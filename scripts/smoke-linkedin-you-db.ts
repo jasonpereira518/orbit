@@ -10,7 +10,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { userSettings } from "../src/db/schema";
 import { patchYou } from "../src/lib/career-profile";
-import { clearCareerProfile, loadYouCurrent, saveCareerPatch } from "../src/lib/career-profile-server";
+import { clearCareerProfile, loadUserFocus, loadYouCurrent, saveCareerPatch } from "../src/lib/career-profile-server";
 import { run } from "./smoke/_env";
 
 const USER = "smoke-career-user";
@@ -72,6 +72,20 @@ async function main() {
   cur = await loadYouCurrent(USER);
   check("the imported details are gone", cur.career === null);
   check("the line they typed is kept", cur.senderBio === "Backend engineer");
+
+  console.log("\nthe profile fields steer focus");
+  await db
+    .update(userSettings)
+    .set({ careerProfile: null, targetRole: "product design", searchStatus: "active" })
+    .where(eq(userSettings.userId, USER));
+  const focus = await loadUserFocus(USER);
+  check(
+    "target role + active search is a focus on its own",
+    JSON.stringify(focus) === JSON.stringify({ skills: [], roleKeywords: ["product design"], role: null, searchActive: true }),
+    JSON.stringify(focus)
+  );
+  await db.update(userSettings).set({ targetRole: null, searchStatus: null }).where(eq(userSettings.userId, USER));
+  check("nothing at all is still null", (await loadUserFocus(USER)) === null);
 
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
   console.log(failures ? `\n${failures} check(s) failed` : "\nsmoke-linkedin-you-db: all checks passed");

@@ -192,6 +192,7 @@ function toRadarContact(
     goalFit: goals.length ? goalRelevanceComponent({ company: row.company, title: row.title, industry: row.industry }, goals) : 0,
     focusFit: focus ? focusFitComponent({ title: row.title, industry: row.industry }, focus) : 0,
     hasEvidence: row.hasEvidence,
+    searchActive: focus?.searchActive ?? false,
   };
 }
 

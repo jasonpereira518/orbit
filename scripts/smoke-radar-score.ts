@@ -12,6 +12,7 @@ import {
   NO_SUPPRESSION,
   RADAR_BUCKETS,
   RADAR_CAPS,
+  RADAR_WEIGHTS as W,
   bucketFor,
   decayed,
   pickWinner,
@@ -203,6 +204,17 @@ function main() {
     check("it is context, so it never leads the card", CONTEXT_CODES.has("alumni") && pickWinner("c1", alum, NOW)?.kind === "reach_out");
     check("it never creates a recommendation on its own",
       kinds(contact({ alumniSchool: "UNC Chapel Hill", lastInteractionAt: ago(3) })).length === 0);
+  }
+
+  console.log("\nactive search boosts target company and alumni");
+  {
+    const inbound: RadarSignal = { kind: "inbound_unanswered", contactId: "c1", at: ago(9) };
+    const pts = (over: Partial<RadarContact>, code: string) =>
+      pickWinner("c1", kinds(contact({ lastInteractionAt: ago(45), ...over }), [inbound]), NOW)?.reasons.find((r) => r.code === code)?.points;
+    check("target company x1.5 while searching", pts({ targetPriority: 2, searchActive: true }, "target_company") === Math.round(W.targetCompany[2] * 1.5));
+    check("target company unchanged otherwise", pts({ targetPriority: 2, searchActive: false }, "target_company") === W.targetCompany[2]);
+    check("alumni x1.5 while searching", pts({ alumniSchool: "UNC", searchActive: true }, "alumni") === Math.round(W.alumni * 1.5));
+    check("alumni unchanged otherwise", pts({ alumniSchool: "UNC", searchActive: false }, "alumni") === W.alumni);
   }
 
   console.log("\nmessage windows");

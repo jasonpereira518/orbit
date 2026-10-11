@@ -117,6 +117,14 @@ function wiringChecks() {
   check("alongside the goals, not instead of them", withBio.includes("find a staff role"));
   check("and the contact block survives", withBio.includes("Name: Sarah Chen"));
 
+  const factsOnly = composeDraftContext({
+    ...parts,
+    senderBlock: [senderProfileBlock(null), senderFactsLine(normalizeSearchProfile({ targetRole: "product design", searchStatus: "active" }))]
+      .filter(Boolean)
+      .join("\n") || null,
+  });
+  check("the search facts line reaches the prompt with no bio", factsOnly.includes("About the sender: looking for product design roles"), factsOnly.slice(0, 160));
+
   const withoutBio = composeDraftContext({ ...parts, senderBlock: null });
   check(
     "no bio, no block",

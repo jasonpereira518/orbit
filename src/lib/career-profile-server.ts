@@ -11,24 +11,37 @@ import type { UserFocus } from "@/lib/focus-fit";
 export async function loadYouCurrent(userId: string): Promise<YouCurrent> {
   const db = await getDb();
   const [row] = await db
-    .select({ career: userSettings.careerProfile, senderBio: userSettings.senderBio })
+    .select({
+      career: userSettings.careerProfile,
+      senderBio: userSettings.senderBio,
+      targetRole: userSettings.targetRole,
+      searchStatus: userSettings.searchStatus,
+    })
     .from(userSettings)
     .where(eq(userSettings.userId, userId))
     .limit(1);
-  return { career: row?.career ?? null, senderBio: row?.senderBio ?? null };
+  return {
+    career: row?.career ?? null,
+    senderBio: row?.senderBio ?? null,
+    targetRole: row?.targetRole ?? null,
+    searchStatus: row?.searchStatus ?? null,
+  };
 }
 
 /**
- * What the user's LinkedIn export says they do and are looking for, or null when nothing was
- * imported. The one reader the recommenders share, next to `listActiveGoalTextsForUser`.
+ * What the user does and is looking for: their LinkedIn export plus the target role and search
+ * status they typed in settings. Null when there is nothing at all. The one reader the
+ * recommenders share, next to `listActiveGoalTextsForUser`.
  */
 export async function loadUserFocus(userId: string): Promise<UserFocus | null> {
-  const { career } = await loadYouCurrent(userId);
-  if (!career) return null;
-  const skills = (career.skills ?? []).filter((s) => typeof s === "string" && s.trim());
-  const roleKeywords = (career.roleKeywords ?? []).filter((s) => typeof s === "string" && s.trim());
-  if (!skills.length && !roleKeywords.length) return null;
-  return { skills, roleKeywords, role: career.role ?? null };
+  const { career, targetRole, searchStatus } = await loadYouCurrent(userId);
+  const skills = (career?.skills ?? []).filter((s) => typeof s === "string" && s.trim());
+  const roleKeywords = (career?.roleKeywords ?? []).filter((s) => typeof s === "string" && s.trim());
+  const role = targetRole?.trim();
+  if (role && !roleKeywords.some((k) => k.toLowerCase() === role.toLowerCase())) roleKeywords.unshift(role);
+  const searchActive = searchStatus === "active";
+  if (!skills.length && !roleKeywords.length && !searchActive) return null;
+  return { skills, roleKeywords, role: career?.role ?? null, searchActive };
 }
 
 /**

@@ -168,6 +168,8 @@ export type RadarContact = {
   goalFit: number;
   /** 0..1 from `focusFitComponent` (skills + watched job titles). Absent means 0. */
   focusFit?: number;
+  /** Actively searching: target-company and alumni reasons count 1.5x. */
+  searchActive?: boolean;
   /**
    * Whether the closeness score rests on real evidence (`closeness_evidence` at or above
    * `EVIDENCE_FLOOR`). Every import stamps `last_interaction_at`, so without this a month-old
@@ -511,15 +513,16 @@ export function scoreContactKinds(
     if (contact.priorityLevel >= 3) reasons.push({ code: "priority", label: "Marked high priority", points: W.priorityHigh });
     else if (contact.priorityLevel === 2) reasons.push({ code: "priority", label: "Marked a priority", points: W.priorityMedium });
     if ((contact.statedCloseness ?? 0) >= 4) reasons.push({ code: "stated_close", label: "You rated them close", points: W.statedClose });
+    const boost = contact.searchActive ? 1.5 : 1;
     if (contact.targetPriority !== null) {
       reasons.push({
         code: "target_company",
         label: contact.company ? `Works at ${contact.company}, on your target list` : "At a company on your target list",
-        points: W.targetCompany[contact.targetPriority],
+        points: Math.round(W.targetCompany[contact.targetPriority] * boost),
       });
     }
     if (contact.alumniSchool) {
-      reasons.push({ code: "alumni", label: `Went to ${contact.alumniSchool} too`, points: W.alumni });
+      reasons.push({ code: "alumni", label: `Went to ${contact.alumniSchool} too`, points: Math.round(W.alumni * boost) });
     }
     const goalPoints = Math.round(W.goalFit * Math.min(1, Math.max(0, contact.goalFit)));
     if (goalPoints > 0) reasons.push({ code: "goal_match", label: "Fits what you’re working on", points: goalPoints });

@@ -21,6 +21,8 @@ export type UserFocus = {
   roleKeywords: string[];
   /** The role held now. Not scored; carried for the prompt block. */
   role?: { title: string; company: string } | null;
+  /** The user said they are actively looking (settings). Lets recruiters count without job alerts. */
+  searchActive?: boolean;
 };
 
 export type FocusContact = {
@@ -31,7 +33,7 @@ export type FocusContact = {
 
 const STOPWORDS = new Set(["and", "the", "for", "with", "of", "in", "to", "at", "a", "an", "or", "ai"]);
 
-/** Titles on the hiring side of a job search. Only count while the user has job alerts. */
+/** Titles on the hiring side of a job search. Only count while the user has job alerts or is actively searching. */
 const RECRUITING_TITLE = /\b(recruit|talent|sourcer|sourcing|hiring|staffing|headhunt)/i;
 
 const SKILL_HITS_CAP = 3;
@@ -60,7 +62,7 @@ function termHits(term: string, haystack: string[]): boolean {
 }
 
 export function focusFitComponent(contact: FocusContact, focus: UserFocus | null | undefined): number {
-  if (!focus || (!focus.skills.length && !focus.roleKeywords.length)) return 0;
+  if (!focus || (!focus.skills.length && !focus.roleKeywords.length && !focus.searchActive)) return 0;
 
   const text = [contact.title, contact.headline, contact.industry].filter(Boolean).join(" ");
   if (!text.trim()) return 0;
@@ -75,8 +77,8 @@ export function focusFitComponent(contact: FocusContact, focus: UserFocus | null
   if (focus.roleKeywords.length) {
     // Someone in the role family you are looking at: a peer, or someone who can speak to it.
     if (focus.roleKeywords.some((k) => termHits(k, haystack))) score += 0.25;
-    // And the people who actually place people, while you are searching.
-    if (RECRUITING_TITLE.test(contact.title ?? "")) score += 0.15;
   }
+  // The people who actually place people, while you are searching: job alerts, or "Actively looking".
+  if ((focus.roleKeywords.length || focus.searchActive) && RECRUITING_TITLE.test(contact.title ?? "")) score += 0.15;
   return Math.min(1, score);
 }

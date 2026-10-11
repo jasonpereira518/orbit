@@ -6,8 +6,8 @@ import { parseAiJson } from "@/lib/ai";
 import { cachedCompleteJson } from "@/lib/ai-result-cache";
 import { isAiAccessError, type AiAccess } from "@/lib/ai-access";
 import type { AiOperationId } from "@/lib/ai-operations";
-import { senderProfileBlock } from "@/lib/sender-profile";
-import { loadSenderBio } from "@/lib/sender-profile-server";
+import { senderFactsLine, senderProfileBlock } from "@/lib/sender-profile";
+import { loadSearchProfile, loadSenderBio } from "@/lib/sender-profile-server";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { withWritingPreferences } from "@/lib/writing-instructions";
 
@@ -188,7 +188,8 @@ async function draftFromContext(input: {
   // every caller so no draft path can be left without it — that is exactly how the sign-off
   // name above ended up being fetched inline too. Omitted entirely when unset; see
   // `senderProfileBlock` on why "unknown" is worse than absent.
-  const senderBlock = senderProfileBlock(await loadSenderBio(input.userId));
+  const [bio, search] = await Promise.all([loadSenderBio(input.userId), loadSearchProfile(input.userId)]);
+  const senderBlock = [senderProfileBlock(bio), senderFactsLine(search)].filter(Boolean).join("\n") || null;
 
   const channelLabel =
     input.channel === "email"

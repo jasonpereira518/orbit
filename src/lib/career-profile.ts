@@ -28,7 +28,12 @@ export type YouField = {
   defaultOn: boolean;
 };
 
-export type YouCurrent = { career: CareerProfile | null; senderBio: string | null };
+export type YouCurrent = {
+  career: CareerProfile | null;
+  senderBio: string | null;
+  targetRole?: string | null;
+  searchStatus?: string | null;
+};
 
 const PROFILE_KEYS = [
   ["headline", "Headline"],

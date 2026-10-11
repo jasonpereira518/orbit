@@ -48,6 +48,12 @@ check(
   focusFitComponent({ title: "Technical Recruiter" }, { skills: ["Go"], roleKeywords: [] }) === 0 &&
     focusFitComponent({ title: "Technical Recruiter" }, { skills: ["Go"], roleKeywords: ["Software Engineer"] }) > 0
 );
+check("target role alone makes a role focus", focusFitComponent({ title: "Software Engineer" }, { skills: [], roleKeywords: ["software engineering"] }) > 0);
+check(
+  "recruiters count while actively searching, even without alerts",
+  focusFitComponent({ title: "Technical Recruiter" }, { skills: [], roleKeywords: [], searchActive: true }) === 0.15
+);
+check("recruiters don't count when not searching", focusFitComponent({ title: "Technical Recruiter" }, { skills: ["go"], roleKeywords: [] }) === 0);
 check(
   "the total never exceeds 1",
   focusFitComponent(
