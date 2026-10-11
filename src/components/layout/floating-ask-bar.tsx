@@ -377,6 +377,9 @@ export function FloatingAskBar() {
       const q = raw.trim();
       if (!q || chatPending) return;
 
+      // A new question starts clean: a refusal from an earlier one must not sit over this
+      // answer. A fresh refusal sets it again in onError.
+      setAskDenial(null);
       setLastUserQuery(q);
       const userMsg: UserMessage = {
         id: newId(),
@@ -485,9 +488,11 @@ export function FloatingAskBar() {
         smoother.flush();
         smootherRef.current = null;
         setChatPending(false);
+        // The answer may have spent a credit. Same guard as the read on open.
+        if (plan === "free") getFreeCreditsLeft().then(setCreditsLeft, () => {});
       })();
     },
-    [activeContactId, chatPending, ensureChatThread]
+    [activeContactId, chatPending, ensureChatThread, plan]
   );
   useEffect(() => {
     sendQuestionRef.current = (q) => sendQuestion(q);

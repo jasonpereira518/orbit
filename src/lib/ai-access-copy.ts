@@ -146,6 +146,17 @@ export function noticeCopyFor(reason: AiAccessDenial | null, plan: Plan, resetsA
   return AI_NOTICE_COPY[reason ?? "key_required"];
 }
 
+/**
+ * A refusal as one line, for places with no room for a notice (a failed background job).
+ * Free out of credits gets the notice's refill date; anything else is the message as is.
+ */
+export function refusalWithRefill(message: string, plan: Plan, resetsAt: string | null): string {
+  const reason = aiDenialFromMessage(message);
+  if (reason !== "managed_limit" || plan !== "free") return message;
+  const copy = noticeCopyFor(reason, plan, resetsAt);
+  return `${copy.title("")}. ${copy.body} — add your own API key in Settings for no limit`;
+}
+
 /** Share of this cycle's allowance used, 0-100. */
 export function allowancePercentUsed(allowance: { granted: number; remaining: number }): number {
   if (allowance.granted <= 0) return 100;
