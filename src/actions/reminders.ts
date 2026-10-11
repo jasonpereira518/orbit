@@ -43,7 +43,10 @@ import {
   scheduleContactFollowUpForUser,
   clearContactFollowUpForUser,
   undoClearContactFollowUpForUser,
+  markKeepInTouchDoneForUser,
+  undoKeepInTouchDoneForUser,
   type ClearFollowUpSnapshot,
+  type KeepInTouchDoneSnapshot,
 } from "@/lib/reminder-writes";
 import { isListColor, isListIcon } from "@/lib/reminder-list-style";
 import { settle, unwrap } from "@/lib/settled";
@@ -118,7 +121,9 @@ function validCompletionSnapshot(snap: CompletionSnapshot): boolean {
         typeof cleared.previousNextFollowUpAt === "string" &&
         !Number.isNaN(Date.parse(cleared.previousNextFollowUpAt)) &&
         (cleared.previousFollowUpStatus === null ||
-          FOLLOW_UP_STATUSES.has(cleared.previousFollowUpStatus))))
+          FOLLOW_UP_STATUSES.has(cleared.previousFollowUpStatus)) &&
+        (cleared.previousLastInteractionAt === undefined || isIsoOrNull(cleared.previousLastInteractionAt)) &&
+        (cleared.touchedAt === undefined || isIsoOrNull(cleared.touchedAt))))
   );
 }
 
@@ -722,6 +727,7 @@ export async function undoClearContactFollowUpAction(snapshot: ClearFollowUpSnap
     typeof snapshot?.contactId !== "string" ||
     !isIsoOrNull(snapshot.previousNextFollowUpAt) ||
     !(snapshot.previousFollowUpStatus === null || FOLLOW_UP_STATUSES.has(snapshot.previousFollowUpStatus)) ||
+    !(snapshot.rebookedTo === undefined || (typeof snapshot.rebookedTo === "string" && isIsoOrNull(snapshot.rebookedTo))) ||
     !Array.isArray(snapshot.completions) ||
     snapshot.completions.length > BULK_LIMIT ||
     !snapshot.completions.every(validCompletionSnapshot)
@@ -729,6 +735,33 @@ export async function undoClearContactFollowUpAction(snapshot: ClearFollowUpSnap
     return { restored: false };
   }
   const result = await undoClearContactFollowUpForUser(userId, snapshot);
+  revalidateReminderPaths(snapshot.contactId);
+  revalidatePathIfRequestScoped("/contacts");
+  return result;
+}
+
+/** Done on a cadence-due contact: moves the last touch to now. Undo via `undoKeepInTouchDoneAction`. */
+export async function markKeepInTouchDone(contactId: string) {
+  const userId = await requireUserId();
+  const snapshot = await markKeepInTouchDoneForUser(userId, contactId);
+  if (!snapshot) throw new UserFacingError("That contact isn’t here anymore");
+  revalidateReminderPaths(contactId);
+  revalidatePathIfRequestScoped("/contacts");
+  return snapshot;
+}
+
+/** Undo for `markKeepInTouchDone`. The snapshot comes back from the client: validated. */
+export async function undoKeepInTouchDoneAction(snapshot: KeepInTouchDoneSnapshot) {
+  const userId = await requireUserId();
+  if (
+    typeof snapshot?.contactId !== "string" ||
+    !isIsoOrNull(snapshot.previousLastInteractionAt) ||
+    typeof snapshot.touchedAt !== "string" ||
+    !isIsoOrNull(snapshot.touchedAt)
+  ) {
+    return { restored: false };
+  }
+  const result = await undoKeepInTouchDoneForUser(userId, snapshot);
   revalidateReminderPaths(snapshot.contactId);
   revalidatePathIfRequestScoped("/contacts");
   return result;

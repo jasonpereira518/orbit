@@ -23,16 +23,24 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { aiSuggestions, contacts, recommendations, reminders, userSettings } from "../src/db/schema";
 import { ensureUserSettings } from "../src/lib/user-settings";
-import { loadDashboardReminders, snoozeReminder } from "../src/lib/reminders";
+import { getDashboardData, loadDashboardReminders, reopenReminder, snoozeReminder } from "../src/lib/reminders";
+import { loadDueFollowUps } from "../src/lib/due-follow-ups";
+import { listContactsPage } from "../src/lib/contacts-page-query";
+import { recalibrateCloseness } from "../src/lib/closeness-cohort";
 import { loadNotificationPanel } from "../src/lib/notification-panel";
 import {
   clearContactFollowUp,
+  markKeepInTouchDone,
+  markReminderDone,
   scheduleContactFollowUp,
   scheduleContactFollowUpAt,
+  undoClearContactFollowUpAction,
+  undoKeepInTouchDoneAction,
 } from "../src/actions/reminders";
 import { markContactReachedOutForUser } from "../src/lib/radar/actions-core";
 
 const USER = "demo-user";
+const OTHER = "smoke-follow-up-actions-other";
 const HANDWRITTEN = "Send Priya the deck";
 
 function check(label: string, condition: boolean, detail?: string) {
@@ -56,6 +64,7 @@ async function cleanup() {
   await db.delete(aiSuggestions).where(eq(aiSuggestions.userId, USER));
   await db.delete(contacts).where(eq(contacts.userId, USER));
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
+  await db.delete(contacts).where(eq(contacts.userId, OTHER));
 }
 
 async function seedContact(fullName: string, overdueDays: number) {
@@ -314,6 +323,115 @@ async function main() {
     check("a past instant is refused with friendly copy", refused === "Pick a time in the future", refused);
     const legacy = await scheduleContactFollowUp(booked.id, 2);
     check("a day count still works", Math.round((new Date(legacy.dueDate).getTime() - Date.now()) / 86_400_000) === 2);
+  }
+
+  /* ----- Done and Clear move a lapsed cadence on, so the contact does not come straight back */
+  {
+    const DAY = 86_400_000;
+    const now = Date.now();
+    // Reading the due list repairs unscored contacts' tiers, so every new contact is followed by
+    // a recalibration and the tiers this block depends on are pinned again afterwards.
+    const pinned = new Map<string, "inner" | "outer">();
+    const pin = async (id: string, tier: "inner" | "outer") => {
+      pinned.set(id, tier);
+      await recalibrateCloseness(USER);
+      for (const [cid, t] of pinned) {
+        await db.update(contacts).set({ closenessTier: t, closenessEvidence: 0.5 }).where(eq(contacts.id, cid));
+      }
+    };
+    // An evidenced Inner contact (default cadence 30d) last touched 40 days ago, with a booked
+    // follow-up that is due: the reminder and the clock at the same instant, as booking writes them.
+    const seedInnerDue = async (fullName: string) => {
+      const dueAt = new Date(now - 3_600_000);
+      const [c] = await db.insert(contacts).values({
+        userId: USER, fullName, closenessTier: "inner", closenessEvidence: 0.5,
+        lastInteractionAt: new Date(now - 40 * DAY), nextFollowUpAt: dueAt, followUpStatus: "pending",
+      }).returning();
+      const [r] = await db.insert(reminders).values({
+        userId: USER, contactId: c.id, title: `Follow up with ${fullName}`, dueDate: dueAt,
+        reminderType: "manual", status: "pending", createdBy: "user",
+      }).returning();
+      await pin(c.id, "inner");
+      return { c, r };
+    };
+    const dueEverywhere = async (id: string) => {
+      const loader = await loadDueFollowUps(USER);
+      const dashboard = await getDashboardData(USER);
+      const page = await listContactsPage(USER, { followUp: "due" });
+      return {
+        loader: loader.some((x) => x.id === id),
+        dashboard: dashboard.dueFollowUps.some((x) => x.id === id),
+        page: page.items.some((x) => x.id === id),
+      };
+    };
+
+    // (a) Done on its follow-up reminder: the last touch moves, so the lapsed default cadence restarts.
+    const done = await seedInnerDue("Inner Done");
+    const before = await dueEverywhere(done.c.id);
+    check("an evidenced Inner contact with a due booked follow-up starts out due",
+      before.loader && before.dashboard && before.page, JSON.stringify(before));
+    const snap = await markReminderDone(done.r.id);
+    const afterDone = await dueEverywhere(done.c.id);
+    check("Done on its follow-up reminder: not in loadDueFollowUps, the dashboard or followUp=due",
+      !afterDone.loader && !afterDone.dashboard && !afterDone.page, JSON.stringify(afterDone));
+    const touched = await db.query.contacts.findFirst({ where: eq(contacts.id, done.c.id) });
+    check("…because Done moved last_interaction_at to now",
+      Math.abs((touched?.lastInteractionAt?.getTime() ?? 0) - Date.now()) < 60_000);
+    // Undo puts the last touch back along with the clock.
+    await reopenReminder(USER, snap!);
+    const reopened = await db.query.contacts.findFirst({ where: eq(contacts.id, done.c.id) });
+    check("Undo restores the previous last_interaction_at",
+      reopened?.lastInteractionAt?.getTime() === done.c.lastInteractionAt?.getTime(),
+      reopened?.lastInteractionAt?.toISOString());
+
+    // (b) Clear on a second such contact books the next one a cadence out instead of nulling it.
+    const clr = await seedInnerDue("Inner Clear");
+    const clearedRes = await clearContactFollowUp(clr.c.id);
+    const afterClear = await dueEverywhere(clr.c.id);
+    check("Clear on a lapsed-cadence contact: not due now",
+      !afterClear.loader && !afterClear.dashboard && !afterClear.page, JSON.stringify(afterClear));
+    const rebooked = await db.query.contacts.findFirst({ where: eq(contacts.id, clr.c.id) });
+    const outDays = ((rebooked?.nextFollowUpAt?.getTime() ?? 0) - Date.now()) / DAY;
+    check("…and next_follow_up_at is about now + 30 days", Math.abs(outDays - 30) < 0.01, String(outDays));
+    const undone = await undoClearContactFollowUpAction(clearedRes.snapshot);
+    const restoredClr = await db.query.contacts.findFirst({ where: eq(contacts.id, clr.c.id) });
+    check("Undo of that Clear puts the original due date back",
+      undone.restored && restoredClr?.nextFollowUpAt?.getTime() === clr.c.nextFollowUpAt?.getTime(),
+      restoredClr?.nextFollowUpAt?.toISOString());
+
+    // No effective cadence (outer tier): Clear leaves the clock null, as before.
+    const [plain] = await db.insert(contacts).values({
+      userId: USER, fullName: "Outer Plain", closenessTier: "outer", closenessEvidence: 0.5,
+      lastInteractionAt: new Date(now - 400 * DAY), nextFollowUpAt: new Date(now - 3_600_000), followUpStatus: "pending",
+    }).returning();
+    await pin(plain.id, "outer");
+    await clearContactFollowUp(plain.id);
+    const plainAfter = await db.query.contacts.findFirst({ where: eq(contacts.id, plain.id) });
+    check("Clear with no effective cadence leaves next_follow_up_at null", plainAfter?.nextFollowUpAt === null);
+
+    /* ----- Done on a cadence-due row (nothing booked) */
+    const [cadenceOnly] = await db.insert(contacts).values({
+      userId: USER, fullName: "Inner Cadence Only", closenessTier: "inner", closenessEvidence: 0.5,
+      lastInteractionAt: new Date(now - 40 * DAY),
+    }).returning();
+    await pin(cadenceOnly.id, "inner");
+    check("a cadence-due contact is in loadDueFollowUps", (await loadDueFollowUps(USER)).some((x) => x.id === cadenceOnly.id));
+    const kit = await markKeepInTouchDone(cadenceOnly.id);
+    check("markKeepInTouchDone removes it from loadDueFollowUps",
+      !(await loadDueFollowUps(USER)).some((x) => x.id === cadenceOnly.id));
+    const kitUndo = await undoKeepInTouchDoneAction(kit);
+    const kitBack = await db.query.contacts.findFirst({ where: eq(contacts.id, cadenceOnly.id) });
+    check("…and its Undo restores the previous last touch",
+      kitUndo.restored && kitBack?.lastInteractionAt?.getTime() === cadenceOnly.lastInteractionAt?.getTime());
+
+    const [foreign] = await db.insert(contacts).values({
+      userId: OTHER, fullName: "Someone Else", lastInteractionAt: new Date(now - 40 * DAY),
+    }).returning();
+    let refused = "";
+    try { await markKeepInTouchDone(foreign.id); } catch (err) { refused = (err as Error).message; }
+    const foreignAfter = await db.query.contacts.findFirst({ where: eq(contacts.id, foreign.id) });
+    check("markKeepInTouchDone on another user's contact is not found and writes nothing",
+      refused !== "" && foreignAfter?.lastInteractionAt?.getTime() === foreign.lastInteractionAt?.getTime(), refused);
   }
 
   await cleanup();

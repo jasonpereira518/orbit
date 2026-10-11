@@ -19,7 +19,8 @@ import {
 } from "@/lib/reminder-action-kind";
 import { findReminderListForUser, getInboxListId } from "@/lib/reminder-lists";
 import { revalidatePathIfRequestScoped, revalidateReminderPaths } from "@/lib/reminder-paths";
-import { completeReminder, reopenReminder, type CompletionSnapshot } from "@/lib/reminders";
+import { completeReminder, reopenReminder, restoreLastTouch, type CompletionSnapshot } from "@/lib/reminders";
+import { cadenceDueAt, effectiveCadenceDays } from "@/lib/keep-in-touch";
 import { settle, unwrap } from "@/lib/settled";
 
 export type CreateReminderInput = {
@@ -200,6 +201,8 @@ export type ClearFollowUpSnapshot = {
   previousNextFollowUpAt: string | null;
   previousFollowUpStatus: string | null;
   completions: CompletionSnapshot[];
+  /** Set when Clear rebooked the clock one cadence out instead of nulling it; Undo matches on it. */
+  rebookedTo?: string;
 };
 
 /**
@@ -214,11 +217,22 @@ export async function clearContactFollowUpForUser(
   const db = await getDb();
   const before = await db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
-    columns: { nextFollowUpAt: true, followUpStatus: true },
+    columns: {
+      nextFollowUpAt: true, followUpStatus: true, cadenceDays: true, closenessTier: true,
+      closenessEvidence: true, lastInteractionAt: true, dateMet: true, createdAt: true,
+    },
   });
+  // A lapsed cadence would bring the contact straight back as due, so Clear books the next
+  // one a cadence out instead (spec C3). No cadence, or not lapsed: nothing booked, as before.
+  const now = new Date();
+  const days = before ? effectiveCadenceDays(before) : null;
+  const lapsedAt = before && days !== null ? cadenceDueAt({ ...before, nextFollowUpAt: null }) : null;
+  const rebookedTo = lapsedAt && days !== null && lapsedAt.getTime() <= now.getTime()
+    ? new Date(now.getTime() + days * 86_400_000)
+    : null;
   await db
     .update(contacts)
-    .set({ nextFollowUpAt: null, followUpStatus: "none", updatedAt: new Date() })
+    .set({ nextFollowUpAt: rebookedTo, followUpStatus: rebookedTo ? "pending" : "none", updatedAt: now })
     .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
   const open = await db.query.reminders.findMany({
     where: and(eq(reminders.userId, userId), eq(reminders.contactId, contactId), eq(reminders.status, "pending")),
@@ -237,6 +251,7 @@ export async function clearContactFollowUpForUser(
       previousNextFollowUpAt: before?.nextFollowUpAt ? before.nextFollowUpAt.toISOString() : null,
       previousFollowUpStatus: before?.followUpStatus ?? null,
       completions,
+      ...(rebookedTo ? { rebookedTo: rebookedTo.toISOString() } : {}),
     },
   };
 }
@@ -263,8 +278,53 @@ export async function undoClearContactFollowUpForUser(
           followUpStatus: snap.previousFollowUpStatus,
           updatedAt: new Date(),
         })
-        .where(and(eq(contacts.id, snap.contactId), eq(contacts.userId, userId), isNull(contacts.nextFollowUpAt)))
+        .where(and(
+          eq(contacts.id, snap.contactId),
+          eq(contacts.userId, userId),
+          snap.rebookedTo ? eq(contacts.nextFollowUpAt, new Date(snap.rebookedTo)) : isNull(contacts.nextFollowUpAt)
+        ))
         .returning() // bare: a field selector breaks over the Db union
     : [];
   return { restored: reopened > 0 || clock.length > 0 };
+}
+
+/** What `markKeepInTouchDoneForUser` changed, for its Undo. */
+export type KeepInTouchDoneSnapshot = {
+  contactId: string;
+  previousLastInteractionAt: string | null;
+  touchedAt: string;
+};
+
+/**
+ * Done on a cadence-due contact: the last touch moves to now (no interaction row), so the
+ * cadence restarts. Null when the contact is not this user's.
+ */
+export async function markKeepInTouchDoneForUser(
+  userId: string,
+  contactId: string
+): Promise<KeepInTouchDoneSnapshot | null> {
+  const db = await getDb();
+  const before = await db.query.contacts.findFirst({
+    where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+    columns: { lastInteractionAt: true },
+  });
+  if (!before) return null;
+  const touchedAt = new Date();
+  await db
+    .update(contacts)
+    .set({ lastInteractionAt: touchedAt, updatedAt: touchedAt })
+    .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+  return {
+    contactId,
+    previousLastInteractionAt: before.lastInteractionAt ? before.lastInteractionAt.toISOString() : null,
+    touchedAt: touchedAt.toISOString(),
+  };
+}
+
+/** Reverse a `markKeepInTouchDoneForUser`, only while the stamp is still the latest touch. */
+export async function undoKeepInTouchDoneForUser(
+  userId: string,
+  snap: KeepInTouchDoneSnapshot
+): Promise<{ restored: boolean }> {
+  return { restored: await restoreLastTouch(userId, snap) };
 }

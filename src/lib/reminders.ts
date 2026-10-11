@@ -1510,6 +1510,12 @@ export type CompletionSnapshot = {
     contactId: string;
     previousNextFollowUpAt: string;
     previousFollowUpStatus: string | null;
+    /**
+     * Finishing the follow-up also moves the contact's last touch to `touchedAt`, so a lapsed
+     * cadence does not bring them straight back as due (spec C3). Optional for older snapshots.
+     */
+    previousLastInteractionAt?: string | null;
+    touchedAt?: string;
   };
 };
 
@@ -1529,7 +1535,7 @@ export async function completeReminder(
     reminder.contactId && reminder.dueDate
       ? await db.query.contacts.findFirst({
           where: and(eq(contacts.id, reminder.contactId), eq(contacts.userId, userId)),
-          columns: { nextFollowUpAt: true, followUpStatus: true },
+          columns: { nextFollowUpAt: true, followUpStatus: true, lastInteractionAt: true },
         })
       : null;
 
@@ -1564,14 +1570,18 @@ export async function completeReminder(
     contact?.nextFollowUpAt &&
     contact.nextFollowUpAt.getTime() === reminder.dueDate.getTime()
   ) {
+    // Done is a touch: last_interaction_at moves (no interaction row), so the cadence restarts.
+    const touchedAt = new Date();
     await db
       .update(contacts)
-      .set({ nextFollowUpAt: null, followUpStatus: "none", updatedAt: new Date() })
+      .set({ nextFollowUpAt: null, followUpStatus: "none", lastInteractionAt: touchedAt, updatedAt: touchedAt })
       .where(and(eq(contacts.id, reminder.contactId), eq(contacts.userId, userId)));
     clearedFollowUp = {
       contactId: reminder.contactId,
       previousNextFollowUpAt: contact.nextFollowUpAt.toISOString(),
       previousFollowUpStatus: contact.followUpStatus ?? null,
+      previousLastInteractionAt: contact.lastInteractionAt ? contact.lastInteractionAt.toISOString() : null,
+      touchedAt: touchedAt.toISOString(),
     };
   }
 
@@ -1634,9 +1644,37 @@ export async function reopenReminder(
           isNull(contacts.nextFollowUpAt)
         )
       );
+    await restoreLastTouch(userId, snap.clearedFollowUp);
   }
 
   return { restored: true };
+}
+
+/**
+ * Put back the last touch a Done stamped, only while it is still that stamp: an interaction
+ * logged since is newer and wins.
+ */
+export async function restoreLastTouch(
+  userId: string,
+  t: { contactId: string; previousLastInteractionAt?: string | null; touchedAt?: string }
+): Promise<boolean> {
+  if (!t.touchedAt || t.previousLastInteractionAt === undefined) return false;
+  const db = await getDb();
+  const rows = await db
+    .update(contacts)
+    .set({
+      lastInteractionAt: t.previousLastInteractionAt ? new Date(t.previousLastInteractionAt) : null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(contacts.id, t.contactId),
+        eq(contacts.userId, userId),
+        eq(contacts.lastInteractionAt, new Date(t.touchedAt))
+      )
+    )
+    .returning(); // bare: a field selector breaks over the Db union
+  return rows.length > 0;
 }
 
 /**

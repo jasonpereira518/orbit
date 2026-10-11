@@ -124,6 +124,7 @@ export function DueFollowUpRow({
         contactId={id}
         contactName={fullName}
         nextFollowUpAt={nextFollowUpAt}
+        dueByCadence={Boolean(keepInTouchDays)}
         compact
         className="mt-2"
       />

@@ -2,10 +2,12 @@
 
 import { useEffect, useState, useTransition, type MouseEvent } from "react";
 import { useRouter } from "next/navigation";
-import { toast } from "@/lib/toast";
+import { runToastAction, toast } from "@/lib/toast";
 import {
   clearContactFollowUp,
+  markKeepInTouchDone,
   scheduleContactFollowUp,
+  undoKeepInTouchDoneAction,
 } from "@/actions/reminders";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,6 +29,7 @@ export function EasyFollowUp({
   contactId,
   contactName,
   nextFollowUpAt,
+  dueByCadence = false,
   compact = false,
   className,
   onScheduled,
@@ -37,6 +40,8 @@ export function EasyFollowUp({
   contactId: string;
   contactName?: string;
   nextFollowUpAt?: string | Date | null;
+  /** Due because the keep-in-touch cadence lapsed, with nothing booked: offer Follow up and Done. */
+  dueByCadence?: boolean;
   compact?: boolean;
   className?: string;
   onScheduled?: (dueDate: string) => void;
@@ -132,7 +137,7 @@ export function EasyFollowUp({
           3. Clear      — destructive: it also closes every pending reminder for
                           this contact. Was a ghost button with no confirmation. */}
       <div className="flex flex-wrap items-center gap-1.5">
-        {nextFollowUpAt && (
+        {(nextFollowUpAt || dueByCadence) && (
           <Button
             type="button"
             size="sm"
@@ -144,6 +149,32 @@ export function EasyFollowUp({
             onClick={openFollowUp}
           >
             Follow up
+          </Button>
+        )}
+
+        {dueByCadence && !nextFollowUpAt && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={pending}
+            className="h-8 px-2.5"
+            title="Mark as kept in touch"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              start(() =>
+                runToastAction({
+                  run: () => markKeepInTouchDone(contactId),
+                  success: "Marked done",
+                  failure: "Couldn’t mark that done — try again?",
+                  refresh: () => router.refresh(),
+                  undo: (snap) => () => undoKeepInTouchDoneAction(snap),
+                }).then(() => undefined)
+              );
+            }}
+          >
+            Done
           </Button>
         )}
 
