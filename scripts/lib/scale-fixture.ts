@@ -27,7 +27,10 @@ export type ScaleFixtureOptions = {
   inlineAvatarShare?: number;
   /** Share of contacts carrying multi-KB notes. */
   longNotesShare?: number;
-  /** Row indexes whose follow-up is long overdue (sorts first among due follow-ups). */
+  /**
+   * Row indexes whose follow-up is long overdue (sorts first among due follow-ups): older
+   * than any lapsed keep-in-touch cadence here, whose anchors reach back at most 900 days.
+   */
   dueFollowUpRows?: number[];
 };
 
@@ -82,7 +85,7 @@ export function scaleContactRows(
         ? new Date(Date.now() - r * 400 * DAY)
         : new Date(Date.now() - 900 * DAY),
       nextFollowUpAt: due.has(i)
-        ? new Date(Date.now() - 30 * DAY)
+        ? new Date(Date.now() - 1000 * DAY)
         : i % 23 === 0
           ? new Date(Date.now() - 3 * DAY)
           : null,

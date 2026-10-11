@@ -199,6 +199,20 @@ async function main() {
   const dash2 = await loadDashboardReminders(USER, new Date());
   check("…on the dashboard too", dash2.rows.some((r) => r.title === HANDWRITTEN && r.contactId === booked.id));
 
+  /* ------- a lapsed keep-in-touch cadence is on the due list too, so its generated reminder yields */
+
+  const [cadenceDue] = await db.insert(contacts).values({
+    userId: USER, fullName: "Cadence Lapsed", cadenceDays: 14,
+    lastInteractionAt: new Date(Date.now() - 20 * 86_400_000),
+  }).returning();
+  await db.insert(reminders).values({
+    userId: USER, contactId: cadenceDue.id, title: "Follow up with Cadence Lapsed", dueDate: past,
+    reminderType: "generated", status: "pending", createdBy: "system",
+  });
+  const dash3 = await loadDashboardReminders(USER, new Date());
+  check("a generated reminder on a cadence-due contact is dropped from the Reminders card",
+    !dash3.rows.some((r) => r.contactId === cadenceDue.id));
+
   /* --------------- the date picker moves a hand-written reminder without renaming it */
 
   const pickerContact = await seedContact("Rowan Ellis", 0);

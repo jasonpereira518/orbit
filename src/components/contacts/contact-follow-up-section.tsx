@@ -41,7 +41,7 @@ import {
 import { DatePickerButton, toLocalYmd } from "@/components/ui/date-picker";
 import { Textarea } from "@/components/ui/textarea";
 import { FOLLOW_UP_INTENTS } from "@/lib/follow-up-intents";
-import { KEEP_IN_TOUCH_PRESETS } from "@/lib/keep-in-touch";
+import { cadenceName, effectiveCadenceDays, KEEP_IN_TOUCH_PRESETS } from "@/lib/keep-in-touch";
 import {
   FOLLOW_UP_PRESETS,
   browserTimeZone,
@@ -65,6 +65,9 @@ function smsHref(phone: string, body: string) {
   return `sms:${digits}${encoded ? `?&body=${encoded}` : ""}`;
 }
 
+// Task 11 replaces this with the shared orbit tier labels.
+const TIER_NAMES = { inner: "Inner orbit", mid: "Mid orbit", outer: "Outer orbit" } as const;
+
 function dueYmd(value: string | Date | null | undefined): string | null {
   if (!value) return null;
   try {
@@ -79,6 +82,8 @@ export function ContactFollowUpSection({
   contactName,
   nextFollowUpAt,
   keepInTouchDays,
+  cadencePhrase,
+  closenessTier,
   sendOptions,
   phone,
   initialIntent,
@@ -89,6 +94,10 @@ export function ContactFollowUpSection({
   nextFollowUpAt?: string | Date | null;
   /** The interval the user set for this contact, or null if they never did. */
   keepInTouchDays?: number | null;
+  /** How a note phrased the saved cadence ("every couple of months"), when one set it. */
+  cadencePhrase?: string | null;
+  /** The materialized tier, for the default cadence when none is set. */
+  closenessTier?: "inner" | "mid" | "outer" | null;
   sendOptions: ContactFollowUpSendOptions;
   phone?: string | null;
   /** Prefill intent for intro/reach-out drafts (e.g. related person). */
@@ -111,6 +120,15 @@ export function ContactFollowUpSection({
   // `router.refresh()` is long enough to make a click feel dropped. Reset from the prop on
   // failure so a rejected write cannot leave the UI claiming a cadence that was not saved.
   const [cadence, setCadence] = useState<number | null>(keepInTouchDays ?? null);
+
+  const own = cadence;
+  const effective = effectiveCadenceDays({ cadenceDays: own, closenessTier: closenessTier ?? null });
+  const cadenceStatus =
+    // The phrase belongs to the saved cadence, not one just picked and not yet refreshed.
+    own && cadencePhrase && own === keepInTouchDays ? `“${cadencePhrase}”`
+    : own ? cadenceName(own)
+    : effective && closenessTier ? `${cadenceName(effective)} (${TIER_NAMES[closenessTier]} default)`
+    : "Not set";
 
   const scheduledYmd = dueYmd(nextFollowUpAt);
   const dueLabel = nextFollowUpAt
@@ -367,13 +385,12 @@ export function ContactFollowUpSection({
             <p className="text-xs font-medium text-muted-foreground">
               Keep in touch
             </p>
-            {cadence ? null : (
-              <p className="text-xs text-muted-foreground">Not set</p>
-            )}
+            <p className="text-xs text-muted-foreground">{cadenceStatus}</p>
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
             {KEEP_IN_TOUCH_PRESETS.map((preset) => {
-              const active = cadence === preset.days;
+              // Within a day, so a note's 91 still lights Quarterly.
+              const active = Math.abs((own ?? 0) - preset.days) <= 1;
               return (
                 <Button
                   key={preset.days}

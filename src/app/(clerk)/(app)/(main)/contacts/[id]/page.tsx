@@ -406,6 +406,9 @@ export default async function ContactDetailPage({
           contactId={contact.id}
           contactName={displayName}
           nextFollowUpAt={contact.nextFollowUpAt}
+          keepInTouchDays={contact.cadenceDays}
+          cadencePhrase={contact.cadencePhrase}
+          closenessTier={contact.closenessTier}
           phone={contact.phone}
         />
       </Suspense>
@@ -504,6 +507,9 @@ async function StreamedFollowUp({
   contactId: string;
   contactName: string;
   nextFollowUpAt: Date | string | null;
+  keepInTouchDays: number | null;
+  cadencePhrase: string | null;
+  closenessTier: "inner" | "mid" | "outer" | null;
   phone: string | null;
 }) {
   const resolved = await sendOptions;

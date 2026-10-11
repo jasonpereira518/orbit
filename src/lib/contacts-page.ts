@@ -131,6 +131,8 @@ export type ContactListRow = {
   closenessTier: "inner" | "mid" | "outer";
   priorityLevel: number;
   nextFollowUpAt: Date | null;
+  /** The effective keep-in-touch cadence in days: the contact's own, else the tier default. */
+  keepInTouchDays: number | null;
   lastInteractionAt: Date | null;
   /** `contacts.source`; the list only reads it for the guided tour's "Example" chip. */
   source: string | null;

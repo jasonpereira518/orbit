@@ -4,6 +4,7 @@ import { EasyFollowUp } from "@/components/follow-up/easy-follow-up";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import { companyBrandColor } from "@/lib/company-brand";
 import { cn } from "@/lib/utils";
+import { cadenceName } from "@/lib/keep-in-touch";
 
 function followUpDueLabel(nextFollowUpAt?: Date | string | null) {
   if (!nextFollowUpAt) return null;
@@ -43,6 +44,8 @@ export function DueFollowUpRow({
   tier,
   nextFollowUpAt,
   lastInteractionAt,
+  keepInTouchDays,
+  keepInTouchIsDefault,
 }: {
   id: string;
   fullName: string;
@@ -51,8 +54,16 @@ export function DueFollowUpRow({
   tier?: "inner" | "mid" | "outer";
   nextFollowUpAt?: Date | string | null;
   lastInteractionAt?: Date | string | null;
+  /** Set when due because the keep-in-touch cadence lapsed, with nothing booked. */
+  keepInTouchDays?: number | null;
+  keepInTouchIsDefault?: boolean;
 }) {
-  const due = followUpDueLabel(nextFollowUpAt);
+  const due = keepInTouchDays
+    ? {
+        text: `Keep in touch · ${cadenceName(keepInTouchDays).toLowerCase()}${keepInTouchIsDefault ? " (default)" : ""}`,
+        overdue: false,
+      }
+    : followUpDueLabel(nextFollowUpAt);
   const lastTouch = lastTouchLabel(lastInteractionAt);
   const companyColor = companyBrandColor(company);
   // The role line carries the company, tinted; it stays index 0 so the overdue styling

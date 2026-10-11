@@ -27,6 +27,7 @@ import {
   encodeContactsCursor,
 } from "@/lib/contacts-page-cursor";
 import { contactsListSelection } from "@/lib/contact-avatar-sql";
+import { effectiveCadenceSql, followUpDueSql } from "@/lib/contact-cadence-sql";
 import type { RankedContact } from "@/lib/hybrid-search";
 import {
   CONTACTS_PAGE_SIZE,
@@ -129,9 +130,7 @@ export async function listContactsPage(
   }
 
   if (filters?.followUp === "due") {
-    conditions.push(
-      sql`${contacts.nextFollowUpAt} is not null and ${contacts.nextFollowUpAt} <= now()`
-    );
+    conditions.push(followUpDueSql(sql`now()`));
   }
 
   // One id, or the comma-separated list the done card sends. It no longer narrows the list —
@@ -156,7 +155,7 @@ export async function listContactsPage(
   if (cursor) conditions.push(contactsCursorCondition(cursor, tier));
 
   const rows = await db
-    .select({ ...contactsListSelection, nameTier: tier ?? sql<number>`2` })
+    .select({ ...contactsListSelection, nameTier: tier ?? sql<number>`2`, keepInTouchDays: effectiveCadenceSql() })
     .from(contacts)
     .where(and(...conditions))
     .orderBy(...contactsOrderBy(sort, tier, semanticIds))
@@ -195,6 +194,7 @@ export async function listContactsPage(
       closenessTier: row.closenessTier ?? "outer",
       priorityLevel: row.priorityLevel,
       nextFollowUpAt: row.nextFollowUpAt,
+      keepInTouchDays: row.keepInTouchDays === null ? null : Number(row.keepInTouchDays),
       lastInteractionAt: row.lastInteractionAt,
       source: row.source ?? null,
       tags: tagsByContact.get(row.id) ?? [],

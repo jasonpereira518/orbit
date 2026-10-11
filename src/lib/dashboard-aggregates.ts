@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { COMET_DORMANT_DAYS } from "@/lib/comet";
+import { followUpDueSql } from "@/lib/contact-cadence-sql";
 
 /**
  * The dashboard's whole-network counts, computed by Postgres instead of by loading the
@@ -99,9 +100,7 @@ export async function getDashboardCounts(userId: string): Promise<DashboardCount
       count(*) filter (
         where next_follow_up_at is not null and next_follow_up_at < now()
       )::int as overdue,
-      count(*) filter (
-        where next_follow_up_at is not null and next_follow_up_at <= now()
-      )::int as due
+      count(*) filter (where ${followUpDueSql(sql`now()`)})::int as due
     from contacts
     where user_id = ${userId}
   `);

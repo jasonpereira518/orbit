@@ -1,6 +1,7 @@
-import { and, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
+import { cadenceDueAtSql, effectiveCadenceSql, followUpDueSql } from "@/lib/contact-cadence-sql";
 import {
   getClosenessCohortSlim,
   type ClosenessCohortSlimResult,
@@ -12,8 +13,31 @@ export const DUE_FOLLOW_UP_CAP = 12;
 type DueCandidate = {
   id: string;
   nextFollowUpAt: Date | null;
+  /** When the keep-in-touch cadence lapses (`cadenceDueAtSql`); read only when nothing is booked. */
+  cadenceDueAt?: Date | string | null;
   priorityLevel: number | null;
 };
+
+/** When the follow-up comes due: the booked date, else the lapsed cadence. Raw SQL extras may be strings. */
+export const dueAtOf = (c: { nextFollowUpAt: Date | string | null; cadenceDueAt?: Date | string | null }) =>
+  c.nextFollowUpAt ? new Date(c.nextFollowUpAt) : c.cadenceDueAt ? new Date(c.cadenceDueAt) : null;
+
+/** The cadence label's inputs, set only when the row is due because of its cadence. */
+export const keepInTouchOf = (c: {
+  nextFollowUpAt: Date | string | null;
+  effectiveCadence: number | string | null;
+  cadenceIsOwn: boolean | null;
+}) => ({
+  keepInTouchDays: c.nextFollowUpAt || c.effectiveCadence === null ? null : Number(c.effectiveCadence),
+  keepInTouchIsDefault: !c.nextFollowUpAt && c.effectiveCadence !== null && !c.cadenceIsOwn,
+});
+
+/** The three computed extras both due lists read; never the raw columns. */
+export const cadenceExtras = () => ({
+  cadenceDueAt: cadenceDueAtSql().as("cadence_due_at"),
+  effectiveCadence: effectiveCadenceSql().as("effective_cadence"),
+  cadenceIsOwn: sql<boolean>`(${contacts.cadenceDays} > 0)`.as("cadence_is_own"),
+});
 
 const TIER_RANK = { inner: 0, mid: 1, outer: 2 } as const;
 
@@ -27,8 +51,8 @@ export function compareDueFollowUps(
   b: DueCandidate,
   cohort: Pick<ClosenessCohortSlimResult, "byId">
 ): number {
-  const aTime = a.nextFollowUpAt ? new Date(a.nextFollowUpAt).getTime() : 0;
-  const bTime = b.nextFollowUpAt ? new Date(b.nextFollowUpAt).getTime() : 0;
+  const aTime = dueAtOf(a)?.getTime() ?? 0;
+  const bTime = dueAtOf(b)?.getTime() ?? 0;
   if (aTime !== bTime) return aTime - bTime;
   const aTier = cohort.byId.get(a.id)?.tier ?? "outer";
   const bTier = cohort.byId.get(b.id)?.tier ?? "outer";
@@ -52,6 +76,9 @@ export type DueFollowUp = {
   lastInteractionAt: Date | null;
   /** The ring the cohort puts them in — the dashboard's `closenessById.get(id)?.tier`. */
   closenessTier: "inner" | "mid" | "outer" | null;
+  /** Set only when due because of the cadence (nothing booked): its days, and whether it is the tier default. */
+  keepInTouchDays: number | null;
+  keepInTouchIsDefault: boolean;
 };
 
 /**
@@ -75,19 +102,16 @@ export async function loadDueFollowUps(
   const db = await getDb();
   const [candidates, cohort] = await Promise.all([
     db.query.contacts.findMany({
-      where: and(
-        eq(contacts.userId, userId),
-        isNotNull(contacts.nextFollowUpAt),
-        lte(contacts.nextFollowUpAt, sql`now() + interval '1 hour'`)
-      ),
+      where: and(eq(contacts.userId, userId), followUpDueSql(sql`now() + interval '1 hour'`)),
       columns: { id: true, company: true, priorityLevel: true, nextFollowUpAt: true },
+      extras: cadenceExtras(),
     }),
     opts.cohort ?? getClosenessCohortSlim(userId),
   ]);
 
   const now = new Date();
   const top = candidates
-    .filter((c) => c.nextFollowUpAt && new Date(c.nextFollowUpAt) <= now)
+    .filter((c) => { const at = dueAtOf(c); return at !== null && at <= now; })
     .sort((a, b) => compareDueFollowUps(a, b, cohort))
     .slice(0, DUE_FOLLOW_UP_CAP);
   if (top.length === 0) return [];
@@ -116,6 +140,7 @@ export async function loadDueFollowUps(
       nextFollowUpAt: c.nextFollowUpAt ?? null,
       lastInteractionAt: d.lastInteractionAt ?? null,
       closenessTier: cohort.byId.get(c.id)?.tier ?? null,
+      ...keepInTouchOf(c),
     }];
   });
 }

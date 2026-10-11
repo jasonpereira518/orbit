@@ -77,7 +77,14 @@ function contactScans(statements: string[]) {
 
 /** True when the column is selected as a bare value (not merely referenced inside an expression). */
 function selectsBare(statement: string, column: string) {
-  return new RegExp(`"${column}"\\s*(,|\\bfrom\\b)`, "i").test(statement);
+  // A column inside a parenthesised expression with no `from` of its own (a `coalesce(…)`,
+  // a cast) is an input to a computed value, not a selected column: strip those first.
+  let s = statement;
+  for (let prev = ""; prev !== s; ) {
+    prev = s;
+    s = s.replace(/\([^()]*\)/g, (m) => (/\bfrom\b/i.test(m) ? m.replace(/[()]/g, " ") : ""));
+  }
+  return new RegExp(`"${column}"\\s*(,|\\bfrom\\b)`, "i").test(s);
 }
 
 type SpecialRow = {

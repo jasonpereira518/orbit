@@ -22,7 +22,8 @@ import {
   getGoalAlignedContactIds,
 } from "@/lib/dashboard-aggregates";
 import { getClosenessCohortSlim } from "@/lib/closeness-cohort";
-import { compareDueFollowUps, DUE_FOLLOW_UP_CAP } from "@/lib/due-follow-ups";
+import { cadenceExtras, compareDueFollowUps, dueAtOf, DUE_FOLLOW_UP_CAP, keepInTouchOf } from "@/lib/due-follow-ups";
+import { aliasColumns, followUpDueSql } from "@/lib/contact-cadence-sql";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { contactHasNotesSql } from "@/lib/contact-notes-sql";
 import { getConstellationConfig } from "@/lib/constellation-config";
@@ -735,18 +736,12 @@ async function loadRecentContacts(userId: string) {
 }
 
 /**
- * "This contact's follow-up is due", in SQL, for a correlated `contacts` row aliased `due`.
- *
- * The same test `getDashboardData` applies in JavaScript to build `dueFollowUpIds`
- * (`new Date(nextFollowUpAt) <= now`), against the SAME `now`: a JS Date carries
- * milliseconds and the column carries microseconds, so the stored value is truncated to the
- * millisecond first, exactly as parsing it into a Date does. Without that, a follow-up
- * stamped in the same millisecond as `now` but a few microseconds after it would be due to
- * the JavaScript list and not due here.
+ * "This contact's follow-up is due", in SQL, for a correlated `contacts` row aliased `due`:
+ * the shared rule (booked, or a lapsed cadence) against the SAME `now` as `dueFollowUpIds`
+ * in `getDashboardData`. The rule truncates to the millisecond, as parsing into a Date does.
  */
-function followUpDueSql(alias: SQL, now: Date) {
-  return sql`date_trunc('milliseconds', ${alias}.next_follow_up_at) <= ${now.toISOString()}::timestamptz`;
-}
+const dueContactSql = (now: Date) =>
+  followUpDueSql(sql`${now.toISOString()}::timestamptz`, aliasColumns("due"));
 
 /** A canonical (lower-case) uuid: the only text `c.id = x::uuid` can match exactly as a JS string compare would. */
 const CANONICAL_UUID_RE = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
@@ -791,7 +786,7 @@ export async function loadDashboardReminders(userId: string, now: Date) {
             select 1 from ${contacts} due
             where due.id = ${reminders.contactId}
               and due.user_id = ${userId}
-              and ${followUpDueSql(sql.raw("due"), now)}
+              and ${dueContactSql(now)}
               and (
                 ${reminders.reminderType} = 'generated'
                 or (
@@ -863,7 +858,7 @@ export async function loadDashboardSuggestions(userId: string, now: Date) {
             where due.user_id = ${userId}
               and due.id = case when ${ranked.firstContactId} ~ ${CANONICAL_UUID_RE}
                                 then ${ranked.firstContactId}::uuid end
-              and not coalesce(${followUpDueSql(sql.raw("due"), now)}, false)
+              and not coalesce(${dueContactSql(now)}, false)
           )
         )`
       )
@@ -929,6 +924,8 @@ export async function getDashboardData(
       extras: {
         // Computed, never the column — see contact-notes-sql.ts and the budget smoke.
         hasNotes: contactHasNotesSql.as("has_notes"),
+        // Computed, never the columns: the whole-network scan stays narrow (smoke-page-budgets).
+        ...cadenceExtras(),
       },
       // The join key alone. Eligibility wants a tag COUNT, and the vocabulary that wanted
       // tag NAMES is `getDashboardVocabularies` now — so this carries one narrow row per
@@ -1064,7 +1061,7 @@ export async function getDashboardData(
 
   const dueFollowUpIds = new Set(
     lightContacts
-      .filter((c) => c.nextFollowUpAt && new Date(c.nextFollowUpAt) <= now)
+      .filter((c) => { const at = dueAtOf(c); return at !== null && at <= now; })
       .map((c) => c.id)
   );
 
@@ -1237,6 +1234,7 @@ export async function getDashboardData(
       relationshipScore: light.relationshipScore ?? 2,
       priorityLevel: light.priorityLevel ?? 0,
       nextFollowUpAt: light.nextFollowUpAt ?? null,
+      ...keepInTouchOf(light),
       lastInteractionAt: d.lastInteractionAt,
       tags: d.tags,
     }];

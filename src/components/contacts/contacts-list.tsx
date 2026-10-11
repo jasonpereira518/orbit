@@ -57,6 +57,7 @@ import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { ExampleTag } from "@/components/onboarding/example-tag";
 import { isTourExampleSource } from "@/lib/onboarding-examples/marker";
 import { cn } from "@/lib/utils";
+import { cadenceName } from "@/lib/keep-in-touch";
 import { LIST_INTENT_DELAY_MS, useIntentPrefetchHandlers } from "@/lib/intent-prefetch";
 import {
   markImportPersonSeen,
@@ -89,6 +90,8 @@ export type ContactListItem = {
   source?: string | null;
   priorityLevel: number;
   nextFollowUpAt?: string | Date | null;
+  /** The effective keep-in-touch cadence in days (own, else the tier default). */
+  keepInTouchDays?: number | null;
   lastInteractionAt?: string | Date | null;
   tags: string[];
   matchReason?: string | null;
@@ -755,6 +758,11 @@ const ContactRow = memo(function ContactRow({
                   />
                 </>
               )}
+              {c.keepInTouchDays ? (
+                <span className="hidden shrink-0 rounded-full border border-border/60 px-1.5 text-[11px] text-muted-foreground md:inline-flex">
+                  {cadenceName(c.keepInTouchDays)}
+                </span>
+              ) : null}
             </div>
             {details && (
               <p className="mt-0.5 truncate text-xs text-muted-foreground/80">

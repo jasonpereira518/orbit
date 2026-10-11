@@ -490,6 +490,8 @@ export async function RemindersAndFollowUpsSection({
                   tier={tierForContact(data, c.id)}
                   nextFollowUpAt={c.nextFollowUpAt}
                   lastInteractionAt={c.lastInteractionAt}
+                  keepInTouchDays={c.keepInTouchDays}
+                  keepInTouchIsDefault={c.keepInTouchIsDefault}
                 />
               ))
             )}
