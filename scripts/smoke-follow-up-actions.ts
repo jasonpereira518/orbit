@@ -288,6 +288,20 @@ async function main() {
   const retired = await db.query.aiSuggestions.findFirst({ where: eq(aiSuggestions.id, nudge!.id) });
   check("…and retires the congratulations nudge", retired?.status === "dismissed", retired?.status);
 
+  // Absolute instants from the shared presets.
+  {
+    const target = new Date(Date.now() + 3 * 86_400_000);
+    target.setUTCHours(13, 0, 0, 0);
+    const res = await scheduleContactFollowUp(booked.id, target.toISOString());
+    check("an ISO instant books exactly that instant", res.dueDate === target.toISOString());
+    let refused = "";
+    try { await scheduleContactFollowUp(booked.id, new Date(Date.now() - 60_000).toISOString()); }
+    catch (err) { refused = (err as Error).message; }
+    check("a past instant is refused with friendly copy", refused === "Pick a time in the future", refused);
+    const legacy = await scheduleContactFollowUp(booked.id, 2);
+    check("a day count still works", Math.round((new Date(legacy.dueDate).getTime() - Date.now()) / 86_400_000) === 2);
+  }
+
   await cleanup();
   console.log("Follow-up actions: all checks passed");
 }

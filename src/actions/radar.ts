@@ -9,6 +9,7 @@ import { cookies } from "next/headers";
 import { after } from "next/server";
 import { AI_ACCESS_COPY } from "@/lib/ai-access-copy";
 import { friendlyError } from "@/lib/errors";
+import { validateFollowUpDate } from "@/lib/follow-up-presets";
 import { requireUserForReleasedSurface } from "@/lib/plan-guards";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { revalidatePathIfRequestScoped, revalidateReminderPaths } from "@/lib/reminder-paths";
@@ -18,9 +19,7 @@ import {
   restoreRecommendationForUser,
   scheduleRecommendationForUser,
   snoozeRecommendationForUser,
-  SCHEDULE_DAYS,
   SNOOZE_DAYS,
-  type ScheduleDays,
   type SnoozeLength,
 } from "@/lib/radar/actions-core";
 import { explainRecommendation } from "@/lib/radar/explain";
@@ -81,10 +80,11 @@ export async function fetchRadarBriefing(): Promise<RadarBriefing> {
 
 export type RadarActionResult = { ok: true; message?: string } | { ok: false; message: string };
 
-export async function scheduleFromRecommendation(id: string, days: ScheduleDays): Promise<RadarActionResult> {
+export async function scheduleFromRecommendation(id: string, dueIso: string): Promise<RadarActionResult> {
   const userId = await requireUserForReleasedSurface(SURFACE);
-  if (!SCHEDULE_DAYS.includes(days)) return { ok: false, message: "Pick 3, 7 or 14 days" };
-  const result = await scheduleRecommendationForUser(userId, id, days);
+  const checked = validateFollowUpDate(dueIso, new Date());
+  if (!checked.ok) return { ok: false, message: checked.message };
+  const result = await scheduleRecommendationForUser(userId, id, checked.date);
   if (!result.ok) return { ok: false, message: "That card has already changed — refresh to see the latest" };
   revalidateReminderPaths(result.contactId);
   revalidateRadar();

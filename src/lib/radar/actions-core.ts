@@ -17,8 +17,6 @@ const DAY_MS = 86_400_000;
 
 export const SNOOZE_DAYS = { "1w": 7, "1m": 30 } as const;
 export type SnoozeLength = keyof typeof SNOOZE_DAYS;
-export const SCHEDULE_DAYS = [3, 7, 14] as const;
-export type ScheduleDays = (typeof SCHEDULE_DAYS)[number];
 
 async function ownedPending(userId: string, id: string) {
   const db = await getDb();
@@ -31,10 +29,10 @@ async function ownedPending(userId: string, id: string) {
 }
 
 /** Put a follow-up on the calendar and retire the card. */
-export async function scheduleRecommendationForUser(userId: string, id: string, days: ScheduleDays) {
+export async function scheduleRecommendationForUser(userId: string, id: string, when: number | Date) {
   const rec = await ownedPending(userId, id);
   if (!rec || rec.status !== "pending") return { ok: false as const };
-  const result = await scheduleContactFollowUpForUser(userId, rec.contactId, days);
+  const result = await scheduleContactFollowUpForUser(userId, rec.contactId, when);
   const db = await getDb();
   const now = new Date();
   await db

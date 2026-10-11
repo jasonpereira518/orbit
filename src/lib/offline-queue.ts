@@ -26,7 +26,7 @@ export type OfflineActionKind = (typeof OFFLINE_ACTION_KINDS)[number];
 /** What each kind is called with. A tuple so it can be spread into the action. */
 export type OfflineActionArgs = {
   "reminder.done": [reminderId: string];
-  "reminder.snooze": [reminderId: string, days: number];
+  "reminder.snooze": [reminderId: string, when: number | string];
   /** To a calendar day, `YYYY-MM-DD` — absolute, so a late replay lands on the same day. */
   "reminder.reschedule": [reminderId: string, ymd: string];
 };
@@ -91,12 +91,12 @@ export function sanitizeQueuedAction(value: unknown): QueuedAction | null {
       return { ...base, kind: "reminder.done", args: [reminderId] };
     }
     case "reminder.snooze": {
-      const [reminderId, days] = v.args;
+      const [reminderId, when] = v.args;
       if (typeof reminderId !== "string" || !ID_RE.test(reminderId)) return null;
-      if (typeof days !== "number" || !Number.isInteger(days) || days < 1 || days > 90) {
-        return null;
-      }
-      return { ...base, kind: "reminder.snooze", args: [reminderId, days] };
+      const dayCount = typeof when === "number" && Number.isInteger(when) && when >= 1 && when <= 90;
+      const instant = typeof when === "string" && when.length <= 40 && !Number.isNaN(Date.parse(when));
+      if (!dayCount && !instant) return null;
+      return { ...base, kind: "reminder.snooze", args: [reminderId, when] };
     }
     case "reminder.reschedule": {
       const [reminderId, ymd] = v.args;

@@ -14,6 +14,7 @@ import {
 import { listActiveGoalTexts } from "@/actions/goals";
 import { requireAuthenticatedUser, requireUserId, getDisplayProfile } from "@/lib/auth";
 import { asActionResult, UserFacingError } from "@/lib/errors";
+import { validateFollowUpDate } from "@/lib/follow-up-presets";
 import { generateFollowUpDraft } from "@/lib/follow-up-drafts";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 import {
@@ -559,10 +560,16 @@ export async function deleteReminderList(id: string) {
 
 export async function scheduleContactFollowUp(
   contactId: string,
-  days = 7
+  when: number | string = 7
 ) {
   const userId = await requireUserId();
-  const result = await scheduleContactFollowUpForUser(userId, contactId, days);
+  let target: number | Date = typeof when === "number" ? when : 7;
+  if (typeof when === "string") {
+    const checked = validateFollowUpDate(when, new Date());
+    if (!checked.ok) throw new UserFacingError(checked.message);
+    target = checked.date;
+  }
+  const result = await scheduleContactFollowUpForUser(userId, contactId, target);
   revalidateReminderPaths(contactId);
   revalidatePathIfRequestScoped("/contacts");
   return result;
@@ -823,9 +830,16 @@ export async function draftFollowUpResponse(reminderId: string) {
   return generateFollowUpDraft(userId, reminderId, goals, { writingInstructions });
 }
 
-export async function snoozeReminderAction(id: string, days = 7) {
+export async function snoozeReminderAction(id: string, when: number | string = 7) {
   const userId = await requireUserId();
-  const snapshot = await snoozeReminder(userId, id, days);
+  let snapshot;
+  if (typeof when === "string") {
+    const checked = validateFollowUpDate(when, new Date());
+    if (!checked.ok) throw new UserFacingError(checked.message);
+    snapshot = await snoozeReminderTo(userId, id, checked.date);
+  } else {
+    snapshot = await snoozeReminder(userId, id, when);
+  }
   revalidateReminderPaths();
   revalidatePathIfRequestScoped("/contacts");
   revalidatePathIfRequestScoped("/graph");

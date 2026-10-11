@@ -129,6 +129,12 @@ async function main() {
       "a snooze outside 1–90 days is refused",
       sanitizeQueuedAction({ ...ok, kind: "reminder.snooze", args: [R1, 9999] }) === null
     );
+    check("an ISO snooze target survives sanitising",
+      sanitizeQueuedAction({ ...ok, kind: "reminder.snooze", args: [R1, "2026-10-19T13:00:00.000Z"] })?.args[1] === "2026-10-19T13:00:00.000Z");
+    check("a non-date string is dropped",
+      sanitizeQueuedAction({ ...ok, kind: "reminder.snooze", args: [R1, "soon"] }) === null);
+    check("a legacy day count still replays",
+      sanitizeQueuedAction({ ...ok, kind: "reminder.snooze", args: [R1, 7] })?.args[1] === 7);
     check(
       "a reschedule needs a YYYY-MM-DD day",
       sanitizeQueuedAction({ ...ok, kind: "reminder.reschedule", args: [R1, "next tuesday"] }) === null &&

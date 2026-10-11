@@ -92,7 +92,8 @@ export async function createReminderForUser(userId: string, input: CreateReminde
 }
 
 /**
- * Put a contact back on the calendar in `days` days, reusing their pending reminder if one
+ * Put a contact back on the calendar, `when` being a day count (clamped 1..90) or an exact
+ * instant, reusing their pending reminder if one
  * exists.
  *
  * The 1..90 clamp is shared with `snoozeReminder`: both write `contacts.nextFollowUpAt` for
@@ -101,7 +102,7 @@ export async function createReminderForUser(userId: string, input: CreateReminde
 export async function scheduleContactFollowUpForUser(
   userId: string,
   contactId: string,
-  days = 7
+  when: number | Date = 7
 ) {
   const db = await getDb();
   // The inbox lookup (which lazily creates the Inbox, before any not-found check — as it
@@ -126,8 +127,14 @@ export async function scheduleContactFollowUpForUser(
   const contact = unwrap(await contactRead);
   if (!contact) throw new Error("Contact not found");
 
-  const due = new Date();
-  due.setDate(due.getDate() + Math.max(1, Math.min(90, days)));
+  const due =
+    when instanceof Date
+      ? new Date(when.getTime())
+      : (() => {
+          const d = new Date();
+          d.setDate(d.getDate() + Math.max(1, Math.min(90, when)));
+          return d;
+        })();
   const name = contact.preferredName || contact.fullName;
   const title = `Follow up with ${name}`;
   const actionKind = inferReminderActionKind({
@@ -183,6 +190,7 @@ export async function scheduleContactFollowUpForUser(
     })
     .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
 
+  const days = Math.max(1, Math.round((due.getTime() - Date.now()) / 86_400_000));
   return { reminder: row, dueDate: due.toISOString(), days };
 }
 

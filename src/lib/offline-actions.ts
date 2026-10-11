@@ -21,6 +21,6 @@ export const OFFLINE_RUNNERS: OfflineRunners = {
   // tonight lands tonight-plus-a-week. Hours of drift on a week is harmless for the one-click
   // "snooze a week" buttons; the reminders page's day picker queues `reminder.reschedule`,
   // which is absolute.
-  "reminder.snooze": ({ args: [reminderId, days] }) => snoozeReminderAction(reminderId, days),
+  "reminder.snooze": ({ args: [reminderId, when] }) => snoozeReminderAction(reminderId, when),
   "reminder.reschedule": ({ args: [reminderId, ymd] }) => rescheduleReminderAction(reminderId, ymd),
 };

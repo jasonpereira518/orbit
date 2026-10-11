@@ -75,11 +75,12 @@ export function useRecommendationActions(rec: { id: string; contactName: string 
       router.refresh();
     });
 
+  // Interim: still takes a day count; Task 3 swaps in the preset picker's ISO instant.
   const schedule = (days: 3 | 7 | 14) =>
     start(async () => {
       setExiting(true);
       try {
-        const [result] = await Promise.all([scheduleFromRecommendation(rec.id, days), settle()]);
+        const [result] = await Promise.all([scheduleFromRecommendation(rec.id, new Date(Date.now() + days * 86_400_000).toISOString()), settle()]);
         if (!result.ok) {
           setExiting(false);
           toast.error(result.message);
