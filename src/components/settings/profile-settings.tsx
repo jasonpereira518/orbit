@@ -6,13 +6,19 @@ import { clerkAppearance } from "@/lib/clerk-appearance";
 import Link from "next/link";
 import type { CareerProfile } from "@/db/schema";
 import { clearLinkedInYou } from "@/actions/imports";
-import { saveSenderBio, saveSocialLinks } from "@/actions/settings";
+import { saveSearchProfile, saveSenderBio, saveSocialLinks } from "@/actions/settings";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SettingsRow, SettingsSection } from "@/components/settings/settings-section";
 import { Textarea } from "@/components/ui/textarea";
-import { SENDER_BIO_MAX_LENGTH } from "@/lib/sender-profile";
+import {
+  SEARCH_STATUS_OPTIONS,
+  SENDER_BIO_MAX_LENGTH,
+  TARGET_ROLE_MAX_LENGTH,
+  type SearchProfile,
+  type SearchStatus,
+} from "@/lib/sender-profile";
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
@@ -65,12 +71,14 @@ export function ProfileSettings({
   clerkEnabled,
   initialSocialLinks,
   initialSenderBio,
+  initialSearchProfile,
   initialCareer,
 }: {
   profile: ProfileData | null;
   clerkEnabled: boolean;
   initialSocialLinks: SocialLinks;
   initialSenderBio: string;
+  initialSearchProfile: SearchProfile;
   initialCareer: CareerProfile | null;
 }) {
   const [socials, setSocials] = useState(initialSocialLinks);
@@ -79,6 +87,8 @@ export function ProfileSettings({
   const [clearing, startClear] = useTransition();
   const [pending, start] = useTransition();
   const [bioPending, startBio] = useTransition();
+  const [search, setSearch] = useState(initialSearchProfile);
+  const [searchPending, startSearch] = useTransition();
 
   return (
     <SettingsSection
@@ -174,6 +184,67 @@ export function ProfileSettings({
             {bio.trim().length}/{SENDER_BIO_MAX_LENGTH}
           </p>
         </div>
+      </SettingsRow>
+
+      <SettingsRow
+        title="What you’re looking for"
+        description="Orbit uses this to rank who to reach out to and to introduce you in drafts"
+      >
+        <div className="grid gap-2 md:grid-cols-[1fr_8rem_12rem]">
+          <Input
+            aria-label="Target role"
+            placeholder="New-grad software engineering"
+            maxLength={TARGET_ROLE_MAX_LENGTH}
+            value={search.targetRole ?? ""}
+            onChange={(e) => setSearch({ ...search, targetRole: e.target.value })}
+          />
+          <Input
+            aria-label="Graduation year"
+            type="number"
+            inputMode="numeric"
+            min={1950}
+            max={2100}
+            placeholder="2027"
+            value={search.graduationYear ?? ""}
+            onChange={(e) =>
+              setSearch({ ...search, graduationYear: e.target.value ? Number(e.target.value) : null })
+            }
+          />
+          <select
+            aria-label="Search status"
+            className="h-9 rounded-md border border-input bg-transparent px-2 text-sm"
+            value={search.searchStatus ?? ""}
+            onChange={(e) =>
+              setSearch({ ...search, searchStatus: (e.target.value || null) as SearchStatus | null })
+            }
+          >
+            <option value="">Search status</option>
+            {SEARCH_STATUS_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          className="mt-2"
+          disabled={searchPending}
+          onClick={() =>
+            startSearch(async () => {
+              try {
+                const saved = await saveSearchProfile(search);
+                setSearch(saved);
+                toast.success("Saved");
+              } catch (err) {
+                toast.error(friendlyError(err, "Couldn’t save that — try again?"));
+              }
+            })
+          }
+        >
+          {searchPending ? "Saving…" : "Save"}
+        </Button>
       </SettingsRow>
 
       <SettingsRow

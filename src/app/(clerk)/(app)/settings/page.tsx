@@ -178,6 +178,11 @@ export default async function SettingsPage() {
             clerkEnabled={isClerkConfigured()}
             initialSocialLinks={initialSettings.socialLinks}
             initialSenderBio={initialSettings.senderBio}
+            initialSearchProfile={{
+              targetRole: initialSettings.targetRole,
+              graduationYear: initialSettings.graduationYear,
+              searchStatus: initialSettings.searchStatus,
+            }}
             initialCareer={initialSettings.careerProfile}
           />
         </Section>

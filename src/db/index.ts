@@ -67,6 +67,9 @@ CREATE TABLE IF NOT EXISTS user_settings (
   profile_image_url text,
   sender_bio text,
   career_profile jsonb,
+  target_role text,
+  graduation_year integer,
+  search_status text,
   email_activity_sync integer NOT NULL DEFAULT 0,
   signup_referrer text,
   signup_utm_source text,
@@ -2594,7 +2597,11 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 151 = importing the user's OWN LinkedIn profile (Profile, Positions, Skills, SavedJobAlerts):
 // user_settings.career_profile. Rescanned every remote ref and every worktree's working file on
 // Oct 8 2026: 150 was the highest claimed anywhere.
-export const SCHEMA_VERSION = 151;
+//
+// 153 = Sprint C profile fields: user_settings.target_role, graduation_year, search_status.
+// Rescanned every remote ref (151 highest) and every worktree's working file on Oct 11 2026:
+// calendar-events-p0 holds 152 unpushed, so this takes 153.
+export const SCHEMA_VERSION = 153;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3389,6 +3396,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "contacts", "constellation_pin", "text");
   await ensureColumn(client, "user_settings", "sender_bio", "text");
   await ensureColumn(client, "user_settings", "career_profile", "jsonb");
+  await ensureColumn(client, "user_settings", "target_role", "text");
+  await ensureColumn(client, "user_settings", "graduation_year", "integer");
+  await ensureColumn(client, "user_settings", "search_status", "text");
   await ensureColumn(client, "user_settings", "email_activity_sync", "integer NOT NULL DEFAULT 0");
   await ensureColumn(
     client,
@@ -4164,6 +4174,9 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS sender_bio text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS career_profile jsonb`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS target_role text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS graduation_year integer`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS search_status text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_activity_sync integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS terms_accepted_at timestamptz`,

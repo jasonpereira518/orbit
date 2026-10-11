@@ -10,7 +10,7 @@ import {
   userSettings,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
-import { normalizeSenderBio } from "@/lib/sender-profile";
+import { normalizeSearchProfile, normalizeSenderBio, type SearchProfile } from "@/lib/sender-profile";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { encrypt } from "@/lib/crypto";
 import { kickRelationshipRun } from "@/lib/relationship-engine/runner";
@@ -167,6 +167,9 @@ export async function getSettings() {
       canUseExtension: entitlements.canUseExtension,
     },
     senderBio: settings?.senderBio || "",
+    targetRole: settings?.targetRole ?? null,
+    graduationYear: settings?.graduationYear ?? null,
+    searchStatus: settings?.searchStatus ?? null,
     /** What the LinkedIn export imports wrote about the user; null when nothing was imported. */
     careerProfile: settings?.careerProfile ?? null,
     socialLinks: {
@@ -202,6 +205,18 @@ export async function saveSenderBio(bio: string) {
 
   revalidatePath("/settings");
   return { senderBio: senderBio ?? "" };
+}
+
+export async function saveSearchProfile(input: SearchProfile) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const p = normalizeSearchProfile(input);
+  await db
+    .insert(userSettings)
+    .values({ userId, ...p })
+    .onConflictDoUpdate({ target: userSettings.userId, set: { ...p, updatedAt: new Date() } });
+  revalidatePath("/settings");
+  return p;
 }
 
 export async function saveThemePreference(theme: ThemePreference) {

@@ -266,6 +266,10 @@ export const userSettings = pgTable("user_settings", {
    * clears it and the data export includes it.
    */
   careerProfile: jsonb("career_profile").$type<CareerProfile>(),
+  /** What the user is looking for (Settings → Profile). Content: exported, cleared by the preferences purge. */
+  targetRole: text("target_role"),
+  graduationYear: integer("graduation_year"),
+  searchStatus: text("search_status").$type<"not_looking" | "open" | "active">(),
   /**
    * Whether a connected mailbox may be read for relationship activity. 0 by default.
    *

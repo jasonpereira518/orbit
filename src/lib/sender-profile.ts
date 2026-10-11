@@ -50,3 +50,44 @@ export function senderProfileBlock(bio: string | null | undefined): string | nul
   const clean = normalizeSenderBio(bio);
   return clean ? `About you (the sender), in their own words: ${clean}` : null;
 }
+
+export type SearchStatus = "not_looking" | "open" | "active";
+export const SEARCH_STATUS_OPTIONS: readonly { value: SearchStatus; label: string }[] = [
+  { value: "not_looking", label: "Not looking" },
+  { value: "open", label: "Open to opportunities" },
+  { value: "active", label: "Actively looking" },
+];
+export const TARGET_ROLE_MAX_LENGTH = 120;
+export type SearchProfile = {
+  targetRole: string | null;
+  graduationYear: number | null;
+  searchStatus: SearchStatus | null;
+};
+
+export function normalizeSearchProfile(input: unknown): SearchProfile {
+  const v = (input ?? {}) as Record<string, unknown>;
+  // Same single-line rule as the bio: this lands in a prompt.
+  const role = typeof v.targetRole === "string" ? v.targetRole.replace(/\s+/g, " ").trim().slice(0, TARGET_ROLE_MAX_LENGTH) : "";
+  const year = typeof v.graduationYear === "string" ? Number(v.graduationYear) : v.graduationYear;
+  const status = SEARCH_STATUS_OPTIONS.some((o) => o.value === v.searchStatus) ? (v.searchStatus as SearchStatus) : null;
+  return {
+    targetRole: role || null,
+    graduationYear: typeof year === "number" && Number.isInteger(year) && year >= 1950 && year <= 2100 ? year : null,
+    searchStatus: status,
+  };
+}
+
+const STATUS_PHRASE: Record<SearchStatus, string> = {
+  active: "actively looking",
+  open: "open to opportunities",
+  not_looking: "not looking right now",
+};
+
+/** One line for the draft prompt, beside the bio. Null when nothing is set. */
+export function senderFactsLine(p: SearchProfile, now: Date = new Date()): string | null {
+  const parts: string[] = [];
+  if (p.graduationYear) parts.push(`${p.graduationYear >= now.getUTCFullYear() ? "Graduating" : "Graduated"} in ${p.graduationYear}`);
+  if (p.targetRole) parts.push(`${p.searchStatus === "not_looking" ? "interested in" : "looking for"} ${p.targetRole} roles`);
+  if (p.searchStatus) parts.push(STATUS_PHRASE[p.searchStatus]);
+  return parts.length ? `About the sender: ${parts.join("; ")}` : null;
+}

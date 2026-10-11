@@ -26,7 +26,9 @@ import { getDb } from "../src/db";
 import { userSettings } from "../src/db/schema";
 import {
   SENDER_BIO_MAX_LENGTH,
+  normalizeSearchProfile,
   normalizeSenderBio,
+  senderFactsLine,
   senderProfileBlock,
 } from "../src/lib/sender-profile";
 import { composeDraftContext } from "../src/lib/follow-up-drafts";
@@ -172,8 +174,50 @@ async function dbChecks() {
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
 }
 
+function searchProfileChecks() {
+  section("Search profile");
+  const NOW = new Date("2026-10-11T12:00:00Z");
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  check(
+    "normalises",
+    same(
+      normalizeSearchProfile({ targetRole: "  new-grad software engineering  ", graduationYear: 2027, searchStatus: "active" }),
+      { targetRole: "new-grad software engineering", graduationYear: 2027, searchStatus: "active" }
+    )
+  );
+  check(
+    "rejects junk",
+    same(
+      normalizeSearchProfile({ targetRole: "", graduationYear: 1800, searchStatus: "hunting" }),
+      { targetRole: null, graduationYear: null, searchStatus: null }
+    )
+  );
+  check("caps role", normalizeSearchProfile({ targetRole: "x".repeat(200) }).targetRole?.length === 120);
+  check("year as string from a form", normalizeSearchProfile({ graduationYear: "2027" }).graduationYear === 2027);
+  check(
+    "facts line",
+    senderFactsLine({ targetRole: "new-grad software engineering", graduationYear: 2027, searchStatus: "active" }, NOW) ===
+      "About the sender: Graduating in 2027; looking for new-grad software engineering roles; actively looking"
+  );
+  check(
+    "past year reads graduated",
+    senderFactsLine({ targetRole: null, graduationYear: 2020, searchStatus: null }, NOW) ===
+      "About the sender: Graduated in 2020"
+  );
+  check(
+    "not looking",
+    senderFactsLine({ targetRole: "product design", graduationYear: null, searchStatus: "not_looking" }, NOW) ===
+      "About the sender: interested in product design roles; not looking right now"
+  );
+  check(
+    "empty is null",
+    senderFactsLine({ targetRole: null, graduationYear: null, searchStatus: null }, NOW) === null
+  );
+}
+
 async function main() {
   pureChecks();
+  searchProfileChecks();
   wiringChecks();
   await dbChecks();
 
