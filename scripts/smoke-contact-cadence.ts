@@ -8,6 +8,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts } from "../src/db/schema";
 import {
+  KEEP_IN_TOUCH_MAX_DAYS, KEEP_IN_TOUCH_PRESETS, normalizeCadence,
   cadenceDueAt, cadenceName, effectiveCadenceDays, isFollowUpDue, isTierDefaultCadence,
 } from "../src/lib/keep-in-touch";
 import { cadenceDueAtSql, effectiveCadenceSql, followUpDueSql } from "../src/lib/contact-cadence-sql";
@@ -38,6 +39,18 @@ async function main() {
   check("no touch falls back to date met",
     cadenceDueAt({ cadenceDays: 30, closenessTier: null, lastInteractionAt: null, dateMet: ago(10), createdAt: ago(100), nextFollowUpAt: null })!.getTime() === ago(10).getTime() + 30 * DAY);
 
+  console.log("normalizeCadence is the only gate on what gets stored");
+  check("rejects zero", normalizeCadence(0) === null);
+  check("rejects negatives", normalizeCadence(-1) === null);
+  check("rejects NaN", normalizeCadence(Number.NaN) === null);
+  check("rejects Infinity", normalizeCadence(Number.POSITIVE_INFINITY) === null);
+  check("rejects junk strings", normalizeCadence("soon") === null);
+  check("rejects past the ceiling", normalizeCadence(KEEP_IN_TOUCH_MAX_DAYS + 1) === null);
+  check("accepts the ceiling itself", normalizeCadence(KEEP_IN_TOUCH_MAX_DAYS) === KEEP_IN_TOUCH_MAX_DAYS);
+  check("accepts a numeric string from a form field", normalizeCadence("90") === 90);
+  check("rounds a fraction rather than storing it", normalizeCadence(90.4) === 90);
+  check("every preset survives its own validator", KEEP_IN_TOUCH_PRESETS.every((p) => normalizeCadence(p.days) === p.days));
+
   console.log("SQL twin agrees");
   const db = await getDb();
   await db.delete(contacts).where(eq(contacts.userId, USER));
@@ -50,6 +63,9 @@ async function main() {
     { fullName: "Scheduled ahead", cadenceDays: 30, closenessTier: "inner", lastInteractionAt: ago(90), nextFollowUpAt: ahead(2) },
     { fullName: "Scheduled due", cadenceDays: 30, closenessTier: "inner", lastInteractionAt: ago(90), nextFollowUpAt: ago(1) },
     { fullName: "No touch, date met", cadenceDays: 14, closenessTier: null, lastInteractionAt: null, dateMet: ago(20) },
+    { fullName: "No anchor, created fallback", cadenceDays: 30, closenessTier: null, lastInteractionAt: null },
+    { fullName: "Zero cadence inner default", cadenceDays: 0, closenessTier: "inner", lastInteractionAt: ago(31) },
+    { fullName: "No cadence no tier", cadenceDays: null, closenessTier: null, lastInteractionAt: ago(400) },
   ] as const;
   const ids: string[] = [];
   try {
@@ -71,7 +87,7 @@ async function main() {
       check(`${r.fullName}: due`, Boolean(r.sqlDue) === isFollowUpDue(r, now));
     }
     const dueNames = rows.filter((r) => isFollowUpDue(r, now)).map((r) => r.fullName).sort();
-    check("due set", JSON.stringify(dueNames) === JSON.stringify(["Inner default lapsed", "No touch, date met", "Own 30 lapsed", "Scheduled due"]));
+    check("due set", JSON.stringify(dueNames) === JSON.stringify(["Inner default lapsed", "No touch, date met", "Own 30 lapsed", "Scheduled due", "Zero cadence inner default"]));
   } finally {
     if (ids.length) await db.delete(contacts).where(inArray(contacts.id, ids));
   }
