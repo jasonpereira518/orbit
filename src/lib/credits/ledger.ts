@@ -139,6 +139,10 @@ export async function ensureStarterGrant(userId: string): Promise<void> {
  * When the plan's allowance is larger than the grant (Pro → Max mid-cycle, which Stripe
  * applies immediately) the difference is added to the cycle. Never lowered: a Max → Pro
  * switch takes effect at the next renewal.
+ *
+ * Free has no billing cycle, so its allowance runs on the calendar month (`creditPeriodFor`
+ * gives that period). On Free this also seeds the one-time starter grant (`ensureStarterGrant`,
+ * keyed `starter:{userId}`, so never a second one).
  */
 export async function ensureAllowance(
   userId: string,
