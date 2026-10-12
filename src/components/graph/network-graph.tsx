@@ -59,6 +59,8 @@ import {
 } from "@/lib/graph/scope-signal";
 import { clusterBrandColor } from "@/lib/school-color";
 import { cn } from "@/lib/utils";
+import { refusalWithRefill } from "@/lib/ai-access-copy";
+import { useViewerPlan } from "@/components/viewer-plan";
 import {
   dismissBackgroundJob,
   finishBackgroundJob,
@@ -668,6 +670,7 @@ export function NetworkGraph({
     requestDefaultView();
   }, [search, requestDefaultView]);
 
+  const { plan, creditsResetAt } = useViewerPlan();
   const runRefresh = useCallback(async () => {
     if (refreshing) return;
     if (operationsStoppedRef.current) return;
@@ -737,7 +740,7 @@ export function NetworkGraph({
         done = result.done;
         anyFailed ||= result.failed > 0;
         if (result.aiError) {
-          finishBackgroundJob(jobId, { status: "failed", error: result.aiError });
+          finishBackgroundJob(jobId, { status: "failed", error: refusalWithRefill(result.aiError, plan, creditsResetAt) });
           return;
         }
         // Hand the app back to whatever else it was doing before asking for the next batch.
@@ -771,7 +774,7 @@ export function NetworkGraph({
       refreshJobIdRef.current = null;
       setRefreshing(false);
     }
-  }, [refreshing]);
+  }, [refreshing, plan, creditsResetAt]);
 
   const cometContacts = useMemo(() => {
     if (!data) return [];

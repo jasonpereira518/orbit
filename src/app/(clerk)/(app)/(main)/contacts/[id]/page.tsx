@@ -34,6 +34,7 @@ import {
   generateAndStoreContactBrief,
   getContactBrief,
   isBriefStale,
+  shouldAutoRefreshBrief,
 } from "@/lib/contact-brief";
 import { listContactMentions } from "@/lib/contact-mentions";
 import { listOpportunitiesForContact } from "@/lib/contact-opportunities";
@@ -156,8 +157,22 @@ export default async function ContactDetailPage({
     // (see node_modules/next/dist/docs/.../functions/after.md), so
     // `after(() => requireUserId().then(...))` would throw there and never
     // regenerate the brief in production.
+    //
+    // Gated on AI the way the dossier is (`shouldAutoRefreshBrief`): a refused refresh leaves
+    // an AI-written brief stale, so without this every open would fire one more refusal. The
+    // settings promise was started during render, so the callback only waits on it — no
+    // request-time API is called inside after().
     const userId = await userIdPromise;
-    after(() => generateAndStoreContactBrief(userId, id).catch(() => null));
+    const modelWritten = brief?.model != null;
+    after(() =>
+      settingsPromise
+        .then((settings) => {
+          const aiReady = "ai" in settings && settings.ai.ready;
+          if (!shouldAutoRefreshBrief({ stale: true, goalsUnjudged: false, aiReady, modelWritten })) return null;
+          return generateAndStoreContactBrief(userId, id);
+        })
+        .catch(() => null)
+    );
   }
 
   // The contact arrives with its newest page of interactions. `interactionHistory` is null

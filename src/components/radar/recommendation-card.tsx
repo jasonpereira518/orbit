@@ -88,7 +88,10 @@ export function RecommendationCard({
   const [writing, start] = useTransition();
   const pending = actions.pending || writing;
   const [note, setNote] = useState<{ why: string; opener: string } | null>(rec.aiNote);
-  const [denial, setDenial] = useState<AiAccessDenial | null>(null);
+  // Kept with the `aiAvailable` it was seen under, so the notice resets when access changes
+  // (a key added, credits refilled) without a setState in an effect.
+  const [refusal, setRefusal] = useState<{ reason: AiAccessDenial; aiAvailable: boolean } | null>(null);
+  const denial = refusal && refusal.aiAvailable === aiAvailable ? refusal.reason : null;
 
   useRadarKeys(shortcuts && !actions.collapsed, (command) => {
     if (pending) return;
@@ -112,10 +115,11 @@ export function RecommendationCard({
         const result = await explainRecommendationAction(rec.id);
         if (!result.ok) {
           const d = aiDenialFromMessage(result.message);
-          if (d) setDenial(d);
+          if (d) setRefusal({ reason: d, aiAvailable });
           else toast.error(result.message);
           return;
         }
+        setRefusal(null);
         if (result.why || result.opener) setNote({ why: result.why ?? "", opener: result.opener ?? "" });
       } catch (err) {
         toast.error(friendlyError(err, "Couldn’t write that just now — try again?"));

@@ -62,6 +62,7 @@ const CORE: DemoPerson[] = [
     location: "San Francisco, CA", email: "aaliyah.brooks@example.com", closeness: 3, howMet: "Alumni panel on design careers",
     metDaysAgo: 75, tags: ["Alumni"], standing: "Friendly; offered to look at your portfolio.",
     touches: [{ at: 45, type: "email", notes: "Shared her portfolio tips and offered to look at mine." }],
+    reminder: { title: "Send Aaliyah my portfolio for a look", inDays: 5, list: "Alumni" },
   },
   {
     fullName: "Ben Carter", firstName: "Ben", lastName: "Carter", title: "Software Engineer II", company: "Microsoft",
