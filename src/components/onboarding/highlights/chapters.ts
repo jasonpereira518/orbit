@@ -68,7 +68,7 @@ export const HIGHLIGHT_CHAPTERS: HighlightChapter[] = [
       { label: "Messy notes become people and reminders" },
       { label: "Voice and meeting capture while it’s still fresh" },
       { label: "Scan business cards and notebooks from your phone" },
-      { label: "A pasted LinkedIn URL logs a person with no key at all" },
+      { label: "A pasted LinkedIn URL logs a person, even while AI is paused" },
     ],
     needs: "ai",
     surfaceKey: "page.capture",
@@ -148,7 +148,7 @@ export const HIGHLIGHT_CHAPTERS: HighlightChapter[] = [
       "LinkedIn, Google and Outlook, contact files and calendars all feed one orbit. Upload a file and review everyone before they land.",
     bullets: [
       { label: "LinkedIn connections and messages, ZIP and all" },
-      { label: "Google and Outlook contacts, free on every plan" },
+      { label: "Google and Outlook contacts; Free connects one of the two" },
       { label: "vCard and CSV from any address book" },
       { label: "Calendar sync for your meetings", entitlement: "canUseSync" },
     ],
