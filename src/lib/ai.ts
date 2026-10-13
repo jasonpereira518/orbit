@@ -2311,6 +2311,10 @@ async function streamText(
         report(tokensFromAnthropic(await stream.finalMessage()));
       }
 
+      // OpenAI's stream iterator treats an abort as "the caller stopped the stream" and simply
+      // ENDS, so a cut-off answer would come back as a finished (shorter) one. Rethrow the abort:
+      // a deadline reads as a timeout, a Stop is filed as cancelled. (Gemini and Anthropic throw.)
+      signal.throwIfAborted();
       if (!full.trim()) throw new Error("Empty AI response");
       return full;
     }),

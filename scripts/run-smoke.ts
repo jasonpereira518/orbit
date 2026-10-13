@@ -448,6 +448,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-memory-search": "pglite",
   "smoke-memory-embedding": "pglite",
   "smoke-chat-gather": "pglite",
+  "smoke-chat-answer-deadline": "pglite",
   "smoke-eval-research-task": "pglite",
   "smoke-agent-sends": "pglite",
   "smoke-dashboard-aggregates": "pglite",

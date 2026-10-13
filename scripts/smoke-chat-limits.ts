@@ -44,34 +44,37 @@ async function main() {
   check("a 400 with the shared copy", tooLong >= 0 && refusal > tooLong, `check@${tooLong} refusal@${refusal}`);
   check(
     "the typed text is read from the edit's question on the edit path, the body's otherwise",
-    route.includes("versionAssistantId ? versionOfRaw?.question : body?.question")
+    /versionAssistantId\s*\?\s*versionOfRaw\?\.question\s*:\s*body\?\.question/.test(route)
   );
   const firstDiscard = Math.min(...["discardCountAfter(db", "truncateAfter(db", "resolveVersionTarget(db"].map((s) => route.indexOf(s)));
   check("it runs before any version work can discard later turns", tooLong >= 0 && tooLong < firstDiscard, `check@${tooLong} version@${firstDiscard}`);
   check(
     "both paths take their question from the checked text",
-    route.includes("question = typedQuestion || versionTarget.priorUserRow.content;") && route.includes("question = typedQuestion;")
+    /question\s*=\s*typedQuestion\s*\|\|\s*versionTarget\.priorUserRow\.content/.test(route) && /question\s*=\s*typedQuestion\s*;/.test(route)
   );
 
   console.log("The composers cap what is typed...");
   const panel = readFileSync("src/components/chat/chat-panel.tsx", "utf8");
   const bar = readFileSync("src/components/layout/floating-ask-bar.tsx", "utf8");
-  const cap = "maxLength={CHAT_QUESTION_MAX_CHARS}";
-  check("the chat composer", panel.includes(`rows={1}\n                  ${cap}`));
-  check("the edit-your-question box", panel.includes(`${cap}\n            aria-label="Edit your question"`));
-  check("the floating ask bar", bar.includes(`${cap}\n            autoComplete="off"`));
+  const capped = (src: string) => src.match(/maxLength=\{CHAT_QUESTION_MAX_CHARS\}/g)?.length ?? 0;
+  check("the chat composer and the edit-your-question box", capped(panel) === 2, String(capped(panel)));
+  check("the floating ask bar", capped(bar) === 1, String(capped(bar)));
 
   console.log("The answer deadline...");
   check(
     "the route hands the answer a deadline measured from the request's start",
-    route.includes("deadlineSignal: AbortSignal.timeout(answerDeadlineMs(requestStartedAt))")
+    /deadlineSignal:\s*AbortSignal\.timeout\(\s*answerDeadlineMs\(requestStartedAt\)\s*\)/.test(route)
   );
-  check("request.signal still goes through untouched", /signal: request\.signal,\n\s+\/\/[^\n]*\n[^\n]*\n[^\n]*\n\s+deadlineSignal/.test(route));
+  check(
+    "request.signal still goes through untouched, never merged with the deadline",
+    /signal:\s*request\.signal\s*,/.test(route) && !/AbortSignal\.any\(/.test(route)
+  );
   check("and a Stop is still read from request.signal alone", route.includes("if (request.signal.aborted) return;"));
   const ai = readFileSync("src/lib/ai.ts", "utf8");
+  check("streamText rethrows an abort the SDK swallowed (OpenAI's iterator just ends)", /signal\.throwIfAborted\(\)\s*;\s*if \(!full\.trim\(\)\)/.test(ai));
   check(
     "the stream aborts on the deadline but only request.signal is the usage cancelSignal",
-    ai.includes("[input.signal, input.deadlineSignal]") && ai.includes("{ cancelSignal: input.signal }")
+    /\[\s*input\.signal\s*,\s*input\.deadlineSignal\s*\]/.test(ai) && /\{\s*cancelSignal:\s*input\.signal\s*\}/.test(ai)
   );
 
   // A real deadline abort, combined the way streamText combines it, with the user never pressing Stop.
@@ -84,16 +87,12 @@ async function main() {
   check("and leaves the person's own signal alone", !stop.signal.aborted);
 
   // What the SDKs throw for an aborted call differs; every shape must read as a timeout.
-  class APIUserAbortError extends Error {
-    constructor() {
-      super("Request was aborted.");
-      this.name = "APIUserAbortError";
-    }
-  }
+  // The OpenAI and Anthropic SDKs' abort error: named plain `Error`, saying only this.
+  const sdkAbort = () => new Error("Request was aborted.");
   const timeoutCopy = "Anthropic timed out — try again, or ask something shorter";
   for (const [label, thrown] of [
     ["the signal's own reason (TimeoutError)", combined.reason],
-    ["an SDK's abort error", new APIUserAbortError()],
+    ["an SDK's abort error", sdkAbort()],
   ] as const) {
     const translated = asAiProviderError(thrown, "Anthropic");
     check(`${label}: the provider copy says it timed out`, translated.message === timeoutCopy, translated.message);
