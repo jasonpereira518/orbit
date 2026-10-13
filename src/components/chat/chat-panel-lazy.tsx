@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useState } from "react";
 import { ChatPanelSkeleton } from "@/components/loading/page-skeletons";
 import type { ChatThreadPage } from "@/actions/chat";
 
@@ -24,8 +25,19 @@ const ChatPanel = dynamic(
  * include it, so a first visit otherwise shows the page skeleton and then this one.
  */
 export function preloadChatPanel() {
-  void import("@/components/chat/chat-panel").catch(() => {});
+  void import("@/components/chat/chat-panel")
+    .then((m) => {
+      preloaded = m.ChatPanel;
+    })
+    .catch(() => {});
 }
+
+/**
+ * Set once a preload lands. Preloading alone is not enough: `next/dynamic`'s lazy wrapper
+ * still suspends on its first mount even with the chunk cached, and React then holds its
+ * skeleton ~300 ms. A visit after a preload renders the real component directly instead.
+ */
+let preloaded: typeof import("@/components/chat/chat-panel").ChatPanel | null = null;
 
 export function ChatPanelLazy({
   initialThreads = null,
@@ -33,5 +45,8 @@ export function ChatPanelLazy({
   /** The history list's first page, read by the page; see `ChatPanel`. */
   initialThreads?: ChatThreadPage | null;
 }) {
-  return <ChatPanel initialThreads={initialThreads} />;
+  // Decided once per mount, so the panel never swaps component (and loses its state) when a
+  // preload lands mid-visit. The server never preloads, so SSR and hard loads stay dynamic.
+  const [Panel] = useState(() => preloaded ?? ChatPanel);
+  return <Panel initialThreads={initialThreads} />;
 }
