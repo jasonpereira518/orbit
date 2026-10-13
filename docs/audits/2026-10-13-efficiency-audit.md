@@ -91,9 +91,14 @@ Live tour, warm vs first hit (TTFB / complete):
    the `admin-operations` barrel (`constellation-config.ts`, `site-invites.ts`) — the same trap #314
    fixed. The (app) layout's server graph had grown from 44 files (#314) to **147 files / 44.9k
    lines**. → **Fixed in PR 1.**
-6. **The dashboard holds a skeleton twice.** Its `loading.tsx` and its card boundaries both trigger
-   React's 300 ms hold. Its render (depth 5+) also outlasts a normal hover, so even hovered clicks show
-   the skeleton.
+6. **The dashboard's in-app p50 of 524 ms is server time, not a double skeleton.**
+   - Locally at 3k contacts, its loading.tsx and card skeletons do pay React's hold twice.
+   - At a realistic account size (85 contacts) the cards resolve inside the first reveal window, in
+     both the base and the variant that waits for the bundle (~370 ms either way).
+   - Making the page await its shared bundle was tried and dropped: no gain at real sizes, slower
+     at 3k.
+   - What's left is the render itself (warm prod: shell 271–571 ms, complete 337–688 ms), which
+     outlasts a normal hover. Next: profile which of its ~33 statements is slowest on Neon.
 7. **Pending drafts UPDATE before they SELECT** (`agent-sends.ts:231`): 2 sequential round trips and a
    write on every dashboard view.
 8. **Phone "More" sheet has no intent prefetch.** It uses plain `<Link>` (`mobile-nav.tsx:664`), so
@@ -111,10 +116,10 @@ Ruled out:
 
 | PR | Content | Status / evidence |
 |---|---|---|
-| **1** `claude/perf-server-graph` | Leaf module for the LinkedIn import types; `recordAdminAction` from `admin-audit`; lazy relationship-engine runner in `actions/settings.ts`; `smoke-server-graph` guard | Layout graph **147 → 68 files** (44.9k → 22.9k lines). `/graph` cold evaluation **1,083 → 887 module factories**. Mean layout+page eval across 28 app routes **64 → 53 ms** (interleaved A/B, 21/28 faster). The guard fails 19 checks on main, passes after. |
-| 2 | Round trips: AI-status chain (no INSERT on read, reuse the settings row, fold the pack count), Suspense around the AI notice on chat/capture, drafts expiry in the SELECT, per-instance memo + LIMIT for brand colors, stream radar's first run, explicit profile columns | next |
-| 3 | Pulse only after a replay; meeting candidates via a GET route; idle-start backfill/presence; phone More-sheet intent; warm the Chat/Graph chunks on hover | next |
-| 4 | Graph payload: slim cohort + only drawn contacts (target < 3 MB at 25k); bounded related-contacts read | after the galaxy stack lands |
+| **1** #425 `claude/perf-server-graph` | Leaf module for the LinkedIn import types; `recordAdminAction` from `admin-audit`; lazy relationship-engine runner in `actions/settings.ts`; `smoke-server-graph` guard | Layout graph **147 → 68 files** (44.9k → 22.9k lines). `/graph` cold evaluation **1,083 → 887 module factories**. Mean layout+page eval across 28 app routes **64 → 53 ms** (interleaved A/B, 21/28 faster). The guard fails 19 checks on main, passes after. |
+| **2** #427 `claude/perf-round-trips` | Credit balance in one round (writes only when due); pool-state reads in parallel; drafts expiry beside the SELECT; per-instance brand-color memo | getAiAccessStatus **Free 5.3 → 2.4, Pro 4.2 → 2.3** rounds; getSettings chain **6.6 → 3.6 / 5.3 → 3.7**; drafts **2.2 → 1.1**. Tried and dropped: the dashboard awaiting its bundle (no gain at real sizes, slower at 3k). |
+| **3** #428 `claude/perf-mount-and-nav` | Pulse only after a reconnect/replay; calendar nudge via `GET /api/meetings/candidates`; phone More sheet `IntentLink`; Chat chunk warmed on hover and rendered directly once loaded | Hard-load Server Actions **2 (+1 at 3.7 s) → 1**, lane free at **570 vs 1,108 ms**; first Chat visit after a hover **350–379 ms → 49 ms**, no skeleton. |
+| 4 | Graph payload (slim cohort, drawn contacts only; target < 3 MB at 25k); bounded related-contacts read on the profile; radar first run streamed; explicit profile columns; Suspense around the AI notice | next — graph part after the galaxy stack (#372→#395) lands |
 | 5 | Client bundle (`LazyMotion`, one notifications panel, font preload) | only items ≥ 15 KB gz |
 
 Decisions for Jason, each with the number behind it:
