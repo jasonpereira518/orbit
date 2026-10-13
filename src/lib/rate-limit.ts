@@ -45,6 +45,7 @@ const BUCKET_LABELS: Record<string, string> = {
   eventWhy: "attendee lookup",
   lifetimeConfirm: "checkout check",
   speechToken: "speech transcription",
+  export: "export",
   // Scope strings some call sites pass verbatim (dotted / kebab). Keyed by the literal scope
   // rather than renaming the scope, which would reset those buckets' counters.
   contactForm: "contact form",
@@ -285,6 +286,12 @@ export const RATE_LIMITS = {
   lifetimeConfirm: { limit: 6, windowSec: 60 },
   /** One token per connection attempt; a stuck reconnect loop must not mint endlessly. */
   speechToken: { limit: 30, windowSec: 300 },
+  /**
+   * `/api/export`: a streamed read of every table the account owns, up to a 300s function.
+   * A person takes a copy now and then; a script or a retry loop re-running it is the shape
+   * to stop, since each run pages through the whole network.
+   */
+  export: { limit: 5, windowSec: 3600 },
 } as const satisfies Record<string, BucketPolicy>;
 
 /**

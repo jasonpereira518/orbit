@@ -4,7 +4,7 @@ import { useTransition } from "react";
 import Link from "next/link";
 import { Download, Trash2, UserX } from "lucide-react";
 import { toast } from "@/lib/toast";
-import { friendlyError } from "@/lib/errors";
+import { friendlyError, UserFacingError } from "@/lib/errors";
 import { Button } from "@/components/ui/button";
 import { AvatarSyncStatus } from "@/components/settings/avatar-sync-status";
 import { DeleteDataDialog } from "@/components/settings/delete-data-dialog";
@@ -44,6 +44,11 @@ export function DataSettings() {
             startExport(async () => {
               try {
                 const res = await fetch("/api/export", { cache: "no-store" });
+                if (res.status === 429) {
+                  // The limiter's own sentence ("…Try again in 60 minutes."); the route is the only author.
+                  const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+                  if (typeof body?.error === "string") throw new UserFacingError(body.error);
+                }
                 if (!res.ok) throw new Error(`export responded ${res.status}`);
                 const blob = await res.blob();
                 const url = URL.createObjectURL(blob);

@@ -30,7 +30,7 @@ function check(label: string, ok: boolean, detail?: unknown) {
 run(async () => {
   const { and, eq } = await import("drizzle-orm");
   const { getDb } = await import("../src/db");
-  const { creditGrants, usageEvents, userSettings } = await import("../src/db/schema");
+  const { creditGrants, creditHolds, usageEvents, userSettings } = await import("../src/db/schema");
   const { ensureUserSettings } = await import("../src/lib/user-settings");
   const { getAccountAlerts, loadAccountHealthInput } = await import("../src/lib/account-health");
   const ledger = await import("../src/lib/credits/ledger");
@@ -41,6 +41,7 @@ run(async () => {
   const reset = async () => {
     await db.delete(creditGrants).where(eq(creditGrants.userId, USER));
     await db.delete(usageEvents).where(eq(usageEvents.userId, USER));
+    await db.delete(creditHolds).where(eq(creditHolds.userId, USER));
   };
   await reset();
 
@@ -236,6 +237,24 @@ run(async () => {
   }
   const measured = await measuredActionCosts(Date.now() + 4 * 60 * 60 * 1000);
   check("with enough captures, a capture costs the sum of its calls per capture", measured.capture === 8_000, measured);
+
+  console.log("\nSettling releases the live hold, not an expired one");
+  await reset();
+  await ledger.ensureAllowance(USER, "orbit", cycle1);
+  // A call that outlived its hold's TTL left the oldest row behind; the next call's live hold
+  // is the one its own settle must release, or the account reads as holding less than it does.
+  const [expiredHold] = await db.insert(creditHolds).values({
+    userId: USER, micros: 10_000, operation: "capture.parse", createdAt: new Date(Date.now() - 20 * 60_000), expiresAt: new Date(Date.now() - 10 * 60_000),
+  }).returning();
+  const [liveHold] = await db.insert(creditHolds).values({
+    userId: USER, micros: 10_000, operation: "capture.parse", expiresAt: new Date(Date.now() + 10 * 60_000),
+  }).returning();
+  await ledger.settleCredits({ userId: USER, operation: "capture.parse", micros: 1_000 });
+  const heldIds = (await db.select({ id: creditHolds.id }).from(creditHolds).where(eq(creditHolds.userId, USER))).map((h) => h.id);
+  check("settle removes the live hold and leaves the older expired one", heldIds.length === 1 && heldIds[0] === expiredHold.id && !heldIds.includes(liveHold.id), heldIds);
+  await ledger.settleCredits({ userId: USER, operation: "capture.parse", micros: 1_000 });
+  check("with no live hold left, settle never touches an expired one (the sweep owns it)",
+    (await db.select({ id: creditHolds.id }).from(creditHolds).where(eq(creditHolds.userId, USER))).length === 1);
 
   await reset();
   if (failures > 0) throw new Error(`${failures} credit check(s) failed`);

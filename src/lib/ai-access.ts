@@ -57,6 +57,7 @@ import {
   BACKGROUND_OPERATIONS,
   MANAGED_AI_ENABLED,
   MANAGED_AI_POOLS,
+  earliestPoolWindowStart,
   poolWindowStart,
   MANAGED_PROVIDER_ORDER,
   UNPRICED_CALL_MICROS,
@@ -208,7 +209,7 @@ export async function managedPoolsSpent(now = new Date()): Promise<Partial<Recor
   const providers = Object.keys(MANAGED_AI_POOLS) as AiProvider[];
   if (providers.length === 0) return {};
   const starts = providers.map((p) => poolWindowStart(MANAGED_AI_POOLS[p]!, now));
-  const earliest = new Date(Math.min(...starts.map((d) => d.getTime())));
+  const earliest = earliestPoolWindowStart(now)!; // non-null: `providers` is non-empty
   const columns = Object.fromEntries(
     providers.map((p, i) => [
       p,
