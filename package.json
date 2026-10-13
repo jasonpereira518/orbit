@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "typecheck": "tsc --noEmit",
+    "css:site": "tsx scripts/gen-site-css-sources.ts",
     "check:env": "tsx scripts/check-env.ts",
     "start": "next start",
     "lint": "eslint",

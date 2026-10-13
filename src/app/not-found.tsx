@@ -1,3 +1,5 @@
+// Outside every route group, so it brings its own sheet: the marketing one (see site.css).
+import "./site.css";
 import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";

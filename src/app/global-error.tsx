@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect } from "react";
+// Renders its own <html>, outside every route group, so it brings its own sheet.
+import "./site.css";
 
 /**
  * Replaces the root layout when IT throws. Must carry its own <html>/<body> and cannot

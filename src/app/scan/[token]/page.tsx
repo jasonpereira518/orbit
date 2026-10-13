@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+// Outside every route group: the phone hand-off renders app components, so it takes the full sheet.
+import "../../globals.css";
 import { ScanPhoneCapture } from "@/components/scan/scan-phone-capture";
 import { findScanHandoff } from "@/lib/scan-handoff";
 
