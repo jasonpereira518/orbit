@@ -128,6 +128,68 @@ Decisions for Jason, each with the number behind it:
 - **Dark-mode starfield:** a 30 fps canvas under a 28 px backdrop blur.
 - **Neon scale-to-zero:** keeping compute warm costs money.
 
+## Landing page (`/`): field p75 3.6 s, p95 9.9 s
+
+For `/` the beacon has no skeleton to wait for, so `load_ms` is time to hydration. The lab
+reproduces the field tail only cold.
+
+| Condition (production, 390×844) | DOMContentLoaded | First beacon (≈ hydrated) | LCP |
+|---|---|---|---|
+| Warm cache, Fast 4G, 4× CPU | 312 ms | 605 ms | 945 ms (TTFB 25 ms) |
+| **Cold cache, Slow 4G, 4× CPU** | **4,727 ms** | **5,131 ms** | — |
+
+Cold, every resource starts at ~1,056 ms and they compete for one thin connection:
+- **~360 KB of JS (compressed).**
+- **One render-blocking stylesheet:** 49 KB gz (331 KB raw), done at 4.6 s, so nothing paints
+  before it.
+- **Three preloaded fonts:** 112 KB.
+- **The hero meteor image:** 26 KB.
+
+The biggest single JS item is **Sentry's browser SDK: an 83 KB gz chunk (263 KB raw)** loaded at
+startup on every route, from `src/instrumentation-client.ts` (tracing on at 10%). This was
+confirmed by a build with that import stubbed: the chunk disappears, and Sentry then exists only
+as the lazy chunk the error boundaries load on an error.
+
+`bundle-report.mjs` does not count the instrumentation entry, which is why "141 KB gz for /"
+understated it.
+
+Fixes, by size:
+1. **Load Sentry after hydration** (idle or `load`). Buffer `error`/`unhandledrejection` until
+   then; the error boundaries already lazy-import it.
+   - Cost: no pageload trace for the 10% sample, and no breadcrumbs from before init.
+   - Saves ~83 KB gz on every route's critical path.
+   - **Needs Jason's OK.**
+2. **Split the stylesheet by route group.**
+   - `globals.css` carries the app's 3,358 lines and `@clerk/ui/themes/shadcn.css` into the
+     Clerk-free marketing pages.
+   - Splitting needs separate Tailwind entries per group with `@source` scoping. Larger, with
+     visual-regression risk.
+3. **Fonts.** The Fraunces italic split (`claude/efficiency-signoff`, 087e9ef5) helps app routes
+   only: the landing tagline uses the italic.
+
+## Dashboard statement profile (25k contacts, each statement replayed alone, PGlite)
+
+**Shape:** 23 statements per request (the slim cohort and touch aggregate are request-cached and
+shared with `getNetworkStats`), ~500 ms of summed DB time.
+
+**Wall time** is the slowest of the parallel round plus the dependent ones. The top costs:
+
+| ms | Statement | Note |
+|---|---|---|
+| 184 | network scan (`getDashboardData`) | **every contact**, plus a correlated per-contact tag aggregate (25,000 index lookups; the planner estimated 142 rows) |
+| 97 | slim cohort (jsonb extraction per contact) | full scan of the user's contacts |
+| 70 | touch aggregate over interactions | grouped per contact |
+| 46 | company/school name union | GROUP BY over every contact |
+| 33 | brand colors (layout) | memoized per instance in #427 |
+
+At typical account sizes (hundreds of contacts) these are a few ms each. The production in-app
+p50 of 524 ms is React's 300 ms hold plus ~200 ms of server time, and the scans only dominate for
+large networks.
+
+The worthwhile change is the network scan's tag aggregate: read tags in one parallel GROUP BY
+instead of a correlated subquery per row. It's bounded by the existing `smoke-page-budgets` and
+`behavior-golden` checks, and worth doing before large imports become common.
+
 ## Cache Components / Partial Prefetching (deferred, recorded)
 
 Next 16.3's "Instant Navigation" would show each route's App Shell on click and stream the rest. That
