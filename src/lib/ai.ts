@@ -2214,6 +2214,12 @@ async function streamText(
     maxOutputTokens?: number;
     operation: AiOperationId;
     signal?: AbortSignal;
+    /**
+     * A deadline the caller imposes (the route's `maxDuration`). Aborts the call like `signal`,
+     * but is not the caller walking away: it is not the `cancelSignal` below, so a cut-off
+     * stream is filed as `timeout`, not `cancelled`.
+     */
+    deadlineSignal?: AbortSignal;
     /** As for `completeJson` — shares the account read, never the grant. */
     access?: AiAccess;
   },
@@ -2226,7 +2232,7 @@ async function streamText(
   const temperature = input.temperature ?? 0.3;
   const maxOutputTokens = input.maxOutputTokens ?? 4096;
   // One deadline per call plus the caller's own abort — a fresh deadline per call, as always.
-  const signal = input.signal ? AbortSignal.any([aiSignal(), input.signal]) : aiSignal();
+  const signal = AbortSignal.any([aiSignal(), ...[input.signal, input.deadlineSignal].filter((s) => s !== undefined)]);
 
   return runOnGrant(grant, withUsage(
     { userId, operation: input.operation, provider, model, kind: "completion", keyOwner },
@@ -2412,6 +2418,8 @@ export async function chatWithNetworkStream(
   attachedContext: Parameters<typeof chatWithNetwork>[8] = null,
   options: {
     signal?: AbortSignal;
+    /** The route's deadline for the answer; see `streamText`. */
+    deadlineSignal?: AbortSignal;
     goals?: string[];
     attentionLite?: string | null;
     evidence?: string | null;
@@ -2446,6 +2454,7 @@ export async function chatWithNetworkStream(
       user: prompt.user,
       system,
       signal: options.signal,
+      deadlineSignal: options.deadlineSignal,
       access: options.access,
     },
     (delta) => {
