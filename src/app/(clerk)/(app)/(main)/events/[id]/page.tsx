@@ -116,7 +116,7 @@ export default async function EventDetailPage({
   if (!event) notFound();
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 pb-8">
+    <div className="space-y-6 pb-8">
       <RenderStamp />
       {/* A static destination rather than `router.back()`: an event page is a deep link
           people reach from a fresh tab or a search result, where going back leaves the app. */}

@@ -245,7 +245,7 @@ export function ContactDetailPageSkeleton() {
 
 export function FormPageSkeleton({ wide = false }: { wide?: boolean }) {
   return (
-    <div className={`space-y-6 ${wide ? "" : "mx-auto max-w-2xl"}`}>
+    <div className={`space-y-6 ${wide ? "" : "mx-auto max-w-3xl"}`}>
       <PageHeaderSkeleton />
       <div className="space-y-4 rounded-2xl border border-border/70 p-6">
         {Array.from({ length: 5 }).map((_, i) => (
@@ -294,7 +294,7 @@ function SettingsCardSkeleton({
 export function SettingsPageSkeleton() {
   const label = <Skeleton className="ml-1 h-3 w-24" />;
   return (
-    <div className="mx-auto max-w-2xl space-y-10">
+    <div className="mx-auto max-w-3xl space-y-10">
       <PageHeaderSkeleton />
       <div className="space-y-4">
         {label}
@@ -475,7 +475,7 @@ export function GraphPageSkeleton() {
 
 export function ImportsPageSkeleton() {
   return (
-    <div className="mx-auto max-w-3xl space-y-8">
+    <div className="mx-auto max-w-3xl space-y-6">
       <PageHeaderSkeleton />
       <Skeleton className="h-44 w-full rounded-2xl" />
       <div className="space-y-2">

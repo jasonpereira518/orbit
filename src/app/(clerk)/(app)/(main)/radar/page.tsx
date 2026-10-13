@@ -62,7 +62,7 @@ export default async function RadarPage({ searchParams }: { searchParams: Promis
   if (gate) return gate;
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="space-y-6">
       <RenderStamp />
       <RadarHeader />
       <div className="reveal-mount" style={{ "--reveal-delay": "90ms" } as React.CSSProperties}>

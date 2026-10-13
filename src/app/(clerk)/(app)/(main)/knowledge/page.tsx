@@ -37,7 +37,7 @@ export default async function KnowledgePage({
     // place, and the list and the dossier each scroll inside their own pane.
     <div
       data-fill-route
-      className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-4"
+      className="flex min-h-0 w-full flex-1 flex-col gap-4"
     >
       <RenderStamp />
       <PageHeader

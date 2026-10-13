@@ -124,7 +124,7 @@ export default async function EventsPage() {
   if (gate) return gate;
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="space-y-6">
       <RenderStamp />
       <EventsHeader actions={<AddEventDialog />} />
 

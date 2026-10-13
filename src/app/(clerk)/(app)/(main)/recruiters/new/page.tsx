@@ -10,7 +10,7 @@ export default async function NewRecruiterPage() {
   if (!canUseRecruiters) return <RecruitersLocked />;
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
+    <div className="mx-auto max-w-3xl space-y-6">
       <RenderStamp />
       <PageHeader
         back={{ href: "/recruiters", label: "Recruiters" }}

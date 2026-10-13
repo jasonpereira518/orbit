@@ -16,7 +16,7 @@ export default async function NewContactPage() {
   // masks thrown Server Function messages in production anyway.
   if (atLimit) {
     return (
-      <div className="mx-auto max-w-2xl">
+      <div className="mx-auto max-w-3xl">
         <RenderStamp />
         <LockedFeature
           title={`You've reached ${usage.limit} contacts`}
@@ -32,7 +32,7 @@ export default async function NewContactPage() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
+    <div className="mx-auto max-w-3xl space-y-6">
       <RenderStamp />
       <PageHeader
         back={{ href: "/contacts", label: "Contacts" }}
