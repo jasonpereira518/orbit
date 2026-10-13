@@ -152,7 +152,7 @@ export function CreditsCard() {
           ) : packLeft > 0 ? (
             <>
               <strong className="font-medium text-ink">{fmt(packLeft)}</strong> pack credits — used after your monthly
-              credits, and they roll over while you’re subscribed.
+              credits, and they roll over from month to month.
             </>
           ) : (
             `No pack credits. A pack adds ${CREDIT_PACK_CREDITS} credits for ${CREDIT_PACK_PRICE_LABEL}, used after your monthly credits.`
@@ -267,7 +267,7 @@ function MaxNudgeDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
           <DialogTitle>Worth a look: Orbit Max</DialogTitle>
           <DialogDescription>
             Two packs plus Pro is about the price of Max, which includes {PLAN_CONFIG.max.monthlyCredits} credits a month plus more transcription and
-            enrichment.
+            the REST API.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter className="gap-2 sm:gap-2">

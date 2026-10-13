@@ -354,8 +354,8 @@ async function main() {
   const ent = await getEntitlements(USER);
   check("entitlements resolve to lifetime", ent.plan === "lifetime", ent.plan);
   check("hosted sending unlocked on lifetime", ent.canUseHostedSending === true);
-  // Lifetime is Max without packs — hosted enrichment (capped monthly) yes, its own smaller AI allowance.
-  check("hosted enrichment unlocked on lifetime", ent.canUseHostedEnrichment === true);
+  // Lifetime is Max without packs — its own smaller AI allowance; no plan includes hosted enrichment.
+  check("no hosted enrichment on lifetime", ent.canUseHostedEnrichment === false);
   check("included AI but no packs on lifetime", ent.canUseHostedAi === true && ent.canBuyCreditPacks === false);
   check("contacts uncapped", ent.contactLimit === null);
 
@@ -409,7 +409,7 @@ async function main() {
   const proEnt = await getEntitlements(PRO_USER);
   check("entitlements resolve to orbit", proEnt.plan === "orbit", proEnt.plan);
   check("hosted sending unlocked on pro", proEnt.canUseHostedSending === true);
-  check("hosted enrichment unlocked on pro", proEnt.canUseHostedEnrichment === true);
+  check("no hosted enrichment on pro", proEnt.canUseHostedEnrichment === false);
   check("contacts uncapped on pro", proEnt.contactLimit === null);
 
   console.log("\ntracks the subscription lifecycle");

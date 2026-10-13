@@ -25,7 +25,7 @@ const FAQ: Array<{ q: string; a: string }> = [
   },
   {
     q: "What is the difference between Orbit Pro and Orbit Max?",
-    a: `Max includes more of everything that costs Orbit money to run: ${max.monthlyCredits} AI credits a month instead of ${pro.monthlyCredits}, ${h(max.speech.meetingSeconds)} of meeting transcription instead of ${h(pro.speech.meetingSeconds)}, ${h(max.speech.shortformSeconds)} of voice notes instead of ${h(pro.speech.shortformSeconds)}, and ${max.hostedEnrichmentsPerMonth} contact enrichments a month instead of ${pro.hostedEnrichmentsPerMonth}. Max also includes the REST API and webhooks. Everything else is the same.`,
+    a: `Max includes more of everything that costs Orbit money to run: ${max.monthlyCredits} AI credits a month instead of ${pro.monthlyCredits}, ${h(max.speech.meetingSeconds)} of meeting transcription instead of ${h(pro.speech.meetingSeconds)}, and ${h(max.speech.shortformSeconds)} of voice notes instead of ${h(pro.speech.shortformSeconds)}. Max also includes the REST API and webhooks. Everything else is the same.`,
   },
   {
     q: "What happens when my AI credits run out?",

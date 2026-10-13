@@ -70,13 +70,6 @@ const ROWS: Array<{ label: string; cells: [Cell, Cell, Cell] }> = [
   { label: "Calendar subscriptions", cells: feature("sync") },
   { label: "Meeting transcription", cells: each((plan) => hours(PLAN_CONFIG[plan].speech.meetingSeconds)) },
   { label: "Voice notes and chat mic", cells: each((plan) => hours(PLAN_CONFIG[plan].speech.shortformSeconds)) },
-  {
-    label: "Contact enrichment",
-    cells: each((plan) => {
-      const n = PLAN_CONFIG[plan].hostedEnrichmentsPerMonth;
-      return n > 0 ? `${n} a month` : "Your own Apollo key";
-    }),
-  },
   { label: "REST API and webhooks", cells: feature("api") },
 ];
 

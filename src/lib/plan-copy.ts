@@ -113,7 +113,6 @@ export const PLAN_COPY: PlanCopy[] = [
       "Calendar subscriptions",
       `${HOURS(pro.speech.meetingSeconds)} of meeting transcription a month`,
       `${HOURS(pro.speech.shortformSeconds)} of voice notes a month`,
-      `${pro.hostedEnrichmentsPerMonth} contact enrichments a month`,
     ],
     caveat: "Prefer your own AI key? Add it any time; calls on it never use credits.",
   },
@@ -127,7 +126,6 @@ export const PLAN_COPY: PlanCopy[] = [
       `AI included: ${max.monthlyCredits} credits a month`,
       `${HOURS(max.speech.meetingSeconds)} of meeting transcription a month`,
       `${HOURS(max.speech.shortformSeconds)} of voice notes a month`,
-      `${max.hostedEnrichmentsPerMonth} contact enrichments a month`,
       "REST API and webhooks",
     ],
     caveat: "Prefer your own AI key? Add it any time; calls on it never use credits.",
@@ -143,10 +141,9 @@ export const PLAN_COPY: PlanCopy[] = [
       "Recruiter tracking, with Google and Microsoft together",
       `${HOURS(lifetime.speech.meetingSeconds)} of meeting transcription a month`,
       `${HOURS(lifetime.speech.shortformSeconds)} of voice notes a month`,
-      `${lifetime.hostedEnrichmentsPerMonth} contact enrichments a month`,
       "REST API and webhooks",
     ],
-    caveat: "AI runs on your own provider key.",
+    caveat: `${lifetime.monthlyCredits} AI credits a month are included. Credit packs aren’t available on this plan.`,
   },
 ];
 

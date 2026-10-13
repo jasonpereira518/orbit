@@ -82,9 +82,9 @@ const SPEC: Record<
   }
 > = {
   free: { contactLimit: 500, credits: 50, packs: true, meeting: 0, shortform: 1 * HOUR, enrich: 0, connections: 1, recruiters: false, sync: false, api: false, meetings: false, hostedAi: true, extension: true },
-  orbit: { contactLimit: null, credits: 300, packs: true, meeting: 5 * HOUR, shortform: 5 * HOUR, enrich: 10, connections: null, recruiters: true, sync: true, api: false, meetings: true, hostedAi: true, extension: true },
-  max: { contactLimit: null, credits: 650, packs: true, meeting: 10 * HOUR, shortform: 10 * HOUR, enrich: 25, connections: null, recruiters: true, sync: true, api: true, meetings: true, hostedAi: true, extension: true },
-  lifetime: { contactLimit: null, credits: 150, packs: false, meeting: 10 * HOUR, shortform: 10 * HOUR, enrich: 25, connections: null, recruiters: true, sync: true, api: true, meetings: true, hostedAi: true, extension: true },
+  orbit: { contactLimit: null, credits: 300, packs: true, meeting: 5 * HOUR, shortform: 5 * HOUR, enrich: 0, connections: null, recruiters: true, sync: true, api: false, meetings: true, hostedAi: true, extension: true },
+  max: { contactLimit: null, credits: 650, packs: true, meeting: 10 * HOUR, shortform: 10 * HOUR, enrich: 0, connections: null, recruiters: true, sync: true, api: true, meetings: true, hostedAi: true, extension: true },
+  lifetime: { contactLimit: null, credits: 150, packs: false, meeting: 10 * HOUR, shortform: 10 * HOUR, enrich: 0, connections: null, recruiters: true, sync: true, api: true, meetings: true, hostedAi: true, extension: true },
 };
 
 function matrix() {
@@ -101,8 +101,9 @@ function matrix() {
     row("managed AI", ent.canUseHostedAi === spec.hostedAi);
     row("meeting seconds", limitFor("meeting", plan) === spec.meeting, limitFor("meeting", plan));
     row("voice seconds", limitFor("shortform", plan) === spec.shortform, limitFor("shortform", plan));
+    // Orbit does not offer hosted enrichment on any plan; a user's own Apollo key is the only way.
     row("hosted enrichments", config.hostedEnrichmentsPerMonth === spec.enrich);
-    row("hosted enrichment flag", ent.canUseHostedEnrichment === spec.enrich > 0);
+    row("hosted enrichment flag", ent.canUseHostedEnrichment === false);
     row("Google/Microsoft connections", config.googleMicrosoftConnections === spec.connections);
     row("extra connections flag", ent.canUseExtraConnections === (spec.connections === null));
     row("recruiters", ent.canUseRecruiters === spec.recruiters);
@@ -264,7 +265,7 @@ async function main() {
   check("extension unlocked", ent.canUseExtension === true);
   // Lifetime has every Max entitlement except packs; its included AI has a smaller allowance.
   check("hosted sending unlocked on lifetime", ent.canUseHostedSending === true);
-  check("hosted enrichment unlocked on lifetime (monthly cap)", ent.canUseHostedEnrichment === true);
+  check("no hosted enrichment on lifetime", ent.canUseHostedEnrichment === false);
   check("included AI but no packs on lifetime", ent.canUseHostedAi === true && ent.canBuyCreditPacks === false);
   check("API on lifetime", ent.canUseApi === true);
 
@@ -287,7 +288,7 @@ async function main() {
   ent = await getEntitlements(USER);
   check("plan is orbit", ent.plan === "orbit", ent.plan);
   check("hosted sending unlocked", ent.canUseHostedSending === true);
-  check("hosted enrichment unlocked", ent.canUseHostedEnrichment === true);
+  check("no hosted enrichment on orbit", ent.canUseHostedEnrichment === false);
 
   // --- the REST API is Max-only, and the refusal records what would unlock it ---
   let apiThrew: unknown = null;
@@ -359,7 +360,6 @@ async function main() {
       "showcase has every feature",
       ent.canUseOutreach &&
         ent.canUseHostedSending &&
-        ent.canUseHostedEnrichment &&
         ent.canUseRecruiters &&
         ent.canUseSync &&
         ent.canUseExtension &&
@@ -368,7 +368,7 @@ async function main() {
     );
     let demoThrew: unknown = null;
     try {
-      await requireEntitlement(USER, "hostedEnrichment");
+      await requireEntitlement(USER, "api");
     } catch (err) {
       demoThrew = err;
     }
@@ -377,7 +377,7 @@ async function main() {
     await setBilling({ compedPlan: "lifetime" });
     ent = await getEntitlements(USER);
     check("comped showcase reports lifetime", ent.plan === "lifetime", ent.plan);
-    check("comped showcase keeps hosted enrichment", ent.canUseHostedEnrichment === true);
+    check("hosted enrichment stays off even for the showcase", ent.canUseHostedEnrichment === false);
     check("comped showcase keeps every gate open", ent.canUseHostedAi && ent.canUseApi);
   } finally {
     if (priorShowcase === undefined) delete process.env.DEMO_ACCOUNT_USER_ID;

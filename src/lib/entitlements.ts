@@ -39,9 +39,9 @@ export type Entitlements = {
    */
   canUseHostedSending: boolean;
   /**
-   * Whether Orbit's own Apollo key may be used for contact enrichment. Capped per month by
-   * `PLAN_CONFIG[plan].hostedEnrichmentsPerMonth` (Pro 10, Max and Lifetime 25). A user's own
-   * Apollo key, saved in Settings, is preferred over Orbit's on every plan and is uncapped.
+   * Whether Orbit's own Apollo key may be used for contact enrichment. False on every plan:
+   * Orbit does not offer hosted enrichment. A user's own Apollo key, saved in Settings, is the
+   * only way in and is uncapped.
    */
   canUseHostedEnrichment: boolean;
   canUseRecruiters: boolean;
@@ -235,7 +235,8 @@ export type DeniableFeature = Exclude<FeatureKey, "hostedAi">;
 export const FEATURE_DENIAL: Record<DeniableFeature, string> = {
   outreach: `Outreach is available on ${availableOn("outreach")}.`,
   hostedSending: `Sending email and SMS on Orbit's credits is available on ${availableOn("hostedSending")}.`,
-  hostedEnrichment: `Contact enrichment on Orbit's Apollo key is available on ${availableOn("hostedEnrichment")}. On the Free Plan, add your own Apollo key in Settings.`,
+  // Not sold on any plan, so no plan name: the only way in is the user's own key.
+  hostedEnrichment: "Orbit doesn’t include contact enrichment — add your own Apollo key in Settings to use it",
   recruiters: `Recruiter tracking is available on ${availableOn("recruiters")}.`,
   api: `The Orbit API and webhooks are available on ${availableOn("api")}. Claude and ChatGPT connect on any plan, with no key.`,
   sync: `Calendar subscriptions and event sources are available on ${availableOn("sync")}.`,
