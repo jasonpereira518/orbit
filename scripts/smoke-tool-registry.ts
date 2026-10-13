@@ -112,8 +112,8 @@ async function main() {
     chatTools.filter((t) => t.scope !== "read").map((t) => t.name).join(", ")
   );
   check(
-    "chat gets every shared read tool plus its own four",
-    chatTools.length === 13,
+    "chat gets every shared read tool plus its own five",
+    chatTools.length === 14,
     chatTools.map((t) => t.name).join(", ")
   );
   check(
@@ -128,9 +128,12 @@ async function main() {
     chatTools.map((t) => t.name).join(", ")
   );
   check(
-    "upcoming_meetings is chat-only too — anyone who sends an invite writes its title",
-    chatTools.some((t) => t.name === "upcoming_meetings") &&
-      !toolsFor(ORBIT_TOOLS, "mcp", ["read", "write"]).some((t) => t.name === "upcoming_meetings")
+    "upcoming_meetings and meeting_context are chat-only too — anyone who sends an invite writes its title",
+    ["upcoming_meetings", "meeting_context"].every(
+      (name) =>
+        chatTools.some((t) => t.name === name) &&
+        !toolsFor(ORBIT_TOOLS, "mcp", ["read", "write"]).some((t) => t.name === name)
+    )
   );
   check(
     "search_meetings is chat-only too — transcripts are other people's words, verbatim",

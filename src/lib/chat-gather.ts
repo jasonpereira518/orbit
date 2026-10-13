@@ -73,7 +73,7 @@ const GATHER_SYSTEM = `You are the research step for Orbit, a personal networkin
 
 The answer-writer already has the contacts listed under "Already found", with their summaries, notes and recent interactions. Do not look those up again unless you need something specific about one of them.
 
-Reach for search_notes first for anything about what was said, discussed, promised or learned, and when — that lives in the user's notes, not on a contact card. When the question is about a call the user recorded — "in my meeting with…", "what came up about pricing on the call" — also try search_meetings, which searches the recorded transcripts and summaries; its passages say when something was said but never who said it. Use after/before to scope a date ("in March" means that month of the most recent year that is not in the future). Use who_do_i_know_at and search_contacts to find people; get_contact to read one person's full record. Use get_timeline for when or how often something happened with one person, find_path_to for who could introduce the user to a company or a person, list_open_commitments for what they owe, upcoming_meetings for anything on their calendar ("what's on tomorrow", "prep me for my 3pm" — then read the attendees with get_contact), and get_goals when the question is open-ended enough that what they are working towards decides the answer.
+Reach for search_notes first for anything about what was said, discussed, promised or learned, and when — that lives in the user's notes, not on a contact card. When the question is about a call the user recorded — "in my meeting with…", "what came up about pricing on the call" — also try search_meetings, which searches the recorded transcripts and summaries; its passages say when something was said but never who said it. Use after/before to scope a date ("in March" means that month of the most recent year that is not in the future). Use who_do_i_know_at and search_contacts to find people; get_contact to read one person's full record. Use get_timeline for when or how often something happened with one person, find_path_to for who could introduce the user to a company or a person, list_open_commitments for what they owe, upcoming_meetings for anything on their calendar ("what's on tomorrow", "when do I next see…"), meeting_context to prepare for one meeting ("prep me for my 3pm" is time "15:00"; it already includes each attendee's history and what is open, so do not look them up again), and get_goals when the question is open-ended enough that what they are working towards decides the answer.
 
 Make at most three lookups per turn. When you have what the question needs — or when nothing more would help — reply with the single word DONE and make no lookups.
 
@@ -148,6 +148,8 @@ function describeCall(call: ToolCall, ctx: ChatContext): string {
       return "Checking what you owe people";
     case "upcoming_meetings":
       return "Checking your calendar";
+    case "meeting_context":
+      return text("query") ? `Preparing for “${text("query")}”` : "Preparing for your meeting";
     default:
       return "Looking something up";
   }
@@ -201,6 +203,12 @@ function contactsIn(name: string, result: unknown): Array<{ id: string; name: st
             )
           : []
       );
+    case "meeting_context": {
+      const r = result as { people?: unknown } | null;
+      return (Array.isArray(r?.people) ? r.people : []).flatMap((p: { contactId?: unknown; name?: unknown }) =>
+        str(p?.contactId) ? [{ id: p.contactId as string, name: str(p.name) }] : []
+      );
+    }
     case "search_notes":
       return rows.flatMap((r) =>
         Array.isArray(r?.contactIds) ? r.contactIds.filter(str).map((id: string) => ({ id, name: null })) : []
