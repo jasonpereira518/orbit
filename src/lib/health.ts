@@ -4,7 +4,7 @@ import { SCHEMA_VERSION, getDb, isPgvectorAvailable, rowsOf } from "@/db";
 import { errorEvents, opsAlertState } from "@/db/schema";
 import { ERROR_SOURCES } from "@/lib/error-events";
 import { getEnvReport } from "@/lib/env";
-import { getCronHealth, getSystemIssues, recentWebhookOutcomes } from "@/lib/admin-system";
+import { getCronHealth, getSystemIssues, isSweepQuiet, recentWebhookOutcomes } from "@/lib/admin-system";
 
 /**
  * The health probe behind `GET /api/health`.
@@ -202,8 +202,10 @@ export async function checkHealth(options: {
   }));
   report.slowCallsLastHour = slow ?? 0;
 
+  // The nightly job's 25 h window cannot see a dead scheduler; the ten-minute sweep can.
   const degraded =
     report.cron.processStalled.missed ||
+    isSweepQuiet(sweep?.lastRun ?? null, now) ||
     envReport.missingRequired.length > 0 ||
     (report.alerts ?? []).some((a) => a.severity !== "info") ||
     Object.values(report.issues).some((n) => n > 0);
