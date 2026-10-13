@@ -90,7 +90,7 @@ function sourceCondition(source: ReminderSource): SQL | undefined {
     case "notes":
       return or(
         isNotNull(reminders.noteBatchId),
-        inArray(reminders.reminderType, ["capture", "post_meeting", "extracted_date"])
+        inArray(reminders.reminderType, ["capture", "post_meeting", "pre_meeting", "extracted_date"])
       );
     case "ai":
       return and(eq(reminders.reminderType, "ai_suggested"), isNull(reminders.noteBatchId));

@@ -64,6 +64,7 @@ export async function createMeetingSession(input: {
   includesMic: boolean;
   captureSurface?: string | null;
   recorderId: string;
+  calendarEventKey?: string | null;
 }): Promise<{ ok: true; id: string; startedAtIso: string } | Fail> {
   try {
     const userId = await requireMeetingsUser();

@@ -265,6 +265,7 @@ CREATE TABLE IF NOT EXISTS reminders (
   raw_date_phrase text,
   date_basis text,
   item_hash text,
+  calendar_event_key text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS suggested_reminders (
@@ -1826,6 +1827,7 @@ CREATE TABLE IF NOT EXISTS meeting_sessions (
   digest jsonb,
   digest_error text,
   note_batch_id uuid,
+  calendar_event_key text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -2621,7 +2623,12 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 152 = calendar_events (new table): a mirror of the near calendar (two days back, two weeks
 // ahead) for calendar-aware chat, event-linked reminders and the recorder. Scanned every local
 // and remote ref and every worktree's working file on Oct 11 2026: 151 was the highest claimed.
-export const SCHEMA_VERSION = 152;
+//
+// 155 = reminders.calendar_event_key + meeting_sessions.calendar_event_key (event-linked
+// reminders and recordings). NOT 153 or 154: claude/sprint-c-audience claims 153 and
+// claude/managed-ai-pool claims 154. Scanned every local and remote ref and every worktree's
+// working file on Oct 12 2026: 154 was the highest claimed.
+export const SCHEMA_VERSION = 155;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3416,6 +3423,8 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "contacts", "constellation_pin", "text");
   await ensureColumn(client, "user_settings", "sender_bio", "text");
   await ensureColumn(client, "user_settings", "career_profile", "jsonb");
+  await ensureColumn(client, "reminders", "calendar_event_key", "text");
+  await ensureColumn(client, "meeting_sessions", "calendar_event_key", "text");
   await ensureColumn(client, "user_settings", "email_activity_sync", "integer NOT NULL DEFAULT 0");
   await ensureColumn(
     client,
@@ -4191,6 +4200,10 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS sender_bio text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS career_profile jsonb`,
+  // Schema v155: the calendar event a reminder or a recording belongs to — the provider's
+  // per-instance id, not a calendar_events FK, because that table only holds a two-week window.
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS calendar_event_key text`,
+  `ALTER TABLE meeting_sessions ADD COLUMN IF NOT EXISTS calendar_event_key text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_activity_sync integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS terms_accepted_at timestamptz`,

@@ -26,6 +26,8 @@ export type MeetingCandidate = {
   webinar: boolean;
   /** The recurring series this occurrence belongs to, for "skip this series". */
   seriesId: string | null;
+  /** The provider's per-instance id — what a recording and its reminders link to. */
+  eventKey: string | null;
 };
 
 /** More people than this on a call is an audience, not a meeting. */
@@ -86,6 +88,7 @@ export function meetingCandidatesFrom(items: RawGoogleEvent[], now: Date, max = 
         // webinar is the host and the only name anyone sees.
         webinar: Boolean(conference) && (parsed.guestsVisible === false || guests === 0 || guests >= WEBINAR_CROWD),
         seriesId: raw.recurringEventId ?? null,
+        eventKey: raw.id ?? null,
       },
       rank: start <= nowMs && nowMs <= end ? 0 : start > nowMs ? 1 : 2,
       distance: Math.abs(start - nowMs),

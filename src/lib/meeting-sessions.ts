@@ -97,6 +97,7 @@ export async function createMeetingSessionRow(
     includesMic: boolean;
     captureSurface?: string | null;
     recorderId: string;
+    calendarEventKey?: string | null;
   },
 ): Promise<MeetingSessionRow> {
   const db = await getDb();
@@ -117,6 +118,11 @@ export async function createMeetingSessionRow(
       attendees: cleanAttendees(input.attendees),
       includesMic: input.includesMic ? 1 : 0,
       captureSurface: input.captureSurface?.slice(0, 32) ?? null,
+      // Client-supplied, so shape-checked: it is only ever compared against the user's own events.
+      calendarEventKey:
+        typeof input.calendarEventKey === "string" && /^[\w@.-]{1,256}$/.test(input.calendarEventKey)
+          ? input.calendarEventKey
+          : null,
       recorderId: input.recorderId,
       status: "recording",
       startedAt: now,

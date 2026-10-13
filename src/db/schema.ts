@@ -1178,6 +1178,12 @@ export const reminders = pgTable(
     confidenceScore: integer("confidence_score"),
     /** `buildSuggestionItemHash(sourceHash, dueIso, title)`; soft-unique per user (NULLs allowed) so a re-paste cannot recreate a reminder. */
     itemHash: text("item_hash"),
+    /**
+     * The calendar event this reminder is about (a prep or post-meeting reminder): the
+     * provider's per-instance id. Not a `calendar_events` FK — that table keeps only a
+     * two-week window, and a reminder outlives it.
+     */
+    calendarEventKey: text("calendar_event_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -1551,6 +1557,8 @@ export const meetingSessions = pgTable(
     digest: jsonb("digest").$type<MeetingDigest>(),
     digestError: text("digest_error"),
     noteBatchId: uuid("note_batch_id"),
+    /** The calendar event this was recorded from, when started from one (provider instance id). */
+    calendarEventKey: text("calendar_event_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

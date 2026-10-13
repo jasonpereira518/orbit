@@ -25,6 +25,7 @@ function meeting(id: string, startMin: number, lengthMin = 30): MeetingCandidate
     call: null,
     webinar: false,
     seriesId: null,
+    eventKey: null,
   };
 }
 const none = new Set<string>();
