@@ -5,7 +5,15 @@ import { LockedFeature } from "@/components/locked-feature";
 import { getPlanOverview } from "@/actions/settings";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
-export default async function NewContactPage() {
+export default async function NewContactPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  // "Add" from a meeting's prep card: the guest's name and address, prefilled.
+  const params = await searchParams;
+  const one = (v: string | string[] | undefined) => (typeof v === "string" ? v.trim().slice(0, 200) : "");
+  const initial = one(params.name) || one(params.email) ? { fullName: one(params.name), email: one(params.email) } : undefined;
   const { usage } = await getPlanOverview();
   const atLimit = usage.limit !== null && usage.remaining === 0;
 
@@ -46,7 +54,7 @@ export default async function NewContactPage() {
         </p>
       </div>
       <ContactQuotaNotice used={usage.used} limit={usage.limit} />
-      <ContactForm />
+      <ContactForm initial={initial} />
     </div>
   );
 }

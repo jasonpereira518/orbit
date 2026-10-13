@@ -20,6 +20,7 @@ import {
 } from "../src/db/schema";
 import { conferenceOf, toStoredEvent } from "../src/lib/connectors/google-calendar";
 import { listUpcomingEvents, refreshCalendarWindow } from "../src/lib/calendar-events";
+import { nextKnownMeeting } from "../src/lib/meeting-context";
 import { ORBIT_TOOLS } from "../src/lib/tools/definitions";
 import { runTool, toolsFor, type OrbitTool } from "../src/lib/tools/registry";
 import { ensureUserSettings } from "../src/lib/user-settings";
@@ -212,6 +213,12 @@ async function main() {
   check("no match is an error, not a guess", typeof (none as { error?: unknown })?.error === "string");
   const theirsCtx = await runTool(ctxTool, OTHER, { eventId: meeting?.eventId as string }, { surface: "chat" });
   check("another user cannot open this meeting by id", typeof (theirsCtx as { error?: unknown })?.error === "string");
+
+  check(
+    "the pulse's next meeting is the one with someone known, inside the horizon",
+    (await nextKnownMeeting(USER, NOW, 30 * 3_600_000))?.title === "Ada 1:1 (moved)" &&
+      (await nextKnownMeeting(USER, NOW, 3_600_000)) === null
+  );
 
   // --- the cascade ---------------------------------------------------------------------
   await db.delete(calendarSources).where(eq(calendarSources.id, source.id));
