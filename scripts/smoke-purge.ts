@@ -648,11 +648,21 @@ async function seed() {
 
   // A calendar picked off one of the connections above. No FK to any of the three connection
   // tables by design (they are separate — see provider-connections.ts), so any uuid does.
-  await db.insert(schema.calendarSources).values({
+  const [calendarSource] = await db
+    .insert(schema.calendarSources)
+    .values({
+      userId: USER,
+      provider: "google",
+      connectionId: randomUUID(),
+      calendarId: "primary",
+    })
+    .returning();
+  await db.insert(schema.calendarEvents).values({
     userId: USER,
-    provider: "google",
-    connectionId: randomUUID(),
-    calendarId: "primary",
+    sourceId: calendarSource.id,
+    providerEventId: "evt-1",
+    title: "Coffee",
+    startAt: new Date(),
   });
 
   const [thread] = await db

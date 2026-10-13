@@ -8,7 +8,7 @@ import { requireUserId } from "@/lib/auth";
 import { deepgramEnabled } from "@/lib/deepgram";
 import { ReauthRequiredError } from "@/lib/errors";
 import { getValidAccessToken, hasCalendarScope } from "@/lib/gmail";
-import { googleFetchWithRetry } from "@/lib/google-fetch";
+import { fetchCalendarWindow } from "@/lib/connectors/google-calendar";
 import { meetingCandidatesFrom, type MeetingCandidate } from "@/lib/meeting-calendar";
 import { listMeetingsFor, type MeetingsPage } from "@/lib/meetings-list";
 import {
@@ -386,23 +386,18 @@ export async function getMeetingCandidates(): Promise<MeetingCandidatesResult> {
     }
 
     const now = new Date();
-    const params = new URLSearchParams({
-      singleEvents: "true",
-      orderBy: "startTime",
-      maxResults: "25",
-      timeMin: new Date(now.getTime() - CANDIDATES_PAST_MS).toISOString(),
-      timeMax: new Date(now.getTime() + CANDIDATES_FUTURE_MS).toISOString(),
+    const page = await fetchCalendarWindow({
+      accessToken,
+      from: new Date(now.getTime() - CANDIDATES_PAST_MS),
+      to: new Date(now.getTime() + CANDIDATES_FUTURE_MS),
+      maxResults: 25,
+      timeoutMs: 10_000,
     });
-    const res = await googleFetchWithRetry(
-      `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
-      { headers: { Authorization: `Bearer ${accessToken}` }, timeoutMs: 10_000 }
-    );
-    if (res.status === 401) return { ok: true, status: "reauth", events: [] };
-    if (res.status === 403) return { ok: true, status: "needs-scope", events: [] };
-    if (!res.ok) throw new Error(`Google Calendar ${res.status}`);
+    if (page.status === 401) return { ok: true, status: "reauth", events: [] };
+    if (page.status === 403) return { ok: true, status: "needs-scope", events: [] };
+    if (page.status >= 400) throw new Error(`Google Calendar ${page.status}`);
 
-    const page = (await res.json()) as { items?: Parameters<typeof meetingCandidatesFrom>[0] };
-    const result: MeetingCandidatesResult = { ok: true, status: "ok", events: meetingCandidatesFrom(page.items ?? [], now) };
+    const result: MeetingCandidatesResult = { ok: true, status: "ok", events: meetingCandidatesFrom(page.items, now) };
     candidatesCache.set(userId, { at: Date.now(), result });
     return result;
   } catch (err) {

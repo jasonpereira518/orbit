@@ -39,6 +39,12 @@ const research: Array<[string, typeof fresh]> = [
   ["What did Raj ask us to send before he reviews our key custody setup?", fresh],
   ["what did Priya Raman promise to send", fresh],
   ["can you draft something for them", followUp],
+  // The calendar lives behind upcoming_meetings, which only the research step calls.
+  ["What's on my calendar tomorrow?", fresh],
+  ["what's on tomorrow", fresh],
+  ["prep me for my 3pm", fresh],
+  ["who am I meeting this week?", fresh],
+  ["when do I next see Priya?", fresh],
 ];
 for (const [q, ctx] of research) {
   const d = chooseDepth(q, ctx);

@@ -17,7 +17,7 @@
 import { z } from "zod";
 import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { actionItems, contacts, interactions } from "@/db/schema";
+import { actionItems, contacts, interactions, userSettings } from "@/db/schema";
 import { hybridSearchContacts } from "@/lib/hybrid-search";
 import { findOrgRosters } from "@/lib/chat-roster";
 import { loadDueFollowUps } from "@/lib/due-follow-ups";
@@ -51,6 +51,8 @@ import { toolError, type OrbitTool } from "@/lib/tools/registry";
 import { searchMemories } from "@/lib/memory-search";
 import { getQueryEmbedding } from "@/lib/embedding-cache";
 import { searchMeetingPassagesFor } from "@/lib/meetings-list";
+import { listUpcomingEvents } from "@/lib/calendar-events";
+import { resolveTimeZone, ymdInZone } from "@/lib/reminder-due-bucket";
 
 const BOTH = ["mcp", "chat"] as const;
 const MCP_ONLY = ["mcp"] as const;
@@ -618,6 +620,81 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         before: dayBound(args.before, true),
         limit: args.limit,
       });
+    },
+  },
+
+  {
+    name: "upcoming_meetings",
+    title: "The user's calendar",
+    description:
+      "Meetings and events on the user's calendar, from two days ago to two weeks ahead. Use it " +
+      "for anything about their schedule: what is on today or tomorrow, when they next see " +
+      "someone, who they are meeting this week, or which meeting \"my 3pm\" is. Each event has " +
+      "the attendees Orbit knows (contactId), so follow up with get_contact or get_timeline to " +
+      "prepare for a meeting. Times are already in the user's own time zone. Narrow by day with " +
+      "after/before (YYYY-MM-DD, the user's local days) and to one person with contactId.",
+    inputSchema: {
+      after: isoDay.optional().describe("Only events on or after this local day. Default: now."),
+      before: isoDay.optional().describe("Only events on or before this local day. Default: a week ahead."),
+      contactId: z.string().uuid().optional().describe("Only events this person is on."),
+      query: z.string().max(100).optional().describe("Match words in the event title."),
+      limit: z.number().int().min(1).max(50).default(20),
+    },
+    annotations: { readOnlyHint: true },
+    // Event titles and guest lists are written by whoever sent the invite — a stranger can put
+    // text in front of the model just by inviting the user — so this stays off MCP like the
+    // other free-text fan-outs.
+    surfaces: CHAT_ONLY,
+    scope: "read",
+    resultLabel: "calendar events",
+    async run(
+      userId,
+      args: { after?: string; before?: string; contactId?: string; query?: string; limit: number }
+    ) {
+      const db = await getDb();
+      const settings = await db.query.userSettings.findFirst({
+        where: eq(userSettings.userId, userId),
+        columns: { radarDigestTz: true },
+      });
+      const tz = resolveTimeZone(settings?.radarDigestTz);
+      const now = new Date();
+      // Local days, read loosely in SQL (a day is at most 14h off UTC) and exactly below.
+      const pad = 14 * 3_600_000;
+      const from = args.after ? new Date(dayBound(args.after, false)!.getTime() - pad) : now;
+      const to = args.before
+        ? new Date(dayBound(args.before, true)!.getTime() + pad)
+        : new Date(now.getTime() + 7 * 86_400_000);
+      const words = (args.query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+      const rows = (await listUpcomingEvents(userId, { from, to, contactId: args.contactId, limit: 200 }))
+        .filter((e) => {
+          const day = ymdInZone(e.startAt, tz);
+          if (args.after && day < args.after) return false;
+          if (args.before && day > args.before) return false;
+          return words.every((w) => e.title.toLowerCase().includes(w));
+        })
+        .slice(0, args.limit);
+      const when = new Intl.DateTimeFormat("en-US", {
+        timeZone: tz,
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+      return rows.map((e) => ({
+        eventId: e.id,
+        title: e.title,
+        day: ymdInZone(e.startAt, tz),
+        start: e.allDay ? "all day" : when.format(e.startAt),
+        end: e.endAt && !e.allDay ? when.format(e.endAt) : null,
+        timeZone: tz,
+        location: e.location,
+        call: e.conferenceKind,
+        response: e.selfResponse,
+        attendees: e.attendees.map((a) => ({ name: a.name || a.email, contactId: a.contactId })),
+        attendeeCount: e.attendeeCount,
+        guestListHidden: e.guestsHidden,
+      }));
     },
   },
 

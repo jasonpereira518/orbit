@@ -976,6 +976,29 @@ CREATE TABLE IF NOT EXISTS calendar_sources (
 );
 CREATE INDEX IF NOT EXISTS calendar_sources_user_idx ON calendar_sources(user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS calendar_sources_conn_cal_uidx ON calendar_sources(connection_id, calendar_id);
+CREATE TABLE IF NOT EXISTS calendar_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  source_id uuid NOT NULL REFERENCES calendar_sources(id) ON DELETE CASCADE,
+  provider_event_id text NOT NULL,
+  ical_uid text,
+  series_id text,
+  title text NOT NULL DEFAULT '',
+  start_at timestamptz NOT NULL,
+  end_at timestamptz,
+  all_day boolean NOT NULL DEFAULT false,
+  location text,
+  conference_url text,
+  conference_kind text,
+  attendees jsonb NOT NULL DEFAULT '[]',
+  attendee_count integer NOT NULL DEFAULT 0,
+  guests_hidden boolean NOT NULL DEFAULT false,
+  self_response text,
+  organizer_email text,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS calendar_events_source_event_uidx ON calendar_events(source_id, provider_event_id);
+CREATE INDEX IF NOT EXISTS calendar_events_user_start_idx ON calendar_events(user_id, start_at);
 CREATE TABLE IF NOT EXISTS usage_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -2594,7 +2617,11 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 151 = importing the user's OWN LinkedIn profile (Profile, Positions, Skills, SavedJobAlerts):
 // user_settings.career_profile. Rescanned every remote ref and every worktree's working file on
 // Oct 8 2026: 150 was the highest claimed anywhere.
-export const SCHEMA_VERSION = 151;
+//
+// 152 = calendar_events (new table): a mirror of the near calendar (two days back, two weeks
+// ahead) for calendar-aware chat, event-linked reminders and the recorder. Scanned every local
+// and remote ref and every worktree's working file on Oct 11 2026: 151 was the highest claimed.
+export const SCHEMA_VERSION = 152;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the

@@ -62,6 +62,12 @@ const RULES: Array<{ reason: string; test: (q: string, ctx: DepthContext) => boo
       ).test(q),
   },
   {
+    // Retrieval reads contacts, not the calendar — only the `upcoming_meetings` lookup can.
+    reason: "asks about the calendar",
+    test: (q) =>
+      /\b(my (calendar|schedule|agenda|next meeting|meetings?|calls?)|meeting (with|today|tomorrow)|on my plate|what'?s on (today|tomorrow|this week)|(today|tomorrow)'?s (meetings?|calls?|schedule)|prep(are)? me|next (see|meet|meeting)|am i (meeting|seeing)|my \d{1,2}(:\d{2})? ?(am|pm)?\b)/.test(q),
+  },
+  {
     reason: "follows up on the last answer",
     test: (q, ctx) =>
       ctx.hasPriorTurns &&

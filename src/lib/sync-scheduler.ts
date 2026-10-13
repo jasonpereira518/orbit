@@ -25,6 +25,7 @@ import {
   CalendarSyncTokenExpiredError,
   advanceCursor as advanceGoogleCalendarCursor,
   fetchCalendarPage as fetchGoogleCalendarPage,
+  fetchCalendarWindow as fetchGoogleCalendarWindow,
   toNetworkEventsDecided,
   type CalendarFetchResult,
 } from "@/lib/connectors/google-calendar";
@@ -75,6 +76,7 @@ import {
 } from "@/lib/connectors/connections";
 import { connectorById } from "@/lib/connectors/registry";
 import { finalizeIngest, ingestEvents, openIngestContext } from "@/lib/ingest/events";
+import { eventsWindow, refreshCalendarWindow } from "@/lib/calendar-events";
 import { ingestPeople } from "@/lib/ingest/people";
 import {
   initialBlockedCount,
@@ -207,11 +209,18 @@ export type SyncDeps = {
    * nothing and gets the registry.
    */
   resolveConnector?: typeof connectorById;
+  /**
+   * The windowed read behind `calendar_events`. Optional and NOT defaulted on purpose: a test
+   * that builds its own deps and does not stub it skips the mirror, rather than sending its
+   * fake token to Google.
+   */
+  fetchWindow?: typeof fetchGoogleCalendarWindow;
 };
 
 const DEFAULT_DEPS: SyncDeps = {
   getAccessToken: getValidGoogleAccessToken,
   fetchPage: fetchGoogleCalendarPage,
+  fetchWindow: fetchGoogleCalendarWindow,
   getMicrosoftAccessToken: getValidOutlookAccessToken,
   fetchMicrosoftPage: fetchMicrosoftCalendarPage,
   fetchApplePage: fetchAppleCalendarPage,
@@ -381,6 +390,19 @@ async function syncGoogleCalendar(
   }
 
   const accessToken = await deps.getAccessToken(conn.userId);
+
+  // The near-calendar mirror first: one windowed read, independent of the sync token below.
+  // Best-effort — a failure here costs chat a stale window, never the interactions sync.
+  if (deps.fetchWindow) {
+    try {
+      const { from, to } = eventsWindow(now);
+      const read = await deps.fetchWindow({ accessToken, from, to, maxPages: 4 });
+      await refreshCalendarWindow(conn.userId, source.id, read, now);
+    } catch (err) {
+      reportError(err, { where: "job.sync.gcal-window", userId: conn.userId, level: "warning" });
+    }
+  }
+
   const ctx = await openIngestContext(conn.userId, {
     source: "google_calendar",
     // A meeting is evidence the user knows this person, so calendar sync populates the
