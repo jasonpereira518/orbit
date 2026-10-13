@@ -49,6 +49,7 @@ import {
 } from "@/lib/interest-list-ticket";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { asWelcomePlanet, planetForSignupNumber, type WelcomePlanet } from "@/lib/welcome-planets";
+import { ipBucketKey } from "@/lib/client-ip";
 
 export type WelcomeSender = (
   email: string,
@@ -125,7 +126,7 @@ export async function joinInterestListCore(
   // 3. Rate limit. A limiter that cannot count must not fail open into the write, and must
   //    not break a real person's signup either — so any throw is the fake ticket.
   try {
-    await consumeBucket("interest.join", ctx.ip, RATE_LIMITS.interestJoin);
+    await consumeBucket("interest.join", ipBucketKey(ctx.ip), RATE_LIMITS.interestJoin);
   } catch (err) {
     // Past the limit, or a limiter that cannot count. Either way the caller gets the fake
     // ticket — the write must never fail open — but only the first is expected. The
@@ -308,7 +309,7 @@ export async function saveInterestListNameCore(
   // Same posture as the join: a limiter that cannot count must not fail open into a write,
   // and must not break a real person's step either — so any throw is a quiet no-op.
   try {
-    await consumeBucket("interest.name", ctx.ip, RATE_LIMITS.interestName);
+    await consumeBucket("interest.name", ipBucketKey(ctx.ip), RATE_LIMITS.interestName);
   } catch (err) {
     if (isRateLimitedError(err)) console.warn("[interest-list] name rate-limited", { ipTag: ipLogTag(ctx.ip) });
     else console.error("[interest-list] limiter failed", err);

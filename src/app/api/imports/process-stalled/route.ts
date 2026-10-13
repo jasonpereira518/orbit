@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { getDb, rowsOf } from "@/db";
 import { contacts, errorEvents, usageEvents } from "@/db/schema";
 import { pruneAiResultCache } from "@/lib/ai-result-cache";
+import { pruneExpiredBuckets } from "@/lib/rate-limit";
 import { runAiBatchSweep } from "@/lib/ai-batch-apply";
 import { resumeStalledImports } from "@/lib/import-stall";
 import { resumeStrandedPurges } from "@/lib/user-data";
@@ -177,6 +178,7 @@ export async function GET(request: Request) {
     captureAbandoned: 0,
     usageEventsPruned: 0,
     errorEventsPruned: 0,
+    rateLimitBucketsPruned: 0,
     /** Unsaved captures' photos past `UNATTACHED_PHOTO_TTL_MS`. */
     capturePhotosPruned: 0,
     /** Email attachment blobs deleted: settled sends past ATTACHMENT_RETENTION_MS, and uploads never sent. */
@@ -243,6 +245,7 @@ export async function GET(request: Request) {
         errorEvents,
         ERROR_EVENT_RETENTION_DAYS
       );
+      stats.rateLimitBucketsPruned = await pruneExpiredBuckets();
       // Remembered AI answers past the longest TTL any caller reads them with.
       await pruneAiResultCache();
       // Batched background AI: whatever the providers have finished since the last sweep.

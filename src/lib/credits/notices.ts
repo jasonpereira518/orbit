@@ -43,9 +43,11 @@ export function noticeLevelFor(grantedMicros: number, remainingMicros: number): 
 const UNSUBSCRIBE_LABEL = "orbit:credit-email-unsubscribe:v1";
 
 function unsubscribeKey(): Buffer {
-  // ENCRYPTION_SECRET is required in production (src/lib/env.ts); the fallback is dev-only.
-  const secret = process.env.ENCRYPTION_SECRET || "orbit-dev-credit-email";
-  return createHmac("sha256", secret).update(UNSUBSCRIBE_LABEL).digest();
+  // ENCRYPTION_SECRET is required in production (src/lib/env.ts); the fallback is dev-only,
+  // and refused outright in production: a known key would let anyone sign a token.
+  const secret = process.env.ENCRYPTION_SECRET;
+  if (!secret && process.env.NODE_ENV === "production") throw new Error("ENCRYPTION_SECRET must be set in production");
+  return createHmac("sha256", secret || "orbit-dev-credit-email").update(UNSUBSCRIBE_LABEL).digest();
 }
 
 export function creditEmailUnsubscribeToken(userId: string): string {

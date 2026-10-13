@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { TIMELINE_DAILY_CONTACT_CAP } from "@/lib/timeline-cost";
-import { getDb } from "@/db";
+import { getDb, rowsOf } from "@/db";
 import { rateLimitBuckets } from "@/db/schema";
 
 /**
@@ -326,4 +326,21 @@ export async function consumeBucket(
     throw new RateLimitedError(scope, Math.max(1, policy.windowSec - elapsed));
   }
   return { remaining: Math.max(0, policy.limit - count) };
+}
+
+/**
+ * Delete buckets whose window started over two days ago. The longest window is one day, so
+ * nothing will count against them again — they would only sit there, and the IP-keyed ones
+ * are visitors' traces. Called from the hourly sweep. Returns how many were removed.
+ */
+export async function pruneExpiredBuckets(): Promise<number> {
+  const db = await getDb();
+  const res = await db.execute(sql`
+    WITH d AS (
+      DELETE FROM ${rateLimitBuckets} WHERE ${rateLimitBuckets.windowStartedAt} < now() - interval '2 days'
+      RETURNING 1
+    )
+    SELECT count(*)::int AS n FROM d
+  `);
+  return Number(rowsOf<{ n: number }>(res)[0]?.n ?? 0);
 }
