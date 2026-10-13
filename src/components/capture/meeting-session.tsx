@@ -120,6 +120,8 @@ export type MeetingSession = MeetingEngineSlice & {
   setIncludeMic: (v: boolean) => void;
   /** Fill the form from a calendar event: its title, and who is on it (with their emails). */
   applyCalendarMeeting: (meeting: MeetingCandidate) => void;
+  /** When the calendar event this recording was started from ends, if it was. */
+  calendarEndIso: string | null;
 };
 
 /** The slice a page needs to coordinate with a meeting. Changes rarely, unlike the above. */
@@ -265,7 +267,10 @@ export function MeetingSessionProvider({
     [title, attendeesText, includeMic]
   );
 
+  const [calendarMeeting, setCalendarMeeting] = useState<{ title: string; endIso: string | null } | null>(null);
+
   const applyCalendarMeeting = (meeting: MeetingCandidate) => {
+    setCalendarMeeting({ title: meeting.title, endIso: meeting.endIso });
     emailsRef.current = Object.fromEntries(
       meeting.attendees.filter((a) => a.email).map((a) => [a.name.trim().toLowerCase(), a.email])
     );
@@ -290,6 +295,8 @@ export function MeetingSessionProvider({
     includeMic,
     setIncludeMic,
     applyCalendarMeeting,
+    // Only while the form still names that event: a retitled or fresh recording is not it.
+    calendarEndIso: calendarMeeting && calendarMeeting.title === title ? calendarMeeting.endIso : null,
   };
 
   const busy = engine?.flow.busy ?? false;

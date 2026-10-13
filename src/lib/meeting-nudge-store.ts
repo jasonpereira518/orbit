@@ -10,7 +10,7 @@
  *
  * It is deliberately NOT paused while the tab is hidden. The case it exists for is Orbit
  * sitting in a background tab while the call is in another one. A hidden tab's timers slow to
- * about one a minute, which still lands inside the two-minutes-before window, and that is
+ * about one a minute, which still lands inside the five-minutes-before window, and that is
  * when the desktop alert — not the in-app card, which nobody is looking at — does the work.
  */
 
@@ -22,6 +22,7 @@ import { nudgeKey, nudgeTiming, pickNudge } from "@/lib/meeting-nudge";
 
 const PREF_KEY = "orbit:meeting-nudge:v1";
 const DISMISSED_KEY = "orbit:meeting-nudge-dismissed:v1";
+const SKIPPED_SERIES_KEY = "orbit:meeting-nudge-skipped-series:v1";
 const MAX_DISMISSED = 50;
 
 const REFRESH_MS = 10 * 60_000;
@@ -106,6 +107,30 @@ export function dismissMeetingNudge(key: string): void {
   recompute();
 }
 
+/** Covers the blocked-storage case within a tab's life. */
+const skippedInSession = new Set<string>();
+
+function readSkippedSeries(): Set<string> {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(SKIPPED_SERIES_KEY) ?? "[]");
+    return new Set(Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+/** "Never for this series": a standup nobody records stops asking, every week. */
+export function skipMeetingSeries(seriesId: string): void {
+  const next = [...readSkippedSeries(), seriesId].slice(-MAX_DISMISSED);
+  try {
+    localStorage.setItem(SKIPPED_SERIES_KEY, JSON.stringify(next));
+  } catch {
+    // Storage blocked: it comes back after a reload.
+  }
+  skippedInSession.add(seriesId);
+  recompute();
+}
+
 // ── The shared poll ───────────────────────────────────────────────────────────────────
 
 export type NudgeSnapshot = { nudge: MeetingCandidate | null; timing: string };
@@ -143,7 +168,9 @@ async function refresh(): Promise<void> {
 function recompute(): void {
   const now = Date.now();
   const dismissed = new Set([...readDismissed(), ...dismissedInSession]);
-  const nudge = isMeetingNudgeOn() ? pickNudge(events, now, dismissed) : null;
+  const skipped = new Set([...readSkippedSeries(), ...skippedInSession]);
+  const offerable = events.filter((e) => !e.seriesId || !skipped.has(e.seriesId));
+  const nudge = isMeetingNudgeOn() ? pickNudge(offerable, now, dismissed) : null;
   const timing = nudge ? nudgeTiming(nudge, now) : "";
 
   const sameOffer = (nudge ? nudgeKey(nudge) : null) === (snapshot.nudge ? nudgeKey(snapshot.nudge) : null);

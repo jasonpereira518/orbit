@@ -9,7 +9,7 @@
  * Nothing in here is stored: a suggestion exists for as long as the setup card is on screen.
  */
 import { counterpartsOf } from "@/lib/calendar-classify";
-import { selfEmailsFrom, toParsedEvent } from "@/lib/connectors/google-calendar";
+import { conferenceOf, selfEmailsFrom, toParsedEvent, type ConferenceKind } from "@/lib/connectors/google-calendar";
 
 type RawGoogleEvent = Parameters<typeof toParsedEvent>[0];
 
@@ -20,7 +20,16 @@ export type MeetingCandidate = {
   endIso: string | null;
   /** Everyone but the calendar owner. Empty when the organiser hid the guest list. */
   attendees: { name: string; email: string }[];
+  /** The call it happens on, when the event carries a link. */
+  call: ConferenceKind | null;
+  /** A broadcast rather than a meeting: a call link and no guest list we can see, or a crowd. */
+  webinar: boolean;
+  /** The recurring series this occurrence belongs to, for "skip this series". */
+  seriesId: string | null;
 };
+
+/** More people than this on a call is an audience, not a meeting. */
+const WEBINAR_CROWD = 20;
 
 /** The setup form takes at most this many names (`parseAttendees`). */
 const MAX_ATTENDEES = 50;
@@ -52,11 +61,15 @@ export function meetingCandidatesFrom(items: RawGoogleEvent[], now: Date, max = 
   for (const raw of items) {
     if (raw.status === "cancelled") continue;
     if (!raw.start?.dateTime) continue; // all-day
-    if ((raw.attendees ?? []).filter((a) => !a.resource).length < 2) continue; // only the owner
+    const conference = conferenceOf(raw);
+    // Only the owner on it is a focus block — unless it has a call link, which is how a
+    // webinar looks from the audience: a Zoom link and no guest list.
+    if ((raw.attendees ?? []).filter((a) => !a.resource).length < 2 && !conference) continue;
     const parsed = toParsedEvent(raw);
     if (!parsed?.start || !parsed.summary.trim()) continue;
     if (parsed.selfResponse === "declined") continue;
 
+    const guests = (raw.attendees ?? []).filter((a) => !a.resource && !a.self).length;
     const people =
       parsed.guestsVisible === false ? [] : counterpartsOf(parsed, selfEmailsFrom(raw)).slice(0, MAX_ATTENDEES);
     const start = parsed.start.getTime();
@@ -68,6 +81,11 @@ export function meetingCandidatesFrom(items: RawGoogleEvent[], now: Date, max = 
         startIso: parsed.start.toISOString(),
         endIso: parsed.end?.toISOString() ?? null,
         attendees: people.map((p) => ({ name: prettyName(p.name, p.email), email: p.email })),
+        call: conference?.kind ?? null,
+        // The guest list itself, not counterparts: those fold in the organiser, who on a
+        // webinar is the host and the only name anyone sees.
+        webinar: Boolean(conference) && (parsed.guestsVisible === false || guests === 0 || guests >= WEBINAR_CROWD),
+        seriesId: raw.recurringEventId ?? null,
       },
       rank: start <= nowMs && nowMs <= end ? 0 : start > nowMs ? 1 : 2,
       distance: Math.abs(start - nowMs),
