@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
  */
 export function SurfaceUnavailable({ label }: { label?: string }) {
   return (
-    <div className="mx-auto max-w-md space-y-5 rounded-2xl border border-border/70 bg-card p-8 text-center">
+    <div className="mx-auto max-w-xl space-y-6 rounded-2xl border border-border/70 bg-card p-8 text-center">
       <span className="mx-auto flex size-11 items-center justify-center rounded-full border border-border bg-muted/40">
         <EyeOff className="size-5 text-muted-foreground" aria-hidden />
       </span>

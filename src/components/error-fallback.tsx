@@ -47,32 +47,36 @@ export function ErrorFallback({
   }, [offline, retry]);
 
   return (
-    <div className="mx-auto flex min-h-[50vh] max-w-lg flex-col items-center justify-center gap-4 px-6 py-16 text-center">
-      <p className="text-sm font-medium text-ink">
-        {offline ? "No connection" : "Something went wrong"}
-      </p>
-      <h1 className="font-[family-name:var(--font-display)] text-3xl tracking-tight text-ink">
-        {offline
-          ? status === "unreachable"
-            ? "Can’t reach Orbit"
-            : "You’re offline"
-          : "We hit a snag"}
-      </h1>
-      <p className="text-muted-foreground">
-        {offline
-          ? "This page needs a connection to load. It’ll try again on its own as soon as you’re back."
-          : "This page failed to load. You can try again or head back."}
-      </p>
-      {error.digest ? (
-        <p className="text-xs text-muted-foreground">Reference: {error.digest}</p>
-      ) : null}
-      <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
-        <button type="button" onClick={retry} className={cn(buttonVariants({ variant: "default" }))}>
-          Try again
-        </button>
-        <Link href={home.href} className={cn(buttonVariants({ variant: "outline" }))}>
-          {home.label}
-        </Link>
+    <div className="flex min-h-[50vh] items-center justify-center px-6 py-16">
+      {/* The same card as LockedFeature and SurfaceUnavailable: one recipe for every
+          screen that stands in for a page. */}
+      <div className="mx-auto flex w-full max-w-xl flex-col items-center gap-4 rounded-2xl border border-border/70 bg-card p-8 text-center">
+        <p className="text-sm font-medium text-ink">
+          {offline ? "No connection" : "Something went wrong"}
+        </p>
+        <h1 className="font-[family-name:var(--font-display)] text-2xl text-ink">
+          {offline
+            ? status === "unreachable"
+              ? "Can’t reach Orbit"
+              : "You’re offline"
+            : "We hit a snag"}
+        </h1>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          {offline
+            ? "This page needs a connection to load. It’ll try again on its own as soon as you’re back."
+            : "This page failed to load. You can try again or head back."}
+        </p>
+        {error.digest ? (
+          <p className="text-xs text-muted-foreground">Reference: {error.digest}</p>
+        ) : null}
+        <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+          <button type="button" onClick={retry} className={cn(buttonVariants({ variant: "default" }))}>
+            Try again
+          </button>
+          <Link href={home.href} className={cn(buttonVariants({ variant: "outline" }))}>
+            {home.label}
+          </Link>
+        </div>
       </div>
     </div>
   );
