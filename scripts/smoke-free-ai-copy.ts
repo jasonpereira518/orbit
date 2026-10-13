@@ -1,6 +1,8 @@
 /**
  * Free includes a small AI allowance (Sprint B). Pins that no plan or pricing copy still says
- * Free needs its own key, and that the Free card names the numbers from PLAN_CONFIG.
+ * Free needs its own key, and that the Free card names the numbers from PLAN_CONFIG. A second
+ * guard keeps the contact FAQ, plan cards, onboarding and tour copy and the README off
+ * "AI runs on your key" (an optional own key may still be mentioned).
  *
  * Run: npx tsx scripts/smoke-free-ai-copy.ts
  */
@@ -36,6 +38,59 @@ for (const file of sources) {
   check(`${file}: no "Free … own key" promise`,
     !/On the Free Plan(,| and Orbit Lifetime,)? (yes|every call runs on|AI runs on|add your own AI)/i.test(src) &&
       !/Bring your own AI key on the Free Plan/i.test(src) && !/AI on it runs on a key you supply/i.test(src));
+}
+
+// --- BYOK-era claims ---------------------------------------------------------------------
+// Every plan includes AI now, so copy must not say AI "runs on your key" or that a key is
+// needed. Mentioning an OPTIONAL own key is fine, so the "own key" pattern is exempt in a
+// sentence that says it is optional; the key-era phrases below never are.
+const KEY_ERA = [
+  /runs on (an|your) [^.]*key/i,
+  /\bno key (at all|needed)\b/i,
+  /\badd a key in Settings\b/i,
+  /\bneeds your AI key\b/i,
+  /\bwith an AI key\b/i,
+];
+const OWN_KEY = /\bown (AI |API |provider )?key\b/i;
+const OPTIONAL = /any plan|optional|you can|any time|prefer your own|never use credits|instead|unless/i;
+
+function byokClaims(file: string, src: string): string[] {
+  // Markdown and plain .ts hold roughly one string per line; JSX wraps a sentence across lines
+  // and nests it in tags, so it is collapsed and split on both.
+  const units = file.endsWith(".tsx") ? [src.replace(/\s+/g, " ")] : src.split("\n");
+  return units
+    .flatMap((unit) => unit.split(file.endsWith(".tsx") ? /(?<=[.?!])\s+|<[^>]*>/ : /(?<=[.?!])\s+/))
+    .filter((sentence) => KEY_ERA.some((re) => re.test(sentence)) || (OWN_KEY.test(sentence) && !OPTIONAL.test(sentence)))
+    .map((sentence) => sentence.trim().slice(0, 140));
+}
+
+console.log("\nBYOK-era claims");
+const flagged = (text: string) => byokClaims("x.tsx", text).length > 0;
+check("the guard flags the old claims", [
+  "AI runs on your own provider key.",
+  "On the Free Plan it runs on an API key you supply.",
+  "Free for your first 500 contacts, with AI on your own provider key.",
+  "| **AI** | Your own key | Included |",
+  "A pasted LinkedIn URL logs a person with no key at all",
+  "Needs your AI key",
+  "Add a key in Settings when you’re ready.",
+].every(flagged));
+check("…and passes an optional own key", [
+  "your own key is optional on any plan.",
+  "You can add your own key on any plan.",
+  "Add your own AI key any time for no limit.",
+  "Prefer your own AI key? Add it any time; calls on it never use credits.",
+].every((text) => !flagged(text)));
+
+for (const file of [
+  "src/app/(site)/(docs)/contact/page.tsx",
+  "src/lib/plan-copy.ts",
+  "src/components/onboarding/highlights/chapters.ts",
+  "src/lib/tour/tour-stops.ts",
+  "README.md",
+]) {
+  const claims = byokClaims(file, readFileSync(file, "utf8"));
+  check(`${file}: no "AI needs your key" claim`, claims.length === 0, claims);
 }
 
 if (failures) {
