@@ -64,7 +64,7 @@ import { extractLinkedInProfileRefs } from "@/lib/linkedin-paste";
 import { startGmailOAuth } from "@/actions/gmail";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
-import { MAX_CONTACTS_FILE_BYTES } from "@/lib/imports/import-constants";
+import { maxImportBytesFor } from "@/lib/imports/import-constants";
 import { MAX_DROP_DEPTH } from "@/lib/capture/file-drop";
 import {
   calendarSources,
@@ -448,7 +448,7 @@ export function ImportHub({
       setScanning(true);
       try {
         const result = await detectImportFiles(kept, {
-          maxBytes: MAX_CONTACTS_FILE_BYTES,
+          maxBytes: maxImportBytesFor,
           truncated: capped,
           chatImports,
         });
@@ -858,7 +858,7 @@ export function ImportHub({
                   "Networking meetings become logged interactions",
                   "New people from invites land in your contacts",
                 ]}
-                note="Connecting Google and Outlook is free on every plan, and so are LinkedIn imports and one-off calendar files."
+                note="Free connects one of Google or Outlook; Pro and Max connect both. LinkedIn imports and one-off calendar files are free on every plan."
               />
             )}
           </ImportSourceRow>

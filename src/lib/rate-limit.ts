@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { lt, sql } from "drizzle-orm";
 import { TIMELINE_DAILY_CONTACT_CAP } from "@/lib/timeline-cost";
 import { getDb } from "@/db";
 import { rateLimitBuckets } from "@/db/schema";
@@ -45,11 +45,14 @@ const BUCKET_LABELS: Record<string, string> = {
   eventWhy: "attendee lookup",
   lifetimeConfirm: "checkout check",
   speechToken: "speech transcription",
+  export: "export",
+  interestWelcome: "welcome email",
   // Scope strings some call sites pass verbatim (dotted / kebab). Keyed by the literal scope
   // rather than renaming the scope, which would reset those buckets' counters.
   contactForm: "contact form",
   "interest.join": "sign-up",
   "interest.name": "sign-up",
+  "interest.welcome": "welcome email",
   "interest.progress": "progress check",
   "avatar.resolve": "photo lookup",
   "lifetime-confirm": "checkout check",
@@ -285,6 +288,20 @@ export const RATE_LIMITS = {
   lifetimeConfirm: { limit: 6, windowSec: 60 },
   /** One token per connection attempt; a stuck reconnect loop must not mint endlessly. */
   speechToken: { limit: 30, windowSec: 300 },
+  /**
+   * `/api/export`: a streamed read of every table the account owns, up to a 300s function.
+   * A person takes a copy now and then; a script or a retry loop re-running it is the shape
+   * to stop, since each run pages through the whole network.
+   */
+  export: { limit: 5, windowSec: 3600 },
+  /**
+   * The waitlist's welcome email, across EVERY sender (keyed "global"). `interestJoin` is per
+   * IP, so a flood of fresh addresses from many IPs still mails each one — from Orbit's
+   * domain, at Resend's cost, to inboxes that never asked. 200 an hour is far above a real
+   * launch-day hour and well inside the sending plan; past it the row and ticket still land
+   * and only the mail is skipped, since the welcome is best-effort by design.
+   */
+  interestWelcome: { limit: 200, windowSec: 3600 },
 } as const satisfies Record<string, BucketPolicy>;
 
 /**
@@ -326,4 +343,24 @@ export async function consumeBucket(
     throw new RateLimitedError(scope, Math.max(1, policy.windowSec - elapsed));
   }
   return { remaining: Math.max(0, policy.limit - count) };
+}
+
+/**
+ * A bucket idle this long is dead weight: `consumeBucket` resets an expired window on the
+ * next hit anyway, so deleting one loses nothing. Twice the longest window in `RATE_LIMITS`
+ * (a day), which `smoke-housekeeping-sweeps` asserts.
+ */
+export const RATE_LIMIT_BUCKET_RETENTION_MS = 2 * 24 * 60 * 60 * 1000;
+
+/**
+ * Drops long-expired buckets; nothing else ever does, so the table grows by one row per
+ * (scope, key) forever. Called by the process-stalled sweep.
+ * ponytail: seq scan on an unindexed column, fine while the table is small — index
+ * `window_started_at` if it ever reaches the hundreds of thousands.
+ */
+export async function pruneRateLimitBuckets(now: Date = new Date()): Promise<void> {
+  const db = await getDb();
+  await db
+    .delete(rateLimitBuckets)
+    .where(lt(rateLimitBuckets.windowStartedAt, new Date(now.getTime() - RATE_LIMIT_BUCKET_RETENTION_MS)));
 }

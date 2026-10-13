@@ -19,6 +19,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatAllowanceReset, allowancePercentUsed, FREE_LOW_CREDITS } from "@/lib/ai-access-copy";
 import { PLAN_CONFIG } from "@/lib/plans/plan-config";
+import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_LABEL } from "@/lib/stripe-config";
 import { toast } from "@/lib/toast";
 
 const MICROS_PER_CREDIT = 10_000;
@@ -70,7 +71,7 @@ export function CreditsCard() {
     (async () => {
       const result = confirm ? await confirm : null;
       if (!live) return;
-      if (result?.status === "granted") toast.success("250 credits added");
+      if (result?.status === "granted") toast.success(`${CREDIT_PACK_CREDITS} credits added`);
       else if (result?.status === "processing") toast.info("Your payment is still clearing — the credits arrive the moment it does");
       await load();
       if (confirm) router.replace("/settings?integration=ai", { scroll: false });
@@ -151,10 +152,10 @@ export function CreditsCard() {
           ) : packLeft > 0 ? (
             <>
               <strong className="font-medium text-ink">{fmt(packLeft)}</strong> pack credits — used after your monthly
-              credits, and they roll over while you’re subscribed.
+              credits, and they roll over from month to month.
             </>
           ) : (
-            "No pack credits. A pack adds 250 credits for $5, used after your monthly credits."
+            `No pack credits. A pack adds ${CREDIT_PACK_CREDITS} credits for ${CREDIT_PACK_PRICE_LABEL}, used after your monthly credits.`
           )}
         </p>
       )}
@@ -266,7 +267,7 @@ function MaxNudgeDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
           <DialogTitle>Worth a look: Orbit Max</DialogTitle>
           <DialogDescription>
             Two packs plus Pro is about the price of Max, which includes {PLAN_CONFIG.max.monthlyCredits} credits a month plus more transcription and
-            enrichment.
+            the REST API.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter className="gap-2 sm:gap-2">
