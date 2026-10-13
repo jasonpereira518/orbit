@@ -40,7 +40,7 @@ export default function GraphPage() {
         subtitle="You are the sun. Companies and schools form constellations around you — each figure traced by its own people."
         compact
         actions={<ConstellationScopeToggle className="mb-0.5 shrink-0" />}
-        className="items-end px-1"
+        className="items-end px-1 md:px-2"
       />
       {/*
         The intro sits OUTSIDE the boundary so it outlives every phase swap beneath it — the

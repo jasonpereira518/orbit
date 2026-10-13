@@ -467,7 +467,7 @@ export function GraphPageSkeleton() {
   // rearranged itself into something else the moment the data arrived.
   return (
     <div className="-mx-1 space-y-3 md:-mx-2">
-      <PageHeaderSkeleton eyebrow compact actions className="px-1" />
+      <PageHeaderSkeleton eyebrow compact actions className="px-1 md:px-2" />
       <ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />
     </div>
   );
