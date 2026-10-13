@@ -139,9 +139,9 @@ export async function startSubscriptionCheckout(
 }
 
 /**
- * Opens a Stripe Checkout Session for one $5 pack of 250 credits. Pro and Max only: the
- * credits are for Orbit's included AI, which Free and Lifetime do not run on. Never
- * automatic — a person clicks, sees the price and pays.
+ * Opens a Stripe Checkout Session for one $5 pack of 250 credits. Every plan but Lifetime
+ * (whose AI has no packs to top up). Never automatic — a person clicks, sees the price and
+ * pays.
  */
 export async function startCreditPackCheckout(): Promise<CheckoutResult> {
   const userId = await requireUserId();

@@ -4721,7 +4721,7 @@ export const creditGrants = pgTable(
     kind: text("kind").$type<"allowance" | "starter" | "pack" | "adjustment">().notNull(),
     grantKey: text("grant_key").notNull(),
     /** The plan whose allowance this is (allowance rows only). */
-    plan: text("plan").$type<"free" | "orbit" | "max">(),
+    plan: text("plan").$type<"free" | "orbit" | "max" | "lifetime">(),
     microsGranted: integer("micros_granted").notNull(),
     microsRemaining: integer("micros_remaining").notNull(),
     periodStart: timestamp("period_start", { withTimezone: true }),

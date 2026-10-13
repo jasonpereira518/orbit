@@ -74,8 +74,8 @@ export const PLAN_SHORT_LABELS: Record<Plan, string> = {
  *   extension's own gate (open PR #248), not by this flag.
  * - `sync`: pasted-ICS calendar subscriptions and event sources.
  * - `extraConnections`: a second Google or Microsoft account. Free keeps its first one.
- * - `hostedAi`: AI on Orbit's provider keys, metered in credits (Free, Pro and Max; not Lifetime).
- * - `creditPacks`: buying a $5 top-up pack (Pro and Max only).
+ * - `hostedAi`: AI on Orbit's provider keys, metered in credits (every plan).
+ * - `creditPacks`: buying a $5 top-up pack (every plan but Lifetime).
  */
 export const FEATURE_KEYS = [
   "outreach",
@@ -136,7 +136,7 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
     monthlyPriceCents: 0,
     annualPriceCents: 0,
     contactLimit: FREE_CONTACT_LIMIT,
-    monthlyCredits: 10,
+    monthlyCredits: 50,
     speech: { meetingSeconds: 0, shortformSeconds: 1 * HOUR },
     hostedEnrichmentsPerMonth: 0,
     googleMicrosoftConnections: 1,
@@ -151,7 +151,7 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
       api: false,
       meetings: false,
       hostedAi: true,
-      creditPacks: false,
+      creditPacks: true,
       extraConnections: false,
     },
   },
@@ -160,7 +160,7 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
     monthlyPriceCents: 899,
     annualPriceCents: 8999,
     contactLimit: null,
-    monthlyCredits: 200,
+    monthlyCredits: 300,
     speech: { meetingSeconds: 5 * HOUR, shortformSeconds: 5 * HOUR },
     hostedEnrichmentsPerMonth: 10,
     googleMicrosoftConnections: null,
@@ -173,26 +173,26 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
     monthlyPriceCents: 1999,
     annualPriceCents: 19999,
     contactLimit: null,
-    monthlyCredits: 500,
+    monthlyCredits: 650,
     speech: { meetingSeconds: 10 * HOUR, shortformSeconds: 10 * HOUR },
     hostedEnrichmentsPerMonth: 25,
     googleMicrosoftConnections: null,
     mcpRateTier: "mcp",
     features: PAID_FEATURES,
   },
-  // Every Max entitlement, except that AI runs only on the user's own key: no managed
-  // AI allowance and no packs.
+  // Every Max entitlement, with a smaller included-AI allowance and no packs (it is never
+  // billed, so there is nothing for a pack to top up).
   lifetime: {
     label: PLAN_LABELS.lifetime,
     monthlyPriceCents: null,
     annualPriceCents: null,
     contactLimit: null,
-    monthlyCredits: null,
+    monthlyCredits: 150,
     speech: { meetingSeconds: 10 * HOUR, shortformSeconds: 10 * HOUR },
     hostedEnrichmentsPerMonth: 25,
     googleMicrosoftConnections: null,
     mcpRateTier: "mcp",
-    features: { ...PAID_FEATURES, hostedAi: false, creditPacks: false },
+    features: { ...PAID_FEATURES, creditPacks: false },
   },
 };
 

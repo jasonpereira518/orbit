@@ -66,7 +66,7 @@ import { aiOperationThinking, type AiOperationId } from "@/lib/ai-operations";
 import { geminiThinkingConfig, openaiCompletionOptions } from "@/lib/ai-request-options";
 import { EMBEDDING_MODELS, modelForOperation } from "@/lib/ai-models";
 import type { ThinkingConfig } from "@google/genai";
-import { anthropicAcceptsTemperature } from "@/lib/ai-providers";
+import { anthropicAcceptsTemperature, anthropicEffort } from "@/lib/ai-providers";
 import { createEvidenceLedger, type EvidenceSource } from "@/lib/chat-evidence";
 import {
   fenceUntrusted,
@@ -632,6 +632,7 @@ export async function completeJson(
           max_tokens: maxOutputTokens,
           // Claude 4.7 and later reject sampling parameters with a 400.
           ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
+          ...anthropicEffort(model),
           system,
           messages: [
             {
@@ -837,6 +838,7 @@ async function completeMultimodalJsonInner(
       max_tokens: maxOutputTokens,
       // Claude 4.7 and later reject sampling parameters with a 400.
       ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
+      ...anthropicEffort(model),
       system,
       messages: [{ role: "user", content }],
     }, { signal: aiSignal() });
@@ -2289,6 +2291,7 @@ async function streamText(
             max_tokens: maxOutputTokens,
             // Claude 4.7 and later reject sampling parameters with a 400.
             ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
+            ...anthropicEffort(model),
             system: input.system,
             messages: [{ role: "user", content: input.user }],
           },
@@ -2801,6 +2804,7 @@ export async function webSearchJson(
             model,
             max_tokens: maxOutputTokens,
             ...(anthropicAcceptsTemperature(model) ? { temperature: 0.1 } : {}),
+            ...anthropicEffort(model),
             system,
             messages,
             tools: [{ type: anthropicWebSearchToolType(model), name: "web_search", max_uses: maxSearches }],

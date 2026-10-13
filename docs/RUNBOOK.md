@@ -101,9 +101,10 @@ above. Vercel Pro crons remove the rule entirely.
 | `config.alerts_undeliverable` | Slack → your app → Incoming Webhooks → copy the URL → Vercel → Environment Variables → `SLACK_OPS_WEBHOOK_URL` (Production) → Redeploy. Until then `/admin/health` is the only place alerts appear. |
 | `ai.provider_outage:*` | Not ours; it clears when the provider recovers. |
 | `perf.slow_burst` | `/admin/health` → error events → `perf.slow` rows name the call and account. |
-| `ai.managed_failing:*` | Orbit's own key for that provider was refused or throttled — every Lifetime account without a key of its own has lost AI. Check the key and its quota in the provider console; replace `ORBIT_MANAGED_<PROVIDER>_API_KEY` in Vercel and redeploy. |
-| `ai.managed_unconfigured` | Lifetime accounts exist but no `ORBIT_MANAGED_*_API_KEY` is set (or `ORBIT_MANAGED_AI=off`). Set one, or accept that Lifetime is BYOK until you do. |
-| `ai.managed_spend_spike` / `ai.managed_runway` | Managed spend is outrunning what Lifetime brought in. `/admin/billing/costs` → "On Orbit's AI keys". Lower `MANAGED_AI_BUDGET` in `src/lib/managed-ai-policy.ts`, or in an emergency set `ORBIT_MANAGED_AI=off` and redeploy. |
+| `ai.managed_failing:*` | Orbit's own key for that provider was refused or throttled — every account on included AI without a key of its own has lost AI. Check the key and its quota (and the prepaid balance) in the provider console; replace `ORBIT_MANAGED_<PROVIDER>_API_KEY` in Vercel and redeploy. |
+| `ai.managed_unconfigured` | Pro/Max accounts exist but no `ORBIT_MANAGED_*_API_KEY` is set (or `ORBIT_MANAGED_AI=off`). Set one. |
+| `ai.managed_pool:<provider>` | That provider's pool (`MANAGED_AI_POOLS`) is at 75%+. Anthropic refills on the 15th and OpenAI takes over meanwhile (warning only). OpenAI spent is critical: top up, raise `MANAGED_AI_POOLS.openai.capMicros`, deploy. With every pool spent included AI refuses. |
+| `ai.managed_spend_spike` / `ai.managed_runway` | Managed spend is spiking, or outrunning subscription revenue (expected while Free usage dominates — the pool alert is the one to act on). `/admin/billing/costs` → "On Orbit's AI keys". Lower `monthlyCredits` in `src/lib/plans/plan-config.ts`, pause from `/admin/billing`, or in an emergency set `ORBIT_MANAGED_AI=off` and redeploy. |
 | `ai.managed_cap_hit` | Info: accounts used their whole monthly allowance. A rising count means the cap is too tight for real use. |
 
 ## Radar: switches
@@ -133,18 +134,17 @@ Monday email. Every switch, smallest first:
   60 days and the email goes to active accounts with a pending card. It was released on Sep 30
   2026 (#380) and put back behind coming soon the same day.
 
-## Managed AI keys (Orbit Lifetime) — NOT SHIPPED
+## Managed AI keys (included AI, every plan)
 
-**Currently off.** `MANAGED_AI_ENABLED = false` in `src/lib/managed-ai-policy.ts`: AI is bring-your-own-key on every deployed plan, Lifetime included, and no `ORBIT_MANAGED_*` variable is read anywhere. Setting one does nothing. Turning managed AI on is that flag plus the public copy (pricing, `/privacy`, `/terms`, which bumps `TERMS_VERSION`). The rest of this section describes the dormant path.
+Every plan includes a monthly AI allowance on Orbit's own provider keys, metered in credits (1 credit = $0.01 of model cost): `monthlyCredits` in `src/lib/plans/plan-config.ts` (Free 50 + a one-time 25 starter, Pro 300, Max 650, Lifetime 150). Only `src/lib/ai-access.ts` can issue a key (`scripts/smoke-ai-access.ts` fails the suite if anything else reads an AI key or builds a provider client). An account with its own key can prefer it in Settings; own-key calls never use credits.
 
-**The one exception is `next dev`**, which runs AI on the bare `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` names in the developer's `.env.local` (`localDevAiEnabled` in `ai-access.ts`: managed AI off, `VERCEL` unset, `NODE_ENV=development` — a deployment is none of these). A key saved in Settings still wins, and `ORBIT_DEMO_MANAGED_AI=off` turns it off to see the production BYOK states.
+- **Keys:** `ORBIT_MANAGED_ANTHROPIC_API_KEY` and `ORBIT_MANAGED_OPENAI_API_KEY`. No managed Gemini key in production. Orbit picks the route on its own key, whatever provider the account selected: `MANAGED_PROVIDER_ORDER` is Anthropic → OpenAI → Gemini, at `MANAGED_DEFAULT_MODELS` (Claude Haiku 5.5, sent at effort `low`; OpenAI `gpt-4o-mini`, `gpt-4.1-nano` for fast-tier work). Embeddings and Whisper run on OpenAI only — Anthropic has neither. Own-key calls keep the account's provider and model.
+- **The pools:** `MANAGED_AI_POOLS` in `src/lib/managed-ai-policy.ts`, one per provider, summing Orbit-paid spend on that provider since its window opened (Deepgram excluded). Anthropic: $190 cap on the $200/month credit, the window restarts on the 15th (`monthlyResetDay`), so it refills by itself. OpenAI: $950 cap on the $1,000 prepaid credit, no reset — after a top-up raise `capMicros` and deploy. A spent pool drops its provider and the next one takes over; with every pool spent, included AI refuses ("Orbit's AI isn't available right now"). Checked in the same 30s-cached read as the admin switch. `/admin/billing` shows one line per pool; `ai.managed_pool:<provider>` warns at 75% (a spent monthly pool stays a warning, a spent prepaid pool is critical).
+- **Admin switch:** `/admin/billing` → included AI on/paused (`site_settings.managed_ai_paused`). Never set reads as PAUSED on production — the reason users see "Orbit’s AI isn’t available right now" until someone turns it on.
+- **Kill switch:** `ORBIT_MANAGED_AI=off`. Every account falls back to its own key, with that same notice.
+- **Per-account cap:** the account's credits (`src/lib/credits/`). Bulk background work stops at half the monthly allowance.
 
-AI is bring-your-own-key on every plan except Lifetime. A Lifetime account with no key of its own runs on Orbit's managed keys, and only `src/lib/ai-access.ts` can issue one (`scripts/smoke-ai-access.ts` fails the suite if anything else reads an AI key or builds a provider client).
-
-- **Keys:** `ORBIT_MANAGED_GEMINI_API_KEY` (cheapest, preferred), `ORBIT_MANAGED_OPENAI_API_KEY`, `ORBIT_MANAGED_ANTHROPIC_API_KEY`. Production only reads these names; the bare `GEMINI_API_KEY`-style names work off Vercel only.
-- **Kill switch:** `ORBIT_MANAGED_AI=off`. Every Lifetime account falls back to BYOK, with the notice "Orbit’s AI isn’t available right now — add your own API key".
-- **Cap:** `MANAGED_AI_BUDGET` in `src/lib/managed-ai-policy.ts`, per account per calendar month (UTC), metered from `usage_events` where `key_owner = 'orbit'`. Bulk background work stops at half.
-- **Revocation:** anything that takes Lifetime away takes managed AI away on the account's next AI call — there is no cache to clear. Today that is removing a comp in `/admin`; a full refund or a lost dispute does it once the launch plan's P0 revocation (`revokeLifetimePurchase`) lands. Until then, refund a Lifetime purchase AND clear `lifetime_purchased_at` by hand.
+**`next dev`** runs localhost demo accounts on the bare `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` names in `.env.local`, unmetered; `ORBIT_DEMO_MANAGED_AI=off` makes localhost behave like production.
 
 ## Deepgram (speech-to-text)
 

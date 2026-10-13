@@ -354,10 +354,9 @@ async function main() {
   const ent = await getEntitlements(USER);
   check("entitlements resolve to lifetime", ent.plan === "lifetime", ent.plan);
   check("hosted sending unlocked on lifetime", ent.canUseHostedSending === true);
-  // Pricing v2: Lifetime is Max without managed AI — hosted enrichment (capped monthly) yes,
-  // Orbit's AI keys no.
+  // Lifetime is Max without packs — hosted enrichment (capped monthly) yes, its own smaller AI allowance.
   check("hosted enrichment unlocked on lifetime", ent.canUseHostedEnrichment === true);
-  check("no managed AI on lifetime", ent.canUseHostedAi === false);
+  check("included AI but no packs on lifetime", ent.canUseHostedAi === true && ent.canBuyCreditPacks === false);
   check("contacts uncapped", ent.contactLimit === null);
 
   const db = await getDb();
