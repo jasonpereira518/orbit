@@ -335,16 +335,13 @@ export default function PrivacyPage() {
         <DocSection id="ai" index={7} title="AI processing">
           <p>
             When you use an AI feature, the content it needs — notes, contact context, chat prompts,
-            photos of pages you scan, recruiter emails when you run the scan — is sent to the
-            provider you chose in Settings: Google Gemini, OpenAI or Anthropic. On Orbit
-            Lifetime, every call runs on an API key you supply, so the request lands on your own
-            account with that provider and is governed by the retention settings you have agreed with
-            them. On the Free Plan, Orbit includes a small monthly AI allowance and a one-time starter
-            grant, and on Orbit Pro and Orbit Max AI is included: those calls run on Orbit&rsquo;s own
-            accounts with those providers, under Orbit&rsquo;s agreements with them, which do not allow
+            photos of pages you scan, recruiter emails when you run the scan — is sent to an AI
+            provider: Google Gemini, OpenAI or Anthropic. Every plan includes a monthly AI
+            allowance, and the Free Plan also gets a one-time starter grant: those calls run on Orbit&rsquo;s own
+            accounts with Anthropic or OpenAI, whichever Orbit routes the request to, under Orbit&rsquo;s agreements with them, which do not allow
             your content to be used to train their models. Providers may keep requests for a limited
             period for abuse monitoring under those agreements. If you add your own key and choose it,
-            those calls run on your account instead.
+            those calls run on your account, with the provider you chose in Settings, instead.
           </p>
           <p>
             Voice notes, the chat microphone and meetings are transcribed by Deepgram instead, on
@@ -490,8 +487,8 @@ export default function PrivacyPage() {
           <p>
             Your Orbit data is kept while your account is active, until you delete it with the
             controls above. Downgrading never deletes anything: contacts added while you were
-            subscribed stay visible and exportable on the Free Plan, and unused pack credits are kept
-            while you&rsquo;re on a plan that can&rsquo;t use them, and come back if you resubscribe.
+            subscribed stay visible and exportable on the Free Plan, and unused pack credits stay
+            spendable.
           </p>
           <p>
             Capture photos stay with the capture they belong to until you delete it; photos from a

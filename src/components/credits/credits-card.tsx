@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatAllowanceReset, allowancePercentUsed, FREE_LOW_CREDITS } from "@/lib/ai-access-copy";
+import { PLAN_CONFIG } from "@/lib/plans/plan-config";
 import { toast } from "@/lib/toast";
 
 const MICROS_PER_CREDIT = 10_000;
@@ -93,7 +94,7 @@ export function CreditsCard() {
   if (overview === null) return null;
 
   const { balance, monthlyCredits, plan } = overview;
-  const packsSold = plan === "orbit" || plan === "max";
+  const packsSold = PLAN_CONFIG[plan].features.creditPacks;
   const starterLeft = credits(balance.starterRemaining);
   const spendableLeft = credits(balance.spendable);
   const allowance = balance.allowance;
@@ -145,7 +146,7 @@ export function CreditsCard() {
           {balance.packsFrozen ? (
             <>
               <strong className="font-medium text-ink">{fmt(packLeft)}</strong> pack credits kept for you. They come back the
-              moment you’re on Pro or Max again.
+              moment you’re on a plan that can use them again.
             </>
           ) : packLeft > 0 ? (
             <>
@@ -162,8 +163,8 @@ export function CreditsCard() {
         <p role="status" className="rounded-lg border border-warning-border bg-warning-surface p-3 text-sm text-foreground">
           {packsSold ? (
             <>
-              You’ve used your credits, so Orbit’s AI is paused until {allowance ? formatAllowanceReset(allowance.periodEnd) : "your plan renews"}.
-              Nothing is charged automatically — add a pack to keep going{plan === "orbit" ? ", or move to Max for 500 credits a month" : ""}.
+              You’ve used your credits, so Orbit’s AI is paused until {allowance ? formatAllowanceReset(allowance.periodEnd) : plan === "free" ? "the 1st" : "your plan renews"}.
+              Nothing is charged automatically — add a pack to keep going{plan === "orbit" ? `, or move to Max for ${PLAN_CONFIG.max.monthlyCredits} credits a month` : ""}.
             </>
           ) : (
             <>You’ve used this month’s AI credits. They refill on {allowance ? formatAllowanceReset(allowance.periodEnd) : "the 1st"}. Add your own key below for no limit</>
@@ -264,7 +265,7 @@ function MaxNudgeDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
         <DialogHeader>
           <DialogTitle>Worth a look: Orbit Max</DialogTitle>
           <DialogDescription>
-            Two packs plus Pro is about the price of Max, which includes 500 credits a month plus more transcription and
+            Two packs plus Pro is about the price of Max, which includes {PLAN_CONFIG.max.monthlyCredits} credits a month plus more transcription and
             enrichment.
           </DialogDescription>
         </DialogHeader>

@@ -105,7 +105,7 @@ run(async () => {
     /pack credits/.test(to(PACKS)[0].subject) && /250 left/.test(to(PACKS)[0].text), to(PACKS)[0]?.text);
   check("opted out: nothing", to(OPTED_OUT).length === 0);
   check("Free: 90% used, in-app only, never an email", to(FREE).length === 0);
-  check("a plan without included AI (Lifetime): nothing", to(LIFETIME).length === 0);
+  check("Lifetime (no packs to offer): in-app only, never an email", to(LIFETIME).length === 0);
   check("Max is never offered Max", to(MAX).length === 1 && !/move to Orbit Max/.test(to(MAX)[0].text));
   check("every email carries its one-click unsubscribe link",
     sent.every((m) => m.unsubscribeUrl.includes("/api/credits/email/unsubscribe?token=") && m.text.includes(m.unsubscribeUrl) &&

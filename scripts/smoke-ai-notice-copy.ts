@@ -30,21 +30,21 @@ function check(label: string, ok: boolean, detail?: unknown) {
 const reset = "2026-11-01T00:00:00.000Z";
 const freeOut = noticeCopyFor("managed_limit", "free", reset);
 check("Free out of credits names the refill date", freeOut.title("x") === "You’ve used this month’s AI credits" && freeOut.body.includes("November 1"), freeOut.body);
-check("…offers a key and plans, never a pack", freeOut.offer === "plans" && !/pack/i.test(freeOut.body));
-check("…obeys the copy rules", !/\.$/.test(freeOut.body) && (freeOut.body.match(/ — /g) ?? []).length <= 1 && !freeOut.body.includes("'"));
-const rendered = `${freeOut.body} — add your own key for no limit under Settings → Integrations → AI provider, or compare plans.`;
-check("…reads as one sentence with the notice lead-in", freeOut.body === "They refill on November 1" && (rendered.match(/ — /g) ?? []).length === 1 && !/  /.test(rendered), rendered);
+check("…offers a pack, like Pro", freeOut.offer === "credits" && /pack/i.test(freeOut.body));
+check("…says nothing is charged automatically", /nothing is charged automatically/.test(freeOut.body) && !freeOut.body.includes("'"));
+const rendered = `${freeOut.body} Or use your own key under Settings → Integrations → AI provider.`;
+check("…reads as whole sentences with the notice lead-in", /\.$/.test(freeOut.body) && (rendered.match(/ — /g) ?? []).length === 1 && !/  /.test(rendered), rendered);
 check("Pro out of credits keeps the pack offer", noticeCopyFor("managed_limit", "orbit", reset).offer === "credits");
 check("key_required no longer says 'On the Free Plan'", !/Free Plan/.test(noticeCopyFor("key_required", "lifetime", null).body));
 check("paused reads the same on every plan", noticeCopyFor("managed_unavailable", "free", reset).title("x") === "Orbit’s AI isn’t available right now");
 check("null reason falls back to key_required", noticeCopyFor(null, "lifetime", null).title("chat") === "Add an AI API key to chat");
 
-// The one-line refusal and the field hint: never a pack to a Free account (final review #3).
+// The one-line refusal and the field hint: Free at zero is told its credits are monthly, and offered a pack.
 check("Free at zero: the one-line refusal is the Free message", refusalCopyFor("managed_limit", "free") === FREE_LIMIT_MESSAGE);
 check("Pro at zero keeps the pack line", refusalCopyFor("managed_limit", "orbit") === AI_ACCESS_COPY.managed_limit);
 check("null reason is key_required", refusalCopyFor(null, "free") === AI_ACCESS_COPY.key_required);
 const freeHint = hintCopyFor("managed_limit", "free");
-check("Free at zero: the hint never offers a pack", !/pack/i.test(freeHint) && /api key/i.test(freeHint), freeHint);
+check("Free at zero: the hint offers a pack and a key", /pack/i.test(freeHint) && /api key/i.test(freeHint), freeHint);
 check("…and obeys the copy rules", !/\.$/.test(freeHint) && (freeHint.match(/ — /g) ?? []).length <= 1 && !freeHint.includes("'"), freeHint);
 check("Pro at zero: the hint keeps the pack", /pack/i.test(hintCopyFor("managed_limit", "orbit")));
 check("the background-reserve refusal is an own-words message", AI_ACCESS_MESSAGES.includes(BACKGROUND_RESERVE_MESSAGE));

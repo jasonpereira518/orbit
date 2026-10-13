@@ -19,6 +19,7 @@ import { OrbitLogo } from "@/components/orbit-logo";
 import { AvatarBackfill } from "@/components/contacts/avatar-backfill";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
 import { PlanCelebrationWatcher } from "@/components/celebration/plan-celebration-watcher";
+import { CreditsIntroWatcher } from "@/components/credits-intro/credits-intro-watcher";
 import { LinkedInReminderWatcher } from "@/components/linkedin-reminder/linkedin-reminder-watcher";
 import { PlanDowngradeWatcher } from "@/components/celebration/plan-downgrade-watcher";
 import { ImportJobWatcher } from "@/components/imports/import-job-watcher";
@@ -66,6 +67,7 @@ export function AppShell({
   navOrder,
   viewingAsUser,
   linkedinReminder,
+  creditsIntroDue,
   tour,
 }: {
   children: React.ReactNode;
@@ -85,6 +87,8 @@ export function AppShell({
   viewingAsUser: boolean;
   /** The full-screen LinkedIn export reminder — see `LinkedInReminderWatcher`. */
   linkedinReminder: { due: boolean; requested: boolean; email: string | null };
+  /** The one-time full-screen "your AI credits are here" moment — see `CreditsIntroWatcher`. */
+  creditsIntroDue: boolean;
   /**
    * The guided tour, when its coach rail should be on screen. A hydration seed only: the
    * runtime owns the live stop and writes it back fire-and-forget.
@@ -182,8 +186,10 @@ export function AppShell({
           <AvatarBackfill />
           <DueNotificationsWatcher />
           <PlanCelebrationWatcher plan={plan} />
-          {/* The export reminder waits until the tour is over: two full-screen guides at
-              once would be one too many. */}
+          {/* The credits intro and the export reminder both wait until the tour is over: two
+              full-screen guides at once would be one too many. The intro mounts first; the
+              reminder defers while any modal dialog is open, so they play one after the other. */}
+          <CreditsIntroWatcher due={creditsIntroDue && !tour.active} />
           <LinkedInReminderWatcher {...linkedinReminder} due={linkedinReminder.due && !tour.active} />
           {tour.active && <TourRuntime seed={tour} hidden={hiddenSet} />}
           <PlanDowngradeWatcher key={userId} userId={userId} plan={plan} />

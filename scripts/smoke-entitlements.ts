@@ -81,10 +81,10 @@ const SPEC: Record<
     extension: boolean;
   }
 > = {
-  free: { contactLimit: 500, credits: 10, packs: false, meeting: 0, shortform: 1 * HOUR, enrich: 0, connections: 1, recruiters: false, sync: false, api: false, meetings: false, hostedAi: true, extension: true },
-  orbit: { contactLimit: null, credits: 200, packs: true, meeting: 5 * HOUR, shortform: 5 * HOUR, enrich: 10, connections: null, recruiters: true, sync: true, api: false, meetings: true, hostedAi: true, extension: true },
-  max: { contactLimit: null, credits: 500, packs: true, meeting: 10 * HOUR, shortform: 10 * HOUR, enrich: 25, connections: null, recruiters: true, sync: true, api: true, meetings: true, hostedAi: true, extension: true },
-  lifetime: { contactLimit: null, credits: null, packs: false, meeting: 10 * HOUR, shortform: 10 * HOUR, enrich: 25, connections: null, recruiters: true, sync: true, api: true, meetings: true, hostedAi: false, extension: true },
+  free: { contactLimit: 500, credits: 50, packs: true, meeting: 0, shortform: 1 * HOUR, enrich: 0, connections: 1, recruiters: false, sync: false, api: false, meetings: false, hostedAi: true, extension: true },
+  orbit: { contactLimit: null, credits: 300, packs: true, meeting: 5 * HOUR, shortform: 5 * HOUR, enrich: 10, connections: null, recruiters: true, sync: true, api: false, meetings: true, hostedAi: true, extension: true },
+  max: { contactLimit: null, credits: 650, packs: true, meeting: 10 * HOUR, shortform: 10 * HOUR, enrich: 25, connections: null, recruiters: true, sync: true, api: true, meetings: true, hostedAi: true, extension: true },
+  lifetime: { contactLimit: null, credits: 150, packs: false, meeting: 10 * HOUR, shortform: 10 * HOUR, enrich: 25, connections: null, recruiters: true, sync: true, api: true, meetings: true, hostedAi: true, extension: true },
 };
 
 function matrix() {
@@ -257,10 +257,10 @@ async function main() {
   check("outreach unlocked", ent.canUseOutreach === true);
   check("sync unlocked", ent.canUseSync === true);
   check("extension unlocked", ent.canUseExtension === true);
-  // Pricing v2: Lifetime has every Max entitlement except managed AI and packs.
+  // Lifetime has every Max entitlement except packs; its included AI has a smaller allowance.
   check("hosted sending unlocked on lifetime", ent.canUseHostedSending === true);
   check("hosted enrichment unlocked on lifetime (monthly cap)", ent.canUseHostedEnrichment === true);
-  check("no managed AI on lifetime", ent.canUseHostedAi === false && ent.canBuyCreditPacks === false);
+  check("included AI but no packs on lifetime", ent.canUseHostedAi === true && ent.canBuyCreditPacks === false);
   check("API on lifetime", ent.canUseApi === true);
 
   const past101 = await createContactsBulkForUser(
@@ -324,7 +324,7 @@ async function main() {
   });
   ent = await getEntitlements(USER);
   check("plan stays lifetime", ent.plan === "lifetime", ent.plan);
-  check("Pro's managed AI does not carry over", ent.canUseHostedAi === false);
+  check("Pro's packs do not carry over (Lifetime keeps its own allowance)", ent.canBuyCreditPacks === false);
   check("Lifetime's own sending is there", ent.canUseHostedSending === true);
 
   await setBilling({

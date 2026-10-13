@@ -134,7 +134,7 @@ export function UpgradePlanCards({
       );
     }
     if (currentPlan === "lifetime") {
-      return <CardNotice>Your Lifetime plan already includes this, with AI on your own key.</CardNotice>;
+      return <CardNotice>Your Lifetime plan already includes this.</CardNotice>;
     }
     if (currentPlan === "orbit" || currentPlan === "max") {
       return (

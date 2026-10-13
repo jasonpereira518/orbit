@@ -178,6 +178,11 @@ export const userSettings = pgTable("user_settings", {
    * across tabs and devices. See `src/lib/linkedin-export.ts`.
    */
   linkedinReminderShownAt: timestamp("linkedin_reminder_shown_at", { withTimezone: true }),
+  /**
+   * When the one-time "your AI credits are here" screen was shown — write-once, claimed in a
+   * single conditional UPDATE so two tabs cannot both play it. See `src/lib/credits-intro.ts`.
+   */
+  creditsIntroShownAt: timestamp("credits_intro_shown_at", { withTimezone: true }),
   theme: text("theme").$type<"light" | "dark" | "system">(),
   ycModeEnabled: boolean("yc_mode_enabled").default(false),
   /**
@@ -4721,7 +4726,7 @@ export const creditGrants = pgTable(
     kind: text("kind").$type<"allowance" | "starter" | "pack" | "adjustment">().notNull(),
     grantKey: text("grant_key").notNull(),
     /** The plan whose allowance this is (allowance rows only). */
-    plan: text("plan").$type<"free" | "orbit" | "max">(),
+    plan: text("plan").$type<"free" | "orbit" | "max" | "lifetime">(),
     microsGranted: integer("micros_granted").notNull(),
     microsRemaining: integer("micros_remaining").notNull(),
     periodStart: timestamp("period_start", { withTimezone: true }),

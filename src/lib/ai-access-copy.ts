@@ -32,7 +32,7 @@ export const FREE_LOW_CREDITS = 3;
  * A Free account at zero. Keeps "API key" so `isMissingAiApiKeyError` flips every notice, and
  * `aiDenialFromMessage` maps it to `managed_limit` by exact match.
  */
-export const FREE_LIMIT_MESSAGE = "You’ve used this month’s AI credits — add your own API key in Settings for no limit";
+export const FREE_LIMIT_MESSAGE = "You’ve used this month’s AI credits — add a $5 pack or your own API key in Settings";
 
 /**
  * Background work on Orbit's key stopped at the floor that keeps the last credits for things a
@@ -70,12 +70,12 @@ export function aiDenialFromMessage(message: string | null | undefined): AiAcces
 /**
  * The notices' wording, per refusal. `verb` completes "…to {verb}". `offer` is the way out
  * besides a key: `upgrade` ("Pro and Max include AI", Free accounts only) or `credits`
- * ("Buy a pack ($5)", plus "Upgrade to Max" on Pro), or `plans` (Free at zero: compare plans).
+ * ("Buy a pack ($5)", plus "Upgrade to Max" on Pro and "Compare plans" on Free).
  * Nothing is ever charged automatically.
  */
 export const AI_NOTICE_COPY: Record<
   AiAccessDenial,
-  { title: (verb: string) => string; body: string; offer: "upgrade" | "credits" | "plans" | null; linkToKeys: boolean }
+  { title: (verb: string) => string; body: string; offer: "upgrade" | "credits" | null; linkToKeys: boolean }
 > = {
   key_required: {
     title: (verb) => `Add an AI API key to ${verb}`,
@@ -104,7 +104,7 @@ export const AI_HINT_COPY: Record<AiAccessDenial, string> = {
   managed_unavailable: "Orbit’s AI is unavailable right now — add your own API key in Settings for summaries",
 };
 
-/** The one-line refusal for this reason on this plan: Free at zero never hears about packs. */
+/** The one-line refusal for this reason on this plan: Free at zero is told its credits are monthly. */
 export function refusalCopyFor(reason: AiAccessDenial | null, plan: Plan): string {
   if (reason === "managed_limit" && plan === "free") return FREE_LIMIT_MESSAGE;
   return AI_ACCESS_COPY[reason ?? "key_required"];
@@ -113,7 +113,7 @@ export function refusalCopyFor(reason: AiAccessDenial | null, plan: Plan): strin
 /** The field hint for this reason on this plan, same rule. */
 export function hintCopyFor(reason: AiAccessDenial | null, plan: Plan): string {
   if (reason === "managed_limit" && plan === "free") {
-    return "This month’s AI credits are used — add your own API key in Settings for summaries";
+    return "This month’s AI credits are used — add a pack or your own API key in Settings for summaries";
   }
   return AI_HINT_COPY[reason ?? "key_required"];
 }
@@ -127,7 +127,7 @@ export function formatAllowanceReset(resetsAt: string): string {
   });
 }
 
-export type NoticeCopy = { title: (verb: string) => string; body: string; offer: "upgrade" | "credits" | "plans" | null; linkToKeys: boolean };
+export type NoticeCopy = { title: (verb: string) => string; body: string; offer: "upgrade" | "credits" | null; linkToKeys: boolean };
 
 /**
  * The notice's words for this refusal on this plan. Free at zero gets its own state, with
@@ -137,9 +137,8 @@ export function noticeCopyFor(reason: AiAccessDenial | null, plan: Plan, resetsA
   if (reason === "managed_limit" && plan === "free") {
     return {
       title: () => "You’ve used this month’s AI credits",
-      // The notice continues it: " — add your own key for no limit under Settings…".
-      body: `They refill on ${resetsAt ? formatAllowanceReset(resetsAt) : "the 1st"}`,
-      offer: "plans",
+      body: `They refill on ${resetsAt ? formatAllowanceReset(resetsAt) : "the 1st"} — nothing is charged automatically. To keep going now, add a pack of 250 credits.`,
+      offer: "credits",
       linkToKeys: true,
     };
   }
@@ -154,7 +153,7 @@ export function refusalWithRefill(message: string, plan: Plan, resetsAt: string 
   const reason = aiDenialFromMessage(message);
   if (reason !== "managed_limit" || plan !== "free") return message;
   const copy = noticeCopyFor(reason, plan, resetsAt);
-  return `${copy.title("")}. ${copy.body} — add your own API key in Settings for no limit`;
+  return `${copy.title("")}. ${copy.body.replace(/\.$/, "")}, or your own API key in Settings`;
 }
 
 /** Share of this cycle's allowance used, 0-100. */

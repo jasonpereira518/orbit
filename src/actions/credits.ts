@@ -8,6 +8,8 @@ import { getEntitlements } from "@/lib/entitlements";
 import { getCreditBalance, type CreditBalance } from "@/lib/credits/ledger";
 import { equivalentsFor, measuredActionCosts, type ActionKey } from "@/lib/credits/equivalents";
 import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
+import { claimCreditsIntroFor } from "@/lib/credits-intro";
+import type { CreditsIntroNumbers } from "@/lib/credits-intro-scene";
 
 export type CreditsOverview = {
   plan: Plan;
@@ -22,9 +24,8 @@ export type CreditsOverview = {
 
 /**
  * The credits card's data: allowance and pack credits remaining, the reset date, plain
- * equivalents from measured cost, and whether the Max nudge is due. Null for plans without
- * included AI (Free and Lifetime) — unless the account holds frozen pack credits, which the
- * card still reports so nobody thinks money vanished.
+ * equivalents from measured cost, and whether the Max nudge is due. Every plan includes AI
+ * now, so this is null only for a plan with no allowance and no pack credits at all.
  */
 export async function getCreditsOverview(): Promise<CreditsOverview | null> {
   const userId = await requireUserId();
@@ -88,4 +89,25 @@ export async function setCreditEmailEnabled(enabled: boolean): Promise<{ ok: boo
     .set({ creditEmailEnabled: enabled === true ? 1 : 0, updatedAt: new Date() })
     .where(eq(userSettings.userId, userId));
   return { ok: true };
+}
+
+/**
+ * The credits intro watcher's one call: takes this account's single showing of the "your AI
+ * credits are here" screen, and hands back the numbers to draw. The server re-checks
+ * eligibility, so a stale `due` from the layout can never replay it.
+ */
+export async function claimCreditsIntro(): Promise<{ claimed: boolean; numbers: CreditsIntroNumbers | null }> {
+  const userId = await requireUserId();
+  if (!(await claimCreditsIntroFor(userId))) return { claimed: false, numbers: null };
+  const overview = await getCreditsOverview();
+  if (!overview) return { claimed: true, numbers: null };
+  return {
+    claimed: true,
+    numbers: {
+      monthlyCredits: overview.monthlyCredits,
+      starterCredits: Math.floor(overview.balance.starterRemaining / 10_000),
+      resetsAt: overview.balance.allowance?.periodEnd ?? null,
+      answers: overview.equivalents.find((e) => e.action === "chat")?.count ?? null,
+    },
+  };
 }

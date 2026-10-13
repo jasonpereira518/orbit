@@ -143,9 +143,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
         onIncluded && ai.plan === "free"
           ? FREE_AI_EXPLAINER
           : onIncluded
-            ? "Orbit uses AI to turn your notes into contacts and answer questions about your network. Your plan includes AI on Orbit’s keys, metered in credits — or bring your own key, which never uses credits."
-            : ai.plan === "lifetime"
-            ? "Orbit uses AI to turn your notes into contacts and answer questions about your network. On Orbit Lifetime, AI runs on your own key — pick a provider and paste it. Keys are encrypted at rest and only used for your account."
+            ? "Orbit uses AI to turn your notes into contacts and answer questions about your network. Your plan includes AI on Orbit’s keys, metered in credits. Orbit picks the model for it (Claude Haiku 5.5, with OpenAI as backup) — or bring your own key to choose, which never uses credits."
             : "Orbit uses AI to turn your notes into contacts and answer questions about your network. Pick a provider and paste its key — keys are encrypted at rest and only used for your account."
       }
     >

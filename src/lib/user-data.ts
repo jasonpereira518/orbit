@@ -788,6 +788,8 @@ const PRESERVED_SETTINGS_COLUMNS = {
   foundingSubscriptionId: true,
   aiKeyPreference: true,
   maxNudgeSeenAt: true,
+  // Shown once per account; deleting data must not replay it.
+  creditsIntroShownAt: true,
   // Credit emails: the person's choice, and what was already sent this cycle (so deleting
   // data mid-cycle never re-sends a notice).
   creditEmailEnabled: true,

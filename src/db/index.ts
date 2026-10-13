@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   tour_completed_at timestamptz,
   linkedin_export_requested_at timestamptz,
   linkedin_reminder_shown_at timestamptz,
+  credits_intro_shown_at timestamptz,
   first_name text,
   last_name text,
   profile_image_url text,
@@ -2594,7 +2595,12 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 151 = importing the user's OWN LinkedIn profile (Profile, Positions, Skills, SavedJobAlerts):
 // user_settings.career_profile. Rescanned every remote ref and every worktree's working file on
 // Oct 8 2026: 150 was the highest claimed anywhere.
-export const SCHEMA_VERSION = 151;
+//
+// 154 = the one-time "your AI credits are here" screen: user_settings.credits_intro_shown_at.
+// NOT 152 or 153: claude/calendar-events-p0 holds 152 and claude/sprint-c-audience holds 153.
+// Rescanned every remote ref, every local branch and every worktree's working file on
+// Oct 12 2026: 153 was the highest claimed anywhere.
+export const SCHEMA_VERSION = 154;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3486,6 +3492,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "tour_completed_at", "timestamptz");
   await ensureColumn(client, "user_settings", "linkedin_export_requested_at", "timestamptz");
   await ensureColumn(client, "user_settings", "linkedin_reminder_shown_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "credits_intro_shown_at", "timestamptz");
   await ensureColumn(client, "user_settings", "email", "text");
   await ensureColumn(client, "user_settings", "calendar_feed_token", "text");
   await ensureColumn(client, "user_settings", "inbound_log_token", "text");
@@ -4187,6 +4194,7 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS tour_completed_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS linkedin_export_requested_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS linkedin_reminder_shown_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credits_intro_shown_at timestamptz`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS slot uuid`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true`,

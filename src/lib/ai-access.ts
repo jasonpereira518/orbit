@@ -5,7 +5,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { GoogleGenAI } from "@google/genai";
 import type OpenAI from "openai";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { siteSettings, usageEvents, userSettings } from "@/db/schema";
 import { getAppBaseUrl } from "@/lib/app-url";
@@ -56,6 +56,8 @@ import {
   BACKGROUND_FLOOR_SHARE,
   BACKGROUND_OPERATIONS,
   MANAGED_AI_ENABLED,
+  MANAGED_AI_POOLS,
+  poolWindowStart,
   MANAGED_PROVIDER_ORDER,
   UNPRICED_CALL_MICROS,
   type AiAccessDenial,
@@ -152,7 +154,7 @@ export function jevSwitchedOff(): boolean {
 }
 
 /**
- * `ORBIT_MANAGED_AI=off` — the env emergency stop. Pro and Max fall back to "add your own
+ * `ORBIT_MANAGED_AI=off` — the env emergency stop. Every plan falls back to "add your own
  * key". Wins over the admin console's runtime switch below.
  */
 export function managedAiSwitchedOff(): boolean {
@@ -165,16 +167,64 @@ export function managedAiSwitchedOff(): boolean {
  * server instance so it costs one read per instance, not per call. Unset reads as PAUSED on
  * production — managed AI must not run before the legal text describing it ships — and as
  * running everywhere else. A read failure keeps the last answer, or pauses if there is none.
+ *
+ * Each provider whose pool (`MANAGED_AI_POOLS`) is spent drops out of the managed set, read
+ * in the same cached pass — so the pools cost one aggregate per instance per 30s, not one per
+ * call. `managedAiPaused` is true when the switch is off OR every provider Orbit holds a key
+ * for has spent its pool.
  */
 const PAUSE_TTL_MS = 30_000;
-let pauseCache: { paused: boolean; at: number } | null = null;
+type PoolState = { paused: boolean; spent: ReadonlySet<AiProvider> };
+let pauseCache: (PoolState & { at: number }) | null = null;
 
 export function managedAiPausedDefault(): boolean {
   return process.env.VERCEL_ENV === "production";
 }
 
-export async function managedAiPaused(now = Date.now()): Promise<boolean> {
-  if (pauseCache && now - pauseCache.at < PAUSE_TTL_MS) return pauseCache.paused;
+/** Orbit-paid spend on one provider since its pool's window opened, in micros. */
+export async function managedPoolSpentMicros(provider: AiProvider, now = new Date()): Promise<number> {
+  const pool = MANAGED_AI_POOLS[provider];
+  if (!pool) return 0;
+  const db = await getDb();
+  const [row] = await db
+    .select({ micros: sql<string>`coalesce(sum(${managedCostSql()}), 0)::bigint` })
+    .from(usageEvents)
+    .where(
+      and(
+        eq(usageEvents.keyOwner, "orbit"),
+        eq(usageEvents.provider, provider),
+        gte(usageEvents.createdAt, poolWindowStart(pool, now))
+      )
+    );
+  return Number(row?.micros ?? 0);
+}
+
+/**
+ * Every pooled provider's spend in its current window — ONE statement (a `FILTER` per
+ * provider), because this runs inside the gate on every page that asks about AI and pages
+ * hold statement budgets (`smoke-page-budgets`).
+ */
+export async function managedPoolsSpent(now = new Date()): Promise<Partial<Record<AiProvider, number>>> {
+  const providers = Object.keys(MANAGED_AI_POOLS) as AiProvider[];
+  if (providers.length === 0) return {};
+  const starts = providers.map((p) => poolWindowStart(MANAGED_AI_POOLS[p]!, now));
+  const earliest = new Date(Math.min(...starts.map((d) => d.getTime())));
+  const columns = Object.fromEntries(
+    providers.map((p, i) => [
+      p,
+      sql<string>`coalesce(sum(${managedCostSql()}) FILTER (WHERE ${usageEvents.provider} = ${p} AND ${usageEvents.createdAt} >= ${starts[i]}), 0)::bigint`,
+    ])
+  );
+  const db = await getDb();
+  const [row] = await db
+    .select(columns)
+    .from(usageEvents)
+    .where(and(eq(usageEvents.keyOwner, "orbit"), gte(usageEvents.createdAt, earliest)));
+  return Object.fromEntries(providers.map((p) => [p, Number((row as Record<string, string> | undefined)?.[p] ?? 0)]));
+}
+
+export async function managedPoolState(now = Date.now()): Promise<PoolState> {
+  if (pauseCache && now - pauseCache.at < PAUSE_TTL_MS) return pauseCache;
   try {
     const db = await getDb();
     const [row] = await db
@@ -182,12 +232,22 @@ export async function managedAiPaused(now = Date.now()): Promise<boolean> {
       .from(siteSettings)
       .where(eq(siteSettings.id, 1))
       .limit(1);
-    const paused = row?.paused ?? managedAiPausedDefault();
-    pauseCache = { paused, at: now };
-    return paused;
+    const spentMicros = await managedPoolsSpent(new Date(now));
+    const spent = new Set(
+      (Object.keys(spentMicros) as AiProvider[]).filter((p) => (spentMicros[p] ?? 0) >= MANAGED_AI_POOLS[p]!.capMicros)
+    );
+    pauseCache = { paused: row?.paused ?? managedAiPausedDefault(), spent, at: now };
+    return pauseCache;
   } catch {
-    return pauseCache?.paused ?? true;
+    return pauseCache ?? { paused: true, spent: new Set() };
   }
+}
+
+export async function managedAiPaused(now = Date.now()): Promise<boolean> {
+  const state = await managedPoolState(now);
+  if (state.paused) return true;
+  const held = MANAGED_PROVIDER_ORDER.filter((p) => managedKey(p));
+  return held.length > 0 && held.every((p) => state.spent.has(p));
 }
 
 /** For the admin switch: forget the cached answer so this instance sees the change at once. */
@@ -499,11 +559,12 @@ export class AiAccess {
 
     const eligibility = managedEligibility(plan, demoCountsAsManaged(userId));
     const managed: Partial<Record<AiProvider, string>> = {};
-    // The admin pause stops Orbit-paid AI for Pro and Max; a dev server's own keys are not
-    // Orbit's, so a localhost demo account is unaffected.
-    const paused = eligibility === "plan" ? await managedAiPaused() : false;
-    if (eligibility && !paused) {
+    // The admin pause stops Orbit-paid AI on every plan, and a spent pool takes its provider
+    // out; a dev server's own keys are not Orbit's, so a localhost demo account is unaffected.
+    const pools = eligibility === "plan" ? await managedPoolState() : null;
+    if (eligibility && !pools?.paused) {
       for (const provider of MANAGED_PROVIDER_ORDER) {
+        if (pools?.spent.has(provider)) continue;
         const key = managedKey(provider);
         if (key) managed[provider] = key;
       }
@@ -726,7 +787,7 @@ export type AiAccessStatus = {
   preference: AiKeyPreference;
   /** Orbit-paid AI is paused by the admin switch or the env kill switch. */
   managedPaused: boolean;
-  /** The credit balance — Pro and Max only. */
+  /** The credit balance — plans with included AI. */
   credits: (CreditBalance & { monthlyCredits: number }) | null;
 };
 

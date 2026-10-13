@@ -82,9 +82,9 @@ export type Entitlements = {
    * starting, resuming, ending and analyzing a NEW recording cost money.
    */
   canUseMeetings: boolean;
-  /** AI on Orbit's provider keys, metered in credits. Pro and Max only. */
+  /** AI on Orbit's provider keys, metered in credits. Every plan. */
   canUseHostedAi: boolean;
-  /** Buying a $5 top-up pack of credits. Pro and Max only. */
+  /** Buying a $5 top-up pack of credits. Every plan but Lifetime. */
   canBuyCreditPacks: boolean;
   /** A second Google or Microsoft account. Free keeps its first connection. */
   canUseExtraConnections: boolean;
