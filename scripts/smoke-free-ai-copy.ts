@@ -8,7 +8,7 @@
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { FREE_STARTER_CREDITS, PLAN_CONFIG } from "../src/lib/plans/plan-config";
-import { AI_POSITIONING, PLAN_COPY } from "../src/lib/plan-copy";
+import { AI_POSITIONING, EXTENSION_PUBLISHED, EXTENSION_STORE_URL, PLAN_COPY } from "../src/lib/plan-copy";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: unknown) {
@@ -63,6 +63,12 @@ function byokClaims(file: string, src: string): string[] {
     .filter((sentence) => KEY_ERA.some((re) => re.test(sentence)) || (OWN_KEY.test(sentence) && !OPTIONAL.test(sentence)))
     .map((sentence) => sentence.trim().slice(0, 140));
 }
+
+// The extension is "soon" until NEXT_PUBLIC_EXTENSION_URL names a listing. This smoke runs without it.
+console.log("\nExtension switch");
+check("unset URL reads as unpublished", EXTENSION_STORE_URL === null && EXTENSION_PUBLISHED === false, EXTENSION_STORE_URL);
+const promo = readFileSync("src/components/notifications/extension-promo.tsx", "utf8");
+check("the promo has no store-search fallback or paid-plan note", !/chromewebstore\.google\.com\/search/.test(promo) && !/Needs Orbit Pro/.test(promo));
 
 console.log("\nBYOK-era claims");
 const flagged = (text: string) => byokClaims("x.tsx", text).length > 0;

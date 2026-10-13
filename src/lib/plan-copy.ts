@@ -24,8 +24,8 @@ import type { DemoAccountReason } from "@/lib/demo-account";
  * actually charged is the Stripe price with the matching lookup key.
  *
  * TWO RULES THIS COPY KEEPS:
- *  - Only shipped features. Outreach, Events and the Chrome extension are behind their
- *    coming-soon gates and appear in no plan copy until they ship.
+ *  - Only shipped features. Outreach and Events are behind their coming-soon gates, and the
+ *    Chrome extension stays out of plan copy until `EXTENSION_PUBLISHED`; none appear until they ship.
  *  - No fake urgency: no struck-through prices, countdowns or scarcity. A founding price is
  *    shown only to an eligible account, and always with its full terms.
  *
@@ -52,6 +52,13 @@ export type PlanCopy = {
   /** Shown under the feature list where a tier deliberately excludes something. */
   caveat?: string;
 };
+
+/**
+ * The Chrome Web Store listing, set at build time (NEXT_PUBLIC_* is inlined) once the extension is
+ * published. Unset means unpublished: every surface that offers it shows "soon" or nothing.
+ */
+export const EXTENSION_STORE_URL = process.env.NEXT_PUBLIC_EXTENSION_URL?.trim() || null;
+export const EXTENSION_PUBLISHED = EXTENSION_STORE_URL !== null;
 
 /** The one-line positioning, used wherever plans are summarised. */
 export const AI_POSITIONING = "Free: a small AI allowance to start. Pro and Max: AI included.";

@@ -152,7 +152,7 @@ export default function PrivacyPage() {
             </li>
             <li>
               <strong>The browser extension</strong> — when you open its panel on a LinkedIn profile,
-              it sends that page&rsquo;s text to Orbit, which fills in a contact using your AI key. A
+              it sends that page&rsquo;s text to Orbit, which fills in a contact using your key or Orbit&rsquo;s included AI. A
               contact is created only when you save it.
             </li>
             <li>

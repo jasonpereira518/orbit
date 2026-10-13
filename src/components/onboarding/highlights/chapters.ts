@@ -1,4 +1,5 @@
 import type { ComponentType } from "react";
+import { EXTENSION_PUBLISHED } from "@/lib/plan-copy";
 import {
   BellRing,
   MessageCircleQuestion,
@@ -167,7 +168,7 @@ export const HIGHLIGHT_CHAPTERS: HighlightChapter[] = [
       { label: "Recruiters, kept apart from friends", entitlement: "canUseRecruiters" },
       { label: "Outreach drafts for every person", soon: true },
       { label: "Events and who you’ll see there", soon: true },
-      { label: "A Chrome extension for LinkedIn", soon: true },
+      { label: "A Chrome extension for LinkedIn", soon: !EXTENSION_PUBLISHED },
       { label: "Orbit in Claude and ChatGPT, free" },
     ],
     Preview: OutreachPreview,
