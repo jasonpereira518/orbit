@@ -19,6 +19,14 @@ const ChatPanel = dynamic(
   }
 );
 
+/**
+ * Fetch the panel's chunk ahead of a visit (nav hover/focus). The route prefetch does not
+ * include it, so a first visit otherwise shows the page skeleton and then this one.
+ */
+export function preloadChatPanel() {
+  void import("@/components/chat/chat-panel").catch(() => {});
+}
+
 export function ChatPanelLazy({
   initialThreads = null,
 }: {

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import { preloadCaptureFlow } from "@/components/capture/capture-flow-lazy";
+import { preloadChatPanel } from "@/components/chat/chat-panel-lazy";
 import { Plus, Search } from "lucide-react";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/lib/ask-bar-events";
 import { UserButton } from "@clerk/nextjs";
@@ -24,6 +25,12 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { clerkAppearance } from "@/lib/clerk-appearance";
 import { useModKeyLabel } from "@/lib/use-mod-key";
+
+/** Nav destinations whose page leans on a lazy client chunk: warmed on hover or focus. */
+const CHUNK_WARMERS: Record<string, (() => void) | undefined> = {
+  "/capture": preloadCaptureFlow,
+  "/chat": preloadChatPanel,
+};
 
 function SidebarNavLink({
   item,
@@ -54,8 +61,8 @@ function SidebarNavLink({
   // the click and fresh, where one taken at page load is usually old enough by then that
   // the page has to refresh itself on arrival (`FreshOnArrival`).
   const NavLink = active ? Link : IntentLink;
-  // /capture's form is a lazy client chunk the route prefetch does not include.
-  const warm = item.href === "/capture" && !active ? preloadCaptureFlow : undefined;
+  // /capture's form and /chat's panel are lazy client chunks the route prefetch does not include.
+  const warm = active ? undefined : CHUNK_WARMERS[item.href];
   return (
     <NavLink
       href={item.href}
