@@ -137,12 +137,16 @@ async function ask(userId: string, options: { signal?: AbortSignal; deadlineSign
   return { deltas, result, err, message: err instanceof Error ? err.message : err === null ? null : String(err) };
 }
 
-/** Usage rows land fire-and-forget; give them time. */
-const settle = () => new Promise((r) => setTimeout(r, 400));
+/** Usage rows land fire-and-forget: poll (bounded) for the row instead of sleeping a fixed time. */
 async function usageFor(userId: string) {
-  await settle();
   const db = await getDb();
-  return db.select().from(usageEvents).where(and(eq(usageEvents.userId, userId), eq(usageEvents.operation, "chat.answer")));
+  const read = () => db.select().from(usageEvents).where(and(eq(usageEvents.userId, userId), eq(usageEvents.operation, "chat.answer")));
+  let rows = await read();
+  for (const start = Date.now(); rows.length === 0 && Date.now() - start < 5_000; ) {
+    await new Promise((r) => setTimeout(r, 25));
+    rows = await read();
+  }
+  return rows;
 }
 
 async function main() {
@@ -151,6 +155,15 @@ async function main() {
   try {
     for (const provider of ["openai", "gemini", "anthropic"] as const) {
       console.log(`\n${LABEL[provider]}...`);
+
+      const doneUser = `smoke-deadline-${provider}-done`;
+      await account(doneUser, provider);
+      // Runs first: it warms the provider SDK's lazy import, so the 300 ms deadline below times the stream, not the import.
+      script = "finish";
+      const whole = await ask(doneUser, { signal: new AbortController().signal, deadlineSignal: AbortSignal.timeout(30_000) });
+      check("a stream that finishes inside its deadline returns the whole answer", whole.err === null && (whole.result as { answer?: string } | null)?.answer === `${TEXT}The end.`, whole.message ?? JSON.stringify(whole.result));
+      const wholeRows = await usageFor(doneUser);
+      check("…and usage records a success", wholeRows.length === 1 && wholeRows[0].success === 1, JSON.stringify(wholeRows.map((r) => [r.success, r.errorKind])));
 
       const deadlineUser = `smoke-deadline-${provider}-deadline`;
       await account(deadlineUser, provider);
@@ -175,14 +188,6 @@ async function main() {
       check("a Stop throws too, so the route takes its Stop branch", stopped.err !== null, JSON.stringify(stopped.result));
       const stopRows = await usageFor(stopUser);
       check("…and usage files it as cancelled", stopRows.length === 1 && stopRows[0].errorKind === "cancelled", JSON.stringify(stopRows.map((r) => [r.success, r.errorKind])));
-
-      const doneUser = `smoke-deadline-${provider}-done`;
-      await account(doneUser, provider);
-      script = "finish";
-      const whole = await ask(doneUser, { signal: new AbortController().signal, deadlineSignal: AbortSignal.timeout(30_000) });
-      check("a stream that finishes inside its deadline returns the whole answer", whole.err === null && (whole.result as { answer?: string } | null)?.answer === `${TEXT}The end.`, whole.message ?? JSON.stringify(whole.result));
-      const wholeRows = await usageFor(doneUser);
-      check("…and usage records a success", wholeRows.length === 1 && wholeRows[0].success === 1, JSON.stringify(wholeRows.map((r) => [r.success, r.errorKind])));
     }
   } finally {
     clearInterval(keepAlive);

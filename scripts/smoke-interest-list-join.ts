@@ -13,7 +13,7 @@ import "./smoke/_env";
 
 import { eq, like } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { interestListSignups, rateLimitBuckets } from "../src/db/schema";
+import { errorEvents, interestListSignups, rateLimitBuckets } from "../src/db/schema";
 import { generateUnsubscribeToken } from "../src/lib/interest-list-email";
 import {
   getInterestProof,
@@ -32,7 +32,7 @@ import {
 import { joinInterestListCore, saveInterestListNameCore, type JoinContext } from "../src/lib/interest-list-join";
 import type { EmailLinks } from "../src/lib/interest-list-email";
 import { RATE_LIMITS } from "../src/lib/rate-limit";
-import { setBotCheckForTests } from "../src/lib/bot-check";
+import { isBotRequest, setBotCheckForTests } from "../src/lib/bot-check";
 import { joinInterestList, saveInterestListName } from "../src/actions/interest-list";
 
 const PREFIX = "smoke-join-";
@@ -395,6 +395,8 @@ async function botVerdictPath() {
   console.log("\nBotID verdict in the actions…");
   const db = await getDb();
   const email = `${PREFIX}botid@example.test`;
+  const botRows = async () => (await db.select().from(errorEvents).where(eq(errorEvents.source, "bot.check")));
+  await db.delete(errorEvents).where(eq(errorEvents.source, "bot.check"));
   setBotCheckForTests(async () => true);
   try {
     const r = await joinInterestList({ email, website: "", elapsedMs: MIN_FILL_MS + 10 });
@@ -412,8 +414,35 @@ async function botVerdictPath() {
     const row = (await db.select().from(interestListSignups).where(eq(interestListSignups.email, `${PREFIX}botname@example.test`)))[0];
     check("a bot's name step answers ok", named.ok);
     check("a bot's name step writes nothing", row?.firstName === null);
+    const blocked = await botRows();
+    check("two bot verdicts record one throttled \"blocked\" event", blocked.length === 1 && blocked[0].kind === "blocked", JSON.stringify(blocked.map((r) => r.kind)));
+    check("…with nothing from the request in it", blocked[0]?.userId === null && blocked[0]?.message === null && Object.keys(blocked[0]?.context ?? {}).length === 0);
   } finally {
     setBotCheckForTests(null);
+  }
+
+  // The fail-open path: BotID throws (production build, no Vercel OIDC token), the request is
+  // let through, and the outage leaves one throttled event.
+  await db.delete(errorEvents).where(eq(errorEvents.source, "bot.check"));
+  const env = process.env as Record<string, string | undefined>;
+  const saved = { NODE_ENV: env.NODE_ENV, VERCEL_OIDC_TOKEN: env.VERCEL_OIDC_TOKEN };
+  const log = [console.error, console.warn];
+  console.error = console.warn = () => undefined;
+  env.NODE_ENV = "production";
+  delete env.VERCEL_OIDC_TOKEN;
+  try {
+    const first = await isBotRequest();
+    const second = await isBotRequest();
+    env.NODE_ENV = saved.NODE_ENV;
+    const failed = await botRows();
+    check("a BotID check that throws fails open", first === false && second === false);
+    check("…and records one throttled \"check_failed\" event", failed.length === 1 && failed[0].kind === "check_failed", JSON.stringify(failed.map((r) => r.kind)));
+    check("…with nothing from the request in it", failed[0]?.userId === null && failed[0]?.message === null && Object.keys(failed[0]?.context ?? {}).length === 0);
+  } finally {
+    [console.error, console.warn] = log;
+    env.NODE_ENV = saved.NODE_ENV;
+    if (saved.VERCEL_OIDC_TOKEN !== undefined) env.VERCEL_OIDC_TOKEN = saved.VERCEL_OIDC_TOKEN;
+    await db.delete(errorEvents).where(eq(errorEvents.source, "bot.check"));
   }
 }
 

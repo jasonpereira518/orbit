@@ -70,8 +70,9 @@ export function poolWindowStart(pool: ManagedPool, now: Date): Date {
 
 /**
  * The earliest start among every pool's current window, or null with no pools: spend from
- * before it is no pool's concern. The one place that says so — the gate's single-statement
- * spend read and the usage_events retention sweep (which must keep rows inside it) share it.
+ * before it is no pool's concern. Used only by `managedPoolsSpent`, to bound its single
+ * per-provider spend read. The usage_events retention sweep does NOT use it: it keeps rows
+ * per provider, inside that provider's own `poolWindowStart`.
  */
 export function earliestPoolWindowStart(now: Date): Date | null {
   const starts = Object.values(MANAGED_AI_POOLS).flatMap((pool) => (pool ? [poolWindowStart(pool, now).getTime()] : []));

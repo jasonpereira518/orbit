@@ -487,6 +487,10 @@ export async function runOnGrant<T>(grant: AiGrant<AiProvider>, call: Promise<T>
     if (grant.source !== "managed") throw err;
     const kind = classifyAiError(err);
     if (kind !== "auth" && kind !== "rate_limit" && kind !== "quota") throw err;
+    // Off Vercel (a localhost demo account) the "managed" key is the developer's own. Its
+    // failures keep the managed copy but must not reach the shared DB, where a dry dev key
+    // would pull Orbit's real provider out of production for two hours.
+    if (!process.env.VERCEL) throw new AiAccessError("managed_unavailable", MANAGED_PROVIDER_FAILURE_MESSAGE);
     // ponytail: no in-request retry (9 call sites); the failing call errors once and later
     // calls fail over — add a function-taking retry helper if that one failure matters.
     if (kind === "quota" && pauseCache) {

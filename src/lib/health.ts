@@ -110,10 +110,13 @@ export async function checkHealth(options: {
   timeoutMs?: number;
   now?: Date;
   probeDb?: () => Promise<{ recorded: number | null }>;
+  /** Test seam: replace the cron-run read. */
+  cronHealth?: typeof getCronHealth;
 }): Promise<HealthReport> {
   const now = options.now ?? new Date();
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const probe = options.probeDb ?? probeSchemaVersion;
+  const cronHealth = options.cronHealth ?? getCronHealth;
 
   const started = Date.now();
   let recorded: number | null = null;
@@ -143,8 +146,8 @@ export async function checkHealth(options: {
   if (!options.deep || report.status === "down") return report;
 
   const [nightly, sweep, webhooks, issues, alerts, slow, pgvector, statementTimeout] = await Promise.all([
-    section(() => getCronHealth("imports.process-stalled", now), timeoutMs),
-    section(() => getCronHealth("ops.sweep", now), timeoutMs),
+    section(() => cronHealth("imports.process-stalled", now), timeoutMs),
+    section(() => cronHealth("ops.sweep", now), timeoutMs),
     section(() => recentWebhookOutcomes(5, now), timeoutMs),
     section(() => getSystemIssues(now), timeoutMs),
     section(async () => {
@@ -203,9 +206,10 @@ export async function checkHealth(options: {
   report.slowCallsLastHour = slow ?? 0;
 
   // The nightly job's 25 h window cannot see a dead scheduler; the ten-minute sweep can.
+  // A sweep section that timed out (null) is unknown, not quiet.
   const degraded =
     report.cron.processStalled.missed ||
-    isSweepQuiet(sweep?.lastRun ?? null, now) ||
+    (sweep !== null && isSweepQuiet(sweep.lastRun, now)) ||
     envReport.missingRequired.length > 0 ||
     (report.alerts ?? []).some((a) => a.severity !== "info") ||
     Object.values(report.issues).some((n) => n > 0);

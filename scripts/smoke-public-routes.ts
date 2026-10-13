@@ -160,6 +160,8 @@ function main() {
     if (!check(path)) crawlerProblems.push(`${path} is in the sitemap but not public`);
     if (disallowed.some((d) => path !== "/" && path.startsWith(d))) crawlerProblems.push(`${path} is in the sitemap but disallowed by robots`);
   }
+  // /interest still carries waitlist copy on the app domain; it is reachable but not advertised.
+  if (sitemap().some(({ url }) => new URL(url).pathname === "/interest")) crawlerProblems.push("/interest is in the sitemap");
   if (String(robots().sitemap) !== `${base}/sitemap.xml`) crawlerProblems.push("robots does not point at /sitemap.xml");
   if (WAITLIST_ALLOWED_PATHS.some((p) => /robots|sitemap/.test(p))) crawlerProblems.push("the waitlist host allows a crawler file");
   console.log(`\n  ${crawlerProblems.length === 0 ? "ok  " : "FAIL"} sitemap entries are public and not disallowed by robots`);

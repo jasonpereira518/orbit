@@ -9,6 +9,7 @@ import {
   IMPORT_TEXT_MAX_BYTES,
   PLATFORM_REQUEST_BODY_MAX_BYTES,
   fitsInOneRequest,
+  importPayloadFits,
 } from "../src/lib/capture-limits";
 import { IMPORT_COPY } from "../src/lib/imports/import-copy";
 import { readFileSync } from "node:fs";
@@ -30,6 +31,19 @@ const half = Math.floor(IMPORT_TEXT_MAX_BYTES / 2);
 check("measures UTF-8 bytes, not characters (fits)", fitsInOneRequest("é".repeat(half)));
 check("measures UTF-8 bytes, not characters (over)", !fitsInOneRequest("é".repeat(half + 1)));
 check("an empty string fits", fitsInOneRequest(""));
+
+// The confirm call carries the selected ids beside the text: both count.
+const ids = Array.from({ length: 1000 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`);
+const idBytes = JSON.stringify(ids).length;
+check("text alone just under the limit still fits as text", fitsInOneRequest("a".repeat(IMPORT_TEXT_MAX_BYTES - 10)));
+check("…but not once its ids ride along", !importPayloadFits("a".repeat(IMPORT_TEXT_MAX_BYTES - 10), ids));
+check("text plus ids exactly at the limit fits", importPayloadFits("a".repeat(IMPORT_TEXT_MAX_BYTES - idBytes), ids));
+check("ids alone (no text) are measured too", !importPayloadFits(null, Array.from({ length: Math.ceil(IMPORT_TEXT_MAX_BYTES / 40) }, () => "x".repeat(40))));
+check("no text and no ids fits", importPayloadFits(null, []));
+check(
+  "the import runner measures the whole payload, not the text",
+  /importPayloadFits\(text, "ids" in job \? job\.ids : \[\]\)/.test(readFileSync("src/lib/import-job-runner.ts", "utf8")),
+);
 
 check(
   "tooLarge tells the person what to do",

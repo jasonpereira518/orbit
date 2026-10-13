@@ -92,6 +92,16 @@ export function fitsInOneRequest(text: string) {
   return text.length <= IMPORT_TEXT_MAX_BYTES && new TextEncoder().encode(text).length <= IMPORT_TEXT_MAX_BYTES;
 }
 
+/**
+ * True when an import's whole confirm call fits one request: its text AND the `ids` that
+ * travel beside it in the same action argument (`text` alone can fit while `text + ids` is
+ * a 413). Not exact (field names and fileName are not counted), which the 10% headroom in
+ * `IMPORT_TEXT_MAX_BYTES` absorbs.
+ */
+export function importPayloadFits(text: string | null, ids: readonly string[] = []) {
+  return fitsInOneRequest((text ?? "") + JSON.stringify(ids));
+}
+
 export function formatImportSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }

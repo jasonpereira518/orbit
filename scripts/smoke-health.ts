@@ -15,6 +15,7 @@ import { inArray } from "drizzle-orm";
 import { SCHEMA_VERSION, getDb } from "../src/db";
 import { cronRuns } from "../src/db/schema";
 import { checkHealth } from "../src/lib/health";
+import { getCronHealth } from "../src/lib/admin-system";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -111,6 +112,15 @@ async function main() {
       Object.values(live.issues ?? {}).some((n) => n > 0);
     check("a sweep seen 5 min ago → the scheduler does not degrade the view",
       otherCause || live.status === "ok", JSON.stringify(live));
+
+    // A sweep read that times out is unknown, not quiet: it must not degrade the view by itself.
+    // Compared with the live run above, so any other cause cancels out.
+    const unknown = await checkHealth({
+      deep: true,
+      cronHealth: (job, now) => (job === "ops.sweep" ? Promise.reject(new Error("timed out")) : getCronHealth(job, now)),
+    });
+    check("a timed-out sweep read is unknown → it does not degrade the view",
+      unknown.cron?.sweep.state === null && unknown.status === live.status, JSON.stringify([unknown.status, live.status]));
   } finally {
     await db.delete(cronRuns).where(inArray(cronRuns.job, JOBS));
   }

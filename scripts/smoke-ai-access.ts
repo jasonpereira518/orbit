@@ -37,7 +37,7 @@ process.env.ORBIT_MANAGED_GEMINI_API_KEY = "managed-gemini-key";
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { and, eq, inArray, like } from "drizzle-orm";
+import { and, eq, inArray, like, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import {
   billingEvents,
@@ -933,6 +933,22 @@ async function transitions() {
     await db.update(errorEvents).set({ createdAt: new Date(Date.now() - 3 * 3_600_000) }).where(quotaEvents);
     forgetManagedAiPause();
     check("…for two hours, then Anthropic is tried again", !(await managedPoolState()).spent.has("anthropic"));
+
+    // A "managed" grant off Vercel is a developer's own key (localhost demo), not Orbit's: its
+    // dry balance must not take the provider out of production through the shared database.
+    const devGrant = { provider: "openai", model: "x", source: "managed", keyOwner: "orbit", operation: "x" } as const;
+    const dry = () => Promise.reject(new Error("You exceeded your current quota, please check your plan and billing details."));
+    const openaiQuota = and(eq(errorEvents.source, "ai.managed"), eq(errorEvents.kind, "quota"), sql`${errorEvents.context}->>'provider' = 'openai'`);
+    await managedPoolState();
+    delete process.env.VERCEL;
+    const offVercel = await runOnGrant(devGrant, dry()).catch((e) => e);
+    process.env.VERCEL = "1";
+    check("off Vercel a managed grant's quota error keeps the user-facing copy", offVercel instanceof Error && offVercel.message === MANAGED_PROVIDER_FAILURE_MESSAGE, offVercel);
+    check("…but leaves the pool unspent", !(await managedPoolState()).spent.has("openai"));
+    check("…and records no ai.managed event", (await db.select().from(errorEvents).where(openaiQuota)).length === 0);
+    await runOnGrant(devGrant, dry()).catch(() => null);
+    check("on Vercel the same error marks the provider spent", (await managedPoolState()).spent.has("openai"));
+    check("…and records the quota event", (await db.select().from(errorEvents).where(openaiQuota)).length === 1);
   } finally {
     respondWith = "ok";
     await db.delete(errorEvents).where(quotaEvents);
