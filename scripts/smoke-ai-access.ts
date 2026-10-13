@@ -62,6 +62,7 @@ import {
   isAiAccessError,
   managedKeysConfigured,
   forgetManagedAiPause,
+  managedPoolState,
   resolveAiAccess,
   runOnGrant,
   typesafeClient,
@@ -117,7 +118,7 @@ function check(label: string, ok: boolean, detail?: unknown) {
 
 type Sent = { url: string; key: string | null; headers: Record<string, string>; body: string | null };
 const sent: Sent[] = [];
-let respondWith: "ok" | "key_refused" = "ok";
+let respondWith: "ok" | "key_refused" | "anthropic_out_of_credit" = "ok";
 
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -138,6 +139,12 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     return new Response(
       JSON.stringify({ error: { code: 400, message: "API key not valid. Please pass a valid API key.", status: "INVALID_ARGUMENT" } }),
       { status: 400, headers: { "content-type": "application/json" } },
+    );
+  }
+  if (respondWith === "anthropic_out_of_credit" && /api\.anthropic\.com/.test(url)) {
+    return Response.json(
+      { type: "error", error: { type: "invalid_request_error", message: "Your credit balance is too low to access the Anthropic API." } },
+      { status: 400 },
     );
   }
   if (/embedContent|batchEmbedContents/.test(url)) {
@@ -887,6 +894,36 @@ async function transitions() {
   const passthrough = new Error("401 unauthorized");
   const back = await runOnGrant(grant, Promise.reject(passthrough)).catch((e) => e);
   check("runOnGrant leaves personal-key failures alone", back === passthrough);
+
+  console.log("\nOrbit's own provider balance runs dry");
+  process.env.ORBIT_MANAGED_ANTHROPIC_API_KEY = ANTHROPIC_MANAGED;
+  process.env.ORBIT_MANAGED_OPENAI_API_KEY = OPENAI_MANAGED;
+  delete process.env.ORBIT_MANAGED_GEMINI_API_KEY;
+  const quotaEvents = and(eq(errorEvents.source, "ai.managed"), eq(errorEvents.kind, "quota"));
+  respondWith = "anthropic_out_of_credit";
+  try {
+    forgetManagedAiPause();
+    r = await lastSent(() => json(U.proNone));
+    check("a Pro user is told Orbit's AI is down, not to top up a balance they don't hold",
+      r.req?.key === ANTHROPIC_MANAGED && r.err instanceof Error && r.err.message === MANAGED_PROVIDER_FAILURE_MESSAGE, r.err);
+    const quota = await db.select().from(errorEvents).where(quotaEvents);
+    check("…and ops gets a quota error event naming the provider",
+      quota.some((e) => (e.context as { provider?: string })?.provider === "anthropic"), JSON.stringify(quota));
+    r = await lastSent(() => json(U.proNone));
+    check("the next call on this instance fails over to Orbit's OpenAI key", r.req?.key === OPENAI_MANAGED, r.req?.url ?? r.err);
+    forgetManagedAiPause();
+    check("a fresh pool read (any instance) has Anthropic spent", (await managedPoolState()).spent.has("anthropic"));
+    await db.update(errorEvents).set({ createdAt: new Date(Date.now() - 3 * 3_600_000) }).where(quotaEvents);
+    forgetManagedAiPause();
+    check("…for two hours, then Anthropic is tried again", !(await managedPoolState()).spent.has("anthropic"));
+  } finally {
+    respondWith = "ok";
+    await db.delete(errorEvents).where(quotaEvents);
+    delete process.env.ORBIT_MANAGED_ANTHROPIC_API_KEY;
+    delete process.env.ORBIT_MANAGED_OPENAI_API_KEY;
+    process.env.ORBIT_MANAGED_GEMINI_API_KEY = MANAGED;
+    forgetManagedAiPause();
+  }
 }
 
 /** `NODE_ENV` is readonly in the Node types; the gate reads it at call time either way. */

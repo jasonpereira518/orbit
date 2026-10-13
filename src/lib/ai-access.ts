@@ -6,8 +6,8 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { GoogleGenAI } from "@google/genai";
 import type OpenAI from "openai";
 import { and, eq, gte, sql } from "drizzle-orm";
-import { getDb } from "@/db";
-import { siteSettings, usageEvents, userSettings } from "@/db/schema";
+import { getDb, rowsOf } from "@/db";
+import { usageEvents, userSettings } from "@/db/schema";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { decryptOrNull } from "@/lib/crypto";
 import { isDemoAccount, isLocalhost } from "@/lib/demo-account";
@@ -227,15 +227,23 @@ export async function managedPoolState(now = Date.now()): Promise<PoolState> {
   if (pauseCache && now - pauseCache.at < PAUSE_TTL_MS) return pauseCache;
   try {
     const db = await getDb();
-    const [row] = await db
-      .select({ paused: siteSettings.managedAiPaused })
-      .from(siteSettings)
-      .where(eq(siteSettings.id, 1))
-      .limit(1);
-    const spentMicros = await managedPoolsSpent(new Date(now));
-    const spent = new Set(
-      (Object.keys(spentMicros) as AiProvider[]).filter((p) => (spentMicros[p] ?? 0) >= MANAGED_AI_POOLS[p]!.capMicros)
+    // One statement, still one row with no site_settings row: the switch, plus every provider
+    // whose balance ran dry (a managed `quota` error, `runOnGrant`) within the last 2 hours —
+    // longer than the 1 h per-instance record throttle, so a dry provider stays out on every
+    // instance until one of them tries it again after the window.
+    const [row] = rowsOf<{ paused: boolean | null; dry: string[] | null }>(
+      await db.execute(sql`
+        SELECT (SELECT managed_ai_paused FROM site_settings WHERE id = 1) AS paused,
+               (SELECT array_agg(DISTINCT context->>'provider') FROM error_events
+                 WHERE source = ${ERROR_SOURCES.managedAi} AND kind = 'quota'
+                   AND created_at > now() - interval '2 hours') AS dry
+      `)
     );
+    const spentMicros = await managedPoolsSpent(new Date(now));
+    const spent = new Set<AiProvider>([
+      ...(Object.keys(spentMicros) as AiProvider[]).filter((p) => (spentMicros[p] ?? 0) >= MANAGED_AI_POOLS[p]!.capMicros),
+      ...((row?.dry ?? []) as AiProvider[]),
+    ]);
     pauseCache = { paused: row?.paused ?? managedAiPausedDefault(), spent, at: now };
     return pauseCache;
   } catch {
@@ -462,10 +470,14 @@ export function typesafeClient(grant: DecisionGrant): {
  *
  * A managed key that the provider refuses or throttles is an ops incident, and the default
  * copy ("Gemini didn't accept your API key — check it in Settings") would send a Lifetime
- * user to fix a key they never gave us. So a managed auth/rate-limit failure becomes
+ * user to fix a key they never gave us. So a managed auth/rate-limit/quota failure becomes
  * `MANAGED_PROVIDER_FAILURE_MESSAGE` and an error event the ops sweep pages on. Wrap the
  * `withUsage` call, not its callback, so `usage_events.error_kind` still records the
  * provider's real failure kind.
+ *
+ * A quota failure (Orbit's balance with that provider ran dry) also takes the provider out
+ * of the managed set: on this instance at once, and on every other through the error event
+ * `managedPoolState` reads.
  */
 export async function runOnGrant<T>(grant: AiGrant<AiProvider>, call: Promise<T>): Promise<T> {
   try {
@@ -473,7 +485,12 @@ export async function runOnGrant<T>(grant: AiGrant<AiProvider>, call: Promise<T>
   } catch (err) {
     if (grant.source !== "managed") throw err;
     const kind = classifyAiError(err);
-    if (kind !== "auth" && kind !== "rate_limit") throw err;
+    if (kind !== "auth" && kind !== "rate_limit" && kind !== "quota") throw err;
+    // ponytail: no in-request retry (9 call sites); the failing call errors once and later
+    // calls fail over — add a function-taking retry helper if that one failure matters.
+    if (kind === "quota" && pauseCache) {
+      pauseCache = { ...pauseCache, spent: new Set([...pauseCache.spent, grant.provider]) };
+    }
     if (shouldRecordThrottled(`ai.managed:${grant.provider}:${kind}`)) {
       await recordErrorEvent({
         source: ERROR_SOURCES.managedAi,
