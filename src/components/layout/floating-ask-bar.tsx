@@ -598,7 +598,7 @@ export function FloatingAskBar() {
                 <p
                   className={cn(
                     idleIntro
-                      ? "font-display text-sm font-medium text-ink"
+                      ? "font-heading text-sm font-medium text-ink"
                       : "text-xs text-muted-foreground"
                   )}
                 >

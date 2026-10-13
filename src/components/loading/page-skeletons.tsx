@@ -5,26 +5,52 @@ import {
 import { ChatRailPlaceholder } from "@/components/chat/chat-rail-placeholder";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { PageHeader } from "@/components/layout/page-header";
 
-function PageHeaderSkeleton({
+/**
+ * Stand-in for `PageHeader` (`@/components/layout/page-header`): same row, same line boxes
+ * (back link 20px + 12px, eyebrow 20px + 4px, title 36px or 40px, subtitle 4px + 24px), so a
+ * page's header does not shift when it replaces this.
+ */
+export function PageHeaderSkeleton({
   subtitle = true,
   actions = false,
+  back = false,
+  eyebrow = false,
+  compact = false,
+  size = "md",
+  toolbar = false,
+  className,
 }: {
+  className?: string;
+  /** The header's toolbar row (e.g. the meetings search). */
+  toolbar?: boolean;
   subtitle?: boolean;
   actions?: boolean;
+  back?: boolean;
+  eyebrow?: boolean;
+  compact?: boolean;
+  size?: "md" | "lg";
 }) {
   return (
-    <div className="flex flex-wrap items-end justify-between gap-4">
-      <div className="space-y-2">
-        <Skeleton className="h-9 w-48" />
-        {subtitle && <Skeleton className="h-4 w-64 max-w-full" />}
+    <div className={cn("flex shrink-0 flex-wrap items-start justify-between gap-4", className)}>
+      <div className="min-w-0 flex-1">
+        {back && <Skeleton className="mb-3 h-5 w-24" />}
+        {eyebrow && <Skeleton className="mb-1 h-5 w-24" />}
+        <Skeleton className={cn("w-48", size === "lg" ? "h-10" : "h-9")} />
+        {subtitle && (
+          <Skeleton
+            className={cn("mt-1 h-6 w-64 max-w-full", compact && "hidden md:block")}
+          />
+        )}
       </div>
       {actions && (
-        <div className="flex gap-2">
+        <div className="flex shrink-0 gap-2">
           <Skeleton className="h-8 w-24" />
           <Skeleton className="h-8 w-28" />
         </div>
       )}
+      {toolbar && <Skeleton className="h-10 w-full rounded-lg" />}
     </div>
   );
 }
@@ -51,11 +77,7 @@ export function RemindersStageSkeleton() {
       data-fill-route
       className="flex min-h-0 flex-1 flex-col gap-4"
     >
-      <div className="flex shrink-0 items-center justify-between">
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
-          Reminders
-        </h1>
-      </div>
+      <PageHeader title="Reminders" />
       <div className="flex min-h-0 flex-1 gap-4 xl:gap-5">
         <div className="hidden w-52 shrink-0 space-y-1 lg:block">
           {Array.from({ length: 4 }).map((_, i) => (
@@ -181,18 +203,7 @@ export function RecruitersPageSkeleton() {
 export function RecruiterDetailPageSkeleton() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="space-y-3">
-          <Skeleton className="h-4 w-24" />
-          <Skeleton className="h-9 w-56" />
-          <Skeleton className="h-4 w-40" />
-          <div className="flex gap-2">
-            <Skeleton className="h-6 w-16 rounded-full" />
-            <Skeleton className="h-6 w-20 rounded-full" />
-          </div>
-        </div>
-        <Skeleton className="h-16 w-32 rounded-xl" />
-      </div>
+      <PageHeaderSkeleton back actions />
       <Skeleton className="h-32 w-full rounded-2xl" />
       <Skeleton className="h-40 w-full rounded-2xl" />
       <Skeleton className="h-52 w-full rounded-2xl" />
@@ -325,10 +336,7 @@ export function SettingsPageSkeleton() {
 export function NoteBatchResultSkeleton() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      <div className="space-y-2">
-        <Skeleton className="h-9 w-72 max-w-full" />
-        <Skeleton className="h-4 w-full max-w-md" />
-      </div>
+      <PageHeaderSkeleton back />
       <div className="space-y-4">
         <Skeleton className="h-12 w-full rounded-2xl" />
         <Skeleton className="h-48 w-full rounded-2xl" />
@@ -437,10 +445,7 @@ export function CaptureFormSkeleton() {
 export function CapturePageSkeleton() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      <div className="space-y-2">
-        <Skeleton className="h-9 w-40" />
-        <Skeleton className="h-4 w-full max-w-md" />
-      </div>
+      <PageHeaderSkeleton />
       <CaptureFormSkeleton />
     </div>
   );
@@ -450,11 +455,7 @@ export function ChatPageSkeleton() {
   return (
     // Same phone height as the chat page itself, so the load doesn't jump.
     <div className="flex h-[calc(100dvh-11.375rem-env(safe-area-inset-bottom))] min-h-0 flex-col gap-5 md:h-[calc(100dvh-4rem)]">
-      <div className="shrink-0 space-y-2">
-        <Skeleton className="h-9 w-64" />
-        {/* The page hides its subtitle on phones. */}
-        <Skeleton className="hidden h-4 w-80 max-w-full sm:block" />
-      </div>
+      <PageHeaderSkeleton compact />
       <ChatPanelSkeleton className="flex-1" />
     </div>
   );
@@ -466,11 +467,7 @@ export function GraphPageSkeleton() {
   // rearranged itself into something else the moment the data arrived.
   return (
     <div className="-mx-1 space-y-3 md:-mx-2">
-      <div className="space-y-2 px-1">
-        <Skeleton className="h-3 w-24" />
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-4 w-80 max-w-full" />
-      </div>
+      <PageHeaderSkeleton eyebrow compact actions className="px-1" />
       <ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />
     </div>
   );

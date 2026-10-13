@@ -10,6 +10,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { formatReplyRate } from "@/lib/outreach-metrics";
 import { cn } from "@/lib/utils";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { PageHeader } from "@/components/layout/page-header";
 
 export default async function OutreachPage() {
   // Before the paywall on purpose: coming-soon is a stronger fact than "buy a plan to
@@ -54,26 +55,16 @@ export default async function OutreachPage() {
   return (
     <div className="space-y-6">
       <RenderStamp />
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
-            Outreach
-          </h1>
-          <p className="mt-1 text-muted-foreground">
-            Optimize for successful replies — quality ICP, personalized drafts, and logged outcomes
-          </p>
-        </div>
-        <Link
-          href="/outreach/new"
-          className={cn(
-            buttonVariants(),
-            "bg-primary text-primary-foreground hover:bg-primary/90"
-          )}
-        >
-          <Plus className="mr-1 h-4 w-4" />
-          New campaign
-        </Link>
-      </div>
+      <PageHeader
+        title="Outreach"
+        subtitle="Optimize for successful replies — quality ICP, personalized drafts, and logged outcomes"
+        actions={
+          <Link href="/outreach/new" className={buttonVariants()}>
+            <Plus className="mr-1 h-4 w-4" />
+            New campaign
+          </Link>
+        }
+      />
 
       {campaigns.length > 0 && (
         <div className="rounded-2xl border border-border/70 bg-card px-5 py-4">

@@ -1,4 +1,3 @@
-import Link from "next/link";
 import {
   getGmailConnectionStatus,
   getGmailSendIdentity,
@@ -14,6 +13,7 @@ import { getEntitlements } from "@/lib/entitlements";
 import { LockedFeature } from "@/components/locked-feature";
 import { ComposeWorkspace } from "@/components/recruiters/compose-workspace";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { PageHeader } from "@/components/layout/page-header";
 
 export default async function RecruiterComposePage() {
   const { canUseRecruiters } = await getEntitlements(await requireUserId());
@@ -44,21 +44,11 @@ export default async function RecruiterComposePage() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <RenderStamp />
-      <div>
-        <Link
-          href="/recruiters"
-          className="text-sm text-muted-foreground hover:text-foreground"
-        >
-          ← Recruiters
-        </Link>
-        <h1 className="mt-2 font-[family-name:var(--font-display)] text-3xl text-ink">
-          Compose
-        </h1>
-        <p className="mt-1 text-muted-foreground">
-          Draft emails to recruiters you&apos;ve logged, then review and send them from
-          your own Gmail.
-        </p>
-      </div>
+      <PageHeader
+        back={{ href: "/recruiters", label: "Recruiters" }}
+        title="Compose"
+        subtitle="Draft emails to recruiters you’ve logged, then review and send them from your own Gmail."
+      />
 
       <ComposeWorkspace
         recruiters={mine.map((r) => ({

@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, CalendarDays, Clock, Users } from "lucide-react";
+import { CalendarDays, Clock, Users } from "lucide-react";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { formatMeetingDuration } from "@/lib/format-meeting-duration";
 import { requireUserId } from "@/lib/auth";
 import { formatElapsed } from "@/lib/format-elapsed";
 import { speakerLabel } from "@/lib/meeting-digest";
 import { getMeetingTranscript } from "@/lib/meeting-sessions";
+import { PageHeader } from "@/components/layout/page-header";
 
 const SEARCH_MAX = 100;
 
@@ -67,44 +68,42 @@ export default async function MeetingDetailPage({
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <RenderStamp />
-      <Link
-        href={q ? `/meetings?q=${encodeURIComponent(q)}` : "/meetings"}
-        className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="size-3.5" /> Meetings
-      </Link>
-
-      <div className="space-y-2">
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">{title}</h1>
-        <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-          <span className="inline-flex items-center gap-1.5">
-            <CalendarDays className="size-4" />
-            {session.startedAt.toLocaleString(undefined, {
-              weekday: "long",
-              month: "long",
-              day: "numeric",
-              hour: "numeric",
-              minute: "2-digit",
-            })}
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <Clock className="size-4" /> {formatMeetingDuration(session.durationMs)}
-          </span>
-          {guests.length > 0 && (
-            <span className="inline-flex items-center gap-1.5">
-              <Users className="size-4" /> {guests.join(", ")}
+      <PageHeader
+        back={{ href: q ? `/meetings?q=${encodeURIComponent(q)}` : "/meetings", label: "Meetings" }}
+        title={title}
+        subtitle={
+          <>
+            <span className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+              <span className="inline-flex items-center gap-1.5">
+                <CalendarDays className="size-4" />
+                {session.startedAt.toLocaleString(undefined, {
+                  weekday: "long",
+                  month: "long",
+                  day: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <Clock className="size-4" /> {formatMeetingDuration(session.durationMs)}
+              </span>
+              {guests.length > 0 && (
+                <span className="inline-flex items-center gap-1.5">
+                  <Users className="size-4" /> {guests.join(", ")}
+                </span>
+              )}
             </span>
-          )}
-        </p>
-        {session.noteBatchId && (
-          <Link
-            href={`/capture/${session.noteBatchId}`}
-            className="inline-block text-sm font-medium text-primary underline-offset-2 hover:underline"
-          >
-            See what was saved from this meeting →
-          </Link>
-        )}
-      </div>
+            {session.noteBatchId && (
+              <Link
+                href={`/capture/${session.noteBatchId}`}
+                className="mt-2 inline-block text-sm font-medium text-primary underline-offset-2 hover:underline"
+              >
+                See what was saved from this meeting →
+              </Link>
+            )}
+          </>
+        }
+      />
 
       {digest ? (
         <div className="space-y-5 rounded-2xl border border-border/70 bg-card p-6">

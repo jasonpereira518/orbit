@@ -57,6 +57,7 @@ import { isQueuedOffline } from "@/lib/offline-queue-store";
 import { runToastAction } from "@/lib/toast";
 import type { TriageCommand } from "@/lib/triage-keys";
 import { cn } from "@/lib/utils";
+import { PageHeader } from "@/components/layout/page-header";
 
 const SEARCH_DEBOUNCE_MS = 250;
 /** Where the detail pane sits inline rather than in a sheet: Tailwind's `xl`. */
@@ -633,13 +634,11 @@ export function RemindersStage({
 
   return (
     <div data-fill-route className="flex min-h-0 flex-1 flex-col gap-4">
-      <header className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        {/* Calendar sync lives at the foot of the rail now, with its status. */}
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">Reminders</h1>
-        <div className="flex items-center gap-1">
-          <RemindersShortcutsHelp open={helpOpen} onOpenChange={setHelpOpen} />
-        </div>
-      </header>
+      {/* Calendar sync lives at the foot of the rail now, with its status. */}
+      <PageHeader
+        title="Reminders"
+        actions={<RemindersShortcutsHelp open={helpOpen} onOpenChange={setHelpOpen} />}
+      />
 
       <div className="flex min-h-0 flex-1 gap-4 xl:gap-5">
         <aside className="hidden w-52 shrink-0 overflow-y-auto overscroll-contain pb-4 lg:block">

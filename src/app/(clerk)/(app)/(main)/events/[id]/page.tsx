@@ -18,6 +18,7 @@ import {
   matchRosterToNetwork,
 } from "@/actions/events";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { BACK_LINK } from "@/components/layout/page-header";
 
 async function WhoToTalkTo({ eventId }: { eventId: string }) {
   const data = await getWhoToTalkTo(eventId);
@@ -119,11 +120,9 @@ export default async function EventDetailPage({
       <RenderStamp />
       {/* A static destination rather than `router.back()`: an event page is a deep link
           people reach from a fresh tab or a search result, where going back leaves the app. */}
-      <Link
-        href="/events"
-        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
-      >
-        <ArrowLeft className="size-3" aria-hidden /> Back to events
+      <Link href="/events" className={BACK_LINK}>
+        <ArrowLeft className="size-3.5" aria-hidden />
+        Events
       </Link>
 
       <EventHero event={event} />

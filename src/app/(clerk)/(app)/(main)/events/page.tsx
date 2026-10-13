@@ -126,10 +126,7 @@ export default async function EventsPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <RenderStamp />
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <EventsHeader />
-        <AddEventDialog />
-      </div>
+      <EventsHeader actions={<AddEventDialog />} />
 
       {/* Above the list: the point of keeping rosters is the pattern across them, and a
           panel below four screens of events is a panel nobody reads. `fallback={null}`

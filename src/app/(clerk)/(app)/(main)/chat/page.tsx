@@ -3,6 +3,7 @@ import { getSettings } from "@/actions/settings";
 import { AiKeyNotice } from "@/components/ai-key-notice";
 import { ChatPanelLazy } from "@/components/chat/chat-panel-lazy";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { PageHeader } from "@/components/layout/page-header";
 
 /** Ask/chat server actions call AI providers — allow longer serverless runs. */
 export const maxDuration = 60;
@@ -40,16 +41,13 @@ export default async function ChatPage() {
      */
     <div className="flex h-[calc(100dvh-11.375rem-env(safe-area-inset-bottom))] min-h-0 flex-col gap-4 overflow-hidden md:h-[calc(100dvh-4rem)]">
       <RenderStamp />
-      <div className="shrink-0">
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
-          Chat with your network
-        </h1>
-        {/* Hidden on phones: the empty chat card says the same thing, and every line here
-            comes out of the message area. */}
-        <p className="mt-1 hidden text-muted-foreground sm:block">
-          Ask who can help, who to follow up with, or who knows what.
-        </p>
-      </div>
+      {/* `compact`: the empty chat card says the same thing on phones, and every line here
+          comes out of the message area. */}
+      <PageHeader
+        title="Chat with your network"
+        subtitle="Ask who can help, who to follow up with, or who knows what."
+        compact
+      />
       {!settings.hasApiKey && (
         <div className="shrink-0">
           <AiKeyNotice feature="chat" reason={settings.ai.reason} compact />

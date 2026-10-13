@@ -10,6 +10,7 @@ import { requireUserId } from "@/lib/auth";
 import { FEATURE_DENIAL, getEntitlements } from "@/lib/entitlements";
 import { getResumableMeeting } from "@/lib/meeting-sessions";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { PageHeader } from "@/components/layout/page-header";
 
 // Page-level, because it governs the server actions called from this page: summarizing an
 // hour-long meeting is a map-reduce over several model calls. The (main) layout is 60, so
@@ -73,14 +74,14 @@ export default async function CapturePage({
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <RenderStamp />
-      <div>
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">Capture</h1>
-        <p className="mt-1 text-muted-foreground">
-          {contactName
+      <PageHeader
+        title="Capture"
+        subtitle={
+          contactName
             ? `Log an interaction with ${contactName} — or paste notes that mention others too.`
-            : "Notes, a voice memo, a meeting, or a form. Orbit pulls out each person; you review them one card at a time."}
-        </p>
-      </div>
+            : "Notes, a voice memo, a meeting, or a form. Orbit pulls out each person; you review them one card at a time."
+        }
+      />
       <CaptureFlowLazy
         initialJob={job}
         initialJobs={jobs}

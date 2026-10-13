@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatReplyRate } from "@/lib/outreach-metrics";
 import type { SequenceStep } from "@/lib/outreach-types";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { PageHeader } from "@/components/layout/page-header";
 
 export default async function OutreachCampaignPage({
   params,
@@ -47,42 +48,30 @@ export default async function OutreachCampaignPage({
   return (
     <div className="space-y-6">
       <RenderStamp />
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <Link
-            href="/outreach"
-            className="text-sm text-muted-foreground hover:text-foreground"
-          >
-            ← All campaigns
-          </Link>
-          <h1 className="mt-2 font-[family-name:var(--font-display)] text-3xl text-ink">
-            {campaign.name}
-          </h1>
-          <p className="mt-1 max-w-2xl text-muted-foreground">
-            {campaign.audienceQuery}
-          </p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <Badge variant="outline">{campaign.status}</Badge>
-            <Badge variant="outline">{campaign.defaultChannel || "email"}</Badge>
-            <Badge variant="outline">{campaign.tone || "professional"}</Badge>
-            {campaign.replyCta && (
-              <Badge variant="outline">{campaign.replyCta.replaceAll("_", " ")}</Badge>
-            )}
-            {campaign.lastSearchSource === "demo" && (
-              <Badge variant="outline">Demo search</Badge>
-            )}
-            <Badge variant="outline">
-              Reply rate {formatReplyRate(campaign.metrics.successfulReplyRate)}
-            </Badge>
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <CampaignEditor campaign={editorCampaign} />
-          <Link href="/outreach/new" className={buttonVariants({ variant: "outline" })}>
-            New campaign
-          </Link>
-        </div>
-      </div>
+      <PageHeader
+        back={{ href: "/outreach", label: "All campaigns" }}
+        title={campaign.name}
+        subtitle={campaign.audienceQuery}
+        actions={
+          <>
+            <CampaignEditor campaign={editorCampaign} />
+            <Link href="/outreach/new" className={buttonVariants({ variant: "outline" })}>
+              New campaign
+            </Link>
+          </>
+        }
+      >
+        <Badge variant="outline">{campaign.status}</Badge>
+        <Badge variant="outline">{campaign.defaultChannel || "email"}</Badge>
+        <Badge variant="outline">{campaign.tone || "professional"}</Badge>
+        {campaign.replyCta && (
+          <Badge variant="outline">{campaign.replyCta.replaceAll("_", " ")}</Badge>
+        )}
+        {campaign.lastSearchSource === "demo" && <Badge variant="outline">Demo search</Badge>}
+        <Badge variant="outline">
+          Reply rate {formatReplyRate(campaign.metrics.successfulReplyRate)}
+        </Badge>
+      </PageHeader>
 
       <CampaignWorkspace
         campaign={{

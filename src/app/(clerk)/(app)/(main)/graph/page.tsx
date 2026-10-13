@@ -10,6 +10,7 @@ import {
 import { NetworkGraphLazy } from "@/components/graph/network-graph-lazy";
 import { STAGE_GROUND } from "@/lib/graph/stage-layers";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { PageHeader } from "@/components/layout/page-header";
 
 /**
  * The heading paints from the layout immediately; the full-network scan streams in behind
@@ -30,24 +31,17 @@ export default function GraphPage() {
         near enough to read as a third piece of app chrome, when it is a control for this one
         chart and belongs next to it.
       */}
-      <div className="flex shrink-0 items-end justify-between gap-3 px-1">
-        <div>
-          <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-primary">
-            Star chart
-          </p>
-          <h1 className="mt-0.5 font-[family-name:var(--font-display)] text-2xl text-ink md:text-3xl">
-            Constellation
-          </h1>
-          {/* Desktop only. On a phone these lines cost the chart ~62px of height, and the
-              Key in the chart's corner explains the same picture on demand. The stage
-              height below `md` (CONSTELLATION_STAGE_HEIGHT) is sized for its absence. */}
-          <p className="mt-0.5 hidden max-w-xl text-sm text-muted-foreground md:block">
-            You are the sun. Companies and schools form constellations around
-            you — each figure traced by its own people.
-          </p>
-        </div>
-        <ConstellationScopeToggle className="mb-0.5 shrink-0" />
-      </div>
+      {/* `compact`: on a phone the description costs the chart ~62px of height, and the Key
+          in the chart's corner explains the same picture on demand. The stage height
+          (CONSTELLATION_STAGE_HEIGHT) is sized for this header at both breakpoints. */}
+      <PageHeader
+        eyebrow="Star chart"
+        title="Constellation"
+        subtitle="You are the sun. Companies and schools form constellations around you — each figure traced by its own people."
+        compact
+        actions={<ConstellationScopeToggle className="mb-0.5 shrink-0" />}
+        className="items-end px-1"
+      />
       {/*
         The intro sits OUTSIDE the boundary so it outlives every phase swap beneath it — the
         payload streaming, the chunk landing, and every canvas remount thereafter. Inside, it

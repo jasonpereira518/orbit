@@ -9,6 +9,7 @@ import { DossierSkeleton } from "@/components/knowledge/knowledge-skeletons";
 import { PeopleIndex } from "@/components/knowledge/people-index";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { cn } from "@/lib/utils";
+import { PageHeader } from "@/components/layout/page-header";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -39,22 +40,12 @@ export default async function KnowledgePage({
       className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-4"
     >
       <RenderStamp />
-      <div
-        className={cn(
-          "shrink-0 flex-wrap items-end justify-between gap-4",
-          selectedId ? "hidden lg:flex" : "flex"
-        )}
-      >
-        <div>
-          <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
-            Knowledge base
-          </h1>
-          <p className="mt-1 text-muted-foreground">
-            Everyone in your orbit, what Orbit knows about them, and how they fit your goals.
-          </p>
-        </div>
-        <KnowledgeViewSwitch view={view} />
-      </div>
+      <PageHeader
+        title="Knowledge base"
+        subtitle="Everyone in your orbit, what Orbit knows about them, and how they fit your goals."
+        actions={<KnowledgeViewSwitch view={view} />}
+        className={selectedId ? "hidden lg:flex" : undefined}
+      />
 
       {view === "overview" ? <Overview /> : <People selectedId={selectedId} />}
     </div>

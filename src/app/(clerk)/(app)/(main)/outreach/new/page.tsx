@@ -4,6 +4,7 @@ import { getEntitlements } from "@/lib/entitlements";
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { OutreachLocked } from "@/components/locked-feature";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { PageHeader } from "@/components/layout/page-header";
 
 export default async function NewOutreachPage() {
   // See `OutreachPage` for why this comes before the paywall, and `pageVisibilityGate`'s
@@ -17,14 +18,11 @@ export default async function NewOutreachPage() {
   return (
     <div className="space-y-6">
       <RenderStamp />
-      <div>
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
-          New outreach campaign
-        </h1>
-        <p className="mt-1 text-muted-foreground">
-          Define a tight audience, a desired reply, and personalized drafts optimized for response rate
-        </p>
-      </div>
+      <PageHeader
+        back={{ href: "/outreach", label: "All campaigns" }}
+        title="New outreach campaign"
+        subtitle="Define a tight audience, a desired reply, and personalized drafts optimized for response rate"
+      />
       <OutreachWizard />
     </div>
   );

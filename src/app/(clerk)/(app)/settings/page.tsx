@@ -37,6 +37,7 @@ import { cookies } from "next/headers";
 import { after } from "next/server";
 import { captureRadarTimeZone } from "@/lib/radar/digest";
 import { TZ_COOKIE } from "@/lib/reminder-due-bucket";
+import { PageHeader } from "@/components/layout/page-header";
 
 /**
  * Anchor for a card that stands alone. Ids and grouping live in `sections.ts`.
@@ -162,14 +163,10 @@ export default async function SettingsPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-10">
       <RenderStamp />
-      <div>
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
-          Settings
-        </h1>
-        <p className="mt-1 text-muted-foreground">
-          Your account, how Orbit behaves, what it connects to, and your data.
-        </p>
-      </div>
+      <PageHeader
+        title="Settings"
+        subtitle="Your account, how Orbit behaves, what it connects to, and your data."
+      />
 
       <Group group="account" visible={groupVisible("account")}>
         <Section id="settings-profile" hidden={hidden}>

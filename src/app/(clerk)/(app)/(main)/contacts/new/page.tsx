@@ -4,6 +4,7 @@ import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import { LockedFeature } from "@/components/locked-feature";
 import { getPlanOverview } from "@/actions/settings";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { PageHeader } from "@/components/layout/page-header";
 
 export default async function NewContactPage() {
   const { usage } = await getPlanOverview();
@@ -33,18 +34,19 @@ export default async function NewContactPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <RenderStamp />
-      <div>
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
-          Add contact
-        </h1>
-        <p className="mt-1 text-muted-foreground">
-          Quick manual entry. Prefer{" "}
-          <Link href="/capture" className="text-primary underline">
-            AI capture
-          </Link>{" "}
-          for messy notes.
-        </p>
-      </div>
+      <PageHeader
+        back={{ href: "/contacts", label: "Contacts" }}
+        title="Add contact"
+        subtitle={
+          <>
+            Quick manual entry. Prefer{" "}
+            <Link href="/capture" className="text-primary underline">
+              AI capture
+            </Link>{" "}
+            for messy notes.
+          </>
+        }
+      />
       <ContactQuotaNotice used={usage.used} limit={usage.limit} />
       <ContactForm />
     </div>

@@ -25,6 +25,8 @@ import {
 } from "@/lib/guess-gender";
 import type { ContactInput } from "@/actions/contacts";
 import { cn } from "@/lib/utils";
+import { ArrowLeft } from "lucide-react";
+import { BACK_LINK } from "@/components/layout/page-header";
 
 type ChannelProps = {
   email?: string | null;
@@ -368,9 +370,10 @@ export function ContactProfileHero({
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-5">
         <Link
           href="/contacts"
-          className="col-start-1 row-start-1 justify-self-start text-sm text-muted-foreground hover:underline"
+          className={cn(BACK_LINK, "col-start-1 row-start-1 mb-0 justify-self-start")}
         >
-          ← Contacts
+          <ArrowLeft className="size-3.5" aria-hidden />
+          Contacts
         </Link>
 
         <div

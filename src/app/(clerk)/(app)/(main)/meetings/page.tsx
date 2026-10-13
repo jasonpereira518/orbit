@@ -10,6 +10,7 @@ import { requireUserId } from "@/lib/auth";
 import { FEATURE_DENIAL, getEntitlements } from "@/lib/entitlements";
 import { getResumableMeeting } from "@/lib/meeting-sessions";
 import { listMeetingsFor } from "@/lib/meetings-list";
+import { PageHeader } from "@/components/layout/page-header";
 
 export default async function MeetingsPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
   const { q: rawQ } = await searchParams;
@@ -21,7 +22,7 @@ export default async function MeetingsPage({ searchParams }: { searchParams: Pro
     return (
       <div className="mx-auto max-w-3xl space-y-6">
         <RenderStamp />
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">Meetings</h1>
+        <PageHeader title="Meetings" />
         <LockedFeature
           title="Meeting history"
           description={FEATURE_DENIAL.meetings}
@@ -44,14 +45,11 @@ export default async function MeetingsPage({ searchParams }: { searchParams: Pro
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <RenderStamp />
-      <div>
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">Meetings</h1>
-        <p className="mt-1 text-muted-foreground">
-          Every call you&apos;ve recorded. Search by a person, a topic, or something that was said.
-        </p>
-      </div>
-
-      <Form action="/meetings" className="flex gap-2" role="search">
+      <PageHeader
+        title="Meetings"
+        subtitle="Every call you’ve recorded. Search by a person, a topic, or something that was said."
+      >
+        <Form action="/meetings" className="flex w-full gap-2" role="search">
         <div className="relative flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -69,7 +67,8 @@ export default async function MeetingsPage({ searchParams }: { searchParams: Pro
             Clear
           </Link>
         )}
-      </Form>
+        </Form>
+      </PageHeader>
 
       {unfinished && !q && (unfinished.status === "recording" || unfinished.status === "ended") && (
         <Link

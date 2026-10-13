@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { PageHeader } from "@/components/layout/page-header";
 
 function formatAvg(avgRating: number) {
   if (!avgRating) return "—";
@@ -40,54 +41,45 @@ export default async function RecruiterDetailPage({
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <RenderStamp />
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <Link
-            href="/recruiters"
-            className="text-sm text-muted-foreground hover:text-foreground"
-          >
-            ← Recruiters
-          </Link>
-          <h1 className="mt-2 font-[family-name:var(--font-display)] text-3xl text-ink">
-            {recruiter.fullName}
-          </h1>
-          <p className="mt-1 text-muted-foreground">
-            {recruiter.firm || "Unknown firm"}
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {recruiter.specialty.map((s) => (
-              <Badge key={s} variant="secondary">
-                {s}
-              </Badge>
-            ))}
+      <PageHeader
+        back={{ href: "/recruiters", label: "Recruiters" }}
+        title={recruiter.fullName}
+        subtitle={recruiter.firm || "Unknown firm"}
+        actions={
+          <div className="rounded-xl border border-border/70 bg-card px-4 py-3 text-center text-sm">
+            {recruiter.ratingCount > 0 ? (
+              <>
+                <p className="text-2xl font-medium text-ink">
+                  ★ {formatAvg(recruiter.avgRating)}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {recruiter.ratingCount} ratings · {recruiter.logCount} logs
+                </p>
+              </>
+            ) : (
+              <>
+                {/* Aggregates only count links shared into the pool, so this is the
+                    normal state for a recruiter nobody else has shared — not an error. */}
+                <p className="text-sm font-medium text-muted-foreground">
+                  No community ratings
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {link?.personalRating
+                    ? `You rated them ${link.personalRating}/5`
+                    : "Nobody has shared a rating yet"}
+                </p>
+              </>
+            )}
           </div>
-        </div>
-        <div className="rounded-xl border border-border/70 bg-card px-4 py-3 text-center text-sm">
-          {recruiter.ratingCount > 0 ? (
-            <>
-              <p className="text-2xl font-medium text-ink">
-                ★ {formatAvg(recruiter.avgRating)}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {recruiter.ratingCount} ratings · {recruiter.logCount} logs
-              </p>
-            </>
-          ) : (
-            <>
-              {/* Aggregates only count links shared into the pool, so this is the
-                  normal state for a recruiter nobody else has shared — not an error. */}
-              <p className="text-sm font-medium text-muted-foreground">
-                No community ratings
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {link?.personalRating
-                  ? `You rated them ${link.personalRating}/5`
-                  : "Nobody has shared a rating yet"}
-              </p>
-            </>
-          )}
-        </div>
-      </div>
+        }
+      >
+        {recruiter.specialty.length > 0 &&
+          recruiter.specialty.map((s) => (
+            <Badge key={s} variant="secondary">
+              {s}
+            </Badge>
+          ))}
+      </PageHeader>
 
       <div className="rounded-2xl border border-border/70 bg-card p-5">
         <h2 className="font-[family-name:var(--font-display)] text-lg text-ink">
