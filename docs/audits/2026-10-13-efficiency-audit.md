@@ -15,9 +15,40 @@ before/after numbers. Previous passes: nav-speed #222–#226, perceived loading 
 - **Caveat:** the machine was on battery with load average 30–177 from other sessions. Byte counts,
   statement counts, request counts and depth are reliable. Millisecond timings are inflated; only
   interleaved A/B comparisons are used for before/after claims.
-- **Production:** `iad1` (beside Neon us-east-1), first `/api/health` 1.26 s, then 0.16 s. The
-  signed-in production tour and `/admin/analytics` "Page load speed" (field p50/p75/p95) are
-  **pending a Browser-pane sign-in**; this report is updated when they land.
+- **Production:** `iad1` (beside Neon us-east-1); first `/api/health` 1.26 s, then 0.16 s. The
+  signed-in tour (Oct 13, one admin account) and `/admin/analytics` field data are below.
+
+## Production field data (`page_views.load_ms`, `/admin/analytics`, Oct 13)
+
+| Route | Kind | n | p50 | p75 | p95 |
+|---|---|---|---|---|---|
+| /dashboard | in-app click | 76 | **524 ms** | **784 ms** | 1.5 s |
+| /capture | in-app click | 51 | 320 ms | 398 ms | 703 ms |
+| /chat | in-app click | 31 | 312 ms | 329 ms | 859 ms |
+| /settings | in-app click | 24 | 282 ms | 423 ms | 1.0 s |
+| /radar | in-app click | 5 | 312 ms | 321 ms | 1.4 s |
+| /contacts | in-app click | 59 | 64 ms | 325 ms | 397 ms |
+| /graph | in-app click | 39 | 49 ms | 323 ms | 1.0 s |
+| /reminders | in-app click | 36 | 27 ms | 36 ms | 357 ms |
+| /contacts/duplicates | in-app click | 2 | 3.0 s | 3.8 s | 4.5 s |
+| / (landing) | full load | 200 | 1.5 s | **3.6 s** | **9.9 s** |
+| /dashboard | full load | 34 | 1.7 s | 2.7 s | 4.8 s |
+| /graph | full load | 5 | 4.4 s | 4.9 s | 5.3 s |
+| /settings | full load | 3 | 2.8 s | 4.2 s | 5.3 s |
+
+What the field data says:
+- **Capture, chat, settings and radar always show a skeleton.** Their p50 of ~300 ms is React's
+  hold, so they're never prefetched in time.
+- **Dashboard is the slowest in-app page by far.**
+- **The landing page's tail (p95 9.9 s on the busiest route) is a separate, unaudited problem.**
+
+Live tour, warm vs first hit (TTFB / complete):
+- Dashboard: 319–582 / 789–841 ms warm, against 895 ms / 3.5 s on the first hit.
+- Other app pages: 125–234 ms TTFB warm, against 0.6–1.0 s on each route's first hit (cold
+  instance).
+- A cold hard load of /dashboard reached its load event at 6.0 s, and no mount effect ran before it.
+  Warm, the same load is interactive at ~635 ms.
+- The pulse double-fire reproduces in prod: two action POSTs at 625 and 822 ms.
 
 ## Scorecard
 
