@@ -1,5 +1,5 @@
 import { Plus } from "lucide-react";
-import { CREDIT_PACK_CREDITS } from "@/lib/stripe-config";
+import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_LABEL } from "@/lib/stripe-config";
 import { FREE_CONTACT_LIMIT, FREE_STARTER_CREDITS, PLAN_CONFIG, formatPlanPrice } from "@/lib/plans/plan-config";
 
 const free = PLAN_CONFIG.free;
@@ -29,11 +29,11 @@ const FAQ: Array<{ q: string; a: string }> = [
   },
   {
     q: "What happens when my AI credits run out?",
-    a: `AI pauses — Orbit never charges you automatically. Your monthly credits come back when your plan renews (on the Free Plan, on the 1st of each month); to keep going before then, add your own key, upgrade, or add a $5 pack. The Free Plan’s ${FREE_STARTER_CREDITS} starter credits are used once and do not come back. Everything else in Orbit keeps working.`,
+    a: `AI pauses — Orbit never charges you automatically. Your monthly credits come back when your plan renews (on the Free Plan, on the 1st of each month); to keep going before then, add your own key, upgrade, or add a ${CREDIT_PACK_PRICE_LABEL} pack. The Free Plan’s ${FREE_STARTER_CREDITS} starter credits are used once and do not come back. Everything else in Orbit keeps working.`,
   },
   {
     q: "How do credit packs work?",
-    a: `A pack is ${CREDIT_PACK_CREDITS} credits for $5, bought whenever you choose, on the Free Plan, Pro or Max. Pack credits are used only after your monthly credits run out, and they roll over from month to month. If a pack's payment is refunded or disputed, its unused credits are removed.`,
+    a: `A pack is ${CREDIT_PACK_CREDITS} credits for ${CREDIT_PACK_PRICE_LABEL}, bought whenever you choose, on the Free Plan, Pro or Max. Pack credits are used only after your monthly credits run out, and they roll over from month to month. If a pack's payment is refunded or disputed, its unused credits are removed.`,
   },
   {
     q: "Is there annual billing?",

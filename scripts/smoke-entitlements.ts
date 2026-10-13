@@ -122,6 +122,11 @@ function matrix() {
   check("the API unlocks on Max, never Lifetime", unlockPlanFor("api") === "max");
   check("recruiters unlock on Pro", unlockPlanFor("recruiters") === "orbit");
   check("the contact cap unlocks on Pro", unlockPlanFor("contacts") === "orbit");
+  check("packs and hosted AI unlock on Free, which already has them", unlockPlanFor("creditPacks") === "free" && unlockPlanFor("hostedAi") === "free");
+  check("the packs denial offers no pack and points at a key",
+    !/Orbit Pro|Orbit Max/.test(FEATURE_DENIAL.creditPacks) && /AI key/.test(FEATURE_DENIAL.creditPacks), FEATURE_DENIAL.creditPacks);
+  check("hostedAi has no denial: every plan has it", !("hostedAi" in FEATURE_DENIAL));
+  check("a feature every plan has reads \"every plan\", not Pro and Max", /every plan/.test(FEATURE_DENIAL.extension), FEATURE_DENIAL.extension);
   check("no denial names Lifetime", Object.values(FEATURE_DENIAL).every((m) => !/Lifetime/.test(m)));
   check("the API denial offers Max only", FEATURE_DENIAL.api.startsWith("The Orbit API and webhooks are available on Orbit Max."));
 }

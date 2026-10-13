@@ -35,8 +35,8 @@ import {
 import {
   AI_ACCESS_COPY,
   BACKGROUND_RESERVE_MESSAGE,
-  FREE_LIMIT_MESSAGE,
   MANAGED_PROVIDER_FAILURE_MESSAGE,
+  refusalCopyFor,
 } from "@/lib/ai-access-copy";
 import { JEV_MODEL } from "@/lib/ai-models";
 import { deepgramEnabled } from "@/lib/deepgram";
@@ -686,7 +686,7 @@ export class AiAccess {
       const balance = await getCreditBalance(this.userId, this.plan, this.settings, undefined, { ensure: false });
       if (balance.spendable > 0) throw this.refusal("managed_unavailable", BACKGROUND_RESERVE_MESSAGE);
     }
-    throw this.refusal("managed_limit", this.plan === "free" ? FREE_LIMIT_MESSAGE : undefined);
+    throw this.refusal("managed_limit", refusalCopyFor("managed_limit", this.plan));
   }
 
   /** A grant for "the user's model": chat, capture, drafts, briefs, OCR. */

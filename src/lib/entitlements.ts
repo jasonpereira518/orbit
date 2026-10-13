@@ -220,12 +220,19 @@ export function entitlementsFromSettings(userId: string, row: BillingColumns): E
   return entitlementsForPlan(plan, source);
 }
 
-/** "on Orbit Pro and Orbit Max" or "on Orbit Max" — never Lifetime, which is not sold. */
+/** "on every plan", "on Orbit Pro and Orbit Max" or "on Orbit Max" — never Lifetime, which is not sold. */
 function availableOn(feature: FeatureKey) {
-  return unlockPlanFor(feature) === "orbit" ? "Orbit Pro and Orbit Max" : "Orbit Max";
+  const from = unlockPlanFor(feature);
+  return from === "free" ? "every plan" : from === "orbit" ? "Orbit Pro and Orbit Max" : "Orbit Max";
 }
 
-export const FEATURE_DENIAL: Record<FeatureKey, string> = {
+/**
+ * Every feature a plan can be refused. `hostedAi` is not one: every plan has it (it is credits,
+ * not a gate), so a denial for it could never be shown.
+ */
+export type DeniableFeature = Exclude<FeatureKey, "hostedAi">;
+
+export const FEATURE_DENIAL: Record<DeniableFeature, string> = {
   outreach: `Outreach is available on ${availableOn("outreach")}.`,
   hostedSending: `Sending email and SMS on Orbit's credits is available on ${availableOn("hostedSending")}.`,
   hostedEnrichment: `Contact enrichment on Orbit's Apollo key is available on ${availableOn("hostedEnrichment")}. On the Free Plan, add your own Apollo key in Settings.`,
@@ -234,8 +241,8 @@ export const FEATURE_DENIAL: Record<FeatureKey, string> = {
   sync: `Calendar subscriptions and event sources are available on ${availableOn("sync")}.`,
   extension: `The Orbit extension is available on ${availableOn("extension")}.`,
   meetings: `Meeting transcription is available on ${availableOn("meetings")}.`,
-  hostedAi: `AI on Orbit's keys is included on ${availableOn("hostedAi")}.`,
-  creditPacks: `Credit packs are available on ${availableOn("creditPacks")}.`,
+  // Only Lifetime is ever refused a pack (Free, Pro and Max can all buy one), and it is not sold.
+  creditPacks: "Credit packs aren’t available on your plan — add your own AI key in Settings to keep going",
   extraConnections: EXTRA_CONNECTION_DENIAL,
 };
 
@@ -261,7 +268,7 @@ const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {
  * what someone wanted and could not reach — so the pricing question depends entirely on it.
  * `recordGateHit` swallows its own failures, so this cannot turn a paywall into a 500.
  */
-export async function requireEntitlement(userId: string, feature: FeatureKey) {
+export async function requireEntitlement(userId: string, feature: DeniableFeature) {
   const ent = await getEntitlements(userId);
   if (ent[FEATURE_FLAG[feature]] !== true) {
     await recordGateHit({ userId, feature, plan: ent.plan });

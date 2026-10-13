@@ -227,13 +227,14 @@ export function planHasFeature(plan: Plan, feature: FeatureKey): boolean {
 }
 
 /**
- * The cheapest plan someone can BUY that unlocks `feature` — what an upgrade prompt
- * should offer, and what `gate_events.unlock_plan` records. Lifetime is never the answer:
- * it is not for sale. The free contact cap unlocks on Pro.
+ * The cheapest plan that unlocks `feature` — what an upgrade prompt should offer, and what
+ * `gate_events.unlock_plan` records. Free counts: a feature Free already has (packs, hosted
+ * AI, the extension) unlocks on "free", not on a paid plan. Lifetime is never the answer: it
+ * is not for sale. The free contact cap unlocks on Pro.
  */
-export function unlockPlanFor(feature: FeatureKey | "contacts"): PurchasablePlan {
+export function unlockPlanFor(feature: FeatureKey | "contacts"): "free" | PurchasablePlan {
   if (feature === "contacts") return "orbit";
-  return PURCHASABLE_PLANS.find((plan) => PLAN_CONFIG[plan].features[feature]) ?? "max";
+  return (["free", ...PURCHASABLE_PLANS] as const).find((plan) => PLAN_CONFIG[plan].features[feature]) ?? "max";
 }
 
 /** The refusal for a Free account's second Google or Microsoft account. */

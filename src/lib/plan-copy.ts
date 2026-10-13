@@ -8,6 +8,7 @@ import {
   type Plan,
   type PurchasablePlan,
 } from "@/lib/plans/plan-config";
+import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_LABEL } from "@/lib/stripe-config";
 
 export type { BillingPeriod } from "@/lib/plans/plan-config";
 export { ANNUAL_SAVING_PERCENT } from "@/lib/plans/plan-config";
@@ -106,7 +107,7 @@ export const PLAN_COPY: PlanCopy[] = [
       "Everything in the Free Plan, uncapped",
       "Unlimited contacts",
       `AI included: ${pro.monthlyCredits} credits a month`,
-      "Top up with $5 packs of 250 credits",
+      `Top up with ${CREDIT_PACK_PRICE_LABEL} packs of ${CREDIT_PACK_CREDITS} credits`,
       "Recruiter tracking",
       "Connect both Google and Microsoft",
       "Calendar subscriptions",

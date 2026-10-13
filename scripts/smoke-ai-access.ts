@@ -73,8 +73,10 @@ import {
   AI_ACCESS_COPY,
   BACKGROUND_RESERVE_MESSAGE,
   FREE_LIMIT_MESSAGE,
+  MANAGED_LIMIT_MESSAGES,
   MANAGED_PROVIDER_FAILURE_MESSAGE,
   aiDenialFromMessage,
+  refusalCopyFor,
 } from "../src/lib/ai-access-copy";
 import { getCreditBalance } from "../src/lib/credits/ledger";
 import { PLAN_CONFIG } from "../src/lib/plans/plan-config";
@@ -462,6 +464,10 @@ function purePolicy() {
       isMissingAiApiKeyError(copy),
     );
   }
+  for (const [plan, copy] of Object.entries(MANAGED_LIMIT_MESSAGES)) {
+    check(`${plan}: out-of-credits copy passes through, reads as managed_limit and flips the notice`,
+      friendlyError(new Error(copy), "x") === copy && aiDenialFromMessage(copy) === "managed_limit" && isMissingAiApiKeyError(copy), copy);
+  }
   check("the managed-failure copy passes through and reads as managed_unavailable",
     friendlyError(new Error(MANAGED_PROVIDER_FAILURE_MESSAGE), "x") === MANAGED_PROVIDER_FAILURE_MESSAGE &&
       aiDenialFromMessage(MANAGED_PROVIDER_FAILURE_MESSAGE) === "managed_unavailable");
@@ -681,6 +687,17 @@ async function realGate() {
   check("…which the client reads back as managed_limit", aiDenialFromMessage(FREE_LIMIT_MESSAGE) === "managed_limit");
   check("…and the status agrees", (await status(U.freeNone)) === "false:managed_limit:managed");
 
+  console.log("\nMax and Lifetime at zero: each hears only what its plan can do");
+  for (const [user, plan] of [[U.maxNone, "max"], [U.lifetimeNone, "lifetime"]] as const) {
+    await db.update(creditGrants).set({ microsRemaining: 0 }).where(eq(creditGrants.userId, user));
+    r = await lastSent(() => json(user, "chat.answer"));
+    check(`${plan}: refused with its own plan's out-of-credits words, nothing sent`,
+      isAiAccessError(r.err) && (r.err as AiAccessError).reason === "managed_limit" &&
+        (r.err as Error).message === MANAGED_LIMIT_MESSAGES[plan] && r.count === 0, r.err);
+  }
+  check("…Max is offered a pack and never Max", /pack/.test(MANAGED_LIMIT_MESSAGES.max) && !/move to Max/.test(MANAGED_LIMIT_MESSAGES.max));
+  check("…Lifetime is offered no pack", !/pack/i.test(MANAGED_LIMIT_MESSAGES.lifetime));
+
   console.log("\nA grant cannot be forged");
   const forged = Object.freeze({ provider: "gemini", model: "x", source: "managed", keyOwner: "orbit", operation: "x" }) as AiGrant;
   let threw = false;
@@ -753,7 +770,7 @@ async function transitions() {
   r = await lastSent(() => completeJson(U.capped, { system: "Return JSON.", user: "hi", operation: "chat.answer", access: sharedCapped }));
   check("…and on an access opened before (one per request), still refused per call",
     isAiAccessError(r.err) && (r.err as AiAccessError).reason === "managed_limit" && r.count === 0, r.err);
-  check("…with words that say so", friendlyError(r.err, "x") === AI_ACCESS_COPY.managed_limit);
+  check("…with words that say so (a Pro account's: pack or Max)", friendlyError(r.err, "x") === refusalCopyFor("managed_limit", "orbit") && /move to Max/.test(friendlyError(r.err, "x")));
   check("…and the UI is told the same", (await getAiAccessStatus(U.capped)).reason === "managed_limit");
 
   console.log("\nOnly the call already in flight gets through");
