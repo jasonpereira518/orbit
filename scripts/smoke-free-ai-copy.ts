@@ -6,7 +6,7 @@
  *
  * Run: npx tsx scripts/smoke-free-ai-copy.ts
  */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { FREE_STARTER_CREDITS, PLAN_CONFIG } from "../src/lib/plans/plan-config";
 import { AI_POSITIONING, PLAN_COPY } from "../src/lib/plan-copy";
 
@@ -92,6 +92,17 @@ for (const file of [
   const claims = byokClaims(file, readFileSync(file, "utf8"));
   check(`${file}: no "AI needs your key" claim`, claims.length === 0, claims);
 }
+
+// Free connects ONE of Google or Outlook (PLAN_CONFIG.free.googleMicrosoftConnections); "both ...
+// every plan" is false. Pure text scan of src, comments included.
+const BOTH_EVERY_PLAN = /Google (and|&) (Outlook|Microsoft)[^.\n]{0,60}every plan/i;
+check("the Free connection claim is checked as written", BOTH_EVERY_PLAN.test("Connecting Google and Outlook is free on every plan"));
+const walk = (dir: string): string[] =>
+  readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? walk(`${dir}/${e.name}`) : /\.(tsx?|md)$/.test(e.name) ? [`${dir}/${e.name}`] : [],
+  );
+const bothEveryPlan = walk("src").filter((f) => BOTH_EVERY_PLAN.test(readFileSync(f, "utf8").replace(/\s+/g, " ")));
+check("nothing under src says Google and Outlook are both free on every plan", bothEveryPlan.length === 0, bothEveryPlan);
 
 if (failures) {
   console.error(`\n${failures} failure(s)`);

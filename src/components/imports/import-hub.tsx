@@ -858,7 +858,7 @@ export function ImportHub({
                   "Networking meetings become logged interactions",
                   "New people from invites land in your contacts",
                 ]}
-                note="Connecting Google and Outlook is free on every plan, and so are LinkedIn imports and one-off calendar files."
+                note="Free connects one of Google or Outlook; Pro and Max connect both. LinkedIn imports and one-off calendar files are free on every plan."
               />
             )}
           </ImportSourceRow>
