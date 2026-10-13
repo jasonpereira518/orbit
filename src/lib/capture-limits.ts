@@ -73,17 +73,24 @@ export function formatUploadSize(bytes: number) {
 }
 
 /**
- * The largest import payload the client will send to a server action.
+ * The most import text one Server Action call can carry: 90% of the platform cap.
  *
- * Next does NOT reject an oversized action body — it keeps the first N bytes, logs a
- * warning server-side, and hands the action a truncated payload. A 44.7MB LinkedIn
- * archive therefore died inside Next's own deserializer with "Unterminated string in
- * JSON at position 33544733" and a 500, while the file picker still showed the file.
+ * Import text travels as a JSON-serialised action argument, and quotes, newlines and
+ * non-ASCII escape to more bytes than the raw text, so the cap itself is not the limit.
+ * Vercel refuses a bigger request before any of our code runs (a plain-text 413), which the
+ * browser reports as an unreadable file; this check says so first, in words.
  *
- * Set below `CAPTURE_BODY_SIZE_LIMIT` (32MB) because CSV text is serialized into a JSON
- * action payload, which adds escaping overhead on top of the raw bytes.
+ * ponytail: no chunked upload for import text yet. If real users hit this, generalise the
+ * staged-rows upload in `src/lib/chat-import-preview.ts` (beginStaging / appendStagedRows /
+ * startStaged) instead of raising the number.
  */
-export const MAX_IMPORT_PAYLOAD_BYTES = 24 * 1024 * 1024;
+export const IMPORT_TEXT_MAX_BYTES = Math.floor(PLATFORM_REQUEST_BODY_MAX_BYTES * 0.9);
+
+/** True when `text` (measured as UTF-8 bytes, what is actually sent) fits one request. */
+export function fitsInOneRequest(text: string) {
+  // Characters never outnumber bytes, so a long string is over before it is encoded.
+  return text.length <= IMPORT_TEXT_MAX_BYTES && new TextEncoder().encode(text).length <= IMPORT_TEXT_MAX_BYTES;
+}
 
 export function formatImportSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;

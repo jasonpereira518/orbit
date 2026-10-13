@@ -20,7 +20,9 @@ import {
 } from "@/actions/chat-imports";
 import type { ChatConversationRowPayload } from "@/db/schema";
 import { MAX_APPEND_ROWS } from "@/lib/conversations/types";
+import { fitsInOneRequest } from "@/lib/capture-limits";
 import { UserFacingError, isUserFacingError } from "@/lib/errors";
+import { IMPORT_COPY } from "@/lib/imports/import-copy";
 import type { PickedDriveFile } from "@/lib/imports/drive-triage";
 import { type ImportProgressState } from "@/components/imports/import-utils";
 import {
@@ -629,6 +631,17 @@ function importStarter(
     const job = pending;
     pending = null;
     if (!job) throw new Error("This import was already started.");
+    // The preview already refused anything this big; this covers the cards, which hold their
+    // own copy of the text, and keeps every text-carrying kind from reaching a 413.
+    const text =
+      job.kind === "connections" || job.kind === "messages"
+        ? job.csvText
+        : job.kind === "contacts_file" || job.kind === "calendar"
+          ? job.text
+          : null;
+    if (text != null && !fitsInOneRequest(text)) {
+      throw new UserFacingError(IMPORT_COPY.tooLarge);
+    }
     switch (job.kind) {
       case "connections":
         return startLinkedInImport(job.csvText, job.fileName, job.ids);

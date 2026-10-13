@@ -213,6 +213,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-focus-fit": "pure",
   "smoke-import-rank": "pure",
   "smoke-import-errors": "pure",
+  "smoke-import-size-guard": "pure",
   "smoke-import-history-render": "pure",
   "smoke-import-sources": "pure",
   "smoke-import-queue": "pure",
