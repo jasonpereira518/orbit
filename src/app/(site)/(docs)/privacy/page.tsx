@@ -26,7 +26,7 @@ const LAST_UPDATED = LEGAL_LAST_UPDATED;
 
 const HIGHLIGHTS: readonly Highlight[] = [
   { icon: ShieldCheck, title: "Your network isn't a product", body: "Orbit doesn't sell personal information or run ad pixels, and its traffic analytics set no cookies." },
-  { icon: Sparkles, title: "AI runs on your key or Orbit’s", body: "You choose the provider, and can supply your own key; the Free Plan, Orbit Pro and Orbit Max include AI on Orbit’s accounts. Most AI features run only when you use them; a few, like deriving LinkedIn timeline events, run automatically in the background on the same key or account. Settings shows what the last 30 days cost." },
+  { icon: Sparkles, title: "AI runs on your key or Orbit’s", body: "You choose the provider, and can supply your own key; the Free Plan, Orbit Pro, Orbit Max and Orbit Lifetime include AI on Orbit’s accounts. Most AI features run only when you use them; a few, like deriving LinkedIn timeline events, run automatically in the background on the same key or account. Settings shows what the last 30 days cost." },
   { icon: Download, title: "Export on demand", body: "One control in Settings produces a JSON download of your core Orbit data, on every plan including Free." },
   { icon: Trash2, title: "Deletion is real deletion", body: "Delete some or all of your data from Settings, or delete your account — which erases your data, keys and sign-in and cancels any subscription." },
 ];
@@ -64,14 +64,14 @@ const PROCESSORS = [
   { name: "Gravatar", badge: "Automatic", body: "Checks for a public avatar for a contact's email. Receives a one-way hash of the address, not the address." },
   { name: "Deepgram", badge: "Always", body: "Speech-to-text for voice notes, meetings and the chat microphone. Receives your audio and a list of your recent contact names so it spells them correctly. Every request sets Deepgram's zero-retention flag, which Deepgram documents as not storing your audio, text, transcripts or synthesized audio after the response is returned. Each request also carries a label so Orbit can check its own bill: a recording's own id for a meeting, and for everything else a random value Orbit generated for your account — not your name, your email or your account id. Labels sit in Deepgram's usage records, which the zero-retention flag does not cover; deleting your data in Settings replaces yours." },
   { name: "Stripe", badge: "Optional", body: "Orbit Pro, Orbit Max and credit pack payments. Card details go to Stripe directly; Orbit stores a customer reference." },
-  { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider you choose in Settings: on your own key, or (for the Free Plan’s allowance and included AI on Orbit Pro and Orbit Max) on Orbit's account with that provider." },
+  { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider you choose in Settings: on your own key, or (for the Free Plan’s allowance and included AI on Orbit Pro, Orbit Max and Orbit Lifetime) on Orbit's account with that provider." },
   { name: "TypeSafe", badge: "Optional", body: "Jev, a decision model, for yes-or-no and ranking steps: spotting recruiters during a mail scan you start, choosing which contacts a chat answer draws on, telling two contact records apart before they are merged, reading captured notes, judging which calendar events were meetings with people, and deciding whether a note or message has anything in it worth sending to your chat model. Only if you add your own TypeSafe key in Settings." },
   { name: "Google", badge: "Optional", body: "Gmail, Contacts and Calendar, one permission per feature you turn on. See Google user data." },
   { name: "Microsoft", badge: "Optional", body: "Outlook, one permission per feature you turn on: your contacts to import, your calendar to log meetings with people you know, your mail for the recruiter scan you start, and sending the email you write from your own address. See What Orbit collects and The recruiter scan." },
   { name: "Eventbrite", badge: "Optional", body: "Guest lists of events you host, through Eventbrite sign-in." },
   { name: "Luma", badge: "Optional", body: "Guest lists of events you host (with your Luma API key), and your personal Luma calendar link if you paste it." },
   { name: "Partiful", badge: "Optional", body: "Your personal Partiful calendar link, if you paste it, to list events you are going to." },
-  { name: "Apollo", badge: "Optional", body: "People search and contact enrichment, with your Apollo key, or Orbit's on Pro, Max and Lifetime (up to your plan's monthly enrichments)." },
+  { name: "Apollo", badge: "Optional", body: "People search and contact enrichment, with your own Apollo key. Orbit does not run it on an Apollo account of its own." },
   { name: "Resend", badge: "Optional", body: "Email Orbit sends on its own behalf: the waitlist confirmation and outreach campaigns you send from Orbit. Email you write to a person goes from your own Gmail or Outlook instead." },
   { name: "Twilio", badge: "Optional", body: "SMS outreach you send, through the Twilio account you connect." },
 ] as const;
@@ -269,7 +269,7 @@ export default function PrivacyPage() {
             &ldquo;recruiter&rdquo;, &ldquo;talent acquisition&rdquo; and &ldquo;open role&rdquo;,
             excluding newsletters and mailing lists. For each likely recruiter, up to 400 a scan, it
             sends the subject and text of up to five of their most recent messages, with their name
-            and address, to the AI provider you chose, on your key. The model decides whether the
+            and address, to the AI provider you chose, on your key or Orbit&rsquo;s included AI. The model decides whether the
             sender is a recruiter and writes a short summary of the conversation.
           </p>
           <p>
@@ -277,7 +277,7 @@ export default function PrivacyPage() {
             same way on Outlook mail: it needs the read-only mail permission, which Orbit asks for
             only when you press Allow mail access on the Recruiters page. It searches your mailbox
             for the same terms, skips Junk Email and Deleted Items, and sends the same text to the
-            same AI provider on your key. What is kept is the same too, apart from the thread id,
+            same AI provider, on your key or Orbit&rsquo;s included AI. What is kept is the same too, apart from the thread id,
             which Outlook does not provide. Message bodies are not stored.
           </p>
           <p>

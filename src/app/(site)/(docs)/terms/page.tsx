@@ -13,7 +13,7 @@ import {
 import type { TocItem } from "@/components/marketing/doc-toc";
 import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
 import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_CENTS, FOUNDING_AMOUNT_OFF_CENTS, FOUNDING_MONTHS } from "@/lib/stripe-config";
-import { formatPlanPrice } from "@/lib/plans/plan-config";
+import { PLAN_CONFIG, formatPlanPrice } from "@/lib/plans/plan-config";
 import { LEGAL_LAST_UPDATED } from "@/lib/legal";
 import { TIMELINE_DAILY_CONTACT_CAP } from "@/lib/timeline-cost";
 
@@ -312,8 +312,9 @@ export default function TermsPage() {
             other allowances listed on the pricing page. Current prices are on
             the <Link href="/pricing">pricing page</Link> and apply from the
             moment you subscribe. Orbit Lifetime is no longer sold. Accounts
-            that already have it keep it, with every Orbit Max feature and AI on
-            their own key.
+            that already have it keep it, with every Orbit Max feature and{" "}
+            {PLAN_CONFIG.lifetime.monthlyCredits} AI credits a month, but not
+            credit packs; they can still add their own key.
           </p>
           <ul>
             <li>

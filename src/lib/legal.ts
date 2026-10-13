@@ -10,7 +10,7 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
  * move and these two do not, so the rule above is enforced rather than merely written down.
  */
 export const TERMS_VERSION = "2026-10-11";
-export const LEGAL_LAST_UPDATED = "October 11, 2026";
+export const LEGAL_LAST_UPDATED = "October 13, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.
@@ -81,7 +81,7 @@ export const GOOGLE_SCOPE_DISCLOSURES: readonly {
   {
     scope: GOOGLE_SCOPES.gmailRead,
     permission: "Read your email (gmail.readonly)",
-    use: "Recruiter scan: finds recruiting conversations and summarizes each with your own AI key. Confirmation emails: reads mail from Luma, Partiful, Eventbrite, Meetup and Posh to find events you registered for. Replying in a thread: when you compose an email to a contact, finds your latest message with them so you can reply in that conversation, reading only its Message-ID, subject, date and thread. Sending: checks your Sent folder so a retried send is never delivered twice. Message bodies are never stored.",
+    use: "Recruiter scan: finds recruiting conversations and summarizes each with your AI key or Orbit's included AI. Confirmation emails: reads mail from Luma, Partiful, Eventbrite, Meetup and Posh to find events you registered for. Replying in a thread: when you compose an email to a contact, finds your latest message with them so you can reply in that conversation, reading only its Message-ID, subject, date and thread. Sending: checks your Sent folder so a retried send is never delivered twice. Message bodies are never stored.",
     askedWhen: "Connect Gmail on Recruiters, or turn on Confirmation emails on Events",
   },
   {
