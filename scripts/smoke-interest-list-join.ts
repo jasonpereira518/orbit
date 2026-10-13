@@ -31,6 +31,9 @@ import {
 } from "../src/lib/interest-list";
 import { joinInterestListCore, saveInterestListNameCore, type JoinContext } from "../src/lib/interest-list-join";
 import type { EmailLinks } from "../src/lib/interest-list-email";
+import { RATE_LIMITS } from "../src/lib/rate-limit";
+import { setBotCheckForTests } from "../src/lib/bot-check";
+import { joinInterestList, saveInterestListName } from "../src/actions/interest-list";
 
 const PREFIX = "smoke-join-";
 
@@ -338,12 +341,90 @@ async function slugPath() {
   check("…and it is stored", (await rowFor(`${PREFIX}legacy-slug@example.test`))?.referralSlug === `${PREFIX}legacy-slug`);
 }
 
+/**
+ * The global welcome cap: one bucket for every sender, so a flood of fresh addresses from
+ * many IPs cannot turn the join into a mail cannon. Past it the row and the ticket still
+ * land; only the mail is dropped. The bucket is real shared state, so it is put back.
+ */
+async function welcomeCapPath() {
+  console.log("\nwelcome cap…");
+  const db = await getDb();
+  const bucket = "interest.welcome:global";
+  const [prior] = await db.select().from(rateLimitBuckets).where(eq(rateLimitBuckets.bucket, bucket));
+  const sent: string[] = [];
+  const ctx: JoinContext = {
+    ip: "smoke-cap",
+    attribution: null,
+    sendWelcome: async (email) => {
+      sent.push(email);
+    },
+    sendTier: async () => undefined,
+  };
+  try {
+    await db
+      .insert(rateLimitBuckets)
+      .values({ bucket, windowStartedAt: new Date(), count: RATE_LIMITS.interestWelcome.limit })
+      .onConflictDoUpdate({
+        target: rateLimitBuckets.bucket,
+        set: { windowStartedAt: new Date(), count: RATE_LIMITS.interestWelcome.limit },
+      });
+    const r = await joinInterestListCore(
+      { email: `${PREFIX}capped@example.test`, website: "", elapsedMs: MIN_FILL_MS + 10 },
+      ctx
+    );
+    const row = (await db.select().from(interestListSignups).where(eq(interestListSignups.email, `${PREFIX}capped@example.test`)))[0];
+    check("a join past the welcome cap still answers ok", r.ok);
+    check("…and still lands its row", Boolean(row));
+    check("…with its real ticket", r.ok && r.ticket.shareToken === row?.shareToken);
+    check("…but sends no welcome", sent.length === 0, sent.join(","));
+  } finally {
+    if (prior) {
+      await db.update(rateLimitBuckets).set({ windowStartedAt: prior.windowStartedAt, count: prior.count }).where(eq(rateLimitBuckets.bucket, bucket));
+    } else {
+      await db.delete(rateLimitBuckets).where(eq(rateLimitBuckets.bucket, bucket));
+    }
+  }
+}
+
+/**
+ * BotID's verdict, checked in the actions before anything else. A bot gets the same answer
+ * a rate-limited caller does — a plausible ticket, a quiet ok — and nothing is written.
+ * The verdict is stubbed: the real one only exists on Vercel.
+ */
+async function botVerdictPath() {
+  console.log("\nBotID verdict in the actions…");
+  const db = await getDb();
+  const email = `${PREFIX}botid@example.test`;
+  setBotCheckForTests(async () => true);
+  try {
+    const r = await joinInterestList({ email, website: "", elapsedMs: MIN_FILL_MS + 10 });
+    check("a bot's join answers ok with a ticket", r.ok && r.ticket.shareToken.length > 10);
+    check("a bot's join writes no row", (await db.select().from(interestListSignups).where(eq(interestListSignups.email, email))).length === 0);
+    check("a bot's ticket resolves to nothing", r.ok && (await getTicketByShareToken(r.ticket.shareToken)) === null);
+    check("a bot's join is not returning", r.ok && r.returning === false);
+
+    const joined = await joinInterestListCore(
+      { email: `${PREFIX}botname@example.test`, website: "", elapsedMs: MIN_FILL_MS + 10 },
+      { ip: "smoke-botname", attribution: null, sendWelcome: async () => undefined, sendTier: async () => undefined }
+    );
+    if (!joined.ok) throw new Error("bot name-step join failed");
+    const named = await saveInterestListName({ shareToken: joined.ticket.shareToken, firstName: "Bot", lastName: "Net" });
+    const row = (await db.select().from(interestListSignups).where(eq(interestListSignups.email, `${PREFIX}botname@example.test`)))[0];
+    check("a bot's name step answers ok", named.ok);
+    check("a bot's name step writes nothing", row?.firstName === null);
+  } finally {
+    setBotCheckForTests(null);
+  }
+}
+
 async function main() {
   await cleanup();
   await readModel();
   await joinPath();
   await namePath();
   await slugPath();
+  await welcomeCapPath();
+  await botVerdictPath();
   await cleanup();
   console.log("\nwaitlist join: all checks passed");
   process.exit(0);

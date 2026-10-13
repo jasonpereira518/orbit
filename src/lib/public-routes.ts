@@ -1,3 +1,5 @@
+import { BOTID_PATH_PREFIX } from "@/lib/waitlist-host";
+
 /**
  * Routes reachable without a Clerk session.
  *
@@ -121,4 +123,7 @@ export const PUBLIC_ROUTES = [
   // is checked against a shape regex before any query, so malformed traffic costs nothing.
   "/scan/(.*)",
   "/api/scan/(.*)",
+  // Vercel BotID's challenge proxy (next.config.ts `withBotId`). The waitlist join's
+  // server-action POSTs carry its proof, so a signed-out visitor must reach it.
+  `/${BOTID_PATH_PREFIX}/(.*)`,
 ] as const;

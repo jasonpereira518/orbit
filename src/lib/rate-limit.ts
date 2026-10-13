@@ -46,11 +46,13 @@ const BUCKET_LABELS: Record<string, string> = {
   lifetimeConfirm: "checkout check",
   speechToken: "speech transcription",
   export: "export",
+  interestWelcome: "welcome email",
   // Scope strings some call sites pass verbatim (dotted / kebab). Keyed by the literal scope
   // rather than renaming the scope, which would reset those buckets' counters.
   contactForm: "contact form",
   "interest.join": "sign-up",
   "interest.name": "sign-up",
+  "interest.welcome": "welcome email",
   "interest.progress": "progress check",
   "avatar.resolve": "photo lookup",
   "lifetime-confirm": "checkout check",
@@ -292,6 +294,14 @@ export const RATE_LIMITS = {
    * to stop, since each run pages through the whole network.
    */
   export: { limit: 5, windowSec: 3600 },
+  /**
+   * The waitlist's welcome email, across EVERY sender (keyed "global"). `interestJoin` is per
+   * IP, so a flood of fresh addresses from many IPs still mails each one — from Orbit's
+   * domain, at Resend's cost, to inboxes that never asked. 200 an hour is far above a real
+   * launch-day hour and well inside the sending plan; past it the row and ticket still land
+   * and only the mail is skipped, since the welcome is best-effort by design.
+   */
+  interestWelcome: { limit: 200, windowSec: 3600 },
 } as const satisfies Record<string, BucketPolicy>;
 
 /**

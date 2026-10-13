@@ -18,7 +18,7 @@ import { createRouteMatcher } from "@clerk/nextjs/server";
 import robots from "../src/app/robots";
 import sitemap from "../src/app/sitemap";
 import { PUBLIC_ROUTES } from "../src/lib/public-routes";
-import { WAITLIST_ALLOWED_PATHS } from "../src/lib/waitlist-host";
+import { BOTID_PATH_PREFIX, WAITLIST_ALLOWED_PATHS } from "../src/lib/waitlist-host";
 import { config as proxyConfig } from "../src/proxy";
 
 const MARKETING_DIRS = ["src/app/(site)", "src/app/(clerk)/(marketing)"];
@@ -139,6 +139,8 @@ function main() {
     // and nowhere else — the phone has no session and cannot get one usefully.
     "/scan/orb_scan_7f3a9c2b_" + "a".repeat(43),
     "/api/scan/orb_scan_7f3a9c2b_" + "a".repeat(43) + "/pages",
+    // Vercel BotID's proxy: the waitlist join's POSTs need its proof, signed out.
+    `/${BOTID_PATH_PREFIX}/tl`,
   ];
   const blocked: string[] = [];
   for (const route of internalRoutes) {
