@@ -1,7 +1,7 @@
 import { sql, type SQL } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { errorEvents, usageEvents } from "@/db/schema";
-import { earliestPoolWindowStart } from "@/lib/managed-ai-policy";
+import { MANAGED_AI_POOLS, poolWindowStart } from "@/lib/managed-ai-policy";
 import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
 
 /** Rows deleted per statement by `pruneOlderThan`. */
@@ -53,15 +53,19 @@ export async function pruneOlderThan(
 }
 
 /**
- * `pruneOlderThan` for usage_events, sparing Orbit-paid rows still inside a managed AI pool's
- * window. Those rows ARE the pool's ledger (`managedPoolsSpent` sums them), and a prepaid pool
- * never resets: pruning them at the retention would hand the spent budget back and reopen
- * Orbit's spend. Everything else — BYOK rows, Orbit rows from before the window — goes as usual.
+ * `pruneOlderThan` for usage_events, sparing Orbit-paid rows still inside THEIR provider's
+ * managed AI pool window (`MANAGED_AI_POOLS`). Those rows ARE the pool's ledger
+ * (`managedPoolsSpent` sums `key_owner = 'orbit'` per provider since `poolWindowStart`), and a
+ * prepaid pool never resets: pruning them at the retention would hand the spent budget back and
+ * reopen Orbit's spend. The window is per provider on purpose — a monthly pool's old months,
+ * and Orbit spend on a provider with no pool, are no pool's ledger and go as usual, as do BYOK
+ * rows and Orbit rows from before a window.
  */
 export function pruneUsageEvents(days: number, now: Date = new Date()): Promise<number> {
-  const since = earliestPoolWindowStart(now);
-  const keep = since
-    ? sql`(${usageEvents.keyOwner} IS DISTINCT FROM 'orbit' OR ${usageEvents.createdAt} < ${since.toISOString()})`
-    : undefined;
+  const inPoolWindow = Object.entries(MANAGED_AI_POOLS).flatMap(([provider, pool]) =>
+    pool ? [sql`(${usageEvents.provider} = ${provider} AND ${usageEvents.createdAt} >= ${poolWindowStart(pool, now).toISOString()})`] : []
+  );
+  // key_owner, provider and created_at are NOT NULL, so NOT (...) never goes unknown.
+  const keep = inPoolWindow.length > 0 ? sql`NOT (${usageEvents.keyOwner} = 'orbit' AND (${sql.join(inPoolWindow, sql` OR `)}))` : undefined;
   return pruneOlderThan(usageEvents, days, keep, now);
 }
