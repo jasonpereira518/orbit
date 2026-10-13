@@ -22,6 +22,7 @@ import { isAwaitingReply, isDeliveredMessage } from "@/lib/outreach-metrics";
 import type { OutreachChannel, PipelineFilter } from "@/lib/outreach-types";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { EmptyState } from "@/components/ui/empty-state";
 
 export type ProspectRow = {
   id: string;
@@ -164,9 +165,10 @@ export function ProspectTable({
 
   if (!prospects.length) {
     return (
-      <div className="rounded-2xl border border-dashed border-border/70 p-10 text-center text-sm text-muted-foreground">
-        No prospects in this view. Adjust filters or run a search from the campaign wizard.
-      </div>
+      <EmptyState
+        title="No prospects in this view"
+        description="Adjust filters or run a search from the campaign wizard."
+      />
     );
   }
 

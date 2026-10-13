@@ -21,6 +21,8 @@ import type {
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { buttonVariants } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 
 type Filter = "all" | KnowledgeKind;
 
@@ -93,30 +95,21 @@ export function KnowledgeBaseView({
 
   if (entries.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-border/70 px-6 py-12 text-center">
-        <BookOpen className="mx-auto h-8 w-8 text-muted-foreground" />
-        <h2 className="mt-3 font-[family-name:var(--font-display)] text-xl text-ink">
-          Your knowledge base is empty
-        </h2>
-        <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-          Import LinkedIn connections and messages, or log notes from Capture.
-          Everything you store about people shows up here and powers Chat.
-        </p>
-        <div className="mt-5 flex flex-wrap justify-center gap-3">
-          <Link
-            href="/imports"
-            className="rounded-xl bg-primary px-4 py-2 text-sm text-primary-foreground"
-          >
-            Import LinkedIn
-          </Link>
-          <Link
-            href="/capture"
-            className="rounded-xl border border-border/70 px-4 py-2 text-sm"
-          >
-            Log a note
-          </Link>
-        </div>
-      </div>
+      <EmptyState
+        icon={BookOpen}
+        title="Your knowledge base is empty"
+        description="Import LinkedIn connections and messages, or log notes from Capture. Everything you store about people shows up here and powers Chat."
+        action={
+          <>
+            <Link href="/imports" className={buttonVariants()}>
+              Import LinkedIn
+            </Link>
+            <Link href="/capture" className={buttonVariants({ variant: "outline" })}>
+              Log a note
+            </Link>
+          </>
+        }
+      />
     );
   }
 

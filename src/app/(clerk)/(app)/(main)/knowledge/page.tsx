@@ -10,6 +10,8 @@ import { PeopleIndex } from "@/components/knowledge/people-index";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
+import { buttonVariants } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -62,24 +64,21 @@ async function People({ selectedId }: { selectedId: string | null }) {
 
   if (people.total === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-border/70 px-6 py-12 text-center">
-        <BookOpen className="mx-auto h-8 w-8 text-muted-foreground" />
-        <h2 className="mt-3 font-[family-name:var(--font-display)] text-xl text-ink">
-          No one is in your orbit yet
-        </h2>
-        <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-          Import LinkedIn connections, or log notes from Capture. Each person you add gets a
-          summary here, and a place in how your people connect to your goals.
-        </p>
-        <div className="mt-5 flex flex-wrap justify-center gap-3">
-          <Link href="/imports" className="rounded-xl bg-primary px-4 py-2 text-sm text-primary-foreground">
-            Import LinkedIn
-          </Link>
-          <Link href="/capture" className="rounded-xl border border-border/70 px-4 py-2 text-sm">
-            Log a note
-          </Link>
-        </div>
-      </div>
+      <EmptyState
+        icon={BookOpen}
+        title="No one is in your orbit yet"
+        description="Import LinkedIn connections, or log notes from Capture. Each person you add gets a summary here, and a place in how your people connect to your goals."
+        action={
+          <>
+            <Link href="/imports" className={buttonVariants()}>
+              Import LinkedIn
+            </Link>
+            <Link href="/capture" className={buttonVariants({ variant: "outline" })}>
+              Log a note
+            </Link>
+          </>
+        }
+      />
     );
   }
 
@@ -105,16 +104,11 @@ async function People({ selectedId }: { selectedId: string | null }) {
             <DossierPane contactId={selectedId} />
           </Suspense>
         ) : (
-          <div className="rounded-2xl border border-dashed border-border/70 px-6 py-16 text-center">
-            <Sparkles className="mx-auto h-7 w-7 text-muted-foreground" />
-            <h2 className="mt-3 font-[family-name:var(--font-display)] text-xl text-ink">
-              Pick someone
-            </h2>
-            <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
-              See their summary, how they bear on your goals, who they connect to, and the
-              facts Orbit has kept.
-            </p>
-          </div>
+          <EmptyState
+            icon={Sparkles}
+            title="Pick someone"
+            description="See their summary, how they bear on your goals, who they connect to, and the facts Orbit has kept."
+          />
         )}
       </section>
     </div>

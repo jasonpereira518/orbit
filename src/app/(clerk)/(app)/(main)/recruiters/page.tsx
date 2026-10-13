@@ -21,6 +21,7 @@ import { RecruiterSharingToggle } from "@/components/recruiters/sharing-toggle";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { EmptyState } from "@/components/ui/empty-state";
 
 export default async function RecruitersPage({
   searchParams,
@@ -131,14 +132,10 @@ export default async function RecruitersPage({
         {tab === "discover" && !sharing ? (
           // The empty Discover tab is the incentive made visible. Hiding it entirely
           // would also hide the offer, so it renders the reason instead of a list.
-          <div className="rounded-2xl border border-dashed border-border/70 bg-card px-5 py-12 text-center">
-            <p className="font-medium text-ink">Nothing to discover yet</p>
-            <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-              Discover shows recruiters other people have logged. It fills up
-              when you share your own list — that&apos;s the trade. Your notes and
-              interaction summaries stay private either way.
-            </p>
-          </div>
+          <EmptyState
+            title="Nothing to discover yet"
+            description="Discover shows recruiters other people have logged. It fills up when you share your own list — that’s the trade. Your notes and interaction summaries stay private either way."
+          />
         ) : (
           <div className="rounded-2xl border border-border/70 bg-card">
             <RecruiterList

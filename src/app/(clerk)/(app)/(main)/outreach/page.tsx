@@ -8,9 +8,9 @@ import { OutreachLocked } from "@/components/locked-feature";
 import { OutreachCampaignCard } from "@/components/outreach/outreach-campaign-card";
 import { buttonVariants } from "@/components/ui/button";
 import { formatReplyRate } from "@/lib/outreach-metrics";
-import { cn } from "@/lib/utils";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { PageHeader } from "@/components/layout/page-header";
+import { EmptyState } from "@/components/ui/empty-state";
 
 export default async function OutreachPage() {
   // Before the paywall on purpose: coming-soon is a stronger fact than "buy a plan to
@@ -81,17 +81,15 @@ export default async function OutreachPage() {
       )}
 
       {ranked.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-border/70 p-12 text-center">
-          <p className="text-muted-foreground">
-            No campaigns yet. Start with a tight ICP and a clear reply ask.
-          </p>
-          <Link
-            href="/outreach/new"
-            className={cn(buttonVariants({ variant: "outline" }), "mt-4 inline-flex")}
-          >
-            Start your first reply-optimized campaign
-          </Link>
-        </div>
+        <EmptyState
+          title="No campaigns yet"
+          description="Start with a tight ICP and a clear reply ask."
+          action={
+            <Link href="/outreach/new" className={buttonVariants({ variant: "outline" })}>
+              Start your first reply-optimized campaign
+            </Link>
+          }
+        />
       ) : (
         <div className="grid gap-4">
           {ranked.map((campaign) => (

@@ -15,6 +15,7 @@ import { formatMeetingDuration } from "@/lib/format-meeting-duration";
 import { formatElapsed } from "@/lib/format-elapsed";
 import type { MeetingListItem, MeetingsPage } from "@/lib/meetings-list";
 import { toast } from "@/lib/toast";
+import { EmptyState } from "@/components/ui/empty-state";
 
 function whenLabel(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
@@ -52,19 +53,23 @@ export function MeetingsList({ initial, q }: { initial: MeetingsPage; q: string 
 
   if (items.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-border/70 p-8 text-center text-sm text-muted-foreground">
-        {q ? (
-          <>No meeting mentions “{q}”.</>
-        ) : (
-          <>
-            No finished meetings yet. Record one from{" "}
-            <Link href="/capture?mode=meeting" className="font-medium text-primary underline-offset-2 hover:underline">
-              Capture
-            </Link>{" "}
-            and it will be kept here.
-          </>
-        )}
-      </div>
+      <EmptyState
+        title={q ? <>No meeting mentions “{q}”</> : "No finished meetings yet"}
+        description={
+          q ? undefined : (
+            <>
+              Record one from{" "}
+              <Link
+                href="/capture?mode=meeting"
+                className="font-medium text-primary underline-offset-2 hover:underline"
+              >
+                Capture
+              </Link>{" "}
+              and it will be kept here.
+            </>
+          )
+        }
+      />
     );
   }
 

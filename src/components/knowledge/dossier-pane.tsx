@@ -14,6 +14,7 @@ import { shouldAutoRefreshBrief } from "@/lib/contact-brief";
 import { loadKnowledgeDossier } from "@/lib/knowledge-dossier";
 import { requireUserForSurface } from "@/lib/plan-guards";
 import { cn } from "@/lib/utils";
+import { EmptyState } from "@/components/ui/empty-state";
 
 const TIER_LABEL = { inner: "Inner orbit", mid: "Mid orbit", outer: "Outer orbit" } as const;
 
@@ -38,14 +39,10 @@ export async function DossierPane({ contactId }: { contactId: string }) {
     return (
       <div className="space-y-4">
         <BackToPeople />
-        <div className="rounded-2xl border border-dashed border-border/70 px-6 py-12 text-center">
-          <h2 className="font-[family-name:var(--font-display)] text-xl text-ink">
-            We couldn’t find that person
-          </h2>
-          <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
-            They may have been merged into someone else or removed. Pick anyone from the list.
-          </p>
-        </div>
+        <EmptyState
+          title="We couldn’t find that person"
+          description="They may have been merged into someone else or removed. Pick anyone from the list."
+        />
       </div>
     );
   }

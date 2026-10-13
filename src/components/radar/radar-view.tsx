@@ -6,7 +6,8 @@ import Link from "next/link";
 import { format, formatDistanceToNow } from "date-fns";
 import { ChevronLeft, ChevronRight, Focus, LayoutList, Play, RefreshCw, Wand2 } from "lucide-react";
 import { AiKeyNotice } from "@/components/ai-key-notice";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { useViewerPlan } from "@/components/viewer-plan";
 import { RecommendationCard, type RecommendationCardData } from "@/components/radar/recommendation-card";
 import { RadarSettingsSheet } from "@/components/radar/radar-settings-sheet";
@@ -174,7 +175,7 @@ export function RadarView(props: RadarViewProps) {
       {!aiAvailable && recommendations.length > 0 && <AiKeyNotice feature="draft" reason={aiReason ?? "key_required"} compact />}
 
       {recommendations.length === 0 ? (
-        <EmptyState hasContacts={hasContacts} ranOnce={lastRunAt !== null} nextRunAt={nextRunAt} paused={paused} />
+        <RadarEmpty hasContacts={hasContacts} ranOnce={lastRunAt !== null} nextRunAt={nextRunAt} paused={paused} />
       ) : mode === "focus" ? (
         <FocusDeck recommendations={recommendations} index={index} setIndex={setIndex} aiAvailable={aiAvailable} />
       ) : (
@@ -391,7 +392,7 @@ function KindSection({ kind, items, aiAvailable }: { kind: RecommendationKind; i
   );
 }
 
-function EmptyState({
+function RadarEmpty({
   hasContacts,
   ranOnce,
   nextRunAt,
@@ -404,28 +405,30 @@ function EmptyState({
 }) {
   if (!hasContacts) {
     return (
-      <div className="rounded-2xl border border-dashed border-border p-8 text-center">
-        <p className="font-medium text-ink">Radar needs people to look at</p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Add a few contacts or import your LinkedIn connections, and Radar will start suggesting who to reach out to.
-        </p>
-        <Link href="/imports" className="mt-4 inline-block text-sm font-medium text-primary hover:underline">
-          Import your network
-        </Link>
-      </div>
+      <EmptyState
+        title="Radar needs people to look at"
+        description="Add a few contacts or import your LinkedIn connections, and Radar will start suggesting who to reach out to."
+        action={
+          <Link href="/imports" className={buttonVariants({ variant: "outline" })}>
+            Import your network
+          </Link>
+        }
+      />
     );
   }
   const next = nextRunAt ? new Date(nextRunAt) : null;
   return (
-    <div className="rounded-2xl border border-dashed border-border p-8 text-center">
-      <p className="font-medium text-ink">{ranOnce ? "All clear" : "Nothing yet"}</p>
-      <p className="mt-1 text-sm text-muted-foreground" suppressHydrationWarning>
-        {paused
-          ? "Radar is paused. Resume it to hear about new people."
-          : ranOnce
-            ? `Nobody needs you right now. Radar checks again ${next ? formatDistanceToNow(next, { addSuffix: true }) : "tonight"}, and anything new will show up here.`
-            : "Radar hasn’t found anyone to suggest yet. It checks your network every night."}
-      </p>
-    </div>
+    <EmptyState
+      title={ranOnce ? "All clear" : "Nothing yet"}
+      description={
+        <span suppressHydrationWarning>
+          {paused
+            ? "Radar is paused. Resume it to hear about new people."
+            : ranOnce
+              ? `Nobody needs you right now. Radar checks again ${next ? formatDistanceToNow(next, { addSuffix: true }) : "tonight"}, and anything new will show up here.`
+              : "Radar hasn’t found anyone to suggest yet. It checks your network every night."}
+        </span>
+      }
+    />
   );
 }

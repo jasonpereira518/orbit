@@ -50,6 +50,7 @@ import { ConnectPreviewDialog, type PreviewRow } from "./connect-preview-dialog"
 import { EditAttendeeDialog } from "./edit-attendee-dialog";
 import { IngestResultCard } from "./ingest-result-card";
 import { friendlyError } from "@/lib/errors";
+import { EmptyState } from "@/components/ui/empty-state";
 
 /** "2nd", "3rd", "4th" — because "2 events together" reads as a count, not a streak. */
 function ordinalSuffix(value: number): string {
@@ -229,11 +230,10 @@ export function AttendeeRoster({
 
   if (rows.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-border/70 px-4 py-10 text-center">
-        <p className="text-sm text-muted-foreground">
-          No attendees yet. Paste or upload the guest list to get started.
-        </p>
-      </div>
+      <EmptyState
+        title="No attendees yet"
+        description="Paste or upload the guest list to get started."
+      />
     );
   }
 

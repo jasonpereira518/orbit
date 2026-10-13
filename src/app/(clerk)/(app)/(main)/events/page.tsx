@@ -15,6 +15,7 @@ import {
   listHiddenEvents,
 } from "@/actions/events";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { EmptyState } from "@/components/ui/empty-state";
 
 async function ConnectionsSection() {
   const { connections, eventbriteConfigured, googleConnected, googleMailGranted, googleCalendarGranted } =
@@ -69,9 +70,7 @@ async function HiddenList() {
 function EventGrid({ events, empty }: { events: EventListRow[]; empty: React.ReactNode }) {
   if (events.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-border/70 px-4 py-10 text-center">
-        <p className="text-sm text-muted-foreground">{empty}</p>
-      </div>
+      <EmptyState title={empty} />
     );
   }
   return (
