@@ -19,7 +19,7 @@ export function EarlyAccessPill() {
   return (
     <Link
       href="/interest"
-      className="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-[max(1rem,env(safe-area-inset-left))] z-40 rounded-full border border-landing-accent bg-[#05070f] px-4 py-2 text-sm font-medium text-[#e8f3f1] transition-colors hover:bg-[#0b1226]"
+      className="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-[max(1rem,env(safe-area-inset-left))] z-40 rounded-full border border-landing-accent bg-[#05070f] px-4 py-2 text-sm font-medium text-[#e8f3f1] transition-colors hover:bg-landing-accent hover:text-[#05070f] focus-visible:bg-landing-accent focus-visible:text-[#05070f]"
     >
       Join the waitlist <span aria-hidden="true">→</span>
     </Link>

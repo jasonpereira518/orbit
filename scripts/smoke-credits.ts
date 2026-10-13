@@ -28,9 +28,11 @@ function check(label: string, ok: boolean, detail?: unknown) {
 }
 
 run(async () => {
-  const { eq } = await import("drizzle-orm");
+  const { and, eq } = await import("drizzle-orm");
   const { getDb } = await import("../src/db");
-  const { creditGrants, usageEvents } = await import("../src/db/schema");
+  const { creditGrants, usageEvents, userSettings } = await import("../src/db/schema");
+  const { ensureUserSettings } = await import("../src/lib/user-settings");
+  const { getAccountAlerts, loadAccountHealthInput } = await import("../src/lib/account-health");
   const ledger = await import("../src/lib/credits/ledger");
   const { evaluateAccountHealth, toAccountAlerts, isDismissible } = await import("../src/lib/account-alerts");
   const { equivalentsFor, measuredActionCosts, MIN_SAMPLES } = await import("../src/lib/credits/equivalents");
@@ -189,11 +191,28 @@ run(async () => {
   check("…and says nothing is charged automatically", /Nothing is charged automatically/.test(out?.body ?? ""), out?.body);
   check("an allowance spent with starter credits left is NOT 'near'",
     !health({ ...c(0, 0, 250_000), allowanceGranted: 100_000, spendable: 250_000 }).includes("plan.credits_near"));
-  // creditFacts is not reachable here; this mirrors its output for a Free account downgraded from
-  // Pro (packs frozen, so packRemaining is 0), allowance spent, starter left.
-  check("Free with frozen packs, allowance spent, starter left: not 'on packs'",
-    !healthFree({ ...c(0, 0, 250_000), allowanceGranted: 100_000, spendable: 250_000 }).some((a) => /pack credits/.test(a.body ?? "")));
-  check("…nor 'out'", !health({ ...c(0, 0, 250_000), allowanceGranted: 100_000, spendable: 250_000 }).includes("plan.credits_out"));
+
+  // Through the real path (getAccountAlerts → creditFacts → getCreditBalance): a Free account
+  // downgraded from Pro keeps its packs frozen, so with the allowance spent and starter left
+  // it is neither "on packs" nor "out".
+  await reset();
+  await db.delete(userSettings).where(eq(userSettings.userId, USER));
+  await ensureUserSettings(USER);
+  await db.update(userSettings).set({ onboardingCompletedAt: new Date() }).where(eq(userSettings.userId, USER));
+  await ledger.ensureAllowance(USER, "free", ledger.creditPeriodFor(null));
+  await db.update(creditGrants).set({ microsRemaining: 0 }).where(and(eq(creditGrants.userId, USER), eq(creditGrants.kind, "allowance")));
+  await db.insert(creditGrants).values({
+    userId: USER, kind: "pack", grantKey: `pack:smoke:${USER}`, microsGranted: 250 * 10_000, microsRemaining: 250 * 10_000,
+  });
+  const frozenInput = await loadAccountHealthInput(USER);
+  check("the real path reads a Free account with starter left and its packs frozen out",
+    frozenInput?.plan === "free" && frozenInput.credits?.starterRemaining === 25 * 10_000 && frozenInput.credits.packRemaining === 0,
+    frozenInput?.credits);
+  const frozenCodes = (await getAccountAlerts(USER)).map((a) => a.code);
+  check("Free with frozen packs, allowance spent, starter left: not 'on packs'", !frozenCodes.includes("plan.credits_on_packs"), frozenCodes);
+  check("…nor 'out'", !frozenCodes.includes("plan.credits_out"), frozenCodes);
+  await db.delete(userSettings).where(eq(userSettings.userId, USER));
+  await reset();
   const outAlert = healthFree({ allowanceGranted: 100_000, allowanceRemaining: 0, packRemaining: 0, starterRemaining: 0, spendable: 0, resetsAt: "2026-11-01T00:00:00.000Z" })
     .find((a) => a.title === "You’re out of AI credits");
   check("Free's out-of-credits alert offers a key, never a pack",

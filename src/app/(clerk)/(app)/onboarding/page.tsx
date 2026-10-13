@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { getActiveCaptureJob } from "@/actions/capture-jobs";
 import { getGmailConnectionStatus } from "@/actions/gmail";
 import { getOutlookConnectionStatus } from "@/actions/outlook";
 import { getSettings } from "@/actions/settings";
@@ -34,7 +35,7 @@ export default async function OnboardingPage() {
   // founding-pricing eligibility before it ever sees a price.
   if (!settings.foundingEligible) await claimSiteInviteGrant(userId);
 
-  const [aiSettings, entitlements, visibility, gmail, outlook, linkedinImported] =
+  const [aiSettings, entitlements, visibility, gmail, outlook, linkedinImported, captureJob] =
     await Promise.all([
       getSettings(),
       getEntitlements(userId),
@@ -42,6 +43,9 @@ export default async function OnboardingPage() {
       getGmailConnectionStatus(),
       getOutlookConnectionStatus(),
       hasLinkedInImport(userId),
+      // The capture step resumes an open review after a reload, as /capture does. A failed
+      // read only costs the resume, never the page.
+      getActiveCaptureJob().catch(() => null),
     ]);
 
   return (
@@ -50,6 +54,8 @@ export default async function OnboardingPage() {
       initialPath={settings.onboardingPath}
       needsTerms={needsTermsAcceptance(settings.termsVersion)}
       hasApiKey={aiSettings.hasApiKey}
+      aiReason={aiSettings.ai.reason}
+      captureJob={captureJob}
       linkedinRequested={settings.linkedinExportRequestedAt != null}
       linkedinImported={linkedinImported}
       hidden={[...visibility.hidden]}

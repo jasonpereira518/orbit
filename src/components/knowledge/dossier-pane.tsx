@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { IntentLink } from "@/components/ui/intent-link";
 import { getAiAccessStatus } from "@/lib/ai-access";
 import { closenessTierChipClass } from "@/lib/closeness";
+import { shouldAutoRefreshBrief } from "@/lib/contact-brief";
 import { loadKnowledgeDossier } from "@/lib/knowledge-dossier";
 import { requireUserForSurface } from "@/lib/plan-guards";
 import { cn } from "@/lib/utils";
@@ -53,9 +54,12 @@ export async function DossierPane({ contactId }: { contactId: string }) {
   const aiReady = ai?.ready ?? false;
   const name = contact.preferredName?.trim() || contact.fullName;
   const role = [contact.title, contact.company].filter(Boolean).join(" at ");
-  // Rebuilding helps a stale brief with or without a key (there is a deterministic fallback);
-  // it only helps goal fit when a model can actually run, or this would be true forever.
-  const auto = dossier.stale || (dossier.goalsUnjudged && aiReady);
+  const auto = shouldAutoRefreshBrief({
+    stale: dossier.stale,
+    goalsUnjudged: dossier.goalsUnjudged,
+    aiReady,
+    modelWritten: dossier.brief?.model != null,
+  });
   const goalFitPending = dossier.goalsUnjudged && aiReady;
   const tier = contact.closenessTier;
   const hasFacts =
