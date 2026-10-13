@@ -2,6 +2,25 @@ import { sql } from "drizzle-orm";
 import { contacts } from "@/db/schema";
 import { NO_PHOTO_PREFIX } from "@/lib/contact-avatar-url";
 
+/** A contact's LinkedIn URL must be on a linkedin.com host before it may show a shared photo. */
+const LINKEDIN_HOST_RE = "^(https?://)?([a-z0-9-]+\\.)*linkedin\\.com/";
+
+/**
+ * The shared (cross-user) LinkedIn photo for a contact row, or NULL. THE one rule every photo
+ * reader uses: precedence is manual upload > shared > the contact's own photo, so a contact
+ * whose `profile_image_source` is 'upload' never gets one; a blocked or "found nothing" row
+ * never matches. A scalar subquery (a primary-key lookup per row) rather than a JOIN so it
+ * drops into relational `extras`, raw SQL and plain selects alike without adding a statement.
+ * `contacts.linkedin_slug` has no host check of its own, hence the regex on the URL.
+ * Inner columns are literal `la.*` so drizzle can never strip their qualifier.
+ */
+export const sharedAvatarUrlSql = sql<string | null>`(CASE WHEN ${contacts.profileImageSource} IS DISTINCT FROM 'upload' THEN (
+  SELECT la.image_url FROM linkedin_avatars la
+   WHERE la.slug = ${contacts.linkedinSlug}
+     AND la.blocked_at IS NULL AND la.image_url IS NOT NULL
+     AND ${contacts.linkedinUrl} ~* ${LINKEDIN_HOST_RE}
+) END)`;
+
 /**
  * `clientContactAvatarUrl()` expressed in SQL, so list scans can return a browser-safe
  * avatar URL WITHOUT selecting `profile_image_url` itself.
@@ -21,14 +40,14 @@ import { NO_PHOTO_PREFIX } from "@/lib/contact-avatar-url";
  * mirror never learned it, which is precisely the drift the note above warns about. The
  * prefix is now interpolated from the same constant rather than restated here.
  */
-export const clientAvatarUrlSql = sql<string | null>`CASE
+export const clientAvatarUrlSql = sql<string | null>`coalesce(${sharedAvatarUrlSql}, CASE
   WHEN ${contacts.profileImageUrl} IS NULL OR btrim(${contacts.profileImageUrl}) = '' THEN NULL
   WHEN ${contacts.profileImageUrl} LIKE ${NO_PHOTO_PREFIX + "%"} THEN NULL
   WHEN ${contacts.profileImageUrl} LIKE 'data:image/%' THEN '/api/avatars/' || ${contacts.id}
   WHEN ${contacts.profileImageUrl} LIKE '%unavatar.io%'
     OR ${contacts.profileImageUrl} LIKE '%static.licdn.com/aero%' THEN NULL
   ELSE btrim(${contacts.profileImageUrl})
-END`;
+END)`;
 
 /**
  * The columns the contacts list selects.

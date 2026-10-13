@@ -5,6 +5,7 @@ import { contacts } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { isTourExampleSource } from "@/lib/onboarding-examples/marker";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { sharedAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import {
   downloadAndPersistAvatar,
   fetchGravatarPhotoUrl,
@@ -100,6 +101,7 @@ export async function GET(_req: Request, { params }: Params) {
       email: true,
       source: true,
     },
+    extras: { sharedUrl: sharedAvatarUrlSql.as("shared_url") },
   });
 
   if (!contact) {
@@ -111,6 +113,9 @@ export async function GET(_req: Request, { params }: Params) {
   if (isTourExampleSource(contact.source)) {
     return miss(404);
   }
+
+  // A shared LinkedIn photo (never an upload-sourced contact's) outranks the contact's own.
+  if (contact.sharedUrl) return NextResponse.redirect(contact.sharedUrl);
 
   const stored = contact.profileImageUrl?.trim() || "";
 

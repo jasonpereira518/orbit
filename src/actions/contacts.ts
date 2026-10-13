@@ -61,7 +61,7 @@ import {
   fetchLinkedInPhotoUrl,
   AvatarSourceRateLimitError,
 } from "@/lib/contact-avatar";
-import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
+import { clientAvatarUrlSql, sharedAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import {
   buildGooglePhotoIndex,
   buildOutlookContactIndex,
@@ -450,6 +450,8 @@ async function loadContactWithHistory(
   const db = await getDb();
   const contact = await db.query.contacts.findFirst({
     where: and(eq(contacts.id, id), eq(contacts.userId, userId)),
+    // The shared LinkedIn photo (if any) rides beside the contact's own `profileImageUrl`.
+    extras: { sharedAvatarUrl: sharedAvatarUrlSql.as("shared_avatar_url") },
     with: {
       contactTags: { with: { tag: true } },
       // Columns are restricted, not rows (unless the caller asks for a page of them):
@@ -1810,6 +1812,7 @@ export async function getAskBarContact(contactId: string): Promise<{
       profileImageUrl: true,
       linkedinUrl: true,
     },
+    extras: { sharedAvatarUrl: sharedAvatarUrlSql.as("shared_avatar_url") },
   });
   if (!contact) return null;
   return {
@@ -1817,7 +1820,7 @@ export async function getAskBarContact(contactId: string): Promise<{
     displayName: contact.preferredName || contact.fullName,
     firstName: contact.firstName,
     fullName: contact.fullName,
-    profileImageUrl: contact.profileImageUrl,
+    profileImageUrl: contact.sharedAvatarUrl ?? contact.profileImageUrl,
     linkedinUrl: contact.linkedinUrl,
   };
 }
