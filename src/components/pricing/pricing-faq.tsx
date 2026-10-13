@@ -33,7 +33,7 @@ const FAQ: Array<{ q: string; a: string }> = [
   },
   {
     q: "How do credit packs work?",
-    a: `A pack is ${CREDIT_PACK_CREDITS} credits for ${CREDIT_PACK_PRICE_LABEL}, bought whenever you choose, on the Free Plan, Pro or Max. Pack credits are used only after your monthly credits run out, and they roll over from month to month. If a pack's payment is refunded or disputed, its unused credits are removed.`,
+    a: `A pack is ${CREDIT_PACK_CREDITS} credits for ${CREDIT_PACK_PRICE_LABEL}, bought whenever you choose, on the Free Plan, Pro or Max. Pack credits are used only after your monthly credits run out, and they roll over from month to month. A pack is refundable on request until any of its credits are used. If a pack's payment is refunded or disputed, its unused credits are removed.`,
   },
   {
     q: "Is there annual billing?",
@@ -41,7 +41,7 @@ const FAQ: Array<{ q: string; a: string }> = [
   },
   {
     q: "Can I switch plans or cancel?",
-    a: "Any time. Moving from Pro to Max, or from monthly to annual, takes effect at once, and you pay only the difference for the rest of the period; moving from Max to Pro, or from annual to monthly, takes effect when the period you've paid for ends. If you cancel, you keep your plan until that period runs out, then your account returns to the Free Plan — still holding every contact you added while subscribed, even past the free limit. Canceling does not trigger a pro-rated refund.",
+    a: "Any time. Moving from Pro to Max, or from monthly to annual, takes effect at once, and you pay only the difference for the rest of the period; moving from Max to Pro, or from annual to monthly, takes effect when the period you've paid for ends. If you cancel, you keep your plan until that period runs out, then your account returns to the Free Plan — still holding every contact you added while subscribed, even past the free limit. Canceling part-way through a period does not trigger a pro-rated refund — except that an annual plan canceled within 14 days of its yearly charge is refunded in full on request.",
   },
   {
     q: "What happens to my data if I stop paying?",

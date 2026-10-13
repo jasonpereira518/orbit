@@ -42,7 +42,7 @@ const TRUST = [
   {
     icon: Sparkles,
     title: "AI included, never auto-charged",
-    body: `Pro and Max include AI credits each month. Run out and AI simply pauses until you choose a ${CREDIT_PACK_PRICE_LABEL} pack or it resets — nothing is ever charged automatically.`,
+    body: `Free, Pro and Max include AI credits each month. Run out and AI simply pauses until you choose a ${CREDIT_PACK_PRICE_LABEL} pack or it resets — nothing is ever charged automatically.`,
   },
 ];
 
