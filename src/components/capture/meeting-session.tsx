@@ -64,6 +64,8 @@ export type MeetingFormState = {
   emailsRef: { current: Record<string, string> };
   /** The calendar event this recording is of, while the form still names it. */
   calendarEventKey: string | null;
+  /** …and its recurring series, so the next occurrence can say what happened last time. */
+  calendarSeriesId: string | null;
 };
 
 /** Everything the engine owns. */
@@ -268,17 +270,30 @@ export function MeetingSessionProvider({
     title: string;
     endIso: string | null;
     eventKey: string | null;
+    seriesId: string | null;
   } | null>(null);
   // Only while the form still names that event: a retitled or fresh recording is not it.
   const linked = calendarMeeting && calendarMeeting.title === title ? calendarMeeting : null;
 
   const form = useMemo<MeetingFormState>(
-    () => ({ title, attendeesText, includeMic, emailsRef, calendarEventKey: linked?.eventKey ?? null }),
-    [title, attendeesText, includeMic, linked?.eventKey]
+    () => ({
+      title,
+      attendeesText,
+      includeMic,
+      emailsRef,
+      calendarEventKey: linked?.eventKey ?? null,
+      calendarSeriesId: linked?.seriesId ?? null,
+    }),
+    [title, attendeesText, includeMic, linked?.eventKey, linked?.seriesId]
   );
 
   const applyCalendarMeeting = (meeting: MeetingCandidate) => {
-    setCalendarMeeting({ title: meeting.title, endIso: meeting.endIso, eventKey: meeting.eventKey });
+    setCalendarMeeting({
+      title: meeting.title,
+      endIso: meeting.endIso,
+      eventKey: meeting.eventKey,
+      seriesId: meeting.seriesId,
+    });
     emailsRef.current = Object.fromEntries(
       meeting.attendees.filter((a) => a.email).map((a) => [a.name.trim().toLowerCase(), a.email])
     );

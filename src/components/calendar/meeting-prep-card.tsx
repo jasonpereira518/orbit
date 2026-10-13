@@ -135,6 +135,16 @@ export function MeetingPrepCard({ offer }: { offer: PrepOffer }) {
 function PrepBrief({ prep }: { prep: MeetingPrep }) {
   return (
     <div className="max-h-[50vh] space-y-3 overflow-y-auto border-t border-border/60 pt-2 text-xs">
+      {prep.lastTime && (prep.lastTime.actionItems.length > 0 || prep.lastTime.decisions.length > 0) && (
+        <div className="space-y-0.5">
+          <p className="text-muted-foreground">Last time ({prep.lastTime.day})</p>
+          <ul className="list-disc pl-4 text-ink">
+            {[...prep.lastTime.actionItems, ...prep.lastTime.decisions].slice(0, 4).map((t, i) => (
+              <li key={i}>{t}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       {prep.people.map((p) => (
         <div key={p.contactId} className="space-y-0.5">
           <Link href={`/contacts/${p.contactId}`} className="font-medium text-ink underline-offset-2 hover:underline">

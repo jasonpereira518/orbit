@@ -9,6 +9,7 @@ export type MeetingPrep = {
   event: ReturnType<typeof eventView>;
   people: MeetingPerson[];
   notInOrbit: Array<{ name: string; email: string }>;
+  lastTime: { day: string; decisions: string[]; actionItems: string[] } | null;
 };
 
 /** The prep card's "Show brief": the same facts the `meeting_context` chat tool reads, no model. */
@@ -21,7 +22,14 @@ export async function getMeetingPrep(
     const found = await getMeetingContext(userId, { eventId: id }, new Date());
     return {
       ok: true,
-      prep: found ? { event: eventView(found.event, found.tz), people: found.people, notInOrbit: found.notInOrbit } : null,
+      prep: found
+        ? {
+            event: eventView(found.event, found.tz),
+            people: found.people,
+            notInOrbit: found.notInOrbit,
+            lastTime: found.lastTime,
+          }
+        : null,
     };
   } catch (err) {
     return { ok: false, error: await actionFailure(err, "Couldn’t load the meeting", "calendar.get-meeting-prep") };

@@ -42,6 +42,7 @@ import { getInboxListId } from "@/lib/reminder-lists";
 import { inferReminderActionKind } from "@/lib/reminder-action-kind";
 import { buildSuggestionItemHash, isoDay, isoDayToLocalNoon } from "@/lib/suggested-reminder-utils";
 import { reportAndContinue } from "@/lib/report-error";
+import { owedByFromDigest } from "@/lib/meeting-extras";
 import { deleteCapturePhotosForBatch } from "@/lib/capture-photos";
 
 export type NoteBatchParticipantInput = {
@@ -406,6 +407,13 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
           .select({ id: actionItems.id, text: actionItems.text, reminderId: actionItems.reminderId })
           .from(actionItems)
           .where(and(eq(actionItems.userId, userId), eq(actionItems.interactionId, row.id)));
+        // A recorded call's digest says who took each item on; carry that onto the row, which
+        // is what lets "you owe Priya" and "Priya owes you" be told apart later.
+        const digestItems = input.meeting?.summary.actionItems ?? [];
+        for (const item of digestItems.length ? openItems : []) {
+          const owedBy = owedByFromDigest(item.text, parsed.name ?? null, digestItems);
+          if (owedBy) await db.update(actionItems).set({ owedBy }).where(and(eq(actionItems.id, item.id), eq(actionItems.userId, userId)));
+        }
         for (const item of openItems) {
           if (item.reminderId) continue;
           drafts.push({

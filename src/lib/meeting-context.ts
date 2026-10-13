@@ -8,6 +8,7 @@ import { getDb } from "@/db";
 import { actionItems, calendarEvents, contactBriefs, contacts, interactions, reminders, userSettings } from "@/db/schema";
 import { listUpcomingEvents, type CalendarEventRow } from "@/lib/calendar-events";
 import { resolveTimeZone, ymdInZone } from "@/lib/reminder-due-bucket";
+import { lastSeriesMeeting } from "@/lib/meeting-sessions";
 
 /** The user's own zone, as Settings/Radar last saw it; UTC until then. */
 export async function userTimeZone(userId: string): Promise<string> {
@@ -76,6 +77,8 @@ export async function getMeetingContext(
   tz: string;
   people: MeetingPerson[];
   notInOrbit: Array<{ name: string; email: string }>;
+  /** For a recurring meeting that was recorded before: what the last one decided and left open. */
+  lastTime: { day: string; decisions: string[]; actionItems: string[] } | null;
 } | null> {
   const tz = await userTimeZone(userId);
   const all = await listUpcomingEvents(userId, {
@@ -100,7 +103,15 @@ export async function getMeetingContext(
     .filter((a) => !a.contactId)
     .map((a) => ({ name: a.name, email: a.email }))
     .slice(0, 10);
-  if (!ids.length) return { event, tz, people: [], notInOrbit };
+  const last = event.seriesId ? await lastSeriesMeeting(userId, event.seriesId) : null;
+  const lastTime = last
+    ? {
+        day: ymdInZone(last.startedAt, tz),
+        decisions: last.decisions,
+        actionItems: last.actionItems.map((a) => (a.owner ? `${a.text} — ${a.owner === "me" ? "you" : a.owner}` : a.text)),
+      }
+    : null;
+  if (!ids.length) return { event, tz, people: [], notInOrbit, lastTime };
 
   const db = await getDb();
   const [people, briefs, todos, items, recent] = await Promise.all([
@@ -150,6 +161,7 @@ export async function getMeetingContext(
     event,
     tz,
     notInOrbit,
+    lastTime,
     people: people.map((c) => {
       const brief = briefs.find((b) => b.contactId === c.id);
       return {

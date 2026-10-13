@@ -10,6 +10,7 @@ import { ReauthRequiredError } from "@/lib/errors";
 import { getValidAccessToken, hasCalendarScope } from "@/lib/gmail";
 import { fetchCalendarWindow } from "@/lib/connectors/google-calendar";
 import { meetingCandidatesFrom, type MeetingCandidate } from "@/lib/meeting-calendar";
+import { findEventByKey, matchEventForSession } from "@/lib/calendar-events";
 import { listMeetingsFor, type MeetingsPage } from "@/lib/meetings-list";
 import {
   analyzeMeetingTranscript,
@@ -17,10 +18,13 @@ import {
   cleanUserNotes,
   formatTranscriptSegment,
   isSelf,
+  speakerNames,
 } from "@/lib/meeting-digest";
 import { requireMeetingsUser } from "@/lib/plan-guards";
 import {
   createMeetingSessionRow,
+  lastSeriesMeeting,
+  linkMeetingSessionToEvent,
   discardMeetingSessionRow,
   endMeetingSessionRow,
   getMeetingTranscript,
@@ -65,6 +69,7 @@ export async function createMeetingSession(input: {
   captureSurface?: string | null;
   recorderId: string;
   calendarEventKey?: string | null;
+  calendarSeriesId?: string | null;
 }): Promise<{ ok: true; id: string; startedAtIso: string } | Fail> {
   try {
     const userId = await requireMeetingsUser();
@@ -232,9 +237,28 @@ export async function analyzeMeetingSession(
     if (t.session.status === "saved") return { ok: false, error: "That meeting was already saved" };
 
     const notes = cleanUserNotes(opts.notes);
+
+    // The calendar event this was, when known — from the nudge, or matched now by time and guests.
+    let event = t.session.calendarEventKey ? await findEventByKey(userId, t.session.calendarEventKey) : null;
+    if (!t.session.calendarEventKey) {
+      event = await matchEventForSession(userId, t.session.startedAt, {
+        title: t.session.title,
+        attendees: t.session.attendees ?? [],
+      });
+      if (event) {
+        await linkMeetingSessionToEvent(userId, t.session.id, { eventKey: event.providerEventId, seriesId: event.seriesId });
+      }
+    }
+    const seriesId = t.session.calendarSeriesId ?? event?.seriesId ?? null;
+    const last = seriesId ? await lastSeriesMeeting(userId, seriesId, t.session.id) : null;
+    const lastOpen = last?.actionItems.map((a) => (a.owner ? `${a.text} (${a.owner})` : a.text)) ?? [];
+    const invited = event?.guestsHidden ? [] : (event?.attendees ?? []).map((a) => a.name || a.email).filter(Boolean);
+
+    // A 1:1's other voice is the other person; the transcript then reads "Priya:" not "Speaker 1:".
+    const voices = speakerNames(t.segments, invited.length ? invited : (t.session.attendees ?? []).map((a) => a.name));
     const paragraphs = t.segments
       .filter((s) => s.text.trim())
-      .map((s) => formatTranscriptSegment(s));
+      .map((s) => formatTranscriptSegment(s, voices));
     if (!paragraphs.length) {
       return {
         ok: false,
@@ -244,7 +268,17 @@ export async function analyzeMeetingSession(
 
     const self = await loadMeetingSelf(userId);
     const userName = [self.firstName, self.lastName].filter(Boolean).join(" ") || null;
-    const attendeeNames = (t.session.attendees ?? []).map((a) => a.name);
+    // The user's typed list wins; a recording started without one borrows the invite's guests.
+    const sessionAttendees = t.session.attendees ?? [];
+    const attendeeNames = sessionAttendees.length ? sessionAttendees.map((a) => a.name) : invited;
+    const emailFor = (name: string) => {
+      const key = name.trim().toLowerCase();
+      return (
+        sessionAttendees.find((a) => a.name.trim().toLowerCase() === key)?.email ??
+        event?.attendees.find((a) => (a.name || a.email).trim().toLowerCase() === key)?.email ??
+        null
+      );
+    };
 
     let digest = !opts.force && !notes ? t.session.digest : null;
     if (!digest) {
@@ -258,6 +292,8 @@ export async function analyzeMeetingSession(
             userName,
             attendees: attendeeNames,
             userNotes: notes || undefined,
+            invite: event ? { attendees: invited, agenda: event.agenda } : undefined,
+            lastTime: lastOpen.length ? { date: isoDay(last!.startedAt), actionItems: lastOpen } : undefined,
           },
           { complete: completeJson, parseJson: parseAiJson }
         );
@@ -308,7 +344,7 @@ export async function analyzeMeetingSession(
           // review card, and someone merely mentioned should be a mention, not a card.
           seedPeople: present.map((name) => ({
             name,
-            email: t.session.attendees.find((a) => a.name.trim().toLowerCase() === name.toLowerCase())?.email ?? null,
+            email: emailFor(name),
           })),
           interactionType: "call",
         },

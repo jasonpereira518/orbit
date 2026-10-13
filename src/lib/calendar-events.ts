@@ -105,6 +105,7 @@ export async function refreshCalendarWindow(
           endAt: sql`excluded.end_at`,
           allDay: sql`excluded.all_day`,
           location: sql`excluded.location`,
+          agenda: sql`excluded.agenda`,
           conferenceUrl: sql`excluded.conference_url`,
           conferenceKind: sql`excluded.conference_kind`,
           attendees: sql`excluded.attendees`,
@@ -147,4 +148,54 @@ export async function listUpcomingEvents(
     )
     .orderBy(asc(calendarEvents.startAt))
     .limit(opts.limit ?? 50);
+}
+
+/** One event by the provider's per-instance id — what a recording stores. Null once it ages out of the window. */
+export async function findEventByKey(userId: string, providerEventId: string): Promise<CalendarEventRow | null> {
+  const db = await getDb();
+  const [row] = await db
+    .select()
+    .from(calendarEvents)
+    .where(and(eq(calendarEvents.userId, userId), eq(calendarEvents.providerEventId, providerEventId)))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * The calendar event a recording was of, when it was started without the calendar nudge:
+ * an event under way when recording began, or starting within 15 minutes of it. One such event
+ * is the answer; among several, the one whose title or guests match the recording's, and only
+ * when it clearly beats the rest. Otherwise null — a wrong link is worse than none.
+ */
+export function pickEventForRecording(
+  candidates: CalendarEventRow[],
+  recording: { title: string | null; attendees: Array<{ name: string; email?: string | null }> }
+): CalendarEventRow | null {
+  const timed = candidates.filter((e) => !e.allDay && e.selfResponse !== "declined");
+  if (timed.length <= 1) return timed[0] ?? null;
+  const title = recording.title?.trim().toLowerCase() || null;
+  const emails = new Set(recording.attendees.map((a) => a.email?.toLowerCase()).filter((e): e is string => !!e));
+  const names = new Set(recording.attendees.map((a) => a.name.trim().toLowerCase()).filter(Boolean));
+  const scored = timed
+    .map((e) => ({
+      e,
+      score:
+        (title && e.title.trim().toLowerCase() === title ? 2 : 0) +
+        e.attendees.filter((a) => emails.has(a.email) || names.has(a.name.trim().toLowerCase())).length,
+    }))
+    .sort((a, b) => b.score - a.score);
+  return scored[0].score > 0 && scored[0].score > scored[1].score ? scored[0].e : null;
+}
+
+export async function matchEventForSession(
+  userId: string,
+  startedAt: Date,
+  recording: { title: string | null; attendees: Array<{ name: string; email?: string | null }> }
+): Promise<CalendarEventRow | null> {
+  const candidates = await listUpcomingEvents(userId, {
+    from: startedAt,
+    to: new Date(startedAt.getTime() + 15 * 60_000),
+    limit: 20,
+  });
+  return pickEventForRecording(candidates, recording);
 }

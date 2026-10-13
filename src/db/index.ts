@@ -989,6 +989,7 @@ CREATE TABLE IF NOT EXISTS calendar_events (
   end_at timestamptz,
   all_day boolean NOT NULL DEFAULT false,
   location text,
+  agenda text,
   conference_url text,
   conference_kind text,
   attendees jsonb NOT NULL DEFAULT '[]',
@@ -1828,6 +1829,7 @@ CREATE TABLE IF NOT EXISTS meeting_sessions (
   digest_error text,
   note_batch_id uuid,
   calendar_event_key text,
+  calendar_series_id text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -2628,7 +2630,11 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // reminders and recordings). NOT 153 or 154: claude/sprint-c-audience claims 153 and
 // claude/managed-ai-pool claims 154. Scanned every local and remote ref and every worktree's
 // working file on Oct 12 2026: 154 was the highest claimed.
-export const SCHEMA_VERSION = 155;
+//
+// 156 = calendar_events.agenda + meeting_sessions.calendar_series_id (the summarizer reads the
+// calendar invite). Scanned every local and remote ref and every worktree's working file on
+// Oct 13 2026: 155 (this stack) was the highest claimed; main is at 154.
+export const SCHEMA_VERSION = 156;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3425,6 +3431,8 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "career_profile", "jsonb");
   await ensureColumn(client, "reminders", "calendar_event_key", "text");
   await ensureColumn(client, "meeting_sessions", "calendar_event_key", "text");
+  await ensureColumn(client, "meeting_sessions", "calendar_series_id", "text");
+  await ensureColumn(client, "calendar_events", "agenda", "text");
   await ensureColumn(client, "user_settings", "email_activity_sync", "integer NOT NULL DEFAULT 0");
   await ensureColumn(
     client,
@@ -4204,6 +4212,10 @@ const alters = [
   // per-instance id, not a calendar_events FK, because that table only holds a two-week window.
   `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS calendar_event_key text`,
   `ALTER TABLE meeting_sessions ADD COLUMN IF NOT EXISTS calendar_event_key text`,
+  // Schema v156: the invite's agenda (for the meeting summarizer) and the recurring series a
+  // recording belongs to (for "last time" in the next one).
+  `ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS agenda text`,
+  `ALTER TABLE meeting_sessions ADD COLUMN IF NOT EXISTS calendar_series_id text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_activity_sync integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS terms_accepted_at timestamptz`,

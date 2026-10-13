@@ -1559,6 +1559,8 @@ export const meetingSessions = pgTable(
     noteBatchId: uuid("note_batch_id"),
     /** The calendar event this was recorded from, when started from one (provider instance id). */
     calendarEventKey: text("calendar_event_key"),
+    /** That event's recurring series, so the next occurrence can open with "last time". */
+    calendarSeriesId: text("calendar_series_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -1627,6 +1629,8 @@ export type MeetingDigest = {
   participants: { name: string; present: boolean; context: string | null }[];
   datedQuotes: string[];
   notes: string;
+  /** The calendar invite's agenda, item by item, and whether the call got to it. Absent before v156. */
+  agenda?: { item: string; covered: boolean }[];
 };
 
 /** The structured profile brief. 1:1 with contacts; kept off `contacts` because that table is scanned whole on hot paths. */
@@ -3354,6 +3358,8 @@ export const calendarEvents = pgTable(
     endAt: timestamp("end_at", { withTimezone: true }),
     allDay: boolean("all_day").notNull().default(false),
     location: text("location"),
+    /** The invite's description as plain text, capped — the agenda the summarizer checks against. */
+    agenda: text("agenda"),
     conferenceUrl: text("conference_url"),
     conferenceKind: text("conference_kind"),
     attendees: jsonb("attendees").$type<CalendarEventAttendee[]>().notNull().default([]),
