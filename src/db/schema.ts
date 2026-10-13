@@ -178,6 +178,11 @@ export const userSettings = pgTable("user_settings", {
    * across tabs and devices. See `src/lib/linkedin-export.ts`.
    */
   linkedinReminderShownAt: timestamp("linkedin_reminder_shown_at", { withTimezone: true }),
+  /**
+   * When the one-time "your AI credits are here" screen was shown — write-once, claimed in a
+   * single conditional UPDATE so two tabs cannot both play it. See `src/lib/credits-intro.ts`.
+   */
+  creditsIntroShownAt: timestamp("credits_intro_shown_at", { withTimezone: true }),
   theme: text("theme").$type<"light" | "dark" | "system">(),
   ycModeEnabled: boolean("yc_mode_enabled").default(false),
   /**
