@@ -47,7 +47,9 @@ export const runtime = "nodejs";
 const OK = () => new NextResponse(null, { status: 204 });
 
 /**
- * Per-instance abuse guard, keyed on the visitor hash.
+ * Per-instance abuse guard, keyed on the client IP — not the visitor hash, which folds in
+ * the User-Agent and so reset for anyone who changed it — and checked before any branch, so
+ * the dwell and load updates are metered too. The address is held in this Map only.
  *
  * Deliberately in memory rather than `rate_limit_buckets`: that limiter costs a Postgres
  * upsert per check, which would double the write volume of the entire pipeline to police
@@ -55,7 +57,8 @@ const OK = () => new NextResponse(null, { status: 204 });
  * matters here — someone curling the endpoint in a loop to poison the numbers.
  */
 const RATE_WINDOW_MS = 60_000;
-const RATE_MAX = 60;
+/** Per IP, and a page sends up to three beacons (view, load, dwell): room for a campus NAT. */
+const RATE_MAX = 240;
 const recentByVisitor = new Map<string, number[]>();
 
 function overRateLimit(key: string, now: number) {
@@ -216,6 +219,7 @@ const isUuid = (value: unknown): value is string =>
 
 export async function POST(request: Request) {
   if (!analyticsEnabled() || !recordsHere()) return OK();
+  if (overRateLimit(clientIp(request.headers), Date.now())) return OK();
 
   try {
     const body = (await request.json().catch(() => null)) as {
@@ -257,8 +261,6 @@ export async function POST(request: Request) {
     const headers = request.headers;
     const userAgent = headers.get("user-agent") ?? "";
     const visitorHash = hashVisitor(clientIp(headers), userAgent);
-
-    if (overRateLimit(visitorHash, Date.now())) return OK();
 
     // The client sends its full URL so the UTMs can be read here rather than trusted from
     // it. `attributionFromUrl` is the same parser the signup attribution cookie uses, so a

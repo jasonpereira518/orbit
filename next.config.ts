@@ -12,6 +12,8 @@ import {
 import { CAPTURE_BODY_SIZE_LIMIT } from "./src/lib/capture-limits";
 
 const nextConfig: NextConfig = {
+  // No `X-Powered-By: Next.js`: the exact framework is no one's business but ours.
+  poweredByHeader: false,
   // `*.bench.tsx` routes (the constellation benchmark, src/app/bench) exist only in a build
   // made with ORBIT_BENCH=1, so no deployed build ever contains them.
   pageExtensions: [

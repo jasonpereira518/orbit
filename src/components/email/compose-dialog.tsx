@@ -398,7 +398,7 @@ export function ComposeDialog({
               </div>
               <div className="flex items-center gap-2">
                 {lowOnSends && capability?.ok && (
-                  <span className="text-xs text-muted-foreground">{capability.remainingToday} left today</span>
+                  <span className="text-xs text-muted-foreground">{capability.remainingToday} recipients left today</span>
                 )}
                 <ScheduleMenu
                   disabled={!canSend}

@@ -1055,8 +1055,9 @@ export async function listImports(
     // day): nothing has been imported yet, so it is not history.
     where: and(eq(imports.userId, userId), ne(imports.status, "staging")),
     orderBy: (i, { desc }) => [desc(i.createdAt)],
-    limit: options.limit ?? IMPORT_HISTORY_PAGE,
-    offset: options.offset,
+    // Arguments to a server action come from any client: bounded, so one call can't page the table.
+    limit: Math.min(Math.max(Math.trunc(Number(options.limit) || IMPORT_HISTORY_PAGE), 1), 200),
+    offset: Math.max(Math.trunc(Number(options.offset) || 0), 0),
     columns: {
       id: true,
       importType: true,
