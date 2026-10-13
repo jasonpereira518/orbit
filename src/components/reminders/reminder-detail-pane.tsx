@@ -27,6 +27,7 @@ import { reminderTypeLabel, reminderTypeStyle } from "@/lib/reminder-display";
 import type { ReminderRow } from "@/lib/reminders-page";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
+import { DraftLinkWarning } from "@/components/follow-up/draft-link-warning";
 
 /**
  * Everything about one reminder, editable in place: the fields, the person it's about,
@@ -235,6 +236,7 @@ function ContactSection({ item }: { item: ReminderRow }) {
               </Button>
             </div>
             <p className="whitespace-pre-wrap text-sm text-muted-foreground">{draft}</p>
+            <DraftLinkWarning text={draft} />
           </div>
         )}
       </div>

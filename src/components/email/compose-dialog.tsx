@@ -28,6 +28,7 @@ import type { MailboxId } from "@/lib/email/sender";
 import { stripSignature } from "@/lib/email/signature";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
+import { DraftLinkWarning } from "@/components/follow-up/draft-link-warning";
 
 /**
  * Write an email and send it from the user's own mailbox. It goes out after a 10-second undo
@@ -58,6 +59,7 @@ export function ComposeDialog({
   const [showCopies, setShowCopies] = useState(false);
   const [subject, setSubject] = useState(request.subject ?? "");
   const [body, setBody] = useState(request.body ?? "");
+  const [aiBody, setAiBody] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<ComposeAttachment[]>(() =>
     (request.attachments ?? []).map((a) => ({ ...a, id: a.pathname, progress: 100 }))
@@ -185,6 +187,7 @@ export function ComposeDialog({
         return;
       }
       setBody(res.body);
+      setAiBody(res.body);
       setSubject((s) => (s.trim() ? s : "Following up"));
     });
   }
@@ -337,6 +340,7 @@ export function ComposeDialog({
               placeholder="Write your message…"
               className="min-h-40 resize-y border-0 px-0 shadow-none focus-visible:ring-0"
             />
+            {aiBody && <DraftLinkWarning text={body} aiText={aiBody} />}
             {ready?.signature && (
               <p className="whitespace-pre-wrap text-xs text-muted-foreground" aria-label="Signature">
                 {`-- \n${ready.signature}`}
