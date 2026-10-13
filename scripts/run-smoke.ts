@@ -225,6 +225,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-import-finish": "pure",
   "smoke-finish-scene-geometry": "pure",
   "smoke-linkedin-slug-guard": "pglite",
+  "smoke-shared-avatars": "pglite",
   "smoke-legal-pages": "pure",
   "smoke-landing-anchors": "pure",
   "smoke-landing-cards": "pure",
