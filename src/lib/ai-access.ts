@@ -227,12 +227,11 @@ export async function managedPoolState(now = Date.now()): Promise<PoolState> {
   if (pauseCache && now - pauseCache.at < PAUSE_TTL_MS) return pauseCache;
   try {
     const db = await getDb();
-    const [row] = await db
-      .select({ paused: siteSettings.managedAiPaused })
-      .from(siteSettings)
-      .where(eq(siteSettings.id, 1))
-      .limit(1);
-    const spentMicros = await managedPoolsSpent(new Date(now));
+    // Independent reads, so one round between them.
+    const [[row], spentMicros] = await Promise.all([
+      db.select({ paused: siteSettings.managedAiPaused }).from(siteSettings).where(eq(siteSettings.id, 1)).limit(1),
+      managedPoolsSpent(new Date(now)),
+    ]);
     const spent = new Set(
       (Object.keys(spentMicros) as AiProvider[]).filter((p) => (spentMicros[p] ?? 0) >= MANAGED_AI_POOLS[p]!.capMicros)
     );
