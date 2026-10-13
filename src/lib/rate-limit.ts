@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { lt, sql } from "drizzle-orm";
 import { TIMELINE_DAILY_CONTACT_CAP } from "@/lib/timeline-cost";
 import { getDb } from "@/db";
 import { rateLimitBuckets } from "@/db/schema";
@@ -326,4 +326,24 @@ export async function consumeBucket(
     throw new RateLimitedError(scope, Math.max(1, policy.windowSec - elapsed));
   }
   return { remaining: Math.max(0, policy.limit - count) };
+}
+
+/**
+ * A bucket idle this long is dead weight: `consumeBucket` resets an expired window on the
+ * next hit anyway, so deleting one loses nothing. Twice the longest window in `RATE_LIMITS`
+ * (a day), which `smoke-housekeeping-sweeps` asserts.
+ */
+export const RATE_LIMIT_BUCKET_RETENTION_MS = 2 * 24 * 60 * 60 * 1000;
+
+/**
+ * Drops long-expired buckets; nothing else ever does, so the table grows by one row per
+ * (scope, key) forever. Called by the process-stalled sweep.
+ * ponytail: seq scan on an unindexed column, fine while the table is small — index
+ * `window_started_at` if it ever reaches the hundreds of thousands.
+ */
+export async function pruneRateLimitBuckets(now: Date = new Date()): Promise<void> {
+  const db = await getDb();
+  await db
+    .delete(rateLimitBuckets)
+    .where(lt(rateLimitBuckets.windowStartedAt, new Date(now.getTime() - RATE_LIMIT_BUCKET_RETENTION_MS)));
 }

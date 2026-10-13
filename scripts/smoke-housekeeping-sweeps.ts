@@ -5,10 +5,11 @@
 import "./smoke/_env";
 
 import { readFileSync } from "node:fs";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, like } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { captureHandoffs, meetingSessions, meetingTranscriptSegments } from "../src/db/schema";
+import { captureHandoffs, meetingSessions, meetingTranscriptSegments, rateLimitBuckets } from "../src/db/schema";
 import { ABANDONED_SESSION_TTL_DAYS, sweepAbandonedMeetingSessions } from "../src/lib/meeting-sessions";
+import { RATE_LIMITS, RATE_LIMIT_BUCKET_RETENTION_MS, pruneRateLimitBuckets } from "../src/lib/rate-limit";
 import { sweepExpiredHandoffs } from "../src/lib/scan-handoff";
 import { run } from "./smoke/_env";
 
@@ -25,6 +26,7 @@ async function cleanup() {
   await db.delete(meetingTranscriptSegments).where(inArray(meetingTranscriptSegments.userId, USERS));
   await db.delete(meetingSessions).where(inArray(meetingSessions.userId, USERS));
   await db.delete(captureHandoffs).where(inArray(captureHandoffs.userId, USERS));
+  await db.delete(rateLimitBuckets).where(like(rateLimitBuckets.bucket, "smoke-sweeps:%"));
 }
 
 run(async () => {
@@ -58,8 +60,22 @@ run(async () => {
     check("the expired grant is gone, the live one kept", JSON.stringify(handoffs.map((h) => h.tokenHash)) === JSON.stringify(["smoke-sweeps-live"]), JSON.stringify(handoffs));
     check("the sweep reports a count", removed >= 1, String(removed));
 
+    console.log("\nRate-limit buckets…");
+    const ago = (ms: number) => new Date(Date.now() - ms);
+    await db.insert(rateLimitBuckets).values([
+      { bucket: "smoke-sweeps:old", windowStartedAt: ago(RATE_LIMIT_BUCKET_RETENTION_MS + 60_000), count: 3 },
+      { bucket: "smoke-sweeps:fresh", windowStartedAt: ago(60_000), count: 3 },
+      { bucket: "smoke-sweeps:day-old", windowStartedAt: ago(86_400_000 + 60_000), count: 3 },
+    ]);
+    await pruneRateLimitBuckets();
+    const buckets = (await db.select({ bucket: rateLimitBuckets.bucket }).from(rateLimitBuckets).where(like(rateLimitBuckets.bucket, "smoke-sweeps:%"))).map((r) => r.bucket).sort();
+    check("a bucket idle past the retention is deleted, a recent one kept", JSON.stringify(buckets) === JSON.stringify(["smoke-sweeps:day-old", "smoke-sweeps:fresh"]), JSON.stringify(buckets));
+    const longestWindowMs = Math.max(...Object.values(RATE_LIMITS).map((p) => p.windowSec)) * 1000;
+    check("retention outlasts the longest bucket window, so a live window is never cut", RATE_LIMIT_BUCKET_RETENTION_MS >= 2 * longestWindowMs, String(longestWindowMs));
+
     const route = readFileSync("src/app/api/imports/process-stalled/route.ts", "utf8");
     check("the daily cron calls both sweeps", route.includes("sweepAbandonedMeetingSessions()") && route.includes("sweepExpiredHandoffs()"));
+    check("…and prunes the rate-limit buckets", route.includes("pruneRateLimitBuckets()"));
   } finally {
     await cleanup();
   }

@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { getDb, rowsOf } from "@/db";
 import { contacts, errorEvents, usageEvents } from "@/db/schema";
 import { pruneAiResultCache } from "@/lib/ai-result-cache";
+import { pruneRateLimitBuckets } from "@/lib/rate-limit";
 import { runAiBatchSweep } from "@/lib/ai-batch-apply";
 import { resumeStalledImports } from "@/lib/import-stall";
 import { resumeStrandedPurges } from "@/lib/user-data";
@@ -245,6 +246,8 @@ export async function GET(request: Request) {
       );
       // Remembered AI answers past the longest TTL any caller reads them with.
       await pruneAiResultCache();
+      // Rate-limit buckets whose window ended long ago; only the next hit ever reset one.
+      await pruneRateLimitBuckets();
       // Batched background AI: whatever the providers have finished since the last sweep.
       const batches = await runAiBatchSweep();
       stats.aiBatchesApplied = batches.applied;
