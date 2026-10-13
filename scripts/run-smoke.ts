@@ -259,6 +259,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-stripe-ordering": "pure",
   "smoke-stripe-revocation": "pure",
   "smoke-settings-layout": "pure",
+  "smoke-page-shell": "pure",
   "smoke-sky-figures": "pure",
   "smoke-timeline-vocabulary": "pure",
   "smoke-twilio-opt-out": "pure",

@@ -666,7 +666,7 @@ export function RemindersStage({
               </Button>
               <h2
                 id="reminders-queue-title"
-                className="hidden min-w-0 flex-1 items-center gap-2 font-heading text-lg font-medium lg:flex"
+                className="hidden min-w-0 flex-1 items-center gap-2 font-[family-name:var(--font-display)] text-lg font-medium text-ink lg:flex"
               >
                 {currentList && <ListGlyph list={currentList} className="size-4.5 shrink-0" />}
                 <span className="truncate">{title}</span>
