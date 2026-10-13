@@ -50,7 +50,10 @@ export function PageHeader({
         className
       )}
     >
-      <div className="min-w-0 flex-1">
+      {/* A floor, not min-w-0: with no minimum the title gives up its width to the actions
+          and a phone subtitle breaks into a sliver. With 16rem, flex-wrap moves the actions
+          to their own line first (the rule PeopleListShell already follows). */}
+      <div className="min-w-64 flex-1">
         {back && (
           <Link href={back.href} className={BACK_LINK}>
             <ArrowLeft className="size-3.5" aria-hidden />

@@ -34,7 +34,7 @@ export function PageHeaderSkeleton({
 }) {
   return (
     <div className={cn("flex shrink-0 flex-wrap items-start justify-between gap-4", className)}>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-64 flex-1">
         {back && <Skeleton className="mb-3 h-5 w-24" />}
         {eyebrow && <Skeleton className="mb-1 h-5 w-24" />}
         <Skeleton className={cn("w-48", size === "lg" ? "h-10" : "h-9")} />
@@ -467,7 +467,7 @@ export function GraphPageSkeleton() {
   // rearranged itself into something else the moment the data arrived.
   return (
     <div className="-mx-1 space-y-3 md:-mx-2">
-      <PageHeaderSkeleton eyebrow compact actions className="px-1 md:px-2" />
+      <PageHeaderSkeleton eyebrow compact className="px-1 md:px-2" />
       <ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />
     </div>
   );
