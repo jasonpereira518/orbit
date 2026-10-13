@@ -104,6 +104,11 @@ export const PUBLIC_ROUTES = [
   // it exists to count, so requiring a session would measure only the people who already
   // converted. It stores no IP and sets no cookie — see src/lib/analytics-visitor.ts.
   "/api/track",
+  // Crawler files (`src/app/robots.ts`, `src/app/sitemap.ts`). The proxy matcher sends
+  // `.txt` and `.xml` through Clerk, so without these a crawler is redirected to sign-in.
+  // Deliberately NOT in WAITLIST_ALLOWED_PATHS: the waitlist host stays unbranded.
+  "/robots.txt",
+  "/sitemap.xml",
   // Genuinely public: the liveness probe the uptime monitor polls. Its shallow body says
   // only "up or down" plus the deployed sha; the deep view needs HEALTH_TOKEN.
   "/api/health",
