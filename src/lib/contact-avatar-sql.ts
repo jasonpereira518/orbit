@@ -11,7 +11,8 @@ const LINKEDIN_HOST_RE = "^(https?://)?([a-z0-9-]+\\.)*linkedin\\.com/";
  * whose `profile_image_source` is 'upload' never gets one; a blocked or "found nothing" row
  * never matches. A scalar subquery (a primary-key lookup per row) rather than a JOIN so it
  * drops into relational `extras`, raw SQL and plain selects alike without adding a statement.
- * `contacts.linkedin_slug` has no host check of its own, hence the regex on the URL.
+ * `contacts.linkedin_slug` has no host check of its own, hence the regex on the URL. Only an
+ * `https://` shared image is ever used (defence in depth: writers validate too).
  * Inner columns are literal `la.*` so drizzle can never strip their qualifier.
  */
 export const sharedAvatarUrlSql = sql<string | null>`(CASE WHEN ${contacts.profileImageSource} IS DISTINCT FROM 'upload' THEN (

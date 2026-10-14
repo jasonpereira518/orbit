@@ -9,8 +9,9 @@ import "./smoke/_env";
 import { run } from "./smoke/_env";
 import { eq, inArray, like, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, linkedinAvatars } from "../src/db/schema";
+import { contacts, importJobRows, imports, linkedinAvatars } from "../src/db/schema";
 import { clientAvatarUrlSql, sharedAvatarUrlSql } from "../src/lib/contact-avatar-sql";
+import { listImportPeople } from "../src/lib/imports/import-people";
 import { buildSnapshot } from "../src/lib/extension/resolve";
 import { loadKnowledgeDossier } from "../src/lib/knowledge-dossier";
 import { loadKnowledgePeople } from "../src/lib/knowledge-people";
@@ -32,6 +33,7 @@ run(async () => {
   const db = await getDb();
   const users = [`${P}u1`, `${P}u2`];
   const cleanup = async () => {
+    await db.delete(imports).where(inArray(imports.userId, users));
     await db.delete(contacts).where(inArray(contacts.userId, users));
     await db.delete(linkedinAvatars).where(like(linkedinAvatars.slug, `${P}%`));
   };
@@ -101,6 +103,22 @@ run(async () => {
   check("knowledge dossier: hasPhoto true with only a shared photo", dossier?.contact.hasPhoto === true);
   const people1 = await loadKnowledgePeople(users[0]);
   check("knowledge people: no photo anywhere stays false", people1.rows.find((r) => r.id === insecure.id)?.hasPhoto === false);
+
+  console.log("\nImport people list...");
+  const [imp] = await db
+    .insert(imports)
+    .values({ userId: users[0], importType: "linkedin_connections", status: "completed", createdAt: new Date("2020-01-01T00:00:00Z") })
+    .returning();
+  const listed = [a1, blocked, insecure, noSlug];
+  await db.insert(importJobRows).values(
+    listed.map((c, i) => ({ importId: imp.id, userId: users[0], rowIndex: i, payload: {} as never, status: "done", contactId: c.id }))
+  );
+  const importPeople = (await listImportPeople(users[0], imp.id, "added")).people;
+  const photo = (id: string) => importPeople.find((p) => p.id === id)?.profileImageUrl;
+  check("import list: shared photo wins", photo(a1.id) === SHARED, String(photo(a1.id)));
+  check("import list: blocked shared row -> own photo", photo(blocked.id) === OWN);
+  check("import list: http shared url and no own photo -> null", photo(insecure.id) === null);
+  check("import list: no slug unaffected", photo(noSlug.id) === OWN);
 
   console.log("\nContact rows stay free of shared URLs...");
   const stored = await db.select({ id: contacts.id, p: contacts.profileImageUrl }).from(contacts).where(eq(contacts.id, a1.id));
