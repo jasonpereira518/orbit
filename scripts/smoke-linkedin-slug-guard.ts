@@ -13,6 +13,7 @@ import {
   DROP_LINKEDIN_SLUG_STATEMENT, LINKEDIN_SLUG_EXPRESSION, SCALE_DDL, SCHEMA_VERSION,
   getDb, linkedinSlugNeedsRewrite, normalizeGeneratedExpression, reconcileSchema, rowsOf,
 } from "../src/db";
+import { sharedAvatarSlug } from "../src/lib/shared-avatars";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -77,6 +78,36 @@ run(async () => {
   check("the slug index is back",
     rowsOf(await db.execute(sql`SELECT 1 FROM pg_indexes WHERE indexname = 'contacts_slug_idx'`)).length === 1);
   await db.execute(sql`DELETE FROM contacts WHERE user_id = ${USER}`);
+
+
+  console.log("\nThe shared-avatar key (JS) equals the generated column (SQL)...");
+  const cases: Array<[string, string | null]> = [
+    ["https://www.linkedin.com/in/Ada-Lovelace", "ada-lovelace"],
+    ["https://de.linkedin.com/in/ada/", "ada"],
+    ["https://www.linkedin.com/in/ada?trk=feed&x=/in/zed", "ada"],
+    ["https://www.linkedin.com/in/ada#about", "ada"],
+    ["https://www.linkedin.com/in/ada/details/experience/", "ada"],
+    ["linkedin.com/in/ada", "ada"],
+    ["https://www.linkedin.com/in/j%C3%BCrgen-m", "j%c3%bcrgen-m"],
+    ["https://www.linkedin.com/in/", null],
+    ["https://www.linkedin.com/company/acme", null],
+    ["https://www.linkedin.com/IN/ada", null],
+    ["https://example.com/in/ada", null],
+    ["https://notlinkedin.com/in/ada", null],
+    ["", null],
+  ];
+  const dbx = await getDb();
+  for (const [url, want] of cases) {
+    const js = sharedAvatarSlug(url);
+    check(`JS ${JSON.stringify(url)} -> ${JSON.stringify(want)}`, js === want, String(js));
+    await dbx.execute(sql`DELETE FROM contacts WHERE user_id = ${USER}`);
+    await dbx.execute(sql`INSERT INTO contacts (user_id, full_name, linkedin_url) VALUES (${USER}, 'Slug Case', ${url})`);
+    const sqlSlug = rowsOf<{ linkedin_slug: string | null }>(
+      await dbx.execute(sql`SELECT linkedin_slug FROM contacts WHERE user_id = ${USER}`))[0]?.linkedin_slug ?? null;
+    // Non-LinkedIn hosts are null in JS by design (never shared); SQL has no host check.
+    if (js !== null) check(`SQL agrees on ${JSON.stringify(url)}`, sqlSlug === js, String(sqlSlug));
+  }
+  await dbx.execute(sql`DELETE FROM contacts WHERE user_id = ${USER}`);
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

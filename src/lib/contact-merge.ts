@@ -217,6 +217,9 @@ export async function mergeContacts(
                last_name            = COALESCE(w.last_name, l.last_name),
                preferred_name       = COALESCE(w.preferred_name, l.preferred_name),
                profile_image_url    = COALESCE(w.profile_image_url, l.profile_image_url),
+               -- The source travels with whichever photo survives.
+               profile_image_source = CASE WHEN w.profile_image_url IS NULL THEN l.profile_image_source
+                                           ELSE w.profile_image_source END,
                -- A merge must never turn a real person into a tour example (removal would
                -- then delete them) nor keep an example label on a winner that now holds
                -- real data. Only when neither side is an example does the usual fill apply.
