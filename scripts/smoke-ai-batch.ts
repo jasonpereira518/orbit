@@ -365,7 +365,7 @@ async function main() {
     await db.insert(userSettings).values({ userId: MANAGED, subscriptionPlan: "orbit", subscriptionStatus: "active" });
     await ensureAllowance(MANAGED, "orbit", creditPeriodFor(null));
     const before = await getCreditBalance(MANAGED, "orbit", null);
-    check("nothing in flight, nothing held", before.held === 0 && before.spendable === 200 * 10_000, JSON.stringify(before));
+    check("nothing in flight, nothing held", before.held === 0 && before.spendable === 300 * 10_000, JSON.stringify(before));
 
     const jobId = crypto.randomUUID();
     const hold = await placeHold({
@@ -373,7 +373,7 @@ async function main() {
     });
     check("an in-flight batch holds its estimate", Boolean(hold));
     const during = await getCreditBalance(MANAGED, "orbit", null);
-    check("  and the balance says so", during.held === 40_000 && during.spendable === 200 * 10_000 - 40_000, JSON.stringify(during));
+    check("  and the balance says so", during.held === 40_000 && during.spendable === 300 * 10_000 - 40_000, JSON.stringify(during));
 
     const tooBig = await placeHold({
       userId: MANAGED, micros: 5_000_000, operation: "batch:too-big", packs: true, ttlMs: BATCH_HOLD_TTL_MS, floorMicros: 5_000_000 - 1,

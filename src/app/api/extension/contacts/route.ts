@@ -7,6 +7,7 @@ import type {
   SaveContactRequest,
   SaveContactResponse,
 } from "@/lib/extension/contract";
+import { sharedAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { saveContactRequestSchema } from "@/lib/extension/contract.schema";
 import { extensionRoute, preflight } from "@/lib/extension/http";
 import { saveContactFromExtension } from "@/lib/extension/writes";
@@ -43,7 +44,7 @@ export const GET = extensionRoute<undefined, ContactSearchResponse>({
         // origin (so `/api/avatars/{id}` would not resolve) and the wire contract
         // requires https. Decided in SQL so an inline row's base64 — up to 120 KB per
         // contact — never crosses the wire just to be dropped here.
-        photoUrl: sql<string | null>`CASE
+        photoUrl: sql<string | null>`coalesce(${sharedAvatarUrlSql}, CASE
           WHEN ${contacts.profileImageUrl} IS NULL
             OR btrim(${contacts.profileImageUrl}) = ''
             OR ${contacts.profileImageUrl} LIKE 'data:%'
@@ -52,7 +53,7 @@ export const GET = extensionRoute<undefined, ContactSearchResponse>({
             OR ${contacts.profileImageUrl} NOT LIKE 'https://%'
           THEN NULL
           ELSE btrim(${contacts.profileImageUrl})
-        END`,
+        END)`,
       })
       .from(contacts)
       .where(

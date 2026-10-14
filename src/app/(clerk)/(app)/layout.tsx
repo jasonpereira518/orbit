@@ -33,6 +33,7 @@ import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { resolveThemePreference } from "@/lib/theme";
 import { isHeldByStealth } from "@/lib/site-access";
 import { stealthWaitlistUrl } from "@/lib/waitlist-host";
+import { isCreditsIntroDue } from "@/lib/credits-intro";
 
 /**
  * No route in this group can be statically prerendered: every one of them resolves a
@@ -157,6 +158,13 @@ export default async function AppLayout({
   const includedAiAvailable = Object.values(managedKeysConfigured()).some(Boolean);
   const aiReason = aiDenialFromSettings(userId, settings);
   const creditsResetAt = PLAN_CONFIG[plan].monthlyCredits ? creditPeriodFor(settings).end.toISOString() : null;
+  // The one-time "your AI credits are here" screen. Free: answered from the row already read.
+  const creditsIntroDue = isCreditsIntroDue({
+    createdAt: settings.createdAt,
+    shownAt: settings.creditsIntroShownAt ?? null,
+    plan,
+    includedAiAvailable,
+  });
 
   return (
     <ViewerPlanProvider value={{ plan, includedAiAvailable, aiReason, creditsResetAt }}>
@@ -179,6 +187,7 @@ export default async function AppLayout({
       navOrder={visibility.navOrder}
       viewingAsUser={visibility.viewingAsUser}
       linkedinReminder={{ ...linkedinReminder, email: settings.email ?? null }}
+      creditsIntroDue={creditsIntroDue}
       tour={{
         active: tourRailVisible(settings),
         stop: settings.tourStop,

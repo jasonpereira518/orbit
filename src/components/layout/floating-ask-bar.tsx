@@ -38,6 +38,7 @@ import { ChatActivity } from "@/components/chat/chat-activity";
 import { OrbitMark } from "@/components/chat/orbit-mark";
 import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
 import { CONTACT_PAGE_SUGGESTIONS, type ChatSuggestion } from "@/lib/chat-suggestions";
+import { CHAT_QUESTION_MAX_CHARS } from "@/lib/chat-question";
 import { getAskBarContact } from "@/actions/contacts";
 import { searchDashboardContacts } from "@/actions/search";
 import { createReminder } from "@/actions/reminders";
@@ -841,6 +842,7 @@ export function FloatingAskBar() {
             value={query}
             placeholder={placeholder}
             disabled={chatPending}
+            maxLength={CHAT_QUESTION_MAX_CHARS}
             autoComplete="off"
             className={cn(
               // 16px on phones: iOS Safari zooms the page into any focused input with

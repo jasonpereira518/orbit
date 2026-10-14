@@ -31,7 +31,7 @@ const STEPS = [
   {
     kicker: "Step 01 · you",
     title: "Connect",
-    body: "Link LinkedIn and Gmail once — no CSVs, no manual entry.",
+    body: "Upload your LinkedIn export once and link Gmail — no manual entry.",
     dot: "#e8f3f1",
     glow: "0 0 20px rgba(232,243,241,.5)",
   },
@@ -52,7 +52,7 @@ const STEPS = [
   {
     kicker: "Step 04 · automatic",
     title: "Replies come back",
-    body: "Orbit tracks who replied — and nudges you about who you still owe a follow-up.",
+    body: "Orbit notices when nothing’s been logged since you reached out — and nudges you about who you still owe a follow-up.",
     dot: "#f2c14e",
     glow: "0 0 20px rgba(242,193,78,.6)",
   },

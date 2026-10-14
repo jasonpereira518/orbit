@@ -131,6 +131,13 @@ export const ERROR_SOURCES = {
    * minutes, and the ops sweep opens `ai.security` when an hour's rows cross its threshold.
    */
   aiSecurity: "ai.security",
+  /**
+   * Vercel BotID on the waitlist join (`src/lib/bot-check.ts`, `src/actions/interest-list.ts`).
+   * `check_failed` is the fail-open path (the check threw, so the request went through
+   * unchecked); `blocked` is a request answered as a bot. Both are throttled to one row an
+   * hour per instance and carry nothing from the request: no IP, no email, no headers.
+   */
+  botCheck: "bot.check",
 } as const;
 
 export type ErrorEventInput = {

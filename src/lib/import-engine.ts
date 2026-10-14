@@ -388,6 +388,7 @@ type PreMergeContact = {
   firstName: string | null;
   lastName: string | null;
   profileImageUrl: string | null;
+  profileImageSource: string | null;
   source: string | null;
   howMet: string | null;
   metContext: string | null;
@@ -421,6 +422,7 @@ function snapshotOf(
     firstName: prior.firstName,
     lastName: prior.lastName,
     profileImageUrl: prior.profileImageUrl,
+    profileImageSource: prior.profileImageSource,
     source: prior.source,
     howMet: prior.howMet,
     metContext: prior.metContext,
@@ -1026,6 +1028,7 @@ export async function runImportJob(importId: string): Promise<void> {
                   firstName: contacts.firstName,
                   lastName: contacts.lastName,
                   profileImageUrl: contacts.profileImageUrl,
+                  profileImageSource: contacts.profileImageSource,
                   source: contacts.source,
                   howMet: contacts.howMet,
                   metContext: contacts.metContext,

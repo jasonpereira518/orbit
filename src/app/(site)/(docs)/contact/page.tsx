@@ -16,6 +16,7 @@ import { DocHero } from "@/components/marketing/marketing-doc";
 import { Reveal } from "@/components/motion/reveal";
 import { isClerkConfigured, isDemoMode } from "@/lib/auth";
 import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
+import { FREE_STARTER_CREDITS, PLAN_CONFIG } from "@/lib/plans/plan-config";
 
 export const metadata: Metadata = {
   title: "Contact — Orbit",
@@ -112,11 +113,11 @@ const FAQ: readonly FaqItem[] = [
     a: (
       <>
         Whichever one you choose in Settings — Google Gemini, OpenAI, or
-        Anthropic. On the Free Plan it runs on an API key you supply, so the
-        request lands on your own account with that vendor. On Orbit Pro and
-        Orbit Max, AI is included and runs on Orbit&apos;s own account with that
-        vendor, unless you choose your own key. Nothing is sent until you
-        enable an AI feature.
+        Anthropic. AI is included on every plan and runs on Orbit&apos;s own
+        account with that vendor; if you add a key of your own and choose it,
+        the request lands on your account with that vendor instead. Most AI
+        features run only when you use them, and a few run in the background,
+        as the <Link href="/terms#ai">Terms</Link> describe.
       </>
     ),
   },
@@ -124,9 +125,11 @@ const FAQ: readonly FaqItem[] = [
     q: "What does Orbit cost?",
     a: (
       <>
-        Free for your first {FREE_CONTACT_LIMIT} contacts, with AI on your own
-        provider key. Orbit Pro and Orbit Max are monthly plans with AI
-        included — current prices are on the{" "}
+        Free for your first {FREE_CONTACT_LIMIT} contacts, with{" "}
+        {PLAN_CONFIG.free.monthlyCredits} AI credits a month plus{" "}
+        {FREE_STARTER_CREDITS} to start on Orbit&apos;s AI; your own key is
+        optional on any plan. Orbit Pro and Orbit Max are monthly or annual
+        plans with more AI included — current prices are on the{" "}
         <Link href="/pricing">pricing page</Link>.
       </>
     ),

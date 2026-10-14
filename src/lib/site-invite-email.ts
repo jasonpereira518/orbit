@@ -1,6 +1,7 @@
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { ACCENT, BG, FAINT, FONT_STACK, MUTED, TEXT, escapeHtml } from "@/lib/interest-list-email";
+import { PLAN_LABELS } from "@/lib/plans/plan-config";
 import type { WelcomePlanet } from "@/lib/welcome-planets";
 
 /**
@@ -119,7 +120,7 @@ export function buildSiteInviteEmail(input: {
   const fields = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
                         <tr>
                     ${field("Passenger", e(input.email))}
-                    ${field("Class", "Orbit · full access", ACCENT)}
+                    ${field("Class", PLAN_LABELS.free, ACCENT)}
                         </tr>
                         <tr>
                     ${field("Invited by", SIGNATURE)}
@@ -242,7 +243,7 @@ export function buildSiteInviteEmail(input: {
     "",
     "YOUR ORBIT PASS",
     `Passenger: ${input.email}`,
-    "Class: Orbit · full access",
+    `Class: ${PLAN_LABELS.free}`,
     `Invited by: ${SIGNATURE}`,
     ...(boardBy ? [`Board by: ${boardBy}`] : []),
     "",

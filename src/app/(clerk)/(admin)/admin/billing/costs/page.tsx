@@ -59,7 +59,7 @@ export default async function MoneyCostsPage() {
   const feeCents = estimatedStripeFeesCents(grossCents, grossCents > 0 ? 1 : 0);
 
   // Contribution per subscriber is revenue less the variable cost of serving them: Pro's
-  // list price, less Stripe's cut, less the whole included-AI allowance (200 credits = $2).
+  // list price, less Stripe's cut, less the whole included-AI allowance (300 credits = $3).
   // Assuming every credit is spent is the ceiling, so break-even here is never flattering.
   const proCents = PLAN_CONFIG.orbit.monthlyPriceCents ?? 0;
   const contributionPerSubscriberCents =

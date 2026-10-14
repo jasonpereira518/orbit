@@ -496,8 +496,8 @@ async function expandZip(
 }
 
 export type DetectOptions = {
-  /** Bytes past which a single file is refused rather than staged. */
-  maxBytes?: number;
+  /** Bytes past which a single file is refused rather than staged; a function sets it per kind. */
+  maxBytes?: number | ((target: ImportTarget) => number);
   /** Set when the drop itself was capped, so the caller can say so. */
   truncated?: boolean;
   /**
@@ -579,7 +579,9 @@ export async function detectImportFiles(
   const skipped: Detected[] = [];
 
   const oversize = recognised.filter(
-    (d) => maxBytes != null && d.bytes > maxBytes,
+    (d) =>
+      maxBytes != null &&
+      d.bytes > (typeof maxBytes === "function" ? maxBytes(d.target) : maxBytes),
   );
   for (const d of oversize) {
     skipped.push({ ...d, reason: "too big to import in one go" });

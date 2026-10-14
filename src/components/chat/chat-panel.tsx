@@ -71,6 +71,7 @@ import {
 import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
 import { DictationButton } from "@/components/chat/dictation-button";
 import { ComposerSendButton } from "@/components/chat/composer-send-button";
+import { CHAT_QUESTION_MAX_CHARS } from "@/lib/chat-question";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { ChatActivity } from "@/components/chat/chat-activity";
 import { OrbitMark } from "@/components/chat/orbit-mark";
@@ -1689,6 +1690,7 @@ export function ChatPanel({
                   onSelectionCollapsedChange={setSelectionCollapsed}
                   onCompositionChange={setComposing}
                   rows={1}
+                  maxLength={CHAT_QUESTION_MAX_CHARS}
                   placeholder="Ask about your network…"
                   data-dictating={dictation.listening || undefined}
                   textareaClassName={cn(
@@ -1917,6 +1919,7 @@ const UserBubble = memo(function UserBubble({
               }
             }}
             rows={2}
+            maxLength={CHAT_QUESTION_MAX_CHARS}
             aria-label="Edit your question"
             className="min-h-16 resize-none border-none bg-transparent p-1 text-sm shadow-none focus-visible:ring-0"
           />

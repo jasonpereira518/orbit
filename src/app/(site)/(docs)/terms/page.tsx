@@ -13,7 +13,7 @@ import {
 import type { TocItem } from "@/components/marketing/doc-toc";
 import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
 import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_CENTS, FOUNDING_AMOUNT_OFF_CENTS, FOUNDING_MONTHS } from "@/lib/stripe-config";
-import { formatPlanPrice } from "@/lib/plans/plan-config";
+import { PLAN_CONFIG, formatPlanPrice } from "@/lib/plans/plan-config";
 import { LEGAL_LAST_UPDATED } from "@/lib/legal";
 import { TIMELINE_DAILY_CONTACT_CAP } from "@/lib/timeline-cost";
 
@@ -257,11 +257,11 @@ export default function TermsPage() {
             Most AI features are optional and run only when you use them; when
             you do, relevant content from your Orbit data is sent to an AI
             provider you selected so it can generate a response. A few run
-            automatically in the background instead — see below. On Orbit
-            Lifetime, AI runs on an API key you supply, and that provider bills
-            you directly. On the Free Plan, Orbit includes a small monthly AI
-            allowance and a one-time starter grant; on Orbit Pro and Orbit Max,
-            AI is included. Included AI runs on Orbit&apos;s own provider
+            automatically in the background instead — see below. Every plan includes a monthly AI
+            allowance, and the Free Plan also gets a one-time starter grant.
+            Included AI draws on a shared budget Orbit sets aside for it, and
+            may pause for everyone when that budget runs out; your own key keeps
+            working when it does. Included AI runs on Orbit&apos;s own provider
             accounts and uses your plan&apos;s credits. If you add a key of your own and choose it
             in Settings, those calls run on your key instead, your provider
             bills you, and no credits are used.
@@ -272,8 +272,7 @@ export default function TermsPage() {
             conversations, without you turning anything on first. The cap of{" "}
             {TIMELINE_DAILY_CONTACT_CAP} conversations a day only counts the
             conversations that reach the model; a thread with a single message
-            gets a rule-based note instead, with no AI call. On every plan with
-            included AI (the Free Plan, Orbit Pro and Orbit Max), background AI
+            gets a rule-based note instead, with no AI call. On every plan, background AI
             work on Orbit&apos;s accounts uses credits too, and pauses once
             half a month&apos;s credits or fewer remain, so what you ask for
             yourself comes first. Settings shows the last 30 days of AI usage
@@ -313,8 +312,9 @@ export default function TermsPage() {
             other allowances listed on the pricing page. Current prices are on
             the <Link href="/pricing">pricing page</Link> and apply from the
             moment you subscribe. Orbit Lifetime is no longer sold. Accounts
-            that already have it keep it, with every Orbit Max feature and AI on
-            their own key.
+            that already have it keep it, with every Orbit Max feature and{" "}
+            {PLAN_CONFIG.lifetime.monthlyCredits} AI credits a month, but not
+            credit packs; they can still add their own key.
           </p>
           <ul>
             <li>
@@ -354,7 +354,7 @@ export default function TermsPage() {
             <li>
               <strong>AI, enrichment, and sending costs are separate.</strong>{" "}
               Where a feature runs on your own provider key, that provider bills
-              you directly and no Orbit plan covers it. Included AI on every plan except Lifetime
+              you directly and no Orbit plan covers it. Included AI on every plan
               is covered by your plan&apos;s credits.
             </li>
             <li>
@@ -364,18 +364,16 @@ export default function TermsPage() {
               annual plan too, on the same day each month — and do not roll over.
               On the Free Plan, the monthly allowance resets on the 1st of each
               month (UTC), the one-time starter grant is used once and does not
-              reset, and credit packs are not available. When your credits run
-              out, included AI stops until they reset or, on Pro and Max, you
-              add a pack; at most the one request already in progress
+              reset. When your credits run out, included AI stops until they
+              reset or you add a pack; at most the one request already in progress
               finishes. Orbit never charges you automatically for more.
             </li>
             <li>
-              <strong>Credit packs.</strong> On Pro and Max you can buy{" "}
+              <strong>Credit packs.</strong> On the Free Plan, Pro and Max you can buy{" "}
               {CREDIT_PACK_CREDITS} credits for {formatPlanPrice(CREDIT_PACK_PRICE_CENTS)}.
-              Pack credits are used after your monthly credits, and they do not
-              expire while you&apos;re on Pro or Max. If you move to a plan
-              without included AI, unused pack credits are kept but can&apos;t
-              be used; they come back if you subscribe to Pro or Max again. A
+              Pack credits are used after your monthly credits and do not expire.
+              On a plan without packs, unused pack credits are kept but
+              can&apos;t be used; they come back on a plan that has them. A
               pack is refundable on request until any of its credits are used.
               If a pack&apos;s payment is refunded, or reversed after a lost
               dispute, the pack&apos;s unused credits are removed.

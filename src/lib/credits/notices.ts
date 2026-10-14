@@ -7,7 +7,7 @@ import { MICROS_PER_CREDIT } from "@/lib/credits/grants";
 import { getEntitlements } from "@/lib/entitlements";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { escapeHtml } from "@/lib/interest-list-email";
-import { PLAN_LABELS, type Plan } from "@/lib/plans/plan-config";
+import { PLAN_CONFIG, PLAN_LABELS, type Plan } from "@/lib/plans/plan-config";
 import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_CENTS } from "@/lib/stripe-config";
 
 /**
@@ -106,11 +106,12 @@ export function buildCreditEmail(notice: CreditNotice, unsubscribeUrl: string): 
   const pack = `$${(CREDIT_PACK_PRICE_CENTS / 100).toFixed(0)} pack of ${CREDIT_PACK_CREDITS} credits`;
   const resets = day(notice.resetsAt);
   const options = [
-    `add a ${pack}`,
-    ...(notice.plan === "orbit" ? ["move to Orbit Max, which includes 500 credits a month"] : []),
+    // Packs only where the plan can buy one; Lifetime is left with its own key.
+    ...(PLAN_CONFIG[notice.plan].features.creditPacks ? [`add a ${pack}`] : []),
+    ...(notice.plan === "orbit" ? [`move to Orbit Max, which includes ${PLAN_CONFIG.max.monthlyCredits} credits a month`] : []),
     "switch to your own AI key, which never uses credits",
   ];
-  const choices = `${options.slice(0, -1).join(", ")}, or ${options.at(-1)}`;
+  const choices = options.length > 1 ? `${options.slice(0, -1).join(", ")}, or ${options.at(-1)}` : options[0];
 
   let subject: string;
   let lines: string[];
@@ -280,9 +281,10 @@ export async function sendCreditNotices(
       stats.skipped++;
       continue;
     }
-    // Only Pro and Max hear about credits by email; Free sees the in-app notice.
+    // Only Pro and Max hear about credits by email. Free (in-app only, by design) and Lifetime
+    // (no packs to offer) see the in-app notice.
     const ent = await getEntitlements(c.user_id);
-    if (!ent.canUseHostedAi || ent.plan === "free") {
+    if (!ent.canUseHostedAi || !ent.canBuyCreditPacks || ent.plan === "free") {
       stats.skipped++;
       continue;
     }

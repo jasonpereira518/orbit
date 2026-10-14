@@ -1,5 +1,7 @@
 import { AI_PROVIDERS, type AiProvider } from "@/lib/ai-providers";
 import type { Plan, PlanSource } from "@/lib/plan-limits";
+import { PLAN_CONFIG } from "@/lib/plans/plan-config";
+import { CREDIT_PACK_PRICE_LABEL } from "@/lib/stripe-config";
 import { integrationHref } from "@/components/settings/sections";
 
 /**
@@ -418,7 +420,12 @@ export function evaluateAccountHealth(
     const c = input.credits;
     const resetsAt = c.resetsAt;
     if (c.spendable <= 0) {
-      findings.push({ code: "plan.credits_out", severity: "error", data: { resetsAt, free: input.plan === "free" ? 1 : 0 } });
+      findings.push({
+        code: "plan.credits_out",
+        severity: "error",
+        // `packs`: whether this plan can buy one (not Lifetime), so the copy offers only what exists.
+        data: { resetsAt, free: input.plan === "free" ? 1 : 0, packs: PLAN_CONFIG[input.plan].features.creditPacks ? 1 : 0 },
+      });
     } else if (c.allowanceGranted > 0 && c.allowanceRemaining <= 0 && c.packRemaining > 0) {
       findings.push({
         code: "plan.credits_on_packs",
@@ -816,9 +823,7 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
                 : `${left} ${plural(left, "credit", "credits")} left this ${f.data.free ? "month" : "cycle"}`,
           body:
             f.code === "plan.credits_out"
-              ? f.data.free
-                ? `Orbit’s AI refills${when ? ` on ${when}` : " next month"}. Add your own key for no limit`
-                : `Included AI is paused${when ? ` until ${when}` : ""}. Nothing is charged automatically — add a $5 pack, or use your own key.`
+              ? `${f.data.free ? `Orbit’s AI refills${when ? ` on ${when}` : " next month"}` : `Included AI is paused${when ? ` until ${when}` : ""}`}. Nothing is charged automatically — ${f.data.packs ? `add a ${CREDIT_PACK_PRICE_LABEL} pack, or use your own key` : "add your own key to keep going"}.`
               : f.code === "plan.credits_on_packs"
                 ? `Orbit is now using your pack credits (${packs} left)${when ? ` until your allowance resets on ${when}` : ""}.`
                 : `You’ve used 80% of this ${f.data.free ? "month" : "cycle"}’s AI credits${when ? `; they reset on ${when}` : ""}.`,
