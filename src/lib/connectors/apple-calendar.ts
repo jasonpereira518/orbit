@@ -36,19 +36,24 @@
  *    connection that can never succeed again.
  */
 import { parseIcsEvents, type ParsedCalendarEvent } from "@/lib/calendar-import";
-import { expandIcsEvents } from "@/lib/recurrence";
+import { expandIcsEvents, seriesUidOf } from "@/lib/recurrence";
 import {
   CalDavAuthError,
   CalDavStaleSyncTokenError,
   fetchChanges,
+  fetchWindow,
   type CalDavCredentials,
 } from "@/lib/caldav/client";
 import {
+  agendaFrom,
   CalendarSyncTokenExpiredError,
   CALENDAR_WINDOW_FUTURE_MS,
   CALENDAR_WINDOW_PAST_MS,
+  conferenceFrom,
+  MAX_STORED_ATTENDEES,
   toNetworkEvents,
   type CalendarFetchResult,
+  type StoredCalendarEvent,
 } from "@/lib/connectors/google-calendar";
 import { ReauthRequiredError } from "@/lib/errors";
 import type { CalendarSyncCursor } from "@/db/schema";
@@ -163,5 +168,77 @@ export function advanceCursor(
     pageToken: null,
     windowStart: page.window ? page.window.from.toISOString() : (previous?.windowStart ?? null),
     windowEnd: page.window ? page.window.to.toISOString() : (previous?.windowEnd ?? null),
+  };
+}
+
+/**
+ * One iCloud calendar's events overlapping [from, to), as `calendar_events` rows: one time-range
+ * REPORT, expanded here (the expander passes one-off events through unfiltered, so the window
+ * is applied after). Throws like `fetchCalendarPage` — a revoked password is a reauth — so a
+ * window that returns is a complete one.
+ */
+export async function fetchCalendarWindow(opts: {
+  creds: CalDavCredentials;
+  calendarUrl: string;
+  ownerEmail: string;
+  from: Date;
+  to: Date;
+  fetchImpl?: typeof fetch;
+}): Promise<StoredCalendarEvent[]> {
+  let docs: string[];
+  try {
+    docs = await fetchWindow(opts.creds, opts.calendarUrl, { from: opts.from, to: opts.to }, { fetchImpl: opts.fetchImpl });
+  } catch (err) {
+    if (err instanceof CalDavAuthError) throw new ReauthRequiredError(err.message);
+    throw err;
+  }
+  const window = { from: opts.from, to: opts.to };
+  return docs
+    .flatMap((doc) => expandIcsEvents(parseIcsEvents(doc), window))
+    .map((e) => toStoredEvent(e, opts.ownerEmail))
+    .filter(
+      (e): e is StoredCalendarEvent =>
+        e !== null && e.startAt < opts.to && (e.endAt ?? e.startAt) >= opts.from
+    );
+}
+
+const PARTSTAT_WORDS: Record<string, string> = {
+  ACCEPTED: "accepted",
+  DECLINED: "declined",
+  TENTATIVE: "tentative",
+  "NEEDS-ACTION": "needsAction",
+};
+
+/** One expanded ICS instance as a `calendar_events` row — the shape Google's makes. */
+export function toStoredEvent(e: ParsedCalendarEvent, ownerEmail: string): StoredCalendarEvent | null {
+  if (!e.start || e.status?.toUpperCase() === "CANCELLED") return null;
+  const owner = ownerEmail.toLowerCase();
+  const mine = e.attendees.find((a) => a.email === owner);
+  const others = e.attendees.filter((a) => !a.resource && a.email !== owner);
+  const guestsHidden = e.guestsVisible === false;
+  const series = seriesUidOf(e.uid);
+  const recurs = Boolean(e.rrule || e.recurrenceId) || series !== e.uid;
+  const location = e.location.trim() || null;
+  // A Zoom, Teams or Meet link usually sits in the URL property or the notes.
+  const conference = conferenceFrom({ location, description: `${e.url ?? ""}\n${e.description}` });
+  return {
+    providerEventId: e.uid,
+    icalUid: series,
+    seriesId: recurs ? series : null,
+    title: e.summary.trim().slice(0, 300),
+    startAt: e.start,
+    endAt: e.end,
+    allDay: e.allDay === true,
+    location: location?.slice(0, 300) ?? null,
+    agenda: agendaFrom(e.description),
+    conferenceUrl: conference?.url.slice(0, 500) ?? null,
+    conferenceKind: conference?.kind ?? null,
+    attendees: guestsHidden
+      ? []
+      : others.map((a) => ({ name: a.name, email: a.email })).slice(0, MAX_STORED_ATTENDEES),
+    attendeeCount: others.length,
+    guestsHidden,
+    selfResponse: (mine?.partstat && PARTSTAT_WORDS[mine.partstat]) || null,
+    organizerEmail: e.organizer?.email || null,
   };
 }

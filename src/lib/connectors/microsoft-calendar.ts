@@ -27,11 +27,15 @@
  */
 import type { ParsedCalendarEvent } from "@/lib/calendar-import";
 import {
+  agendaFrom,
   CalendarSyncTokenExpiredError,
   CALENDAR_WINDOW_FUTURE_MS,
   CALENDAR_WINDOW_PAST_MS,
+  conferenceFrom,
+  MAX_STORED_ATTENDEES,
   toNetworkEvents,
   type CalendarFetchResult,
+  type StoredCalendarEvent,
 } from "@/lib/connectors/google-calendar";
 import type { CalendarSyncCursor } from "@/db/schema";
 
@@ -39,11 +43,14 @@ export { CalendarSyncTokenExpiredError, toNetworkEvents };
 
 const CALENDAR_VIEW_DELTA_API =
   "https://graph.microsoft.com/v1.0/me/calendarView/delta";
+const CALENDAR_VIEW_API = "https://graph.microsoft.com/v1.0/me/calendarView";
 
 type GraphAttendee = {
   emailAddress?: { name?: string; address?: string };
   type?: "required" | "optional" | "resource";
 };
+
+type GraphResponse = "none" | "organizer" | "tentativelyAccepted" | "accepted" | "declined" | "notResponded";
 
 type GraphDateTimeTz = { dateTime?: string; timeZone?: string };
 
@@ -58,6 +65,14 @@ type GraphEvent = {
   attendees?: GraphAttendee[];
   organizer?: { emailAddress?: { name?: string; address?: string } };
   "@removed"?: { reason?: string };
+  // Read by the `calendar_events` window only (`toStoredEvent`); the delta sync never asks.
+  isAllDay?: boolean;
+  isCancelled?: boolean;
+  seriesMasterId?: string | null;
+  onlineMeeting?: { joinUrl?: string } | null;
+  responseStatus?: { response?: GraphResponse };
+  hideAttendees?: boolean;
+  body?: { contentType?: string; content?: string };
 };
 
 type GraphDeltaPage = {
@@ -225,4 +240,116 @@ export function advanceCursor(
     syncToken: page.nextSyncToken ?? previous?.syncToken ?? null,
     pageToken: null,
   };
+}
+
+const WINDOW_SELECT = [
+  "id",
+  "iCalUId",
+  "subject",
+  "body",
+  "location",
+  "start",
+  "end",
+  "isAllDay",
+  "isCancelled",
+  "seriesMasterId",
+  "onlineMeeting",
+  "responseStatus",
+  "hideAttendees",
+  "attendees",
+  "organizer",
+].join(",");
+
+/**
+ * Every event between two instants, live — the plain `calendarView` (recurrences expanded, no
+ * delta link), for the `calendar_events` window. `complete` is false when the window ran past
+ * `maxPages` or a page failed, so the caller deletes nothing on absence.
+ */
+export async function fetchCalendarWindow(opts: {
+  accessToken: string;
+  from: Date;
+  to: Date;
+  maxPages?: number;
+  timeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}): Promise<{ items: GraphEvent[]; complete: boolean; status: number }> {
+  const doFetch = opts.fetchImpl ?? fetch;
+  const items: GraphEvent[] = [];
+  let url: string | undefined = `${CALENDAR_VIEW_API}?${new URLSearchParams({
+    startDateTime: opts.from.toISOString(),
+    endDateTime: opts.to.toISOString(),
+    $top: "100",
+    $select: WINDOW_SELECT,
+  })}`;
+  for (let page = 0; page < (opts.maxPages ?? 1) && url; page++) {
+    const res = await doFetch(url, {
+      headers: { Authorization: `Bearer ${opts.accessToken}`, Prefer: 'outlook.timezone="UTC"' },
+      signal: AbortSignal.timeout(opts.timeoutMs ?? 20_000),
+    });
+    if (!res.ok) return { items, complete: false, status: res.status };
+    const body = (await res.json()) as GraphDeltaPage;
+    items.push(...(body.value || []));
+    url = body["@odata.nextLink"];
+    if (!url) return { items, complete: true, status: res.status };
+  }
+  return { items, complete: false, status: 200 };
+}
+
+/** Graph's RSVP words in Google's, which is what every reader of `self_response` checks. */
+function selfResponseOf(response: GraphResponse | undefined): string | null {
+  switch (response) {
+    case "organizer":
+    case "accepted":
+      return "accepted";
+    case "tentativelyAccepted":
+      return "tentative";
+    case "declined":
+      return "declined";
+    case "notResponded":
+      return "needsAction";
+    default:
+      return null;
+  }
+}
+
+/** One Outlook event as a `calendar_events` row — the same shape Google's `toStoredEvent` makes. */
+export function toStoredEvent(raw: GraphEvent, ownerEmail: string): StoredCalendarEvent | null {
+  if (!raw.id || raw.isCancelled || raw["@removed"]) return null;
+  const startAt = parseWhen(raw.start);
+  if (!startAt) return null;
+  const owner = ownerEmail.toLowerCase();
+  const others = (raw.attendees || []).filter(
+    (a) => a.type !== "resource" && (a.emailAddress?.address || "").toLowerCase() !== owner
+  );
+  const guestsHidden = raw.hideAttendees === true;
+  const description = raw.body?.content || raw.bodyPreview || "";
+  const location = raw.location?.displayName?.trim() || null;
+  const conference = conferenceFrom({ url: raw.onlineMeeting?.joinUrl, location, description });
+  return {
+    providerEventId: raw.id,
+    icalUid: raw.iCalUId || null,
+    seriesId: raw.seriesMasterId || null,
+    title: (raw.subject || "").trim().slice(0, 300),
+    startAt,
+    endAt: parseWhen(raw.end),
+    allDay: raw.isAllDay === true,
+    location: location?.slice(0, 300) ?? null,
+    agenda: agendaFrom(description),
+    conferenceUrl: conference?.url.slice(0, 500) ?? null,
+    conferenceKind: conference?.kind ?? null,
+    attendees: guestsHidden
+      ? []
+      : others
+          .map((a) => ({ name: a.emailAddress?.name || "", email: (a.emailAddress?.address || "").toLowerCase() }))
+          .filter((a) => a.name || a.email)
+          .slice(0, MAX_STORED_ATTENDEES),
+    attendeeCount: others.length,
+    guestsHidden,
+    selfResponse: selfResponseOf(raw.responseStatus?.response),
+    organizerEmail: raw.organizer?.emailAddress?.address?.toLowerCase() || null,
+  };
+}
+
+export function storedEventsOf(items: GraphEvent[], ownerEmail: string): StoredCalendarEvent[] {
+  return items.map((raw) => toStoredEvent(raw, ownerEmail)).filter((e): e is StoredCalendarEvent => e !== null);
 }

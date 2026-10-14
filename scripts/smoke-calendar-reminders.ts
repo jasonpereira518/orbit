@@ -11,6 +11,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { calendarSources, contacts, interactions, meetingSessions, reminders } from "../src/db/schema";
 import { refreshCalendarWindow } from "../src/lib/calendar-events";
+import { storedEventsOf } from "../src/lib/connectors/google-calendar";
 import { prepDue } from "../src/lib/calendar-reminders";
 
 const USER = "smoke-calendar-reminders-user";
@@ -98,7 +99,7 @@ async function main() {
     event("p-stranger", -2 * H, ["nobody@else.example"]),
   ];
 
-  await refreshCalendarWindow(USER, source.id, { items, complete: true }, NOW);
+  await refreshCalendarWindow(USER, source.id, { events: storedEventsOf(items), complete: true }, NOW);
   const all = async () =>
     db.select().from(reminders).where(and(eq(reminders.userId, USER), eq(reminders.createdBy, "calendar_sync")));
   let rows = await all();
@@ -131,7 +132,7 @@ async function main() {
   check("a meeting with no known contact does not", byKey("p-stranger").length === 0);
 
   const count = rows.length;
-  await refreshCalendarWindow(USER, source.id, { items, complete: true }, NOW);
+  await refreshCalendarWindow(USER, source.id, { events: storedEventsOf(items), complete: true }, NOW);
   rows = await all();
   check("a second pass creates nothing new", rows.length === count, `${count} -> ${rows.length}`);
 
@@ -139,7 +140,7 @@ async function main() {
   const moved = items
     .map((e) => (e.id === "e-first" ? event("e-first", 54 * H, ["ada@x.example"]) : e))
     .filter((e) => e.id !== "e-gap");
-  await refreshCalendarWindow(USER, source.id, { items: moved, complete: true }, NOW);
+  await refreshCalendarWindow(USER, source.id, { events: storedEventsOf(moved), complete: true }, NOW);
   rows = await all();
   check(
     "a moved meeting's prep reminder follows it",
@@ -148,7 +149,7 @@ async function main() {
   );
   check("a cancelled meeting's prep reminder is dismissed", byKey("e-gap")[0]?.status === "dismissed");
 
-  await refreshCalendarWindow(USER, source.id, { items: moved.filter((e) => e.id !== "e-open"), complete: false }, NOW);
+  await refreshCalendarWindow(USER, source.id, { events: storedEventsOf(moved.filter((e) => e.id !== "e-open")), complete: false }, NOW);
   rows = await all();
   check("a partial read dismisses nothing", byKey("e-open")[0]?.status === "pending");
 

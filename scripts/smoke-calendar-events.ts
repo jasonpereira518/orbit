@@ -14,19 +14,21 @@ import {
   contactBriefs,
   contactIdentities,
   contacts,
+  appleConnections,
   gmailConnections,
   interactions,
+  outlookConnections,
   rateLimitBuckets,
   reminders,
   userSettings,
 } from "../src/db/schema";
-import { conferenceOf, toStoredEvent } from "../src/lib/connectors/google-calendar";
+import { conferenceOf, storedEventsOf, toStoredEvent } from "../src/lib/connectors/google-calendar";
 import {
   listUpcomingEvents,
   pruneStaleCalendarEvents,
   refreshCalendarWindow,
-  refreshUserCalendarWindows,
 } from "../src/lib/calendar-events";
+import { refreshUserCalendarWindows } from "../src/lib/calendar-window";
 import { setSourceEnabled } from "../src/lib/calendar-sources";
 import { GOOGLE_SCOPES } from "../src/lib/google-scopes";
 import { getMeetingContext, nextKnownMeeting } from "../src/lib/meeting-context";
@@ -132,8 +134,8 @@ async function main() {
     .values({ userId: OTHER, provider: "google", connectionId: randomUUID(), calendarId: "primary" })
     .returning();
 
-  await refreshCalendarWindow(USER, source.id, { items: [ONE_ON_ONE, WEBINAR, TRIP], complete: true }, NOW);
-  await refreshCalendarWindow(OTHER, otherSource.id, { items: [{ ...TRIP, id: "theirs" }], complete: true }, NOW);
+  await refreshCalendarWindow(USER, source.id, { events: storedEventsOf([ONE_ON_ONE, WEBINAR, TRIP]), complete: true }, NOW);
+  await refreshCalendarWindow(OTHER, otherSource.id, { events: storedEventsOf([{ ...TRIP, id: "theirs" }]), complete: true }, NOW);
 
   const week = new Date(NOW.getTime() + 7 * 86_400_000);
   const rows = await listUpcomingEvents(USER, { from: NOW, to: week });
@@ -153,7 +155,7 @@ async function main() {
   check("contactId narrows to that person's events", adas.length === 1 && adas[0].providerEventId === ONE_ON_ONE.id);
 
   // Re-read with a changed title and the webinar gone.
-  await refreshCalendarWindow(USER, source.id, { items: [{ ...ONE_ON_ONE, summary: "Ada 1:1 (moved)" }, TRIP], complete: true }, NOW);
+  await refreshCalendarWindow(USER, source.id, { events: storedEventsOf([{ ...ONE_ON_ONE, summary: "Ada 1:1 (moved)" }, TRIP]), complete: true }, NOW);
   const after = await db.select().from(calendarEvents).where(eq(calendarEvents.userId, USER));
   check("an event missing from a complete read is deleted", !after.some((r) => r.providerEventId === "webinar1"));
   check(
@@ -161,7 +163,7 @@ async function main() {
     after.find((r) => r.providerEventId === ONE_ON_ONE.id)?.title === "Ada 1:1 (moved)"
   );
 
-  await refreshCalendarWindow(USER, source.id, { items: [], complete: false }, NOW);
+  await refreshCalendarWindow(USER, source.id, { events: storedEventsOf([]), complete: false }, NOW);
   const kept = await db.select().from(calendarEvents).where(eq(calendarEvents.userId, USER));
   check("a partial read deletes nothing", kept.length === 2, String(kept.length));
 
@@ -255,8 +257,8 @@ async function main() {
   };
   let reads = 0;
   const pulseDeps = {
-    getAccessToken: async () => "token",
-    fetchWindow: (async () => {
+    getGoogleToken: async () => "token",
+    fetchGoogleWindow: (async () => {
       reads++;
       return { items: [ONE_ON_ONE, BO_MEET], complete: true, status: 200 };
     }) as never,
@@ -298,7 +300,7 @@ async function main() {
 
   // Frozen: OTHER's source stopped refreshing a day ago; USER's is fresh.
   await setSourceEnabled(USER, live.id, true);
-  await refreshCalendarWindow(USER, live.id, { items: [ONE_ON_ONE], complete: true }, NOW);
+  await refreshCalendarWindow(USER, live.id, { events: storedEventsOf([ONE_ON_ONE]), complete: true }, NOW);
   await db
     .update(calendarEvents)
     .set({ updatedAt: new Date(NOW.getTime() - 25 * 3_600_000) })
@@ -308,6 +310,69 @@ async function main() {
     "a calendar not refreshed in a day is pruned; a fresh one stays",
     (await db.select().from(calendarEvents).where(eq(calendarEvents.userId, OTHER))).length === 0 &&
       (await db.select().from(calendarEvents).where(eq(calendarEvents.userId, USER))).length === 1
+  );
+
+  // --- Outlook and iCloud fill the same table ---------------------------------------------------
+  const MULTI = "smoke-calendar-events-multi";
+  await db.delete(calendarSources).where(eq(calendarSources.userId, MULTI));
+  await db.delete(outlookConnections).where(eq(outlookConnections.userId, MULTI));
+  await db.delete(appleConnections).where(eq(appleConnections.userId, MULTI));
+  await db.delete(contacts).where(eq(contacts.userId, MULTI));
+  await db.delete(rateLimitBuckets).where(eq(rateLimitBuckets.bucket, `calendarWindow:${MULTI}`));
+  const [grace] = await db.insert(contacts).values({ userId: MULTI, fullName: "Grace Hopper", email: "grace@navy.example" }).returning();
+  const [outlook] = await db
+    .insert(outlookConnections)
+    .values({ userId: MULTI, emailAddress: "me@outlook.example", accessTokenEncrypted: "x", scopes: "Calendars.Read offline_access" })
+    .returning();
+  const [icloud] = await db
+    .insert(appleConnections)
+    .values({ userId: MULTI, emailAddress: "me@icloud.example", appPasswordEncrypted: "x" })
+    .returning();
+  const [outlookSource] = await db
+    .insert(calendarSources)
+    .values({ userId: MULTI, provider: "microsoft", connectionId: outlook.id, calendarId: "default" })
+    .returning();
+  const [icloudSource] = await db
+    .insert(calendarSources)
+    .values({ userId: MULTI, provider: "apple", connectionId: icloud.id, calendarId: "https://caldav.example/home/" })
+    .returning();
+  let appleAskedFor = "";
+  const multi = await refreshUserCalendarWindows(MULTI, NOW, {
+    getOutlookToken: async () => "token",
+    fetchOutlookWindow: (async () => ({
+      items: [
+        {
+          id: "graph-1",
+          subject: "Sync with Grace",
+          start: { dateTime: at(3).replace(/Z$/, ""), timeZone: "UTC" },
+          end: { dateTime: at(3.5).replace(/Z$/, ""), timeZone: "UTC" },
+          onlineMeeting: { joinUrl: "https://teams.microsoft.com/l/meetup-join/x" },
+          attendees: [
+            { emailAddress: { name: "Grace Hopper", address: "grace@navy.example" }, type: "required" },
+            { emailAddress: { name: "Me", address: "me@outlook.example" }, type: "required" },
+          ],
+        },
+      ],
+      complete: true,
+      status: 200,
+    })) as never,
+    getAppleCredentials: async () => ({ username: "me@icloud.example", password: "x" }),
+    fetchAppleWindow: (async (o: { calendarUrl: string }) => {
+      appleAskedFor = o.calendarUrl;
+      return [{ ...toStoredEvent(TRIP)!, providerEventId: "ics-trip" }];
+    }) as never,
+  });
+  const mirrored = await db.select().from(calendarEvents).where(eq(calendarEvents.userId, MULTI));
+  check("an Outlook and an iCloud calendar are both refreshed", multi.refreshed === 2 && mirrored.length === 2, JSON.stringify(multi));
+  const graphRow = mirrored.find((r) => r.sourceId === outlookSource.id);
+  check(
+    "the Outlook meeting is stored with its call and its known guest",
+    graphRow?.conferenceKind === "teams" && graphRow.attendees[0]?.contactId === grace.id && graphRow.attendees.length === 1,
+    JSON.stringify(graphRow?.attendees)
+  );
+  check(
+    "the iCloud read is per calendar",
+    appleAskedFor === "https://caldav.example/home/" && mirrored.some((r) => r.sourceId === icloudSource.id)
   );
 
   if (failures) {

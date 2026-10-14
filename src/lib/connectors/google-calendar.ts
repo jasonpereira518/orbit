@@ -199,8 +199,16 @@ function conferenceKindOf(url: string): ConferenceKind {
  */
 export function conferenceOf(raw: GoogleEvent): { url: string; kind: ConferenceKind } | null {
   const video = raw.conferenceData?.entryPoints?.find((e) => e.entryPointType === "video" && e.uri)?.uri;
-  const url =
-    raw.hangoutLink || video || CONFERENCE_URL.exec(raw.location || "")?.[0] || CONFERENCE_URL.exec(raw.description || "")?.[0];
+  return conferenceFrom({ url: raw.hangoutLink || video, location: raw.location, description: raw.description });
+}
+
+/** Any provider's call link: the one it names, else a Zoom/Teams/Webex/Meet link in the text. */
+export function conferenceFrom(e: {
+  url?: string | null;
+  location?: string | null;
+  description?: string | null;
+}): { url: string; kind: ConferenceKind } | null {
+  const url = e.url || CONFERENCE_URL.exec(e.location || "")?.[0] || CONFERENCE_URL.exec(e.description || "")?.[0];
   return url ? { url, kind: conferenceKindOf(url) } : null;
 }
 
@@ -258,7 +266,7 @@ export type StoredCalendarEvent = {
 };
 
 /** At most this many names per event — a webinar's guest list is not a meeting's. */
-const MAX_STORED_ATTENDEES = 50;
+export const MAX_STORED_ATTENDEES = 50;
 
 /**
  * One Google event as a `calendar_events` row. Keyed on `id`, not `iCalUID`: every instance of
@@ -298,6 +306,11 @@ export function toStoredEvent(raw: GoogleEvent): StoredCalendarEvent | null {
     selfResponse: parsed?.selfResponse ?? null,
     organizerEmail: raw.organizer?.email?.toLowerCase() || null,
   };
+}
+
+/** A Google window read as `calendar_events` rows. */
+export function storedEventsOf(items: GoogleEvent[]): StoredCalendarEvent[] {
+  return items.map(toStoredEvent).filter((e): e is StoredCalendarEvent => e !== null);
 }
 
 /**
