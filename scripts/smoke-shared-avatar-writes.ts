@@ -8,7 +8,7 @@
  */
 import "./smoke/_env";
 import { run } from "./smoke/_env";
-import { eq, inArray, like } from "drizzle-orm";
+import { eq, inArray, like, or } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, linkedinAvatars, rateLimitBuckets } from "../src/db/schema";
 import { setAvatarBlobClientForTests } from "../src/lib/avatar-blob";
@@ -41,12 +41,15 @@ const li = (slug: string) => `https://www.linkedin.com/in/${slug}/`;
 
 // ---- stubs ----------------------------------------------------------------------------
 let unavatarHits = true;
+/** Runs inside a source call: lets a check play a concurrent writer mid-lookup. */
+let duringLookup: (() => Promise<void>) | null = null;
 const sourceCalls: string[] = [];
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL) => {
   const url = input instanceof Request ? input.url : String(input);
   if (url.includes("unavatar.io") || url.includes("api.microlink.io")) sourceCalls.push(url);
   if (url.includes("unavatar.io")) {
+    if (duringLookup) await duringLookup();
     return unavatarHits
       ? new Response(Buffer.from(PIXEL, "base64"), { headers: { "content-type": "image/jpeg" } })
       : new Response(null, { status: 404 });
@@ -87,10 +90,14 @@ function page(url: string): PageContext {
 
 run(async () => {
   const db = await getDb();
+  // The app-wide source counters are shared with every other smoke: put them back as found.
+  const sharedCounters = await db.select().from(rateLimitBuckets).where(like(rateLimitBuckets.bucket, "avatarSource.shared:%"));
   const cleanup = async () => {
     await db.delete(linkedinAvatars).where(like(linkedinAvatars.slug, `${P}%`));
     await db.delete(contacts).where(inArray(contacts.userId, [USER_A, USER_B]));
-    await db.delete(rateLimitBuckets).where(like(rateLimitBuckets.bucket, "avatarSource%"));
+    await db.delete(rateLimitBuckets).where(
+      or(like(rateLimitBuckets.bucket, `%:${USER_A}`), like(rateLimitBuckets.bucket, `%:${USER_B}`))
+    );
   };
   await cleanup();
   const row = async (slug: string) =>
@@ -143,6 +150,38 @@ run(async () => {
     const now = await row(hit);
     check("a stale photo is replaced", typeof refreshed === "object" && now?.imageUrl !== old && now!.resolvedAt.getTime() > Date.now() - 60_000);
     check("…and the old shared object is deleted", dels.includes(old), JSON.stringify(dels));
+
+    console.log("\nA stale photo that misses");
+    const raced = `${P}raced`;
+    await db.insert(linkedinAvatars).values({ slug: raced, imageUrl: "https://abc.public.blob.vercel-storage.com/avatars-shared/x-OLD.jpg", source: "unavatar", resolvedAt: new Date(Date.now() - 181 * 86_400_000) });
+    const NEWER = "https://abc.public.blob.vercel-storage.com/avatars-shared/x-NEW.jpg";
+    unavatarHits = false;
+    duringLookup = async () => {
+      // A concurrent refresh lands its photo while this lookup is out.
+      await db.update(linkedinAvatars).set({ imageUrl: NEWER, resolvedAt: new Date() }).where(eq(linkedinAvatars.slug, raced));
+    };
+    const afterRace = await resolveLinkedInPhotoCached("c-r", li(raced), USER_A);
+    duringLookup = null;
+    unavatarHits = true;
+    check("a miss never writes an older photo back over a newer one", (await row(raced))?.imageUrl === NEWER && typeof afterRace === "object" && afterRace?.sharedUrl === NEWER, JSON.stringify(await row(raced)));
+    await db.update(linkedinAvatars).set({ resolvedAt: new Date(Date.now() - 181 * 86_400_000) }).where(eq(linkedinAvatars.slug, raced));
+    unavatarHits = false;
+    await resolveLinkedInPhotoCached("c-r", li(raced), USER_A);
+    unavatarHits = true;
+    const restamped = await row(raced);
+    check("…and a plain miss keeps the photo, restarting its clock", restamped?.imageUrl === NEWER && restamped.resolvedAt.getTime() > Date.now() - 60_000);
+
+    console.log("\nThe lookup is keyed exactly like the row");
+    const tricky = `https://www.linkedin.com/IN/${P}alice/in/${P}bob`;
+    sourceCalls.length = 0;
+    await resolveLinkedInPhotoCached("c-t", tricky, USER_A);
+    const unavatarAsked = sourceCalls.filter((u) => u.includes("unavatar.io"));
+    check(
+      "a URL naming two profiles looks up the one it is stored under",
+      unavatarAsked.length > 0 && unavatarAsked.every((u) => u.includes(`/linkedin/${P}bob`)),
+      JSON.stringify(sourceCalls)
+    );
+    check("…and nothing lands under the other", (await row(`${P}alice`)) === null && (await row(`${P}bob`)) !== null);
 
     console.log("\nBlocked slugs");
     const blocked = `${P}takedown`;
@@ -216,6 +255,17 @@ run(async () => {
     const blockedContact = await contactRow(blockedExt.contact.id);
     check("…the capture stays the user's own photo", blockedContact.profileImageUrl === licdn && blockedContact.profileImageSource === "extension", `${blockedContact.profileImageUrl} ${blockedContact.profileImageSource}`);
 
+    const googleCapture = "https://lh3.googleusercontent.com/a/someone";
+    const otherSlug = `${P}ext-google`;
+    const notLicdn = await saveContactFromExtension(
+      USER_A,
+      { mode: "create", force: true, page: page(li(otherSlug)), fields: { fullName: "Other Photo", linkedinUrl: li(otherSlug), photoUrl: googleCapture } },
+      () => {}
+    );
+    check("a capture that is not a LinkedIn CDN photo is never contributed", (await row(otherSlug)) === null);
+    const notLicdnRow = await contactRow(notLicdn.contact.id);
+    check("…it stays the contact's own", notLicdnRow.profileImageUrl === googleCapture && notLicdnRow.profileImageSource === "extension");
+
     const [kept] = await db.insert(contacts).values({
       userId: USER_A, fullName: "Kept Photo", profileImageUrl: "https://abc.public.blob.vercel-storage.com/avatars/kept.jpg", profileImageSource: "google",
     }).returning();
@@ -230,6 +280,8 @@ run(async () => {
     globalThis.fetch = realFetch;
     setAvatarBlobClientForTests(null);
     await cleanup();
+    await db.delete(rateLimitBuckets).where(like(rateLimitBuckets.bucket, "avatarSource.shared:%"));
+    if (sharedCounters.length > 0) await db.insert(rateLimitBuckets).values(sharedCounters);
   }
 
   if (failures > 0) {

@@ -2,7 +2,7 @@
  * Shared, cross-user LinkedIn photo cache (table `linkedin_avatars`), keyed by profile slug.
  * The key must equal the generated column `contacts.linkedin_slug` so reads can JOIN on it.
  */
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { linkedinAvatars } from "@/db/schema";
 import { AVATAR_RECHECK_DAYS } from "@/lib/avatar-backfill";
@@ -159,7 +159,8 @@ export async function resolveLinkedInPhotoCached(
   if (row && isSharedFresh(row)) return row.imageUrl ? { sharedUrl: row.imageUrl } : null;
 
   if (!hasBlobStorage()) {
-    const own = await fetchLinkedInPhotoUrl(contactId, linkedinUrl, userId);
+    // Rebuilt from the key, so the lookup and any negative row name the same person.
+    const own = await fetchLinkedInPhotoUrl(contactId, `https://www.linkedin.com/in/${slug}`, userId);
     if (!own && !row?.imageUrl) await upsertSharedAvatar({ slug, imageUrl: null, source: "unavatar" });
     return own;
   }
@@ -167,8 +168,21 @@ export async function resolveLinkedInPhotoCached(
   const found = await fetchLinkedInPhoto(linkedinUrl, userId, { sharedSlug: slug });
   if (found) return adoptSharedPhoto(slug, row, found.url, found.source);
   if (row?.imageUrl) {
-    await upsertSharedAvatar({ slug, imageUrl: row.imageUrl, source: row.source });
-    return { sharedUrl: row.imageUrl };
+    // Restart the photo's clock only if it is still the one we read: a concurrent refresh
+    // may have replaced it (and deleted its object), which must never be written back.
+    const db = await getDb();
+    await db
+      .update(linkedinAvatars)
+      .set({ resolvedAt: sql`now()` })
+      .where(
+        and(
+          eq(linkedinAvatars.slug, slug),
+          eq(linkedinAvatars.imageUrl, row.imageUrl),
+          isNull(linkedinAvatars.blockedAt)
+        )
+      );
+    const current = await getSharedAvatar(slug);
+    return current?.imageUrl && !current.blockedAt ? { sharedUrl: current.imageUrl } : null;
   }
   // Negative rows name the first tier asked; both were.
   await upsertSharedAvatar({ slug, imageUrl: null, source: "unavatar" });

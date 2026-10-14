@@ -652,6 +652,15 @@ export async function listContactTimelineInteractions(contactId: string) {
  * record's identifiers already belonged to someone, the data is folded into them and their
  * row comes back instead.
  */
+/**
+ * These actions are callable from the browser, and a photo's provenance decides what it
+ * displays over (`sharedAvatarUrlSql`), so only server-side writers may set it.
+ */
+function clientContactInput<T extends Partial<ContactInput>>(input: T): T {
+  const { profileImageSource: _serverOnly, ...rest } = input;
+  return rest as T;
+}
+
 export async function createContact(
   input: ContactInput,
   options?: ContactWriteOptions
@@ -679,7 +688,7 @@ export async function createContactDetailed(
   const userId = await requireUserId();
   const { contactId, outcome, reason } = await resolveOrCreateContact(
     userId,
-    input,
+    clientContactInput(input),
     options
   );
   const db = await getDb();
@@ -704,7 +713,7 @@ export async function createContactsBulk(
 ) {
   return createContactsBulkForUser(
     await requireUserId(),
-    inputs,
+    inputs.map(clientContactInput),
     companyResolve,
     options
   );
@@ -715,7 +724,7 @@ export async function updateContact(
   input: Partial<ContactInput>,
   options?: ContactWriteOptions
 ) {
-  return updateContactForUser(await requireUserId(), id, input, options);
+  return updateContactForUser(await requireUserId(), id, clientContactInput(input), options);
 }
 
 /** Valid range for a user-supplied closeness rating (matches the 1–5 scale used throughout, e.g. contact-form.tsx's "Strength" field). */
@@ -1367,7 +1376,8 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
 
       if (!profile) {
         if (profileImageUrl) {
-          await updateContact(
+          await updateContactForUser(
+            userId,
             contact.id,
             { profileImageUrl, profileImageSource },
             { skipRevalidate: true }
@@ -1382,7 +1392,8 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
         continue;
       }
 
-      await updateContact(
+      await updateContactForUser(
+        userId,
         contact.id,
         {
           ...(profile.title ? { title: profile.title } : {}),

@@ -247,7 +247,9 @@ export async function fetchLinkedInPhoto(
   userId: string | null,
   target: AvatarTarget
 ): Promise<{ url: string; source: AvatarQuotaSource } | null> {
-  const slug = linkedinSlug(linkedinUrl);
+  // A shared-pool photo is stored under `sharedSlug`, so it must be looked up by exactly that
+  // slug too. Re-deriving it from the URL can name a different person (`/IN/a/in/b`).
+  const slug = "sharedSlug" in target ? target.sharedSlug : linkedinSlug(linkedinUrl);
   if (!slug) return null;
 
   // Free tier, but quota'd: 25 anonymous lookups a day. Nothing stores this URL —
