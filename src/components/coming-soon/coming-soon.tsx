@@ -141,7 +141,7 @@ export function ComingSoon({ surfaceKey, label }: { surfaceKey: string; label: s
             <DryDock icon={feature.icon} />
           </div>
           <div
-            className="reveal-mount min-w-0 max-w-sm space-y-3 text-center md:text-left"
+            className="reveal-mount min-w-0 max-w-sm space-y-3 text-center md:pb-16 md:text-left"
             style={{ "--reveal-delay": "80ms" } as React.CSSProperties}
           >
             <h1 className="font-[family-name:var(--font-display)] text-ink">
