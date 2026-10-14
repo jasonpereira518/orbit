@@ -46,6 +46,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-sessions": "pure",
   "smoke-chat-read-files": "pure",
   "smoke-connectivity": "pure",
+  "smoke-constellation-industry": "pure",
   "smoke-waitlist-pass-news": "pure",
   "smoke-waitlist-demo-fidelity": "pure",
   "smoke-offline-queue": "pure",

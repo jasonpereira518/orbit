@@ -45,7 +45,7 @@ const LONG_TAIL_INITIALS_EVERY = 7;
 
 const PORTRAITS_PER_GENDER = 100;
 
-function portraitUrl(gender: "f" | "m", index: number) {
+export function portraitUrl(gender: "f" | "m", index: number) {
   const folder = gender === "f" ? "women" : "men";
   return `https://randomuser.me/api/portraits/${folder}/${index % PORTRAITS_PER_GENDER}.jpg`;
 }

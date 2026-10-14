@@ -1231,7 +1231,7 @@ export function NetworkGraph({
                       <span className="text-[9px] font-semibold uppercase tracking-wider text-[#ff9900]">
                         AWS
                       </span>
-                      Cluster label — company or school group
+                      Cluster label — company, school or industry group
                     </li>
                     <li className="flex items-center gap-2">
                       <span className="h-3 w-5 bg-[conic-gradient(from_10deg,transparent_0deg,rgba(255,153,0,0.4)_18deg,transparent_36deg,rgba(255,153,0,0.28)_90deg,transparent_130deg,rgba(255,153,0,0.36)_210deg,transparent_260deg,rgba(255,153,0,0.24)_320deg,transparent_360deg)] blur-[1.5px]" />

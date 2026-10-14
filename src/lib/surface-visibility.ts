@@ -5,6 +5,7 @@ import { getDb } from "@/db";
 import { appSurfaceFlags } from "@/db/schema";
 import { isAdminUser } from "@/lib/admin";
 import { recordAdminAction } from "@/lib/admin-audit";
+import { isDemoWorkspace } from "@/lib/demo-workspace";
 import {
   COMING_SOON_COMPANIONS,
   DEFAULT_COMING_SOON_KEYS,
@@ -220,9 +221,17 @@ export async function resolveSurfaceVisibility(
   // takes the separate, explicit `previewingUnreleased` opt-in.
   const previewingUnreleased = admin && (await isPreviewingUnreleased(userId));
   const marked = await getComingSoonKeys();
+  // The demo workspace records product demos, so its unreleased PAGES read as released —
+  // no teaser, no "Soon" tag, companions shown. Unreleased features stay hidden.
+  const demoPages = marked.size > 0 && (await isDemoWorkspace(userId));
   const comingSoon = new Set<string>();
+  const comingSoonMarked = new Set(marked);
   if (!previewingUnreleased) {
     for (const key of marked) {
+      if (demoPages && getSurface(key)?.kind === "page") {
+        comingSoonMarked.delete(key);
+        continue;
+      }
       // A page gets the coming-soon screen; a feature has no screen of its own to show, so
       // it is simply hidden, which every entry point and guard already respects.
       if (getSurface(key)?.kind === "page") comingSoon.add(key);
@@ -237,7 +246,7 @@ export async function resolveSurfaceVisibility(
     viewingAsUser,
     comingSoon,
     previewingUnreleased,
-    comingSoonMarked: new Set(marked),
+    comingSoonMarked,
     navOrder: await getNavOrder(),
   };
 }
