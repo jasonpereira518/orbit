@@ -11,6 +11,7 @@ import { captureHandoffs, meetingSessions, meetingTranscriptSegments, rateLimitB
 import { ABANDONED_SESSION_TTL_DAYS, sweepAbandonedMeetingSessions } from "../src/lib/meeting-sessions";
 import { RATE_LIMITS, RATE_LIMIT_BUCKET_RETENTION_MS, pruneRateLimitBuckets } from "../src/lib/rate-limit";
 import { sweepExpiredHandoffs } from "../src/lib/scan-handoff";
+import { SHARED_FILL_BUDGET_MS } from "../src/lib/shared-avatar-upkeep";
 import { run } from "./smoke/_env";
 
 const USERS = ["smoke-sweeps-a", "smoke-sweeps-b"];
@@ -76,6 +77,26 @@ run(async () => {
     const route = readFileSync("src/app/api/imports/process-stalled/route.ts", "utf8");
     check("the daily cron calls both sweeps", route.includes("sweepAbandonedMeetingSessions()") && route.includes("sweepExpiredHandoffs()"));
     check("…and prunes the rate-limit buckets", route.includes("pruneRateLimitBuckets()"));
+    const stepOf = (call: string) => {
+      const at = route.indexOf(call);
+      const open = route.lastIndexOf("    try {", at);
+      return { at, open, close: route.indexOf("\n    }", at) };
+    };
+    const fill = stepOf("await fillSharedAvatars()");
+    const orphans = stepOf("await sweepOrphanedSharedAvatars()");
+    check(
+      "the shared-photo fill and orphan sweep each run in their own try block",
+      fill.at > 0 && orphans.at > 0 && fill.open !== orphans.open && fill.close < orphans.open,
+      JSON.stringify([fill, orphans])
+    );
+    check("…and are recorded in the run summary", route.includes("sharedAvatarsFilled") && route.includes("sharedAvatarsSwept"));
+    const embeddingSweep = route.indexOf("runEmbeddingBackfill(staleUser");
+    check(
+      "…and run after the embedding sweep, so slow lookups never push it past maxDuration",
+      embeddingSweep > 0 && fill.open > embeddingSweep && orphans.open > embeddingSweep,
+      JSON.stringify({ embeddingSweep, fill: fill.open })
+    );
+    check("…within a 20s fill budget", SHARED_FILL_BUDGET_MS <= 20_000, String(SHARED_FILL_BUDGET_MS));
   } finally {
     await cleanup();
   }
