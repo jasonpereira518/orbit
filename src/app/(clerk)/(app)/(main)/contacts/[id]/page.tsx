@@ -25,7 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { computeCloseness, formatInteractionFrequency } from "@/lib/closeness";
 import { getContactCloseness } from "@/lib/closeness-cohort";
 import { getConstellationConfig } from "@/lib/constellation-config";
-import { constellationEligibility } from "@/lib/constellation-eligibility";
+import { constellationEligibility, userTagCount } from "@/lib/constellation-eligibility";
 import { requireUserId } from "@/lib/auth";
 import { getEventsWithContact } from "@/actions/events";
 import { ContactEventsTogether } from "@/components/contacts/contact-events-together";
@@ -356,7 +356,7 @@ export default async function ContactDetailPage({
                       statedCloseness: contact.statedCloseness,
                       priorityLevel: contact.priorityLevel,
                       nextFollowUpAt: contact.nextFollowUpAt,
-                      tagCount: contact.tags.length,
+                      userTagCount: userTagCount(contact.tags),
                     },
                     constellationConfig.thresholds
                   ).eligible,

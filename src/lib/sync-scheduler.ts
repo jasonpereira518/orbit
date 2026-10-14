@@ -476,7 +476,8 @@ async function syncGoogleContacts(
     // calendar phase makes, and the opposite of the one-shot file import, which is a review
     // screen precisely because a file is somebody else's list.
     createsContacts: true,
-    // Same tag the one-shot Google import gives, so synced people reach the default sky.
+    // Same source tag the one-shot Google import gives. It does NOT put anyone on the sky:
+    // `constellationEligibility` ignores import source tags (`IMPORT_SOURCE_TAGS`).
     tagNames: ["google-contacts"],
   });
 
