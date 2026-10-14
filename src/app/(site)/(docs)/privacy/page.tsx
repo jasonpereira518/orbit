@@ -124,6 +124,13 @@ export default function PrivacyPage() {
               stored; photos from a capture you never save are deleted after 24 hours.
             </li>
             <li>
+              <strong>Contact photos</strong> — shared photos come only from public LinkedIn profile
+              photos found by a public lookup on the web: one is added to a shared set once and shown
+              to any Orbit user who has that person. Photos from Google or Outlook contacts, photos the
+              Orbit browser extension captures, and Gravatar and Apollo photos are never shared: they
+              stay with your account.
+            </li>
+            <li>
               <strong>Voice and meetings</strong> — audio you record is sent to be transcribed and is
               not kept. The transcript is: a voice note becomes the text of your note, and a meeting
               keeps its transcript until you delete the meeting.
@@ -499,6 +506,10 @@ export default function PrivacyPage() {
             you were signed in, keeping only the anonymous count.
           </p>
           <p>
+            A shared LinkedIn photo is deleted within a day once no Orbit account has that person.
+            To have one removed sooner, email us through the <Link href="/contact">contact page</Link>.
+          </p>
+          <p>
             When you delete your account, every table holding your data is cleared, including your
             settings, keys and tokens. What remains: Stripe&rsquo;s own records of your payments,
             held by Stripe; Orbit&rsquo;s accounting record of charges, refunds and credit packs, with
@@ -554,7 +565,7 @@ export default function PrivacyPage() {
           </ul>
           <p>
             The operator can comp or revoke a plan, suspend or delete an account, retry or cancel an
-            import, reset onboarding, disconnect an integration, turn a calendar feed on or off, and
+            import, reset onboarding, disconnect an integration, turn a calendar feed on or off, remove a shared LinkedIn photo, and
             create a one-time link that signs in as your account (for support, and for the demo
             account). Each of these requires a written reason, recorded in an audit log. Opening your
             account is recorded, and so is every individual contact record opened, by its id.
