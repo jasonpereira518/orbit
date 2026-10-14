@@ -18,6 +18,8 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatAllowanceReset, allowancePercentUsed, FREE_LOW_CREDITS } from "@/lib/ai-access-copy";
+import { PLAN_CONFIG } from "@/lib/plans/plan-config";
+import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_LABEL } from "@/lib/stripe-config";
 import { toast } from "@/lib/toast";
 
 const MICROS_PER_CREDIT = 10_000;
@@ -69,7 +71,7 @@ export function CreditsCard() {
     (async () => {
       const result = confirm ? await confirm : null;
       if (!live) return;
-      if (result?.status === "granted") toast.success("250 credits added");
+      if (result?.status === "granted") toast.success(`${CREDIT_PACK_CREDITS} credits added`);
       else if (result?.status === "processing") toast.info("Your payment is still clearing — the credits arrive the moment it does");
       await load();
       if (confirm) router.replace("/settings?integration=ai", { scroll: false });
@@ -93,7 +95,7 @@ export function CreditsCard() {
   if (overview === null) return null;
 
   const { balance, monthlyCredits, plan } = overview;
-  const packsSold = plan === "orbit" || plan === "max";
+  const packsSold = PLAN_CONFIG[plan].features.creditPacks;
   const starterLeft = credits(balance.starterRemaining);
   const spendableLeft = credits(balance.spendable);
   const allowance = balance.allowance;
@@ -145,15 +147,15 @@ export function CreditsCard() {
           {balance.packsFrozen ? (
             <>
               <strong className="font-medium text-ink">{fmt(packLeft)}</strong> pack credits kept for you. They come back the
-              moment you’re on Pro or Max again.
+              moment you’re on a plan that can use them again.
             </>
           ) : packLeft > 0 ? (
             <>
               <strong className="font-medium text-ink">{fmt(packLeft)}</strong> pack credits — used after your monthly
-              credits, and they roll over while you’re subscribed.
+              credits, and they roll over from month to month.
             </>
           ) : (
-            "No pack credits. A pack adds 250 credits for $5, used after your monthly credits."
+            `No pack credits. A pack adds ${CREDIT_PACK_CREDITS} credits for ${CREDIT_PACK_PRICE_LABEL}, used after your monthly credits.`
           )}
         </p>
       )}
@@ -162,8 +164,8 @@ export function CreditsCard() {
         <p role="status" className="rounded-lg border border-warning-border bg-warning-surface p-3 text-sm text-foreground">
           {packsSold ? (
             <>
-              You’ve used your credits, so Orbit’s AI is paused until {allowance ? formatAllowanceReset(allowance.periodEnd) : "your plan renews"}.
-              Nothing is charged automatically — add a pack to keep going{plan === "orbit" ? ", or move to Max for 500 credits a month" : ""}.
+              You’ve used your credits, so Orbit’s AI is paused until {allowance ? formatAllowanceReset(allowance.periodEnd) : plan === "free" ? "the 1st" : "your plan renews"}.
+              Nothing is charged automatically — add a pack to keep going{plan === "orbit" ? `, or move to Max for ${PLAN_CONFIG.max.monthlyCredits} credits a month` : ""}.
             </>
           ) : (
             <>You’ve used this month’s AI credits. They refill on {allowance ? formatAllowanceReset(allowance.periodEnd) : "the 1st"}. Add your own key below for no limit</>
@@ -264,8 +266,8 @@ function MaxNudgeDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
         <DialogHeader>
           <DialogTitle>Worth a look: Orbit Max</DialogTitle>
           <DialogDescription>
-            Two packs plus Pro is about the price of Max, which includes 500 credits a month plus more transcription and
-            enrichment.
+            Two packs plus Pro is about the price of Max, which includes {PLAN_CONFIG.max.monthlyCredits} credits a month plus more transcription and
+            the REST API.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter className="gap-2 sm:gap-2">

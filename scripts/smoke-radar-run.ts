@@ -407,6 +407,11 @@ run(async () => {
 
   console.log("\nthe rest of the app sees the same list");
   {
+    // The bell and the briefing filter on the real clock (`now()`), but these cards were made on
+    // the fixed NOW clock, so they lapse a week after it. Re-anchor their expiry to today.
+    await db.update(recommendations)
+      .set({ expiresAt: new Date(Date.now() + 7 * DAY) })
+      .where(and(eq(recommendations.userId, USER), eq(recommendations.status, "pending")));
     const live = await pending();
     check("the rest of the app points into Radar exactly when it is released",
       (await isSurfaceLive(USER, "page.radar")) === !DEFAULT_COMING_SOON_KEYS.has("page.radar"));

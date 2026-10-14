@@ -26,7 +26,7 @@ const LAST_UPDATED = LEGAL_LAST_UPDATED;
 
 const HIGHLIGHTS: readonly Highlight[] = [
   { icon: ShieldCheck, title: "Your network isn't a product", body: "Orbit doesn't sell personal information or run ad pixels, and its traffic analytics set no cookies." },
-  { icon: Sparkles, title: "AI runs on your key or Orbit’s", body: "You choose the provider, and can supply your own key; the Free Plan, Orbit Pro and Orbit Max include AI on Orbit’s accounts. Most AI features run only when you use them; a few, like deriving LinkedIn timeline events, run automatically in the background on the same key or account. Settings shows what the last 30 days cost." },
+  { icon: Sparkles, title: "AI runs on your key or Orbit’s", body: "You choose the provider, and can supply your own key; the Free Plan, Orbit Pro, Orbit Max and Orbit Lifetime include AI on Orbit’s accounts. Most AI features run only when you use them; a few, like deriving LinkedIn timeline events, run automatically in the background on the same key or account. Settings shows what the last 30 days cost." },
   { icon: Download, title: "Export on demand", body: "One control in Settings produces a JSON download of your core Orbit data, on every plan including Free." },
   { icon: Trash2, title: "Deletion is real deletion", body: "Delete some or all of your data from Settings, or delete your account — which erases your data, keys and sign-in and cancels any subscription." },
 ];
@@ -64,14 +64,14 @@ const PROCESSORS = [
   { name: "Gravatar", badge: "Automatic", body: "Checks for a public avatar for a contact's email. Receives a one-way hash of the address, not the address." },
   { name: "Deepgram", badge: "Always", body: "Speech-to-text for voice notes, meetings and the chat microphone. Receives your audio and a list of your recent contact names so it spells them correctly. Every request sets Deepgram's zero-retention flag, which Deepgram documents as not storing your audio, text, transcripts or synthesized audio after the response is returned. Each request also carries a label so Orbit can check its own bill: a recording's own id for a meeting, and for everything else a random value Orbit generated for your account — not your name, your email or your account id. Labels sit in Deepgram's usage records, which the zero-retention flag does not cover; deleting your data in Settings replaces yours." },
   { name: "Stripe", badge: "Optional", body: "Orbit Pro, Orbit Max and credit pack payments. Card details go to Stripe directly; Orbit stores a customer reference." },
-  { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider you choose in Settings: on your own key, or (for the Free Plan’s allowance and included AI on Orbit Pro and Orbit Max) on Orbit's account with that provider." },
+  { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider you choose in Settings: on your own key, or (for the Free Plan’s allowance and included AI on Orbit Pro, Orbit Max and Orbit Lifetime) on Orbit's account with that provider." },
   { name: "TypeSafe", badge: "Optional", body: "Jev, a decision model, for yes-or-no and ranking steps: spotting recruiters during a mail scan you start, choosing which contacts a chat answer draws on, telling two contact records apart before they are merged, reading captured notes, judging which calendar events were meetings with people, and deciding whether a note or message has anything in it worth sending to your chat model. Only if you add your own TypeSafe key in Settings." },
   { name: "Google", badge: "Optional", body: "Gmail, Contacts and Calendar, one permission per feature you turn on. See Google user data." },
   { name: "Microsoft", badge: "Optional", body: "Outlook, one permission per feature you turn on: your contacts to import, your calendar to log meetings with people you know, your mail for the recruiter scan you start, and sending the email you write from your own address. See What Orbit collects and The recruiter scan." },
   { name: "Eventbrite", badge: "Optional", body: "Guest lists of events you host, through Eventbrite sign-in." },
   { name: "Luma", badge: "Optional", body: "Guest lists of events you host (with your Luma API key), and your personal Luma calendar link if you paste it." },
   { name: "Partiful", badge: "Optional", body: "Your personal Partiful calendar link, if you paste it, to list events you are going to." },
-  { name: "Apollo", badge: "Optional", body: "People search and contact enrichment, with your Apollo key, or Orbit's on Pro, Max and Lifetime (up to your plan's monthly enrichments)." },
+  { name: "Apollo", badge: "Optional", body: "People search and contact enrichment, with your own Apollo key. Orbit does not run it on an Apollo account of its own." },
   { name: "Resend", badge: "Optional", body: "Email Orbit sends on its own behalf: the waitlist confirmation and outreach campaigns you send from Orbit. Email you write to a person goes from your own Gmail or Outlook instead." },
   { name: "Twilio", badge: "Optional", body: "SMS outreach you send, through the Twilio account you connect." },
 ] as const;
@@ -124,6 +124,13 @@ export default function PrivacyPage() {
               stored; photos from a capture you never save are deleted after 24 hours.
             </li>
             <li>
+              <strong>Contact photos</strong> — shared photos come only from public LinkedIn profile
+              photos found by a public lookup on the web: one is added to a shared set once and shown
+              to any Orbit user who has that person. Photos from Google or Outlook contacts, photos the
+              Orbit browser extension captures, and Gravatar and Apollo photos are never shared: they
+              stay with your account.
+            </li>
+            <li>
               <strong>Voice and meetings</strong> — audio you record is sent to be transcribed and is
               not kept. The transcript is: a voice note becomes the text of your note, and a meeting
               keeps its transcript until you delete the meeting.
@@ -152,7 +159,7 @@ export default function PrivacyPage() {
             </li>
             <li>
               <strong>The browser extension</strong> — when you open its panel on a LinkedIn profile,
-              it sends that page&rsquo;s text to Orbit, which fills in a contact using your AI key. A
+              it sends that page&rsquo;s text to Orbit, which fills in a contact using your key or Orbit&rsquo;s included AI. A
               contact is created only when you save it.
             </li>
             <li>
@@ -269,7 +276,7 @@ export default function PrivacyPage() {
             &ldquo;recruiter&rdquo;, &ldquo;talent acquisition&rdquo; and &ldquo;open role&rdquo;,
             excluding newsletters and mailing lists. For each likely recruiter, up to 400 a scan, it
             sends the subject and text of up to five of their most recent messages, with their name
-            and address, to the AI provider you chose, on your key. The model decides whether the
+            and address, to the AI provider you chose, on your key or Orbit&rsquo;s included AI. The model decides whether the
             sender is a recruiter and writes a short summary of the conversation.
           </p>
           <p>
@@ -277,7 +284,7 @@ export default function PrivacyPage() {
             same way on Outlook mail: it needs the read-only mail permission, which Orbit asks for
             only when you press Allow mail access on the Recruiters page. It searches your mailbox
             for the same terms, skips Junk Email and Deleted Items, and sends the same text to the
-            same AI provider on your key. What is kept is the same too, apart from the thread id,
+            same AI provider, on your key or Orbit&rsquo;s included AI. What is kept is the same too, apart from the thread id,
             which Outlook does not provide. Message bodies are not stored.
           </p>
           <p>
@@ -335,16 +342,13 @@ export default function PrivacyPage() {
         <DocSection id="ai" index={7} title="AI processing">
           <p>
             When you use an AI feature, the content it needs — notes, contact context, chat prompts,
-            photos of pages you scan, recruiter emails when you run the scan — is sent to the
-            provider you chose in Settings: Google Gemini, OpenAI or Anthropic. On Orbit
-            Lifetime, every call runs on an API key you supply, so the request lands on your own
-            account with that provider and is governed by the retention settings you have agreed with
-            them. On the Free Plan, Orbit includes a small monthly AI allowance and a one-time starter
-            grant, and on Orbit Pro and Orbit Max AI is included: those calls run on Orbit&rsquo;s own
-            accounts with those providers, under Orbit&rsquo;s agreements with them, which do not allow
+            photos of pages you scan, recruiter emails when you run the scan — is sent to an AI
+            provider: Google Gemini, OpenAI or Anthropic. Every plan includes a monthly AI
+            allowance, and the Free Plan also gets a one-time starter grant: those calls run on Orbit&rsquo;s own
+            accounts with Anthropic or OpenAI, whichever Orbit routes the request to, under Orbit&rsquo;s agreements with them, which do not allow
             your content to be used to train their models. Providers may keep requests for a limited
             period for abuse monitoring under those agreements. If you add your own key and choose it,
-            those calls run on your account instead.
+            those calls run on your account, with the provider you chose in Settings, instead.
           </p>
           <p>
             Voice notes, the chat microphone and meetings are transcribed by Deepgram instead, on
@@ -490,8 +494,8 @@ export default function PrivacyPage() {
           <p>
             Your Orbit data is kept while your account is active, until you delete it with the
             controls above. Downgrading never deletes anything: contacts added while you were
-            subscribed stay visible and exportable on the Free Plan, and unused pack credits are kept
-            while you&rsquo;re on a plan that can&rsquo;t use them, and come back if you resubscribe.
+            subscribed stay visible and exportable on the Free Plan, and unused pack credits stay
+            spendable.
           </p>
           <p>
             Capture photos stay with the capture they belong to until you delete it; photos from a
@@ -500,6 +504,10 @@ export default function PrivacyPage() {
             Audio is never kept. Page views are
             deleted after 180 days; deleting your data or your account unlinks the ones made while
             you were signed in, keeping only the anonymous count.
+          </p>
+          <p>
+            A shared LinkedIn photo is deleted within a day once no Orbit account has that person.
+            To have one removed sooner, email us through the <Link href="/contact">contact page</Link>.
           </p>
           <p>
             When you delete your account, every table holding your data is cleared, including your
@@ -557,7 +565,7 @@ export default function PrivacyPage() {
           </ul>
           <p>
             The operator can comp or revoke a plan, suspend or delete an account, retry or cancel an
-            import, reset onboarding, disconnect an integration, turn a calendar feed on or off, and
+            import, reset onboarding, disconnect an integration, turn a calendar feed on or off, remove a shared LinkedIn photo, and
             create a one-time link that signs in as your account (for support, and for the demo
             account). Each of these requires a written reason, recorded in an audit log. Opening your
             account is recorded, and so is every individual contact record opened, by its id.
