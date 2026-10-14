@@ -2,8 +2,7 @@ import { cache } from "react";
 import { and, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import { getDb } from "@/db";
 import { imports, userSettings } from "@/db/schema";
-import { LINKEDIN_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-connections";
-import { LINKEDIN_MESSAGES_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-messages";
+import { LINKEDIN_IMPORT_TYPE, LINKEDIN_MESSAGES_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-import-types";
 import {
   LINKEDIN_REMINDER_MAX_AGE_MS,
   LINKEDIN_REMINDER_MIN_AGE_MS,

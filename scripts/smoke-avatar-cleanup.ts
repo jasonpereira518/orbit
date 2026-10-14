@@ -9,11 +9,14 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import * as schema from "../src/db/schema";
 import { setAvatarBlobClientForTests } from "../src/lib/avatar-blob";
+import { deleteContactsForUser } from "../src/lib/contact-delete";
 import { mergeContacts, unmergeContacts } from "../src/lib/contact-merge";
 import { purgeUserData } from "../src/lib/user-data";
 
 const USER = "smoke-avatar-cleanup-user";
 const BLOB = (n: string) => `https://abc.public.blob.vercel-storage.com/avatars/${n}.jpg`;
+/** The shared LinkedIn pool: other accounts display it, so no per-contact cleanup may touch it. */
+const SHARED = (n: string) => `https://abc.public.blob.vercel-storage.com/avatars-shared/${n}.jpg`;
 
 function check(label: string, ok: boolean, detail?: string) {
   if (!ok) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -49,10 +52,23 @@ async function main() {
     const [adopted] = await db.select().from(schema.contacts).where(eq(schema.contacts.id, bare));
     check("a winner with no photo adopts the loser's, and nothing is deleted", adopted?.profileImageUrl === BLOB("donor") && deleted.length === 0);
 
-    console.log("\nPurge");
+    console.log("\nShared pool objects");
     deleted.length = 0;
+    const keeper = await contact("Shared Winner", BLOB("keeper"));
+    const sharedLoser = await contact("Shared Loser", SHARED("loser"));
+    await mergeContacts(USER, keeper, sharedLoser, { deferInvalidation: true });
+    const sharedDeleted = await contact("Shared Deleted", SHARED("deleted"));
+    await deleteContactsForUser(USER, [sharedDeleted]);
+    await contact("Shared Purged", SHARED("purged"));
+
+    console.log("\nPurge");
     await purgeUserData(USER, { only: ["contacts"] });
     check("the contacts step deletes every photo it references", deleted.includes(BLOB("winner")) && deleted.includes(BLOB("donor")), JSON.stringify(deleted));
+    check(
+      "merge, delete and purge never delete an avatars-shared/ object",
+      !deleted.some((u) => u.includes("/avatars-shared/")),
+      JSON.stringify(deleted)
+    );
   } finally {
     setAvatarBlobClientForTests(null);
     await purgeUserData(USER, { keepSettings: false }).catch(() => {});

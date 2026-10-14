@@ -20,6 +20,7 @@ export const metadata = { title: "Admin · Audit" };
 const DESTRUCTIVE = new Set([
   "account.delete",
   "account.suspend",
+  "avatar.block",
   "integration.disconnect",
   "record.reveal",
   "reveal.grant",

@@ -15,7 +15,10 @@
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createRouteMatcher } from "@clerk/nextjs/server";
+import robots from "../src/app/robots";
+import sitemap from "../src/app/sitemap";
 import { PUBLIC_ROUTES } from "../src/lib/public-routes";
+import { BOTID_PATH_PREFIX, WAITLIST_ALLOWED_PATHS } from "../src/lib/waitlist-host";
 import { config as proxyConfig } from "../src/proxy";
 
 const MARKETING_DIRS = ["src/app/(site)", "src/app/(clerk)/(marketing)"];
@@ -128,11 +131,16 @@ function main() {
     "/api/health",
     // Browsers report CSP violations without one.
     "/api/csp-report",
+    // Crawlers have no session either, and the matcher sends .txt and .xml through Clerk.
+    "/robots.txt",
+    "/sitemap.xml",
     // The phone half of note scanning, authenticated by the opaque token in the path. If
     // these fall out of PUBLIC_ROUTES the QR code leads to a sign-in page in production
     // and nowhere else — the phone has no session and cannot get one usefully.
     "/scan/orb_scan_7f3a9c2b_" + "a".repeat(43),
     "/api/scan/orb_scan_7f3a9c2b_" + "a".repeat(43) + "/pages",
+    // Vercel BotID's proxy: the waitlist join's POSTs need its proof, signed out.
+    `/${BOTID_PATH_PREFIX}/tl`,
   ];
   const blocked: string[] = [];
   for (const route of internalRoutes) {
@@ -140,6 +148,23 @@ function main() {
     console.log(`  ${ok ? "ok  " : "FAIL"} ${route} ${ok ? "is exempt from Clerk" : "is behind Clerk"}`);
     if (!ok) blocked.push(route);
   }
+
+  // The crawler files: every sitemap entry is a public page, none is disallowed by robots,
+  // and robots points at the sitemap. The waitlist host must not serve either file.
+  const crawlerProblems: string[] = [];
+  const base = new URL(String(robots().sitemap)).origin;
+  const disallowed = ([] as string[]).concat((robots().rules as { disallow?: string | string[] }).disallow ?? []);
+  for (const { url } of sitemap()) {
+    const path = new URL(url).pathname;
+    if (!url.startsWith(base)) crawlerProblems.push(`${url} is not on the app origin`);
+    if (!check(path)) crawlerProblems.push(`${path} is in the sitemap but not public`);
+    if (disallowed.some((d) => path !== "/" && path.startsWith(d))) crawlerProblems.push(`${path} is in the sitemap but disallowed by robots`);
+  }
+  // /interest still carries waitlist copy on the app domain; it is reachable but not advertised.
+  if (sitemap().some(({ url }) => new URL(url).pathname === "/interest")) crawlerProblems.push("/interest is in the sitemap");
+  if (String(robots().sitemap) !== `${base}/sitemap.xml`) crawlerProblems.push("robots does not point at /sitemap.xml");
+  if (WAITLIST_ALLOWED_PATHS.some((p) => /robots|sitemap/.test(p))) crawlerProblems.push("the waitlist host allows a crawler file");
+  console.log(`\n  ${crawlerProblems.length === 0 ? "ok  " : "FAIL"} sitemap entries are public and not disallowed by robots`);
 
   // Static assets in public/. `proxy.ts`'s matcher skips middleware for a fixed list of
   // extensions; anything missing from that list is matched, fails isPublicRoute and gets a
@@ -167,7 +192,7 @@ function main() {
     );
   }
 
-  if (missing.length > 0 || !guardedOk || blocked.length > 0 || gated.length > 0) {
+  if (missing.length > 0 || !guardedOk || blocked.length > 0 || gated.length > 0 || crawlerProblems.length > 0) {
     if (missing.length > 0) {
       console.error(
         `\nFAILED: add ${missing.join(", ")} to PUBLIC_ROUTES in src/lib/public-routes.ts`
@@ -177,6 +202,9 @@ function main() {
       console.error(
         `\nFAILED: ${leaked.join(", ")} must NOT be in PUBLIC_ROUTES — they require a session`
       );
+    }
+    if (crawlerProblems.length > 0) {
+      console.error(`\nFAILED: ${crawlerProblems.join("; ")}`);
     }
     if (blocked.length > 0) {
       console.error(
