@@ -388,7 +388,7 @@ export function ContactForm({
           </Field>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Bluesky" hint="Radar reads their public posts">
+          <Field label="Bluesky">
             <Input
               value={form.blueskyHandle}
               onChange={(e) => set("blueskyHandle", e.target.value)}
@@ -397,7 +397,7 @@ export function ContactForm({
               spellCheck={false}
             />
           </Field>
-          <Field label="Mastodon" hint="Radar reads their public posts">
+          <Field label="Mastodon">
             <Input
               value={form.mastodonAcct}
               onChange={(e) => set("mastodonAcct", e.target.value)}

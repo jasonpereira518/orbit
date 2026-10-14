@@ -6,7 +6,8 @@ import { ATTRIBUTION_COOKIE, parseAttribution } from "@/lib/attribution-parse";
 import type { InterestListResult, InterestNameResult } from "@/lib/interest-list";
 import type { InterestListInput, InterestNameInput } from "@/lib/interest-list-schema";
 import { SHARE_TOKEN_MAX } from "@/lib/interest-list";
-import { joinInterestListCore, saveInterestListNameCore } from "@/lib/interest-list-join";
+import { joinInterestListCore, plausibleTicket, saveInterestListNameCore } from "@/lib/interest-list-join";
+import { isBotRequest, recordBotBlocked } from "@/lib/bot-check";
 import { recordPassCheck } from "@/lib/interest-list-ticket";
 
 /**
@@ -16,6 +17,12 @@ import { recordPassCheck } from "@/lib/interest-list-ticket";
 export async function joinInterestList(
   input: InterestListInput
 ): Promise<InterestListResult> {
+  // BotID first. A bot gets what a rate-limited caller gets: a ticket that resolves to nothing.
+  if (await isBotRequest()) {
+    await recordBotBlocked();
+    return { ok: true, ticket: await plausibleTicket(), returning: false };
+  }
+
   const headerList = await headers();
   const ip = clientIpFrom(headerList);
 
@@ -29,6 +36,10 @@ export async function joinInterestList(
 export async function saveInterestListName(
   input: InterestNameInput
 ): Promise<InterestNameResult> {
+  if (await isBotRequest()) {
+    await recordBotBlocked();
+    return { ok: true };
+  }
   const ip = clientIpFrom(await headers());
   return saveInterestListNameCore(input, { ip });
 }

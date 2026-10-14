@@ -23,7 +23,7 @@ import { getDb } from "../src/db";
 import { contacts, interactions, memoryChunks } from "../src/db/schema";
 import type { ToolCall, ToolDriver, ToolStep } from "../src/lib/ai-tools";
 import { prepareChatContext } from "../src/lib/chat-context";
-import { gatherEvidence, maybeGather } from "../src/lib/chat-gather";
+import { ANSWER_ENDS_BY_MS, answerDeadlineMs, GATHER_ENDS_BY_MS, gatherEvidence, maybeGather } from "../src/lib/chat-gather";
 import type { ChatStep } from "../src/lib/chat-stream-protocol";
 import { createStepEmitter } from "../src/lib/chat-steps";
 import { logNoteInteractionForUser } from "../src/lib/contact-writes";
@@ -181,11 +181,19 @@ async function main() {
     addResults: s3.driver.addResults,
   };
   const late = await maybeGather(USER, await prepareChatContext(USER, question, {}), {
-    // 36s into a request: less than the minimum left before the 38s cut-off.
-    requestStartedAt: Date.now() - 36_000,
+    // 27s into a request: less than the minimum left before the 30s cut-off.
+    requestStartedAt: Date.now() - 27_000,
     driver: counting,
   });
   check("with too little time left, research does not start", asked === 0 && late.evidence === null, `${asked} rounds`);
+
+  // --- the clock: research ends, then the answer, both inside maxDuration (60s) --------------
+
+  check("gathering ends by 30s and the answer by 55s", GATHER_ENDS_BY_MS === 30_000 && ANSWER_ENDS_BY_MS === 55_000);
+  check("the answer deadline is the time left until 55s", answerDeadlineMs(1_000, 11_000) === 45_000);
+  check("at the start it is the whole 55s", answerDeadlineMs(5_000, 5_000) === ANSWER_ENDS_BY_MS);
+  check("it never goes below 1s (AbortSignal.timeout throws on a negative delay)", answerDeadlineMs(0, 54_500) === 1_000 && answerDeadlineMs(0, 90_000) === 1_000);
+  check("so it is always a delay AbortSignal.timeout accepts", (() => { try { AbortSignal.timeout(answerDeadlineMs(0, 90_000)); return true; } catch { return false; } })());
 
   // --- no grant: an answer from retrieval, not an error --------------------------------------
 

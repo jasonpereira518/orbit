@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
-import { getDb } from "@/db";
+import { getDb, rowsOf, runAtomicBatch } from "@/db";
 import { interestListSignups, userSettings, waitlistPollVotes } from "@/db/schema";
 import { countInt } from "@/lib/admin-metrics";
 import { getWaitlistPageUrl } from "@/lib/app-url";
@@ -532,22 +532,20 @@ export async function deleteInterestListRow(
   id: string
 ): Promise<{ email: string } | null> {
   const db = await getDb();
-  const deleted = await db.transaction(async (tx) => {
-    await tx
+  // One atomic batch, not `db.transaction`: neon-http cannot hold a transaction open.
+  const results = await runAtomicBatch(db, (tx) => [
+    tx
       .update(interestListSignups)
       .set({ referredById: null })
-      .where(eq(interestListSignups.referredById, id));
-    await tx
+      .where(eq(interestListSignups.referredById, id)),
+    tx
       .delete(waitlistPollVotes)
       .where(
         or(eq(waitlistPollVotes.signupId, id), eq(waitlistPollVotes.voterKey, `signup:${id}`))
-      );
-    const rows = await tx
-      .delete(interestListSignups)
-      .where(eq(interestListSignups.id, id))
-      .returning();
-    return rows[0] ?? null;
-  });
+      ),
+    tx.delete(interestListSignups).where(eq(interestListSignups.id, id)).returning(),
+  ]);
+  const deleted = rowsOf<{ email: string }>(results[2])[0] ?? null;
   if (!deleted) return null;
   invalidateInterestProof();
   return { email: deleted.email };
@@ -581,26 +579,23 @@ export async function bulkDeleteInterestListRows(ids: string[]): Promise<string[
   if (ids.length === 0) return [];
   const capped = ids.slice(0, BULK_LIMIT);
   const db = await getDb();
-  const emails = await db.transaction(async (tx) => {
-    await tx
+  const voterKeys = capped.map((id) => `signup:${id}`);
+  const results = await runAtomicBatch(db, (tx) => [
+    tx
       .update(interestListSignups)
       .set({ referredById: null })
-      .where(inArray(interestListSignups.referredById, capped));
-    const voterKeys = capped.map((id) => `signup:${id}`);
-    await tx
+      .where(inArray(interestListSignups.referredById, capped)),
+    tx
       .delete(waitlistPollVotes)
       .where(
         or(
           inArray(waitlistPollVotes.signupId, capped),
           inArray(waitlistPollVotes.voterKey, voterKeys)
         )
-      );
-    const rows = await tx
-      .delete(interestListSignups)
-      .where(inArray(interestListSignups.id, capped))
-      .returning();
-    return rows.map((r) => r.email);
-  });
+      ),
+    tx.delete(interestListSignups).where(inArray(interestListSignups.id, capped)).returning(),
+  ]);
+  const emails = rowsOf<{ email: string }>(results[2]).map((r) => r.email);
   if (emails.length > 0) invalidateInterestProof();
   return emails;
 }

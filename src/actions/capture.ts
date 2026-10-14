@@ -31,7 +31,8 @@ import {
 } from "@/lib/capture-limits";
 import { getDb } from "@/db";
 import { resolveAvatarNow } from "@/lib/avatar-backfill";
-import { downloadAndPersistAvatar, fetchLinkedInPhotoUrl } from "@/lib/contact-avatar";
+import { downloadAndPersistAvatar } from "@/lib/contact-avatar";
+import { resolveLinkedInPhotoCached } from "@/lib/shared-avatars";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { kickWorkHistoryResearch, linkedInCaptureContactIds } from "@/lib/work-history-research";
 import {
@@ -264,7 +265,7 @@ export async function confirmBulkCapture(
     const db = await getDb();
     await resolveAvatarNow(db, userId, out.contactIds[0]!, {
       persistRemote: downloadAndPersistAvatar,
-      resolveLinkedIn: (id, url) => fetchLinkedInPhotoUrl(id, url, userId),
+      resolveLinkedIn: (id, url) => resolveLinkedInPhotoCached(id, url, userId),
     });
   }
 
