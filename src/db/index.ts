@@ -2611,9 +2611,10 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // Rescanned every remote ref, every local branch and every worktree's working file on
 // Oct 12 2026: 153 was the highest claimed anywhere.
 //
-// 157 = the shared LinkedIn photo cache: linkedin_avatars (global, keyed by profile slug) and
-// contacts.profile_image_source. NOT 155 or 156: the calendar branches hold them.
-export const SCHEMA_VERSION = 157;
+// 159 = the shared LinkedIn photo cache: linkedin_avatars (global, keyed by profile slug) and
+// contacts.profile_image_source. NOT 155, 156 or 158: the calendar branches hold them
+// (claude/calendar-prep-c holds 158, and the gate never re-runs a lower version).
+export const SCHEMA_VERSION = 159;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -4086,7 +4087,7 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS school text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_url text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_checked_at timestamp`,
-  // Schema v157: where a contact's photo came from (google|outlook|gravatar|apollo|public|
+  // Schema v159: where a contact's photo came from (google|outlook|gravatar|apollo|public|
   // extension|upload), and the cross-user LinkedIn photo cache keyed by profile slug. Null
   // source = unknown (older rows); no backfill.
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_source text`,
