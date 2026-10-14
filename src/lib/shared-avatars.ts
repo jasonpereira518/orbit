@@ -201,6 +201,8 @@ function isLinkedInCdnPhoto(url: string): boolean {
 
 /**
  * Put a photo the extension captured from a LinkedIn profile into the shared pool.
+ * `pageUrl` is the page it was scraped from: the photo is only taken when that page IS the
+ * profile it would be stored under, so a capture can never be filed under someone else.
  * True when the pool now holds a photo for the slug (the contact needs none of its own);
  * false when it cannot or must not take it — no shareable slug, not a LinkedIn CDN photo,
  * no Blob store, a blocked slug, a failed download — and the caller keeps it on the contact.
@@ -208,10 +210,12 @@ function isLinkedInCdnPhoto(url: string): boolean {
  */
 export async function contributeSharedPhoto(
   linkedinUrl: string | null | undefined,
-  imageUrl: string
+  imageUrl: string,
+  pageUrl: string
 ): Promise<boolean> {
   const slug = sharedPhotoSlug(linkedinUrl);
-  if (!slug || !isLinkedInCdnPhoto(imageUrl) || !hasBlobStorage()) return false;
+  if (!slug || slug !== sharedPhotoSlug(pageUrl)) return false;
+  if (!isLinkedInCdnPhoto(imageUrl) || !hasBlobStorage()) return false;
   const row = await getSharedAvatar(slug);
   if (row?.blockedAt) return false;
   if (row?.imageUrl && isSharedFresh(row)) return true;

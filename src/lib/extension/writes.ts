@@ -121,13 +121,17 @@ export const EXTENSION_SOURCE = "chrome_extension";
  * False (keep it on the contact) on anything but a confirmed contribution. A contribution
  * that outlives the budget still lands; the contact then just has its own copy as well.
  */
-async function sharedPhotoTaken(linkedinUrl: string | null | undefined, photoUrl: string | undefined) {
+async function sharedPhotoTaken(
+  linkedinUrl: string | null | undefined,
+  photoUrl: string | undefined,
+  pageUrl: string
+) {
   if (!photoUrl) return false;
   const timer = new Promise<false>((resolve) => {
     const t = setTimeout(() => resolve(false), AVATAR_INLINE_BUDGET_MS);
     (t as { unref?: () => void }).unref?.();
   });
-  return Promise.race([contributeSharedPhoto(linkedinUrl, photoUrl).catch(() => false), timer]);
+  return Promise.race([contributeSharedPhoto(linkedinUrl, photoUrl, pageUrl).catch(() => false), timer]);
 }
 
 export async function saveContactFromExtension(
@@ -152,7 +156,8 @@ export async function saveContactFromExtension(
 
     const shared = await sharedPhotoTaken(
       input.fields.linkedinUrl ?? existing.linkedinUrl,
-      input.fields.photoUrl
+      input.fields.photoUrl,
+      input.page.url
     );
     const patch = toContactInput(input.fields, existing.source ?? EXTENSION_SOURCE, !shared);
     // Additive for the list fields — see the file header. The union itself now lives in
@@ -190,7 +195,7 @@ export async function saveContactFromExtension(
       }
     }
 
-    const shared = await sharedPhotoTaken(input.fields.linkedinUrl, input.fields.photoUrl);
+    const shared = await sharedPhotoTaken(input.fields.linkedinUrl, input.fields.photoUrl, input.page.url);
     let contact;
     try {
       contact = await createContactForUser(

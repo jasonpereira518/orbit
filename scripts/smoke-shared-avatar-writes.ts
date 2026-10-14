@@ -54,7 +54,8 @@ globalThis.fetch = (async (input: RequestInfo | URL) => {
       ? new Response(Buffer.from(PIXEL, "base64"), { headers: { "content-type": "image/jpeg" } })
       : new Response(null, { status: 404 });
   }
-  if (url.includes("media.licdn.com")) {
+  // Real image bytes for a non-LinkedIn host too, so only the CDN gate can refuse it.
+  if (url.includes("media.licdn.com") || url.includes("lh3.googleusercontent.com")) {
     return new Response(Buffer.from(PIXEL, "base64"), { headers: { "content-type": "image/jpeg" } });
   }
   return Response.json({ status: "success", data: {} }); // Microlink: nothing found
@@ -92,6 +93,8 @@ run(async () => {
   const db = await getDb();
   // The app-wide source counters are shared with every other smoke: put them back as found.
   const sharedCounters = await db.select().from(rateLimitBuckets).where(like(rateLimitBuckets.bucket, "avatarSource.shared:%"));
+  // …and start this run from zero, so another smoke's spend cannot run the pool dry here.
+  await db.delete(rateLimitBuckets).where(like(rateLimitBuckets.bucket, "avatarSource.shared:%"));
   const cleanup = async () => {
     await db.delete(linkedinAvatars).where(like(linkedinAvatars.slug, `${P}%`));
     await db.delete(contacts).where(inArray(contacts.userId, [USER_A, USER_B]));
@@ -265,6 +268,16 @@ run(async () => {
     check("a capture that is not a LinkedIn CDN photo is never contributed", (await row(otherSlug)) === null);
     const notLicdnRow = await contactRow(notLicdn.contact.id);
     check("…it stays the contact's own", notLicdnRow.profileImageUrl === googleCapture && notLicdnRow.profileImageSource === "extension");
+
+    const victim = `${P}ext-victim`;
+    const spoofed = await saveContactFromExtension(
+      USER_A,
+      { mode: "create", force: true, page: page(li(`${P}ext-scraped`)), fields: { fullName: "Spoofed", linkedinUrl: li(victim), photoUrl: licdn } },
+      () => {}
+    );
+    check("a capture from another profile's page is never filed under this slug", (await row(victim)) === null && (await row(`${P}ext-scraped`)) === null);
+    const spoofedRow = await contactRow(spoofed.contact.id);
+    check("…it stays the contact's own", spoofedRow.profileImageUrl === licdn && spoofedRow.profileImageSource === "extension");
 
     const [kept] = await db.insert(contacts).values({
       userId: USER_A, fullName: "Kept Photo", profileImageUrl: "https://abc.public.blob.vercel-storage.com/avatars/kept.jpg", profileImageSource: "google",

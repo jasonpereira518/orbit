@@ -641,6 +641,15 @@ export async function listContactTimelineInteractions(contactId: string) {
 }
 
 /**
+ * These actions are callable from the browser, and a photo's provenance decides what it
+ * displays over (`sharedAvatarUrlSql`), so only server-side writers may set it.
+ */
+function clientContactInput<T extends Partial<ContactInput>>(input: T): T {
+  const { profileImageSource: _serverOnly, ...rest } = input;
+  return rest as T;
+}
+
+/**
  * Create a contact from the manual "New contact" form (and any other single-record path).
  *
  * Goes through `resolveOrCreateContact` rather than straight to `createContactForUser`.
@@ -652,15 +661,6 @@ export async function listContactTimelineInteractions(contactId: string) {
  * record's identifiers already belonged to someone, the data is folded into them and their
  * row comes back instead.
  */
-/**
- * These actions are callable from the browser, and a photo's provenance decides what it
- * displays over (`sharedAvatarUrlSql`), so only server-side writers may set it.
- */
-function clientContactInput<T extends Partial<ContactInput>>(input: T): T {
-  const { profileImageSource: _serverOnly, ...rest } = input;
-  return rest as T;
-}
-
 export async function createContact(
   input: ContactInput,
   options?: ContactWriteOptions
