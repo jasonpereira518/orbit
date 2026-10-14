@@ -64,7 +64,7 @@ export function OfflineSync({ userId }: { userId: string }) {
   }, []);
 
   useEffect(() => {
-    const sync = async (outageMs: number) => {
+    const sync = async (outageMs: number, reconnected: boolean) => {
       const { sent, dropped } = await flushOfflineQueue();
       if (sent > 0) {
         toast.success(`Synced ${changesLabel(sent)} you made offline`, { keep: false });
@@ -74,17 +74,20 @@ export function OfflineSync({ userId }: { userId: string }) {
           `${changesLabel(dropped)} made offline didn’t go through — the item may have changed since`
         );
       }
-      void refreshPulse(true);
+      // Only when something changed or the tab was cut off: on a plain page load the
+      // notifications panel has just read the pulse, and a forced second read queued behind
+      // it on the tab's one-at-a-time Server Action lane (~0.4 s of blocked clicks).
+      if (reconnected || sent > 0 || dropped > 0) void refreshPulse(true);
       if (sent > 0 || dropped > 0 || outageMs > STALE_AFTER_OUTAGE_MS) router.refresh();
     };
 
     // Changes left from an earlier visit (a reload while offline, a closed laptop).
-    if (!isOffline()) void sync(0);
+    if (!isOffline()) void sync(0, false);
 
     return onReconnect(() => {
       const outageMs = lostAtRef.current ? Date.now() - lostAtRef.current : 0;
       lostAtRef.current = null;
-      void sync(outageMs);
+      void sync(outageMs, true);
     });
   }, [router]);
 

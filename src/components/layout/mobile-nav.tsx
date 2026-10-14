@@ -1,7 +1,6 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -661,9 +660,12 @@ export function MobileNav({
               const active = isNavActive(pathname, item.href);
               const Icon = item.icon;
               return (
-                <Link
+                // IntentLink, like the bottom bar: a touch on a row prefetches the page whole,
+                // so Meetings, Events, Radar or Imports opened from here skip the skeleton.
+                <IntentLink
                   key={item.href}
                   href={item.href}
+                  prefetch={fullPrefetch(item, active)}
                   onClick={() => setMoreOpen(false)}
                   className={cn(
                     "relative flex items-center gap-3 rounded-xl px-3 py-3 text-sm transition-colors",
@@ -680,7 +682,7 @@ export function MobileNav({
                     </span>
                   )}
                   <NavPendingDot className="top-1/2 right-3 -translate-y-1/2" />
-                </Link>
+                </IntentLink>
               );
             })}
           </nav>
