@@ -41,7 +41,8 @@ import {
 import type { CaptureJobResult, CaptureParseResult, CaptureDecisions, CaptureSavedSummary } from "@/lib/capture/types";
 
 import { resolveAvatarNow } from "@/lib/avatar-backfill";
-import { downloadAndPersistAvatar, fetchLinkedInPhotoUrl } from "@/lib/contact-avatar";
+import { downloadAndPersistAvatar } from "@/lib/contact-avatar";
+import { resolveLinkedInPhotoCached } from "@/lib/shared-avatars";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { buildDuplicateIndex, findDuplicateCandidatesIndexed, DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
@@ -269,7 +270,7 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
         const db = await getDb();
         await resolveAvatarNow(db, userId, out.contactIds[0]!, {
           persistRemote: downloadAndPersistAvatar,
-          resolveLinkedIn: (id, url) => fetchLinkedInPhotoUrl(id, url, userId),
+          resolveLinkedIn: (id, url) => resolveLinkedInPhotoCached(id, url, userId),
         }).catch(reportAndContinue(followOn("avatar"), false));
       }
 

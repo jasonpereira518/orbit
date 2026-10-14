@@ -13,7 +13,6 @@ import { requireUserId } from "@/lib/auth";
 import { normalizeSenderBio } from "@/lib/sender-profile";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { encrypt } from "@/lib/crypto";
-import { kickRelationshipRun } from "@/lib/relationship-engine/runner";
 import { loadWritingInstructions, saveWritingInstructionsFor } from "@/lib/writing-instructions-store";
 import { loadEmailSettings, saveDefaultSendProvider, saveEmailSignature } from "@/lib/email/settings";
 import { getSendCapability, type SendCapability } from "@/lib/email/sender";
@@ -259,7 +258,8 @@ export async function saveAiSettings(input: {
   });
 
   // A run parked in waiting_key resumes as soon as AI can run again.
-  if (newKey) after(() => kickRelationshipRun(userId));
+  // Lazy: every page that reads settings imports this file, and the engine is only needed here.
+  if (newKey) after(async () => (await import("@/lib/relationship-engine/runner")).kickRelationshipRun(userId));
 
   revalidatePath("/settings");
   revalidatePath("/chat");

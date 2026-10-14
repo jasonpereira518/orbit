@@ -28,12 +28,11 @@
 import "./smoke/_env";
 import { run } from "./smoke/_env";
 import { eq } from "drizzle-orm";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import ts from "typescript";
+import { relative, resolve } from "node:path";
 import { getDb } from "../src/db";
 import { appleConnections, calendarSources, userSettings } from "../src/db/schema";
 import { CalDavAuthError, type CalDavCalendar } from "../src/lib/caldav/client";
+import { serverImportGraph } from "./lib/import-graph";
 import {
   BAD_PASSWORD_MESSAGE,
   UNREACHABLE_MESSAGE,
@@ -77,43 +76,7 @@ function check(label: string, ok: boolean, detail = "") {
  * gate is unreachable rather than merely absent from one file's text.
  */
 function importsReach(entryFile: string, bannedFile: string): boolean {
-  const root = resolve(".");
-  const target = resolve(bannedFile);
-  const visited = new Set<string>();
-  const queue = [resolve(entryFile)];
-
-  function resolveSpecifier(fromFile: string, specifier: string): string | null {
-    let base: string;
-    if (specifier.startsWith("@/")) base = join(root, "src", specifier.slice(2));
-    else if (specifier.startsWith(".")) base = resolve(dirname(fromFile), specifier);
-    else return null; // a bare package import (drizzle-orm, next/cache, …) — out of scope
-    for (const candidate of [`${base}.ts`, `${base}.tsx`, join(base, "index.ts"), join(base, "index.tsx")]) {
-      if (existsSync(candidate)) return candidate;
-    }
-    return null;
-  }
-
-  while (queue.length) {
-    const file = queue.pop()!;
-    if (visited.has(file)) continue;
-    visited.add(file);
-    if (file === target) return true;
-
-    const source = readFileSync(file, "utf8");
-    const sf = ts.createSourceFile(
-      file,
-      source,
-      ts.ScriptTarget.Latest,
-      true,
-      file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS
-    );
-    for (const stmt of sf.statements) {
-      if (!ts.isImportDeclaration(stmt) || !ts.isStringLiteral(stmt.moduleSpecifier)) continue;
-      const resolved = resolveSpecifier(file, stmt.moduleSpecifier.text);
-      if (resolved) queue.push(resolved);
-    }
-  }
-  return false;
+  return serverImportGraph(entryFile).has(relative(resolve("."), resolve(bannedFile)));
 }
 
 const DISCOVERED = {

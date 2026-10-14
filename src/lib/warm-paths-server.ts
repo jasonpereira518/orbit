@@ -1,5 +1,6 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
+import { sharedAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { companies, contactExperiences, contacts } from "@/db/schema";
 import {
   WARM_PATHS_PER_ORG,
@@ -46,7 +47,7 @@ export async function findWarmPaths(
         fullName: contacts.fullName,
         closeness: contacts.closeness,
         relationshipScore: contacts.relationshipScore,
-        profileImageUrl: contacts.profileImageUrl,
+        profileImageUrl: sql<string | null>`coalesce(${sharedAvatarUrlSql}, ${contacts.profileImageUrl})`,
         linkedinUrl: contacts.linkedinUrl,
         email: contacts.email,
       })
@@ -68,7 +69,7 @@ export async function findWarmPaths(
         fullName: contacts.fullName,
         closeness: contacts.closeness,
         relationshipScore: contacts.relationshipScore,
-        profileImageUrl: contacts.profileImageUrl,
+        profileImageUrl: sql<string | null>`coalesce(${sharedAvatarUrlSql}, ${contacts.profileImageUrl})`,
         linkedinUrl: contacts.linkedinUrl,
         email: contacts.email,
       })

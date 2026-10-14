@@ -61,8 +61,9 @@ export type CreditsMoney = {
 };
 
 /**
- * @param spendablePlanUsers accounts currently on Pro or Max — pack credits anywhere else are
- *   frozen (derived, never written), so the liability splits on this set.
+ * @param spendablePlanUsers accounts on a plan whose packs are spendable (every plan but
+ *   Lifetime) — pack credits anywhere else are frozen (derived, never written), so the
+ *   liability splits on this set.
  */
 export async function loadCreditsMoney(
   spendablePlanUsers: ReadonlySet<string>,

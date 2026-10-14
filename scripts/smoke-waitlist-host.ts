@@ -14,7 +14,10 @@
  */
 import { getPathMatch } from "next/dist/shared/lib/router/utils/path-match";
 import { matchHas } from "next/dist/shared/lib/router/utils/prepare-destination";
+import { withBotId } from "botid/next/config";
 import {
+  BOTID_PATH_PREFIX,
+  BOTID_PROTECTED_POSTS,
   STEALTH_HIDDEN_API,
   isWaitlistHostHeader,
   resolveStealth,
@@ -203,8 +206,42 @@ check(
 );
 check("with no waitlist host it just opens", gate("/waitlist/ada", false, { SITE_STEALTH: "1" }) === pass);
 
-if (failures > 0) {
-  console.error(`\n${failures} check(s) failed.`);
-  process.exit(1);
+async function botIdChecks() {
+  console.log("\nVercel BotID:");
+  // The package's own rewrites, so an upgrade that moves its path fails here, not in production.
+  // Same `beforeFiles` shape as next.config.ts, which the package appends to.
+  const botConfig = withBotId({ rewrites: async () => ({ beforeFiles: [], afterFiles: [], fallback: [] }) });
+  const botRewrites = (await (botConfig.rewrites as () => Promise<{ beforeFiles: ConfigRewrite[] }>)()).beforeFiles;
+  check(
+    "the package proxies under BOTID_PATH_PREFIX",
+    botRewrites.length > 0 && botRewrites.every((r) => r.source.startsWith(`/${BOTID_PATH_PREFIX}/`)),
+    botRewrites.map((r) => r.source).join(", ")
+  );
+  const botScript = botRewrites[0]!.source;
+  const withBot = [...rewrites, ...waitlistReferralRewrites(), ...botRewrites];
+  for (const path of [botScript, `/${BOTID_PATH_PREFIX}/p.js`, `/${BOTID_PATH_PREFIX}/tl`]) {
+    const o = route(WAITLIST, path, redirects, withBot);
+    check(`the waitlist host lets ${path} through to Vercel`, o.kind === "rewrite" && o.to.startsWith("https://"), show(o));
+    check(`…stealth leaves it open`, gate(path, false) === pass && gate(path, false, NO_HOST) === pass);
+  }
+  check("a lookalike of the segment still redirects", show(onWaitlist(`/${BOTID_PATH_PREFIX.split("/")[0]}/other/a`)) === show({ kind: "redirect", to: "/" }));
+  // initBotId's matcher: `*` is `.*`, anchored, on the pathname.
+  const protects = (pathname: string) =>
+    BOTID_PROTECTED_POSTS.some((p) => p.method === "POST" && new RegExp(`^${p.path.replace(/[.?+^$[\]\\(){}|-]/g, "\\$&").split("*").join(".*")}$`).test(pathname));
+  for (const path of ["/", "/interest", "/waitlist/ada.lovelace"]) {
+    check(`the join's POSTs from ${path} carry BotID's proof`, protects(path));
+  }
+  check("…and the rest of the app's do not", !protects("/contacts") && !protects("/api/track"));
+
+  if (failures > 0) {
+    console.error(`\n${failures} check(s) failed.`);
+    process.exit(1);
+  }
+  console.log("\nThe waitlist host serves only the waitlist.");
+  process.exit(0);
 }
-console.log("\nThe waitlist host serves only the waitlist.");
+
+botIdChecks().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

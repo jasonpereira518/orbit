@@ -111,7 +111,8 @@ export const PROVIDER_MODELS: Record<
     { value: "gpt-4o", label: "GPT-4o" },
   ],
   anthropic: [
-    { value: "claude-haiku-4-5", label: "Claude Haiku 4.5", tier: "cheapest" },
+    { value: "claude-haiku-5-5", label: "Claude Haiku 5.5", tier: "cheapest" },
+    { value: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
     { value: "claude-sonnet-4-5", label: "Claude Sonnet 4.5", tier: "balanced" },
     { value: "claude-opus-4-5", label: "Claude Opus 4.5", tier: "best" },
   ],
@@ -211,6 +212,15 @@ const ANTHROPIC_TEMPERATURE_FAMILIES = [
 function anthropicFamilyId(model: string): string {
   const slash = model.indexOf("/");
   return (slash === -1 ? model : model.slice(slash + 1)).replace(/\./g, "-");
+}
+
+/**
+ * Haiku 5.5 thinks adaptively by default at effort `medium`, and thinking bills as output.
+ * Orbit's calls are extraction and short answers, where deeper thinking measurably hurt on
+ * Gemini, so they run at `low`. A spreadable request fragment; empty for every other model.
+ */
+export function anthropicEffort(model: string): { output_config?: { effort: "low" } } {
+  return anthropicFamilyId(model).startsWith("claude-haiku-5") ? { output_config: { effort: "low" } } : {};
 }
 
 export function anthropicAcceptsTemperature(model: string): boolean {

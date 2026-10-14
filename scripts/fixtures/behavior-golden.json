@@ -4995,6 +4995,7 @@
     "mastodonAcct": null,
     "profileImageUrl": null,
     "profileImageCheckedAt": null,
+    "profileImageSource": null,
     "workHistoryDueAt": null,
     "relationshipScore": 4,
     "statedCloseness": 4,
@@ -5037,6 +5038,7 @@
     "createdAt": "<ts>",
     "updatedAt": "<ts>",
     "embeddingStaleAt": "<ts>",
+    "sharedAvatarUrl": null,
     "contactTags": [
       {
         "id": "<contact_tags:?>",
@@ -5281,7 +5283,7 @@
       "contactLimit": null,
       "canUseOutreach": true,
       "canUseHostedSending": true,
-      "canUseHostedEnrichment": true,
+      "canUseHostedEnrichment": false,
       "canUseRecruiters": true,
       "canUseSync": true,
       "canUseExtension": true
@@ -6794,6 +6796,7 @@
       "mastodonAcct": null,
       "profileImageUrl": null,
       "profileImageCheckedAt": null,
+      "profileImageSource": null,
       "workHistoryDueAt": null,
       "relationshipScore": 4,
       "statedCloseness": 4,
@@ -6836,6 +6839,7 @@
       "createdAt": "<ts>",
       "updatedAt": "<ts>",
       "embeddingStaleAt": "<ts>",
+      "clientAvatarUrl": null,
       "contactTags": [
         {
           "id": "<contact_tags:?>",
@@ -10679,6 +10683,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -10751,6 +10756,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -10821,6 +10827,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -10894,6 +10901,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -10964,6 +10972,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -11034,6 +11043,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -11106,6 +11116,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -11179,6 +11190,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -11252,6 +11264,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -11322,6 +11335,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -11392,6 +11406,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -11465,6 +11480,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -11537,6 +11553,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -11611,6 +11628,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -11681,6 +11699,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -11754,6 +11773,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -11830,6 +11850,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -11903,6 +11924,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -11976,6 +11998,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -12046,6 +12069,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -12122,6 +12146,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -12192,6 +12217,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -12269,6 +12295,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -12343,6 +12370,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -12417,6 +12445,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -12493,6 +12522,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     },
@@ -12566,6 +12596,7 @@
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
       "first_interaction_at": "<ts>",
+      "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
     }

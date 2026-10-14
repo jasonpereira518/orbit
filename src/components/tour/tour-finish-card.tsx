@@ -6,6 +6,7 @@ import { getGmailConnectionStatus } from "@/actions/gmail";
 import { getOutlookConnectionStatus } from "@/actions/outlook";
 import { SoonTag } from "@/components/onboarding/onboarding-ui";
 import { Button } from "@/components/ui/button";
+import { EXTENSION_PUBLISHED } from "@/lib/plan-copy";
 import type { TourStopId } from "@/lib/tour/tour-stops";
 import { cn } from "@/lib/utils";
 
@@ -86,7 +87,9 @@ export function TourFinishCard({
           What’s ahead <SoonTag />
         </p>
         {/* Recruiters is live on Pro, so it is not in this list: "Soon" would be untrue. */}
-        <p className="mt-1">Outreach campaigns and Events, plus a Chrome extension.</p>
+        <p className="mt-1">
+          Outreach campaigns and Events{EXTENSION_PUBLISHED ? "" : ", plus a Chrome extension"}.
+        </p>
       </div>
       <Button type="button" disabled={pending} onClick={onFinish}>
         {pending ? "Finishing…" : "Go to your dashboard"}

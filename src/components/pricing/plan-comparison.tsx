@@ -5,6 +5,7 @@ import {
   PLAN_LABELS,
   type PurchasablePlan,
 } from "@/lib/plans/plan-config";
+import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_LABEL } from "@/lib/stripe-config";
 import { cn } from "@/lib/utils";
 
 type Cell = boolean | string;
@@ -51,7 +52,7 @@ const ROWS: Array<{ label: string; cells: [Cell, Cell, Cell] }> = [
       return credits ? `Included: ${credits} credits a month${plan === "free" ? ` + ${FREE_STARTER_CREDITS} to start` : ""}` : "Your own key";
     }),
   },
-  { label: "Credit packs ($5 = 250 credits)", cells: feature("creditPacks") },
+  { label: `Credit packs (${CREDIT_PACK_PRICE_LABEL} = ${CREDIT_PACK_CREDITS} credits)`, cells: feature("creditPacks") },
   { label: "Capture with AI extraction", cells: [true, true, true] },
   { label: "Chat with your network", cells: [true, true, true] },
   { label: "Constellation map", cells: [true, true, true] },
@@ -69,13 +70,6 @@ const ROWS: Array<{ label: string; cells: [Cell, Cell, Cell] }> = [
   { label: "Calendar subscriptions", cells: feature("sync") },
   { label: "Meeting transcription", cells: each((plan) => hours(PLAN_CONFIG[plan].speech.meetingSeconds)) },
   { label: "Voice notes and chat mic", cells: each((plan) => hours(PLAN_CONFIG[plan].speech.shortformSeconds)) },
-  {
-    label: "Contact enrichment",
-    cells: each((plan) => {
-      const n = PLAN_CONFIG[plan].hostedEnrichmentsPerMonth;
-      return n > 0 ? `${n} a month` : "Your own Apollo key";
-    }),
-  },
   { label: "REST API and webhooks", cells: feature("api") },
 ];
 
