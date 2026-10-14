@@ -3,6 +3,7 @@ import { notTourExample } from "@/lib/onboarding-examples/sql";
 import type { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { AvatarSourceRateLimitError, AvatarStorageError } from "@/lib/contact-avatar";
+import type { ProfileImageSource, SharedLinkedInPhoto } from "@/lib/shared-avatars";
 import { deadlineReached } from "@/lib/time-budget";
 
 type Db = Awaited<ReturnType<typeof getDb>>;
@@ -171,9 +172,19 @@ export type AvatarBatchDeps = {
    * and preferred over LinkedIn sources since it's the user's own contact, not a
    * public-profile guess. Optional so callers without either connection can omit it.
    */
-  resolveConnectedAccount?: (contactId: string, email: string) => Promise<string | null>;
-  /** Resolve a LinkedIn profile photo (Microlink/Unavatar); null when none is findable. */
-  resolveLinkedIn: (contactId: string, linkedinUrl: string) => Promise<string | null>;
+  resolveConnectedAccount?: (
+    contactId: string,
+    email: string
+  ) => Promise<{ url: string; source: "google" | "outlook" } | null>;
+  /**
+   * Resolve a LinkedIn profile photo (Microlink/Unavatar); null when none is findable.
+   * `{ sharedUrl }` means the shared pool holds it (`resolveLinkedInPhotoCached`): the
+   * contact displays that, so nothing is saved onto it.
+   */
+  resolveLinkedIn: (
+    contactId: string,
+    linkedinUrl: string
+  ) => Promise<string | SharedLinkedInPhoto | null>;
   /** Resolve a photo from Gravatar by email; null when the address has none. */
   resolveGravatar: (contactId: string, email: string) => Promise<string | null>;
   /**
@@ -192,7 +203,8 @@ export type AvatarBatchDeps = {
    * passes a no-op `markChecked`.
    */
   sourcesUnavailable?: { connectedAccount?: boolean; apollo?: boolean };
-  save: (contactId: string, photoUrl: string) => Promise<void>;
+  /** `source` is undefined when the stored remote photo was only made durable: keep its source. */
+  save: (contactId: string, photoUrl: string, source?: ProfileImageSource) => Promise<void>;
   /** Record that a contact was tried and yielded nothing, starting its cooldown. */
   markChecked: (contactId: string) => Promise<void>;
 };
@@ -237,10 +249,14 @@ export async function resolveAvatarNow(
     if (!candidate) return false;
 
     const deadline = deps.deadline ?? Date.now() + AVATAR_INLINE_BUDGET_MS;
-    const save = async (id: string, photoUrl: string) => {
+    const save = async (id: string, photoUrl: string, source?: ProfileImageSource) => {
       await db
         .update(contacts)
-        .set({ profileImageUrl: photoUrl, updatedAt: new Date() })
+        .set({
+          profileImageUrl: photoUrl,
+          ...(source ? { profileImageSource: source } : {}),
+          updatedAt: new Date(),
+        })
         .where(and(eq(contacts.id, id), eq(contacts.userId, userId)));
     };
 
@@ -306,6 +322,8 @@ export async function runAvatarBackfillBatch(
     if (deadlineReached(deps.deadline, now)) break;
     try {
       let photoUrl: string | null = null;
+      let source: ProfileImageSource | undefined;
+      let shared = false;
       // Set when a source refused us for quota rather than answering. Such a contact
       // stays retryable (kept out of failedIds, never cooldown-stamped) so it gets a
       // real look once the source's quota resets.
@@ -318,12 +336,19 @@ export async function runAvatarBackfillBatch(
       }
 
       if (!photoUrl && contact.email && deps.resolveConnectedAccount) {
-        photoUrl = await deps.resolveConnectedAccount(contact.id, contact.email);
+        const hit = await deps.resolveConnectedAccount(contact.id, contact.email);
+        if (hit) ({ url: photoUrl, source } = hit);
       }
 
       if (!photoUrl && contact.linkedinUrl) {
         try {
-          photoUrl = await deps.resolveLinkedIn(contact.id, contact.linkedinUrl);
+          const linkedIn = await deps.resolveLinkedIn(contact.id, contact.linkedinUrl);
+          if (typeof linkedIn === "string") {
+            photoUrl = linkedIn;
+            source = "public";
+          } else if (linkedIn) {
+            shared = true;
+          }
         } catch (err) {
           if (err instanceof AvatarSourceRateLimitError) {
             rateLimitedUntil = err.resetAt;
@@ -337,12 +362,23 @@ export async function runAvatarBackfillBatch(
         }
       }
 
+      if (shared) {
+        // The contact already shows the shared photo. Its cooldown takes it out of the
+        // backlog; the next look after that is one cached read.
+        await deps.markChecked(contact.id);
+        saved += 1;
+        savedIds.push(contact.id);
+        continue;
+      }
+
       if (!photoUrl && contact.email) {
         photoUrl = await deps.resolveGravatar(contact.id, contact.email);
+        if (photoUrl) source = "gravatar";
       }
 
       if (!photoUrl && contact.linkedinUrl && deps.resolveApollo) {
         photoUrl = await deps.resolveApollo(contact.id, contact.linkedinUrl);
+        if (photoUrl) source = "apollo";
       }
 
       if (!photoUrl) {
@@ -356,7 +392,7 @@ export async function runAvatarBackfillBatch(
         continue;
       }
 
-      await deps.save(contact.id, photoUrl);
+      await deps.save(contact.id, photoUrl, source);
       saved += 1;
       savedIds.push(contact.id);
     } catch (err) {

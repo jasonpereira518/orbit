@@ -27,6 +27,7 @@ const BUCKET_LABELS: Record<string, string> = {
   meetingChunk: "meeting transcription",
   meetingCandidates: "calendar lookup",
   avatarResolve: "photo lookup",
+  avatarFill: "photo fill",
   feedback: "feedback",
   radarRefresh: "Radar refresh",
   knowledgeRefresh: "refresh",
@@ -148,6 +149,11 @@ export const RATE_LIMITS = {
    * and the per-Lambda cooldowns cannot see each other.
    */
   avatarSourceShared: { limit: 25, windowSec: 86_400 },
+  /**
+   * The hourly shared-photo fill's own daily cap, so a Microlink key (which skips the shared
+   * allowance above) cannot turn it into hundreds of paid calls a day.
+   */
+  avatarFill: { limit: 60, windowSec: 86_400 },
   /** One user's daily slice of each source, so one large network cannot drain it for all. */
   avatarSourceUser: { limit: 5, windowSec: 86_400 },
   /** People searches per user per day on Orbit's HOSTED Apollo key. Own keys are uncapped. */
