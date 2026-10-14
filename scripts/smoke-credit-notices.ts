@@ -105,8 +105,15 @@ run(async () => {
     /pack credits/.test(to(PACKS)[0].subject) && /250 left/.test(to(PACKS)[0].text), to(PACKS)[0]?.text);
   check("opted out: nothing", to(OPTED_OUT).length === 0);
   check("Free: 90% used, in-app only, never an email", to(FREE).length === 0);
-  check("a plan without included AI (Lifetime): nothing", to(LIFETIME).length === 0);
+  check("Lifetime (no packs to offer): in-app only, never an email", to(LIFETIME).length === 0);
   check("Max is never offered Max", to(MAX).length === 1 && !/move to Orbit Max/.test(to(MAX)[0].text));
+  // The builder itself, per plan: a pack only where the plan can buy one, the plan above only on Pro.
+  const built = (plan: "free" | "orbit" | "max" | "lifetime") =>
+    notices.buildCreditEmail({ level: 100, plan, grantedCredits: 150, usedCredits: 150, packCredits: 0, resetsAt: new Date("2026-11-01T00:00:00Z") }, "https://example.test/u").text;
+  check("Lifetime's email (built directly) offers no pack and no plan move, only its own key",
+    !/pack/i.test(built("lifetime")) && !/move to Orbit/.test(built("lifetime")) && /you can switch to your own AI key/.test(built("lifetime")), built("lifetime"));
+  check("Pro's email offers a pack and Max; Max's only the pack",
+    /\$5 pack/.test(built("orbit")) && /move to Orbit Max/.test(built("orbit")) && /\$5 pack/.test(built("max")) && !/move to Orbit Max/.test(built("max")));
   check("every email carries its one-click unsubscribe link",
     sent.every((m) => m.unsubscribeUrl.includes("/api/credits/email/unsubscribe?token=") && m.text.includes(m.unsubscribeUrl) &&
       m.html.includes("Turn it off")));

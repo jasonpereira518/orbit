@@ -34,6 +34,7 @@ check("the passenger is their address", invite.html.includes("maya@example.com")
 check("it shows the board-by date", invite.html.includes("Oct 25, 2026") && invite.text.includes("Board by: Oct 25, 2026"));
 check("it uses their planet, from the app's own domain", invite.html.includes("https://orbit.test/landing/planets/mars.png"));
 check("it boards", invite.html.includes("Board Orbit"));
+check("the class is the Free Plan, not a promise of full access", invite.text.includes("Class: Free Plan") && !/full access/i.test(invite.html + invite.text));
 check("it is signed", invite.text.includes("— Jason"));
 
 console.log("\nWithout a name, and with hostile input…");

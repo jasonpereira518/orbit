@@ -41,7 +41,7 @@ export const BATCH_HOLD_TTL_MS = 26 * 60 * 60 * 1000;
 
 export type CreditPeriod = { start: Date; end: Date };
 
-/** Whether this plan's packs are spendable (Pro and Max). Frozen everywhere else. */
+/** Whether this plan's packs are spendable (every plan but Lifetime). Frozen there. */
 export function packsUsable(plan: Plan): boolean {
   return PLAN_CONFIG[plan].features.creditPacks;
 }
@@ -151,7 +151,7 @@ export async function ensureAllowance(
   now = new Date()
 ): Promise<void> {
   const credits = PLAN_CONFIG[plan].monthlyCredits;
-  if (!credits || plan === "lifetime") return;
+  if (!credits) return;
   if (plan === "free") await ensureStarterGrant(userId);
   const micros = creditsToMicros(credits);
   const grantKey = `allowance:${userId}:${period.start.toISOString()}`;
@@ -272,7 +272,7 @@ export async function placeHold(input: {
 
 /**
  * Deduct a managed call's real cost, allowance first, then starter, then adjustments, then packs
- * oldest-first, and release the oldest open hold for its operation. Never takes a grant
+ * oldest-first, and release the oldest open (unexpired) hold for its operation. Never takes a grant
  * below zero. Packs are always eligible here: a call only ran because its plan allowed it.
  */
 export async function settleCredits(input: { userId: string; operation: string; micros: number }): Promise<void> {
@@ -299,7 +299,7 @@ export async function settleCredits(input: { userId: string; operation: string; 
        WHERE g.id = u.id AND u.running - u.micros_remaining < ${amount}`),
     tx.execute(sql`DELETE FROM credit_holds WHERE id = (
         SELECT id FROM credit_holds
-         WHERE user_id = ${input.userId} AND operation = ${input.operation}
+         WHERE user_id = ${input.userId} AND operation = ${input.operation} AND expires_at > now()
          ORDER BY created_at, id LIMIT 1
       )`),
   ]);
@@ -326,7 +326,7 @@ export type CreditBalance = {
   allowance: { granted: number; remaining: number; periodStart: string; periodEnd: string } | null;
   /** A Free account's one-time starter credits still unused, in micros (0 when none). */
   starterRemaining: number;
-  /** Purchased pack credits still unused (spendable only on Pro and Max). */
+  /** Purchased pack credits still unused (frozen only on Lifetime). */
   packRemaining: number;
   /** Packs exist but the plan cannot spend them (downgraded): kept, frozen. */
   packsFrozen: boolean;

@@ -2,14 +2,8 @@ import type { LinkedInImportRowPayload } from "@/db/schema";
 import type { ImportAdapter } from "@/lib/import-engine";
 import { parseConnectedOn } from "@/lib/linkedin-connections";
 
-/**
- * The `imports.import_type` value LinkedIn connection jobs carry.
- *
- * Lives here rather than in `import-job-dispatch.ts` (which re-exports it, so every
- * existing call site is unchanged) so the adapter registry can key on it without importing
- * the dispatcher — the dispatcher reaches the engine, and the engine reaches the registry.
- */
-export const LINKEDIN_IMPORT_TYPE = "linkedin_connections";
+/** Defined in a leaf module so the every-page LinkedIn reminder can read it cheaply. */
+export { LINKEDIN_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-import-types";
 
 export const linkedinConnectionsAdapter: ImportAdapter<LinkedInImportRowPayload> = {
   identity(payload) {

@@ -1,7 +1,7 @@
 import { and, eq, gt, gte, inArray, ne, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { billingEvents, errorEvents, usageEvents } from "@/db/schema";
-import { managedAiSwitchedOff, managedCostSql, managedKeysConfigured } from "@/lib/ai-access";
+import { managedAiSwitchedOff, managedCostSql, managedKeysConfigured, managedPoolsSpent } from "@/lib/ai-access";
 import { ERROR_SOURCES } from "@/lib/error-events";
 import type { ManagedAiOpsFacts } from "@/lib/ops-alerts";
 
@@ -25,7 +25,7 @@ export async function loadManagedAiOpsFacts(now: Date): Promise<ManagedAiOpsFact
   // spend-spike and margin alerts below.
   const notDeepgram = ne(usageEvents.provider, "deepgram");
 
-  const [included, spend, revenue, dry, failing] = await Promise.all([
+  const [included, spend, revenue, dry, failing, poolSpentMicros] = await Promise.all([
     // `resolvePlan`, in SQL, narrowed to the plans with included AI.
     db.execute(sql`
       SELECT count(*)::int AS n FROM user_settings s
@@ -65,6 +65,7 @@ export async function loadManagedAiOpsFacts(now: Date): Promise<ManagedAiOpsFact
       .selectDistinct({ provider: sql<string | null>`${errorEvents.context}->>'provider'` })
       .from(errorEvents)
       .where(and(eq(errorEvents.source, ERROR_SOURCES.managedAi), gte(errorEvents.createdAt, hourAgo))),
+    managedPoolsSpent(now),
   ]);
 
   return {
@@ -76,5 +77,6 @@ export async function loadManagedAiOpsFacts(now: Date): Promise<ManagedAiOpsFact
     revenueLast30dCents: Number(revenue[0]?.cents ?? 0),
     accountsAtCap: Number(rowsOf<{ n: number }>(dry)[0]?.n ?? 0),
     failingProviders: failing.map((f) => f.provider ?? "unknown"),
+    poolSpentMicros,
   };
 }

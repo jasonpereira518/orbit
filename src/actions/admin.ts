@@ -42,6 +42,7 @@ import {
   type SiteInviteResult,
 } from "@/lib/site-invites";
 import { UserFacingError } from "@/lib/errors";
+import { blockSharedAvatar, unblockSharedAvatar } from "@/lib/admin-avatars";
 
 /**
  * Every export here re-asserts `requireAdminUserId()`.
@@ -1091,4 +1092,26 @@ export async function setManagedAiPausedAction(input: {
   const state = await setManagedAiPaused(adminUserId, input.paused === true, input.reason);
   revalidatePath("/admin/billing");
   return state;
+}
+
+/* ------------------------------------------------- Shared LinkedIn photo takedown ------- */
+
+function revalidateAvatars() {
+  revalidatePath("/admin/avatars");
+  revalidatePath("/admin/users");
+}
+
+/** Remove a shared LinkedIn photo and block the slug from being re-fetched or re-contributed. */
+export async function blockSharedAvatarAction(input: { slug: string; reason: string }): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  await blockSharedAvatar(adminUserId, input);
+  revalidateAvatars();
+  return { ok: true };
+}
+
+export async function unblockSharedAvatarAction(input: { slug: string; reason: string }): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  await unblockSharedAvatar(adminUserId, input);
+  revalidateAvatars();
+  return { ok: true };
 }

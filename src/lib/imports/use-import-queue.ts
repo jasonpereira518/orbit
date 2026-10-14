@@ -11,6 +11,8 @@ import {
 } from "@/actions/imports";
 import type { YouField } from "@/lib/career-profile";
 import { isYouTarget, type YouTarget } from "@/lib/linkedin-you-shape";
+import { compactContactsFileText } from "@/lib/contacts-file";
+import { fitsInOneRequest } from "@/lib/capture-limits";
 import { RUN_ORDER } from "@/lib/imports/import-constants";
 import { failureText, friendlyError, UserFacingError } from "@/lib/errors";
 import {
@@ -167,7 +169,13 @@ export function useImportQueue(): ImportQueueView {
 async function readText(d: Detected): Promise<string> {
   // ZIP members were decompressed to be identified; re-reading the archive would be wasted
   // work, and a `File` cannot be recovered from a ZIP entry anyway.
-  return d.text ?? (await d.file.text());
+  const raw = d.text ?? (await d.file.text());
+  // Same as the contacts card: photos are stripped in the browser before anything is sent.
+  const text = d.target === "contacts_file" ? compactContactsFileText(raw) : raw;
+  // Measured after unzipping and compacting: the file's size says nothing about the text a
+  // Server Action carries.
+  if (!fitsInOneRequest(text)) throw new UserFacingError(IMPORT_COPY.tooLarge);
+  return text;
 }
 
 type PreviewOutcome =
