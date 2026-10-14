@@ -43,7 +43,7 @@ export async function POST(request: Request) {
   }
 
   const origin = request.headers.get("origin");
-  if (origin && new URL(origin).host !== new URL(request.url).host) {
+  if (origin && URL.parse(origin)?.host !== new URL(request.url).host) {
     return NextResponse.json({ error: "Cross-origin request refused" }, { status: 403 });
   }
 

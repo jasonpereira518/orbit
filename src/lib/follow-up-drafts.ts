@@ -10,6 +10,7 @@ import { senderProfileBlock } from "@/lib/sender-profile";
 import { loadSenderBio } from "@/lib/sender-profile-server";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { withWritingPreferences } from "@/lib/writing-instructions";
+import { auditUntrustedWrite, fenceUntrusted, guardModelOutput, recordAiSecurityEvent } from "@/lib/ai-security";
 
 const draftSchema = z.object({
   body: z.string().min(1),
@@ -113,13 +114,13 @@ export function composeDraftContext(parts: {
   return `${parts.goalsBlock}
 ${parts.senderBlock ? `${parts.senderBlock}\n` : ""}
 Contact:
-${parts.profileBlock}
+${fenceUntrusted("CONTACT", parts.profileBlock)}
 
-${parts.reminderBlock?.trim() || "Reminder: Warm follow-up from contact profile"}
+${parts.reminderBlock?.trim() ? fenceUntrusted("REMINDER", parts.reminderBlock.trim()) : "Reminder: Warm follow-up from contact profile"}
 ${parts.intentBlock ? `\n${parts.intentBlock}` : ""}
 
 Conversation history (newest first):
-${parts.transcript || "(no interactions logged yet)"}`;
+${parts.transcript ? fenceUntrusted("HISTORY", parts.transcript) : "(no interactions logged yet)"}`;
 }
 
 export function buildProfileBlock(contact: ContactRow) {
@@ -179,6 +180,9 @@ async function draftFromContext(input: {
   const contactName = input.contact.preferredName || input.contact.fullName;
   const profileBlock = buildProfileBlock(input.contact);
   const transcript = buildConversationTranscript(input.recent);
+  const operation = input.operation ?? "followup.draft";
+  // Tripwire, never a block: the history is other people's mail, DMs and calendar invites.
+  auditUntrustedWrite(input.userId, operation, "history", `${profileBlock}\n${transcript}`);
   const goalsBlock =
     input.userGoals.length > 0
       ? `Your active goals: ${input.userGoals.join("; ")}`
@@ -231,7 +235,7 @@ async function draftFromContext(input: {
       : "Do not write a sign-off, signature, or placeholder name — end on the final sentence.";
 
   const content = await cachedCompleteJson(input.userId, {
-    operation: input.operation ?? "followup.draft",
+    operation,
     access: input.access,
     signal: input.signal,
     temperature: 0.5,
@@ -265,8 +269,18 @@ ${intentBlock ? "- Honor the user's stated intent when drafting." : ""}`,
     accept: (raw) => Boolean(parseDraftBody(raw)?.trim()),
   });
 
+  // Secrets the contact's notes held, and fence markers, never reach a draft someone sends.
+  const guarded = guardModelOutput(parseDraftBody(content));
+  if (guarded.findings.length) {
+    void recordAiSecurityEvent({
+      kind: "output_scrubbed",
+      userId: input.userId,
+      surface: operation,
+      detail: { findings: guarded.findings, secretKinds: guarded.secretKinds },
+    });
+  }
   return {
-    body: parseDraftBody(content),
+    body: guarded.text,
     contactId: input.contact.id,
     contactName,
   };

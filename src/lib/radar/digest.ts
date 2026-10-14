@@ -119,9 +119,11 @@ export async function captureRadarTimeZone(userId: string, raw: string | null | 
 // ---- Unsubscribe -------------------------------------------------------------------------
 
 function unsubscribeKey(): Buffer {
-  // ENCRYPTION_SECRET is required in production (src/lib/env.ts); the fallback is dev-only.
-  const secret = process.env.ENCRYPTION_SECRET || "orbit-dev-radar-digest";
-  return createHmac("sha256", secret).update(UNSUBSCRIBE_LABEL).digest();
+  // ENCRYPTION_SECRET is required in production (src/lib/env.ts); the fallback is dev-only,
+  // and refused outright in production: a known key would let anyone sign a token.
+  const secret = process.env.ENCRYPTION_SECRET;
+  if (!secret && process.env.NODE_ENV === "production") throw new Error("ENCRYPTION_SECRET must be set in production");
+  return createHmac("sha256", secret || "orbit-dev-radar-digest").update(UNSUBSCRIBE_LABEL).digest();
 }
 
 export function radarDigestUnsubscribeToken(userId: string): string {

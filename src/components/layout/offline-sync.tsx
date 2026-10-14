@@ -7,6 +7,8 @@ import { SW_PATH } from "@/lib/browser-notifications";
 import { isOffline, onReconnect, useConnectivity } from "@/lib/connectivity-store";
 import { OFFLINE_RUNNERS } from "@/lib/offline-actions";
 import { changesLabel } from "@/lib/offline-queue";
+import { clearKeptNotifications } from "@/lib/kept-notifications";
+import { forgetPreviousAccount } from "@/lib/local-data-owner";
 import { configureOfflineQueue, flushOfflineQueue } from "@/lib/offline-queue-store";
 import { toast } from "@/lib/toast";
 
@@ -34,6 +36,12 @@ export function OfflineSync({ userId }: { userId: string }) {
   useEffect(() => {
     if (lostAt !== null) lostAtRef.current = lostAt;
   }, [lostAt]);
+
+  // First, and here because this is the one per-tab, per-account mount: a different account
+  // signing in on this browser must not inherit the last one's drafts, notes or notifications.
+  useEffect(() => {
+    if (forgetPreviousAccount(userId, [window.localStorage, window.sessionStorage])) clearKeptNotifications();
+  }, [userId]);
 
   useEffect(() => configureOfflineQueue(userId, OFFLINE_RUNNERS), [userId]);
 

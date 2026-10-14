@@ -428,7 +428,15 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // leave a tombstone per event behind — a list of every Luma link and calendar UID the
       // user ever had, pointing at nothing, outliving the account.
       await db.delete(eventAliases).where(eq(eventAliases.userId, userId));
+      // Covers sit at a public, guessable path (`event-covers/<eventId>`) with no foreign key:
+      // read which are this user's before the rows go, delete them after (as with avatars).
+      const coverRows = await db.execute(sql`
+        SELECT cover_image_url AS url FROM events
+         WHERE user_id = ${userId} AND cover_image_url LIKE '%.blob.vercel-storage.com/event-covers/%'
+      `);
+      const coverUrls = rowsOf<{ url: string }>(coverRows).map((r) => r.url);
       await db.delete(events).where(eq(events.userId, userId));
+      if (coverUrls.length && hasBlobStorage()) await del(coverUrls).catch(() => {});
     },
   },
   goals: {

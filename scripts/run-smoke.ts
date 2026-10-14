@@ -78,7 +78,6 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-avatar-tiers": "pure",
   "smoke-brand-colors": "pure",
   "smoke-backdrop-filter": "pure",
-  "smoke-backup-workflow": "pure",
   "smoke-connection-status": "pure",
   "smoke-connect-gates": "pure",
   "smoke-integration-status": "pure",
