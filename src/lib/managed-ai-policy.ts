@@ -5,10 +5,9 @@ import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
 /**
  * Who may run AI on whose key — the whole rule, as pure functions.
  *
- * THE RULE (pricing v2, Sprint B). Free gets a small monthly allowance plus a one-time starter
- * on Orbit's own provider keys; Orbit Pro and Orbit Max include more. All of it is metered in
- * credits (`src/lib/credits/`). Orbit Lifetime is every Max entitlement EXCEPT this one: its
- * AI runs on its own key only.
+ * THE RULE (pricing v2, Sprint B, Oct 2026). Every plan includes a monthly allowance on
+ * Orbit's own provider keys; Free also gets a one-time starter. All of it is metered in
+ * credits (`src/lib/credits/`), and all of it draws on one shared budget (`MANAGED_AI_POOL`).
  *
  * A paid account may still save its own key. Which one runs by default is the account's
  * choice (`user_settings.ai_key_preference`): `included` puts Orbit's key first, `own` the
@@ -36,13 +35,61 @@ export type AiKeySource = "personal" | "managed";
 export const MANAGED_AI_ENABLED: boolean = true;
 
 /**
+ * The budgets Orbit's included AI draws on, one per provider that funds it: Orbit-paid spend
+ * on that provider (`usage_events`, `key_owner = 'orbit'`) since the pool's window opened. A
+ * spent pool takes its provider out of the managed set — the next call falls to the next
+ * provider in `MANAGED_PROVIDER_ORDER`, and with every pool spent included AI refuses as
+ * `managed_unavailable`. Per-account credits can therefore never add up to more than the
+ * provider balances. Each cap leaves headroom for calls in flight and the 30s the check is
+ * cached.
+ *
+ *  - anthropic: $200 a month of credit, renewing on the 15th. `monthlyResetDay` restarts the
+ *    window there, so the pool refills on its own.
+ *  - openai: $1,000 prepaid (Oct 2026), no reset. No end date on purpose: a new year does not
+ *    silently reopen spending.
+ */
+// ponytail: code constants, no admin UI. Raise capMicros (and redeploy) when a provider is topped up.
+export type ManagedPool = { capMicros: number; since: string; monthlyResetDay?: number };
+export const MANAGED_AI_POOLS: Partial<Record<AiProvider, ManagedPool>> = {
+  anthropic: { capMicros: 190_000_000, since: "2026-09-15T00:00:00Z", monthlyResetDay: 15 },
+  openai: { capMicros: 950_000_000, since: "2026-10-11T00:00:00Z" },
+};
+
+/**
+ * Where a pool's current window starts: the latest `monthlyResetDay` at 00:00 UTC on or
+ * before `now`, never earlier than `since`; just `since` for a pool that never resets.
+ */
+export function poolWindowStart(pool: ManagedPool, now: Date): Date {
+  const since = new Date(pool.since);
+  if (!pool.monthlyResetDay) return since;
+  const day = pool.monthlyResetDay;
+  let start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), day));
+  if (start > now) start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, day));
+  return start > since ? start : since;
+}
+
+/**
+ * The earliest start among every pool's current window, or null with no pools: spend from
+ * before it is no pool's concern. Used only by `managedPoolsSpent`, to bound its single
+ * per-provider spend read. The usage_events retention sweep does NOT use it: it keeps rows
+ * per provider, inside that provider's own `poolWindowStart`.
+ */
+export function earliestPoolWindowStart(now: Date): Date | null {
+  const starts = Object.values(MANAGED_AI_POOLS).flatMap((pool) => (pool ? [poolWindowStart(pool, now).getTime()] : []));
+  return starts.length > 0 ? new Date(Math.min(...starts)) : null;
+}
+
+/** Spend at which the ops sweep warns that the pool is running low. */
+export const MANAGED_AI_POOL_WARN_SHARE = 0.75;
+
+/**
  * Why AI cannot run for this account right now.
  *
- *  - `key_required`         Lifetime (or an account whose included AI is paused)
- *                           with no key of their own for what was asked
- *  - `managed_unavailable`  Free, Pro or Max, no key of their own, and Orbit holds no managed key
- *                           for any provider right now
- *  - `managed_limit`        Free, Pro or Max on Orbit's key, and the credits are spent: the hard
+ *  - `key_required`         an account with no included AI (or a demo account) and no key of
+ *                           its own for what was asked
+ *  - `managed_unavailable`  no key of their own, and Orbit holds no managed key for any provider
+ *                           right now — or included AI is paused, or the pool is spent
+ *  - `managed_limit`        on Orbit's key, and the account's credits are spent: the hard
  *                           stop. Buy a pack, upgrade to Max, or use your own key.
  */
 export type AiAccessDenial = "key_required" | "managed_unavailable" | "managed_limit";
@@ -60,15 +107,17 @@ export function managedEligibility(plan: Plan, isDemo: boolean): ManagedEligibil
 export type AiKeyPreference = "included" | "own" | null;
 
 /**
- * The order Orbit reaches for its own keys when the user's chosen provider has none
- * configured. Cheapest first: the managed path is paid for once, at checkout, forever.
+ * The order Orbit spends its own keys in, whatever provider the account picked: the expiring
+ * monthly Anthropic credit first (Claude Haiku 5.5 is also the cheapest capable model), then
+ * the prepaid OpenAI balance. Gemini last, for a developer's `.env.local` — production holds
+ * no managed Gemini key. A provider whose pool is spent is skipped (`MANAGED_AI_POOLS`).
  */
 // OpenRouter is deliberately absent: Orbit holds no OpenRouter key, so it is never a managed
 // provider, and this order is exactly the set of providers Orbit will ever pay for.
-export const MANAGED_PROVIDER_ORDER: readonly AiProvider[] = ["gemini", "openai", "anthropic"];
+export const MANAGED_PROVIDER_ORDER: readonly AiProvider[] = ["anthropic", "openai", "gemini"];
 
 /**
- * Models the managed key will run. A Lifetime user can type any model id into Settings, and
+ * Models the managed key will run. A user can type any model id into Settings, and
  * on their own key that is their business; on Orbit's key, `claude-opus-4` would spend a
  * month's allowance in a handful of questions. Anything off this list runs on the provider's
  * managed default instead. Every entry must be priced in `ai-pricing.ts` — an unpriced model
@@ -76,8 +125,8 @@ export const MANAGED_PROVIDER_ORDER: readonly AiProvider[] = ["gemini", "openai"
  */
 export const MANAGED_MODELS: Record<AiProvider, readonly string[]> = {
   gemini: ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite"],
-  openai: ["gpt-4o-mini", "gpt-4.1-mini"],
-  anthropic: ["claude-haiku-4-5"],
+  openai: ["gpt-4o-mini", "gpt-4.1-nano"],
+  anthropic: ["claude-haiku-5-5"],
   // Unreachable: MANAGED_PROVIDER_ORDER excludes openrouter, so this arm exists only to
   // satisfy the Record — Orbit never selects it as a managed provider.
   openrouter: [],
@@ -86,15 +135,30 @@ export const MANAGED_MODELS: Record<AiProvider, readonly string[]> = {
 export const MANAGED_DEFAULT_MODELS: Record<AiProvider, string> = {
   gemini: "gemini-3.8-flash",
   openai: "gpt-4o-mini",
-  anthropic: "claude-haiku-4-5",
+  anthropic: "claude-haiku-5-5",
   // Unreachable for the same reason as MANAGED_MODELS.openrouter above.
   openrouter: "google/gemini-3.8-flash",
 };
 
-export function managedModel(provider: AiProvider, requested: string | null | undefined): string {
+/**
+ * The cheaper model for the `fast` tier on Orbit's key, where the provider has one cheaper
+ * than its default. Haiku 5.5 is already the cheapest Anthropic model, so it has no entry.
+ */
+export const MANAGED_FAST_MODELS: Partial<Record<AiProvider, string>> = {
+  openai: "gpt-4.1-nano",
+  gemini: "gemini-3.1-flash-lite",
+};
+
+/**
+ * The model Orbit's key runs. Orbit picks it — the account's own model choice applies only to
+ * its own key — so this is the provider's managed default, or its fast-tier model for `fast`
+ * work. `requested` is honoured only when it is already on the allowlist (a tier's own pick).
+ */
+export function managedModel(provider: AiProvider, requested: string | null | undefined, tier?: string): string {
   // The allowlist protects Orbit's money. With managed AI off the only key behind this path
   // is the developer's own, so `next dev` keeps running whatever model Settings asks for.
   if (!MANAGED_AI_ENABLED) return requested || MANAGED_DEFAULT_MODELS[provider];
+  if (tier === "fast" && MANAGED_FAST_MODELS[provider]) return MANAGED_FAST_MODELS[provider]!;
   if (requested && MANAGED_MODELS[provider].includes(requested)) return requested;
   return MANAGED_DEFAULT_MODELS[provider];
 }
@@ -195,7 +259,7 @@ function anyManaged(facts: KeyFacts) {
 }
 
 /**
- * Denial for "nothing usable". Only a Pro or Max account was PROMISED Orbit's AI, so only it
+ * Denial for "nothing usable". Only an account whose plan includes AI was PROMISED Orbit's AI, so only it
  * hears "Orbit's AI isn't available"; a demo account with no local key is simply missing
  * one, like anybody else.
  */
@@ -214,9 +278,10 @@ function denied(facts: KeyFacts) {
  *
  * Their own key for their chosen provider wins, at their chosen model — unless an eligible
  * account has chosen `included`, in which case Orbit's key comes first. Otherwise, only for
- * an eligible account, Orbit's key: the chosen provider if Orbit holds one, else the
- * cheapest provider Orbit does hold, at a managed model. A key they saved for some OTHER
- * provider is not used for completions; the provider they picked is the one they are shown.
+ * an eligible account, Orbit's key: Orbit picks the route — the first provider in
+ * `MANAGED_PROVIDER_ORDER` it holds, at that provider's managed model — whatever provider the
+ * account selected, because Orbit is paying. A key they saved for some OTHER provider is not
+ * used for completions.
  */
 export function chooseCompletionKey(facts: KeyFacts): KeyChoice {
   const selected = facts.selectedProvider;
@@ -225,15 +290,8 @@ export function chooseCompletionKey(facts: KeyFacts): KeyChoice {
     return { ok: true, provider: selected, source: "personal", model: facts.selectedModel };
   }
   if (!facts.eligibility || !anyManaged(facts)) return denied(facts);
-  const provider = facts.managed[selected]
-    ? selected
-    : MANAGED_PROVIDER_ORDER.find((p) => facts.managed[p])!;
-  return {
-    ok: true,
-    provider,
-    source: "managed",
-    model: managedModel(provider, provider === selected ? facts.selectedModel : null),
-  };
+  const provider = MANAGED_PROVIDER_ORDER.find((p) => facts.managed[p])!;
+  return { ok: true, provider, source: "managed", model: managedModel(provider, null) };
 }
 
 /**

@@ -67,17 +67,17 @@ const PRICE_LOOKUP_KEYS = {
 const PRODUCTS = {
   pro: {
     name: "Orbit Pro",
-    description: "Unlimited contacts, AI included (200 credits a month), recruiter tracking, and meeting transcription.",
+    description: "Unlimited contacts, AI included (300 credits a month), recruiter tracking, and meeting transcription.",
     metadata: { orbit_product: "pro" },
   },
   max: {
     name: "Orbit Max",
-    description: "Everything in Orbit Pro with 500 AI credits a month, more transcription and enrichment, and the REST API.",
+    description: "Everything in Orbit Pro with 650 AI credits a month, more transcription, and the REST API.",
     metadata: { orbit_product: "max" },
   },
   pack: {
     name: "Orbit credit pack",
-    description: "250 AI credits for Orbit Pro or Orbit Max. Credits roll over while you're subscribed.",
+    description: "250 AI credits for Orbit's included AI, on any plan. Pack credits never expire.",
     metadata: { orbit_product: "credit_pack", orbit_credits: "250" },
   },
 } as const;
