@@ -3,7 +3,7 @@ import { contacts } from "@/db/schema";
 import { NO_PHOTO_PREFIX } from "@/lib/contact-avatar-url";
 
 /** A contact's LinkedIn URL must be on a linkedin.com host before it may show a shared photo. */
-const LINKEDIN_HOST_RE = "^(https?://)?([a-z0-9-]+\\.)*linkedin\\.com/";
+export const LINKEDIN_HOST_RE = "^(https?://)?([a-z0-9-]+\\.)*linkedin\\.com/";
 
 /**
  * The shared (cross-user) LinkedIn photo for a contact row, or NULL. THE one rule every photo

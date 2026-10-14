@@ -58,9 +58,9 @@ import {
   AVATAR_BACKFILL_BUDGET_MS,
   downloadAndPersistAvatar,
   fetchGravatarPhotoUrl,
-  fetchLinkedInPhotoUrl,
   AvatarSourceRateLimitError,
 } from "@/lib/contact-avatar";
+import { resolveLinkedInPhotoCached, type ProfileImageSource } from "@/lib/shared-avatars";
 import { clientAvatarUrlSql, sharedAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import {
   buildGooglePhotoIndex,
@@ -1120,13 +1120,13 @@ export async function backfillContactAvatars(
   };
 
   const resolveConnectedAccount = needsConnectedAccount
-    ? async (contactId: string, email: string): Promise<string | null> => {
+    ? async (contactId: string, email: string) => {
         const key = email.trim().toLowerCase();
 
         const googlePhoto = googlePhotoByEmail.get(key);
         if (googlePhoto) {
           const persisted = await downloadAndPersistAvatar(contactId, googlePhoto);
-          if (persisted) return persisted;
+          if (persisted) return { url: persisted, source: "google" as const };
         }
 
         const outlookContactId = outlookContactIdByEmail.get(key);
@@ -1134,7 +1134,7 @@ export async function backfillContactAvatars(
           const photoDataUrl = await fetchOutlookContactPhoto(userId, outlookContactId);
           if (photoDataUrl) {
             const persisted = await downloadAndPersistAvatar(contactId, photoDataUrl);
-            if (persisted) return persisted;
+            if (persisted) return { url: persisted, source: "outlook" as const };
           }
         }
 
@@ -1157,11 +1157,11 @@ export async function backfillContactAvatars(
         deadline: Date.now() + AVATAR_BACKFILL_BUDGET_MS,
         persistRemote: downloadAndPersistAvatar,
         resolveConnectedAccount,
-        resolveLinkedIn: (contactId, url) => fetchLinkedInPhotoUrl(contactId, url, userId),
+        resolveLinkedIn: (contactId, url) => resolveLinkedInPhotoCached(contactId, url, userId),
         resolveGravatar: fetchGravatarPhotoUrl,
         resolveApollo,
         sourcesUnavailable,
-        save: async (contactId, photoUrl) => {
+        save: async (contactId, photoUrl, source) => {
           // `updatedAt` deliberately left alone, for the reason spelled out on
           // `setConstellationPin` below: the dashboard and /knowledge both order by
           // `desc(updated_at)`, and a background photo fetch is an invisible operation. A
@@ -1176,7 +1176,7 @@ export async function backfillContactAvatars(
           // backfill had been, this had not.
           await db
             .update(contacts)
-            .set({ profileImageUrl: photoUrl })
+            .set({ profileImageUrl: photoUrl, ...(source ? { profileImageSource: source } : {}) })
             .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
         },
         markChecked: async (contactId) => {
@@ -1330,8 +1330,12 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
     const profile = enriched[i];
 
     try {
-      // Prefer Apollo photo when present; otherwise resolve via LinkedIn.
+      // Prefer Apollo photo when present; otherwise resolve via LinkedIn, whose photo lands
+      // in the shared pool (the contact shows it from there) unless it has to be the
+      // contact's own.
       let profileImageUrl: string | null = null;
+      let profileImageSource: ProfileImageSource = "apollo";
+      let sharedPhoto = false;
       if (profile?.profileImageUrl) {
         profileImageUrl = await downloadAndPersistAvatar(
           contact.id,
@@ -1340,11 +1344,17 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
       }
       if (!profileImageUrl && contact.linkedinUrl) {
         try {
-          profileImageUrl = await fetchLinkedInPhotoUrl(
+          const linkedIn = await resolveLinkedInPhotoCached(
             contact.id,
             contact.linkedinUrl,
             userId
           );
+          if (typeof linkedIn === "string") {
+            profileImageUrl = linkedIn;
+            profileImageSource = "public";
+          } else {
+            sharedPhoto = linkedIn !== null;
+          }
         } catch (err) {
           if (err instanceof AvatarSourceRateLimitError) {
             rateLimited = true;
@@ -1359,10 +1369,12 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
         if (profileImageUrl) {
           await updateContact(
             contact.id,
-            { profileImageUrl },
+            { profileImageUrl, profileImageSource },
             { skipRevalidate: true }
           );
           await deleteReplacedAvatar(contact.profileImageUrl, profileImageUrl);
+          refreshed += 1;
+        } else if (sharedPhoto) {
           refreshed += 1;
         } else {
           unmatched += 1;
@@ -1383,7 +1395,7 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
           ...(profile.linkedinUrl
             ? { linkedinUrl: profile.linkedinUrl }
             : {}),
-          ...(profileImageUrl ? { profileImageUrl } : {}),
+          ...(profileImageUrl ? { profileImageUrl, profileImageSource } : {}),
         },
         { skipRevalidate: true }
       );

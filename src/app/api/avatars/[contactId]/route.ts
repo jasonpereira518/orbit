@@ -6,10 +6,10 @@ import { requireUserId } from "@/lib/auth";
 import { isTourExampleSource } from "@/lib/onboarding-examples/marker";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { sharedAvatarUrlSql } from "@/lib/contact-avatar-sql";
+import { resolveLinkedInPhotoCached, type ProfileImageSource } from "@/lib/shared-avatars";
 import {
   downloadAndPersistAvatar,
   fetchGravatarPhotoUrl,
-  fetchLinkedInPhotoUrl,
   isDurableAvatarUrl,
   isUnusableAvatarUrl,
   AvatarSourceRateLimitError,
@@ -65,15 +65,21 @@ function retryLater(retryAfterSec: number) {
   });
 }
 
+/** `source` undefined = the stored photo was only made durable: keep its source. */
 async function persistProfileImage(
   contactId: string,
   userId: string,
-  dataUrl: string
+  dataUrl: string,
+  source?: ProfileImageSource
 ) {
   const db = await getDb();
   await db
     .update(contacts)
-    .set({ profileImageUrl: dataUrl, updatedAt: new Date() })
+    .set({
+      profileImageUrl: dataUrl,
+      ...(source ? { profileImageSource: source } : {}),
+      updatedAt: new Date(),
+    })
     .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
 }
 
@@ -153,17 +159,24 @@ export async function GET(_req: Request, { params }: Params) {
       await consumeBucket("avatar.resolve", userId, RATE_LIMITS.avatarResolve);
 
       let photoUrl: string | null = null;
+      let source: ProfileImageSource = "public";
       if (linkedinUrl) {
-        photoUrl = await fetchLinkedInPhotoUrl(contactId, linkedinUrl, userId);
+        // Cache-first: a slug another account already resolved costs no lookup at all.
+        const linkedIn = await resolveLinkedInPhotoCached(contactId, linkedinUrl, userId);
+        if (linkedIn && typeof linkedIn === "object") {
+          return NextResponse.redirect(linkedIn.sharedUrl);
+        }
+        photoUrl = linkedIn;
       }
       // Same ladder as the backfill: an email-only contact must resolve here too,
       // or on-demand rows would silently never fill in for them.
       if (!photoUrl && email) {
         photoUrl = await fetchGravatarPhotoUrl(contactId, email);
+        source = "gravatar";
       }
 
       if (photoUrl) {
-        await persistProfileImage(contactId, userId, photoUrl);
+        await persistProfileImage(contactId, userId, photoUrl, source);
         return NextResponse.redirect(photoUrl);
       }
     } catch (err) {

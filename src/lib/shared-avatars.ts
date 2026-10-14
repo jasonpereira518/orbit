@@ -6,9 +6,30 @@ import { and, eq, isNull } from "drizzle-orm";
 import { getDb } from "@/db";
 import { linkedinAvatars } from "@/db/schema";
 import { AVATAR_RECHECK_DAYS } from "@/lib/avatar-backfill";
+import { deleteSharedAvatarBlob } from "@/lib/avatar-blob";
+import {
+  downloadAndPersistSharedAvatar,
+  fetchLinkedInPhoto,
+  fetchLinkedInPhotoUrl,
+  hasBlobStorage,
+} from "@/lib/contact-avatar";
+import { LINKEDIN_HOST_RE } from "@/lib/contact-avatar-sql";
 
 export type SharedAvatarRow = typeof linkedinAvatars.$inferSelect;
 export type SharedAvatarSource = SharedAvatarRow["source"];
+
+/** `contacts.profile_image_source`: where a contact's OWN photo came from. Never a shared photo. */
+export type ProfileImageSource =
+  | "google"
+  | "outlook"
+  | "gravatar"
+  | "apollo"
+  | "public"
+  | "extension"
+  | "upload";
+
+/** The contact displays the shared pool's photo for its slug; nothing goes on the contact. */
+export type SharedLinkedInPhoto = { sharedUrl: string };
 
 /** A positive (photo found) row is trusted this long before it is re-resolved. */
 export const SHARED_AVATAR_POSITIVE_DAYS = 180;
@@ -29,6 +50,17 @@ export function sharedAvatarSlug(linkedinUrl: string | null | undefined): string
   const afterIn = linkedinUrl.split("/in/")[1] ?? "";
   const slug = afterIn.split("?")[0].split("#")[0].split("/")[0].toLowerCase();
   return slug === "" ? null : slug;
+}
+
+const LINKEDIN_HOST = new RegExp(LINKEDIN_HOST_RE, "i");
+
+/**
+ * The slug a contact may show a shared photo under: {@link sharedAvatarSlug}, but only when
+ * `sharedAvatarUrlSql` would also accept the URL. Writers key on this so nothing is
+ * resolved into the pool for a contact that could never display it.
+ */
+export function sharedPhotoSlug(linkedinUrl: string | null | undefined): string | null {
+  return linkedinUrl && LINKEDIN_HOST.test(linkedinUrl) ? sharedAvatarSlug(linkedinUrl) : null;
 }
 
 export async function getSharedAvatar(slug: string): Promise<SharedAvatarRow | null> {
@@ -58,6 +90,8 @@ export async function upsertSharedAvatar(input: {
   source: SharedAvatarSource;
   refresh?: boolean;
 }): Promise<boolean> {
+  // Readers only ever show an https image; refuse anything else at the door too.
+  if (input.imageUrl !== null && !input.imageUrl.startsWith("https://")) return false;
   const db = await getDb();
   const values = { slug: input.slug, imageUrl: input.imageUrl, source: input.source, resolvedAt: new Date() };
   const rows = await db
@@ -75,4 +109,99 @@ export async function upsertSharedAvatar(input: {
     })
     .returning();
   return rows.length > 0;
+}
+
+/**
+ * Record a freshly stored shared photo. On a lost race with a takedown the new object is
+ * deleted; when it replaces an older photo, the older object is.
+ */
+async function adoptSharedPhoto(
+  slug: string,
+  previous: SharedAvatarRow | null,
+  imageUrl: string,
+  source: SharedAvatarSource
+): Promise<SharedLinkedInPhoto | null> {
+  const written = await upsertSharedAvatar({ slug, imageUrl, source, refresh: previous !== null });
+  if (!written) {
+    await deleteSharedAvatarBlob(imageUrl);
+    return null;
+  }
+  if (previous?.imageUrl && previous.imageUrl !== imageUrl) {
+    await deleteSharedAvatarBlob(previous.imageUrl);
+  }
+  return { sharedUrl: imageUrl };
+}
+
+/**
+ * The LinkedIn step of every photo ladder, cache-first.
+ *
+ * A fresh shared row answers without any source call or quota: a photo means the contact
+ * already displays it, "found nothing" means skip LinkedIn, a blocked slug is never fetched.
+ * Missing or stale, the usual Unavatar/Microlink lookup runs, its photo goes to the shared
+ * pool (never the contact) and a real miss is remembered for {@link AVATAR_RECHECK_DAYS}.
+ * A miss on a stale photo keeps that photo and restarts its clock: the free tiers miss
+ * often enough that one miss is not proof the photo is gone.
+ *
+ * Returns a plain URL for the contact's own column only where the pool cannot be used: no
+ * shareable slug (exactly the old per-contact behaviour), or no Blob store (the pool holds
+ * https URLs only). Throws what {@link fetchLinkedInPhotoUrl} throws, writing nothing.
+ */
+export async function resolveLinkedInPhotoCached(
+  contactId: string,
+  linkedinUrl: string,
+  userId: string | null
+): Promise<string | SharedLinkedInPhoto | null> {
+  const slug = sharedPhotoSlug(linkedinUrl);
+  if (!slug) return fetchLinkedInPhotoUrl(contactId, linkedinUrl, userId);
+
+  const row = await getSharedAvatar(slug);
+  if (row?.blockedAt) return null;
+  if (row && isSharedFresh(row)) return row.imageUrl ? { sharedUrl: row.imageUrl } : null;
+
+  if (!hasBlobStorage()) {
+    const own = await fetchLinkedInPhotoUrl(contactId, linkedinUrl, userId);
+    if (!own && !row?.imageUrl) await upsertSharedAvatar({ slug, imageUrl: null, source: "unavatar" });
+    return own;
+  }
+
+  const found = await fetchLinkedInPhoto(linkedinUrl, userId, { sharedSlug: slug });
+  if (found) return adoptSharedPhoto(slug, row, found.url, found.source);
+  if (row?.imageUrl) {
+    await upsertSharedAvatar({ slug, imageUrl: row.imageUrl, source: row.source });
+    return { sharedUrl: row.imageUrl };
+  }
+  // Negative rows name the first tier asked; both were.
+  await upsertSharedAvatar({ slug, imageUrl: null, source: "unavatar" });
+  return null;
+}
+
+/** A real LinkedIn CDN profile photo, as the extension scrapes it. */
+function isLinkedInCdnPhoto(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" && parsed.hostname === "media.licdn.com";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Put a photo the extension captured from a LinkedIn profile into the shared pool.
+ * True when the pool now holds a photo for the slug (the contact needs none of its own);
+ * false when it cannot or must not take it — no shareable slug, not a LinkedIn CDN photo,
+ * no Blob store, a blocked slug, a failed download — and the caller keeps it on the contact.
+ * A fresh photo already there is kept rather than re-downloaded.
+ */
+export async function contributeSharedPhoto(
+  linkedinUrl: string | null | undefined,
+  imageUrl: string
+): Promise<boolean> {
+  const slug = sharedPhotoSlug(linkedinUrl);
+  if (!slug || !isLinkedInCdnPhoto(imageUrl) || !hasBlobStorage()) return false;
+  const row = await getSharedAvatar(slug);
+  if (row?.blockedAt) return false;
+  if (row?.imageUrl && isSharedFresh(row)) return true;
+  const stored = await downloadAndPersistSharedAvatar(slug, imageUrl);
+  if (!stored) return false;
+  return (await adoptSharedPhoto(slug, row, stored, "extension")) !== null;
 }

@@ -2402,6 +2402,8 @@ export type ImportRevertSnapshot = {
   firstName: string | null;
   lastName: string | null;
   profileImageUrl: string | null;
+  /** Absent on snapshots taken before schema 157. */
+  profileImageSource?: string | null;
   source: string | null;
   howMet: string | null;
   metContext: string | null;

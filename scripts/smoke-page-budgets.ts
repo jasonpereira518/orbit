@@ -577,7 +577,7 @@ async function main() {
       persistRemote: async () => null,
       resolveConnectedAccount: async () => {
         calls.push("connected");
-        return "https://connected.example.com/photo.jpg";
+        return { url: "https://connected.example.com/photo.jpg", source: "google" as const };
       },
       resolveLinkedIn: async () => {
         calls.push("linkedin");

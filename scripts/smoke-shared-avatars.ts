@@ -44,6 +44,8 @@ run(async () => {
   check("blocked row refuses a positive", (await upsertSharedAvatar({ slug: `${P}b`, imageUrl: "https://x/y.jpg", source: "extension" })) === false);
   check("blocked row refuses a refresh", (await upsertSharedAvatar({ slug: `${P}b`, imageUrl: null, source: "unavatar", refresh: true })) === false);
   row = await getSharedAvatar(`${P}b`);
+  check("a non-https image is refused", (await upsertSharedAvatar({ slug: `${P}c`, imageUrl: "data:image/jpeg;base64,AA", source: "unavatar" })) === false && (await getSharedAvatar(`${P}c`)) === null);
+  check("so is plain http", (await upsertSharedAvatar({ slug: `${P}c`, imageUrl: "http://x/y.jpg", source: "unavatar" })) === false);
   check("blocked row untouched", row?.imageUrl === IMG && row.source === "microlink" && row.blockedBy === "admin");
 
   console.log("\nFreshness...");
