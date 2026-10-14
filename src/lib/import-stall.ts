@@ -20,8 +20,17 @@ import { reportError } from "@/lib/report-error";
  * `RESUMABLE_IMPORT_TYPES` stays the single list of what may be resumed at all.
  */
 
-/** How long a server-owned import must be untouched before this backstop resumes it. */
-export const CRON_STALL_THRESHOLD_MS = 3 * 60 * 1000;
+/**
+ * How long a server-owned import must be untouched before this backstop resumes it.
+ *
+ * Longer than the continue route's `maxDuration` (300 s) so the previous runner is
+ * guaranteed dead by then; a shorter wait let a second runner claim rows the first was
+ * still processing.
+ *
+ * ponytail: no row lease. If duplicates still appear, add claim_token / lease_until the way
+ * `src/lib/relationship-engine/runner.ts` does.
+ */
+export const CRON_STALL_THRESHOLD_MS = 6 * 60 * 1000;
 
 /** Resumes allowed before giving up. The fourth stall marks the job failed. */
 export const MAX_STALL_RESUMES = 3;

@@ -25,7 +25,11 @@ import {
  * inspector already applies.
  */
 
-/** `usage_events` is pruned at 180 days by the process-stalled cron; no window may exceed it. */
+/**
+ * `usage_events` is pruned at 180 days by the process-stalled cron, so no window over it may
+ * exceed that — except Orbit-paid rows inside an open managed AI pool window, which are kept
+ * for the pool's spend sum (`pruneUsageEvents`) and are not something these views read past it.
+ */
 export const USAGE_EVENT_RETENTION_DAYS = 180;
 
 /** An import sitting in `processing` this long is stuck, not slow. */

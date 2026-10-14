@@ -9,7 +9,7 @@
  *
  * Run: npx tsx scripts/smoke-ops-alerts.ts
  */
-import { MANAGED_AI_ALERTS } from "../src/lib/managed-ai-policy";
+import { MANAGED_AI_ALERTS, MANAGED_AI_POOLS } from "../src/lib/managed-ai-policy";
 import {
   evaluateOpsConditions,
   planTransitions,
@@ -76,6 +76,7 @@ const HEALTHY: OpsSnapshot = {
     revenueLast30dCents: 7_500,
     accountsAtCap: 0,
     failingProviders: [],
+    poolSpentMicros: {},
   },
 };
 
@@ -113,6 +114,16 @@ function main() {
     /no revenue booked/.test(find(managed({ spentLast30dMicros: 2_000_000, revenueLast30dCents: 0 }), "ai.managed_runway")?.detail ?? ""));
   check("accounts out of credits → info (the allowances may be too tight)",
     find(managed({ accountsAtCap: 2 }), "ai.managed_cap_hit")?.severity === "info");
+  const openaiCap = MANAGED_AI_POOLS.openai!.capMicros;
+  const anthropicCap = MANAGED_AI_POOLS.anthropic!.capMicros;
+  check("pools under 75% → quiet",
+    !evaluateOpsConditions(managed({ poolSpentMicros: { openai: openaiCap * 0.5, anthropic: anthropicCap * 0.5 } }), NOW).some((c) => c.id.startsWith("ai.managed_pool")));
+  check("OpenAI pool at 75% → ai.managed_pool:openai warning",
+    find(managed({ poolSpentMicros: { openai: openaiCap * 0.75 } }), "ai.managed_pool:openai")?.severity === "warning");
+  check("prepaid OpenAI pool spent → critical (it never refills on its own)",
+    find(managed({ poolSpentMicros: { openai: openaiCap } }), "ai.managed_pool:openai")?.severity === "critical");
+  check("monthly Anthropic pool spent → only a warning (it refills on the 15th)",
+    find(managed({ poolSpentMicros: { anthropic: anthropicCap } }), "ai.managed_pool:anthropic")?.severity === "warning");
 
   check("cron never ran → cron.missed (warning)",
     find({ ...HEALTHY, cron: { ...HEALTHY.cron, processStalled: { lastStartedAt: null, lastState: null } } }, "cron.missed")?.severity === "warning");

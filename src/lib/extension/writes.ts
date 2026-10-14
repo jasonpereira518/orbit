@@ -69,7 +69,10 @@ function unionLists(
   return out;
 }
 
+/** A captured photo is this account's own (source "extension"); it never enters the shared LinkedIn pool. */
 function toContactInput(fields: SaveContactFields, source: string): ContactInput {
+  // No photo scraped is undefined, never null: in merge mode null would wipe a stored photo.
+  const photo = fields.photoUrl || undefined;
   return {
     fullName: fields.fullName,
     firstName: fields.firstName,
@@ -83,7 +86,8 @@ function toContactInput(fields: SaveContactFields, source: string): ContactInput
     linkedinUrl: fields.linkedinUrl,
     xHandle: fields.xHandle,
     website: fields.website,
-    profileImageUrl: fields.photoUrl ?? null,
+    profileImageUrl: photo,
+    profileImageSource: photo ? "extension" : undefined,
     relationshipScore: fields.relationshipScore,
     source,
     metContext: fields.metContext,

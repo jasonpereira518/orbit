@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   tour_completed_at timestamptz,
   linkedin_export_requested_at timestamptz,
   linkedin_reminder_shown_at timestamptz,
+  credits_intro_shown_at timestamptz,
   first_name text,
   last_name text,
   profile_image_url text,
@@ -161,6 +162,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   mastodon_acct text,
   profile_image_url text,
   profile_image_checked_at timestamp,
+  profile_image_source text,
   relationship_score integer NOT NULL DEFAULT 2,
   priority_level integer NOT NULL DEFAULT 0,
   source text,
@@ -1503,6 +1505,15 @@ CREATE TABLE IF NOT EXISTS org_brand_colors (
   resolved_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS org_brand_colors_key_uidx ON org_brand_colors(name_key, kind);
+CREATE TABLE IF NOT EXISTS linkedin_avatars (
+  slug text PRIMARY KEY,
+  image_url text,
+  source text NOT NULL,
+  resolved_at timestamptz NOT NULL DEFAULT now(),
+  blocked_at timestamptz,
+  blocked_by text
+);
+CREATE INDEX IF NOT EXISTS linkedin_avatars_resolved_at_idx ON linkedin_avatars(resolved_at);
 CREATE TABLE IF NOT EXISTS site_settings (
   id integer PRIMARY KEY DEFAULT 1,
   stealth_enabled boolean,
@@ -2618,10 +2629,21 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // user_settings.career_profile. Rescanned every remote ref and every worktree's working file on
 // Oct 8 2026: 150 was the highest claimed anywhere.
 //
-// 152 = calendar_events (new table): a mirror of the near calendar (two days back, two weeks
-// ahead) for calendar-aware chat, event-linked reminders and the recorder. Scanned every local
-// and remote ref and every worktree's working file on Oct 11 2026: 151 was the highest claimed.
-export const SCHEMA_VERSION = 152;
+// 154 = the one-time "your AI credits are here" screen: user_settings.credits_intro_shown_at.
+// NOT 152 or 153: claude/calendar-events-p0 holds 152 and claude/sprint-c-audience holds 153.
+// Rescanned every remote ref, every local branch and every worktree's working file on
+// Oct 12 2026: 153 was the highest claimed anywhere.
+//
+// 159 = the shared LinkedIn photo cache: linkedin_avatars (global, keyed by profile slug) and
+// contacts.profile_image_source. NOT 155, 156 or 158: the calendar branches hold them
+// (claude/calendar-prep-c holds 158, and the gate never re-runs a lower version).
+//
+// 160 = calendar_events (new table): a mirror of the near calendar (two days back, two weeks
+// ahead) for calendar-aware chat, event-linked reminders and the recorder. Built as 152 on
+// Oct 11 and renumbered on Oct 14 when merging main: main had reached 159, and a database
+// stamped 159 would never run a 152. Rescanned every local and remote ref and every
+// worktree's working file on Oct 14 2026: 159 was the highest claimed anywhere.
+export const SCHEMA_VERSION = 160;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3466,6 +3488,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "contacts", "school", "text");
   await ensureColumn(client, "contacts", "profile_image_url", "text");
   await ensureColumn(client, "contacts", "profile_image_checked_at", "timestamp");
+  await ensureColumn(client, "contacts", "profile_image_source", "text");
   await ensureColumn(
     client,
     "user_settings",
@@ -3513,6 +3536,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "tour_completed_at", "timestamptz");
   await ensureColumn(client, "user_settings", "linkedin_export_requested_at", "timestamptz");
   await ensureColumn(client, "user_settings", "linkedin_reminder_shown_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "credits_intro_shown_at", "timestamptz");
   await ensureColumn(client, "user_settings", "email", "text");
   await ensureColumn(client, "user_settings", "calendar_feed_token", "text");
   await ensureColumn(client, "user_settings", "inbound_log_token", "text");
@@ -4092,6 +4116,12 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS school text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_url text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_checked_at timestamp`,
+  // Schema v159: where a contact's photo came from (google|outlook|gravatar|apollo|public|
+  // extension|upload), and the cross-user LinkedIn photo cache keyed by profile slug. Null
+  // source = unknown (older rows); no backfill.
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_source text`,
+  `CREATE TABLE IF NOT EXISTS linkedin_avatars (slug text PRIMARY KEY, image_url text, source text NOT NULL, resolved_at timestamptz NOT NULL DEFAULT now(), blocked_at timestamptz, blocked_by text)`,
+  `CREATE INDEX IF NOT EXISTS linkedin_avatars_resolved_at_idx ON linkedin_avatars(resolved_at)`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS x_handle text`,
   `CREATE INDEX IF NOT EXISTS contacts_user_linkedin_idx ON contacts(user_id, linkedin_url)`,
   `CREATE INDEX IF NOT EXISTS contacts_user_x_idx ON contacts(user_id, x_handle)`,
@@ -4214,6 +4244,7 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS tour_completed_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS linkedin_export_requested_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS linkedin_reminder_shown_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credits_intro_shown_at timestamptz`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS slot uuid`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true`,

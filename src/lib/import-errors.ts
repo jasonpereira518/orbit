@@ -36,6 +36,7 @@ export type ImportFailureCode =
   | "database"
   | "stalled"
   | "ai_key"
+  | "ai_credits"
   | "unknown";
 
 export type ImportFailureCopy = {
@@ -103,6 +104,11 @@ export const IMPORT_FAILURE_COPY: Record<ImportFailureCode, ImportFailureCopy> =
       next: "Add or fix your AI key in Settings, then start the import again",
       fix: { label: "Open AI settings", href: "/settings?section=settings-ai" },
     },
+    ai_credits: {
+      cause: "Orbit’s AI credits ran out before this import finished",
+      next: "Wait for your credits to refill or add your own AI key in Settings, then start the import again",
+      fix: { label: "Open AI settings", href: "/settings?section=settings-ai" },
+    },
     unknown: {
       cause: "This import didn’t finish",
       next: "Try it again, and send us the reference below if it keeps happening",
@@ -117,8 +123,14 @@ const PATTERNS: { code: ImportFailureCode; test: RegExp }[] = [
   },
   { code: "stalled", test: /stalled \d+ times|gave up/i },
   {
+    // Out of credits (every plan's `managed_limit` wording in `ai-access-copy.ts`), apart from
+    // a key problem: the fix is a refill, a pack or a key, not repairing one.
+    code: "ai_credits",
+    test: /\bused (this month’s|your) AI credits\b/i,
+  },
+  {
     code: "ai_key",
-    // "AI provider/key/model" (the Drive key-problem copy) and every AI gate refusal in
+    // "AI provider/key/model" (the Drive key-problem copy) and every other AI gate refusal in
     // `ai-access-copy.ts`, which say "AI API key" or "own API key".
     test: /\bAI (provider|key|model|API key)\b|\bown API key\b/i,
   },
@@ -190,7 +202,9 @@ export function classifyImportFailure(err: unknown): ImportFailureCode {
     return "needs_reconnect";
   // The AI gate said no (no key, allowance used, managed AI down). By name, not instanceof,
   // to stay import-free — and because its copy is prose a regex could drift away from.
-  if (err instanceof Error && err.name === "AiAccessError") return "ai_key";
+  if (err instanceof Error && err.name === "AiAccessError") {
+    return (err as { reason?: unknown }).reason === "managed_limit" ? "ai_credits" : "ai_key";
+  }
 
   const code = (err as { code?: unknown } | null)?.code;
   if (typeof code === "string") {

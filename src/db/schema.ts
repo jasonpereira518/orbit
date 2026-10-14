@@ -178,6 +178,11 @@ export const userSettings = pgTable("user_settings", {
    * across tabs and devices. See `src/lib/linkedin-export.ts`.
    */
   linkedinReminderShownAt: timestamp("linkedin_reminder_shown_at", { withTimezone: true }),
+  /**
+   * When the one-time "your AI credits are here" screen was shown — write-once, claimed in a
+   * single conditional UPDATE so two tabs cannot both play it. See `src/lib/credits-intro.ts`.
+   */
+  creditsIntroShownAt: timestamp("credits_intro_shown_at", { withTimezone: true }),
   theme: text("theme").$type<"light" | "dark" | "system">(),
   ycModeEnabled: boolean("yc_mode_enabled").default(false),
   /**
@@ -663,6 +668,12 @@ export const contacts = pgTable(
      * skips a contact whose last attempt is inside AVATAR_RECHECK_DAYS.
      */
     profileImageCheckedAt: timestamp("profile_image_checked_at"),
+    /**
+     * Where `profileImageUrl` came from: google | outlook | gravatar | apollo | public |
+     * extension | upload. Null = unknown (rows from before this column). Precedence when a
+     * shared LinkedIn photo exists: upload > shared > this contact's own photo.
+     */
+    profileImageSource: text("profile_image_source"),
     /**
      * When this contact's work history is next due a web-search re-check. NULL = never
      * checked, which the sweep treats as due now. Also the sweep's lease: a claim pushes it
@@ -2391,6 +2402,8 @@ export type ImportRevertSnapshot = {
   firstName: string | null;
   lastName: string | null;
   profileImageUrl: string | null;
+  /** Absent on snapshots taken before schema 157. */
+  profileImageSource?: string | null;
   source: string | null;
   howMet: string | null;
   metContext: string | null;
@@ -4721,7 +4734,7 @@ export const gateEvents = pgTable(
      * The cheapest plan that would have let them through (`unlockPlanFor`). Null on rows
      * written before pricing v2.
      */
-    unlockPlan: text("unlock_plan").$type<"orbit" | "max">(),
+    unlockPlan: text("unlock_plan").$type<"free" | "orbit" | "max">(),
     /** Route or action that hit the wall, for locating it in the product. */
     context: jsonb("context").$type<Record<string, unknown>>().default({}).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -4760,7 +4773,7 @@ export const creditGrants = pgTable(
     kind: text("kind").$type<"allowance" | "starter" | "pack" | "adjustment">().notNull(),
     grantKey: text("grant_key").notNull(),
     /** The plan whose allowance this is (allowance rows only). */
-    plan: text("plan").$type<"free" | "orbit" | "max">(),
+    plan: text("plan").$type<"free" | "orbit" | "max" | "lifetime">(),
     microsGranted: integer("micros_granted").notNull(),
     microsRemaining: integer("micros_remaining").notNull(),
     periodStart: timestamp("period_start", { withTimezone: true }),
@@ -4903,6 +4916,27 @@ export const orgBrandColors = pgTable(
     resolvedAt: timestamp("resolved_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [uniqueIndex("org_brand_colors_key_uidx").on(t.nameKey, t.kind)]
+);
+
+/**
+ * Cross-user LinkedIn photo cache, keyed by the profile slug (`contacts.linkedin_slug`, so
+ * reads JOIN on it). Global: no user_id. `imageUrl` null = looked and found nothing. Public
+ * lookups (Unavatar, Microlink) only; never an extension capture (those stay with the
+ * account) nor a mailbox or enrichment provider's photo.
+ * A row is deleted once no contact in any account carries the slug; `blockedAt` rows stay
+ * (admin takedown) so the slug is never fetched again.
+ */
+export const linkedinAvatars = pgTable(
+  "linkedin_avatars",
+  {
+    slug: text("slug").primaryKey(),
+    imageUrl: text("image_url"),
+    source: text("source").$type<"unavatar" | "microlink">().notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }).defaultNow().notNull(),
+    blockedAt: timestamp("blocked_at", { withTimezone: true }),
+    blockedBy: text("blocked_by"),
+  },
+  (t) => [index("linkedin_avatars_resolved_at_idx").on(t.resolvedAt)]
 );
 
 export const siteSettings = pgTable("site_settings", {
