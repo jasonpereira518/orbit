@@ -150,7 +150,9 @@ function waitlistHeaders(options: { dev: boolean; enforce: boolean }): SecurityH
     `img-src 'self' data: blob:`,
     `style-src 'self' 'unsafe-inline'`,
     `font-src 'self' data:`,
-    `frame-src 'none'`,
+    // Vercel BotID's challenge is proxied same-origin (`withBotId` in next.config.ts), and
+    // the package marks its own path frameable by 'self' only — so 'self', never wider.
+    `frame-src 'self'`,
     `object-src 'none'`,
     `base-uri 'self'`,
     `form-action 'self'`,

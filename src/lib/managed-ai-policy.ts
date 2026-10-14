@@ -68,6 +68,17 @@ export function poolWindowStart(pool: ManagedPool, now: Date): Date {
   return start > since ? start : since;
 }
 
+/**
+ * The earliest start among every pool's current window, or null with no pools: spend from
+ * before it is no pool's concern. Used only by `managedPoolsSpent`, to bound its single
+ * per-provider spend read. The usage_events retention sweep does NOT use it: it keeps rows
+ * per provider, inside that provider's own `poolWindowStart`.
+ */
+export function earliestPoolWindowStart(now: Date): Date | null {
+  const starts = Object.values(MANAGED_AI_POOLS).flatMap((pool) => (pool ? [poolWindowStart(pool, now).getTime()] : []));
+  return starts.length > 0 ? new Date(Math.min(...starts)) : null;
+}
+
 /** Spend at which the ops sweep warns that the pool is running low. */
 export const MANAGED_AI_POOL_WARN_SHARE = 0.75;
 

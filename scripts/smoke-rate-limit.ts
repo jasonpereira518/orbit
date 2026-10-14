@@ -15,7 +15,7 @@ import "./smoke/_env";
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "../src/db";
 import { ipBucketKey } from "../src/lib/client-ip";
-import { RateLimitedError, consumeBucket, pruneExpiredBuckets } from "../src/lib/rate-limit";
+import { RateLimitedError, consumeBucket, pruneRateLimitBuckets } from "../src/lib/rate-limit";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -78,7 +78,7 @@ async function main() {
   console.log("Expired buckets are pruned...");
   await db.execute(sql`INSERT INTO rate_limit_buckets (bucket, window_started_at, count) VALUES (${`smoke.old:${KEY}`}, now() - interval '3 days', 1)`);
   await consumeBucket("smoke.fresh", KEY, { limit: 5, windowSec: 60 });
-  await pruneExpiredBuckets();
+  await pruneRateLimitBuckets();
   const left = rowsOf<{ bucket: string }>(await db.execute(sql`SELECT bucket FROM rate_limit_buckets WHERE bucket IN (${`smoke.old:${KEY}`}, ${`smoke.fresh:${KEY}`})`)).map((r) => r.bucket);
   check("a bucket past two days is deleted", !left.includes(`smoke.old:${KEY}`));
   check("a live bucket is kept", left.includes(`smoke.fresh:${KEY}`));

@@ -310,6 +310,20 @@ async function main() {
   check("retry clears the error message", retried?.errorMessage === null);
   check("retry writes an audit row", (await auditRows("import.retry")).length === 1);
 
+  // A runner still inside its time box owns its rows; a second one would claim the same ones.
+  const [liveJob] = await db
+    .insert(imports)
+    .values({ userId: TARGET, importType: "linkedin_connections", fileName: "live.csv", status: "processing" })
+    .returning();
+  await refuses(
+    "retrying an import a runner touched a moment ago is refused",
+    () => actions.retryImport(ADMIN, { targetUserId: TARGET, importId: liveJob.id, reason: "looks stuck" }),
+    /still running/i
+  );
+  await db.update(imports).set({ updatedAt: new Date(Date.now() - 7 * 60 * 1000) }).where(eq(imports.id, liveJob.id));
+  await actions.retryImport(ADMIN, { targetUserId: TARGET, importId: liveJob.id, reason: "stalled for real" });
+  check("a processing import quiet past the threshold can be retried", true);
+
   // Google and Outlook contacts stage `import_job_rows` through the same engine now, so a
   // retry has to reach them too — the operator's only alternative is waiting on the cron.
   const [googleJob] = await db

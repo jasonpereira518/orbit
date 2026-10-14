@@ -15,6 +15,7 @@ import {
   RESUMABLE_IMPORT_TYPES,
   runImportJobById,
 } from "@/lib/import-job-dispatch";
+import { CRON_STALL_THRESHOLD_MS } from "@/lib/import-stall";
 import { purgeUserData } from "@/lib/user-data";
 
 /**
@@ -254,6 +255,11 @@ export async function retryImport(adminUserId: string, input: {
     );
   }
   if (job.status === "completed") throw new Error("That import already completed.");
+  // A runner lives up to the continue route's maxDuration; starting a second one now would
+  // have both claim the same rows.
+  if (job.status === "processing" && Date.now() - job.updatedAt.getTime() < CRON_STALL_THRESHOLD_MS) {
+    throw new Error("That import is still running — wait a few minutes and retry if it stays stuck.");
+  }
 
   await recordAdminAction({
     adminUserId,

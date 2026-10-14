@@ -291,7 +291,7 @@ export function NotificationsPanelButton({
           </SheetHeader>
 
           <div className="min-h-[7rem] flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-3 [scrollbar-width:thin]">
-            {data && <ExtensionPromo canUseExtension={data.canUseExtension} />}
+            {data && <ExtensionPromo />}
 
             {loading && !data ? (
               <p className="text-sm text-muted-foreground">Loading…</p>

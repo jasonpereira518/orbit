@@ -6,7 +6,8 @@ import { chatWithNetworkStream, completeJsonOn } from "@/lib/ai";
 import { resolveAiAccess, type AiAccess } from "@/lib/ai-access";
 import { requireAuthenticatedUser, type AuthenticatedUser } from "@/lib/auth";
 import { prepareChatContext } from "@/lib/chat-context";
-import { maybeGather } from "@/lib/chat-gather";
+import { answerDeadlineMs, maybeGather } from "@/lib/chat-gather";
+import { CHAT_QUESTION_TOO_LONG_MESSAGE, isChatQuestionTooLong } from "@/lib/chat-question";
 import { discardEmptyThread, discardUnansweredQuestion, persistAssistantTurn } from "@/lib/chat-persist";
 import { createStepEmitter, deriveFollowUps, plural } from "@/lib/chat-steps";
 import { generateChatTitle, settleWithin, TITLE_GRACE_MS } from "@/lib/chat-title";
@@ -94,6 +95,14 @@ export async function POST(request: Request) {
     typeof versionOfRaw?.assistantMessageId === "string" ? versionOfRaw.assistantMessageId : null;
   const confirmDiscard = versionOfRaw?.confirmDiscard === true;
 
+  // What the person typed, checked before the version work below: that can already discard
+  // later turns, and a refused edit must not cost them anything.
+  const typed = versionAssistantId ? versionOfRaw?.question : body?.question;
+  const typedQuestion = typeof typed === "string" ? typed.trim() : "";
+  if (isChatQuestionTooLong(typedQuestion)) {
+    return NextResponse.json({ error: CHAT_QUESTION_TOO_LONG_MESSAGE }, { status: 400 });
+  }
+
   let question: string;
   let versionTarget: Awaited<ReturnType<typeof resolveVersionTarget>> | null = null;
   if (versionAssistantId) {
@@ -120,11 +129,9 @@ export async function POST(request: Request) {
       }
       return NextResponse.json({ error: friendlyError(err, "That answer couldn’t be found") }, { status: 404 });
     }
-    question =
-      (typeof versionOfRaw?.question === "string" ? versionOfRaw.question.trim() : "") ||
-      versionTarget.priorUserRow.content;
+    question = typedQuestion || versionTarget.priorUserRow.content;
   } else {
-    question = typeof body?.question === "string" ? body.question.trim() : "";
+    question = typedQuestion;
   }
   if (!question) return NextResponse.json({ error: "Question is required" }, { status: 400 });
 
@@ -226,6 +233,10 @@ export async function POST(request: Request) {
               ctx.attachedContext,
               {
                 signal: request.signal,
+                // A slow answer is cut here, inside `maxDuration`, so it ends as an `error` event
+                // rather than the platform killing the function mid-stream. Separate from
+                // `request.signal`, which the catch below reads to mean the person pressed Stop.
+                deadlineSignal: AbortSignal.timeout(answerDeadlineMs(requestStartedAt)),
                 goals: ctx.goals,
                 attentionLite: ctx.attentionLite,
                 evidence,

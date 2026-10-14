@@ -243,6 +243,17 @@ async function main() {
       }
       check("requireOutreachUser requires a released surface",
         callsIn("src/lib/plan-guards.ts", "requireOutreachUser").has("requireReleasedSurface"));
+      // Compose is a FEATURE: coming soon puts it in `hidden`, so even the visibility-only guard
+      // refuses it; the AI-spending draft action states the intent with the released-surface guard.
+      check("feature.compose is coming soon by default", DEFAULT_COMING_SOON_KEYS.has(COMPOSE_SURFACE_KEY));
+      for (const [guard, label] of [[requireVisibleSurface, "requireVisibleSurface"], [requireReleasedSurface, "requireReleasedSurface"]] as const) {
+        let refusedCompose: unknown = null;
+        try { await guard(USER, COMPOSE_SURFACE_KEY); } catch (err) { refusedCompose = err; }
+        check(`${label} refuses Compose while it is coming soon`, isSurfaceHiddenError(refusedCompose));
+      }
+      const draftCalls = callsIn("src/actions/email-compose.ts", "draftComposeWithAi");
+      check("draftComposeWithAi requires Compose to be released",
+        draftCalls.has("requireUserForReleasedSurface") && !draftCalls.has("requireUserForSurface"), [...draftCalls].join(", "));
       for (const fn of ["connectLuma", "connectEventFeed", "setGmailEventScan", "startEventbriteOAuth"]) {
         check(`${fn} requires Events to be released`, callsIn("src/actions/events.ts", fn).has("requireReleasedSurface"));
       }

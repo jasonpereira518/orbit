@@ -206,6 +206,8 @@ const withUrl = (source: ExportSource, prefix: string): ExportSource => ({
   ...source,
   transform: (row) => ({ ...row, url: `${prefix}${String(row.id)}` }),
 });
+// Exports the contact's OWN photo reference only: a shared LinkedIn photo is pooled across
+// accounts, not this user's data, so it is deliberately left out.
 const contactsSource: ExportSource = {
   ...own(contacts),
   // An inline avatar is replaced below whatever its bytes are, so only its `data:` prefix is

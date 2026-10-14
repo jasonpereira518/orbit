@@ -1,10 +1,11 @@
-import { isNotNull, sql } from "drizzle-orm";
+import { isNotNull } from "drizzle-orm";
 import { sweepExpiredHolds } from "@/lib/credits/ledger";
 import { NextResponse } from "next/server";
-import { getDb, rowsOf } from "@/db";
-import { contacts, errorEvents, usageEvents } from "@/db/schema";
+import { getDb } from "@/db";
+import { contacts, errorEvents } from "@/db/schema";
 import { pruneAiResultCache } from "@/lib/ai-result-cache";
-import { pruneExpiredBuckets } from "@/lib/rate-limit";
+import { pruneRateLimitBuckets } from "@/lib/rate-limit";
+import { pruneOlderThan, pruneUsageEvents } from "@/lib/event-prune";
 import { runAiBatchSweep } from "@/lib/ai-batch-apply";
 import { resumeStalledImports } from "@/lib/import-stall";
 import { resumeStrandedPurges } from "@/lib/user-data";
@@ -17,6 +18,7 @@ import { clerkClient } from "@clerk/nextjs/server";
 import { kickCaptureJob, resumeStalledCaptureJobs } from "@/lib/capture-jobs";
 import { pruneUnattachedCapturePhotos } from "@/lib/capture-photos";
 import { hasBlobStorage } from "@/lib/contact-avatar";
+import { fillSharedAvatars, sweepOrphanedSharedAvatars } from "@/lib/shared-avatar-upkeep";
 import { sweepEmailAttachments } from "@/lib/email/attachments";
 import {
   finishCronRun,
@@ -36,7 +38,6 @@ import { isInternalRequest } from "@/lib/internal-auth";
 import { reportAndContinue, reportError } from "@/lib/report-error";
 import { kickRelationshipRun } from "@/lib/relationship-engine/runner";
 import { usersWithPendingRelationshipWork } from "@/lib/relationship-engine/pending";
-import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
 
 export const maxDuration = 300;
 
@@ -45,7 +46,8 @@ export const maxDuration = 300;
 /**
  * `usage_events` is write-only and nothing user-facing reads it, so without a sweep it
  * quietly becomes the largest table in the database. Six months is well past the window
- * any admin view looks at.
+ * any admin view looks at. The one exception is Orbit-paid rows inside a managed AI pool's
+ * open window, which the pool's budget still counts (`pruneUsageEvents`).
  */
 const USAGE_EVENT_RETENTION_DAYS = 180;
 
@@ -97,49 +99,6 @@ const EMBED_SWEEP_BUDGET_MS = 90 * 1000;
  */
 const ERROR_EVENT_RETENTION_DAYS = 30;
 
-/** Rows deleted per statement by `pruneOlderThan`. */
-const PRUNE_BATCH = 5_000;
-
-/**
- * Wall-clock ceiling on pruning one table. A backlog still there when it runs out is the
- * next hour's; the resumption work below is what this route exists for.
- */
-const PRUNE_BUDGET_MS = 20 * 1000;
-
-/**
- * Deletes rows past the retention window in bounded batches, the way `prunePageViews`
- * does and for its reasons: one unbounded DELETE over a neglected table holds its locks
- * for as long as it takes inside a function with a timeout.
- *
- * Each batch counts itself (`RETURNING 1` into `count(*)`) rather than trusting a
- * driver-specific `rowCount` — neon-http and pglite disagree about the shape of a delete
- * result — so there is no separate count scan, and no deleted row leaves Postgres. Both
- * tables are indexed on created_at.
- */
-async function pruneOlderThan(
-  table: typeof usageEvents | typeof errorEvents,
-  days: number
-): Promise<number> {
-  const db = await getDb();
-  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-  const deadline = deadlineAfter(PRUNE_BUDGET_MS);
-  let pruned = 0;
-  for (;;) {
-    const res = await db.execute(sql`
-      WITH d AS (
-        DELETE FROM ${table} WHERE ${table.id} IN (
-          SELECT ${table.id} FROM ${table} WHERE ${table.createdAt} < ${cutoff} LIMIT ${PRUNE_BATCH}
-        )
-        RETURNING 1
-      )
-      SELECT count(*)::int AS n FROM d
-    `);
-    const n = Number(rowsOf<{ n: number }>(res)[0]?.n ?? 0);
-    pruned += n;
-    if (n < PRUNE_BATCH || deadlineReached(deadline)) return pruned;
-  }
-}
-
 /**
  * The hourly backstop, scheduled by `.github/workflows/ops.yml` (the only scheduler):
  * resumes server-owned import and capture jobs whose invocation died mid-run. The primary
@@ -178,7 +137,6 @@ export async function GET(request: Request) {
     captureAbandoned: 0,
     usageEventsPruned: 0,
     errorEventsPruned: 0,
-    rateLimitBucketsPruned: 0,
     /** Unsaved captures' photos past `UNATTACHED_PHOTO_TTL_MS`. */
     capturePhotosPruned: 0,
     /** Email attachment blobs deleted: settled sends past ATTACHMENT_RETENTION_MS, and uploads never sent. */
@@ -193,6 +151,12 @@ export async function GET(request: Request) {
     /** Background AI sent to a provider's Batch API: what came back this sweep. */
     aiBatchesApplied: 0,
     aiBatchesPending: 0,
+    /** Shared LinkedIn photo pool: slugs filled / found nothing this run, whether the source
+     *  quota stopped the fill, and rows removed because no contact has the slug any more. */
+    sharedAvatarsFilled: 0,
+    sharedAvatarsMissed: 0,
+    sharedAvatarFillDeferred: false,
+    sharedAvatarsSwept: 0,
     cohortsRecalibrated: 0,
     embeddingsBackfilled: 0,
     embeddingsGenerated: 0,
@@ -237,17 +201,15 @@ export async function GET(request: Request) {
     }
 
     try {
-      stats.usageEventsPruned = await pruneOlderThan(
-        usageEvents,
-        USAGE_EVENT_RETENTION_DAYS
-      );
+      stats.usageEventsPruned = await pruneUsageEvents(USAGE_EVENT_RETENTION_DAYS);
       stats.errorEventsPruned = await pruneOlderThan(
         errorEvents,
         ERROR_EVENT_RETENTION_DAYS
       );
-      stats.rateLimitBucketsPruned = await pruneExpiredBuckets();
       // Remembered AI answers past the longest TTL any caller reads them with.
       await pruneAiResultCache();
+      // Rate-limit buckets whose window ended long ago; only the next hit ever reset one.
+      await pruneRateLimitBuckets();
       // Batched background AI: whatever the providers have finished since the last sweep.
       const batches = await runAiBatchSweep();
       stats.aiBatchesApplied = batches.applied;
@@ -429,6 +391,25 @@ export async function GET(request: Request) {
     } catch (err) {
       status = "partial";
       reportError(err, { where: "job.process-stalled.relationship-kicks" });
+    }
+
+    try {
+      // A little of the shared photo pool each hour, most-shared slugs first. Last, with the
+      // orphan sweep: lookups are slow, and must never push the stages above past maxDuration.
+      const fill = await fillSharedAvatars();
+      stats.sharedAvatarsFilled = fill.found;
+      stats.sharedAvatarsMissed = fill.missed;
+      stats.sharedAvatarFillDeferred = fill.deferred;
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.shared-avatar-fill" });
+    }
+
+    try {
+      stats.sharedAvatarsSwept = await sweepOrphanedSharedAvatars();
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.shared-avatar-sweep" });
     }
 
     if (stats.resumeFailed > 0) status = "partial";

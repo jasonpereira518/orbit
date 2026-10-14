@@ -92,6 +92,9 @@ function main() {
     /display-capture=\(\)/.test(header(waitlist, "Permissions-Policy") ?? ""));
   check("still reports to /api/csp-report and allows Vercel Analytics",
     /report-uri \/api\/csp-report/.test(wCsp) && /va\.vercel-scripts\.com/.test(wCsp));
+  // Vercel BotID serves its challenge frames same-origin (withBotId marks its path
+  // frame-ancestors 'self'), so the join breaks under enforcement if frames are refused.
+  check("frames only itself, for BotID", /frame-src 'self'(;|$)/.test(wCsp), wCsp);
   check("follows CSP_ENFORCE like the app's",
     Boolean(header(buildSecurityHeaders({ dev: false, enforce: true, clerkPublishableKey: pk, surface: "waitlist" }), "Content-Security-Policy")));
 

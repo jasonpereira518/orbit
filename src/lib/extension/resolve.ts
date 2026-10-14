@@ -14,6 +14,7 @@ import { getDb } from "@/db";
 import { contacts, interactions, reminders } from "@/db/schema";
 import type { Contact } from "@/db/schema";
 import { computeCloseness } from "@/lib/closeness";
+import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import {
   heuristicStarters,
   pageValue,
@@ -219,6 +220,9 @@ export async function buildSnapshot(
 
   const row = await db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+    // Shared photo first, then the own one in its browser-safe form: never raw base64 or the
+    // negative-cache marker.
+    extras: { clientAvatarUrl: clientAvatarUrlSql.as("client_avatar_url") },
     with: {
       contactTags: { with: { tag: true } },
       interactions: {
@@ -256,7 +260,9 @@ export async function buildSnapshot(
     location: row.location,
     linkedinUrl: row.linkedinUrl,
     xHandle: row.xHandle,
-    photoUrl: row.profileImageUrl,
+    // The extension is another origin and its wire contract is https-only, so the
+    // same-origin `/api/avatars/{id}` form (an inline photo) is dropped, as in extension search.
+    photoUrl: row.clientAvatarUrl?.startsWith("https://") ? row.clientAvatarUrl : null,
     relationshipScore: row.relationshipScore,
     priorityLevel: row.priorityLevel,
     closeness: closeness.closeness,

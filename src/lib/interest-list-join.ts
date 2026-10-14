@@ -93,7 +93,7 @@ export function generateShareToken() {
  * token that exists nowhere. Indistinguishable in shape from a real ticket; resolves to
  * nothing if followed.
  */
-async function plausibleTicket(): Promise<InterestTicket> {
+export async function plausibleTicket(): Promise<InterestTicket> {
   const proof = await getInterestProof();
   const number = proof.total + 1;
   return {
@@ -256,6 +256,18 @@ export async function joinInterestListCore(
     });
   } catch (err) {
     ticketError = err;
+  }
+
+  // The global welcome cap (RATE_LIMITS.interestWelcome). Past it, or with a limiter that
+  // cannot count, the row and ticket still stand and only the mail is skipped.
+  if (welcome) {
+    try {
+      await consumeBucket("interest.welcome", "global", RATE_LIMITS.interestWelcome);
+    } catch (err) {
+      if (isRateLimitedError(err)) console.warn("[interest-list] welcome cap reached; mail skipped");
+      else console.error("[interest-list] welcome limiter failed; mail skipped", err);
+      welcome = false;
+    }
   }
 
   if (welcome) {

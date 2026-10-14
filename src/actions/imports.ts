@@ -1916,6 +1916,7 @@ export async function matchGooglePhotos(): Promise<GooglePhotoMatchResult> {
     await db.execute(sql`
       UPDATE contacts AS c
          SET profile_image_url = v.url,
+             profile_image_source = 'google',
              -- A photo found here clears any cooldown the backfill set, so it caches promptly.
              profile_image_checked_at = NULL,
              updated_at = ${updatedAt}::timestamptz

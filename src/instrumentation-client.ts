@@ -1,6 +1,8 @@
 import * as Sentry from "@sentry/nextjs";
+import { initBotId } from "botid/client/core";
 import { scrubSentryEvent } from "@/lib/sentry-scrub";
 import { markNavStart } from "@/lib/nav-timing";
+import { BOTID_PROTECTED_POSTS } from "@/lib/waitlist-host";
 
 /**
  * Browser-side Sentry: hydration errors, client exceptions, and errors caught by the
@@ -21,6 +23,12 @@ Sentry.init({
   beforeSendTransaction: scrubSentryEvent,
   beforeBreadcrumb: (crumb) => scrubSentryEvent({ breadcrumbs: [crumb] }).breadcrumbs![0]!,
 });
+
+/**
+ * Vercel BotID: the waitlist join's server-action POSTs carry a proof the actions check
+ * (`src/lib/bot-check.ts`). Every other request passes through untouched.
+ */
+initBotId({ protect: BOTID_PROTECTED_POSTS });
 
 /**
  * Every client-side navigation starts here. Sentry gets its breadcrumb, and page-load timing
