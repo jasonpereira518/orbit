@@ -320,9 +320,10 @@ export default async function ContactDetailPage({
             // Same rule as the list's `clientAvatarUrlSql`: an inline `data:` image (up to
             // ~120 KB of base64) is served by `/api/avatars/{id}` instead of riding along in
             // this page's payload. The hero only needs to know a stored photo exists.
-            contact.profileImageUrl?.trim().startsWith("data:image/")
+            contact.sharedAvatarUrl ??
+            (contact.profileImageUrl?.trim().startsWith("data:image/")
               ? `/api/avatars/${contact.id}`
-              : contact.profileImageUrl
+              : contact.profileImageUrl)
           }
           linkedinUrl={contact.linkedinUrl}
           source={contact.source}

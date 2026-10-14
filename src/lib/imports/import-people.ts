@@ -1,6 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { imports } from "@/db/schema";
+import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 
 /** Whether an import brought a person into Orbit or matched someone already here. */
 export type ImportPersonOutcome = "added" | "existing";
@@ -13,9 +14,8 @@ export type ImportedPerson = {
   /**
    * Browser-safe avatar URL, never the raw `profile_image_url` column — that can carry up
    * to 120 KB of base64 per contact (see `clientAvatarUrlSql` in `contact-avatar-sql.ts`).
-   * Written by hand rather than by interpolating that helper: a drizzle column reference
-   * loses its table qualifier once mixed into this file's aliased raw SQL (the same trap
-   * `importContactIds`'s comment below describes for `created_at`).
+   * Interpolates that helper, so the query uses `contacts` unaliased: the helper names the
+   * table in full (and carries the shared-photo rule).
    */
   profileImageUrl: string | null;
   /**
@@ -103,8 +103,8 @@ export async function listImportPeople(
   const start = Math.max(0, Math.floor(offset) || 0);
   const createdFilter =
     outcome === "added"
-      ? sql`c.created_at >= ${imp.createdAt}`
-      : sql`c.created_at < ${imp.createdAt}`;
+      ? sql`contacts.created_at >= ${imp.createdAt}`
+      : sql`contacts.created_at < ${imp.createdAt}`;
 
   // One past the page, so "Show more" is only offered when there is more.
   const rows = rowsOf<{
@@ -116,21 +116,15 @@ export async function listImportPeople(
     can_resolve_photo: boolean;
   }>(
     await db.execute(sql`
-      SELECT c.id, c.full_name, c.title, c.company,
-             CASE
-               WHEN c.profile_image_url IS NULL OR btrim(c.profile_image_url) = '' THEN NULL
-               WHEN c.profile_image_url LIKE 'data:image/%' THEN '/api/avatars/' || c.id
-               WHEN c.profile_image_url LIKE '%unavatar.io%'
-                 OR c.profile_image_url LIKE '%static.licdn.com/aero%' THEN NULL
-               ELSE btrim(c.profile_image_url)
-             END AS profile_image_url,
-             (coalesce(btrim(c.linkedin_url), '') <> ''
-               OR coalesce(btrim(c.email), '') <> '') AS can_resolve_photo
-      FROM contacts c
-      WHERE c.user_id = ${userId}
+      SELECT contacts.id, contacts.full_name, contacts.title, contacts.company,
+             ${clientAvatarUrlSql} AS profile_image_url,
+             (coalesce(btrim(contacts.linkedin_url), '') <> ''
+               OR coalesce(btrim(contacts.email), '') <> '') AS can_resolve_photo
+      FROM contacts
+      WHERE contacts.user_id = ${userId}
         AND ${createdFilter}
-        AND c.id IN (${importContactIds(userId, importId)})
-      ORDER BY lower(c.full_name), c.id
+        AND contacts.id IN (${importContactIds(userId, importId)})
+      ORDER BY lower(contacts.full_name), contacts.id
       LIMIT ${IMPORT_PEOPLE_PAGE + 1} OFFSET ${start}
     `),
   );

@@ -28,7 +28,7 @@ import { getDb } from "@/db";
 import { interestListSignups, userSettings } from "@/db/schema";
 import { isClerkConfigured } from "@/lib/demo-account";
 import { getAppBaseUrl } from "@/lib/app-url";
-import { recordAdminAction } from "@/lib/admin-operations";
+import { recordAdminAction } from "@/lib/admin-audit";
 import { hasSiteInvite, markStealthCleared, SITE_INVITE_METADATA_KEY } from "@/lib/site-access";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { asWelcomePlanet, type WelcomePlanet } from "@/lib/welcome-planets";
