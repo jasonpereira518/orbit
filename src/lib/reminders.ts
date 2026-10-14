@@ -914,6 +914,8 @@ export async function getDashboardData(
         id: true,
         company: true,
         school: true,
+        // The constellation preview groups by industry when company and school do not.
+        industry: true,
         relationshipScore: true,
         statedCloseness: true,
         priorityLevel: true,

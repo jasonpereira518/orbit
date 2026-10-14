@@ -16,7 +16,8 @@ import { readFileSync } from "node:fs";
 import { eq, like } from "drizzle-orm";
 import { callsIn } from "./smoke-connect-gates";
 import { getDb } from "../src/db";
-import { adminAuditLog, appSurfaceFlags } from "../src/db/schema";
+import { adminAuditLog, appSurfaceFlags, userSettings } from "../src/db/schema";
+import { DEMO_WORKSPACE_EMAILS } from "../src/lib/demo-workspace";
 import {
   isSurfaceHiddenError,
   requireReleasedSurface,
@@ -49,6 +50,7 @@ import { SETTINGS_SECTIONS } from "../src/components/settings/sections";
 
 const ADMIN = "smoke-surface-admin";
 const USER = "smoke-surface-user";
+const DEMO_USER = "smoke-surface-demo";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -324,6 +326,30 @@ async function main() {
         "chat imports are closed for an ordinary user",
         !(await isSurfaceLive(USER, CHAT_IMPORTS_SURFACE_KEY))
       );
+
+      // The demo workspace records product demos: its unreleased pages read as released
+      // (no teaser, no "Soon" tag, companions shown) while unreleased features stay hidden.
+      await db.delete(userSettings).where(eq(userSettings.userId, DEMO_USER));
+      await db.insert(userSettings).values({ userId: DEMO_USER, email: DEMO_WORKSPACE_EMAILS[0] });
+      try {
+        const forDemo = await resolveSurfaceVisibility(DEMO_USER);
+        const soonPages = [...DEFAULT_COMING_SOON_KEYS].filter((k) => getSurface(k)?.kind === "page");
+        check(
+          "the demo workspace sees unreleased pages as released",
+          soonPages.length > 0 &&
+            soonPages.every((k) => !forDemo.comingSoon.has(k) && !forDemo.comingSoonMarked.has(k))
+        );
+        check(
+          "the demo workspace still has unreleased features hidden",
+          forDemo.hidden.has(COMPOSE_SURFACE_KEY) && forDemo.hidden.has(CHAT_IMPORTS_SURFACE_KEY)
+        );
+        check(
+          "the demo workspace sees companions of unreleased pages",
+          soonPages.flatMap((k) => COMING_SOON_COMPANIONS[k] ?? []).every((k) => !forDemo.hidden.has(k))
+        );
+      } finally {
+        await db.delete(userSettings).where(eq(userSettings.userId, DEMO_USER));
+      }
       check(
         "chat imports are closed for an admin without the preview cookie",
         // A coming-soon feature has no screen of its own, so it lands in `hidden` (as compose does).
