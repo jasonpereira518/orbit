@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
+import { listSchools } from "@/lib/events/target-companies";
 import {
   chatMessages,
   chatThreads,
@@ -100,6 +101,8 @@ export type ChatContext = {
    * `chatWithNetwork`.
    */
   goals: string[];
+  /** `user_settings.schools`, so "my school" means something in the answer too. Trusted, like goals. */
+  userSchools: string[];
   orgRosters: OrgRoster[];
   attention: AttentionBrief | null;
   /**
@@ -283,8 +286,12 @@ async function retrieveRankedContacts(
     /** The account read the question shares; undefined means each call opens its own. */
     access?: Promise<AiAccess | undefined>;
   }
-): Promise<{ ranked: RankedContact[]; searchNotice: string | null; goals: string[] }> {
-  const [activeGoals, access] = await Promise.all([loadActiveGoalTexts(userId), routing?.access]);
+): Promise<{ ranked: RankedContact[]; searchNotice: string | null; goals: string[]; userSchools: string[] }> {
+  const [activeGoals, userSchools, access] = await Promise.all([
+    loadActiveGoalTexts(userId),
+    listSchools(userId),
+    routing?.access,
+  ]);
   // Every model call below shares the one account read; each still mints its own grant.
   const complete = completeJsonOn(access);
   let searchNotice: string | null = null;
@@ -297,7 +304,7 @@ async function retrieveRankedContacts(
       searchNotice = embeddingFailureNotice(err);
       return null;
     }),
-    understandQuery(userId, q, activeGoals, complete).then((parsed) => {
+    understandQuery(userId, q, activeGoals, complete, userSchools).then((parsed) => {
       routing?.onIntent(parsed.intent ?? null);
       return parsed;
     }),
@@ -358,7 +365,7 @@ async function retrieveRankedContacts(
   // question, so the model that actually wrote the answer never learned what the user was
   // trying to accomplish — every other AI surface in the product (outreach, starters,
   // follow-up drafts) has been given them for months.
-  return { ranked, searchNotice, goals: activeGoals };
+  return { ranked, searchNotice, goals: activeGoals, userSchools };
 }
 
 /** What the query parser actually understood, as a line a person can check. */
@@ -889,6 +896,7 @@ export async function prepareChatContext(
     userContext,
     searchNotice: retrieval.searchNotice,
     goals: retrieval.goals,
+    userSchools: retrieval.userSchools,
     orgRosters,
     attention,
     attentionLite,

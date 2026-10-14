@@ -1892,6 +1892,8 @@ type ChatPromptArgs = {
   notePassages: NonNullable<Parameters<typeof chatWithNetwork>[12]>;
   /** The user's writing notes, or null. Appended only when non-empty; see `writing-instructions.ts`. */
   writingPreferences?: string | null;
+  /** The schools the user went to (`user_settings.schools`), so "my school" resolves. */
+  userSchools?: string[];
 };
 
 /**
@@ -1916,6 +1918,7 @@ export function buildChatPrompt({
   evidence,
   notePassages,
   writingPreferences,
+  userSchools,
 }: ChatPromptArgs): {
   user: string;
   systemCore: string;
@@ -1961,7 +1964,7 @@ export function buildChatPrompt({
       // (@/lib/contact-profile-format) strips control characters and folds newlines before
       // the value ever gets here, so no organization name can open a second numbered row.
       // The fence is what keeps the block as a whole from being escaped.
-      return `${i + 1}. [id=${c.id}] ${c.fullName} | ${c.title || "?"} @ ${c.company || "?"} | career=${c.career || "n/a"} | score=${c.relationshipScore} | tags=${c.tags.join(", ")} | relevance=${c.relevance.toFixed(2)}\nSummary: ${c.aiSummary || "n/a"}${factsCite}\nNotes: ${(c.notes || "").slice(0, 1200)}${facts ? `\n${facts}` : ""}${messages ? `\n${messages}` : ""}`;
+      return `${i + 1}. [id=${c.id}] ${c.fullName} | ${c.title || "?"} @ ${c.company || "?"} | career=${c.career || "n/a"}${c.school ? ` | school=${sanitizeProfileLine(c.school)}` : ""} | score=${c.relationshipScore} | tags=${c.tags.join(", ")} | relevance=${c.relevance.toFixed(2)}\nSummary: ${c.aiSummary || "n/a"}${factsCite}\nNotes: ${(c.notes || "").slice(0, 1200)}${facts ? `\n${facts}` : ""}${messages ? `\n${messages}` : ""}`;
     })
     .join("\n\n");
 
@@ -2016,9 +2019,13 @@ export function buildChatPrompt({
     .map((g) => sanitizeProfileLine(g))
     .filter((g) => g.length > 0)
     .slice(0, 8);
-  const goalsBlock = goalLines.length
-    ? `What the user is working towards, in their own words:\n${goalLines.map((g) => `- ${g}`).join("\n")}\n\n`
-    : "";
+  const schoolLines = (userSchools ?? []).map((s) => sanitizeProfileLine(s)).filter(Boolean).slice(0, 10);
+  const goalsBlock =
+    (goalLines.length
+      ? `What the user is working towards, in their own words:\n${goalLines.map((g) => `- ${g}`).join("\n")}\n\n`
+      : "") +
+    // "My school" / "went to school with me" means these. Typed or imported by the user.
+    (schoolLines.length ? `Schools the user went to: ${schoolLines.join("; ")}\n\n` : "");
 
   /**
    * The overdue queue, as background.
@@ -2429,6 +2436,7 @@ export async function chatWithNetworkStream(
     evidence?: string | null;
     notePassages?: Parameters<typeof chatWithNetwork>[12];
     writingPreferences?: string | null;
+    userSchools?: string[];
     /** The account already resolved for this request (see `AiAccess.forUser`). */
     access?: AiAccess;
   } = {}
@@ -2447,6 +2455,7 @@ export async function chatWithNetworkStream(
     evidence: options.evidence ?? null,
     notePassages: options.notePassages ?? [],
     writingPreferences: options.writingPreferences,
+    userSchools: options.userSchools,
   });
   const splitter = createAnswerSplitter();
   const system = `${prompt.systemCore}${CHAT_STREAM_TAIL}`;
@@ -2511,6 +2520,8 @@ export async function chatWithNetwork(
     timeline?: Array<{ id: string; date: string; line: string }>;
     tags: string[];
     relevance: number;
+    /** `contacts.school`, when known. */
+    school?: string | null;
     /** Compact career summary — "Ramp, ex-Stripe · MIT". Rendered in `contextBlock`
      * alongside title/company; null when no profile is stored for this contact. */
     career?: string | null;

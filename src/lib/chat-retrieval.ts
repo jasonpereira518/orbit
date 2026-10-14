@@ -109,26 +109,28 @@ Return JSON: {"semanticQuery": string, "filters": {"companies"?: string[], "indu
  * Accuracy-only stage: on any failure or timeout it returns the pass-through
  * fallback. It must never throw and never block the pipeline.
  *
- * Spec erratum: the spec says self-references ("my school", "my company")
- * resolve against the user's profile, but userSettings carries no
- * school/company profile fields to resolve against — only active networking
- * goals are available as user context here. Unresolvable self-references are
- * therefore deliberately left unfiltered (see UNDERSTAND_SYSTEM) rather than
- * guessing a value.
+ * Self-references resolve against what the user told Orbit: "my school" against
+ * `user_settings.schools` (typed in Settings or imported from Education.csv). Anything
+ * the context does not name — "my company" — is left unfiltered (see UNDERSTAND_SYSTEM)
+ * rather than guessed.
  * @param userGoals - the user's active networking goals, used as context.
+ * @param userSchools - the schools the user went to, so "my school" can become a filter.
  */
 export async function understandQuery(
   userId: string,
   question: string,
   userGoals: string[],
-  completeFn: typeof completeJson = completeJson
+  completeFn: typeof completeJson = completeJson,
+  userSchools: string[] = []
 ): Promise<ParsedQuery> {
   const fallback = fallbackParsedQuery(typeof question === "string" ? question : "");
   if (typeof question !== "string" || question.trim().length < 8) return fallback;
   try {
-    const goalsBlock = userGoals.length
-      ? `User context — their active networking goals:\n${userGoals.map((g) => `- ${g}`).join("\n")}\n\n`
-      : "";
+    const goalsBlock =
+      (userGoals.length
+        ? `User context — their active networking goals:\n${userGoals.map((g) => `- ${g}`).join("\n")}\n\n`
+        : "") +
+      (userSchools.length ? `User context — schools the user went to: ${userSchools.join("; ")}\n\n` : "");
     const content = await withTimeout(
       completeFn(userId, {
         operation: "chat.understand",
@@ -360,6 +362,7 @@ export type BudgetedContact = {
   relevance: number;
   /** Compact career summary — "Ramp, ex-Stripe · MIT". Null when no profile is stored. */
   career: string | null;
+  school: string | null;
 };
 
 /**
@@ -412,7 +415,7 @@ export function budgetContactsContext(
 
     const cost =
       c.fullName.length + (c.company?.length ?? 0) + (c.title?.length ?? 0) +
-      (notes?.length ?? 0) + (aiSummary?.length ?? 0) + (career?.length ?? 0) +
+      (notes?.length ?? 0) + (aiSummary?.length ?? 0) + (career?.length ?? 0) + (c.school?.length ?? 0) +
       keyFacts.join("").length + timeline.map((t) => t.line).join("").length +
       c.tags.join("").length + 80; // formatting overhead
     // Budget exhaustion stops serialization entirely — a later, cheaper
@@ -433,6 +436,7 @@ export function budgetContactsContext(
       tags: c.tags,
       relevance: c.relevance,
       career,
+      school: c.school ?? null,
     });
   }
   return out;

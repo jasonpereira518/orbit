@@ -242,6 +242,7 @@ export async function POST(request: Request) {
                 evidence,
                 notePassages,
                 writingPreferences: ctx.writingInstructions,
+                userSchools: ctx.userSchools,
                 access: ctx.access,
               }
             ),

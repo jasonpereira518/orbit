@@ -90,6 +90,9 @@ export function parseQuietDays(value: unknown): number | null {
 
 export const CONTACTS_PAGE_SIZE = 50;
 
+/** The `?school=` value meaning "any of my schools". Not a name a school could have. */
+export const SAME_SCHOOL_AS_ME = "@mine";
+
 export type ContactsPageFilters = {
   q?: string;
   company?: string;
@@ -105,6 +108,11 @@ export type ContactsPageFilters = {
   letter?: string;
   /** Restrict to contacts carrying this tag, matched case-insensitively. */
   tag?: string;
+  /**
+   * Alumni of a school (`schoolCondition`), or `SAME_SCHOOL_AS_ME` for anyone who went to one
+   * of the user's own schools (`user_settings.schools`).
+   */
+  school?: string;
   cursor?: string;
   limit?: number;
   /** Narrow the list to one import's people — the added and the matched-existing alike. */

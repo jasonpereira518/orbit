@@ -8,7 +8,9 @@
  */
 import type { CareerProfile } from "@/db/schema";
 import {
+  MAX_SCHOOLS,
   parseLinkedInAlertsCsv,
+  parseLinkedInEducationCsv,
   parseLinkedInPositionsCsv,
   parseLinkedInProfileCsv,
   parseLinkedInSkillsCsv,
@@ -28,7 +30,18 @@ export type YouField = {
   defaultOn: boolean;
 };
 
-export type YouCurrent = { career: CareerProfile | null; senderBio: string | null };
+export type YouCurrent = {
+  career: CareerProfile | null;
+  senderBio: string | null;
+  /** `user_settings.schools`: typed in Settings, or imported from Education.csv. */
+  schools: string[];
+};
+
+/** What Settings already lists, then the file's new ones — added, never replaced. */
+function mergedSchools(current: string[], incoming: string[]): string[] {
+  const seen = new Set(current.map((s) => s.toLowerCase()));
+  return [...current, ...incoming.filter((s) => !seen.has(s.toLowerCase()))].slice(0, MAX_SCHOOLS);
+}
 
 const PROFILE_KEYS = [
   ["headline", "Headline"],
@@ -102,6 +115,19 @@ export function previewYou(target: YouTarget, text: string, current: YouCurrent)
     ];
   }
 
+  if (target === "linkedin_education") {
+    const schools = mergedSchools(current.schools, parseLinkedInEducationCsv(text));
+    return [
+      {
+        key: "schools",
+        label: "Schools you went to",
+        before: current.schools.length ? current.schools.join(", ") : null,
+        after: schools.join(", "),
+        defaultOn: true,
+      },
+    ];
+  }
+
   const keywords = parseLinkedInAlertsCsv(text);
   if (!keywords.length) {
     throw new LinkedInExportError("Your saved job alerts don't name a job title, so there is nothing to import.");
@@ -122,6 +148,8 @@ export type YouPatch = {
   career: CareerProfile;
   /** The new `sender_bio`, or null to leave it alone. */
   senderBio: string | null;
+  /** The whole new `user_settings.schools` list, or null to leave it alone. */
+  schools: string[] | null;
   /** The line the queue shows when the step finishes. */
   message: string;
 };
@@ -145,6 +173,7 @@ export function patchYou(
 
   const career: CareerProfile = { importedAt: now.toISOString() };
   let senderBio: string | null = null;
+  let schools: string[] | null = null;
 
   if (target === "linkedin_profile") {
     const parsed = parseLinkedInProfileCsv(text);
@@ -159,10 +188,12 @@ export function patchYou(
     career.role = parseLinkedInPositionsCsv(text) ?? undefined;
   } else if (target === "linkedin_skills") {
     career.skills = parseLinkedInSkillsCsv(text);
+  } else if (target === "linkedin_education") {
+    schools = mergedSchools(current.schools, parseLinkedInEducationCsv(text));
   } else {
     career.roleKeywords = parseLinkedInAlertsCsv(text);
   }
 
   const done = chosen.size;
-  return { career, senderBio, message: `Saved ${done} ${done === 1 ? "detail" : "details"} from your LinkedIn export` };
+  return { career, senderBio, schools, message: `Saved ${done} ${done === 1 ? "detail" : "details"} from your LinkedIn export` };
 }

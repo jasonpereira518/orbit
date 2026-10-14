@@ -87,6 +87,37 @@ check(
   promptWithCareer.user
 );
 
+// --- school: the contact's on its row, the user's own as a "my school" line ------------
+
+const promptWithSchool = buildChatPrompt({
+  ...baseChatPromptArgs(),
+  question: "who went to my school?",
+  userSchools: ["UNC Chapel Hill"],
+  contactsContext: [
+    {
+      id: "c3",
+      fullName: "Ana Alum",
+      company: null,
+      title: null,
+      relationshipScore: 50,
+      aiSummary: null,
+      notes: null,
+      keyFacts: [],
+      timeline: [],
+      tags: [],
+      relevance: 0.9,
+      career: null,
+      school: "UNC Chapel Hill",
+    },
+  ],
+  focusProfile: null,
+});
+check("a contact's school reaches their row", promptWithSchool.user.includes("school=UNC Chapel Hill"));
+check(
+  "the user's own schools are named, so \"my school\" resolves",
+  promptWithSchool.user.includes("Schools the user went to: UNC Chapel Hill")
+);
+
 const promptWithoutCareer = buildChatPrompt({
   ...baseChatPromptArgs(),
   question: "who has worked at NASA?",
