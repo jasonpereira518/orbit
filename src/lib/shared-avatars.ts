@@ -115,7 +115,7 @@ export async function upsertSharedAvatar(input: {
  * Record a freshly stored shared photo. On a lost race with a takedown the new object is
  * deleted; when it replaces an older photo, the older object is.
  */
-async function adoptSharedPhoto(
+export async function adoptSharedPhoto(
   slug: string,
   previous: SharedAvatarRow | null,
   imageUrl: string,
@@ -190,7 +190,7 @@ export async function resolveLinkedInPhotoCached(
 }
 
 /** A real LinkedIn CDN profile photo, as the extension scrapes it. */
-function isLinkedInCdnPhoto(url: string): boolean {
+export function isLinkedInCdnPhoto(url: string): boolean {
   try {
     const parsed = new URL(url);
     return parsed.protocol === "https:" && parsed.hostname === "media.licdn.com";

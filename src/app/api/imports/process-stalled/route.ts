@@ -18,6 +18,7 @@ import { clerkClient } from "@clerk/nextjs/server";
 import { kickCaptureJob, resumeStalledCaptureJobs } from "@/lib/capture-jobs";
 import { pruneUnattachedCapturePhotos } from "@/lib/capture-photos";
 import { hasBlobStorage } from "@/lib/contact-avatar";
+import { fillSharedAvatars, sweepOrphanedSharedAvatars } from "@/lib/shared-avatar-upkeep";
 import { sweepEmailAttachments } from "@/lib/email/attachments";
 import {
   finishCronRun,
@@ -150,6 +151,12 @@ export async function GET(request: Request) {
     /** Background AI sent to a provider's Batch API: what came back this sweep. */
     aiBatchesApplied: 0,
     aiBatchesPending: 0,
+    /** Shared LinkedIn photo pool: slugs filled / found nothing this run, whether the source
+     *  quota stopped the fill, and rows removed because no contact has the slug any more. */
+    sharedAvatarsFilled: 0,
+    sharedAvatarsMissed: 0,
+    sharedAvatarFillDeferred: false,
+    sharedAvatarsSwept: 0,
     cohortsRecalibrated: 0,
     embeddingsBackfilled: 0,
     embeddingsGenerated: 0,
@@ -275,6 +282,24 @@ export async function GET(request: Request) {
       }
     } catch {
       status = "partial";
+    }
+
+    try {
+      // A little of the shared photo pool each hour, most-shared slugs first.
+      const fill = await fillSharedAvatars();
+      stats.sharedAvatarsFilled = fill.found;
+      stats.sharedAvatarsMissed = fill.missed;
+      stats.sharedAvatarFillDeferred = fill.deferred;
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.shared-avatar-fill" });
+    }
+
+    try {
+      stats.sharedAvatarsSwept = await sweepOrphanedSharedAvatars();
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.shared-avatar-sweep" });
     }
 
     try {

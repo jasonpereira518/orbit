@@ -76,6 +76,19 @@ run(async () => {
     const route = readFileSync("src/app/api/imports/process-stalled/route.ts", "utf8");
     check("the daily cron calls both sweeps", route.includes("sweepAbandonedMeetingSessions()") && route.includes("sweepExpiredHandoffs()"));
     check("…and prunes the rate-limit buckets", route.includes("pruneRateLimitBuckets()"));
+    const stepOf = (call: string) => {
+      const at = route.indexOf(call);
+      const open = route.lastIndexOf("    try {", at);
+      return { at, open, close: route.indexOf("\n    }", at) };
+    };
+    const fill = stepOf("await fillSharedAvatars()");
+    const orphans = stepOf("await sweepOrphanedSharedAvatars()");
+    check(
+      "the shared-photo fill and orphan sweep each run in their own try block",
+      fill.at > 0 && orphans.at > 0 && fill.open !== orphans.open && fill.close < orphans.open,
+      JSON.stringify([fill, orphans])
+    );
+    check("…and are recorded in the run summary", route.includes("sharedAvatarsFilled") && route.includes("sharedAvatarsSwept"));
   } finally {
     await cleanup();
   }
