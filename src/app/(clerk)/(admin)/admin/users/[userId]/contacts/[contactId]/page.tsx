@@ -120,7 +120,6 @@ export default async function AdminContactDetailPage({
           >
             <div className="flex items-center gap-3 text-sm">
               {sharedPhoto?.imageUrl && !sharedPhoto.blockedAt && (
-                // eslint-disable-next-line @next/next/no-img-element
                 <img src={sharedPhoto.imageUrl} alt="" className="size-14 rounded-full object-cover" />
               )}
               <span className="text-muted-foreground">

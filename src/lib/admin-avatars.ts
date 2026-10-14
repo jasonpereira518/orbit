@@ -1,9 +1,10 @@
-import { and, desc, eq, ilike, isNotNull } from "drizzle-orm";
+import { and, eq, ilike, inArray, isNotNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, linkedinAvatars } from "@/db/schema";
 import { recordAdminAction, requireReason } from "@/lib/admin-operations";
-import { deleteSharedAvatarBlob } from "@/lib/avatar-blob";
+import { deleteAvatarBlobs, deleteSharedAvatarBlob } from "@/lib/avatar-blob";
 import { UserFacingError } from "@/lib/errors";
+import { provablePublicPhotoSource } from "@/lib/shared-avatar-upkeep";
 
 /**
  * Admin takedown of a shared LinkedIn photo. The caller (`src/actions/admin.ts`) has already
@@ -20,8 +21,10 @@ function cleanSlug(raw: string): string {
 
 /**
  * Remove the shared photo and block the slug: it is never re-fetched or re-contributed
- * (every writer refuses a blocked row). Every account's own sources get another go at the
- * contact, since they were skipped while the shared photo was showing.
+ * (every writer refuses a blocked row). Per-contact copies of the same public photo (source
+ * public/extension, or unlabelled but provably from LinkedIn/Unavatar) are removed too, in
+ * every account; Google, Outlook, Gravatar, Apollo and uploaded photos are never touched.
+ * Every account's own sources get another go at the contact.
  */
 export async function blockSharedAvatar(
   adminUserId: string,
@@ -48,7 +51,21 @@ export async function blockSharedAvatar(
     .insert(linkedinAvatars)
     .values({ slug, source: "unavatar", ...set })
     .onConflictDoUpdate({ target: linkedinAvatars.slug, set });
+  const owners = await db
+    .select({ id: contacts.id, source: contacts.profileImageSource, url: contacts.profileImageUrl })
+    .from(contacts)
+    .where(eq(contacts.linkedinSlug, slug));
+  const publicCopies = owners.filter(
+    (c) => c.source === "public" || c.source === "extension" || (c.source === null && provablePublicPhotoSource(c.url) !== null)
+  );
   await db.update(contacts).set({ profileImageCheckedAt: null }).where(eq(contacts.linkedinSlug, slug));
+  if (publicCopies.length > 0) {
+    await db
+      .update(contacts)
+      .set({ profileImageUrl: null, profileImageSource: null })
+      .where(inArray(contacts.id, publicCopies.map((c) => c.id)));
+  }
+  await deleteAvatarBlobs(publicCopies.map((c) => c.url));
   await deleteSharedAvatarBlob(previous?.imageUrl);
 }
 
@@ -89,6 +106,6 @@ export async function listSharedAvatars(input: { q?: string }) {
     })
     .from(linkedinAvatars)
     .where(where)
-    .orderBy(desc(linkedinAvatars.blockedAt), linkedinAvatars.slug)
+    .orderBy(sql`${linkedinAvatars.blockedAt} DESC NULLS LAST`, linkedinAvatars.slug)
     .limit(100);
 }

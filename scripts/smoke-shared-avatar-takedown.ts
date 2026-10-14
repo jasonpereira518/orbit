@@ -76,12 +76,18 @@ run(async () => {
     const OLD = "https://abc.public.blob.vercel-storage.com/avatars-shared/old-photo.jpg";
     await upsertSharedAvatar({ slug: SLUG, imageUrl: OLD, source: "unavatar" });
     const checkedAt = new Date("2026-10-01T00:00:00Z");
-    const [a, b, other] = await db
+    const OWN_COPY = "https://abc.public.blob.vercel-storage.com/avatars/own-public-copy.jpg";
+    const ELSE_COPY = "https://abc.public.blob.vercel-storage.com/avatars/else-copy.jpg";
+    const UNLABELLED = "https://unavatar.io/linkedin/smoke-sat-target?fallback=false";
+    const GOOGLE_PHOTO = "https://abc.public.blob.vercel-storage.com/avatars/google-photo.jpg";
+    const [a, b, other, own, unlabelled] = await db
       .insert(contacts)
       .values([
-        { userId: USER_A, fullName: "Target A", linkedinUrl: li(SLUG), profileImageCheckedAt: checkedAt },
-        { userId: USER_B, fullName: "Target B", linkedinUrl: li(SLUG), profileImageCheckedAt: checkedAt },
-        { userId: USER_B, fullName: "Someone Else", linkedinUrl: li(`${P}else`), profileImageCheckedAt: checkedAt },
+        { userId: USER_A, fullName: "Target A", linkedinUrl: li(SLUG), profileImageCheckedAt: checkedAt, profileImageUrl: GOOGLE_PHOTO, profileImageSource: "google" },
+        { userId: USER_B, fullName: "Target B", linkedinUrl: li(SLUG), profileImageCheckedAt: checkedAt, profileImageUrl: OWN_COPY, profileImageSource: "public" },
+        { userId: USER_B, fullName: "Someone Else", linkedinUrl: li(`${P}else`), profileImageCheckedAt: checkedAt, profileImageUrl: ELSE_COPY, profileImageSource: "public" },
+        { userId: USER_A, fullName: "Ext copy", linkedinUrl: li(SLUG.toUpperCase()), profileImageUrl: "https://media.licdn.com/dms/image/v2/t/own.jpg", profileImageSource: "extension" },
+        { userId: USER_A, fullName: "Unlabelled", linkedinUrl: li(SLUG), profileImageUrl: UNLABELLED },
       ])
       .returning();
 
@@ -103,10 +109,16 @@ run(async () => {
     const blocked = await row(SLUG);
     check("block clears the image and records who and when", blocked?.imageUrl === null && blocked.blockedBy === ADMIN && blocked.blockedAt !== null, JSON.stringify(blocked));
     check("…and deletes the stored object", dels.includes(OLD), dels.join(","));
-    const rechecks = await db.select().from(contacts).where(inArray(contacts.id, [a.id, b.id, other.id]));
+    const rechecks = await db.select().from(contacts).where(inArray(contacts.id, [a.id, b.id, other.id, own.id, unlabelled.id]));
+    const photoOf = (id: string) => rechecks.find((c) => c.id === id);
     const checkedOf = (id: string) => rechecks.find((c) => c.id === id)?.profileImageCheckedAt ?? null;
     check("…resets the photo re-check clock for every account with that person", checkedOf(a.id) === null && checkedOf(b.id) === null);
     check("…and no one else's", checkedOf(other.id)?.getTime() === checkedAt.getTime());
+    check("a public-source copy on a contact is removed", photoOf(b.id)?.profileImageUrl === null && photoOf(b.id)?.profileImageSource === null);
+    check("…so are extension-sourced and provably-public unlabelled copies", photoOf(own.id)?.profileImageUrl === null && photoOf(unlabelled.id)?.profileImageUrl === null);
+    check("…and their Blob objects are deleted", dels.includes(OWN_COPY));
+    check("a Google-sourced photo is kept", photoOf(a.id)?.profileImageUrl === GOOGLE_PHOTO && photoOf(a.id)?.profileImageSource === "google" && !dels.includes(GOOGLE_PHOTO));
+    check("a public copy under another slug is kept", photoOf(other.id)?.profileImageUrl === ELSE_COPY);
     const [audit] = await db.select().from(adminAuditLog).where(and(eq(adminAuditLog.adminUserId, ADMIN), eq(adminAuditLog.action, "avatar.block")));
     check("…and is audited with its reason", audit?.resourceId === SLUG && audit.reason === "takedown request", JSON.stringify(audit));
 

@@ -24,7 +24,7 @@ export function SharedAvatarActions({ slug, blocked }: { slug: string; blocked: 
         </button>
       }
       title="Remove and block this photo?"
-      description="Deletes the shared photo for every Orbit user who has this person and stops it being fetched or contributed again. Their own Google, Outlook and Gravatar photos are re-checked."
+      description="Removes the photo everywhere it came from LinkedIn: the shared photo and any copy saved on a contact in any account. It is never fetched or contributed again. Google, Outlook, Gravatar, Apollo and uploaded photos stay, and are re-checked."
       confirmLabel="Remove & block"
       danger
       onConfirm={(reason) => blockSharedAvatarAction({ slug, reason })}
