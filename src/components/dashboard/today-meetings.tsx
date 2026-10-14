@@ -9,7 +9,7 @@ import { after } from "next/server";
 import { CalendarDays, Video } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireUserId } from "@/lib/auth";
-import { listUpcomingEvents } from "@/lib/calendar-events";
+import { listUpcomingEvents, relinkEvents } from "@/lib/calendar-events";
 import { hhmmInZone, userTimeZone } from "@/lib/meeting-context";
 import { isValidTimeZone, TZ_COOKIE, ymdInZone } from "@/lib/reminder-due-bucket";
 import { captureRadarTimeZone } from "@/lib/radar/digest";
@@ -26,10 +26,12 @@ export async function TodayMeetingsSection({ now }: { now: Date }) {
     listUpcomingEvents(userId, { from: now, to: new Date(now.getTime() + 86_400_000), limit: 30 }),
   ]);
   const today = ymdInZone(now, tz);
-  const rows = events
+  const shown = events
     .filter((e) => !e.allDay && e.selfResponse !== "declined" && ymdInZone(e.startAt, tz) <= today)
     .slice(0, 6);
-  if (!rows.length) return null;
+  if (!shown.length) return null;
+  // Someone added since the last sync shows by name.
+  const rows = await relinkEvents(userId, shown);
 
   const time = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" });
 

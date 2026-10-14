@@ -76,7 +76,7 @@ import {
 } from "@/lib/connectors/connections";
 import { connectorById } from "@/lib/connectors/registry";
 import { finalizeIngest, ingestEvents, openIngestContext } from "@/lib/ingest/events";
-import { eventsWindow, refreshCalendarWindow } from "@/lib/calendar-events";
+import { eventsWindow, pruneStaleCalendarEvents, refreshCalendarWindow } from "@/lib/calendar-events";
 import { ingestPeople } from "@/lib/ingest/people";
 import {
   initialBlockedCount,
@@ -1395,6 +1395,10 @@ export async function runSyncPass(
   } else {
     stats.budgetExhausted = true;
   }
+
+  // One statement, outside the budget: meetings from a calendar that stopped refreshing a day
+  // ago must not keep driving nudges and prep reminders.
+  await pruneStaleCalendarEvents(now).catch(reportAndContinue({ where: "job.sync.calendar-events-prune" }, 0));
 
   return stats;
 }
