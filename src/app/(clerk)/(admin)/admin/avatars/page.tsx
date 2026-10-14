@@ -15,7 +15,9 @@ export const metadata = { title: "Admin · Shared photos" };
 
 /**
  * Blocked shared LinkedIn photos, and a slug search over the whole pool. A takedown starts
- * from a contact page; this is where to find it again, undo it, or check a slug by name.
+ * from a contact page; this is where to find it again, undo it, or check a slug by name. A
+ * searched slug with no row can be blocked ahead of any lookup (a removal request from
+ * someone no account has yet).
  */
 export default async function AdminAvatarsPage({
   searchParams,
@@ -25,12 +27,13 @@ export default async function AdminAvatarsPage({
   await requireAdminUserId();
   const q = (await searchParams).q?.trim().slice(0, 100) || undefined;
   const rows = await listSharedAvatars({ q });
+  const unseen = q && !rows.some((r) => r.slug === q.toLowerCase()) ? q.toLowerCase() : null;
 
   return (
     <>
       <AdminPageHeader
         title="Shared photos"
-        subtitle="Public LinkedIn photos shared across accounts. Blocked slugs are never fetched or contributed."
+        subtitle="Public LinkedIn photos shared across accounts. Blocked slugs are never fetched."
       />
       <form method="get" className="mb-4 flex gap-2">
         <input
@@ -45,6 +48,15 @@ export default async function AdminAvatarsPage({
           Search
         </button>
       </form>
+      {unseen && (
+        <div className="mb-4 flex items-center gap-3 text-sm text-muted-foreground">
+          <span>
+            No row for <span className="font-mono text-xs text-foreground">{unseen}</span> yet. Block it so it is never
+            fetched:
+          </span>
+          <SharedAvatarActions slug={unseen} blocked={false} />
+        </div>
+      )}
       <AdminPanel title={q ? `Matches for “${q}”` : `Blocked (${rows.length})`}>
         {rows.length === 0 ? (
           <EmptyState>{q ? "No shared photo row for that slug." : "Nothing is blocked."}</EmptyState>

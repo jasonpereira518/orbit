@@ -238,6 +238,20 @@ export async function fetchLinkedInPhotoUrl(
   return (await fetchLinkedInPhoto(linkedinUrl, userId, { contactId }))?.url ?? null;
 }
 
+/** An https `media.licdn.com` URL with a `/profile-displayphoto…` path segment: a LinkedIn profile photo. */
+export function isLinkedInProfilePhoto(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.protocol === "https:" &&
+      parsed.hostname === "media.licdn.com" &&
+      parsed.pathname.split("/").some((seg) => seg.startsWith("profile-displayphoto"))
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Where a resolved photo is stored: the contact's own object, or the shared pool's. */
 export type AvatarTarget = { contactId: string } | { sharedSlug: string };
 
@@ -288,7 +302,9 @@ export async function fetchLinkedInPhoto(
 
   try {
     const imageUrl = await resolveLinkedInOgImage(normalized);
-    if (imageUrl) {
+    // The pool is shared across accounts: only a LinkedIn profile photo goes in, never a
+    // banner, post image or logo the og:image happened to be.
+    if (imageUrl && ("contactId" in target || isLinkedInProfilePhoto(imageUrl))) {
       const photoUrl = await downloadAndPersist(target, imageUrl);
       if (photoUrl) return { url: photoUrl, source: "microlink" };
     }

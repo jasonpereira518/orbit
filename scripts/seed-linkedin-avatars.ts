@@ -1,12 +1,10 @@
 /**
- * One-off: promote photos contacts already hold into the shared LinkedIn photo pool.
- *
- * Only a contact's REMOTE public photo is eligible (https media.licdn.com, or Unavatar's
- * LinkedIn endpoint, and only rows whose source is unknown or "public": never extension
- * captures, which may be from the wrong page, nor mailbox/enrichment/upload photos): those are the only
- * photos whose public origin is provable. Each is downloaded (Unavatar by slug, not by the stored URL) and stored under
- * avatars-shared/. Blob, data:, Google and Outlook photos are never promoted. Blocked and
- * already-positive slugs are skipped.
+ * One-off: seed the shared LinkedIn photo pool from slugs whose contact already shows an
+ * Unavatar LinkedIn photo (source unknown or "public"). Each slug gets a fresh public lookup:
+ * Unavatar by the slug, never the stored URL, stored under avatars-shared/. Stored
+ * media.licdn.com photos are never promoted (they may be extension captures, which stay with
+ * their account), nor Blob, data:, Google, Outlook, Gravatar, Apollo or uploaded photos.
+ * Blocked and already-positive slugs are skipped.
  *
  * Dry run by default (nothing is downloaded or written). Needs BLOB_READ_WRITE_TOKEN to apply.
  * Run: npx tsx scripts/seed-linkedin-avatars.ts [--apply]
@@ -35,7 +33,7 @@ async function main() {
         isNotNull(contacts.linkedinSlug),
         isNotNull(contacts.profileImageUrl),
         or(isNull(contacts.profileImageSource), eq(contacts.profileImageSource, "public")),
-        sql`(${contacts.profileImageUrl} LIKE 'https://media.licdn.com/%' OR ${contacts.profileImageUrl} LIKE 'https://unavatar.io/linkedin/%')`
+        sql`${contacts.profileImageUrl} LIKE 'https://unavatar.io/linkedin/%'`
       )
     );
   const counts: Record<string, number> = {};

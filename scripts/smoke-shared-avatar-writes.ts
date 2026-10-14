@@ -1,8 +1,9 @@
 /**
  * Shared LinkedIn photo cache, write side: lookups are cache-first, a photo found for one
  * account is reused by every other account with the same slug (no source call, no quota),
- * misses are remembered, blocked slugs are never fetched or contributed, and photos from the
- * user's own sources (Google, extension merges without a photo) never reach the shared pool.
+ * misses are remembered, blocked slugs are never fetched, only a LinkedIn profile photo is
+ * pooled from Microlink, and photos from the user's own sources (Google, extension captures)
+ * never reach the shared pool.
  *
  * Network and Blob are stubbed. Run: npx tsx scripts/smoke-shared-avatar-writes.ts
  */
@@ -41,6 +42,8 @@ const li = (slug: string) => `https://www.linkedin.com/in/${slug}/`;
 
 // ---- stubs ----------------------------------------------------------------------------
 let unavatarHits = true;
+/** What Microlink's og:image answers with; null = nothing found. */
+let microlinkImage: string | null = null;
 /** Runs inside a source call: lets a check play a concurrent writer mid-lookup. */
 let duringLookup: (() => Promise<void>) | null = null;
 const sourceCalls: string[] = [];
@@ -54,11 +57,11 @@ globalThis.fetch = (async (input: RequestInfo | URL) => {
       ? new Response(Buffer.from(PIXEL, "base64"), { headers: { "content-type": "image/jpeg" } })
       : new Response(null, { status: 404 });
   }
-  // Real image bytes for a non-LinkedIn host too, so only the CDN gate can refuse it.
-  if (url.includes("media.licdn.com") || url.includes("lh3.googleusercontent.com")) {
+  // Real image bytes for any LinkedIn CDN path, so only the profile-photo gate can refuse one.
+  if (url.includes("media.licdn.com")) {
     return new Response(Buffer.from(PIXEL, "base64"), { headers: { "content-type": "image/jpeg" } });
   }
-  return Response.json({ status: "success", data: {} }); // Microlink: nothing found
+  return Response.json({ status: "success", data: microlinkImage ? { image: { url: microlinkImage } } : {} });
 }) as typeof fetch;
 
 const puts: string[] = [];
@@ -236,48 +239,57 @@ run(async () => {
     }), { skipRevalidate: true, skipEmbedding: true, skipSummary: true });
     check("a Google Contacts import marks its photo google", (await contactRow(imported.id)).profileImageSource === "google");
 
-    console.log("\nExtension");
-    const extSlug = `${P}ext-person`;
-    const licdn = "https://media.licdn.com/dms/image/v2/ext/profile.jpg";
-    const created = await saveContactFromExtension(
-      USER_A,
-      { mode: "create", force: true, page: page(li(extSlug)), fields: { fullName: "Ext Person", linkedinUrl: li(extSlug), photoUrl: licdn } },
-      () => {}
-    );
-    const extRow = await row(extSlug);
-    check("a LinkedIn CDN capture is contributed to the shared pool", extRow?.source === "extension" && extRow.imageUrl?.startsWith("https://") === true, JSON.stringify(extRow));
-    check("…and not copied onto the contact", (await contactRow(created.contact.id)).profileImageUrl === null);
+    console.log("\nMicrolink only pools a LinkedIn profile photo");
+    // No user (no quota): this section is about which photo is taken, not who pays.
+    unavatarHits = false;
+    const PHOTO = "https://media.licdn.com/dms/image/v2/D4E03AQ/profile-displayphoto-shrink_800_800/profile-displayphoto-shrink_800_800/0/1?e=1";
+    const notPhotos = [
+      "https://media.licdn.com/dms/image/v2/D4E16AQ/profile-displaybackgroundimage-shrink_350_1400/0/1?e=1",
+      "https://media.licdn.com/dms/image/v2/D4E22AQ/feedshare-shrink_800/0/1?e=1",
+      "https://media.licdn.com/dms/image/v2/C4E0BAQ/company-logo_200_200/0/1?e=1",
+      "http://media.licdn.com/dms/image/v2/x/profile-displayphoto-shrink_800_800/0/1",
+    ];
+    for (const [i, image] of notPhotos.entries()) {
+      microlinkImage = image;
+      const slug = `${P}ml-not-photo-${i}`;
+      check(`a non-profile-photo og:image is never pooled (${i})`, (await resolveLinkedInPhotoCached(`c-ml${i}`, li(slug), null)) === null && (await row(slug))?.imageUrl === null);
+    }
+    microlinkImage = PHOTO;
+    const mlSlug = `${P}ml-photo`;
+    const ml = await resolveLinkedInPhotoCached("c-ml", li(mlSlug), null);
+    const mlRow = await row(mlSlug);
+    check("a profile-displayphoto og:image is pooled", typeof ml === "object" && ml !== null && mlRow?.source === "microlink" && mlRow.imageUrl === ml.sharedUrl, JSON.stringify(mlRow));
+    microlinkImage = null;
+    unavatarHits = true;
 
-    const blockedExt = await saveContactFromExtension(
+    console.log("\nExtension captures stay with the account");
+    const PROFILE_PHOTO = PHOTO;
+    const captures = [
+      { label: "a LinkedIn profile photo", slug: `${P}ext-person`, photo: PROFILE_PHOTO },
+      { label: "a capture on a blocked slug", slug: blocked, photo: PROFILE_PHOTO },
+      { label: "a non-LinkedIn photo", slug: `${P}ext-google`, photo: "https://lh3.googleusercontent.com/a/someone" },
+    ];
+    for (const c of captures) {
+      const before = await row(c.slug);
+      const saved = await saveContactFromExtension(
+        USER_A,
+        { mode: "create", force: true, page: page(li(c.slug)), fields: { fullName: c.label, linkedinUrl: li(c.slug), photoUrl: c.photo } },
+        () => {}
+      );
+      const after = await row(c.slug);
+      check(`${c.label} never touches the shared pool`, JSON.stringify(after) === JSON.stringify(before), JSON.stringify(after));
+      const own = await contactRow(saved.contact.id);
+      check("…and stays the contact's own photo", own.profileImageUrl === c.photo && own.profileImageSource === "extension", `${own.profileImageUrl} ${own.profileImageSource}`);
+    }
+    const [toMerge] = await db.insert(contacts).values({ userId: USER_A, fullName: "Merge Target", linkedinUrl: li(`${P}ext-merge`) }).returning();
+    await saveContactFromExtension(
       USER_A,
-      { mode: "create", force: true, page: page(li(blocked)), fields: { fullName: "Blocked Person", linkedinUrl: li(blocked), photoUrl: licdn } },
+      { mode: "merge", contactId: toMerge.id, page: page(li(`${P}ext-merge`)), fields: { fullName: "Merge Target", photoUrl: PROFILE_PHOTO } },
       () => {}
     );
-    const blockedRow = await row(blocked);
-    check("a blocked slug is never contributed", blockedRow?.imageUrl === null && blockedRow.blockedAt !== null);
-    const blockedContact = await contactRow(blockedExt.contact.id);
-    check("…the capture stays the user's own photo", blockedContact.profileImageUrl === licdn && blockedContact.profileImageSource === "extension", `${blockedContact.profileImageUrl} ${blockedContact.profileImageSource}`);
-
-    const googleCapture = "https://lh3.googleusercontent.com/a/someone";
-    const otherSlug = `${P}ext-google`;
-    const notLicdn = await saveContactFromExtension(
-      USER_A,
-      { mode: "create", force: true, page: page(li(otherSlug)), fields: { fullName: "Other Photo", linkedinUrl: li(otherSlug), photoUrl: googleCapture } },
-      () => {}
-    );
-    check("a capture that is not a LinkedIn CDN photo is never contributed", (await row(otherSlug)) === null);
-    const notLicdnRow = await contactRow(notLicdn.contact.id);
-    check("…it stays the contact's own", notLicdnRow.profileImageUrl === googleCapture && notLicdnRow.profileImageSource === "extension");
-
-    const victim = `${P}ext-victim`;
-    const spoofed = await saveContactFromExtension(
-      USER_A,
-      { mode: "create", force: true, page: page(li(`${P}ext-scraped`)), fields: { fullName: "Spoofed", linkedinUrl: li(victim), photoUrl: licdn } },
-      () => {}
-    );
-    check("a capture from another profile's page is never filed under this slug", (await row(victim)) === null && (await row(`${P}ext-scraped`)) === null);
-    const spoofedRow = await contactRow(spoofed.contact.id);
-    check("…it stays the contact's own", spoofedRow.profileImageUrl === licdn && spoofedRow.profileImageSource === "extension");
+    const merged = await contactRow(toMerge.id);
+    check("a merge capture lands on the contact as extension", merged.profileImageUrl === PROFILE_PHOTO && merged.profileImageSource === "extension");
+    check("…with no shared row", (await row(`${P}ext-merge`)) === null);
 
     const [kept] = await db.insert(contacts).values({
       userId: USER_A, fullName: "Kept Photo", profileImageUrl: "https://abc.public.blob.vercel-storage.com/avatars/kept.jpg", profileImageSource: "google",

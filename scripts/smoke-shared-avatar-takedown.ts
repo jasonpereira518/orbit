@@ -1,7 +1,9 @@
 /**
  * Admin takedown of a shared LinkedIn photo: only an admin may do it; block removes the
- * image (and its Blob), resets every account's photo re-check clock for that person, and
- * stops the slug being re-fetched or re-contributed; unblock lets it all happen again.
+ * image (and its Blob) and per-contact copies provably from a public lookup (never an
+ * extension capture or a mailbox photo), resets every account's photo re-check clock for that
+ * person, stops the slug being re-fetched, and works on a slug with no row yet; unblock lets
+ * lookups happen again.
  *
  * Network and Blob are stubbed. Run: npx tsx scripts/smoke-shared-avatar-takedown.ts
  */
@@ -14,7 +16,7 @@ import { AdminForbiddenError } from "../src/lib/admin";
 import { blockSharedAvatarAction, unblockSharedAvatarAction } from "../src/actions/admin";
 import { setAvatarBlobClientForTests } from "../src/lib/avatar-blob";
 import { blockSharedAvatar, listSharedAvatars, unblockSharedAvatar } from "../src/lib/admin-avatars";
-import { contributeSharedPhoto, resolveLinkedInPhotoCached, upsertSharedAvatar } from "../src/lib/shared-avatars";
+import { resolveLinkedInPhotoCached, upsertSharedAvatar } from "../src/lib/shared-avatars";
 
 process.env.BLOB_READ_WRITE_TOKEN = "smoke-shared-avatar-takedown";
 delete process.env.MICROLINK_API_KEY;
@@ -80,14 +82,16 @@ run(async () => {
     const ELSE_COPY = "https://abc.public.blob.vercel-storage.com/avatars/else-copy.jpg";
     const UNLABELLED = "https://unavatar.io/linkedin/smoke-sat-target?fallback=false";
     const GOOGLE_PHOTO = "https://abc.public.blob.vercel-storage.com/avatars/google-photo.jpg";
-    const [a, b, other, own, unlabelled] = await db
+    const EXT_PHOTO = "https://media.licdn.com/dms/image/v2/t/profile-displayphoto-shrink_800_800/0/own.jpg";
+    const [a, b, other, own, unlabelled, legacy] = await db
       .insert(contacts)
       .values([
         { userId: USER_A, fullName: "Target A", linkedinUrl: li(SLUG), profileImageCheckedAt: checkedAt, profileImageUrl: GOOGLE_PHOTO, profileImageSource: "google" },
         { userId: USER_B, fullName: "Target B", linkedinUrl: li(SLUG), profileImageCheckedAt: checkedAt, profileImageUrl: OWN_COPY, profileImageSource: "public" },
         { userId: USER_B, fullName: "Someone Else", linkedinUrl: li(`${P}else`), profileImageCheckedAt: checkedAt, profileImageUrl: ELSE_COPY, profileImageSource: "public" },
-        { userId: USER_A, fullName: "Ext copy", linkedinUrl: li(SLUG.toUpperCase()), profileImageUrl: "https://media.licdn.com/dms/image/v2/t/own.jpg", profileImageSource: "extension" },
+        { userId: USER_A, fullName: "Ext copy", linkedinUrl: li(SLUG.toUpperCase()), profileImageUrl: EXT_PHOTO, profileImageSource: "extension" },
         { userId: USER_A, fullName: "Unlabelled", linkedinUrl: li(SLUG), profileImageUrl: UNLABELLED },
+        { userId: USER_B, fullName: "Unlabelled CDN", linkedinUrl: li(SLUG), profileImageUrl: EXT_PHOTO },
       ])
       .returning();
 
@@ -109,13 +113,15 @@ run(async () => {
     const blocked = await row(SLUG);
     check("block clears the image and records who and when", blocked?.imageUrl === null && blocked.blockedBy === ADMIN && blocked.blockedAt !== null, JSON.stringify(blocked));
     check("…and deletes the stored object", dels.includes(OLD), dels.join(","));
-    const rechecks = await db.select().from(contacts).where(inArray(contacts.id, [a.id, b.id, other.id, own.id, unlabelled.id]));
+    const rechecks = await db.select().from(contacts).where(inArray(contacts.id, [a.id, b.id, other.id, own.id, unlabelled.id, legacy.id]));
     const photoOf = (id: string) => rechecks.find((c) => c.id === id);
     const checkedOf = (id: string) => rechecks.find((c) => c.id === id)?.profileImageCheckedAt ?? null;
     check("…resets the photo re-check clock for every account with that person", checkedOf(a.id) === null && checkedOf(b.id) === null);
     check("…and no one else's", checkedOf(other.id)?.getTime() === checkedAt.getTime());
     check("a public-source copy on a contact is removed", photoOf(b.id)?.profileImageUrl === null && photoOf(b.id)?.profileImageSource === null);
-    check("…so are extension-sourced and provably-public unlabelled copies", photoOf(own.id)?.profileImageUrl === null && photoOf(unlabelled.id)?.profileImageUrl === null);
+    check("…so is an unlabelled Unavatar copy", photoOf(unlabelled.id)?.profileImageUrl === null);
+    check("an extension capture is the user's own and kept", photoOf(own.id)?.profileImageUrl === EXT_PHOTO && photoOf(own.id)?.profileImageSource === "extension");
+    check("…so is an unlabelled LinkedIn CDN photo (it may be a capture)", photoOf(legacy.id)?.profileImageUrl === EXT_PHOTO);
     check("…and their Blob objects are deleted", dels.includes(OWN_COPY));
     check("a Google-sourced photo is kept", photoOf(a.id)?.profileImageUrl === GOOGLE_PHOTO && photoOf(a.id)?.profileImageSource === "google" && !dels.includes(GOOGLE_PHOTO));
     check("a public copy under another slug is kept", photoOf(other.id)?.profileImageUrl === ELSE_COPY);
@@ -125,10 +131,17 @@ run(async () => {
     sourceCalls.length = 0;
     const lookup = await resolveLinkedInPhotoCached(a.id, li(SLUG), USER_A);
     check("a blocked slug is never fetched", lookup === null && sourceCalls.length === 0, `${JSON.stringify(lookup)} ${sourceCalls.length}`);
-    const licdn = "https://media.licdn.com/dms/image/v2/t/profile.jpg";
-    check("…and never contributed", (await contributeSharedPhoto(li(SLUG), licdn, li(SLUG))) === false);
-    check("…nor written by a late writer", (await upsertSharedAvatar({ slug: SLUG, imageUrl: "https://x.test/p.jpg", source: "extension" })) === false);
+    check("…nor written by a late writer", (await upsertSharedAvatar({ slug: SLUG, imageUrl: "https://x.test/p.jpg", source: "unavatar" })) === false);
     check("…the row is still blocked and empty", (await row(SLUG))?.imageUrl === null && (await row(SLUG))?.blockedAt !== null);
+
+    console.log("\nBlock ahead of any lookup");
+    const fresh = `${P}no-row-yet`;
+    check("the slug starts with no row", (await row(fresh)) === null);
+    await blockSharedAvatar(ADMIN, { slug: fresh, reason: "removal request, no account" });
+    const pre = await row(fresh);
+    check("block inserts a blocked, empty row", pre?.blockedAt !== null && pre?.imageUrl === null && pre?.blockedBy === ADMIN, JSON.stringify(pre));
+    sourceCalls.length = 0;
+    check("…so the slug is never fetched", (await resolveLinkedInPhotoCached("c-fresh", li(fresh), USER_A)) === null && sourceCalls.length === 0);
 
     console.log("\nSearch");
     const hits = await listSharedAvatars({ q: "TARGET" });
@@ -140,9 +153,9 @@ run(async () => {
     check("unblock clears the block", (await row(SLUG))?.blockedAt == null);
     const [unblockAudit] = await db.select().from(adminAuditLog).where(and(eq(adminAuditLog.adminUserId, ADMIN), eq(adminAuditLog.action, "avatar.unblock")));
     check("…and is audited", unblockAudit?.resourceId === SLUG);
-    check("a capture can contribute again", (await contributeSharedPhoto(li(SLUG), licdn, li(SLUG))) === true);
+    const again = await resolveLinkedInPhotoCached(a.id, li(SLUG), USER_A);
     const after = await row(SLUG);
-    check("…and the pool holds it", after?.source === "extension" && after.imageUrl?.startsWith("https://") === true && after.blockedAt === null, JSON.stringify(after));
+    check("a lookup can pool the person again", typeof again === "object" && again !== null && after?.source === "unavatar" && after.imageUrl === again.sharedUrl && after.blockedAt === null, JSON.stringify(after));
   } finally {
     globalThis.fetch = realFetch;
     setAvatarBlobClientForTests(null);

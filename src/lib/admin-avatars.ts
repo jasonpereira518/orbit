@@ -14,17 +14,18 @@ import { provablePublicPhotoSource } from "@/lib/shared-avatar-upkeep";
 function cleanSlug(raw: string): string {
   const slug = raw.trim().toLowerCase();
   if (!slug || slug.length > 200 || /[\s/?#]/.test(slug)) {
-    throw new UserFacingError("Enter a LinkedIn profile slug, like “jane-doe”.");
+    throw new UserFacingError("Enter a LinkedIn profile slug, like “jane-doe”");
   }
   return slug;
 }
 
 /**
- * Remove the shared photo and block the slug: it is never re-fetched or re-contributed
- * (every writer refuses a blocked row). Per-contact copies of the same public photo (source
- * public/extension, or unlabelled but provably from LinkedIn/Unavatar) are removed too, in
- * every account; Google, Outlook, Gravatar, Apollo and uploaded photos are never touched.
- * Every account's own sources get another go at the contact.
+ * Remove the shared photo and block the slug: it is never re-fetched (every writer refuses a
+ * blocked row). Works on a slug with no row yet (a removal request ahead of any lookup): the
+ * blocked row is inserted. Per-contact copies Orbit can prove came from a public lookup
+ * (source "public", or unlabelled with an Unavatar LinkedIn URL) are removed too, in every
+ * account; extension captures (the user's own), Google, Outlook, Gravatar, Apollo and
+ * uploaded photos are never touched. Every account's own sources get another go at the contact.
  */
 export async function blockSharedAvatar(
   adminUserId: string,
@@ -56,7 +57,7 @@ export async function blockSharedAvatar(
     .from(contacts)
     .where(eq(contacts.linkedinSlug, slug));
   const publicCopies = owners.filter(
-    (c) => c.source === "public" || c.source === "extension" || (c.source === null && provablePublicPhotoSource(c.url) !== null)
+    (c) => c.source === "public" || (c.source === null && provablePublicPhotoSource(c.url) !== null)
   );
   await db.update(contacts).set({ profileImageCheckedAt: null }).where(eq(contacts.linkedinSlug, slug));
   if (publicCopies.length > 0) {

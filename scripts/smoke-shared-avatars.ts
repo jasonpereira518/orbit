@@ -31,9 +31,9 @@ run(async () => {
   console.log("Upsert semantics...");
   check("no row reads as null", (await getSharedAvatar(`${P}a`)) === null);
   check("insert negative", (await upsertSharedAvatar({ slug: `${P}a`, imageUrl: null, source: "unavatar" })) === true);
-  check("negative -> positive replaces", (await upsertSharedAvatar({ slug: `${P}a`, imageUrl: IMG, source: "extension" })) === true);
+  check("negative -> positive replaces", (await upsertSharedAvatar({ slug: `${P}a`, imageUrl: IMG, source: "microlink" })) === true);
   let row = await getSharedAvatar(`${P}a`);
-  check("positive stored with its source", row?.imageUrl === IMG && row.source === "extension");
+  check("positive stored with its source", row?.imageUrl === IMG && row.source === "microlink");
   check("negative does not replace a photo", (await upsertSharedAvatar({ slug: `${P}a`, imageUrl: null, source: "unavatar" })) === false);
   check("photo survived", (await getSharedAvatar(`${P}a`))?.imageUrl === IMG);
   check("negative with refresh replaces", (await upsertSharedAvatar({ slug: `${P}a`, imageUrl: null, source: "unavatar", refresh: true })) === true);
@@ -41,7 +41,7 @@ run(async () => {
 
   await upsertSharedAvatar({ slug: `${P}b`, imageUrl: IMG, source: "microlink" });
   await db.update(linkedinAvatars).set({ blockedAt: new Date(), blockedBy: "admin" }).where(eq(linkedinAvatars.slug, `${P}b`));
-  check("blocked row refuses a positive", (await upsertSharedAvatar({ slug: `${P}b`, imageUrl: "https://x/y.jpg", source: "extension" })) === false);
+  check("blocked row refuses a positive", (await upsertSharedAvatar({ slug: `${P}b`, imageUrl: "https://x/y.jpg", source: "microlink" })) === false);
   check("blocked row refuses a refresh", (await upsertSharedAvatar({ slug: `${P}b`, imageUrl: null, source: "unavatar", refresh: true })) === false);
   row = await getSharedAvatar(`${P}b`);
   check("a non-https image is refused", (await upsertSharedAvatar({ slug: `${P}c`, imageUrl: "data:image/jpeg;base64,AA", source: "unavatar" })) === false && (await getSharedAvatar(`${P}c`)) === null);

@@ -1,6 +1,6 @@
 /**
- * Upkeep of the shared LinkedIn photo pool (`linkedin_avatars`): promoting photos a contact
- * already holds (seed script), filling the most-shared slugs a little each hour, and
+ * Upkeep of the shared LinkedIn photo pool (`linkedin_avatars`): seeding slugs whose contact
+ * already shows an Unavatar photo (seed script, by a fresh public lookup), filling the most-shared slugs a little each hour, and
  * removing rows once no contact in any account carries the slug.
  */
 import { createHash } from "node:crypto";
@@ -18,9 +18,7 @@ import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit
 import {
   adoptSharedPhoto,
   getSharedAvatar,
-  isLinkedInCdnPhoto,
   resolveLinkedInPhotoCached,
-  type SharedAvatarSource,
 } from "@/lib/shared-avatars";
 
 /** Slugs resolved per hourly run. The shared Unavatar/Microlink allowance is the real cap. */
@@ -31,16 +29,16 @@ const SWEEP_MAX_BATCHES = 10;
 /** The fill stops while the app-wide allowance of either source has fewer than this left. */
 export const SHARED_FILL_RESERVE = 10;
 /** Wall-clock ceiling on one fill run. */
-export const SHARED_FILL_BUDGET_MS = 60_000;
+export const SHARED_FILL_BUDGET_MS = 20_000;
 
 /**
- * Where a contact's stored photo URL provably came from the public web: a LinkedIn CDN photo
- * (what the extension scrapes) or Unavatar's LinkedIn endpoint. Blob, data:, Google, Outlook
- * and everything else is null: its origin is not provable, so it is never shared.
+ * Whether a contact's stored photo URL provably came from a public lookup: Unavatar's LinkedIn
+ * endpoint. A media.licdn.com URL is NOT: it may be an extension capture from before photo
+ * provenance existed, and captures stay with their account. Blob, data:, Google, Outlook and
+ * everything else is null too.
  */
-export function provablePublicPhotoSource(url: string | null | undefined): SharedAvatarSource | null {
+export function provablePublicPhotoSource(url: string | null | undefined): "unavatar" | null {
   if (!url) return null;
-  if (isLinkedInCdnPhoto(url)) return "extension";
   try {
     const u = new URL(url);
     return u.protocol === "https:" && u.hostname === "unavatar.io" && u.pathname.startsWith("/linkedin/")
@@ -54,23 +52,21 @@ export function provablePublicPhotoSource(url: string | null | undefined): Share
 export type SeedOutcome = "promoted" | "not-provable" | "blocked" | "already" | "no-image";
 
 /**
- * Cache `url` (a contact's remote photo) into the pool under `slug`. Always stored from the
- * slug, never re-derived from a URL; the pool holds our own copy, never a remote reference.
- * `dryRun` classifies without downloading or writing.
+ * Pool `slug` when a contact's photo `url` shows Unavatar had one: a fresh Unavatar lookup by
+ * the slug (never the stored URL) is stored as our own copy. `dryRun` classifies without
+ * downloading or writing.
  */
 export async function seedSharedAvatar(slug: string, url: string, dryRun = false): Promise<SeedOutcome> {
-  const source = provablePublicPhotoSource(url);
-  if (!source) return "not-provable";
+  if (!provablePublicPhotoSource(url)) return "not-provable";
   const row = await getSharedAvatar(slug);
   if (row?.blockedAt) return "blocked";
   if (row?.imageUrl) return "already";
   if (dryRun) return "promoted";
-  // Unavatar is asked for the slug, never the stored URL as-is. It serves an SVG placeholder
-  // for misses; the download refuses vectors.
-  const from = source === "unavatar" ? `https://unavatar.io/linkedin/${encodeURIComponent(slug)}?fallback=false` : url;
+  // Unavatar serves an SVG placeholder for misses; the download refuses vectors.
+  const from = `https://unavatar.io/linkedin/${encodeURIComponent(slug)}?fallback=false`;
   const stored = await downloadAndPersistSharedAvatar(slug, from);
   if (!stored) return "no-image";
-  return (await adoptSharedPhoto(slug, row, stored, source)) ? "promoted" : "blocked";
+  return (await adoptSharedPhoto(slug, row, stored, "unavatar")) ? "promoted" : "blocked";
 }
 
 /** Lookups left today in an app-wide source allowance (`consumeBucket`'s window rule). */
@@ -140,7 +136,7 @@ export async function fillSharedAvatars(
 
 /**
  * Delete pool rows no contact in any account refers to any more (blocked rows stay: they
- * hold no image and keep the slug from being re-contributed). The row goes first, in one
+ * hold no image and keep the slug from being fetched again). The row goes first, in one
  * statement that re-checks for contacts as of its own snapshot (a contact inserted by a
  * concurrent transaction can still lose its photo until the next lookup re-fills it); the
  * object is deleted after, best-effort. Returns rows removed.

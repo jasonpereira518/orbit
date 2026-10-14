@@ -4882,16 +4882,17 @@ export const orgBrandColors = pgTable(
 /**
  * Cross-user LinkedIn photo cache, keyed by the profile slug (`contacts.linkedin_slug`, so
  * reads JOIN on it). Global: no user_id. `imageUrl` null = looked and found nothing. Public
- * web sources and extension captures only; never a mailbox or enrichment provider's photo.
+ * lookups (Unavatar, Microlink) only; never an extension capture (those stay with the
+ * account) nor a mailbox or enrichment provider's photo.
  * A row is deleted once no contact in any account carries the slug; `blockedAt` rows stay
- * (admin takedown) so the slug is never fetched or contributed again.
+ * (admin takedown) so the slug is never fetched again.
  */
 export const linkedinAvatars = pgTable(
   "linkedin_avatars",
   {
     slug: text("slug").primaryKey(),
     imageUrl: text("image_url"),
-    source: text("source").$type<"unavatar" | "microlink" | "extension">().notNull(),
+    source: text("source").$type<"unavatar" | "microlink">().notNull(),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }).defaultNow().notNull(),
     blockedAt: timestamp("blocked_at", { withTimezone: true }),
     blockedBy: text("blocked_by"),

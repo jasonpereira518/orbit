@@ -127,7 +127,7 @@ export default async function AdminContactDetailPage({
                 <span className="font-mono text-xs">{photoSlug}</span>
                 {" · "}
                 {sharedPhoto?.blockedAt
-                  ? "Blocked — never fetched or contributed."
+                  ? "Blocked — never fetched."
                   : sharedPhoto?.imageUrl
                     ? `Shown to every Orbit user who has this person (${sharedPhoto.source}).`
                     : "No shared photo."}

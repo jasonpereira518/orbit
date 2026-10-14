@@ -12,7 +12,7 @@ export function SharedAvatarActions({ slug, blocked }: { slug: string; blocked: 
     <ConfirmActionDialog
       trigger={<button type="button" className={`${BUTTON} hover:bg-muted`}>Unblock</button>}
       title="Unblock this photo?"
-      description="The next lookup for this person resolves a photo again, and an extension capture can contribute one."
+      description="The next public lookup for this person can find and share a photo again."
       confirmLabel="Unblock"
       onConfirm={(reason) => unblockSharedAvatarAction({ slug, reason })}
     />
@@ -24,7 +24,7 @@ export function SharedAvatarActions({ slug, blocked }: { slug: string; blocked: 
         </button>
       }
       title="Remove and block this photo?"
-      description="Removes the photo everywhere it came from LinkedIn: the shared photo and any copy saved on a contact in any account. It is never fetched or contributed again. Google, Outlook, Gravatar, Apollo and uploaded photos stay, and are re-checked."
+      description="Removes the shared photo, and any copy on a contact in any account that Orbit can prove came from a public lookup. It is never fetched again. Extension captures, Google, Outlook, Gravatar, Apollo and uploaded photos stay with their accounts, and are re-checked."
       confirmLabel="Remove & block"
       danger
       onConfirm={(reason) => blockSharedAvatarAction({ slug, reason })}

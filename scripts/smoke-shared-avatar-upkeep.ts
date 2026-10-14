@@ -1,6 +1,7 @@
 /**
- * Shared LinkedIn photo pool upkeep: seeding promotes only photos with a provable public
- * origin, the hourly fill takes the most-shared slugs first and stops when the source quota
+ * Shared LinkedIn photo pool upkeep: seeding pools only slugs whose contact shows an Unavatar
+ * photo, by a fresh lookup (never a stored media.licdn.com URL: it may be an extension
+ * capture); the hourly fill takes the most-shared slugs first and stops when the source quota
  * defers, and the orphan sweep removes a row only once no contact in ANY account has the slug
  * (blocked rows survive). Network and Blob are stubbed.
  * Run: npx tsx scripts/smoke-shared-avatar-upkeep.ts
@@ -95,11 +96,11 @@ run(async () => {
   try {
     console.log("Which photos are provable");
     const prov = provablePublicPhotoSource;
-    check("a LinkedIn CDN photo is", prov("https://media.licdn.com/dms/image/x.jpg") === "extension");
     check("an Unavatar LinkedIn lookup is", prov("https://unavatar.io/linkedin/ada?fallback=false") === "unavatar");
     check(
-      "Blob, data:, Google, Outlook, look-alike hosts and other Unavatar providers are not",
+      "LinkedIn CDN, Blob, data:, Google, Outlook, look-alike hosts and other Unavatar providers are not",
       [
+        "https://media.licdn.com/dms/image/v2/x/profile-displayphoto-shrink_800_800/0/1",
         `${BLOB}/avatars/c1.jpg`,
         "data:image/jpeg;base64,AAAA",
         "https://lh3.googleusercontent.com/a/x",
@@ -114,22 +115,19 @@ run(async () => {
     );
 
     console.log("\nSeeding");
-    const licdn = "https://media.licdn.com/dms/image/v2/seed/profile.jpg";
+    const licdn = "https://media.licdn.com/dms/image/v2/seed/profile-displayphoto-shrink_800_800/0/1";
+    const unav = "https://unavatar.io/linkedin/whoever?fallback=false";
     const dry = `${P}dry`;
-    check("a dry run reports without downloading or writing", (await seedSharedAvatar(dry, licdn, true)) === "promoted" && (await row(dry)) === null && puts.length === 0 && photoFetches.length === 0);
+    check("a dry run reports without downloading or writing", (await seedSharedAvatar(dry, unav, true)) === "promoted" && (await row(dry)) === null && puts.length === 0 && unavatarAsked.length === 0);
 
     const fromCdn = `${P}cdn`;
-    check("a LinkedIn CDN photo is promoted", (await seedSharedAvatar(fromCdn, licdn)) === "promoted");
-    const cdnRow = await row(fromCdn);
-    check(
-      "…downloaded into avatars-shared/, not referenced remotely",
-      cdnRow?.source === "extension" && cdnRow.imageUrl?.startsWith(`${BLOB}/avatars-shared/`) === true && photoFetches.length === 1 && !cdnRow.imageUrl.includes("licdn"),
-      JSON.stringify(cdnRow)
-    );
+    check("a stored LinkedIn CDN photo is never promoted", (await seedSharedAvatar(fromCdn, licdn)) === "not-provable" && (await row(fromCdn)) === null && photoFetches.length === 0 && puts.length === 0);
 
     const fromUnavatar = `${P}unav`;
     unavatarAsked.length = 0;
     check("an Unavatar photo with real bytes is promoted", (await seedSharedAvatar(fromUnavatar, `https://unavatar.io/linkedin/someone-else?fallback=false`)) === "promoted" && (await row(fromUnavatar))?.source === "unavatar");
+    const seededRow = await row(fromUnavatar);
+    check("…downloaded into avatars-shared/, not referenced remotely", seededRow?.imageUrl?.startsWith(`${BLOB}/avatars-shared/`) === true, JSON.stringify(seededRow));
     check("…asked for by the slug, not the stored URL", unavatarAsked.length === 1 && unavatarAsked[0].includes(`/linkedin/${fromUnavatar}?`), JSON.stringify(unavatarAsked));
 
     const placeholder = `${P}svg`;
@@ -146,12 +144,12 @@ run(async () => {
 
     const blocked = `${P}blocked`;
     await db.insert(linkedinAvatars).values({ slug: blocked, imageUrl: null, source: "unavatar", blockedAt: new Date(), blockedBy: "admin" });
-    check("a blocked slug is skipped", (await seedSharedAvatar(blocked, licdn)) === "blocked" && (await row(blocked))?.imageUrl === null);
+    check("a blocked slug is skipped", (await seedSharedAvatar(blocked, unav)) === "blocked" && (await row(blocked))?.imageUrl === null);
     const putsAtAlready = puts.length;
-    check("an already-positive slug is skipped", (await seedSharedAvatar(fromCdn, licdn)) === "already" && puts.length === putsAtAlready);
+    check("an already-positive slug is skipped", (await seedSharedAvatar(fromUnavatar, unav)) === "already" && puts.length === putsAtAlready);
     const negative = `${P}negative`;
     await db.insert(linkedinAvatars).values({ slug: negative, imageUrl: null, source: "unavatar" });
-    check("a negative row is upgraded", (await seedSharedAvatar(negative, licdn)) === "promoted" && (await row(negative))?.imageUrl?.startsWith("https://") === true);
+    check("a negative row is upgraded", (await seedSharedAvatar(negative, unav)) === "promoted" && (await row(negative))?.imageUrl?.startsWith("https://") === true);
 
     console.log("\nHourly fill");
     const [A, B, C] = [`${P}fill-a`, `${P}fill-b`, `${P}fill-c`];
@@ -211,7 +209,7 @@ run(async () => {
     dels.length = 0;
     await sweepOrphanedSharedAvatars();
     check("rows with a contact are kept", (await row(shared)) !== null && (await row(lastOne)) !== null);
-    check("a slug no contact has is removed, with its object", (await row(neverHad)) === null && (await row(cdnRow!.slug)) === null && dels.includes(cdnRow!.imageUrl!), JSON.stringify(dels));
+    check("a slug no contact has is removed, with its object", (await row(neverHad)) === null && (await row(seededRow!.slug)) === null && dels.includes(seededRow!.imageUrl!), JSON.stringify(dels));
     check("a blocked row survives", (await row(keepBlocked)) !== null);
 
     await db.delete(contacts).where(eq(contacts.id, a1.id));

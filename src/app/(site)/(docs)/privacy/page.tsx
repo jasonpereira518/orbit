@@ -124,13 +124,13 @@ export default function PrivacyPage() {
               stored; photos from a capture you never save are deleted after 24 hours.
             </li>
             <li>
-              <strong>Contact photos</strong> — a public LinkedIn profile photo, whether fetched from
-              the public web or captured by the Orbit browser extension from a LinkedIn profile page
-              you are viewing, can be added to a shared set once and shown to any Orbit user who has
-              that person. Photos from Google or Outlook contacts, Gravatar and Apollo are never
-              shared: they stay private to your account.
+              <strong>Contact photos</strong> — shared photos come only from public LinkedIn profile
+              photos found by a public lookup on the web: one is added to a shared set once and shown
+              to any Orbit user who has that person. Photos from Google or Outlook contacts, photos the
+              Orbit browser extension captures, and Gravatar and Apollo photos are never shared: they
+              stay with your account.
             </li>
-          <li>
+            <li>
               <strong>Voice and meetings</strong> — audio you record is sent to be transcribed and is
               not kept. The transcript is: a voice note becomes the text of your note, and a meeting
               keeps its transcript until you delete the meeting.

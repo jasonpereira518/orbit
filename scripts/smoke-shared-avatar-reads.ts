@@ -41,10 +41,10 @@ run(async () => {
 
   const ok = `${P}ok`;
   await db.insert(linkedinAvatars).values([
-    { slug: ok, imageUrl: SHARED, source: "extension" },
-    { slug: `${P}blocked`, imageUrl: SHARED, source: "extension", blockedAt: new Date(), blockedBy: "admin" },
+    { slug: ok, imageUrl: SHARED, source: "microlink" },
+    { slug: `${P}blocked`, imageUrl: SHARED, source: "microlink", blockedAt: new Date(), blockedBy: "admin" },
     { slug: `${P}neg`, imageUrl: null, source: "unavatar" },
-    { slug: `${P}http`, imageUrl: "http://media.licdn.com/insecure", source: "extension" },
+    { slug: `${P}http`, imageUrl: "http://media.licdn.com/insecure", source: "microlink" },
   ]);
   const mk = async (userId: string, name: string, linkedinUrl: string | null, extra: Partial<typeof contacts.$inferInsert> = {}) =>
     (await db.insert(contacts).values({ userId, fullName: name, linkedinUrl, profileImageUrl: OWN, ...extra }).returning())[0];

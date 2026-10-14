@@ -22,8 +22,6 @@ import {
   type ContactInput,
 } from "@/lib/contact-writes";
 import { DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
-import { AVATAR_INLINE_BUDGET_MS } from "@/lib/avatar-backfill";
-import { contributeSharedPhoto } from "@/lib/shared-avatars";
 import { PaywallError } from "@/lib/entitlements";
 import { rebuildContactEmbedding } from "@/lib/search";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
@@ -71,13 +69,10 @@ function unionLists(
   return out;
 }
 
-/**
- * `ownPhoto` false = the scraped photo went to the shared LinkedIn pool, which the contact
- * displays, so it is not copied onto the contact.
- */
-function toContactInput(fields: SaveContactFields, source: string, ownPhoto = true): ContactInput {
+/** A captured photo is this account's own (source "extension"); it never enters the shared LinkedIn pool. */
+function toContactInput(fields: SaveContactFields, source: string): ContactInput {
   // No photo scraped is undefined, never null: in merge mode null would wipe a stored photo.
-  const photo = ownPhoto ? fields.photoUrl || undefined : undefined;
+  const photo = fields.photoUrl || undefined;
   return {
     fullName: fields.fullName,
     firstName: fields.firstName,
@@ -116,24 +111,6 @@ function revalidateContactRoutes(contactId: string) {
 
 export const EXTENSION_SOURCE = "chrome_extension";
 
-/**
- * Offer a scraped LinkedIn photo to the shared pool, bounded like an inline avatar lookup.
- * False (keep it on the contact) on anything but a confirmed contribution. A contribution
- * that outlives the budget still lands; the contact then just has its own copy as well.
- */
-async function sharedPhotoTaken(
-  linkedinUrl: string | null | undefined,
-  photoUrl: string | undefined,
-  pageUrl: string
-) {
-  if (!photoUrl) return false;
-  const timer = new Promise<false>((resolve) => {
-    const t = setTimeout(() => resolve(false), AVATAR_INLINE_BUDGET_MS);
-    (t as { unref?: () => void }).unref?.();
-  });
-  return Promise.race([contributeSharedPhoto(linkedinUrl, photoUrl, pageUrl).catch(() => false), timer]);
-}
-
 export async function saveContactFromExtension(
   userId: string,
   input: SaveContactRequest,
@@ -154,12 +131,7 @@ export async function saveContactFromExtension(
       throw new ExtensionRouteError("not_found", "That contact no longer exists.");
     }
 
-    const shared = await sharedPhotoTaken(
-      input.fields.linkedinUrl ?? existing.linkedinUrl,
-      input.fields.photoUrl,
-      input.page.url
-    );
-    const patch = toContactInput(input.fields, existing.source ?? EXTENSION_SOURCE, !shared);
+    const patch = toContactInput(input.fields, existing.source ?? EXTENSION_SOURCE);
     // Additive for the list fields — see the file header. The union itself now lives in
     // `updateContactForUser` behind `mergeFactLists`, because this rule was implemented
     // here and nowhere else, and the path that pastes notes did not have it: a note
@@ -195,12 +167,11 @@ export async function saveContactFromExtension(
       }
     }
 
-    const shared = await sharedPhotoTaken(input.fields.linkedinUrl, input.fields.photoUrl, input.page.url);
     let contact;
     try {
       contact = await createContactForUser(
         userId,
-        toContactInput(input.fields, EXTENSION_SOURCE, !shared),
+        toContactInput(input.fields, EXTENSION_SOURCE),
         WRITE_OPTIONS
       );
     } catch (error) {

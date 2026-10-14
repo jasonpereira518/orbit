@@ -285,24 +285,6 @@ export async function GET(request: Request) {
     }
 
     try {
-      // A little of the shared photo pool each hour, most-shared slugs first.
-      const fill = await fillSharedAvatars();
-      stats.sharedAvatarsFilled = fill.found;
-      stats.sharedAvatarsMissed = fill.missed;
-      stats.sharedAvatarFillDeferred = fill.deferred;
-    } catch (err) {
-      status = "partial";
-      reportError(err, { where: "job.process-stalled.shared-avatar-fill" });
-    }
-
-    try {
-      stats.sharedAvatarsSwept = await sweepOrphanedSharedAvatars();
-    } catch (err) {
-      status = "partial";
-      reportError(err, { where: "job.process-stalled.shared-avatar-sweep" });
-    }
-
-    try {
       // Redraw closeness for users whose ranking has been drifting.
       //
       // Ordinary edits score their own contact immediately and flag the distribution
@@ -409,6 +391,25 @@ export async function GET(request: Request) {
     } catch (err) {
       status = "partial";
       reportError(err, { where: "job.process-stalled.relationship-kicks" });
+    }
+
+    try {
+      // A little of the shared photo pool each hour, most-shared slugs first. Last, with the
+      // orphan sweep: lookups are slow, and must never push the stages above past maxDuration.
+      const fill = await fillSharedAvatars();
+      stats.sharedAvatarsFilled = fill.found;
+      stats.sharedAvatarsMissed = fill.missed;
+      stats.sharedAvatarFillDeferred = fill.deferred;
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.shared-avatar-fill" });
+    }
+
+    try {
+      stats.sharedAvatarsSwept = await sweepOrphanedSharedAvatars();
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.shared-avatar-sweep" });
     }
 
     if (stats.resumeFailed > 0) status = "partial";
