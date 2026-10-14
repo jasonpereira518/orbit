@@ -3,9 +3,10 @@
  * already holds (seed script), filling the most-shared slugs a little each hour, and
  * removing rows once no contact in any account carries the slug.
  */
+import { createHash } from "node:crypto";
 import { and, isNull, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { linkedinAvatars } from "@/db/schema";
+import { linkedinAvatars, rateLimitBuckets } from "@/db/schema";
 import { deleteSharedAvatarBlob } from "@/lib/avatar-blob";
 import {
   AvatarSourceRateLimitError,
@@ -13,6 +14,7 @@ import {
   hasBlobStorage,
 } from "@/lib/contact-avatar";
 import { LINKEDIN_HOST_RE } from "@/lib/contact-avatar-sql";
+import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import {
   adoptSharedPhoto,
   getSharedAvatar,
@@ -26,6 +28,10 @@ export const SHARED_AVATAR_FILL_PER_RUN = 20;
 /** Rows removed per statement, and statements per run. */
 export const SHARED_AVATAR_SWEEP_BATCH = 200;
 const SWEEP_MAX_BATCHES = 10;
+/** The fill stops while the app-wide allowance of either source has fewer than this left. */
+export const SHARED_FILL_RESERVE = 10;
+/** Wall-clock ceiling on one fill run. */
+export const SHARED_FILL_BUDGET_MS = 60_000;
 
 /**
  * Where a contact's stored photo URL provably came from the public web: a LinkedIn CDN photo
@@ -59,17 +65,34 @@ export async function seedSharedAvatar(slug: string, url: string, dryRun = false
   if (row?.blockedAt) return "blocked";
   if (row?.imageUrl) return "already";
   if (dryRun) return "promoted";
-  // Unavatar serves an SVG placeholder for misses; the download refuses vectors.
-  const stored = await downloadAndPersistSharedAvatar(slug, url);
+  // Unavatar is asked for the slug, never the stored URL as-is. It serves an SVG placeholder
+  // for misses; the download refuses vectors.
+  const from = source === "unavatar" ? `https://unavatar.io/linkedin/${encodeURIComponent(slug)}?fallback=false` : url;
+  const stored = await downloadAndPersistSharedAvatar(slug, from);
   if (!stored) return "no-image";
   return (await adoptSharedPhoto(slug, row, stored, source)) ? "promoted" : "blocked";
 }
 
+/** Lookups left today in an app-wide source allowance (`consumeBucket`'s window rule). */
+async function sharedAllowanceLeft(source: "unavatar" | "microlink"): Promise<number> {
+  const db = await getDb();
+  const policy = RATE_LIMITS.avatarSourceShared;
+  const [b] = await db
+    .select()
+    .from(rateLimitBuckets)
+    .where(sql`${rateLimitBuckets.bucket} = ${"avatarSource.shared:" + source}`);
+  if (!b || Date.now() - b.windowStartedAt.getTime() > policy.windowSec * 1000) return policy.limit;
+  return policy.limit - b.count;
+}
+
 /**
  * Resolve up to `limit` slugs that have no pool row, most-shared first (contacts across all
- * accounts). Stops at the first quota deferral. Each lookup is charged to its own system id:
- * the per-user daily slice protects users from each other, and this is not a user; the
- * app-wide allowance (what actually defers) still applies.
+ * accounts). Never takes an app-wide source allowance below {@link SHARED_FILL_RESERVE}, which
+ * is left for interactive lookups, has its own daily cap and a time budget, and stops at the first
+ * deferral of any kind. Each lookup is charged to its own system id: the per-user daily slice
+ * protects users from each other and this is not a user.
+ * ponytail: the candidate query is linear in contacts that carry a slug, once an hour; if
+ * that table gets large, keep a per-slug count (or a worklist table) updated on write.
  */
 export async function fillSharedAvatars(
   limit = SHARED_AVATAR_FILL_PER_RUN
@@ -87,17 +110,27 @@ export async function fillSharedAvatars(
      ORDER BY count(*) DESC, c.linkedin_slug
      LIMIT ${limit}
   `);
+  const deadline = Date.now() + SHARED_FILL_BUDGET_MS;
   for (const { slug } of rowsOf<{ slug: string }>(result)) {
+    if (Date.now() > deadline) break;
     try {
+      const left = await Promise.all([sharedAllowanceLeft("unavatar"), sharedAllowanceLeft("microlink")]);
+      // This lookup spends one (two on a Unavatar miss), so stop at the reserve, not below it.
+      if (Math.min(...left) <= SHARED_FILL_RESERVE) {
+        out.deferred = true;
+        break;
+      }
+      await consumeBucket("avatarFill", "daily", RATE_LIMITS.avatarFill);
       const got = await resolveLinkedInPhotoCached(
         `shared:${slug}`,
         `https://www.linkedin.com/in/${slug}`,
-        `system:avatar-fill:${slug}`
+        // Hashed: the id becomes part of a bucket key, and a slug is user-controlled text.
+        `system:avatar-fill:${createHash("sha256").update(slug).digest("hex").slice(0, 16)}`
       );
       if (got) out.found += 1;
       else out.missed += 1;
     } catch (err) {
-      if (!(err instanceof AvatarSourceRateLimitError)) throw err;
+      if (!(err instanceof AvatarSourceRateLimitError || isRateLimitedError(err))) throw err;
       out.deferred = true;
       break;
     }
@@ -108,8 +141,9 @@ export async function fillSharedAvatars(
 /**
  * Delete pool rows no contact in any account refers to any more (blocked rows stay: they
  * hold no image and keep the slug from being re-contributed). The row goes first, in one
- * statement that re-checks for a contact that just appeared; its object is deleted after,
- * best-effort. Returns rows removed.
+ * statement that re-checks for contacts as of its own snapshot (a contact inserted by a
+ * concurrent transaction can still lose its photo until the next lookup re-fills it); the
+ * object is deleted after, best-effort. Returns rows removed.
  */
 export async function sweepOrphanedSharedAvatars(): Promise<number> {
   const db = await getDb();

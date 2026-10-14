@@ -2,8 +2,9 @@
  * One-off: promote photos contacts already hold into the shared LinkedIn photo pool.
  *
  * Only a contact's REMOTE public photo is eligible (https media.licdn.com, or Unavatar's
- * LinkedIn endpoint, and not from a mailbox/enrichment/upload source): those are the only
- * photos whose public origin is provable. Each is downloaded and stored under
+ * LinkedIn endpoint, and only rows whose source is unknown or "public": never extension
+ * captures, which may be from the wrong page, nor mailbox/enrichment/upload photos): those are the only
+ * photos whose public origin is provable. Each is downloaded (Unavatar by slug, not by the stored URL) and stored under
  * avatars-shared/. Blob, data:, Google and Outlook photos are never promoted. Blocked and
  * already-positive slugs are skipped.
  *
@@ -14,10 +15,10 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 config();
 
-import { and, isNotNull, isNull, or, inArray, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts } from "../src/db/schema";
-import { hasBlobStorage } from "../src/lib/contact-avatar";
+import { AvatarSourceRateLimitError, hasBlobStorage } from "../src/lib/contact-avatar";
 import { provablePublicPhotoSource, seedSharedAvatar } from "../src/lib/shared-avatar-upkeep";
 import { sharedPhotoSlug } from "../src/lib/shared-avatars";
 
@@ -33,7 +34,7 @@ async function main() {
       and(
         isNotNull(contacts.linkedinSlug),
         isNotNull(contacts.profileImageUrl),
-        or(isNull(contacts.profileImageSource), inArray(contacts.profileImageSource, ["extension", "public"])),
+        or(isNull(contacts.profileImageSource), eq(contacts.profileImageSource, "public")),
         sql`(${contacts.profileImageUrl} LIKE 'https://media.licdn.com/%' OR ${contacts.profileImageUrl} LIKE 'https://unavatar.io/linkedin/%')`
       )
     );
@@ -43,8 +44,14 @@ async function main() {
     const slug = sharedPhotoSlug(url);
     if (!slug || !photo || !provablePublicPhotoSource(photo) || seen.has(slug)) continue;
     seen.add(slug);
-    const outcome = await seedSharedAvatar(slug, photo, !apply);
-    counts[outcome] = (counts[outcome] ?? 0) + 1;
+    try {
+      const outcome = await seedSharedAvatar(slug, photo, !apply);
+      counts[outcome] = (counts[outcome] ?? 0) + 1;
+    } catch (err) {
+      if (!(err instanceof AvatarSourceRateLimitError)) throw err;
+      console.log(`${err.source} rate limit hit; stopping. Re-run later: promoted slugs are skipped.`);
+      break;
+    }
   }
   console.log(`${apply ? "Applied" : "Dry run"}: ${seen.size} candidate slug(s).`, counts);
   if (!apply) console.log('"promoted" = would be promoted. Re-run with --apply to write.');

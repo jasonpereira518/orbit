@@ -11,8 +11,10 @@ import { eq, inArray, like, or } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, linkedinAvatars, rateLimitBuckets } from "../src/db/schema";
 import { setAvatarBlobClientForTests } from "../src/lib/avatar-blob";
+import { RATE_LIMITS } from "../src/lib/rate-limit";
 import {
   SHARED_AVATAR_SWEEP_BATCH,
+  SHARED_FILL_RESERVE,
   fillSharedAvatars,
   provablePublicPhotoSource,
   seedSharedAvatar,
@@ -72,9 +74,9 @@ setAvatarBlobClientForTests({
 
 run(async () => {
   const db = await getDb();
-  const savedCounters = await db.select().from(rateLimitBuckets).where(like(rateLimitBuckets.bucket, "avatarSource.%"));
+  const savedCounters = await db.select().from(rateLimitBuckets).where(or(like(rateLimitBuckets.bucket, "avatarSource.%"), like(rateLimitBuckets.bucket, "avatarFill:%")));
   const resetCounters = () =>
-    db.delete(rateLimitBuckets).where(or(like(rateLimitBuckets.bucket, "avatarSource.shared:%"), like(rateLimitBuckets.bucket, "avatarSource.%system:avatar-fill:smoke-sau-%")));
+    db.delete(rateLimitBuckets).where(or(like(rateLimitBuckets.bucket, "avatarSource.shared:%"), like(rateLimitBuckets.bucket, "avatarFill:%"), like(rateLimitBuckets.bucket, "avatarSource.user:%system:avatar-fill:%")));
   const cleanup = async () => {
     await db.delete(linkedinAvatars).where(like(linkedinAvatars.slug, `${P}%`));
     await db.delete(contacts).where(inArray(contacts.userId, USERS));
@@ -126,7 +128,9 @@ run(async () => {
     );
 
     const fromUnavatar = `${P}unav`;
-    check("an Unavatar photo with real bytes is promoted", (await seedSharedAvatar(fromUnavatar, `https://unavatar.io/linkedin/${fromUnavatar}?fallback=false`)) === "promoted" && (await row(fromUnavatar))?.source === "unavatar");
+    unavatarAsked.length = 0;
+    check("an Unavatar photo with real bytes is promoted", (await seedSharedAvatar(fromUnavatar, `https://unavatar.io/linkedin/someone-else?fallback=false`)) === "promoted" && (await row(fromUnavatar))?.source === "unavatar");
+    check("…asked for by the slug, not the stored URL", unavatarAsked.length === 1 && unavatarAsked[0].includes(`/linkedin/${fromUnavatar}?`), JSON.stringify(unavatarAsked));
 
     const placeholder = `${P}svg`;
     unavatarSvg = true;
@@ -160,15 +164,28 @@ run(async () => {
     await addContacts(offHost, 13, `https://example.com/in/${offHost}`);
     await db.insert(linkedinAvatars).values({ slug: hasRow, imageUrl: `${BLOB}/avatars-shared/keep.jpg`, source: "unavatar" });
 
-    // Room for exactly one lookup in the app-wide allowance.
-    await db.insert(rateLimitBuckets).values({ bucket: "avatarSource.shared:unavatar", windowStartedAt: new Date(), count: 24 });
+    // Room for one lookup above the reserve: the fill must stop there, not run the allowance dry.
+    const sharedLimit = RATE_LIMITS.avatarSourceShared.limit;
+    await db.insert(rateLimitBuckets).values({ bucket: "avatarSource.shared:unavatar", windowStartedAt: new Date(), count: sharedLimit - SHARED_FILL_RESERVE - 1 });
     unavatarAsked.length = 0;
     microlinkAsked.length = 0;
     const first = await fillSharedAvatars();
     const mine = () => unavatarAsked.filter((u) => u.includes(P)).map((u) => u.match(/fill-[a-z-]+/)?.[0]);
-    check("the most-shared slug is resolved first and the quota stops the run", (await row(A))?.imageUrl?.startsWith("https://") === true && (await row(B)) === null && (await row(C)) === null && first.deferred, JSON.stringify({ first, asked: mine() }));
-    check("…and no later slug is tried once it defers", microlinkAsked.filter((u) => u.includes(P)).length === 1, JSON.stringify(microlinkAsked));
+    const [shared1] = await db.select().from(rateLimitBuckets).where(eq(rateLimitBuckets.bucket, "avatarSource.shared:unavatar"));
+    check("the most-shared slug is resolved first, then the reserve stops the run", (await row(A))?.imageUrl?.startsWith("https://") === true && (await row(B)) === null && (await row(C)) === null && first.deferred, JSON.stringify({ first, asked: mine() }));
+    check("…leaving at least the reserve of the app-wide allowance", sharedLimit - shared1.count >= SHARED_FILL_RESERVE, String(shared1.count));
+    check("…and no later slug is tried", mine().length === 1 && microlinkAsked.filter((u) => u.includes(P)).length === 0, JSON.stringify({ mine: mine(), microlinkAsked }));
     check("…a slug with a row or a non-LinkedIn host is never asked for", !mine().includes("fill-has-row") && !mine().includes("fill-offhost"), JSON.stringify(mine()));
+    const keys = (await db.select().from(rateLimitBuckets).where(like(rateLimitBuckets.bucket, "avatarSource.user:%system:avatar-fill:%"))).map((b) => b.bucket);
+    check("the system id in a bucket key is a hash, not the slug", keys.length > 0 && keys.every((k) => !k.includes(P)), JSON.stringify(keys));
+
+    await db.delete(rateLimitBuckets).where(eq(rateLimitBuckets.bucket, "avatarSource.shared:unavatar"));
+    await db.delete(rateLimitBuckets).where(eq(rateLimitBuckets.bucket, "avatarFill:daily"));
+    await db.insert(rateLimitBuckets).values({ bucket: "avatarFill:daily", windowStartedAt: new Date(), count: RATE_LIMITS.avatarFill.limit });
+    unavatarAsked.length = 0;
+    const capped = await fillSharedAvatars();
+    check("the fill's own daily cap stops it before any lookup", capped.deferred && capped.found === 0 && unavatarAsked.length === 0, JSON.stringify(capped));
+    await db.delete(rateLimitBuckets).where(eq(rateLimitBuckets.bucket, "avatarFill:daily"));
 
     await db.delete(rateLimitBuckets).where(eq(rateLimitBuckets.bucket, "avatarSource.shared:unavatar"));
     unavatarAsked.length = 0;
