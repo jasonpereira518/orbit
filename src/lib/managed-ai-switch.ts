@@ -2,23 +2,25 @@ import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { siteSettings } from "@/db/schema";
 import { recordAdminAction } from "@/lib/admin-audit";
+import type { AiProvider } from "@/lib/ai-providers";
 import {
   forgetManagedAiPause,
   managedAiPausedDefault,
   managedAiSwitchedOff,
   managedKeysConfigured,
+  managedPoolsSpent,
 } from "@/lib/ai-access";
 
 /**
- * The admin console's switch for included AI on Pro and Max (`site_settings.managed_ai_paused`).
+ * The admin console's switch for included AI on every plan (`site_settings.managed_ai_paused`).
  *
- * Three things decide whether included AI runs, and the console shows all three because only
+ * Four things decide whether included AI runs, and the console shows all four because only
  * one of them is this switch:
  *  - `ORBIT_MANAGED_AI=off` in the environment always wins (a deploy-level kill switch);
  *  - Orbit must hold a key for at least one provider;
+ *  - at least one provider pool (`MANAGED_AI_POOLS`) must have budget left;
  *  - this switch. Never set reads as PAUSED on production, so included AI cannot start before
  *    someone turns it on here, deliberately.
- * Free and Lifetime never use Orbit's keys, whatever the switch says.
  */
 export type ManagedAiSwitchState = {
   paused: boolean;
@@ -26,6 +28,8 @@ export type ManagedAiSwitchState = {
   explicit: boolean;
   envOff: boolean;
   keysConfigured: boolean;
+  /** Orbit-paid spend per pooled provider in its current window, in micros. */
+  poolSpentMicros: Partial<Record<AiProvider, number>>;
 };
 
 export async function getManagedAiSwitchState(): Promise<ManagedAiSwitchState> {
@@ -41,6 +45,7 @@ export async function getManagedAiSwitchState(): Promise<ManagedAiSwitchState> {
     explicit,
     envOff: managedAiSwitchedOff(),
     keysConfigured: Object.values(managedKeysConfigured()).some(Boolean),
+    poolSpentMicros: await managedPoolsSpent(),
   };
 }
 

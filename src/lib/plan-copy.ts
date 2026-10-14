@@ -8,6 +8,7 @@ import {
   type Plan,
   type PurchasablePlan,
 } from "@/lib/plans/plan-config";
+import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_LABEL } from "@/lib/stripe-config";
 
 export type { BillingPeriod } from "@/lib/plans/plan-config";
 export { ANNUAL_SAVING_PERCENT } from "@/lib/plans/plan-config";
@@ -23,8 +24,8 @@ import type { DemoAccountReason } from "@/lib/demo-account";
  * actually charged is the Stripe price with the matching lookup key.
  *
  * TWO RULES THIS COPY KEEPS:
- *  - Only shipped features. Outreach, Events and the Chrome extension are behind their
- *    coming-soon gates and appear in no plan copy until they ship.
+ *  - Only shipped features. Outreach and Events are behind their coming-soon gates, and the
+ *    Chrome extension stays out of plan copy until `EXTENSION_PUBLISHED`; none appear until they ship.
  *  - No fake urgency: no struck-through prices, countdowns or scarcity. A founding price is
  *    shown only to an eligible account, and always with its full terms.
  *
@@ -51,6 +52,13 @@ export type PlanCopy = {
   /** Shown under the feature list where a tier deliberately excludes something. */
   caveat?: string;
 };
+
+/**
+ * The Chrome Web Store listing, set at build time (NEXT_PUBLIC_* is inlined) once the extension is
+ * published. Unset means unpublished: every surface that offers it shows "soon" or nothing.
+ */
+export const EXTENSION_STORE_URL = process.env.NEXT_PUBLIC_EXTENSION_URL?.trim() || null;
+export const EXTENSION_PUBLISHED = EXTENSION_STORE_URL !== null;
 
 /** The one-line positioning, used wherever plans are summarised. */
 export const AI_POSITIONING = "Free: a small AI allowance to start. Pro and Max: AI included.";
@@ -106,13 +114,12 @@ export const PLAN_COPY: PlanCopy[] = [
       "Everything in the Free Plan, uncapped",
       "Unlimited contacts",
       `AI included: ${pro.monthlyCredits} credits a month`,
-      "Top up with $5 packs of 250 credits",
+      `Top up with ${CREDIT_PACK_PRICE_LABEL} packs of ${CREDIT_PACK_CREDITS} credits`,
       "Recruiter tracking",
       "Connect both Google and Microsoft",
       "Calendar subscriptions",
       `${HOURS(pro.speech.meetingSeconds)} of meeting transcription a month`,
       `${HOURS(pro.speech.shortformSeconds)} of voice notes a month`,
-      `${pro.hostedEnrichmentsPerMonth} contact enrichments a month`,
     ],
     caveat: "Prefer your own AI key? Add it any time; calls on it never use credits.",
   },
@@ -126,7 +133,6 @@ export const PLAN_COPY: PlanCopy[] = [
       `AI included: ${max.monthlyCredits} credits a month`,
       `${HOURS(max.speech.meetingSeconds)} of meeting transcription a month`,
       `${HOURS(max.speech.shortformSeconds)} of voice notes a month`,
-      `${max.hostedEnrichmentsPerMonth} contact enrichments a month`,
       "REST API and webhooks",
     ],
     caveat: "Prefer your own AI key? Add it any time; calls on it never use credits.",
@@ -142,10 +148,9 @@ export const PLAN_COPY: PlanCopy[] = [
       "Recruiter tracking, with Google and Microsoft together",
       `${HOURS(lifetime.speech.meetingSeconds)} of meeting transcription a month`,
       `${HOURS(lifetime.speech.shortformSeconds)} of voice notes a month`,
-      `${lifetime.hostedEnrichmentsPerMonth} contact enrichments a month`,
       "REST API and webhooks",
     ],
-    caveat: "AI runs on your own provider key.",
+    caveat: `${lifetime.monthlyCredits} AI credits a month are included. Credit packs aren’t available on this plan.`,
   },
 ];
 

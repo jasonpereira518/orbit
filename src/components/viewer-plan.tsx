@@ -8,8 +8,8 @@ import type { Plan } from "@/lib/plans/plan-config";
  * The signed-in account's plan, and whether this deployment can actually run included AI
  * (it holds at least one managed key). Provided once by the (app) layout, which reads both on
  * the server, so client notices can pitch the right thing: "Pro and Max include AI" only to a
- * Free account, a pack or Max only to a Pro or Max account, and never included AI a
- * deployment would then refuse.
+ * Free account, Max only to a Pro account, and never included AI a deployment would
+ * then refuse.
  *
  * It also carries the settings-level AI denial (why AI cannot run, short of credits) and when
  * this account's monthly credits refill, so a notice can say "they refill on November 1".

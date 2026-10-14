@@ -5,15 +5,16 @@ import { Loader2 } from "lucide-react";
 import { startCreditPackCheckout } from "@/actions/billing";
 import { Button } from "@/components/ui/button";
 import { friendlyError } from "@/lib/errors";
+import { CREDIT_PACK_PRICE_LABEL } from "@/lib/stripe-config";
 
 /**
- * "Buy a pack ($5)" — one Stripe Checkout for 250 credits. Never automatic: the person sees
- * the price on Stripe's page and pays. The server refuses Free and Lifetime accounts anyway.
+ * "Buy a pack ($5)" — one Stripe Checkout for one pack of credits. Never automatic: the person
+ * sees the price on Stripe's page and pays. The server refuses Lifetime accounts, which have no packs.
  */
 export function BuyPackButton({
   size = "sm",
   variant = "default",
-  label = "Buy a pack ($5)",
+  label = `Buy a pack (${CREDIT_PACK_PRICE_LABEL})`,
 }: {
   size?: "sm" | "default";
   variant?: "default" | "outline";

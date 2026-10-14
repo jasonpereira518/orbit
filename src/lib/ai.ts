@@ -66,7 +66,7 @@ import { aiOperationThinking, type AiOperationId } from "@/lib/ai-operations";
 import { geminiThinkingConfig, openaiCompletionOptions } from "@/lib/ai-request-options";
 import { EMBEDDING_MODELS, modelForOperation } from "@/lib/ai-models";
 import type { ThinkingConfig } from "@google/genai";
-import { anthropicAcceptsTemperature } from "@/lib/ai-providers";
+import { anthropicAcceptsTemperature, anthropicEffort } from "@/lib/ai-providers";
 import { createEvidenceLedger, type EvidenceSource } from "@/lib/chat-evidence";
 import {
   fenceUntrusted,
@@ -632,6 +632,7 @@ export async function completeJson(
           max_tokens: maxOutputTokens,
           // Claude 4.7 and later reject sampling parameters with a 400.
           ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
+          ...anthropicEffort(model),
           system,
           messages: [
             {
@@ -837,6 +838,7 @@ async function completeMultimodalJsonInner(
       max_tokens: maxOutputTokens,
       // Claude 4.7 and later reject sampling parameters with a 400.
       ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
+      ...anthropicEffort(model),
       system,
       messages: [{ role: "user", content }],
     }, { signal: aiSignal() });
@@ -2212,6 +2214,12 @@ async function streamText(
     maxOutputTokens?: number;
     operation: AiOperationId;
     signal?: AbortSignal;
+    /**
+     * A deadline the caller imposes (the route's `maxDuration`). Aborts the call like `signal`,
+     * but is not the caller walking away: it is not the `cancelSignal` below, so a cut-off
+     * stream is filed as `timeout`, not `cancelled`.
+     */
+    deadlineSignal?: AbortSignal;
     /** As for `completeJson` — shares the account read, never the grant. */
     access?: AiAccess;
   },
@@ -2224,7 +2232,7 @@ async function streamText(
   const temperature = input.temperature ?? 0.3;
   const maxOutputTokens = input.maxOutputTokens ?? 4096;
   // One deadline per call plus the caller's own abort — a fresh deadline per call, as always.
-  const signal = input.signal ? AbortSignal.any([aiSignal(), input.signal]) : aiSignal();
+  const signal = AbortSignal.any([aiSignal(), ...[input.signal, input.deadlineSignal].filter((s) => s !== undefined)]);
 
   return runOnGrant(grant, withUsage(
     { userId, operation: input.operation, provider, model, kind: "completion", keyOwner },
@@ -2289,6 +2297,7 @@ async function streamText(
             max_tokens: maxOutputTokens,
             // Claude 4.7 and later reject sampling parameters with a 400.
             ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
+            ...anthropicEffort(model),
             system: input.system,
             messages: [{ role: "user", content: input.user }],
           },
@@ -2302,6 +2311,10 @@ async function streamText(
         report(tokensFromAnthropic(await stream.finalMessage()));
       }
 
+      // OpenAI's stream iterator treats an abort as "the caller stopped the stream" and simply
+      // ENDS, so a cut-off answer would come back as a finished (shorter) one. Rethrow the abort:
+      // a deadline reads as a timeout, a Stop is filed as cancelled. (Gemini and Anthropic throw.)
+      signal.throwIfAborted();
       if (!full.trim()) throw new Error("Empty AI response");
       return full;
     }),
@@ -2409,6 +2422,8 @@ export async function chatWithNetworkStream(
   attachedContext: Parameters<typeof chatWithNetwork>[8] = null,
   options: {
     signal?: AbortSignal;
+    /** The route's deadline for the answer; see `streamText`. */
+    deadlineSignal?: AbortSignal;
     goals?: string[];
     attentionLite?: string | null;
     evidence?: string | null;
@@ -2443,6 +2458,7 @@ export async function chatWithNetworkStream(
       user: prompt.user,
       system,
       signal: options.signal,
+      deadlineSignal: options.deadlineSignal,
       access: options.access,
     },
     (delta) => {
@@ -2801,6 +2817,7 @@ export async function webSearchJson(
             model,
             max_tokens: maxOutputTokens,
             ...(anthropicAcceptsTemperature(model) ? { temperature: 0.1 } : {}),
+            ...anthropicEffort(model),
             system,
             messages,
             tools: [{ type: anthropicWebSearchToolType(model), name: "web_search", max_uses: maxSearches }],

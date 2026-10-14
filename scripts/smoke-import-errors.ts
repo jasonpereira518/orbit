@@ -23,7 +23,7 @@ import {
 import { IMPORT_COPY } from "../src/lib/imports/import-copy";
 import { withReference } from "../src/lib/errors";
 import { DRIVE_ROW_COPY } from "../src/lib/imports/drive-row-copy";
-import { AI_ACCESS_COPY, MANAGED_PROVIDER_FAILURE_MESSAGE } from "../src/lib/ai-access-copy";
+import { AI_ACCESS_COPY, MANAGED_LIMIT_MESSAGES, MANAGED_PROVIDER_FAILURE_MESSAGE } from "../src/lib/ai-access-copy";
 import { AiAccessError } from "../src/lib/ai-access";
 
 let failures = 0;
@@ -83,7 +83,8 @@ const SAMPLES: { raw: string; code: ImportFailureCode }[] = [
   },
   // The AI gate's own refusals, as `failImport` stores them (I1).
   { raw: AI_ACCESS_COPY.key_required, code: "ai_key" },
-  { raw: AI_ACCESS_COPY.managed_limit, code: "ai_key" },
+  // Out of credits is its own state on every plan, apart from a key problem.
+  ...Object.values(MANAGED_LIMIT_MESSAGES).map((raw) => ({ raw, code: "ai_credits" as const })),
   { raw: AI_ACCESS_COPY.managed_unavailable, code: "ai_key" },
   { raw: MANAGED_PROVIDER_FAILURE_MESSAGE, code: "ai_key" },
 ];
@@ -106,8 +107,8 @@ check("null is unknown", classifyImportError(null) === "unknown");
 console.log("Classification from the error instance");
 for (const reason of Object.keys(AI_ACCESS_COPY) as (keyof typeof AI_ACCESS_COPY)[]) {
   check(
-    `an AiAccessError (${reason}) is ai_key`,
-    classifyImportFailure(new AiAccessError(reason)) === "ai_key",
+    `an AiAccessError (${reason}) is ${reason === "managed_limit" ? "ai_credits" : "ai_key"}`,
+    classifyImportFailure(new AiAccessError(reason)) === (reason === "managed_limit" ? "ai_credits" : "ai_key"),
     classifyImportFailure(new AiAccessError(reason)),
   );
 }
@@ -222,6 +223,7 @@ const CODES: ImportFailureCode[] = [
   "database",
   "stalled",
   "ai_key",
+  "ai_credits",
   "unknown",
 ];
 check(

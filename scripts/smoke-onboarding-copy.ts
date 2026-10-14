@@ -38,7 +38,7 @@ check("embedded capture hands off only a save it saw happen, never a stale saved
 const chapters = readFileSync("src/components/onboarding/highlights/chapters.ts", "utf8");
 check("the ask chapter no longer says it runs on your key", !chapters.includes("Runs on the AI key you bring"));
 check("the Settings explainer names both numbers",
-  FREE_AI_EXPLAINER === "Free includes 10 AI credits a month and 25 to start. Add your own key to use AI with no limit", FREE_AI_EXPLAINER);
+  FREE_AI_EXPLAINER === "Free includes 50 AI credits a month and 25 to start. Add your own key to use AI with no limit", FREE_AI_EXPLAINER);
 
 if (failures) {
   console.error(`\n${failures} failure(s)`);

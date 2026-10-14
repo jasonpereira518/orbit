@@ -168,9 +168,19 @@ async function main() {
   const hrefs = hrefsOf(form);
   check(
     "it links only to itself and its privacy notice",
-    hrefs.length > 0 && hrefs.every((h) => h === "#interest-join" || h === "/interest/privacy"),
+    hrefs.length > 0 &&
+      // The sign-up-open copy (app domain, stealth off) is the one place that may point at /sign-up.
+      hrefs.every((h) => h === "#interest-join" || h === "/interest/privacy" || (h === "/sign-up" && findProp(form, "signupOpen") !== undefined)),
     hrefs.join(", ")
   );
+  // No request here, so this reads as the app domain: sign-up is open exactly when stealth is off.
+  const { getSiteMode } = await import("../src/lib/site-access");
+  check(
+    "the app domain gives the hero the sign-up-open copy exactly when stealth is off",
+    (findProp(form, "signupOpen") !== undefined) === !(await getSiteMode()).stealth,
+    String(findProp(form, "signupOpen"))
+  );
+  check("…and the path agrees", (findProp(await Page(sp({ me: TOKEN })), "openStops") !== undefined) === (findProp(form, "signupOpen") !== undefined));
   check("the hero gets the waitlist page URL, not the app's", String(findProp(form, "pageUrl")).endsWith("/interest"));
 
   // The poll lives in a client component this walk cannot enter; its props are the contract.

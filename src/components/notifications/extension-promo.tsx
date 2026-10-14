@@ -4,21 +4,8 @@ import { useState } from "react";
 import { ExternalLink, X } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { OrbitLogo } from "@/components/orbit-logo";
-import { WarpLink } from "@/components/warp/warp-link";
+import { EXTENSION_STORE_URL } from "@/lib/plan-copy";
 import { cn } from "@/lib/utils";
-
-/**
- * Where "Add to Chrome" goes. There is no published listing yet, so this falls
- * back to a Chrome Web Store search rather than hiding the button — the store
- * is the destination either way, and a search still lands somewhere real.
- *
- * Set `NEXT_PUBLIC_EXTENSION_URL` to the listing URL
- * (https://chromewebstore.google.com/detail/<slug>/<id>) once it is published;
- * that is the only change needed here.
- */
-const STORE_URL =
-  process.env.NEXT_PUBLIC_EXTENSION_URL ??
-  "https://chromewebstore.google.com/search/orbit";
 
 /**
  * In dark mode this banner keeps its light-mode face: a white card in a dark
@@ -82,22 +69,18 @@ function rememberDismissed() {
  * is the one row nobody asked for, so it never borrows the shape of a reminder,
  * never counts toward the bell badge, and dismisses permanently on first ask.
  *
- * The caller holds it back until the panel payload has landed, so the plan
- * note under the button is never rendered against a guessed plan and then
- * swapped underneath the cursor.
+ * Free has the extension, so the banner is plan-independent; it renders only
+ * once `NEXT_PUBLIC_EXTENSION_URL` names a published listing.
  */
-export function ExtensionPromo({
-  canUseExtension,
-}: {
-  canUseExtension: boolean;
-}) {
+export function ExtensionPromo() {
   // Read once at mount rather than in an effect, so someone who already
   // dismissed this never sees it flash back for a frame. Safe to read during
   // render here: the panel holds this component back until its client-side
   // fetch resolves, so it has no server-rendered output to mismatch.
   const [dismissed, setDismissed] = useState(wasDismissed);
 
-  if (dismissed) return null;
+  // Unpublished: there is no listing to send anyone to, so no banner.
+  if (dismissed || !EXTENSION_STORE_URL) return null;
 
   return (
     <div
@@ -138,7 +121,7 @@ export function ExtensionPromo({
 
           <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
             <a
-              href={STORE_URL}
+              href={EXTENSION_STORE_URL}
               target="_blank"
               rel="noreferrer"
               className={CTA_CLASS}
@@ -146,20 +129,6 @@ export function ExtensionPromo({
               Add to Chrome
               <ExternalLink className="h-3.5 w-3.5" />
             </a>
-            {/* The store page is public, so the button shows on every plan —
-                but the extension only works on a paid one, and finding that
-                out after installing it would be the wrong order. */}
-            {!canUseExtension && (
-              <span className="text-xs text-muted-foreground">
-                Needs Orbit Pro or Max —{" "}
-                <WarpLink
-                  href="/pricing"
-                  className="font-medium text-import-connections underline underline-offset-2 hover:opacity-80"
-                >
-                  see plans
-                </WarpLink>
-              </span>
-            )}
           </div>
         </div>
       </div>

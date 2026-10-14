@@ -13,6 +13,7 @@ import { PricingFaq } from "@/components/pricing/pricing-faq";
 import { PricingTiers } from "@/components/pricing/pricing-tiers";
 import { AI_POSITIONING } from "@/lib/plan-copy";
 import { FREE_CONTACT_LIMIT, PLAN_CONFIG, formatPlanPrice } from "@/lib/plans/plan-config";
+import { CREDIT_PACK_PRICE_LABEL } from "@/lib/stripe-config";
 import { isCheckoutConfigured } from "@/lib/stripe-config";
 import { isClerkConfigured, isDemoMode } from "@/lib/auth";
 
@@ -41,7 +42,7 @@ const TRUST = [
   {
     icon: Sparkles,
     title: "AI included, never auto-charged",
-    body: "Pro and Max include AI credits each month. Run out and AI simply pauses until you choose a $5 pack or it resets — nothing is ever charged automatically.",
+    body: `Free, Pro and Max include AI credits each month. Run out and AI simply pauses until you choose a ${CREDIT_PACK_PRICE_LABEL} pack or it resets — nothing is ever charged automatically.`,
   },
 ];
 
