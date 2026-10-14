@@ -101,6 +101,17 @@ const PAGES: Surface[] = [
     href: "/meetings",
   },
   {
+    // Ships dark. Brief someone who is not in the network yet, from a web search on the
+    // account's own AI key (`src/lib/web-research.ts`); briefs are kept 14 days, and only
+    // the people a user saves become contacts.
+    key: "page.find",
+    kind: "page",
+    label: "Find people",
+    description: "Research anyone outside your network before you reach out or meet.",
+    href: "/find",
+    comingSoon: true,
+  },
+  {
     key: "page.imports",
     kind: "page",
     label: "Imports",

@@ -92,6 +92,12 @@ export const AI_OPERATIONS = {
   // the result pages it reads as input — which cost per token on the pricier model too. The
   // namesake risk is carried by the prompt's "confident or nothing" rule, not model size.
   "contact.work_history": { label: "Work history (web search)", tier: "fast", thinking: "minimal", background: true },
+  // Briefing someone who is not a contact yet (/find), grounded in a web search on the
+  // account's own key. Same cost reasoning as work history: the searches dominate the bill,
+  // and the namesake risk is carried by the prompt's "confident or nothing" rule.
+  "research.person": { label: "Research a person (web search)", tier: "fast", thinking: "minimal" },
+  "research.company": { label: "Research a company (web search)", tier: "fast", thinking: "minimal" },
+  "research.discover": { label: "Find people by description (web search)", tier: "fast", thinking: "minimal" },
   "events.why": { label: "Events: why talk to them", tier: "fast", thinking: "minimal" },
   // One sentence about a Radar card the scorer already chose, written during the nightly
   // pass on the account's own key: work on the person's behalf, not something they wait on.

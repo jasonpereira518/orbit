@@ -52,6 +52,15 @@ const RULES: Array<{ reason: string; test: (q: string, ctx: DepthContext) => boo
       ),
   },
   {
+    // Someone (or some company) to look up on the web. Explicit verbs only, or "who is X Y
+    // at Z": a bare "who is the best person to…" is a question about the user's own network.
+    reason: "asks to research someone",
+    test: (q) =>
+      /\b(research|look up|lookup|brief me on|background on|dig into|find out about)\b/.test(q) ||
+      /\b(outside (of )?my network|not in my network|people i don'?t know|new people)\b/.test(q) ||
+      /\bwho(?:'s| is) [a-z][a-z.'-]+ [a-z][a-z.'-]+ (at|from)\b/.test(q),
+  },
+  {
     // The PAST only. "This week" looks forward — "who should I reconnect with this week?" is
     // one of Orbit's own suggested questions, the attention brief answers it, and routing it
     // here would put a research round on the product's most-clicked prompt.

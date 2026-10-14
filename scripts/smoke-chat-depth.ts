@@ -39,6 +39,10 @@ const research: Array<[string, typeof fresh]> = [
   ["What did Raj ask us to send before he reviews our key custody setup?", fresh],
   ["what did Priya Raman promise to send", fresh],
   ["can you draft something for them", followUp],
+  ["research Priya Rao at Stripe before my call", fresh],
+  ["brief me on the CTO of Ramp", fresh],
+  ["who is Priya Rao at Stripe?", fresh],
+  ["find me product managers at Stripe outside my network", fresh],
 ];
 for (const [q, ctx] of research) {
   const d = chooseDepth(q, ctx);
@@ -58,6 +62,8 @@ const single: Array<[string, typeof fresh]> = [
   ["What did Ada Lovelace work on before Stripe?", fresh],
   // A pronoun with NO prior turn is not a follow-up — there is nothing to refer back to.
   ["what did she work on before Stripe", { hasPriorTurns: false }],
+  // "who is" alone is a question about the user's own network, not a web lookup.
+  ["who is the best person to ask about payments?", fresh],
 ];
 for (const [q, ctx] of single) {
   const d = chooseDepth(q, ctx);
