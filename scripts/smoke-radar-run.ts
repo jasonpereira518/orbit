@@ -66,12 +66,10 @@ import { scaleContactRows } from "./lib/scale-fixture";
 
 const USER = "smoke-radar-run-user";
 const DAY = 86_400_000;
-/**
- * Noon UTC, a week before today. Relative rather than a fixed date: the runs below are dated
- * up to six days after NOW, and the pending list filters on `expires_at > now()` against the
- * REAL clock — a fixed date made every recommendation expire once that date was old enough.
- */
-const NOW = new Date(Math.floor(Date.now() / DAY) * DAY - 7 * DAY + 12 * 3_600_000);
+// The current hour, not a fixed date: the readers under test (the bell, the briefing) filter on
+// the database's real `now()` against each recommendation's expiry, so a pinned date made
+// this smoke fail every run once the calendar passed that expiry (Oct 14 2026).
+const NOW = new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000);
 const ago = (days: number) => new Date(NOW.getTime() - days * DAY);
 const ahead = (days: number) => new Date(NOW.getTime() + days * DAY);
 
