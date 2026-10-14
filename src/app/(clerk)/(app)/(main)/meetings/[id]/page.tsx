@@ -7,6 +7,9 @@ import { requireUserId } from "@/lib/auth";
 import { formatElapsed } from "@/lib/format-elapsed";
 import { speakerLabel, speakerNames } from "@/lib/meeting-digest";
 import { getMeetingTranscript } from "@/lib/meeting-sessions";
+import { MeetingRecapButton } from "@/components/meetings/meeting-recap-button";
+import { isSurfaceLive } from "@/lib/surface-visibility";
+import { COMPOSE_SURFACE_KEY } from "@/lib/surfaces";
 
 const SEARCH_MAX = 100;
 
@@ -55,7 +58,10 @@ export default async function MeetingDetailPage({
   const q = ((await searchParams).q ?? "").trim().slice(0, SEARCH_MAX);
   const userId = await requireUserId();
 
-  const meeting = await getMeetingTranscript(userId, id);
+  const [meeting, composeLive] = await Promise.all([
+    getMeetingTranscript(userId, id),
+    isSurfaceLive(userId, COMPOSE_SURFACE_KEY).catch(() => false),
+  ]);
   // The same two states the list shows. A meeting still being recorded is Capture's.
   if (!meeting || (meeting.session.status !== "analyzed" && meeting.session.status !== "saved")) notFound();
 
@@ -107,6 +113,8 @@ export default async function MeetingDetailPage({
           </Link>
         )}
       </div>
+
+      {digest && <MeetingRecapButton sessionId={session.id} composeLive={composeLive} />}
 
       {digest ? (
         <div className="space-y-5 rounded-2xl border border-border/70 bg-card p-6">

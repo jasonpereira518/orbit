@@ -22,6 +22,9 @@ import { matchEventForSession, pickEventForRecording, type CalendarEventRow } fr
 import { lastSeriesMeeting, linkMeetingSessionToEvent } from "../src/lib/meeting-sessions";
 import { getMeetingContext } from "../src/lib/meeting-context";
 import { owedByFromDigest } from "../src/lib/meeting-extras";
+import { lastUnloggedMeeting } from "../src/lib/meeting-context";
+import { buildMeetingRecap, recapMailto } from "../src/lib/meeting-recap";
+import { contacts, interactions } from "../src/db/schema";
 
 const USER = "smoke-meeting-calendar-context-user";
 
@@ -235,6 +238,71 @@ async function main() {
     ctx?.lastTime?.decisions[0] === "Ship v2 in November" && ctx.lastTime.actionItems[0] === "Send the deck — Priya Raman",
     JSON.stringify(ctx?.lastTime)
   );
+
+  // --- recap ---------------------------------------------------------------------------
+  const recap = buildMeetingRecap({
+    title: "Pilot sync",
+    digest: {
+      ...digest(["Ship v2 in November"], [
+        { text: "Send the deck", owner: "me", duePhrase: null, sourceExcerpt: null },
+        { text: "Share the questionnaire", owner: "Priya", duePhrase: null, sourceExcerpt: null },
+      ]),
+      summary: "We reviewed the pilot.",
+    },
+    attendees: [
+      { name: "Jordan Lee", email: "jordan@me.example" },
+      { name: "Priya Raman", email: "Priya@Acme.io" },
+      { name: "No Email", email: null },
+    ],
+    userFirstName: "Jordan",
+    isSelf: (n) => n === "Jordan Lee",
+  });
+  check("the recap goes to the guests, never the user", JSON.stringify(recap.to) === JSON.stringify(["priya@acme.io"]), JSON.stringify(recap.to));
+  check(
+    "it carries the summary, decisions and who does what",
+    recap.body.includes("We reviewed the pilot.") &&
+      recap.body.includes("- Ship v2 in November") &&
+      recap.body.includes("- Send the deck (Jordan)") &&
+      recap.body.includes("- Share the questionnaire (Priya)"),
+    recap.body
+  );
+  const mailto = recapMailto(recap);
+  check(
+    "mailto keeps the address raw and spaces as %20",
+    mailto.startsWith("mailto:priya@acme.io?") && mailto.includes("subject=Recap%3A%20Pilot%20sync") && !mailto.includes("+"),
+    mailto
+  );
+
+  // --- "how did it go?" --------------------------------------------------------------------
+  const [ada] = await db.insert(contacts).values({ userId: USER, fullName: "Ada", email: "ada@x.example" }).returning();
+  const ended = (key: string, minsAgo: number, extra: Record<string, unknown> = {}) => ({
+    userId: USER,
+    sourceId: source.id,
+    providerEventId: key,
+    title: key,
+    startAt: new Date(now - (minsAgo + 30) * 60_000),
+    endAt: new Date(now - minsAgo * 60_000),
+    attendees: [{ name: "Ada", email: "ada@x.example", contactId: ada.id }],
+    attendeeCount: 1,
+    ...extra,
+  });
+  await db.insert(calendarEvents).values(ended("just-ended", 20));
+  // Calendar sync logs the meeting itself: that must not count as a note.
+  await db.insert(interactions).values({
+    userId: USER,
+    contactId: ada.id,
+    interactionType: "meeting",
+    interactionDate: new Date(now - 50 * 60_000),
+    source: "google_calendar",
+  });
+  check("a meeting that just ended with no note is offered", (await lastUnloggedMeeting(USER, new Date(now)))?.title === "just-ended");
+  await db.insert(meetingSessions).values({ userId: USER, title: "x", status: "analyzed", calendarEventKey: "just-ended" });
+  check("…not once it was recorded", (await lastUnloggedMeeting(USER, new Date(now))) === null);
+  await db.insert(calendarEvents).values(ended("noted", 10));
+  await db.insert(interactions).values({ userId: USER, contactId: ada.id, interactionType: "meeting_note", interactionDate: new Date(now) });
+  check("…nor once a note was written", (await lastUnloggedMeeting(USER, new Date(now))) === null);
+  await db.insert(calendarEvents).values(ended("long-ago", 5 * 60));
+  check("a meeting hours ago is not a question any more", (await lastUnloggedMeeting(USER, new Date(now))) === null);
 
   if (failures) {
     console.error(`\nsmoke-meeting-calendar-context: ${failures} failure(s)`);

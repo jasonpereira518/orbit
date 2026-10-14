@@ -5,7 +5,7 @@ import { ensureUserSettings } from "@/lib/user-settings";
 import { isAdminUser } from "@/lib/admin";
 import { isSurfaceLive, isViewingAsUser } from "@/lib/surface-visibility";
 import type { Plan } from "@/lib/plan-limits";
-import { nextKnownMeeting } from "@/lib/meeting-context";
+import { lastUnloggedMeeting, nextKnownMeeting } from "@/lib/meeting-context";
 
 /**
  * The one periodic read every authenticated tab makes.
@@ -41,6 +41,8 @@ export type AppPulse = {
   desktopNotificationsEnabled: boolean | null;
   /** The next meeting with someone the user knows, starting within 20 minutes — the prep card. */
   nextMeeting: Awaited<ReturnType<typeof nextKnownMeeting>>;
+  /** A meeting that just ended with someone known and left no note — "How did it go?". */
+  unloggedMeeting: Awaited<ReturnType<typeof lastUnloggedMeeting>>;
 };
 
 /** Far enough ahead that the prep card (15 minutes out) never waits a whole pulse for it. */
@@ -55,13 +57,14 @@ export async function loadAppPulse(
 ): Promise<AppPulse> {
   const settings = loadedSettings ?? (await ensureUserSettings(userId));
   const entitlements = entitlementsFromSettings(userId, settings);
-  const [rawPanel, canOpenAdmin, nextMeeting] = await Promise.all([
+  const [rawPanel, canOpenAdmin, nextMeeting, unloggedMeeting] = await Promise.all([
     isSurfaceLive(userId, "page.radar").then((radar) =>
       loadNotificationPanel(userId, now, { withAlerts: true, settings, entitlements, radar })
     ),
     isAdminUser(userId) ? isViewingAsUser(userId).then((v) => !v) : Promise.resolve(false),
     // Best-effort: a calendar read must never cost the panel its pulse.
     nextKnownMeeting(userId, now, NEXT_MEETING_WITHIN_MS).catch(() => null),
+    lastUnloggedMeeting(userId, now).catch(() => null),
   ]);
   const panel = { ...rawPanel, canOpenAdmin };
   const notified = new Set(settings.desktopNotifiedIds ?? []);
@@ -75,5 +78,6 @@ export async function loadAppPulse(
     plan: entitlements.plan,
     desktopNotificationsEnabled: settings.desktopNotificationsEnabled ?? null,
     nextMeeting,
+    unloggedMeeting,
   };
 }

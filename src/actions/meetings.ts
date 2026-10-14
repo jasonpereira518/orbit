@@ -1,8 +1,8 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { gmailConnections, type MeetingDigest } from "@/db/schema";
+import { gmailConnections, meetingSessions, type MeetingDigest } from "@/db/schema";
 import { completeJson, parseAiJson, type CaptureParseHints } from "@/lib/ai";
 import { requireUserId } from "@/lib/auth";
 import { deepgramEnabled } from "@/lib/deepgram";
@@ -11,6 +11,7 @@ import { getValidAccessToken, hasCalendarScope } from "@/lib/gmail";
 import { fetchCalendarWindow } from "@/lib/connectors/google-calendar";
 import { meetingCandidatesFrom, type MeetingCandidate } from "@/lib/meeting-calendar";
 import { findEventByKey, matchEventForSession } from "@/lib/calendar-events";
+import { buildMeetingRecap, type MeetingRecap } from "@/lib/meeting-recap";
 import { listMeetingsFor, type MeetingsPage } from "@/lib/meetings-list";
 import {
   analyzeMeetingTranscript,
@@ -355,6 +356,39 @@ export async function analyzeMeetingSession(
     };
   } catch (err) {
     return { ok: false, error: await actionFailure(err, "Couldn’t analyze the meeting", "meetings.analyze-meeting-session") };
+  }
+}
+
+/**
+ * The recap email for a summarized meeting: to everyone invited (the calendar event's guests
+ * when it is still in the window, else the names typed when recording), from the stored digest.
+ * Nothing is sent from here — the page opens it in Compose or the user's own mail app.
+ */
+export async function getMeetingRecap(id: string): Promise<{ ok: true; recap: MeetingRecap } | Fail> {
+  try {
+    const userId = await requireMeetingsUser();
+    const db = await getDb();
+    const session = await db.query.meetingSessions.findFirst({
+      where: and(eq(meetingSessions.id, id), eq(meetingSessions.userId, userId)),
+      columns: { title: true, digest: true, attendees: true, calendarEventKey: true },
+    });
+    if (!session?.digest) return { ok: false, error: "That meeting hasn’t been summarized yet" };
+    const event = session.calendarEventKey ? await findEventByKey(userId, session.calendarEventKey) : null;
+    const typed = (session.attendees ?? []).map((a) => ({ name: a.name, email: a.email ?? null }));
+    const invited = (event?.attendees ?? []).map((a) => ({ name: a.name || a.email, email: a.email || null }));
+    const self = await loadMeetingSelf(userId);
+    return {
+      ok: true,
+      recap: buildMeetingRecap({
+        title: session.title?.trim() || session.digest.title || "our meeting",
+        digest: session.digest,
+        attendees: invited.length ? invited : typed,
+        userFirstName: self.firstName,
+        isSelf: (name) => isSelf(name, self),
+      }),
+    };
+  } catch (err) {
+    return { ok: false, error: await actionFailure(err, "Couldn’t write the recap", "meetings.get-meeting-recap") };
   }
 }
 

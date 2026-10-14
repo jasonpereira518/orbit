@@ -3,9 +3,18 @@
  * by the prep card (`getMeetingPrep`). No model call: it is the stored brief, the dated
  * history and what is open, so the card costs nothing and the tool answers in one round.
  */
-import { and, asc, desc, eq, gt, inArray, isNull, lte, lt, ne, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, lt, ne, or } from "drizzle-orm";
 import { getDb } from "@/db";
-import { actionItems, calendarEvents, contactBriefs, contacts, interactions, reminders, userSettings } from "@/db/schema";
+import {
+  actionItems,
+  calendarEvents,
+  contactBriefs,
+  contacts,
+  interactions,
+  meetingSessions,
+  reminders,
+  userSettings,
+} from "@/db/schema";
 import { listUpcomingEvents, type CalendarEventRow } from "@/lib/calendar-events";
 import { resolveTimeZone, ymdInZone } from "@/lib/reminder-due-bucket";
 import { lastSeriesMeeting } from "@/lib/meeting-sessions";
@@ -220,6 +229,77 @@ export async function nextKnownMeeting(
     eventId: e.id,
     title: e.title,
     startIso: e.startAt.toISOString(),
+    people: e.attendees
+      .filter((a) => a.contactId)
+      .map((a) => a.name || a.email)
+      .slice(0, 4),
+  };
+}
+
+/** Past this, "how did it go?" is history, not a question. */
+const UNLOGGED_WITHIN_MS = 3 * 3_600_000;
+
+/**
+ * The meeting that just ended with someone the user knows and left no trace: not recorded, and
+ * no note or log for those people since it started. For the app pulse's "How did it go?" card —
+ * one indexed read, then two small ones only when there is a candidate.
+ */
+export async function lastUnloggedMeeting(
+  userId: string,
+  now: Date
+): Promise<{ eventId: string; title: string; endIso: string; people: string[] } | null> {
+  const db = await getDb();
+  const rows = await db
+    .select({
+      id: calendarEvents.id,
+      providerEventId: calendarEvents.providerEventId,
+      title: calendarEvents.title,
+      startAt: calendarEvents.startAt,
+      endAt: calendarEvents.endAt,
+      attendees: calendarEvents.attendees,
+      attendeeCount: calendarEvents.attendeeCount,
+    })
+    .from(calendarEvents)
+    .where(
+      and(
+        eq(calendarEvents.userId, userId),
+        lte(calendarEvents.endAt, now),
+        gte(calendarEvents.endAt, new Date(now.getTime() - UNLOGGED_WITHIN_MS)),
+        eq(calendarEvents.allDay, false),
+        or(isNull(calendarEvents.selfResponse), ne(calendarEvents.selfResponse, "declined"))
+      )
+    )
+    .orderBy(desc(calendarEvents.endAt))
+    .limit(5);
+  // A real meeting: someone known on it, and small enough to be a conversation.
+  const e = rows.find((r) => r.attendeeCount > 0 && r.attendeeCount <= 8 && r.attendees.some((a) => a.contactId));
+  if (!e || !e.endAt) return null;
+  const ids = e.attendees.map((a) => a.contactId).filter((c): c is string => !!c);
+  const [recorded, logged] = await Promise.all([
+    db
+      .select({ id: meetingSessions.id })
+      .from(meetingSessions)
+      .where(and(eq(meetingSessions.userId, userId), eq(meetingSessions.calendarEventKey, e.providerEventId)))
+      .limit(1),
+    db
+      .select({ id: interactions.id })
+      .from(interactions)
+      .where(
+        and(
+          eq(interactions.userId, userId),
+          inArray(interactions.contactId, ids),
+          gte(interactions.createdAt, e.startAt),
+          // Calendar sync logs the meeting itself; that is not the user writing anything down.
+          or(isNull(interactions.source), ne(interactions.source, "google_calendar"))
+        )
+      )
+      .limit(1),
+  ]);
+  if (recorded.length || logged.length) return null;
+  return {
+    eventId: e.id,
+    title: e.title,
+    endIso: e.endAt.toISOString(),
     people: e.attendees
       .filter((a) => a.contactId)
       .map((a) => a.name || a.email)

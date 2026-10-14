@@ -9,7 +9,7 @@
  * no model call — and "Ask chat" hands the meeting to chat for a written briefing.
  */
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { CalendarClock, Loader2, UserPlus } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -17,44 +17,13 @@ import { getMeetingPrep, type MeetingPrep } from "@/actions/calendar-prep";
 import { useAppPulse } from "@/lib/app-pulse-store";
 import { NUDGE_LEAD_MS } from "@/lib/meeting-nudge";
 import { useNow } from "@/lib/use-now";
+import { createDismissStore } from "@/lib/dismissed-ids";
 import { syncTimeZoneCookie } from "@/lib/tz-cookie";
 import { cn } from "@/lib/utils";
 
 const PREP_LEAD_MS = 15 * 60_000;
-const DISMISSED_KEY = "orbit:meeting-prep-dismissed:v1";
 
-// ── Dismissals: per device, per event ──────────────────────────────────────────────────
-const dismissedInSession = new Set<string>();
-const listeners = new Set<() => void>();
-let version = 0;
-
-function isDismissed(eventId: string): boolean {
-  if (dismissedInSession.has(eventId)) return true;
-  try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(DISMISSED_KEY) ?? "[]");
-    return Array.isArray(parsed) && parsed.includes(eventId);
-  } catch {
-    return false;
-  }
-}
-
-function dismiss(eventId: string): void {
-  dismissedInSession.add(eventId);
-  try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(DISMISSED_KEY) ?? "[]");
-    const list = Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === "string") : [];
-    localStorage.setItem(DISMISSED_KEY, JSON.stringify([...list, eventId].slice(-50)));
-  } catch {
-    // Storage blocked: the in-session set covers this tab.
-  }
-  version++;
-  listeners.forEach((l) => l());
-}
-
-const subscribe = (l: () => void) => {
-  listeners.add(l);
-  return () => void listeners.delete(l);
-};
+const prepDismissals = createDismissStore("orbit:meeting-prep-dismissed:v1");
 
 export type PrepOffer = NonNullable<NonNullable<ReturnType<typeof useAppPulse>["pulse"]>["nextMeeting"]> & {
   minutes: number;
@@ -68,8 +37,8 @@ export function useMeetingPrepCard(): PrepOffer | null {
   const { pulse } = useAppPulse();
   const meeting = pulse?.nextMeeting ?? null;
   const now = useNow(30_000, meeting !== null);
-  useSyncExternalStore(subscribe, () => version, () => 0);
-  if (!meeting || now === null || isDismissed(meeting.eventId)) return null;
+  prepDismissals.useVersion();
+  if (!meeting || now === null || prepDismissals.isDismissed(meeting.eventId)) return null;
   const until = Date.parse(meeting.startIso) - now;
   if (until > PREP_LEAD_MS || until <= NUDGE_LEAD_MS) return null;
   return { ...meeting, minutes: Math.ceil(until / 60_000) };
@@ -124,7 +93,7 @@ export function MeetingPrepCard({ offer }: { offer: PrepOffer }) {
         <Link href={ask} className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}>
           Ask chat
         </Link>
-        <Button type="button" size="sm" variant="ghost" className="ml-auto" onClick={() => dismiss(offer.eventId)}>
+        <Button type="button" size="sm" variant="ghost" className="ml-auto" onClick={() => prepDismissals.dismiss(offer.eventId)}>
           Not now
         </Button>
       </div>

@@ -10,6 +10,9 @@ import { requireUserId } from "@/lib/auth";
 import { FEATURE_DENIAL, getEntitlements } from "@/lib/entitlements";
 import { getResumableMeeting } from "@/lib/meeting-sessions";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { findEventById } from "@/lib/calendar-events";
+import { userTimeZone } from "@/lib/meeting-context";
+import { ymdInZone } from "@/lib/reminder-due-bucket";
 
 // Page-level, because it governs the server actions called from this page: summarizing an
 // hour-long meeting is a map-reduce over several model calls. The (main) layout is 60, so
@@ -19,7 +22,7 @@ export const maxDuration = 300;
 export default async function CapturePage({
   searchParams,
 }: {
-  searchParams: Promise<{ contactId?: string; mode?: string }>;
+  searchParams: Promise<{ contactId?: string; mode?: string; event?: string }>;
 }) {
   const params = await searchParams;
   const requestedContactId = params.contactId || null;
@@ -55,6 +58,23 @@ export default async function CapturePage({
 
   const settings = await settingsPromise;
   const userId = await userIdPromise;
+
+  // "Add a note" after a meeting (the "How did it go?" card): the attendees, the day and the
+  // kind of interaction are known, so the parse starts from them instead of guessing.
+  const event =
+    params.event && /^[0-9a-f-]{36}$/i.test(params.event) ? await findEventById(userId, params.event).catch(() => null) : null;
+  const initialMeeting = event
+    ? {
+        notes: `Notes from “${event.title || "the meeting"}”${
+          event.attendees.length ? ` with ${event.attendees.map((a) => a.name || a.email).join(", ")}` : ""
+        }:\n`,
+        hints: {
+          eventDate: ymdInZone(event.startAt, await userTimeZone(userId)),
+          interactionType: "meeting",
+          seedPeople: event.attendees.map((a) => ({ name: a.name || null, email: a.email || null })),
+        },
+      }
+    : null;
   const { usage } = await planPromise;
   const { canUseMeetings, canUseSync } = await getEntitlements(userId);
   const resumableMeeting = await resumablePromise;
@@ -64,7 +84,7 @@ export default async function CapturePage({
   // An unfinished meeting is the one thing on this page that can be lost by ignoring it,
   // so it opens on the Meeting tab unless the link asked for something specific.
   const defaultMode: CaptureMode =
-    modeParam || (contactId ? "structured" : resumableMeeting ? "meeting" : "messy");
+    modeParam || (initialMeeting ? "messy" : contactId ? "structured" : resumableMeeting ? "meeting" : "messy");
   // The gate's own answer for the engine chain in `transcribeAudioWithAI` (Whisper or
   // Gemini — or Orbit's on Lifetime). Anthropic has no speech-to-text, so an Anthropic-only
   // BYOK account can summarize but not transcribe.
@@ -87,6 +107,7 @@ export default async function CapturePage({
         initialContactId={contactId}
         initialContactName={contactName}
         defaultMode={defaultMode}
+        initialMeeting={initialMeeting}
         hasApiKey={settings.hasApiKey}
         aiReason={settings.ai.reason}
         canTranscribe={canTranscribe}
