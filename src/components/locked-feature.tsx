@@ -30,7 +30,6 @@ export function LockedFeature({
   unlockPlan?: PurchasablePlan;
   note?: string;
 }) {
-  const plans = PURCHASABLE_PLANS.filter((plan) => PLAN_RANK[plan] >= PLAN_RANK[unlockPlan]);
   return (
     <div
       data-plan={unlockPlan}
@@ -59,14 +58,7 @@ export function LockedFeature({
         ))}
       </ul>
 
-      {plans.length > 0 && (
-        <div className="flex flex-wrap items-center justify-center gap-2 text-sm text-muted-foreground">
-          <span>Unlocks with</span>
-          {plans.map((planId) => (
-            <PlanBadge key={planId} plan={planId} />
-          ))}
-        </div>
-      )}
+      <UnlocksWith plan={unlockPlan} className="justify-center" />
 
       {note && <p className="text-xs text-muted-foreground">{note}</p>}
 
@@ -87,6 +79,23 @@ export function LockedFeature({
           Your plan
         </Link>
       </div>
+    </div>
+  );
+}
+
+/**
+ * "Unlocks with [Pro] [Max]": the plans on sale that include a feature whose cheapest plan
+ * is `plan`. Shared by the paywall and the coming-soon screen so the two can't disagree.
+ */
+export function UnlocksWith({ plan, className }: { plan: PurchasablePlan; className?: string }) {
+  const plans = PURCHASABLE_PLANS.filter((p) => PLAN_RANK[p] >= PLAN_RANK[plan]);
+  if (!plans.length) return null;
+  return (
+    <div className={cn("flex flex-wrap items-center gap-2 text-sm text-muted-foreground", className)}>
+      <span>Unlocks with</span>
+      {plans.map((planId) => (
+        <PlanBadge key={planId} plan={planId} />
+      ))}
     </div>
   );
 }

@@ -15,7 +15,14 @@ import {
   isNavActive,
   type AppNavItem,
 } from "@/components/layout/app-nav";
-import { isHrefComingSoon, isHrefHidden, orderNavItems, surfaceKeyForHref } from "@/lib/surfaces";
+import {
+  COMING_SOON_UNLOCK_PLAN,
+  isHrefComingSoon,
+  isHrefHidden,
+  orderNavItems,
+  surfaceKeyForHref,
+} from "@/lib/surfaces";
+import { PLAN_LABELS } from "@/lib/plans/plan-config";
 import { NavPendingDot } from "@/components/layout/nav-pending-dot";
 import { OrbitLogo } from "@/components/orbit-logo";
 import type { Plan } from "@/lib/plan-limits";
@@ -72,7 +79,7 @@ function SidebarNavLink({
         hiddenFromUsers
           ? `${item.label} — hidden from users`
           : comingSoon
-            ? `${item.label} — coming soon`
+            ? `${item.label} — coming soon · unlocks with ${PLAN_LABELS[COMING_SOON_UNLOCK_PLAN]}`
             : item.label
       }
       className={cn(
