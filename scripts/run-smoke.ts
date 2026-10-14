@@ -297,6 +297,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-api-connector-routes-live": "pglite",
   "smoke-apollo-hosted-budget": "pglite",
   "smoke-apple-actions": "pglite",
+  "smoke-server-graph": "pure",
   "smoke-action-items": "pglite",
   "smoke-admin": "pglite",
   "smoke-app-pulse": "pglite",
