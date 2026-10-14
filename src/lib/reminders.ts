@@ -5,6 +5,7 @@ import {
   actionItems,
   aiSuggestions,
   contacts,
+  contactTags,
   interactions,
   reminders,
   userGoals,
@@ -932,15 +933,12 @@ export async function getDashboardData(
         // Computed, never the column — see contact-notes-sql.ts and the budget smoke.
         hasNotes: contactHasNotesSql.as("has_notes"),
       },
-      // The join key alone. Eligibility wants a tag COUNT, and the vocabulary that wanted
-      // tag NAMES is `getDashboardVocabularies` now — so this carries one narrow row per
-      // tag rather than a whole tags row (id, user, name, timestamp) per tag.
-      //
-      // NOT a correlated `(select count(*) …)` in `extras`: written that way it returned
-      // zero for every contact rather than failing, which quietly made every tag-qualified
-      // contact ineligible for the constellation. Drizzle builds the correlation for a
-      // declared relation; hand-writing it here did not.
-      with: { contactTags: { columns: { contactId: true } } },
+      // No tags here: eligibility wants only a COUNT per contact, read below as one grouped
+      // query in the same round. Joined in this scan, it was a correlated aggregate per row
+      // (25,000 index lookups at 25k contacts, the scan's single biggest cost). And NOT a
+      // hand-written correlated `(select count(*) …)` in `extras` either: that returned zero
+      // for every contact rather than failing, which quietly made every tag-qualified contact
+      // ineligible for the constellation.
       // The order the preview and the metrics sample break ties in. `id` makes it total.
       orderBy: (c, { desc }) => [desc(c.updatedAt), desc(c.id)],
     })
@@ -961,6 +959,7 @@ export async function getDashboardData(
     counts,
     vocabularies,
     goalAlignedIds,
+    tagCountRows,
   ] = await Promise.all([
     contactRowsPromise,
     // Filtered, capped and counted in SQL — see the two loaders. Both judge "due" against
@@ -988,7 +987,16 @@ export async function getDashboardData(
     getDashboardCounts(userId),
     getDashboardVocabularies(userId),
     getGoalAlignedContactIds(userId, GOAL_ALIGNED_CAP),
+    // Tags per contact, for eligibility: one grouped pass over the join table, scoped by
+    // the owner through `contacts`, instead of an aggregate per scanned row.
+    db
+      .select({ contactId: contactTags.contactId, n: sql<number>`count(*)::int` })
+      .from(contactTags)
+      .innerJoin(contacts, eq(contacts.id, contactTags.contactId))
+      .where(eq(contacts.userId, userId))
+      .groupBy(contactTags.contactId),
   ]);
+  const tagCountById = new Map(tagCountRows.map((r) => [r.contactId, Number(r.n)]));
 
   // `profileImageUrl` keeps its name for the cards that render these rows, but it is now
   // the browser-safe URL from SQL — never the stored data: URL.
@@ -1013,7 +1021,7 @@ export async function getDashboardData(
         nextFollowUpAt: c.nextFollowUpAt ?? null,
         // A COUNT from SQL, where this used to be `(c.tags ?? []).length` over a joined
         // array of tag rows. The predicate only ever wanted the number.
-        tagCount: c.contactTags.length,
+        tagCount: tagCountById.get(c.id) ?? 0,
       },
       constellationConfig.thresholds
     );
