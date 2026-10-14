@@ -6,8 +6,10 @@ import {
   chatThreads,
   contacts,
   interactions,
+  reminders,
   type ChatRecommendation,
 } from "@/db/schema";
+import { getContactBrief } from "@/lib/contact-brief";
 import {
   loadAttachedPeople,
   renderAttachedPeople,
@@ -416,6 +418,62 @@ function focusProse(value: string | null | undefined): string | null {
 const FOCUS_PROFILE_MAX_ROLES = 20;
 const FOCUS_PROFILE_MAX_SCHOOLS = 10;
 const FOCUS_PROFILE_MAX_CHARS = 12_000;
+/** Per-interaction cap for the focused person's history: enough for a real meeting note. */
+const FOCUS_ENTRY_CHARS = 600;
+
+function day(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : isoDay(d);
+}
+
+/**
+ * The relationship half of the focused person: how you met, when you first and last
+ * talked, what is open, and where Orbit's brief says things stand. Everything here is the
+ * user's own record (or derived from it), which is what turns "tell me about @Ana" from a
+ * LinkedIn summary into an answer about the two of you. Null when there is nothing to say.
+ */
+export function renderFocusRelationship(
+  row: {
+    howMet: string | null;
+    metContext: string | null;
+    dateMet: Date | string | null;
+    firstInteractionAt: Date | string | null;
+    lastInteractionAt: Date | string | null;
+    nextFollowUpAt: Date | string | null;
+  } | null,
+  openReminders: readonly { title: string; dueDate: Date | string | null }[],
+  brief: { standing: string; nextStep: string | null } | null
+): string | null {
+  const lines: string[] = [];
+  if (row) {
+    const how = [focusLine(row.howMet), focusLine(row.metContext)].filter(Boolean).join(", ");
+    const met = day(row.dateMet);
+    if (how || met) lines.push(`How you met: ${how || "not recorded"}${met ? ` (${met})` : ""}`);
+    const first = day(row.firstInteractionAt);
+    const last = day(row.lastInteractionAt);
+    if (first || last) {
+      lines.push(`Known since ${first ?? "?"}; last in touch ${last ?? "?"}`);
+    }
+    const followUp = day(row.nextFollowUpAt);
+    if (followUp) lines.push(`Follow-up due ${followUp}`);
+  }
+  if (openReminders.length) {
+    lines.push(
+      `Open reminders: ${openReminders
+        .map((r) => {
+          const due = day(r.dueDate);
+          return `${focusLine(r.title) ?? ""}${due ? ` (due ${due})` : ""}`;
+        })
+        .join("; ")}`
+    );
+  }
+  if (brief?.standing?.trim()) {
+    lines.push(`Where things stand: ${focusLine(brief.standing)}`);
+    if (brief.nextStep?.trim()) lines.push(`Suggested next step: ${focusLine(brief.nextStep)}`);
+  }
+  return lines.length ? `Relationship:\n${lines.join("\n")}` : null;
+}
 
 /**
  * The focused contact's profile as plain text — one section per heading, no JSON.
@@ -488,7 +546,9 @@ export function renderFocusProfile(profile: Awaited<ReturnType<typeof getContact
   lines.push(
     profile.source === "extension"
       ? "(Captured from their LinkedIn profile page.)"
-      : "(From a third-party data provider, not their LinkedIn page directly.)"
+      : profile.source === "web"
+        ? "(Found by a web search, not their LinkedIn page directly.)"
+        : "(From a third-party data provider, not their LinkedIn page directly.)"
   );
 
   const rendered = lines.join("\n");
@@ -527,10 +587,16 @@ export async function prepareChatContext(
   const q = question.trim();
   if (!q) throw new Error("Question is required");
   const threadId = options.threadId ?? null;
-  const focusContactId = options.focusContactId?.trim() || null;
   const attachedIds = (options.contextContactIds ?? []).filter(
     (id): id is string => typeof id === "string" && id.trim().length > 0
   );
+  // "Tell me more about @Ana" is a question about Ana. One @mention takes the focus path —
+  // full LinkedIn profile, how you met, open reminders, a long dated history, pinned first —
+  // instead of the attached block's one-line-per-note summary. Two or more stay attached:
+  // there is no single person to answer "primarily about". The mention is still loaded as
+  // attached (the step, the thread's mark) but not rendered twice.
+  const focusContactId =
+    options.focusContactId?.trim() || (attachedIds.length === 1 ? attachedIds[0]!.trim() : null);
   const steps = options.steps ?? NULL_STEPS;
   const photos = createPhotoCache();
 
@@ -712,6 +778,14 @@ export async function prepareChatContext(
     .reverse()
     .map((m) => ({ role: m.role as ChatTurn["role"], content: m.content }));
 
+  let focusRelationship: {
+    howMet: string | null;
+    metContext: string | null;
+    dateMet: Date | string | null;
+    firstInteractionAt: Date | string | null;
+    lastInteractionAt: Date | string | null;
+    nextFollowUpAt: Date | string | null;
+  } | null = null;
   if (focusContactId) {
     // Exactly the fields the RankedContact entry below is built from — not the whole row
     // (inline avatar, enrichment blobs) and whole tag rows, to read these.
@@ -734,12 +808,19 @@ export async function prepareChatContext(
         relationshipScore: true,
         priorityLevel: true,
         closenessTier: true,
+        howMet: true,
+        metContext: true,
+        dateMet: true,
+        firstInteractionAt: true,
+        lastInteractionAt: true,
+        nextFollowUpAt: true,
       },
       with: {
         contactTags: { columns: { tagId: true }, with: { tag: { columns: { name: true } } } },
       },
     });
     if (focused) {
+      focusRelationship = focused;
       const focusEntry: RankedContact = {
         id: focused.id,
         fullName: focused.fullName,
@@ -778,7 +859,7 @@ export async function prepareChatContext(
   if (retrievedIds.length) {
     steps.start("read", `Reading notes on ${plural(retrievedIds.length, "person", "people")}`);
   }
-  const [snippets, careerLines, moveLines, focusMsgs, focusProfileData] = await Promise.all([
+  const [snippets, careerLines, moveLines, focusMsgs, focusProfileData, focusReminders, focusBrief] = await Promise.all([
     loadRecentInteractions(userId, retrievedIds),
     getCareerLines(userId, retrievedIds).catch(() => new Map<string, string>()),
     getRecentMoveLines(userId, retrievedIds).catch(() => new Map<string, string>()),
@@ -800,6 +881,21 @@ export async function prepareChatContext(
     focusContactId
       ? getContactProfile(userId, focusContactId).catch(() => null)
       : Promise.resolve(null),
+    focusContactId
+      ? db.query.reminders
+          .findMany({
+            where: and(
+              eq(reminders.userId, userId),
+              eq(reminders.contactId, focusContactId),
+              eq(reminders.status, "pending")
+            ),
+            columns: { title: true, dueDate: true },
+            orderBy: [reminders.dueDate],
+            limit: 5,
+          })
+          .catch(() => [])
+      : Promise.resolve([]),
+    focusContactId ? getContactBrief(userId, focusContactId).catch(() => null) : Promise.resolve(null),
   ]);
   if (retrievedIds.length) {
     // Count the people who actually had something written about them, not the page size —
@@ -816,7 +912,13 @@ export async function prepareChatContext(
       ),
     });
   }
-  const focusProfile = renderFocusProfile(focusProfileData);
+  const focusProfile =
+    [
+      renderFocusRelationship(focusRelationship, focusReminders, focusBrief),
+      renderFocusProfile(focusProfileData),
+    ]
+      .filter((block): block is string => Boolean(block))
+      .join("\n\n") || null;
   if (focusContactId) {
     // The focused contact still gets a deeper slice than the tiers would allow, and now in
     // the same dated shape as everyone else.
@@ -828,7 +930,7 @@ export async function prepareChatContext(
           const date = isoDay(new Date(m.interactionDate));
           const line = `${date} · ${interactionTypeLabel(
             m.interactionType
-          )}: ${sanitizeProfileLine(text).slice(0, 320)}`;
+          )}: ${sanitizeProfileLine(text).slice(0, FOCUS_ENTRY_CHARS)}`;
           return { id: m.id, date, line };
         })
         .filter((entry): entry is ChatTimelineEntry => entry !== null)
@@ -856,7 +958,7 @@ export async function prepareChatContext(
     const career = careerLines.get(id);
     careerLines.set(id, career ? `${career} · recent moves: ${moves}` : `Recent moves: ${moves}`);
   }
-  const modelContacts = budgetContactsContext(retrieved, snippets, careerLines, q);
+  const modelContacts = budgetContactsContext(retrieved, snippets, careerLines, q, focusContactId);
 
   // Roster and attention contacts are as legitimate a recommendation as retrieved ones —
   // they came from the same user's own rows — so they must not be filtered out for being
@@ -902,7 +1004,8 @@ export async function prepareChatContext(
     attentionLite,
     recruitersForChat,
     attachedPeople,
-    attachedContext: renderAttachedPeople(attachedPeople),
+    // The promoted @mention is already the focus; rendering it again would double its weight.
+    attachedContext: renderAttachedPeople(attachedPeople.filter((p) => p.id !== focusContactId)),
     allowedContacts,
     contactNames,
     allowedRecruiters,

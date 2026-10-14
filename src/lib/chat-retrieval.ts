@@ -386,6 +386,12 @@ const CONTEXT_TIERS = [
   { upto: Infinity, notes: 300, summary: 240, entries: 2, entryChars: 160, facts: 4 },
 ] as const;
 const TOTAL_CONTEXT_CHAR_BUDGET = 48000;
+/**
+ * The pinned person's row (a focused question, or a single @mention): the question is about
+ * them, so they get their whole record, not the top tier's trim. Still finite — the focus
+ * block's own cap is the backstop for a pathological record.
+ */
+const PINNED_TIER = { notes: 4000, summary: 1500, entries: 12, entryChars: 600, facts: 12 } as const;
 
 export function budgetContactsContext(
   contacts: RankedContact[],
@@ -398,13 +404,15 @@ export function budgetContactsContext(
    * and a couple of smoke scripts call this without a query and should not change behaviour.
    * See `pickNoteWindow` (@/lib/note-window) for why the head was the wrong 1,200 characters.
    */
-  query: string = ""
+  query: string = "",
+  /** The focused contact, whose row skips the tiers (`PINNED_TIER`). */
+  pinnedId: string | null = null
 ): BudgetedContact[] {
   const out: BudgetedContact[] = [];
   let spent = 0;
   for (let index = 0; index < contacts.length; index++) {
     const c = contacts[index];
-    const tier = CONTEXT_TIERS.find((t) => index < t.upto)!;
+    const tier = c.id === pinnedId ? PINNED_TIER : CONTEXT_TIERS.find((t) => index < t.upto)!;
     const notes = pickNoteWindow(c.notes, query, tier.notes).text || null;
     const aiSummary = (c.aiSummary || "").slice(0, tier.summary) || null;
     const keyFacts = c.keyFacts.slice(0, tier.facts);
