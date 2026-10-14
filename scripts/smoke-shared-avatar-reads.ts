@@ -11,6 +11,9 @@ import { eq, inArray, like, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, linkedinAvatars } from "../src/db/schema";
 import { clientAvatarUrlSql, sharedAvatarUrlSql } from "../src/lib/contact-avatar-sql";
+import { buildSnapshot } from "../src/lib/extension/resolve";
+import { loadKnowledgeDossier } from "../src/lib/knowledge-dossier";
+import { loadKnowledgePeople } from "../src/lib/knowledge-people";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -39,6 +42,7 @@ run(async () => {
     { slug: ok, imageUrl: SHARED, source: "extension" },
     { slug: `${P}blocked`, imageUrl: SHARED, source: "extension", blockedAt: new Date(), blockedBy: "admin" },
     { slug: `${P}neg`, imageUrl: null, source: "unavatar" },
+    { slug: `${P}http`, imageUrl: "http://media.licdn.com/insecure", source: "extension" },
   ]);
   const mk = async (userId: string, name: string, linkedinUrl: string | null, extra: Partial<typeof contacts.$inferInsert> = {}) =>
     (await db.insert(contacts).values({ userId, fullName: name, linkedinUrl, profileImageUrl: OWN, ...extra }).returning())[0];
@@ -53,7 +57,8 @@ run(async () => {
   // /in/ on a non-LinkedIn host must never pick up the shared photo.
   const fakeHost = await mk(users[0], "FakeHost", `https://evil.example.com/in/${ok}`);
   const lookalike = await mk(users[0], "Lookalike", `https://notlinkedin.com/in/${ok}`);
-  const ids = [a1, a2, blocked, neg, upload, noSlug, noSlugOwn, fakeHost, lookalike].map((c) => c.id);
+  const insecure = await mk(users[0], "Insecure", `https://www.linkedin.com/in/${P}http`, { profileImageUrl: null });
+  const ids = [insecure, a1, a2, blocked, neg, upload, noSlug, noSlugOwn, fakeHost, lookalike].map((c) => c.id);
 
   console.log("Plain select (clientAvatarUrlSql)...");
   const rows = await db.select({ id: contacts.id, url: clientAvatarUrlSql }).from(contacts).where(inArray(contacts.id, ids));
@@ -67,6 +72,7 @@ run(async () => {
   check("linkedin url without /in/ unaffected", url(noSlugOwn.id) === OWN);
   check("non-linkedin host with /in/ unaffected", url(fakeHost.id) === OWN);
   check("lookalike host unaffected", url(lookalike.id) === OWN);
+  check("non-https shared image_url is ignored", url(insecure.id) == null, String(url(insecure.id)));
 
   console.log("\nRelational extras...");
   const rel = await db.query.contacts.findMany({
@@ -83,6 +89,18 @@ run(async () => {
   const raw = await db.execute(sql`SELECT ${clientAvatarUrlSql} AS u FROM contacts WHERE contacts.id = ${a2.id}::uuid`);
   const rawRows = (Array.isArray(raw) ? raw : (raw as { rows: unknown[] }).rows) as { u: string }[];
   check("raw: shared wins", rawRows[0]?.u === SHARED);
+
+  console.log("\nExtension snapshot, knowledge hasPhoto...");
+  const snap = await buildSnapshot(users[1], a2.id, []);
+  check("extension snapshot returns the shared photo", snap?.snapshot.photoUrl === SHARED, String(snap?.snapshot.photoUrl));
+  const snapOwn = await buildSnapshot(users[0], blocked.id, []);
+  check("extension snapshot falls back to own photo", snapOwn?.snapshot.photoUrl === OWN);
+  const people = await loadKnowledgePeople(users[1]);
+  check("knowledge people: hasPhoto true with only a shared photo", people.rows.find((r) => r.id === a2.id)?.hasPhoto === true);
+  const dossier = await loadKnowledgeDossier(users[1], a2.id);
+  check("knowledge dossier: hasPhoto true with only a shared photo", dossier?.contact.hasPhoto === true);
+  const people1 = await loadKnowledgePeople(users[0]);
+  check("knowledge people: no photo anywhere stays false", people1.rows.find((r) => r.id === insecure.id)?.hasPhoto === false);
 
   console.log("\nContact rows stay free of shared URLs...");
   const stored = await db.select({ id: contacts.id, p: contacts.profileImageUrl }).from(contacts).where(eq(contacts.id, a1.id));

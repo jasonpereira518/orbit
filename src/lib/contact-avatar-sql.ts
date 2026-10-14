@@ -17,7 +17,7 @@ const LINKEDIN_HOST_RE = "^(https?://)?([a-z0-9-]+\\.)*linkedin\\.com/";
 export const sharedAvatarUrlSql = sql<string | null>`(CASE WHEN ${contacts.profileImageSource} IS DISTINCT FROM 'upload' THEN (
   SELECT la.image_url FROM linkedin_avatars la
    WHERE la.slug = ${contacts.linkedinSlug}
-     AND la.blocked_at IS NULL AND la.image_url IS NOT NULL
+     AND la.blocked_at IS NULL AND la.image_url LIKE 'https://%'
      AND ${contacts.linkedinUrl} ~* ${LINKEDIN_HOST_RE}
 ) END)`;
 

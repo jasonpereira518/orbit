@@ -14,6 +14,7 @@ import { getDb } from "@/db";
 import { contacts, interactions, reminders } from "@/db/schema";
 import type { Contact } from "@/db/schema";
 import { computeCloseness } from "@/lib/closeness";
+import { sharedAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import {
   heuristicStarters,
   pageValue,
@@ -219,6 +220,7 @@ export async function buildSnapshot(
 
   const row = await db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+    extras: { sharedAvatarUrl: sharedAvatarUrlSql.as("shared_avatar_url") },
     with: {
       contactTags: { with: { tag: true } },
       interactions: {
@@ -256,7 +258,7 @@ export async function buildSnapshot(
     location: row.location,
     linkedinUrl: row.linkedinUrl,
     xHandle: row.xHandle,
-    photoUrl: row.profileImageUrl,
+    photoUrl: row.sharedAvatarUrl ?? row.profileImageUrl,
     relationshipScore: row.relationshipScore,
     priorityLevel: row.priorityLevel,
     closeness: closeness.closeness,
