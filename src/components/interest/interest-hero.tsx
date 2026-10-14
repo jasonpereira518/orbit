@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { AnimatePresence, motion, useAnimate } from "motion/react";
 import { joinInterestList, recordPassCheckAction, saveInterestListName } from "@/actions/interest-list";
 import { BoardingPass } from "@/components/interest/boarding-pass";
@@ -74,12 +74,15 @@ export function InterestHero({
   initial,
   pageUrl,
   pagePath,
+  signupOpen,
 }: {
   initial: HeroInitial;
   /** The waitlist page on its own domain, for the share link. */
   pageUrl: string;
   /** The path this page is served at — `/` on the waitlist host — for the pass's URL. */
   pagePath: string;
+  /** Sign-up is open on the app domain: replaces the waves copy. Built on the server. */
+  signupOpen?: { eyebrow: string; lead: ReactNode };
 }) {
   const reduced = usePrefersReducedMotion();
   const [phase, setPhase] = useState<Phase>(initial.kind === "ticket" ? "ticket" : "form");
@@ -244,7 +247,7 @@ export function InterestHero({
     <>
       <section className="pt-10 text-center md:pt-16">
         <p className="text-xs uppercase tracking-[0.16em] text-landing-accent">
-          Early access · Opening in waves
+          {signupOpen ? signupOpen.eyebrow : "Early access · Opening in waves"}
         </p>
         <h1 className={cn(HEADING, "mt-4 grid text-[clamp(34px,5.4vw,60px)]")}>
           {/* Both headlines occupy the same grid cell so the crossfade does not reflow. */}
@@ -268,7 +271,9 @@ export function InterestHero({
           </AnimatePresence>
         </h1>
         <p className="mx-auto mt-5 max-w-[48ch] text-base leading-relaxed text-[#9aada8] sm:text-lg">
-          {showTicket ? (
+          {signupOpen ? (
+            signupOpen.lead
+          ) : showTicket ? (
             <>
               Your place is saved. We&apos;re letting people in wave by wave — share your link
               to move up to the front.

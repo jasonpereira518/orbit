@@ -307,7 +307,7 @@ export async function placeHold(input: {
 
 /**
  * Deduct a managed call's real cost, allowance first, then starter, then adjustments, then packs
- * oldest-first, and release the oldest open hold for its operation. Never takes a grant
+ * oldest-first, and release the oldest open (unexpired) hold for its operation. Never takes a grant
  * below zero. Packs are always eligible here: a call only ran because its plan allowed it.
  */
 export async function settleCredits(input: { userId: string; operation: string; micros: number }): Promise<void> {
@@ -334,7 +334,7 @@ export async function settleCredits(input: { userId: string; operation: string; 
        WHERE g.id = u.id AND u.running - u.micros_remaining < ${amount}`),
     tx.execute(sql`DELETE FROM credit_holds WHERE id = (
         SELECT id FROM credit_holds
-         WHERE user_id = ${input.userId} AND operation = ${input.operation}
+         WHERE user_id = ${input.userId} AND operation = ${input.operation} AND expires_at > now()
          ORDER BY created_at, id LIMIT 1
       )`),
   ]);

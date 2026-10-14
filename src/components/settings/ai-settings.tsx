@@ -75,7 +75,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
   // A dev server running on the keys in `.env.local`: the included-AI machinery, but the
   // developer's own key, so it says so rather than promising what no deployment does.
   const onLocalDevKeys = ai.eligibility === "demo" && ai.managedConfigured;
-  // Pro and Max: AI included on Orbit's keys (unless paused).
+  // Every plan: AI included on Orbit's keys (unless paused).
   const onIncluded = ai.eligibility === "plan" && ai.managedConfigured && !ai.managedPaused;
   const hasAnyPersonalKey = settings.providers.some((p) => p.hasPersonalKey);
   // What Orbit's key would run for the provider on screen, when it is the one paying.
@@ -250,7 +250,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
             ? "This dev server runs AI on the keys in your .env.local — nothing to set up. Save a key above and it is used instead, which is also how you see what a deployed account sees. Keys are encrypted at rest and only used for your account."
             : onIncluded
               ? "Your plan includes AI on Orbit’s own keys — nothing to set up. You can still bring your own Gemini, OpenAI, or Anthropic key and choose which runs first; calls on your own key never use credits. Keys are encrypted at rest and only used for your account."
-              : `Choose Gemini, OpenAI, or Anthropic above and paste your own API key. Keys are encrypted at rest and only used for your account.${ai.plan === "free" && ai.managedConfigured ? " Orbit Pro and Orbit Max include AI, so no key is needed there." : ""}`}
+              : `Choose Gemini, OpenAI, or Anthropic above and paste your own API key. Keys are encrypted at rest and only used for your account.${ai.managedConfigured ? " Every plan, Free included, has AI on Orbit’s own keys, so a key is optional; included AI is paused right now." : ""}`}
         </p>
 
         {/* No live region below: this sits inside a collapsed panel, and hidden content is
