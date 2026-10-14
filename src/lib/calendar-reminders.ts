@@ -69,7 +69,7 @@ function quoted(title: string): string {
  */
 export function prepReasons(
   people: Array<{ contactId: string; name: string }>,
-  facts: { lastTouch: Map<string, Date>; open: Map<string, number> },
+  facts: { lastTouch: Map<string, Date>; open: Map<string, number>; dueBefore?: Map<string, string> },
   now: Date
 ): Array<{ contactId: string; reason: string }> {
   const out: Array<{ contactId: string; reason: string }> = [];
@@ -80,6 +80,8 @@ export function prepReasons(
     else if (now.getTime() - last.getTime() > GAP_MS) {
       const months = Math.round((now.getTime() - last.getTime()) / (30 * DAY));
       out.push({ contactId: p.contactId, reason: `Last spoke with ${p.name} ${months} months ago` });
+    } else if (facts.dueBefore?.get(p.contactId)) {
+      out.push({ contactId: p.contactId, reason: `Due before the meeting: ${facts.dueBefore.get(p.contactId)}` });
     } else if (open > 0) {
       out.push({ contactId: p.contactId, reason: `${open} open ${open === 1 ? "to-do" : "to-dos"} with ${p.name}` });
     }
@@ -171,7 +173,7 @@ export async function syncCalendarReminders(
           )
           .groupBy(interactions.contactId),
         db
-          .select({ contactId: reminders.contactId, n: sql<number>`count(*)::int` })
+          .select({ contactId: reminders.contactId, title: reminders.title, dueDate: reminders.dueDate })
           .from(reminders)
           .where(
             and(
@@ -181,7 +183,7 @@ export async function syncCalendarReminders(
               isNull(reminders.calendarEventKey)
             )
           )
-          .groupBy(reminders.contactId),
+          .orderBy(reminders.dueDate),
         db
           .select({ contactId: actionItems.contactId, n: sql<number>`count(*)::int` })
           .from(actionItems)
@@ -193,15 +195,21 @@ export async function syncCalendarReminders(
       const lastTouch = new Map<string, Date>();
       for (const t of touches) if (t.contactId && t.last) lastTouch.set(t.contactId, new Date(t.last));
       const open = new Map<string, number>();
-      for (const r of [...openReminders, ...openItems]) {
-        if (r.contactId) open.set(r.contactId, (open.get(r.contactId) ?? 0) + Number(r.n));
-      }
+      for (const r of openReminders) if (r.contactId) open.set(r.contactId, (open.get(r.contactId) ?? 0) + 1);
+      for (const r of openItems) if (r.contactId) open.set(r.contactId, (open.get(r.contactId) ?? 0) + Number(r.n));
 
       for (const e of toPrep) {
         const people = e.attendees
           .filter((a): a is CalendarEventAttendee & { contactId: string } => !!a.contactId)
           .map((a) => ({ contactId: a.contactId, name: a.name || a.email }));
-        const reasons = prepReasons(people, { lastTouch, open }, now);
+        // The earliest to-do with each person that falls due before this meeting starts.
+        const dueBefore = new Map<string, string>();
+        for (const r of openReminders) {
+          if (r.contactId && r.dueDate && r.dueDate.getTime() <= e.startAt.getTime() && !dueBefore.has(r.contactId)) {
+            dueBefore.set(r.contactId, r.title);
+          }
+        }
+        const reasons = prepReasons(people, { lastTouch, open, dueBefore }, now);
         if (!reasons.length) continue;
         rows.push({
           userId,

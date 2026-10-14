@@ -108,6 +108,8 @@ export const AI_OPERATIONS = {
   "radar.draft": { label: "Radar: drafts for Today", tier: "user", background: true },
   "extension.parse": { label: "Extension: reading profiles", tier: "fast", thinking: "minimal" },
   "extension.starters": { label: "Extension: conversation starters", tier: "user" },
+  // "Talking points" on a meeting's prep card: the user asked, so a foreground operation.
+  "meeting.talking_points": { label: "Meeting: talking points", tier: "fast", thinking: "minimal" },
   "followup.draft": { label: "Follow-up drafts", tier: "user" },
   "outreach.draft": { label: "Outreach drafts", tier: "user" },
   "outreach.apollo": { label: "Outreach: prospect search", tier: "user" },

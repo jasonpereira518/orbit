@@ -442,6 +442,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-calendar-events": "pglite",
   "smoke-calendar-reminders": "pglite",
   "smoke-meeting-calendar-context": "pglite",
+  "smoke-meeting-prep": "pglite",
   "smoke-tool-registry": "pglite",
   "smoke-memory-search": "pglite",
   "smoke-memory-embedding": "pglite",

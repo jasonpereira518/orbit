@@ -3334,6 +3334,29 @@ export const calendarSources = pgTable(
   ]
 );
 
+/**
+ * What a "Look up" found about a meeting guest who is not a contact, keyed by their email. Kept
+ * apart from `contacts` on purpose: looking someone up before a call is not deciding to add them.
+ */
+export const guestProfiles = pgTable(
+  "guest_profiles",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    email: text("email").notNull(),
+    name: text("name"),
+    title: text("title"),
+    company: text("company"),
+    headline: text("headline"),
+    linkedinUrl: text("linkedin_url"),
+    sources: jsonb("sources").$type<{ url: string; title?: string | null }[]>().notNull().default([]),
+    /** False when the search could not be sure it found this person; nothing but the date is kept then. */
+    confident: boolean("confident").notNull().default(false),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("guest_profiles_user_email_uidx").on(t.userId, t.email)]
+);
+
 export type CalendarEventAttendee = { name: string; email: string; contactId: string | null };
 
 /**

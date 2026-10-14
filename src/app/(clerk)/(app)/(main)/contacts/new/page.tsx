@@ -13,7 +13,15 @@ export default async function NewContactPage({
   // "Add" from a meeting's prep card: the guest's name and address, prefilled.
   const params = await searchParams;
   const one = (v: string | string[] | undefined) => (typeof v === "string" ? v.trim().slice(0, 200) : "");
-  const initial = one(params.name) || one(params.email) ? { fullName: one(params.name), email: one(params.email) } : undefined;
+  const initial =
+    one(params.name) || one(params.email)
+      ? {
+          fullName: one(params.name),
+          email: one(params.email),
+          ...(one(params.company) ? { company: one(params.company) } : {}),
+          ...(one(params.title) ? { title: one(params.title) } : {}),
+        }
+      : undefined;
   const { usage } = await getPlanOverview();
   const atLimit = usage.limit !== null && usage.remaining === 0;
 

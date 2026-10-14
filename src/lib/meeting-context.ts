@@ -3,7 +3,7 @@
  * by the prep card (`getMeetingPrep`). No model call: it is the stored brief, the dated
  * history and what is open, so the card costs nothing and the tool answers in one round.
  */
-import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, lt, ne, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, lt, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   actionItems,
@@ -12,9 +12,11 @@ import {
   contacts,
   interactions,
   meetingSessions,
+  memoryChunks,
   reminders,
   userSettings,
 } from "@/db/schema";
+import { companyFromEmail, loadGuestProfiles } from "@/lib/guest-profiles";
 import { listUpcomingEvents, type CalendarEventRow } from "@/lib/calendar-events";
 import { resolveTimeZone, ymdInZone } from "@/lib/reminder-due-bucket";
 import { lastSeriesMeeting } from "@/lib/meeting-sessions";
@@ -70,7 +72,20 @@ export type MeetingPerson = {
   standing: string | null;
   nextStep: string | null;
   recent: Array<{ day: string | null; type: string; summary: string | null }>;
+  /** To-dos with this person due on or before the meeting starts — the ones to close first. */
+  dueBefore: string[];
   open: string[];
+  /** The latest things the user's own notes say involving them, newest first. */
+  fromNotes: Array<{ day: string | null; snippet: string }>;
+};
+
+export type GuestNotInOrbit = {
+  name: string;
+  email: string;
+  /** From the email domain (free); null for gmail.com and friends. */
+  company: string | null;
+  /** What a "Look up" found, when one was run and was sure. */
+  profile: { title: string | null; company: string | null; headline: string | null; linkedinUrl: string | null } | null;
 };
 
 /**
@@ -85,7 +100,7 @@ export async function getMeetingContext(
   event: CalendarEventRow;
   tz: string;
   people: MeetingPerson[];
-  notInOrbit: Array<{ name: string; email: string }>;
+  notInOrbit: GuestNotInOrbit[];
   /** For a recurring meeting that was recorded before: what the last one decided and left open. */
   lastTime: { day: string; decisions: string[]; actionItems: string[] } | null;
 } | null> {
@@ -108,10 +123,17 @@ export async function getMeetingContext(
   if (!event) return null;
 
   const ids = [...new Set(event.attendees.map((a) => a.contactId).filter((c): c is string => !!c))].slice(0, 8);
-  const notInOrbit = event.attendees
-    .filter((a) => !a.contactId)
-    .map((a) => ({ name: a.name, email: a.email }))
-    .slice(0, 10);
+  const strangers = event.attendees.filter((a) => !a.contactId).slice(0, 10);
+  const looked = await loadGuestProfiles(userId, strangers.map((a) => a.email));
+  const notInOrbit: GuestNotInOrbit[] = strangers.map((a) => {
+    const p = looked.get(a.email.toLowerCase());
+    return {
+      name: a.name,
+      email: a.email,
+      company: companyFromEmail(a.email),
+      profile: p?.confident ? { title: p.title, company: p.company, headline: p.headline, linkedinUrl: p.linkedinUrl } : null,
+    };
+  });
   const last = event.seriesId ? await lastSeriesMeeting(userId, event.seriesId) : null;
   const lastTime = last
     ? {
@@ -123,7 +145,7 @@ export async function getMeetingContext(
   if (!ids.length) return { event, tz, people: [], notInOrbit, lastTime };
 
   const db = await getDb();
-  const [people, briefs, todos, items, recent] = await Promise.all([
+  const [people, briefs, todos, items, recent, notes] = await Promise.all([
     db.query.contacts.findMany({
       where: and(eq(contacts.userId, userId), inArray(contacts.id, ids)),
       columns: { id: true, fullName: true, company: true, title: true },
@@ -140,7 +162,7 @@ export async function getMeetingContext(
         // Not the meeting's own prep/follow-up reminders: those are about this event.
         isNull(reminders.calendarEventKey)
       ),
-      columns: { contactId: true, title: true },
+      columns: { contactId: true, title: true, dueDate: true },
       orderBy: [asc(reminders.dueDate)],
       limit: 40,
     }),
@@ -164,7 +186,30 @@ export async function getMeetingContext(
         })
       )
     ),
+    // What the user's own notes say with them in it. Lexical-free and embedding-free: just the
+    // newest passages that name them (the contacts GIN index), never the generated brief.
+    Promise.all(
+      ids.map((id) =>
+        db
+          .select({ occurredAt: memoryChunks.occurredAt, content: memoryChunks.content })
+          .from(memoryChunks)
+          .where(
+            and(
+              eq(memoryChunks.userId, userId),
+              sql`${memoryChunks.contactIds} && array[${id}]::uuid[]`,
+              ne(memoryChunks.sourceKind, "brief")
+            )
+          )
+          .orderBy(sql`${memoryChunks.occurredAt} desc nulls last`)
+          .limit(2)
+      )
+    ),
   ]);
+  const notesBy = new Map(notes.map((rows, i) => [ids[i], rows]));
+  const snippet = (text: string) => {
+    const t = text.replace(/\s+/g, " ").trim();
+    return t.length > 180 ? `${t.slice(0, 177)}…` : t;
+  };
   const recentBy = new Map(recent.map((rows, i) => [ids[i], rows]));
   return {
     event,
@@ -185,10 +230,20 @@ export async function getMeetingContext(
           type: i.interactionType,
           summary: i.aiSummary,
         })),
+        dueBefore: todos
+          .filter((t) => t.contactId === c.id && t.dueDate && t.dueDate.getTime() <= event.startAt.getTime())
+          .map((t) => t.title)
+          .slice(0, 5),
         open: [
-          ...todos.filter((t) => t.contactId === c.id).map((t) => t.title),
+          ...todos
+            .filter((t) => t.contactId === c.id && !(t.dueDate && t.dueDate.getTime() <= event.startAt.getTime()))
+            .map((t) => t.title),
           ...items.filter((t) => t.contactId === c.id).map((t) => t.text),
         ].slice(0, 5),
+        fromNotes: (notesBy.get(c.id) ?? []).map((n) => ({
+          day: n.occurredAt ? ymdInZone(n.occurredAt, tz) : null,
+          snippet: snippet(n.content),
+        })),
       };
     }),
   };

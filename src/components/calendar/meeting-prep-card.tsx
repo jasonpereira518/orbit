@@ -11,9 +11,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { CalendarClock, Loader2, UserPlus } from "lucide-react";
+import { CalendarClock, Lightbulb, Loader2, Search, UserPlus } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { getMeetingPrep, type MeetingPrep } from "@/actions/calendar-prep";
+import { getMeetingPrep, getTalkingPoints, lookUpGuest, type MeetingPrep } from "@/actions/calendar-prep";
+import type { TalkingPointsResult } from "@/lib/meeting-talking-points";
 import { useAppPulse } from "@/lib/app-pulse-store";
 import { NUDGE_LEAD_MS } from "@/lib/meeting-nudge";
 import { useNow } from "@/lib/use-now";
@@ -76,8 +77,9 @@ export function MeetingPrepCard({ offer }: { offer: PrepOffer }) {
         </div>
       </div>
 
-      {state.kind === "open" && <PrepBrief prep={state.prep} />}
+      {state.kind === "open" && <PrepBrief prep={state.prep} eventId={offer.eventId} />}
       {state.kind === "error" && <p className="text-xs text-destructive">{state.message}</p>}
+      <TalkingPoints eventId={offer.eventId} />
 
       <div className="flex flex-wrap items-center gap-2">
         <Button
@@ -101,7 +103,7 @@ export function MeetingPrepCard({ offer }: { offer: PrepOffer }) {
   );
 }
 
-function PrepBrief({ prep }: { prep: MeetingPrep }) {
+function PrepBrief({ prep, eventId }: { prep: MeetingPrep; eventId: string }) {
   return (
     <div className="max-h-[50vh] space-y-3 overflow-y-auto border-t border-border/60 pt-2 text-xs">
       {prep.lastTime && (prep.lastTime.actionItems.length > 0 || prep.lastTime.decisions.length > 0) && (
@@ -131,6 +133,16 @@ function PrepBrief({ prep }: { prep: MeetingPrep }) {
           ) : (
             <p className="text-muted-foreground">First time meeting</p>
           )}
+          {p.dueBefore.length > 0 && (
+            <div>
+              <p className="font-medium text-amber-700 dark:text-warning">Due before this meeting</p>
+              <ul className="list-disc pl-4 text-ink">
+                {p.dueBefore.slice(0, 3).map((o, i) => (
+                  <li key={i}>{o}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           {p.open.length > 0 && (
             <ul className="list-disc pl-4 text-ink">
               {p.open.slice(0, 3).map((o, i) => (
@@ -138,23 +150,121 @@ function PrepBrief({ prep }: { prep: MeetingPrep }) {
               ))}
             </ul>
           )}
+          {p.fromNotes[0] && (
+            <p className="text-muted-foreground">
+              From your notes{p.fromNotes[0].day ? ` (${p.fromNotes[0].day})` : ""}: “{p.fromNotes[0].snippet}”
+            </p>
+          )}
         </div>
       ))}
       {prep.notInOrbit.length > 0 && (
         <div className="space-y-1">
           <p className="text-muted-foreground">Not in Orbit yet</p>
           {prep.notInOrbit.map((p) => (
-            <div key={p.email || p.name} className="flex items-center justify-between gap-2">
-              <span className="truncate">{p.name || p.email}</span>
-              <Link
-                href={`/contacts/new?${new URLSearchParams({ name: p.name, email: p.email })}`}
-                className="inline-flex shrink-0 items-center gap-1 text-primary underline-offset-2 hover:underline"
-              >
-                <UserPlus className="size-3" /> Add
-              </Link>
-            </div>
+            <GuestRow key={p.email || p.name} guest={p} eventId={eventId} />
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+type Guest = MeetingPrep["notInOrbit"][number];
+
+/** A guest who isn't a contact: their company from the email domain, and "Look up" for more. */
+function GuestRow({ guest, eventId }: { guest: Guest; eventId: string }) {
+  const [profile, setProfile] = useState(guest.profile);
+  const [state, setState] = useState<"idle" | "loading" | { message: string }>("idle");
+  const company = profile?.company ?? guest.company;
+  const role = profile?.title ? `${profile.title}${company ? ` at ${company}` : ""}` : company;
+
+  const lookUp = async () => {
+    setState("loading");
+    const res = await lookUpGuest(eventId, guest.email);
+    if (!res.ok) return setState({ message: res.error });
+    if (!res.found) return setState({ message: "Couldn’t be sure which person this is" });
+    setProfile(res.profile);
+    setState("idle");
+  };
+
+  const add = new URLSearchParams({ name: guest.name, email: guest.email });
+  if (company) add.set("company", company);
+  if (profile?.title) add.set("title", profile.title);
+
+  return (
+    <div className="space-y-0.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="min-w-0 truncate">
+          {guest.name || guest.email}
+          {role && <span className="text-muted-foreground"> · {role}</span>}
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          {!profile && guest.company && (
+            <button
+              type="button"
+              onClick={lookUp}
+              disabled={state === "loading"}
+              className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline disabled:opacity-60"
+            >
+              {state === "loading" ? <Loader2 className="size-3 animate-spin" /> : <Search className="size-3" />} Look up
+            </button>
+          )}
+          <Link
+            href={`/contacts/new?${add}`}
+            className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline"
+          >
+            <UserPlus className="size-3" /> Add
+          </Link>
+        </span>
+      </div>
+      {profile?.headline && <p className="text-muted-foreground">{profile.headline}</p>}
+      {typeof state === "object" && <p className="text-muted-foreground">{state.message}</p>}
+    </div>
+  );
+}
+
+/** "Talking points": what to bring up, each with the fact it came from. */
+function TalkingPoints({ eventId }: { eventId: string }) {
+  const [state, setState] = useState<
+    | { kind: "idle" }
+    | { kind: "loading" }
+    | { kind: "done"; result: TalkingPointsResult }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
+
+  if (state.kind === "idle" || state.kind === "loading") {
+    return (
+      <button
+        type="button"
+        disabled={state.kind === "loading"}
+        onClick={async () => {
+          setState({ kind: "loading" });
+          const res = await getTalkingPoints(eventId);
+          setState(res.ok ? { kind: "done", result: res.result } : { kind: "error", message: res.error });
+        }}
+        className="inline-flex items-center gap-1 self-start text-xs text-primary underline-offset-2 hover:underline disabled:opacity-60"
+      >
+        {state.kind === "loading" ? <Loader2 className="size-3 animate-spin" /> : <Lightbulb className="size-3" />}
+        Talking points
+      </button>
+    );
+  }
+  if (state.kind === "error") return <p className="text-xs text-destructive">{state.message}</p>;
+  const { points, source } = state.result;
+  return (
+    <div className="space-y-1 border-t border-border/60 pt-2 text-xs">
+      <p className="text-muted-foreground">Talking points{source === "facts" ? " · from what Orbit knows" : ""}</p>
+      {points.length === 0 ? (
+        <p className="text-muted-foreground">Nothing on file yet to bring up with them.</p>
+      ) : (
+        <ul className="space-y-1">
+          {points.map((p, i) => (
+            <li key={i}>
+              <span className="text-ink">{p.text}</span>
+              <span className="block text-muted-foreground">{p.basis}</span>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

@@ -999,6 +999,20 @@ CREATE TABLE IF NOT EXISTS calendar_events (
   organizer_email text,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS guest_profiles (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  email text NOT NULL,
+  name text,
+  title text,
+  company text,
+  headline text,
+  linkedin_url text,
+  sources jsonb NOT NULL DEFAULT '[]',
+  confident boolean NOT NULL DEFAULT false,
+  checked_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS guest_profiles_user_email_uidx ON guest_profiles(user_id, email);
 CREATE UNIQUE INDEX IF NOT EXISTS calendar_events_source_event_uidx ON calendar_events(source_id, provider_event_id);
 CREATE INDEX IF NOT EXISTS calendar_events_user_start_idx ON calendar_events(user_id, start_at);
 CREATE TABLE IF NOT EXISTS usage_events (
@@ -2634,7 +2648,11 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 156 = calendar_events.agenda + meeting_sessions.calendar_series_id (the summarizer reads the
 // calendar invite). Scanned every local and remote ref and every worktree's working file on
 // Oct 13 2026: 155 (this stack) was the highest claimed; main is at 154.
-export const SCHEMA_VERSION = 156;
+//
+// 158 = guest_profiles (new table): on-demand "Look up" results for meeting guests who are not
+// contacts. NOT 157: claude/shared-linkedin-avatars claims it. Scanned every local and remote ref
+// and every worktree's working file on Oct 13 2026: 157 was the highest claimed.
+export const SCHEMA_VERSION = 158;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
