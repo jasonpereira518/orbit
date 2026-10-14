@@ -1,7 +1,6 @@
 import {
   CalendarCheck,
   Check,
-  Coins,
   Globe,
   Infinity as InfinityIcon,
   Megaphone,
@@ -105,7 +104,6 @@ const FEATURE_STYLE: ReadonlyArray<{
   { test: /Reminders/i, icon: Check, bold: /Reminders and follow-up feed/i },
   { test: /Knowledge/i, icon: Check, bold: /Knowledge base/i },
   { test: /^Export/i, icon: Check, bold: /^Export your data/i },
-  { test: /enrichment/i, icon: Coins, bold: /Contact enrichment/i },
   { test: /Outreach/i, icon: Megaphone, bold: /Outreach campaigns/i },
   { test: /Recruiter/i, icon: UserSearch, bold: /Recruiter tracking/i },
   { test: /Calendar/i, icon: CalendarCheck, bold: /Calendar links/i },

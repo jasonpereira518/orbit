@@ -5272,7 +5272,7 @@
       "contactLimit": null,
       "canUseOutreach": true,
       "canUseHostedSending": true,
-      "canUseHostedEnrichment": true,
+      "canUseHostedEnrichment": false,
       "canUseRecruiters": true,
       "canUseSync": true,
       "canUseExtension": true

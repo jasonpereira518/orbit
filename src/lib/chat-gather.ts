@@ -393,13 +393,20 @@ export async function gatherEvidence(
 /**
  * Time, measured from when the request arrived. The route's `maxDuration` is 60s; retrieval
  * has already spent some of it, and the answer — the part the user actually waits for —
- * must always have room. So gathering stops by 38s into the request, runs at most 25s even
+ * must always have room. So gathering stops by 30s into the request, runs at most 25s even
  * when retrieval was fast, and does not start at all with less than 4s to work in: one
  * research round that cannot finish is a cost with nothing to show for it.
  */
-const GATHER_ENDS_BY_MS = 38_000;
+export const GATHER_ENDS_BY_MS = 30_000;
+/** The answer stream is cut here, so it ends inside `maxDuration` (60s) with room left to persist. */
+export const ANSWER_ENDS_BY_MS = 55_000;
 const GATHER_MAX_MS = 25_000;
 const GATHER_MIN_MS = 4_000;
+
+/** Ms left for the answer stream. Floored at 1s: `AbortSignal.timeout` throws on a negative delay. */
+export function answerDeadlineMs(requestStartedAt: number, now = Date.now()): number {
+  return Math.max(1_000, requestStartedAt + ANSWER_ENDS_BY_MS - now);
+}
 
 /**
  * The one entry point both chat paths call — the streaming route and the `askNetwork`

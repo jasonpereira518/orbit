@@ -4687,7 +4687,7 @@ export const gateEvents = pgTable(
      * The cheapest plan that would have let them through (`unlockPlanFor`). Null on rows
      * written before pricing v2.
      */
-    unlockPlan: text("unlock_plan").$type<"orbit" | "max">(),
+    unlockPlan: text("unlock_plan").$type<"free" | "orbit" | "max">(),
     /** Route or action that hit the wall, for locating it in the product. */
     context: jsonb("context").$type<Record<string, unknown>>().default({}).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

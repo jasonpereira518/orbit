@@ -6,8 +6,8 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { GoogleGenAI } from "@google/genai";
 import type OpenAI from "openai";
 import { and, eq, gte, sql } from "drizzle-orm";
-import { getDb } from "@/db";
-import { siteSettings, usageEvents, userSettings } from "@/db/schema";
+import { getDb, rowsOf } from "@/db";
+import { usageEvents, userSettings } from "@/db/schema";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { decryptOrNull } from "@/lib/crypto";
 import { isDemoAccount, isLocalhost } from "@/lib/demo-account";
@@ -35,8 +35,8 @@ import {
 import {
   AI_ACCESS_COPY,
   BACKGROUND_RESERVE_MESSAGE,
-  FREE_LIMIT_MESSAGE,
   MANAGED_PROVIDER_FAILURE_MESSAGE,
+  refusalCopyFor,
 } from "@/lib/ai-access-copy";
 import { JEV_MODEL } from "@/lib/ai-models";
 import { deepgramEnabled } from "@/lib/deepgram";
@@ -57,6 +57,7 @@ import {
   BACKGROUND_OPERATIONS,
   MANAGED_AI_ENABLED,
   MANAGED_AI_POOLS,
+  earliestPoolWindowStart,
   poolWindowStart,
   MANAGED_PROVIDER_ORDER,
   UNPRICED_CALL_MICROS,
@@ -208,7 +209,7 @@ export async function managedPoolsSpent(now = new Date()): Promise<Partial<Recor
   const providers = Object.keys(MANAGED_AI_POOLS) as AiProvider[];
   if (providers.length === 0) return {};
   const starts = providers.map((p) => poolWindowStart(MANAGED_AI_POOLS[p]!, now));
-  const earliest = new Date(Math.min(...starts.map((d) => d.getTime())));
+  const earliest = earliestPoolWindowStart(now)!; // non-null: `providers` is non-empty
   const columns = Object.fromEntries(
     providers.map((p, i) => [
       p,
@@ -227,15 +228,23 @@ export async function managedPoolState(now = Date.now()): Promise<PoolState> {
   if (pauseCache && now - pauseCache.at < PAUSE_TTL_MS) return pauseCache;
   try {
     const db = await getDb();
-    const [row] = await db
-      .select({ paused: siteSettings.managedAiPaused })
-      .from(siteSettings)
-      .where(eq(siteSettings.id, 1))
-      .limit(1);
-    const spentMicros = await managedPoolsSpent(new Date(now));
-    const spent = new Set(
-      (Object.keys(spentMicros) as AiProvider[]).filter((p) => (spentMicros[p] ?? 0) >= MANAGED_AI_POOLS[p]!.capMicros)
+    // One statement, still one row with no site_settings row: the switch, plus every provider
+    // whose balance ran dry (a managed `quota` error, `runOnGrant`) within the last 2 hours —
+    // longer than the 1 h per-instance record throttle, so a dry provider stays out on every
+    // instance until one of them tries it again after the window.
+    const [row] = rowsOf<{ paused: boolean | null; dry: string[] | null }>(
+      await db.execute(sql`
+        SELECT (SELECT managed_ai_paused FROM site_settings WHERE id = 1) AS paused,
+               (SELECT array_agg(DISTINCT context->>'provider') FROM error_events
+                 WHERE source = ${ERROR_SOURCES.managedAi} AND kind = 'quota'
+                   AND created_at > now() - interval '2 hours') AS dry
+      `)
     );
+    const spentMicros = await managedPoolsSpent(new Date(now));
+    const spent = new Set<AiProvider>([
+      ...(Object.keys(spentMicros) as AiProvider[]).filter((p) => (spentMicros[p] ?? 0) >= MANAGED_AI_POOLS[p]!.capMicros),
+      ...((row?.dry ?? []) as AiProvider[]),
+    ]);
     pauseCache = { paused: row?.paused ?? managedAiPausedDefault(), spent, at: now };
     return pauseCache;
   } catch {
@@ -462,10 +471,14 @@ export function typesafeClient(grant: DecisionGrant): {
  *
  * A managed key that the provider refuses or throttles is an ops incident, and the default
  * copy ("Gemini didn't accept your API key — check it in Settings") would send a Lifetime
- * user to fix a key they never gave us. So a managed auth/rate-limit failure becomes
+ * user to fix a key they never gave us. So a managed auth/rate-limit/quota failure becomes
  * `MANAGED_PROVIDER_FAILURE_MESSAGE` and an error event the ops sweep pages on. Wrap the
  * `withUsage` call, not its callback, so `usage_events.error_kind` still records the
  * provider's real failure kind.
+ *
+ * A quota failure (Orbit's balance with that provider ran dry) also takes the provider out
+ * of the managed set: on this instance at once, and on every other through the error event
+ * `managedPoolState` reads.
  */
 export async function runOnGrant<T>(grant: AiGrant<AiProvider>, call: Promise<T>): Promise<T> {
   try {
@@ -473,7 +486,16 @@ export async function runOnGrant<T>(grant: AiGrant<AiProvider>, call: Promise<T>
   } catch (err) {
     if (grant.source !== "managed") throw err;
     const kind = classifyAiError(err);
-    if (kind !== "auth" && kind !== "rate_limit") throw err;
+    if (kind !== "auth" && kind !== "rate_limit" && kind !== "quota") throw err;
+    // Off Vercel (a localhost demo account) the "managed" key is the developer's own. Its
+    // failures keep the managed copy but must not reach the shared DB, where a dry dev key
+    // would pull Orbit's real provider out of production for two hours.
+    if (!process.env.VERCEL) throw new AiAccessError("managed_unavailable", MANAGED_PROVIDER_FAILURE_MESSAGE);
+    // ponytail: no in-request retry (9 call sites); the failing call errors once and later
+    // calls fail over — add a function-taking retry helper if that one failure matters.
+    if (kind === "quota" && pauseCache) {
+      pauseCache = { ...pauseCache, spent: new Set([...pauseCache.spent, grant.provider]) };
+    }
     if (shouldRecordThrottled(`ai.managed:${grant.provider}:${kind}`)) {
       await recordErrorEvent({
         source: ERROR_SOURCES.managedAi,
@@ -668,7 +690,7 @@ export class AiAccess {
       const balance = await getCreditBalance(this.userId, this.plan, this.settings, undefined, { ensure: false });
       if (balance.spendable > 0) throw this.refusal("managed_unavailable", BACKGROUND_RESERVE_MESSAGE);
     }
-    throw this.refusal("managed_limit", this.plan === "free" ? FREE_LIMIT_MESSAGE : undefined);
+    throw this.refusal("managed_limit", refusalCopyFor("managed_limit", this.plan));
   }
 
   /** A grant for "the user's model": chat, capture, drafts, briefs, OCR. */

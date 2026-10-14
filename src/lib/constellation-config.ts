@@ -9,7 +9,9 @@ import { cache } from "react";
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { constellationSettings } from "@/db/schema";
-import { recordAdminAction } from "@/lib/admin-operations";
+// From admin-audit, not the admin-operations barrel: that one drags the import engine (and
+// every adapter) into the dashboard and graph loaders, which read this config.
+import { recordAdminAction } from "@/lib/admin-audit";
 import {
   clampThresholds,
   DEFAULT_CONSTELLATION_THRESHOLDS,

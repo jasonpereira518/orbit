@@ -91,6 +91,27 @@ export function hostMatchValue(host: string) {
 }
 
 /**
+ * The path prefix Vercel BotID serves its challenge script and proxy under. Fixed by the
+ * `botid` package: `withBotId` (next.config.ts) rewrites it to Vercel and `initBotId`
+ * (src/instrumentation-client.ts) loads from it. `smoke-waitlist-host` asserts the package
+ * still uses this prefix, so an upgrade that moves it fails loudly.
+ */
+export const BOTID_PATH_PREFIX = "149e9513-01fa-4fb0-aad4-566afd725d1b/2d206a39-8ed7-437e-a3be-862e0f06eea3";
+
+/**
+ * Every URL the waitlist's join form can post its server actions from (an action POSTs to
+ * the page's own URL): `/interest` on the app host, and `/` and `/waitlist/<slug>` on the
+ * waitlist host, both rewritten to `/interest` below. `initBotId` attaches BotID's proof
+ * to POSTs on these paths only (`*` is its wildcard), and `isBotRequest` reads it in the
+ * actions — so a path missing here makes every real person on it look like a bot.
+ */
+export const BOTID_PROTECTED_POSTS = [
+  { path: "/interest", method: "POST" },
+  { path: "/", method: "POST" },
+  { path: "/waitlist/*", method: "POST" },
+];
+
+/**
  * Paths the waitlist host serves, as regex fragments matched from the first segment.
  * Everything else redirects to `/`.
  *
@@ -105,6 +126,8 @@ export function hostMatchValue(host: string) {
  * - `favicon.ico`, `icon.png`, `apple-icon.png`: the root layout's file-based icons, which
  *   every page links. They are rewritten to the waitlist's icon below.
  * - `monitoring`: Sentry's tunnel, if one is ever configured. `__nextjs`: the dev overlay.
+ * - `BOTID_PATH_PREFIX/`: Vercel BotID's challenge script and proxy, which the join's
+ *   server-action POSTs depend on.
  *
  * Exact entries end in `$`; directory entries end in `/`. So neither `privacy-policy` nor
  * `landing/earth.png` is let through by a looser neighbour.
@@ -126,6 +149,7 @@ export const WAITLIST_ALLOWED_PATHS = [
   "apple-icon\\.png$",
   "monitoring$",
   "__nextjs",
+  `${BOTID_PATH_PREFIX}/`,
 ] as const;
 
 /**
@@ -249,6 +273,8 @@ export const STEALTH_HIDDEN_API = ["/api/v1/openapi.json"] as const;
  * - `/scan/`: the phone half of note scanning, authenticated by a token in the path and
  *   opened by an existing user's own phone.
  * - `/.well-known/` and `/__clerk/`: machine endpoints (OAuth discovery, Clerk's proxy).
+ * - `/<BOTID_PATH_PREFIX>/`: Vercel BotID's script and proxy, which `/interest`'s join
+ *   needs while stealth leaves that page open (no waitlist host).
  */
 export const STEALTH_OPEN_PREFIXES = [
   "/sign-in",
@@ -256,6 +282,7 @@ export const STEALTH_OPEN_PREFIXES = [
   "/scan/",
   "/.well-known/",
   "/__clerk/",
+  `/${BOTID_PATH_PREFIX}/`,
 ] as const;
 
 /** The query key a Clerk invitation link lands on `/sign-up` with. */

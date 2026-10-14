@@ -4,7 +4,8 @@ import { planMeterUsage } from "@/db/schema";
 
 /**
  * Monthly per-plan counters that are counts rather than money or audio seconds — today, the
- * contact enrichments a plan may run on Orbit's own Apollo key (Pro 10, Max and Lifetime 25).
+ * contact enrichments a plan may run on Orbit's own Apollo key (none today: every plan's
+ * `hostedEnrichmentsPerMonth` is 0).
  *
  * The cap is enforced by ONE conditional upsert: the row only moves when the new total still
  * fits, so two concurrent enrichments at 9 of 10 cannot both land. The month is the UTC

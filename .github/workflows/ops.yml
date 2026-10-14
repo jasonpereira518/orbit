@@ -271,6 +271,9 @@ jobs:
           curl -sS --fail-with-body --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/work-history/sweep"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
 
       # Radar's nightly pass (daily). Its own line and its own route, for the same reason as
       # the job feed: model calls on people's own keys must never make the alerting path's
