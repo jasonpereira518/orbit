@@ -81,6 +81,9 @@ const PRICES: Record<string, PriceEntry> = {
   "claude-opus-5": { input: 5, output: 25, cachedInput: 0.5 },
   "claude-sonnet-4-6": { input: 3, output: 15, cachedInput: 0.3 },
   "claude-sonnet-4-5": { input: 3, output: 15, cachedInput: 0.3 },
+  // Haiku 5.5: prompts up to 100K tokens. Orbit's prompts are far below that; above it the
+  // provider bills $0.50 / $2.50, which this table does not model.
+  "claude-haiku-5-5": { input: 0.1, output: 0.5, cachedInput: 0.01 },
   "claude-haiku-4-5": { input: 1, output: 5, cachedInput: 0.1 },
   "claude-opus-4-8": { input: 5, output: 25, cachedInput: 0.5 },
   "claude-opus-4-7": { input: 5, output: 25, cachedInput: 0.5 },

@@ -6,6 +6,7 @@ import {
   Gauge,
   Globe,
   HandCoins,
+  ImageOff,
   LayoutTemplate,
   MessageSquareText,
   Scale,
@@ -48,6 +49,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
   // Route is /admin/billing, but the screen covers money in AND money out — "Billing"
   // alone reads as revenue-only.
   { href: "/admin/billing", label: "Money", icon: Wallet },
+  // Takedown of a shared LinkedIn photo starts from a contact page; this lists what is blocked.
+  { href: "/admin/avatars", label: "Photos", icon: ImageOff },
   { href: "/admin/audit", label: "Audit", icon: ScrollText },
 ];
 

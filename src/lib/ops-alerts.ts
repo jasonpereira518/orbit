@@ -1,7 +1,8 @@
 import type { CronRunState } from "@/lib/cron-runs";
 import { PURGE_MAX_ATTEMPTS } from "@/lib/data-categories";
 import { hasMissedRun } from "@/lib/cron-runs";
-import { MANAGED_AI_ALERTS } from "@/lib/managed-ai-policy";
+import { MANAGED_AI_ALERTS, MANAGED_AI_POOLS, MANAGED_AI_POOL_WARN_SHARE, poolWindowStart } from "@/lib/managed-ai-policy";
+import type { AiProvider } from "@/lib/ai-providers";
 
 /**
  * Known-condition alerting: the catalogue, and the state machine that keeps it quiet.
@@ -121,6 +122,8 @@ export type ManagedAiOpsFacts = {
   accountsAtCap: number;
   /** Providers whose managed key was refused or throttled in the last hour. */
   failingProviders: string[];
+  /** Orbit-paid spend per pooled provider in its current window (`MANAGED_AI_POOLS`). */
+  poolSpentMicros: Partial<Record<AiProvider, number>>;
 };
 
 /** How often a persisting condition is repeated. Info is said once. */
@@ -708,13 +711,33 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
 const usd = (micros: number) => `$${(micros / 1_000_000).toFixed(2)}`;
 
 /**
- * Orbit's own AI keys, which Lifetime accounts run on when they bring none. A one-time
- * payment funding ongoing inference is the one open-ended cost in the product, so it gets
- * its own catalogue entries: the key breaking, the key missing, a spike, a pace that
- * outruns the revenue behind it, and accounts hitting the cap.
+ * Orbit's own AI keys, which every plan's included AI runs on. Free accounts spend with no
+ * revenue behind them, so it gets its own catalogue entries: the key breaking, the key
+ * missing, the shared pool running down, a spike, a pace that outruns the revenue behind
+ * it, and accounts hitting the cap.
  */
 function managedAiConditions(m: ManagedAiOpsFacts): OpsCondition[] {
   const out: OpsCondition[] = [];
+
+  for (const provider of Object.keys(MANAGED_AI_POOLS) as AiProvider[]) {
+    const pool = MANAGED_AI_POOLS[provider]!;
+    const spentMicros = m.poolSpentMicros[provider] ?? 0;
+    const share = spentMicros / pool.capMicros;
+    if (share < MANAGED_AI_POOL_WARN_SHARE) continue;
+    const spent = share >= 1;
+    const since = poolWindowStart(pool, new Date()).toISOString().slice(0, 10);
+    const after = pool.monthlyResetDay
+      ? ` It refills on day ${pool.monthlyResetDay} of the month; until then included AI runs on the next provider, if any.`
+      : ` It never refills on its own: top up the provider and raise MANAGED_AI_POOLS.${provider}.capMicros.`;
+    out.push({
+      id: `ai.managed_pool:${provider}`,
+      // A monthly pool that runs dry comes back by itself; a prepaid one needs a person.
+      severity: spent ? (pool.monthlyResetDay ? "warning" : "critical") : "warning",
+      title: spent ? `Orbit's ${provider} AI pool is spent` : `Orbit's ${provider} AI pool is running low`,
+      detail: `${usd(spentMicros)} of the ${usd(pool.capMicros)} ${provider} pool spent since ${since}.${after}`,
+      href: "/admin/billing/costs",
+    });
+  }
 
   for (const provider of m.failingProviders) {
     out.push({
@@ -758,7 +781,7 @@ function managedAiConditions(m: ManagedAiOpsFacts): OpsCondition[] {
         detail:
           m.revenueLast30dCents > 0
             ? `Managed AI cost ${usd(m.spentLast30dMicros)} in the last 30 days — ${Math.round(share * 100)}% of the ${usd(revenueMicros)} of subscription and pack revenue booked in the same window (alarm above ${Math.round(MANAGED_AI_ALERTS.maxCostShare * 100)}%). Revisit the allowances or the prices.`
-            : `${usd(m.spentLast30dMicros)} of managed AI in the last 30 days with no revenue booked behind it (comps only).`,
+            : `${usd(m.spentLast30dMicros)} of managed AI in the last 30 days with no revenue booked behind it (Free and comped accounts).`,
         href: "/admin/billing/costs",
       });
     }
