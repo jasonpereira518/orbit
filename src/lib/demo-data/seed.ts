@@ -1114,8 +1114,10 @@ async function seedImports(userId: string, ago: (d: number) => Date, summary: De
     contactsUpdated: 6,
     duplicatesFound: 2,
     stats: { skipped: 0 },
-    createdAt: ago(120),
-    updatedAt: ago(120),
+    // Inside the LinkedIn refresh window (`linkedInRefreshLevel`: bell at 30 days, dashboard
+    // at 90), so a demo never opens on "your LinkedIn data is 4 months old".
+    createdAt: ago(21),
+    updatedAt: ago(21),
   });
   summary.imports = 1;
 }

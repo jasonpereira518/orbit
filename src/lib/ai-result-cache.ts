@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, eq, gt, lt } from "drizzle-orm";
+import { and, eq, gt, like, lt, or } from "drizzle-orm";
 import { getDb } from "@/db";
 import { aiResultCache } from "@/db/schema";
 import { completeJson } from "@/lib/ai";
@@ -22,6 +22,12 @@ import type { AiOperationId } from "@/lib/ai-operations";
 
 /** Rows older than this are pruned by the process-stalled sweep. No TTL may exceed it. */
 export const AI_RESULT_CACHE_MAX_DAYS = 90;
+
+/**
+ * Web research on people who are not contacts (`research.*`, `src/lib/web-research.ts`) is
+ * kept this long and no longer — it is about strangers, so it is pruned early, not at 90.
+ */
+export const RESEARCH_CACHE_DAYS = 14;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -128,10 +134,21 @@ export function cachedCompleteJson(
   );
 }
 
-/** Deletes cached answers older than the longest TTL. Called by the process-stalled sweep. */
+/**
+ * Deletes cached answers older than the longest TTL, and research on non-contacts past
+ * `RESEARCH_CACHE_DAYS`. Called by the process-stalled sweep.
+ */
 export async function pruneAiResultCache(now: Date = new Date()): Promise<void> {
   const db = await getDb();
   await db
     .delete(aiResultCache)
-    .where(lt(aiResultCache.createdAt, new Date(now.getTime() - AI_RESULT_CACHE_MAX_DAYS * DAY_MS)));
+    .where(
+      or(
+        lt(aiResultCache.createdAt, new Date(now.getTime() - AI_RESULT_CACHE_MAX_DAYS * DAY_MS)),
+        and(
+          like(aiResultCache.operation, "research.%"),
+          lt(aiResultCache.createdAt, new Date(now.getTime() - RESEARCH_CACHE_DAYS * DAY_MS))
+        )
+      )
+    );
 }

@@ -80,6 +80,7 @@ export const PUBLIC_ROUTES = [
   // Radar's nightly pass, hourly news sweep and Monday email — same CRON_SECRET gate, same
   // reasons.
   "/api/radar/run",
+  "/api/cloud-notes/run",
   "/api/radar/feeds/sweep",
   "/api/radar/digest",
   // The credit emails, on the ten-minute schedule — same CRON_SECRET gate.

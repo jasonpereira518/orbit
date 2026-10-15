@@ -24,6 +24,7 @@ const KIND: Record<ImportTarget, { label: string; Icon: typeof Contact; tone: st
   linkedin_positions: { label: "LinkedIn current role", Icon: UserRound, tone: "bg-rose-500/15 text-rose-700 dark:text-rose-300" },
   linkedin_skills: { label: "LinkedIn skills", Icon: UserRound, tone: "bg-rose-500/15 text-rose-700 dark:text-rose-300" },
   linkedin_alerts: { label: "LinkedIn job alerts", Icon: UserRound, tone: "bg-rose-500/15 text-rose-700 dark:text-rose-300" },
+  linkedin_education: { label: "LinkedIn education", Icon: UserRound, tone: "bg-rose-500/15 text-rose-700 dark:text-rose-300" },
   linkedin_export: { label: "LinkedIn export files", Icon: Users, tone: "bg-sky-500/15 text-sky-700 dark:text-sky-300" },
   contacts_file: { label: "Contacts", Icon: Contact, tone: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" },
   calendar_ics: { label: "Calendar", Icon: CalendarDays, tone: "bg-amber-500/15 text-amber-700 dark:text-amber-300" },

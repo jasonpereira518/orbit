@@ -18,6 +18,7 @@ import { ConnectivityBanner } from "@/components/layout/connectivity-banner";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { AvatarBackfill } from "@/components/contacts/avatar-backfill";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
+import { CloudNotesWatcher } from "@/components/notifications/cloud-notes-watcher";
 import { PlanCelebrationWatcher } from "@/components/celebration/plan-celebration-watcher";
 import { CreditsIntroWatcher } from "@/components/credits-intro/credits-intro-watcher";
 import { LinkedInReminderWatcher } from "@/components/linkedin-reminder/linkedin-reminder-watcher";
@@ -188,6 +189,7 @@ export function AppShell({
           )}
           <AvatarBackfill />
           <DueNotificationsWatcher />
+          <CloudNotesWatcher />
           <PlanCelebrationWatcher plan={plan} />
           {/* The credits intro and the export reminder both wait until the tour is over: two
               full-screen guides at once would be one too many. The intro mounts first; the

@@ -45,7 +45,7 @@ run(async () => {
     const signals = cohort.constellationSignals.get(c.id);
     check("recent touches count the note and the message only", cohort.touchCounts.get(c.id) === 2, String(cohort.touchCounts.get(c.id)));
     check("a model-read meeting does not make them met", signals?.meetingInteractions === 0, JSON.stringify(signals));
-    check("the message still counts as inbound", signals?.linkedInInbound === 1 && signals?.noteInteractions === 1, JSON.stringify(signals));
+    check("the message still counts as inbound", signals?.messageInbound === 1 && signals?.noteInteractions === 1, JSON.stringify(signals));
     check("they have still interacted", cohort.interactedIds.has(c.id));
   }
 

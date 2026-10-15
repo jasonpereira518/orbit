@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   linkedin_export_requested_at timestamptz,
   linkedin_reminder_shown_at timestamptz,
   credits_intro_shown_at timestamptz,
+  cloud_notes_auto_extract integer NOT NULL DEFAULT 0,
   first_name text,
   last_name text,
   profile_image_url text,
@@ -1503,6 +1504,38 @@ CREATE TABLE IF NOT EXISTS linkedin_avatars (
   blocked_by text
 );
 CREATE INDEX IF NOT EXISTS linkedin_avatars_resolved_at_idx ON linkedin_avatars(resolved_at);
+CREATE TABLE IF NOT EXISTS cloud_note_sources (
+  user_id text NOT NULL,
+  provider text NOT NULL,
+  cursor text,
+  backfilled_at timestamptz,
+  next_scan_at timestamptz NOT NULL DEFAULT now(),
+  lease_until timestamptz,
+  last_scan_at timestamptz,
+  last_error text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, provider)
+);
+CREATE INDEX IF NOT EXISTS cloud_note_sources_due_idx ON cloud_note_sources(next_scan_at);
+CREATE TABLE IF NOT EXISTS cloud_note_files (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  provider text NOT NULL,
+  file_id text NOT NULL,
+  name text NOT NULL,
+  web_url text,
+  modified_at timestamptz,
+  status text NOT NULL DEFAULT 'found',
+  reason text,
+  detected_by text NOT NULL DEFAULT 'rules',
+  from_backfill integer NOT NULL DEFAULT 0,
+  capture_job_id uuid,
+  notified_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS cloud_note_files_user_file_uidx ON cloud_note_files(user_id, provider, file_id);
+CREATE INDEX IF NOT EXISTS cloud_note_files_user_status_idx ON cloud_note_files(user_id, status);
 CREATE TABLE IF NOT EXISTS site_settings (
   id integer PRIMARY KEY DEFAULT 1,
   stealth_enabled boolean,
@@ -2627,6 +2660,11 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // contacts.profile_image_source. NOT 155, 156 or 158: the calendar branches hold them
 // (claude/calendar-prep-c holds 158, and the gate never re-runs a lower version).
 //
+// 164 = cloud notes (Drive/OneDrive meeting notes): cloud_note_sources, cloud_note_files and
+// user_settings.cloud_notes_auto_extract. NOT 160–163: the calendar stack holds them
+// (#420–#436 renumbered Oct 14). Rescanned every local branch and remote ref on Oct 14 2026:
+// 163 was the highest claimed anywhere.
+//
 // 165 = the raw files of a LinkedIn export: import_files. NOT 160-164: the calendar stack holds
 // 160-163 and claude/cloud-notes-auto-extract-799187 holds 164 (the job-change-alerts-radar
 // worktree also has an uncommitted 164). Rescanned every ref and worktree on Oct 15 2026.
@@ -3524,6 +3562,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "linkedin_export_requested_at", "timestamptz");
   await ensureColumn(client, "user_settings", "linkedin_reminder_shown_at", "timestamptz");
   await ensureColumn(client, "user_settings", "credits_intro_shown_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "cloud_notes_auto_extract", "integer NOT NULL DEFAULT 0");
   await ensureColumn(client, "user_settings", "email", "text");
   await ensureColumn(client, "user_settings", "calendar_feed_token", "text");
   await ensureColumn(client, "user_settings", "inbound_log_token", "text");
@@ -4109,6 +4148,14 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_source text`,
   `CREATE TABLE IF NOT EXISTS linkedin_avatars (slug text PRIMARY KEY, image_url text, source text NOT NULL, resolved_at timestamptz NOT NULL DEFAULT now(), blocked_at timestamptz, blocked_by text)`,
   `CREATE INDEX IF NOT EXISTS linkedin_avatars_resolved_at_idx ON linkedin_avatars(resolved_at)`,
+  // Schema v164: cloud notes. One row per watched drive (its own change cursor — never
+  // gmail_connections.sync_cursor, which calendar sync owns) and one per doc found or extracted,
+  // which is the dedupe, the panel row and the review dialog. Plus the auto-extract switch.
+  `CREATE TABLE IF NOT EXISTS cloud_note_sources (user_id text NOT NULL, provider text NOT NULL, cursor text, backfilled_at timestamptz, next_scan_at timestamptz NOT NULL DEFAULT now(), lease_until timestamptz, last_scan_at timestamptz, last_error text, created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (user_id, provider))`,
+  `CREATE INDEX IF NOT EXISTS cloud_note_sources_due_idx ON cloud_note_sources(next_scan_at)`,
+  `CREATE TABLE IF NOT EXISTS cloud_note_files (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, provider text NOT NULL, file_id text NOT NULL, name text NOT NULL, web_url text, modified_at timestamptz, status text NOT NULL DEFAULT 'found', reason text, detected_by text NOT NULL DEFAULT 'rules', from_backfill integer NOT NULL DEFAULT 0, capture_job_id uuid, notified_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS cloud_note_files_user_file_uidx ON cloud_note_files(user_id, provider, file_id)`,
+  `CREATE INDEX IF NOT EXISTS cloud_note_files_user_status_idx ON cloud_note_files(user_id, status)`,
   // Schema v165: the raw files of a LinkedIn export (import_files), hung off its imports row.
   `CREATE TABLE IF NOT EXISTS import_files (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, import_id uuid NOT NULL REFERENCES imports(id) ON DELETE CASCADE, path text NOT NULL, byte_size integer NOT NULL, role text NOT NULL, gz text NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE INDEX IF NOT EXISTS import_files_user_idx ON import_files(user_id)`,
@@ -4236,6 +4283,7 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS linkedin_export_requested_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS linkedin_reminder_shown_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credits_intro_shown_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS cloud_notes_auto_extract integer NOT NULL DEFAULT 0`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS slot uuid`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true`,

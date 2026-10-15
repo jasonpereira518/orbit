@@ -2,7 +2,7 @@
  * The research step before a multi-step answer: what it is shown, which tools it gets, and
  * what it hands to the answer.
  *
- * It runs only when `chooseDepth` says one retrieval cannot answer the question, and it
+ * It runs only when the router says one retrieval cannot answer the question, and it
  * never writes the answer. It hands back two things: an evidence block the answer prompt
  * fences as untrusted data, and the ids of every contact its lookups surfaced — which join
  * the recommendation allowlist, so a person found in round two is recommendable instead of
@@ -20,13 +20,14 @@ import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { createToolDriver, type ModelTool, type ToolCall } from "@/lib/ai-tools";
 import type { ChatContext } from "@/lib/chat-context";
-import { chooseDepth, type DepthDecision } from "@/lib/chat-depth";
+import type { DepthDecision } from "@/lib/decisions/chat-route";
 import { NULL_STEPS, plural, toRefs, type StepEmitter } from "@/lib/chat-steps";
 import { runToolLoop, type ExecutedCall, type ToolLoopOutcome } from "@/lib/chat-tool-loop";
 import { sanitizeProfileLine } from "@/lib/contact-profile-format";
 import { recordAiSecurityEvent, UNTRUSTED_DATA_RULES } from "@/lib/ai-security";
 import { ORBIT_TOOLS } from "@/lib/tools/definitions";
-import { isToolError, runTool, toolsFor, type OrbitTool } from "@/lib/tools/registry";
+import { isToolError, releasedTools, runTool, toolsFor, type OrbitTool } from "@/lib/tools/registry";
+import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 
 /** Rounds of lookups. Most research questions finish in one or two. */
 const MAX_ROUNDS = 3;
@@ -53,6 +54,8 @@ export type NotePassage = {
   /** A meeting passage: when in the call it was said (null for its summary), and its title. */
   startMs?: number | null;
   title?: string | null;
+  /** Who an interaction passage is about, when that contact is still the user's. */
+  contactName?: string;
 };
 
 export type GatherResult = {
@@ -73,7 +76,7 @@ const GATHER_SYSTEM = `You are the research step for Orbit, a personal networkin
 
 The answer-writer already has the contacts listed under "Already found", with their summaries, notes and recent interactions. Do not look those up again unless you need something specific about one of them.
 
-Reach for search_notes first for anything about what was said, discussed, promised or learned, and when — that lives in the user's notes, not on a contact card. When the question is about a call the user recorded — "in my meeting with…", "what came up about pricing on the call" — also try search_meetings, which searches the recorded transcripts and summaries; its passages say when something was said but never who said it. Use after/before to scope a date ("in March" means that month of the most recent year that is not in the future). Use who_do_i_know_at and search_contacts to find people; get_contact to read one person's full record. Use get_timeline for when or how often something happened with one person, find_path_to for who could introduce the user to a company or a person, list_open_commitments for what they owe, and get_goals when the question is open-ended enough that what they are working towards decides the answer.
+Reach for search_notes first for anything about what was said, discussed, promised or learned, and when — that lives in the user's notes, not on a contact card. When the question is about a call the user recorded — "in my meeting with…", "what came up about pricing on the call" — also try search_meetings, which searches the recorded transcripts and summaries; its passages say when something was said but never who said it. Use after/before to scope a date ("in March" means that month of the most recent year that is not in the future). Use who_do_i_know_at and search_contacts to find people; get_contact to read one person's full record. Use get_timeline for when or how often something happened with one person, find_path_to for who could introduce the user to a company or a person, list_open_commitments for what they owe, and get_goals when the question is open-ended enough that what they are working towards decides the answer. When the question is about someone the user does not know yet — "who is…", "brief me on…", "research…" — and search_contacts finds nobody by that name, use research_person (it needs a company, domain or LinkedIn link besides the name; take them from the question). For a company beyond who the user knows there, use research_company. To find NEW people matching a description ("find me PMs at Stripe", "people outside my network who…"), use find_people. All three search the public web and are slow: at most one of them per turn, and only if they are offered.
 
 Make at most three lookups per turn. When you have what the question needs — or when nothing more would help — reply with the single word DONE and make no lookups.
 
@@ -104,6 +107,24 @@ function digest(ctx: ChatContext, today: string): string {
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+/** "Searching your notes…" → "Searched your notes…", for a lookup that finished. */
+function pastTense(label: string): string {
+  return label.replace(/^(Search|Check|Look)ing\b/, "$1ed").replace(/^Reading\b/, "Read");
+}
+
+/** What one lookup came back with, as the end of its step line. */
+function describeOutcome(out: { ok: boolean; result: unknown }): string {
+  if (!out.ok) return "failed";
+  const r = out.result as Record<string, unknown> | unknown[] | null;
+  const rows = Array.isArray(r)
+    ? r
+    : r && typeof r === "object"
+      ? (Object.values(r).find(Array.isArray) as unknown[] | undefined)
+      : undefined;
+  if (!rows) return "done";
+  return rows.length ? `${plural(rows.length, "result")}` : "nothing found";
 }
 
 /** The step line for one lookup — model-chosen text, so sanitized and shortened. */
@@ -294,6 +315,21 @@ function executorFor(userId: string, tools: OrbitTool[]) {
   };
 }
 
+/**
+ * The read tools this asker's chat may use: every chat tool, minus those whose page has not
+ * been released to them. A visibility read that fails drops the gated tools — closed, not open.
+ */
+async function chatToolsFor(userId: string): Promise<OrbitTool[]> {
+  const all = toolsFor(ORBIT_TOOLS, "chat", ["read"]);
+  if (!all.some((t) => t.releasedSurface)) return all;
+  try {
+    const { hidden, comingSoon } = await resolveSurfaceVisibility(userId);
+    return releasedTools(all, (key) => !hidden.has(key) && !comingSoon.has(key));
+  } catch {
+    return releasedTools(all, () => false);
+  }
+}
+
 export async function gatherEvidence(
   userId: string,
   ctx: ChatContext,
@@ -307,7 +343,7 @@ export async function gatherEvidence(
   }
 ): Promise<GatherResult> {
   const steps = options.steps ?? NULL_STEPS;
-  const tools = toolsFor(ORBIT_TOOLS, "chat", ["read"]);
+  const tools = await chatToolsFor(userId);
   const modelTools: ModelTool[] = tools.map((t) => ({
     name: t.name,
     description: t.description,
@@ -329,13 +365,30 @@ export async function gatherEvidence(
         // The account read retrieval already made; the grant is still this driver's own.
         access: ctx.access,
       }));
-    outcome = await runToolLoop(driver, executorFor(userId, tools), {
+    // Every lookup is its own step, finished with what it found, so the trail shows the whole
+    // research — not one line relabelled until only the last lookup is left on it.
+    const run = executorFor(userId, tools);
+    let lookups = 0;
+    const narrated = async (call: ToolCall) => {
+      const id = `gather:${++lookups}`;
+      const label = describeCall(call, ctx);
+      steps.start("gather", label, undefined, id);
+      try {
+        const out = await run(call);
+        steps.done("gather", { id, label: `${pastTense(label)} → ${describeOutcome(out)}` });
+        return out;
+      } catch (err) {
+        // The loop reports the throw to the model; the trail must not leave it spinning.
+        steps.done("gather", { id, label: `${pastTense(label)} → failed` });
+        throw err;
+      }
+    };
+    outcome = await runToolLoop(driver, narrated, {
       maxRounds: MAX_ROUNDS,
       maxCalls: MAX_CALLS,
       deadline: options.deadline,
       signal: options.signal,
       maxResultChars: MAX_RESULT_CHARS,
-      onCall: (call) => steps.update("gather", { label: describeCall(call, ctx) }),
     });
   } catch {
     // No research grant, a provider that is down: the answer runs from retrieval alone, as
@@ -431,14 +484,17 @@ export async function maybeGather(
   depth: DepthDecision;
   research: ResearchSummary | null;
 }> {
-  // Decided with the rest of the routing (decisions/chat-route.ts) while retrieval ran; the
-  // rules answer here only for a context built without it.
-  const depth = ctx.route?.depth ?? chooseDepth(ctx.q, { hasPriorTurns: ctx.priorTurns.length > 0 });
-  if (depth.depth !== "research") return { evidence: null, notePassages: [], depth, research: null };
+  // Decided with the rest of the routing (decisions/chat-route.ts) while retrieval ran; a
+  // context built without it gets one pass.
+  const depth: DepthDecision = ctx.route?.depth ?? { depth: "single", reason: "one retrieval answers it" };
+  // The fact lane's passages (retrieval, every fact or person question) come first; research
+  // adds to them, never replaces them.
+  const lanePassages = ctx.notePassages ?? [];
+  if (depth.depth !== "research") return { evidence: null, notePassages: lanePassages, depth, research: null };
 
   const now = Date.now();
   const deadline = Math.min(options.requestStartedAt + GATHER_ENDS_BY_MS, now + GATHER_MAX_MS);
-  if (deadline - now < GATHER_MIN_MS) return { evidence: null, notePassages: [], depth, research: null };
+  if (deadline - now < GATHER_MIN_MS) return { evidence: null, notePassages: lanePassages, depth, research: null };
 
   const gathered = await gatherEvidence(userId, ctx, {
     deadline,
@@ -452,9 +508,10 @@ export async function maybeGather(
   // research found (not retrieval) has a name to preview, not a blank.
   for (const c of gathered.namedContacts) if (!ctx.contactNames.has(c.id)) ctx.contactNames.set(c.id, c.name);
   const o = gathered.outcome;
+  const seen = new Set(lanePassages.map((p) => p.sourceId));
   return {
     evidence: gathered.evidence,
-    notePassages: gathered.notePassages,
+    notePassages: [...lanePassages, ...gathered.notePassages.filter((p) => !seen.has(p.sourceId))],
     depth,
     research: o
       ? {

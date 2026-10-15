@@ -21,6 +21,7 @@ export const RUN_ORDER: readonly ImportTarget[] = [
   "linkedin_positions",
   "linkedin_skills",
   "linkedin_alerts",
+  "linkedin_education",
   "calendar_ics",
   "calendar_csv",
   // Last: its extras (invitations, notes, recommendations) attach to people, so the people

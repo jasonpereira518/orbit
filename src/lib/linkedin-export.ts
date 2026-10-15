@@ -88,3 +88,29 @@ export function isLinkedInNudgeVisible(input: {
   const age = accountAgeMs(input.createdAt, input.now);
   return age != null && age <= LINKEDIN_NUDGE_MAX_AGE_MS;
 }
+
+/**
+ * Keeping LinkedIn fresh. The export is a snapshot, so connections made after it never reach
+ * Orbit until the user requests another one. A month after the last upload the bell says so;
+ * after three the dashboard leads with it.
+ */
+export const LINKEDIN_REFRESH_NOTIFY_MS = 30 * DAY_MS;
+export const LINKEDIN_REFRESH_URGENT_MS = 90 * DAY_MS;
+
+export type LinkedInRefreshLevel = "notify" | "urgent" | null;
+
+/** null with no import at all: the first-import reminder above owns that account. */
+export function linkedInRefreshLevel(lastImportAt: Instant, now: Date): LinkedInRefreshLevel {
+  const last = ms(lastImportAt);
+  if (last == null) return null;
+  const age = now.getTime() - last;
+  if (age >= LINKEDIN_REFRESH_URGENT_MS) return "urgent";
+  if (age >= LINKEDIN_REFRESH_NOTIFY_MS) return "notify";
+  return null;
+}
+
+/** Whole days since the last import, for copy. */
+export function daysSince(value: Instant, now: Date): number {
+  const t = ms(value);
+  return t == null ? 0 : Math.floor((now.getTime() - t) / DAY_MS);
+}
