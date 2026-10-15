@@ -121,11 +121,19 @@ export type TranscribeEvalFixture = {
 
 /** `scripts/eval-fixtures/ai-chat-eval.json` — questions over `contact-search-eval.json`'s network. */
 export type ChatEvalFixture = {
+  /** Look-alike contacts seeded beside the network, so a list question has more than 12 answers. */
+  bulk?: Array<{ count: number; namePrefix: string; school?: string; company?: string; location?: string }>;
   cases: Array<{
     id: string;
     question: string;
     /** Emails (from contact-search-eval.json) of contacts the answer must name. */
     mustMention: string[];
+    /** A list question: the complete filtered roster must reach the prompt with this total. */
+    expectList?: { total: number };
+    /** A count question: the answer must state this number. */
+    expectCount?: number;
+    /** A person question: this contact (by email) must resolve and be the focused contact. */
+    expectPerson?: string;
   }>;
 };
 

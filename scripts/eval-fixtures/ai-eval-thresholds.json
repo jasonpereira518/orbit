@@ -73,7 +73,10 @@
   "chat": {
     "mentionRecall": { "maxDrop": 0.03 },
     "retrievalRecall": { "maxDrop": 0.03 },
-    "firstTokenP50Ms": { "maxRise": 1500 }
+    "firstTokenP50Ms": { "maxRise": 1500 },
+    "listCompleteness": { "maxDrop": 0 },
+    "countAccuracy": { "maxDrop": 0.1 },
+    "personResolution": { "maxDrop": 0.05 }
   },
   "research": {
     "mentionRecall": { "maxDrop": 0.05 },

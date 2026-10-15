@@ -139,6 +139,10 @@ export type ChatStepKind =
   | "recruiters"
   | "attached"
   | "read"
+  /** The shape lanes (`@/lib/chat-lanes`): an exhaustive filtered list, a name resolved, notes searched. */
+  | "filter"
+  | "resolve"
+  | "notes"
   /** The research loop before a multi-step answer — one step, relabelled per lookup. */
   | "gather"
   | "answer"

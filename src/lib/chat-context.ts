@@ -20,6 +20,7 @@ import {
 import {
   budgetContactsContext,
   CANDIDATE_POOL,
+  FINAL_CONTACT_COUNT,
   rerankCandidatesWithEngine,
   type RankEngine,
   understandQuery,
@@ -29,6 +30,8 @@ import {
 import { openDecider, type Decider } from "@/lib/decisions/jev";
 import { gateRosters, routeFromParsed, type ChatRoute, type PriorTurn } from "@/lib/decisions/chat-route";
 import { findOrgRosters, type OrgRoster } from "@/lib/chat-roster";
+import { factLane, filterLane, personLane } from "@/lib/chat-lanes";
+import type { NotePassage } from "@/lib/chat-gather";
 import { attachPhotos, createPhotoCache, type PhotoCache } from "@/lib/chat-photos";
 import { describeArms, NULL_STEPS, plural, toRefs, type StepEmitter } from "@/lib/chat-steps";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
@@ -124,6 +127,12 @@ export type ChatContext = {
    * depth from here instead of re-deciding it. Optional so hand-built contexts in tests work.
    */
   route?: ChatRoute;
+  /**
+   * Passages from the notes (and meetings) the fact lane found for a fact question, or for a
+   * person question once the name resolved. `maybeGather` hands them to the answer, with any
+   * the research step adds. Optional so hand-built contexts in tests work.
+   */
+  notePassages?: NotePassage[];
   /** Contacts the model may recommend: budgeted-in, on a roster, or in the attention brief. */
   allowedContacts: Set<string>;
   /** A name for every id in `allowedContacts` — see `validateProposedActions`'s `contactNames`. */
@@ -279,7 +288,17 @@ async function retrieveRankedContacts(
     /** The account read the question shares; undefined means each call opens its own. */
     access?: Promise<AiAccess | undefined>;
   }
-): Promise<{ ranked: RankedContact[]; searchNotice: string | null; goals: string[] }> {
+): Promise<{
+  ranked: RankedContact[];
+  searchNotice: string | null;
+  goals: string[];
+  /** Everyone matching a list or count question's filters, as a roster. */
+  filterRoster: OrgRoster | null;
+  /** The contact a person question resolved to. */
+  personId: string | null;
+  notePassages: NotePassage[];
+  notePeople: Array<{ id: string; name: string }>;
+}> {
   const [activeGoals, access] = await Promise.all([loadActiveGoalTexts(userId), routing?.access]);
   // Every model call below shares the one account read; each still mints its own grant.
   const complete = completeJsonOn(access);
@@ -311,10 +330,24 @@ async function retrieveRankedContacts(
     detail: describeParsedQuery(parsedQuery),
   });
 
+  // The shape's own lanes run beside the search (see `@/lib/chat-lanes`). Each narrates
+  // itself and settles to "nothing" on failure, so the search alone still answers.
+  const personP = personLane(userId, parsedQuery, steps).catch(() => null);
+  const lanesP = Promise.all([
+    filterLane(userId, parsedQuery, steps).catch(() => null),
+    personP,
+    personP.then((person) =>
+      factLane(userId, q, parsedQuery, { embedding: queryEmbedding, person }, steps).catch(() => ({
+        passages: [] as NotePassage[],
+        people: [] as Array<{ id: string; name: string }>,
+      }))
+    ),
+  ]);
+
   steps.start("search", "Searching your network");
   const candidates = await hybridSearchContacts(userId, {
     query: q,
-    embedding: queryEmbedding,
+    embedding: await semanticEmbedding(userId, q, parsedQuery.semanticQuery, queryEmbedding, access),
     filters: parsedQuery.filters,
     expansionTerms: parsedQuery.expansionTerms,
     limit: CANDIDATE_POOL,
@@ -334,15 +367,14 @@ async function retrieveRankedContacts(
   });
   attachPhotos(steps, "search", candidateRefs, userId, photos);
 
+  // Only an open question is ranked by a model. Every other shape has its own lane carrying
+  // the answer — the list, the person, the passages — so the contacts here are background,
+  // and search order is good enough for background. This is the fast path's biggest saving.
   steps.start("rank", `Ranking ${plural(candidates.length, "candidate")}`);
-  const { contacts: ranked, engine: rankEngine } = await rerankCandidatesWithEngine(
-    userId,
-    q,
-    candidates,
-    complete,
-    parsedQuery.semanticQuery,
-    decider
-  );
+  const { contacts: ranked, engine: rankEngine } =
+    parsedQuery.shape === "open"
+      ? await rerankCandidatesWithEngine(userId, q, candidates, complete, parsedQuery.semanticQuery, decider)
+      : { contacts: candidates.slice(0, FINAL_CONTACT_COUNT), engine: "search" as const };
   const keptRefs = toRefs(
     ranked.map((c) => ({ id: c.id, name: c.fullName })),
     "contact"
@@ -359,7 +391,47 @@ async function retrieveRankedContacts(
   // question, so the model that actually wrote the answer never learned what the user was
   // trying to accomplish — every other AI surface in the product (outreach, starters,
   // follow-up drafts) has been given them for months.
-  return { ranked, searchNotice, goals: activeGoals };
+  const [filterRoster, person, facts] = await lanesP;
+  return {
+    ranked,
+    searchNotice,
+    goals: activeGoals,
+    filterRoster,
+    personId: person?.id ?? null,
+    notePassages: facts.passages,
+    notePeople: facts.people,
+  };
+}
+
+/** How long the rewritten query's embedding may hold up the search before the question's own is used. */
+const SEMANTIC_EMBED_WAIT_MS = 600;
+
+/**
+ * The parser's rewrite ("a fintech founder in New York who raised a seed round") is a better
+ * meaning query than the question as typed, so the semantic arm uses it — when it arrives in
+ * time. Otherwise, or when the rewrite is the question itself, the question's own embedding.
+ */
+async function semanticEmbedding(
+  userId: string,
+  q: string,
+  rewrite: string,
+  fallback: number[] | null,
+  access: AiAccess | undefined
+): Promise<number[] | null> {
+  if (!fallback || rewrite.trim() === q.trim()) return fallback;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), SEMANTIC_EMBED_WAIT_MS);
+  });
+  try {
+    const rewritten = await Promise.race([
+      getQueryEmbedding(userId, rewrite, createEmbedding, defaultResolveScope, { access }).catch(() => null),
+      late,
+    ]);
+    return rewritten ?? fallback;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** What the query parser actually understood, as a line a person can check. */
@@ -521,7 +593,7 @@ export async function prepareChatContext(
   const q = question.trim();
   if (!q) throw new Error("Question is required");
   const threadId = options.threadId ?? null;
-  const focusContactId = options.focusContactId?.trim() || null;
+  const pinnedContactId = options.focusContactId?.trim() || null;
   const attachedIds = (options.contextContactIds ?? []).filter(
     (id): id is string => typeof id === "string" && id.trim().length > 0
   );
@@ -692,6 +764,11 @@ export async function prepareChatContext(
 
   if (threadId && !thread) throw new Error("Chat not found");
   const retrieved = retrieval.ranked;
+  // The contact page's pin wins; otherwise the person a person question resolved to gets the
+  // same deeper slice — profile, sixteen interactions, first place in the list.
+  const focusContactId = pinnedContactId ?? retrieval.personId;
+  // Everyone matching a list or count question, beside any organisation the question named.
+  if (retrieval.filterRoster) orgRosters.push(retrieval.filterRoster);
 
   const priorTurns: ChatTurn[] = priorRows
     .slice()
@@ -857,6 +934,8 @@ export async function prepareChatContext(
     ...orgRosters.flatMap((r) => r.people.map((p) => p.id)),
     ...(attention?.overdue.map((c) => c.id) ?? []),
     ...(attention?.suggestions.map((c) => c.id) ?? []),
+    // Someone a cited note is about is someone the user knows, found or not by the search.
+    ...retrieval.notePeople.map((p) => p.id),
   ]);
   // Every name paired with an id in `allowedContacts`, for a proposed action's preview text
   // ("Log a note on Ada Lovelace…") — same sources, same order, so a name is never missing
@@ -867,6 +946,7 @@ export async function prepareChatContext(
     ...orgRosters.flatMap((r) => r.people.map((p): [string, string] => [p.id, p.name])),
     ...(attention?.overdue.map((c): [string, string] => [c.id, c.name]) ?? []),
     ...(attention?.suggestions.map((c): [string, string] => [c.id, c.name]) ?? []),
+    ...retrieval.notePeople.map((p): [string, string] => [p.id, p.name]),
   ]);
   const allowedRecruiters = new Set(recruitersForChat.map((r) => r.id));
   const maxScore = Math.max(1, ...recruitersForChat.map((r) => r.score));
@@ -888,6 +968,7 @@ export async function prepareChatContext(
     recruitersForChat,
     attachedPeople,
     attachedContext: renderAttachedPeople(attachedPeople),
+    notePassages: retrieval.notePassages,
     allowedContacts,
     contactNames,
     allowedRecruiters,

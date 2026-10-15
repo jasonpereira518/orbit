@@ -1393,10 +1393,26 @@ async function seedNetwork(userId: string): Promise<Map<string, { id: string; fu
 }
 
 export async function runChatTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
-  const cases = fixture<ChatEvalFixture>("ai-chat-eval.json").cases.slice(0, limit);
+  const chatFixture = fixture<ChatEvalFixture>("ai-chat-eval.json");
+  const cases = chatFixture.cases.slice(0, limit);
   const network = await seedNetwork(userId);
+  const db = await getDb();
+  for (const group of chatFixture.bulk ?? []) {
+    await db.insert(contacts).values(
+      Array.from({ length: group.count }, (_, i) => ({
+        userId,
+        fullName: `${group.namePrefix} ${i + 1}`,
+        school: group.school,
+        company: group.company,
+        location: group.location,
+      }))
+    );
+  }
   const answered = tally();
   const retrieved = tally();
+  const listed = tally();
+  const counted = tally();
+  const resolved = tally();
   const misses: string[] = [];
   const latenciesMs: number[] = [];
   /** Request start to the first answer token, per non-research case: the "under 6s" goal. */
@@ -1441,6 +1457,22 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
       );
       const shown = new Set(ctx.modelContacts.map((m) => m.id));
       let missed = false;
+      if (c.expectList) {
+        const ok = ctx.orgRosters.some((r) => r.kind === "filter" && r.total === c.expectList!.total);
+        count(listed, ok);
+        missed ||= !ok;
+      }
+      if (c.expectCount !== undefined) {
+        const ok = new RegExp(`\\b${c.expectCount}\\b`).test(result.answer ?? "");
+        count(counted, ok);
+        missed ||= !ok;
+      }
+      if (c.expectPerson) {
+        const person = network.get(c.expectPerson);
+        const ok = Boolean(person) && ctx.retrieved[0]?.id === person!.id && ctx.scopedQuestion.startsWith("[Focus:");
+        count(resolved, ok);
+        missed ||= !ok;
+      }
       for (const email of c.mustMention) {
         const person = network.get(email);
         if (!person) throw new Error(`fixture names ${email}, which contact-search-eval.json does not have`);
@@ -1454,6 +1486,9 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
     } catch (err) {
       misses.push(c.id);
       for (let i = 0; i < c.mustMention.length; i++) count(answered, false);
+      if (c.expectList) count(listed, false);
+      if (c.expectCount !== undefined) count(counted, false);
+      if (c.expectPerson) count(resolved, false);
       log(`  FAIL chat/${c.id} — ${err instanceof Error ? err.message : String(err)}`);
     }
   }
@@ -1466,6 +1501,9 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
       mentionRecall: rate(answered),
       retrievalRecall: rate(retrieved),
       firstTokenP50Ms: median(firstTokenMs),
+      listCompleteness: rate(listed),
+      countAccuracy: rate(counted),
+      personResolution: rate(resolved),
     },
   };
 }

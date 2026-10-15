@@ -53,6 +53,8 @@ export type NotePassage = {
   /** A meeting passage: when in the call it was said (null for its summary), and its title. */
   startMs?: number | null;
   title?: string | null;
+  /** Who an interaction passage is about, when that contact is still the user's. */
+  contactName?: string;
 };
 
 export type GatherResult = {
@@ -434,11 +436,14 @@ export async function maybeGather(
   // Decided with the rest of the routing (decisions/chat-route.ts) while retrieval ran; a
   // context built without it gets one pass.
   const depth: DepthDecision = ctx.route?.depth ?? { depth: "single", reason: "one retrieval answers it" };
-  if (depth.depth !== "research") return { evidence: null, notePassages: [], depth, research: null };
+  // The fact lane's passages (retrieval, every fact or person question) come first; research
+  // adds to them, never replaces them.
+  const lanePassages = ctx.notePassages ?? [];
+  if (depth.depth !== "research") return { evidence: null, notePassages: lanePassages, depth, research: null };
 
   const now = Date.now();
   const deadline = Math.min(options.requestStartedAt + GATHER_ENDS_BY_MS, now + GATHER_MAX_MS);
-  if (deadline - now < GATHER_MIN_MS) return { evidence: null, notePassages: [], depth, research: null };
+  if (deadline - now < GATHER_MIN_MS) return { evidence: null, notePassages: lanePassages, depth, research: null };
 
   const gathered = await gatherEvidence(userId, ctx, {
     deadline,
@@ -452,9 +457,10 @@ export async function maybeGather(
   // research found (not retrieval) has a name to preview, not a blank.
   for (const c of gathered.namedContacts) if (!ctx.contactNames.has(c.id)) ctx.contactNames.set(c.id, c.name);
   const o = gathered.outcome;
+  const seen = new Set(lanePassages.map((p) => p.sourceId));
   return {
     evidence: gathered.evidence,
-    notePassages: gathered.notePassages,
+    notePassages: [...lanePassages, ...gathered.notePassages.filter((p) => !seen.has(p.sourceId))],
     depth,
     research: o
       ? {
