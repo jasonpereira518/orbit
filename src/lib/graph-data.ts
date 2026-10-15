@@ -27,7 +27,7 @@ export type GraphCluster = {
   company: string;
   id: string;
   name: string;
-  kind: "company" | "school" | "other";
+  kind: "company" | "school" | "industry" | "other";
   count: number;
   contactIds: string[];
 };
@@ -139,6 +139,8 @@ export async function loadGraphData(
       preferredName: c.preferredName,
       company: c.company,
       school: c.school,
+      // Only when set: it feeds the industry constellation tier, and most contacts have none.
+      ...(c.industry?.trim() ? { industry: c.industry } : {}),
       title: c.title,
       relationshipScore: c.relationshipScore,
       closeness: breakdown?.closeness ?? 0,

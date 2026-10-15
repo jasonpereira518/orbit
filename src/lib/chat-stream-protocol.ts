@@ -13,6 +13,7 @@
  *     in the browser across arbitrary chunk boundaries.
  */
 
+import type { ChatBlocks } from "@/lib/chat-directives";
 import type { EvidenceSource } from "@/lib/chat-evidence";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 
@@ -97,11 +98,18 @@ function parseRecommendations(raw: string): Pick<SplitResult, "recommendations" 
     // Both the bare array (recommendations only, the original shape) and the wrapper object
     // (recommendations plus proposed_actions) are tolerated — a model that has not been asked
     // for proposals, or answers a question with none, still parses the same way it always did.
+    // An object with only "proposed_actions" is the common case now that people are placed
+    // in the prose (`@/lib/chat-directives`): no recommendations, not a malformed list.
+    const wrapped = value && typeof value === "object" && !Array.isArray(value)
+      ? (value as { recommendations?: unknown }).recommendations
+      : undefined;
     const list = Array.isArray(value)
       ? value
-      : value && typeof value === "object" && Array.isArray((value as { recommendations?: unknown }).recommendations)
-        ? (value as { recommendations: unknown[] }).recommendations
-        : null;
+      : Array.isArray(wrapped)
+        ? wrapped
+        : value && typeof value === "object" && wrapped === undefined
+          ? []
+          : null;
     if (!list) return { recommendations: [], proposedActions: [], parseError: "recommendations is not an array" };
     const proposedActions =
       value && typeof value === "object" && Array.isArray((value as { proposed_actions?: unknown }).proposed_actions)
@@ -139,6 +147,10 @@ export type ChatStepKind =
   | "recruiters"
   | "attached"
   | "read"
+  /** The shape lanes (`@/lib/chat-lanes`): an exhaustive filtered list, a name resolved, notes searched. */
+  | "filter"
+  | "resolve"
+  | "notes"
   /** The research loop before a multi-step answer — one step, relabelled per lookup. */
   | "gather"
   | "answer"
@@ -186,6 +198,12 @@ export type ChatStreamEvent =
   | { type: "evidence"; items: Record<string, EvidenceSource> }
   /** Actions this answer proposed, already validated — see `@/lib/chat-proposed-actions`. */
   | { type: "actions"; items: StoredProposedAction[] }
+  /**
+   * What the answer's `::people` and `::list` directives may point at, sent once before the
+   * first word — see `@/lib/chat-directives`. Names and role lines of people the user already
+   * has, and the rosters the prompt was shown; nothing the answer could not already name.
+   */
+  | { type: "blocks"; blocks: ChatBlocks }
   | {
       type: "done";
       messageId: string | null;

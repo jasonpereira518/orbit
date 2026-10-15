@@ -622,7 +622,9 @@ async function main() {
   const paidStatements = stopQueryCount();
   check(
     `19 paid account costs few statements (${paidStatements})`,
-    paidStatements <= 4,
+    // 5: surface visibility's demo-workspace check reads the settings row, which a request
+    // has already memoised but a standalone call like this one has not.
+    paidStatements <= 5,
     String(paidStatements)
   );
 

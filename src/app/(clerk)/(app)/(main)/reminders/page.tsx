@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { Suspense } from "react";
 import { loadReminderRail, loadRemindersPage } from "@/actions/reminders";
 import { listSuggestedReminders } from "@/actions/suggested-reminders";
@@ -20,11 +21,14 @@ type Params = {
   new?: string;
 };
 
-export default function RemindersPage({
+export default async function RemindersPage({
   searchParams,
 }: {
   searchParams: Promise<Params>;
 }) {
+  const gate = await pageVisibilityGate("page.reminders");
+  if (gate) return gate;
+
   return (
     <>
       <RenderStamp />

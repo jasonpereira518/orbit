@@ -46,6 +46,16 @@ import { getInboxListId } from "@/lib/reminder-lists";
 import { DEMO_GOALS, DEMO_PEOPLE, type DemoPerson } from "@/lib/demo-data/network";
 import { buildExtendedCast, seedExtendedSurfaces, type ExtendedCast } from "@/lib/demo-data/seed-extended";
 import { STUDENT_GOALS, STUDENT_LISTS, STUDENT_PEOPLE, studentEvents } from "@/lib/demo-data/student";
+import {
+  GILLINGS_CHAT,
+  GILLINGS_GOALS,
+  GILLINGS_LISTS,
+  GILLINGS_REMINDER_EXTRAS,
+  buildGillingsCast,
+  gillingsCampaigns,
+  gillingsEvents,
+  gillingsRecruiters,
+} from "@/lib/demo-data/gillings";
 
 /** Written to every seeded row that has a `source`, so demo rows can always be told apart. */
 export const DEMO_SOURCE = "demo-seed";
@@ -54,10 +64,13 @@ const DAY = 86_400_000;
 
 export type DemoSeedSummary = Record<string, number>;
 
-export type DemoPersona = "founder" | "student";
+export type DemoPersona = "founder" | "student" | "gillings";
 
 export type DemoSeedOptions = {
-  /** Which workspace: the founder (default) or a student / new grad. */
+  /**
+   * Which workspace: the founder (default), a student / new grad, or `gillings` — a UNC
+   * public-health undergrad, always seeded with the extended surfaces and photos.
+   */
   persona?: DemoPersona;
   /**
    * The extended workspace: the cast's fuller histories, a long tail of lighter
@@ -88,27 +101,38 @@ export async function seedDemoWorkspace(
 
   const summary: DemoSeedSummary = {};
   const student = opts.persona === "student";
-  const extended = !student && opts.extended ? buildExtendedCast() : null;
+  const gillings = opts.persona === "gillings";
+  const extended = gillings ? buildGillingsCast() : !student && opts.extended ? buildExtendedCast() : null;
   const people = student ? STUDENT_PEOPLE : (extended?.people ?? DEMO_PEOPLE);
   const contactIdByName = await seedNetwork(userId, ago, ahead, summary, extended, people);
 
   const surfaces: Array<[string, () => Promise<void>]> = student
     ? [
-        ["reminders", () => seedReminders(userId, contactIdByName, ahead, summary, people, STUDENT_LISTS, false)],
+        ["reminders", () => seedReminders(userId, contactIdByName, ahead, summary, people, STUDENT_LISTS, null)],
         ["events", () => seedEvents(userId, contactIdByName, summary, studentEvents(ago, ahead))],
         ["goals", () => seedGoals(userId, summary, STUDENT_GOALS)],
       ]
-    : [
-        // The base cast, never the extended one: the founder reminders are pinned by
-        // smoke-behavior-golden and smoke-demo-data.
-        ["reminders", () => seedReminders(userId, contactIdByName, ahead, summary, DEMO_PEOPLE, ["Fundraising"], true)],
-        ["outreach", () => seedOutreach(userId, contactIdByName, ago, summary)],
-        ["recruiters", () => seedRecruiters(userId, contactIdByName, ago, summary)],
-        ["events", () => seedEvents(userId, contactIdByName, summary, founderEvents(ago, ahead))],
-        ["chat", () => seedChat(userId, contactIdByName, ago, summary)],
-        ["imports", () => seedImports(userId, ago, summary)],
-        ["goals", () => seedGoals(userId, summary, DEMO_GOALS)],
-      ];
+    : gillings
+      ? [
+          ["reminders", () => seedReminders(userId, contactIdByName, ahead, summary, people, GILLINGS_LISTS, GILLINGS_REMINDER_EXTRAS)],
+          ["outreach", () => seedOutreach(userId, contactIdByName, ago, summary, gillingsCampaigns(ago))],
+          ["recruiters", () => seedRecruiters(userId, contactIdByName, summary, gillingsRecruiters(ago))],
+          ["events", () => seedEvents(userId, contactIdByName, summary, gillingsEvents(ago, ahead))],
+          ["chat", () => seedChat(userId, contactIdByName, ago, summary, GILLINGS_CHAT)],
+          ["imports", () => seedImports(userId, ago, summary, people.length)],
+          ["goals", () => seedGoals(userId, summary, GILLINGS_GOALS)],
+        ]
+      : [
+          // The base cast, never the extended one: the founder reminders are pinned by
+          // smoke-behavior-golden and smoke-demo-data.
+          ["reminders", () => seedReminders(userId, contactIdByName, ahead, summary, DEMO_PEOPLE, ["Fundraising"], FOUNDER_REMINDER_EXTRAS)],
+          ["outreach", () => seedOutreach(userId, contactIdByName, ago, summary, founderCampaigns(ago))],
+          ["recruiters", () => seedRecruiters(userId, contactIdByName, summary, founderRecruiters(ago))],
+          ["events", () => seedEvents(userId, contactIdByName, summary, founderEvents(ago, ahead))],
+          ["chat", () => seedChat(userId, contactIdByName, ago, summary, FOUNDER_CHAT)],
+          ["imports", () => seedImports(userId, ago, summary, DEMO_PEOPLE.length)],
+          ["goals", () => seedGoals(userId, summary, DEMO_GOALS)],
+        ];
   if (extended) {
     surfaces.push(["extended", () => seedExtendedSurfaces(userId, extended, contactIdByName, now, summary)]);
   }
@@ -170,6 +194,7 @@ async function seedNetwork(
       company: p.company ?? null,
       companyId: company?.id ?? null,
       school: p.school ?? null,
+      ...(p.industry ? { industry: p.industry } : {}),
       location: p.location ?? null,
       email: p.email ?? null,
       linkedinUrl: p.linkedinUrl ?? null,
@@ -189,6 +214,9 @@ async function seedNetwork(
       lastInteractionAt: days.length ? ago(Math.min(...days)) : null,
       nextFollowUpAt: p.followUpInDays == null ? null : ahead(p.followUpInDays),
       followUpStatus: p.followUpInDays == null ? "none" : "pending",
+      // The extended workspace dates each row to its last touch, so "Recently updated"
+      // reads like a lived-in network rather than everyone added a second ago.
+      ...(extended && days.length ? { updatedAt: ago(Math.min(...days)) } : {}),
       // Flags the rows for the embedding backfill, so chat's semantic arm picks them up
       // wherever an embedding provider is configured.
       embeddingStaleAt: new Date(),
@@ -359,6 +387,61 @@ function summaryFor(p: DemoPerson) {
 
 /* ---------------------------------------------------------------------------- reminders */
 
+/** Reminders that are not one person's follow-up, plus the capture awaiting review. */
+export type ReminderExtras = {
+  rows: (ctx: {
+    listFor: (name?: string) => string;
+    contactId: (name: string) => string | undefined;
+    ahead: (d: number) => Date;
+  }) => Omit<typeof reminders.$inferInsert, "userId">[];
+  suggested?: {
+    source: string;
+    pending: { contact: string; title: string; inDays: number; excerpt: string }[];
+  };
+};
+
+const FOUNDER_REMINDER_EXTRAS: ReminderExtras = {
+  rows: ({ listFor, contactId, ahead }) => [
+    {
+      listId: listFor("Fundraising"),
+      title: "Draft the October investor update",
+      description: "Traction, the Codex partnership conversation, and the founding-engineer search.",
+      dueDate: ahead(3),
+      actionKind: "task",
+    },
+    {
+      listId: listFor(),
+      title: "Book a venue for the Orbit user dinner",
+      dueDate: ahead(10),
+      actionKind: "task",
+    },
+    {
+      contactId: contactId("Tom Bennett"),
+      listId: listFor(),
+      title: "Call Tom about API versioning",
+      description: "He offered to review the public API design.",
+      dueDate: ahead(6),
+      actionKind: "call",
+    },
+    {
+      contactId: contactId("Nina Petrova"),
+      listId: listFor(),
+      title: "Thank Nina for the positioning feedback",
+      dueDate: ahead(-9),
+      status: "done",
+      actionKind: "email",
+    }
+  ],
+  suggested: {
+    source: "Dinner with Nina and Daniel. Promised Nina the pricing draft, and Daniel wants the hiring scorecard.",
+    pending: [
+      { contact: "Nina Petrova", title: "Send Nina the pricing draft", inDays: 4, excerpt: "Promised Nina the pricing draft" },
+      { contact: "Daniel Osei", title: "Send Daniel the hiring scorecard", inDays: 8, excerpt: "Daniel wants the hiring scorecard" },
+    ],
+  },
+};
+
+
 async function seedReminders(
   userId: string,
   contactIdByName: Map<string, string>,
@@ -366,7 +449,7 @@ async function seedReminders(
   summary: DemoSeedSummary,
   people: DemoPerson[],
   lists: readonly string[],
-  founderExtras: boolean
+  extras: ReminderExtras | null
 ) {
   const db = await getDb();
   const inboxId = await getInboxListId(userId);
@@ -396,56 +479,20 @@ async function seedReminders(
         ]
       : []
   );
-  if (founderExtras) {
+  if (extras) {
     rows.push(
-      {
-        userId,
-        listId: listFor("Fundraising"),
-        title: "Draft the October investor update",
-        description: "Traction, the Codex partnership conversation, and the founding-engineer search.",
-        dueDate: ahead(3),
-        actionKind: "task",
-      },
-      {
-        userId,
-        listId: inboxId,
-        title: "Book a venue for the Orbit user dinner",
-        dueDate: ahead(10),
-        actionKind: "task",
-      },
-      {
-        userId,
-        contactId: contactIdByName.get("Tom Bennett"),
-        listId: inboxId,
-        title: "Call Tom about API versioning",
-        description: "He offered to review the public API design.",
-        dueDate: ahead(6),
-        actionKind: "call",
-      },
-      {
-        userId,
-        contactId: contactIdByName.get("Nina Petrova"),
-        listId: inboxId,
-        title: "Thank Nina for the positioning feedback",
-        dueDate: ahead(-9),
-        status: "done",
-        actionKind: "email",
-      }
+      ...extras.rows({ listFor, contactId: (name) => contactIdByName.get(name), ahead }).map((r) => ({ ...r, userId }))
     );
   }
   await db.insert(reminders).values(rows);
   summary.reminders = rows.length;
 
-  if (!founderExtras) return;
+  if (!extras?.suggested) return;
 
   // One capture awaiting review, so the "from your notes" queue is not empty.
   const captureBatchId = randomUUID();
-  const source = "Dinner with Nina and Daniel. Promised Nina the pricing draft, and Daniel wants the hiring scorecard.";
+  const { source, pending } = extras.suggested;
   const sourceHash = sha256(source);
-  const pending = [
-    { contact: "Nina Petrova", title: "Send Nina the pricing draft", inDays: 4, excerpt: "Promised Nina the pricing draft" },
-    { contact: "Daniel Osei", title: "Send Daniel the hiring scorecard", inDays: 8, excerpt: "Daniel wants the hiring scorecard" },
-  ];
   await db.insert(suggestedReminders).values(
     pending.map((s) => {
       const due = ahead(s.inDays);
@@ -469,7 +516,7 @@ async function seedReminders(
 
 /* ----------------------------------------------------------------------------- outreach */
 
-type DemoProspect = {
+export type DemoProspect = {
   name: string;
   title: string;
   company: string;
@@ -490,17 +537,13 @@ type DemoProspect = {
   }>;
 };
 
-async function seedOutreach(
-  userId: string,
-  contactIdByName: Map<string, string>,
-  ago: (d: number) => Date,
-  summary: DemoSeedSummary
-) {
-  const db = await getDb();
-  const campaigns: Array<{
-    values: Omit<typeof outreachCampaigns.$inferInsert, "userId">;
-    prospects: DemoProspect[];
-  }> = [
+export type DemoCampaign = {
+  values: Omit<typeof outreachCampaigns.$inferInsert, "userId">;
+  prospects: DemoProspect[];
+};
+
+function founderCampaigns(ago: (d: number) => Date): DemoCampaign[] {
+  return [
     {
       values: {
         name: "AI lab partnerships",
@@ -654,7 +697,16 @@ async function seedOutreach(
       ],
     },
   ];
+}
 
+async function seedOutreach(
+  userId: string,
+  contactIdByName: Map<string, string>,
+  ago: (d: number) => Date,
+  summary: DemoSeedSummary,
+  campaigns: DemoCampaign[]
+) {
+  const db = await getDb();
   let prospectCount = 0;
   let messageCount = 0;
   for (const c of campaigns) {
@@ -705,14 +757,23 @@ async function seedOutreach(
 
 /* --------------------------------------------------------------------------- recruiters */
 
-async function seedRecruiters(
-  userId: string,
-  contactIdByName: Map<string, string>,
-  ago: (d: number) => Date,
-  summary: DemoSeedSummary
-) {
-  const db = await getDb();
-  const cast = [
+export type DemoRecruiter = {
+  fullName: string;
+  firm: string;
+  specialty: string[];
+  email: string;
+  linkedinUrl: string | null;
+  /** Link to the seeded contact of this name. */
+  contact?: string;
+  link: Omit<
+    typeof userRecruiterLinks.$inferInsert,
+    "userId" | "recruiterId" | "source" | "contactId" | "email" | "linkedinUrl"
+  >;
+  message: Omit<typeof recruiterMessages.$inferInsert, "userId" | "recruiterId"> | null;
+};
+
+function founderRecruiters(ago: (d: number) => Date): DemoRecruiter[] {
+  return [
     {
       fullName: "Alex Rivera",
       firm: "Rivera Talent",
@@ -785,7 +846,15 @@ async function seedRecruiters(
       message: null,
     },
   ];
+}
 
+async function seedRecruiters(
+  userId: string,
+  contactIdByName: Map<string, string>,
+  summary: DemoSeedSummary,
+  cast: DemoRecruiter[]
+) {
+  const db = await getDb();
   for (const r of cast) {
     // Recruiter profiles are a shared, cross-user pool: reuse an existing row rather than
     // minting a duplicate each time another local account is seeded.
@@ -814,7 +883,7 @@ async function seedRecruiters(
         userId,
         recruiterId: recruiter.id,
         source: "manual",
-        contactId: "contact" in r && r.contact ? contactIdByName.get(r.contact) ?? null : null,
+        contactId: r.contact ? contactIdByName.get(r.contact) ?? null : null,
         ...r.link,
         // Contact details live per link (`resolveRecruiterPii`), and the seed reuses one
         // global row across local accounts — so each seeded account gets its own copy of the
@@ -833,7 +902,7 @@ async function seedRecruiters(
 
 /* ------------------------------------------------------------------------------- events */
 
-type DemoEventAttendee = {
+export type DemoEventAttendee = {
   name: string;
   company?: string;
   title?: string;
@@ -841,7 +910,7 @@ type DemoEventAttendee = {
   /** Link to the seeded contact of the same name. */
   contact?: boolean;
 };
-type DemoEvent = { values: Omit<typeof events.$inferInsert, "userId">; attendees: DemoEventAttendee[] };
+export type DemoEvent = { values: Omit<typeof events.$inferInsert, "userId">; attendees: DemoEventAttendee[] };
 
 function founderEvents(ago: (d: number) => Date, ahead: (d: number) => Date): DemoEvent[] {
   return [
@@ -958,21 +1027,16 @@ async function seedEvents(
 
 /* --------------------------------------------------------------------------------- chat */
 
-async function seedChat(
-  userId: string,
-  contactIdByName: Map<string, string>,
-  ago: (d: number) => Date,
-  summary: DemoSeedSummary
-) {
-  const db = await getDb();
-  const rec = (name: string, reason: string, action: string, draft: string | null): ChatRecommendation => ({
-    contact_id: contactIdByName.get(name) ?? null,
-    name,
-    reason,
-    suggested_action: action,
-    draft_message: draft,
-  });
-  const threads: Array<{ title: string; daysAgo: number; question: string; answer: string; recommendations: ChatRecommendation[] }> = [
+export type DemoChatRec = (name: string, reason: string, action: string, draft: string | null) => ChatRecommendation;
+export type DemoChatThread = {
+  title: string;
+  daysAgo: number;
+  question: string;
+  answer: string;
+  recommendations: ChatRecommendation[];
+};
+
+const FOUNDER_CHAT = (rec: DemoChatRec): DemoChatThread[] => [
     {
       title: "Who can help with the Codex partnership?",
       daysAgo: 3,
@@ -996,8 +1060,24 @@ async function seedChat(
         rec("Grace Whitfield", "Wants a short quarterly update; a week overdue.", "Send the Q3 update", "Hi Grace — quick quarterly update: usage is up 3x since July and we're opening a small pre-seed round."),
       ],
     },
-  ];
+];
 
+async function seedChat(
+  userId: string,
+  contactIdByName: Map<string, string>,
+  ago: (d: number) => Date,
+  summary: DemoSeedSummary,
+  buildThreads: (rec: DemoChatRec) => DemoChatThread[]
+) {
+  const db = await getDb();
+  const rec: DemoChatRec = (name, reason, action, draft) => ({
+    contact_id: contactIdByName.get(name) ?? null,
+    name,
+    reason,
+    suggested_action: action,
+    draft_message: draft,
+  });
+  const threads = buildThreads(rec);
   for (const t of threads) {
     const at = ago(t.daysAgo);
     const [thread] = await db
@@ -1021,16 +1101,16 @@ async function seedChat(
 
 /* ---------------------------------------------------------------------- imports + goals */
 
-async function seedImports(userId: string, ago: (d: number) => Date, summary: DemoSeedSummary) {
+async function seedImports(userId: string, ago: (d: number) => Date, summary: DemoSeedSummary, peopleCount: number) {
   const db = await getDb();
   await db.insert(imports).values({
     userId,
     importType: "linkedin_connections",
     fileName: "Connections.csv",
     status: "completed",
-    totalRows: DEMO_PEOPLE.length,
-    rowsProcessed: DEMO_PEOPLE.length,
-    contactsCreated: DEMO_PEOPLE.length - 6,
+    totalRows: peopleCount,
+    rowsProcessed: peopleCount,
+    contactsCreated: peopleCount - 6,
     contactsUpdated: 6,
     duplicatesFound: 2,
     stats: { skipped: 0 },

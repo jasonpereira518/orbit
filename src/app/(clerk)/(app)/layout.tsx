@@ -185,6 +185,9 @@ export default async function AppLayout({
       hiddenForUsers={[...visibility.hiddenForUsers]}
       comingSoon={[...visibility.comingSoonMarked]}
       navOrder={visibility.navOrder}
+      // An exempt operator sees every tier rule (they can open the page, but should see
+      // who cannot); anyone else sees only the pages their own plan is locked out of.
+      tierTags={Object.fromEntries(visibility.exempt ? visibility.tierRules : visibility.tierLocked)}
       viewingAsUser={visibility.viewingAsUser}
       linkedinReminder={{ ...linkedinReminder, email: settings.email ?? null }}
       creditsIntroDue={creditsIntroDue}

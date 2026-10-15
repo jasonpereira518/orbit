@@ -9,8 +9,10 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
  * `scripts/smoke-legal-pages.ts` holds a lock over the two page sources and fails when they
  * move and these two do not, so the rule above is enforced rather than merely written down.
  */
-export const TERMS_VERSION = "2026-10-14";
-export const LEGAL_LAST_UPDATED = "October 14, 2026";
+// ".2": a second revision the same day — 2026-10-14 (#438, shared LinkedIn photos) had already
+// shipped when the cloud-notes disclosure (Drive/OneDrive read access) landed.
+export const TERMS_VERSION = "2026-10-14.2";
+export const LEGAL_LAST_UPDATED = "October 14, 2026 (revised)";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.
@@ -101,6 +103,12 @@ export const GOOGLE_SCOPE_DISCLOSURES: readonly {
     permission: "See and open only the Google Docs and Slides you pick (drive.file)",
     use: "Lets you pick Google Docs and Slides from the Google Picker to import. Orbit only ever sees files you explicitly select.",
     askedWhen: "Connect Google on Imports → Google Drive",
+  },
+  {
+    scope: GOOGLE_SCOPES.driveRead,
+    permission: "See your Google Drive files (drive.readonly)",
+    use: "Cloud notes: lists your recent Google Docs so you can pick notes to import from inside Orbit, and reads the title and first lines of recently changed Docs to spot meeting notes. A whole Doc is read only when you extract it, or when you turned on automatic extraction. Orbit never changes or deletes anything in your Drive.",
+    askedWhen: "Connect Google Drive on Capture → Drive & OneDrive",
   },
 ];
 

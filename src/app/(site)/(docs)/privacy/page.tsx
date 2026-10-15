@@ -51,7 +51,7 @@ const TOC: readonly TocItem[] = [
   { id: "contact", label: "Questions" },
 ];
 
-/** Every service that receives personal data, verified against the code on 2026-09-23. */
+/** Every service that receives personal data, verified against the code on 2026-10-13. */
 const PROCESSORS = [
   { name: "Clerk", badge: "Required", body: "Sign-in, sessions and account lifecycle. Holds your sign-in identity and records when you accepted these terms." },
   { name: "Vercel", badge: "Required", body: "Hosting, and file storage for contact photos, capture photos, feedback screenshots and files you attach to email. Also runs Web Analytics and Speed Insights, which receive page addresses with ids and tokens removed." },
@@ -64,10 +64,13 @@ const PROCESSORS = [
   { name: "Gravatar", badge: "Automatic", body: "Checks for a public avatar for a contact's email. Receives a one-way hash of the address, not the address." },
   { name: "Deepgram", badge: "Always", body: "Speech-to-text for voice notes, meetings and the chat microphone. Receives your audio and a list of your recent contact names so it spells them correctly. Every request sets Deepgram's zero-retention flag, which Deepgram documents as not storing your audio, text, transcripts or synthesized audio after the response is returned. Each request also carries a label so Orbit can check its own bill: a recording's own id for a meeting, and for everything else a random value Orbit generated for your account — not your name, your email or your account id. Labels sit in Deepgram's usage records, which the zero-retention flag does not cover; deleting your data in Settings replaces yours." },
   { name: "Stripe", badge: "Optional", body: "Orbit Pro, Orbit Max and credit pack payments. Card details go to Stripe directly; Orbit stores a customer reference." },
-  { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider you choose in Settings: on your own key, or (for the Free Plan’s allowance and included AI on Orbit Pro, Orbit Max and Orbit Lifetime) on Orbit's account with that provider." },
+  { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider you choose in Settings: on your own key, or (for the Free Plan’s allowance and included AI on Orbit Pro, Orbit Max and Orbit Lifetime) on Orbit's account with that provider. Keeping a contact's work history current runs a web search through that same provider, by the contact's name, employer and public profile link." },
+  { name: "OpenRouter", badge: "Optional", body: "The same AI features, routed through OpenRouter, only if you connect your own OpenRouter account in Settings." },
   { name: "TypeSafe", badge: "Optional", body: "Jev, a decision model, for yes-or-no and ranking steps: spotting recruiters during a mail scan you start, choosing which contacts a chat answer draws on, telling two contact records apart before they are merged, reading captured notes, judging which calendar events were meetings with people, and deciding whether a note or message has anything in it worth sending to your chat model. Only if you add your own TypeSafe key in Settings." },
   { name: "Google", badge: "Optional", body: "Gmail, Contacts and Calendar, one permission per feature you turn on. See Google user data." },
-  { name: "Microsoft", badge: "Optional", body: "Outlook, one permission per feature you turn on: your contacts to import, your calendar to log meetings with people you know, your mail for the recruiter scan you start, and sending the email you write from your own address. See What Orbit collects and The recruiter scan." },
+  { name: "Apple iCloud", badge: "Optional", body: "Your iCloud calendars, if you connect them with an app-specific password, which Orbit stores encrypted. Used to log meetings with people you know." },
+  { name: "Bluesky and Mastodon", badge: "Optional", body: "For contacts whose Bluesky or Mastodon handle you added, a nightly read of their public posts for Radar. Each request carries only that public handle, to the server that hosts it." },
+  { name: "Microsoft", badge: "Optional", body: "Outlook, one permission per feature you turn on: your contacts to import, your calendar to log meetings with people you know, your mail for the recruiter scan you start, and sending the email you write from your own address, and your OneDrive files for cloud notes. See What Orbit collects and The recruiter scan." },
   { name: "Eventbrite", badge: "Optional", body: "Guest lists of events you host, through Eventbrite sign-in." },
   { name: "Luma", badge: "Optional", body: "Guest lists of events you host (with your Luma API key), and your personal Luma calendar link if you paste it." },
   { name: "Partiful", badge: "Optional", body: "Your personal Partiful calendar link, if you paste it, to list events you are going to." },
@@ -144,7 +147,10 @@ export default function PrivacyPage() {
               your latest message with a contact when you reply in that conversation (its
               Message-ID, subject and date only), and to check your Sent Items so a retried send is
               never delivered twice; and permission to send mail (Mail.Send), only for email you
-              write and press Send on. Each connection also asks for your Microsoft sign-in
+              write and press Send on; and read access to your OneDrive files (Files.Read), for
+              cloud notes: listing recent files so you can pick notes to import, and reading the
+              title and first lines of recently changed ones to spot meeting notes — a whole file is
+              read only when you extract it or turned on automatic extraction. Each connection also asks for your Microsoft sign-in
               identity and email address, to show which account is connected. Orbit cannot read,
               change or delete anything else in your Microsoft account. Disconnecting deletes the tokens Orbit holds; to
               also revoke the grant on Microsoft&rsquo;s side, remove Orbit from your Microsoft
@@ -430,6 +436,15 @@ export default function PrivacyPage() {
             group the pages of a single visit, your browser holds a random
             session id in <code>sessionStorage</code>; it is discarded when you
             close the tab, and replaced after 30 minutes without a page view.
+            Forms that limit how often they can be sent — the waitlist, the
+            contact form, the feature poll — count by address the same way: a
+            one-way hash, never the address, deleted within two days.
+          </p>
+          <p>
+            While you work, unsent drafts, meeting notes and recent
+            notifications are kept in your browser so a reload doesn&apos;t
+            lose them. They are removed when they are sent or cleared, and all
+            of them when a different account signs in on that browser.
           </p>
           <p>
             For a signed-out visitor, that is all it is: a count of how many
