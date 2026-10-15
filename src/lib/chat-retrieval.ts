@@ -108,8 +108,7 @@ export function sanitizeParsedQuery(raw: unknown, question: string): ParsedQuery
 const UNDERSTAND_SYSTEM = `You turn a question about someone's personal/professional network into a retrieval plan.
 Extract only what the question explicitly states or strongly implies. Do not guess.
 Filters narrow a database query over the user's contacts:
-- companies, industries, schools, locations: substring matches (e.g. "fintech", "Stanford")
-- locations are stored as cities ("Toronto", "Austin, TX"), so a country, state or region matches nobody by itself: give it AND its major cities (e.g. "Canada" -> ["Canada", "Toronto", "Vancouver", "Montreal", "Ottawa", "Calgary"]), at most 8 values
+- companies, industries, schools, locations: substring matches (e.g. "fintech", "Stanford"); locations are cities, so give a country or region with its major cities ("Canada" -> ["Canada","Toronto","Vancouver","Montreal","Ottawa"])
 - tags: user-defined labels (e.g. "mentor", "investor")
 - closenessTiers: subset of ["inner","mid","outer"] — ONLY when the question references closeness ("close friends" -> ["inner"], "acquaintances" -> ["outer"])
 Self-references ("my school", "my company") can only be resolved from the user context provided; if it does not name one, OMIT that filter — never invent a value.
