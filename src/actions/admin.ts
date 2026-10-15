@@ -25,6 +25,7 @@ import {
   PREVIEW_UNRELEASED_COOKIE,
   setNavOrder,
   setSurfaceComingSoon,
+  setSurfaceTiers,
   setSurfaceHidden,
   VIEW_AS_USER_COOKIE,
 } from "@/lib/surface-visibility";
@@ -343,6 +344,23 @@ export async function setSurfaceComingSoonAction(input: {
   const adminUserId = await requireAdminUserId();
 
   await setSurfaceComingSoon(adminUserId, input.surfaceKey, input.soon);
+
+  revalidatePath("/", "layout");
+  revalidatePath("/admin/product");
+  return { ok: true };
+}
+
+/**
+ * Limit a page to some tiers, or open it to all of them. Same shape and invalidation as the
+ * two toggles above: the app shell tags and locks the sidebar from these rules.
+ */
+export async function setSurfaceTiersAction(input: {
+  surfaceKey: string;
+  plans: string[];
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+
+  await setSurfaceTiers(adminUserId, input.surfaceKey, input.plans);
 
   revalidatePath("/", "layout");
   revalidatePath("/admin/product");

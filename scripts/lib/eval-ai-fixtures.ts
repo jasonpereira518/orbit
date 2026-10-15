@@ -7,6 +7,8 @@
  * extra topic or phrases a summary differently is not marked wrong.
  */
 
+import type { QuestionShape } from "../../src/lib/chat-retrieval";
+
 /** `scripts/eval-fixtures/ai-capture-eval.json` — runs the whole capture parse (people + dates). */
 export type CaptureEvalFixture = {
   cases: Array<{
@@ -119,6 +121,8 @@ export type TranscribeEvalFixture = {
 
 /** `scripts/eval-fixtures/ai-chat-eval.json` — questions over `contact-search-eval.json`'s network. */
 export type ChatEvalFixture = {
+  /** Look-alike contacts seeded beside the network, so a list question has more than 12 answers. */
+  bulk?: Array<{ count: number; namePrefix: string; school?: string; company?: string; location?: string }>;
   cases: Array<{
     id: string;
     question: string;
@@ -128,6 +132,12 @@ export type ChatEvalFixture = {
     priorTurns?: Array<{ role: "user" | "assistant"; content: string }>;
     /** Facts the answer must state; `{networkSize}` is the number of contacts seeded. */
     mustSay?: string[];
+    /** A list question: the complete filtered roster must reach the prompt with this total. */
+    expectList?: { total: number };
+    /** A count question: the answer must state this number. */
+    expectCount?: number;
+    /** A person question: this contact (by email) must resolve and be the focused contact. */
+    expectPerson?: string;
   }>;
 };
 
@@ -192,12 +202,19 @@ export type ResearchEvalFixture = {
 };
 
 export type ChatRoutingEvalFixture = {
+  /** What "today" is for relative dates, so the time labels stay true. */
+  today: string;
   cases: Array<{
     id: string;
     question: string;
     priorTurns?: Array<{ role: "user" | "assistant"; content: string }>;
     expect: {
       depth: "single" | "research";
+      /** The question shape; an array accepts any of them. */
+      shape: QuestionShape | QuestionShape[];
+      /** A substring the parsed person must contain (case-insensitive). */
+      person?: string;
+      time?: "interacted" | "quiet";
       attention: boolean;
       recruiters: boolean;
       /** Seeded company names whose rosters should attach. */

@@ -199,6 +199,13 @@ async function main() {
   check("budget keeps order", budgeted[0].id === "b0");
   check("top tier gets more notes than tail", budgeted[0].notes!.length > budgeted[11].notes!.length);
   check("messages trimmed per tier", budgeted[0].timeline.length <= 6 && budgeted[11].timeline.length <= 2);
+  const pinned = budgetContactsContext(budgetPool, snippets, new Map(), "", "b0");
+  check(
+    "the pinned (focused) contact skips the tiers: more history, more notes",
+    pinned[0].timeline.length > budgeted[0].timeline.length || pinned[0].notes!.length > budgeted[0].notes!.length,
+    `${pinned[0].timeline.length} entries / ${pinned[0].notes?.length} chars vs ${budgeted[0].timeline.length} / ${budgeted[0].notes?.length}`
+  );
+  check("…and nobody else's row changes", pinned[1].timeline.length === budgeted[1].timeline.length);
   check("every surviving timeline entry keeps its interaction id", budgeted[0].timeline.every((t) => typeof t.id === "string" && t.id.length > 0));
   const totalChars = budgeted.reduce(
     (n, c) =>

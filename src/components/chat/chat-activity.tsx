@@ -21,9 +21,12 @@ import type { ChatStep } from "@/lib/chat-stream-protocol";
  * so the counts, durations and names are facts rather than a scripted sequence. A stage
  * that was skipped sends nothing, and this renders nothing for it.
  *
- * Live, it is a card: the stage running now as its header, the stages already finished
- * ticked off beneath it. Finished, it collapses to a one-line summary you can open again.
- * The ask bar (`compact`) has no room for either, so it gets a single line.
+ * Live, it is a card: the stage running now as its header, and beneath it the whole trail —
+ * every stage, finished ones ticked with what they found, running ones marked as running.
+ * Once the answer's words start arriving the card folds to its header (it can be opened
+ * again), so the trail never pushes the answer down. Finished, it collapses to a one-line
+ * summary you can open again. The ask bar (`compact`) has no room for either, so it gets a
+ * single line.
  */
 
 export type ChatActivityProps = {
@@ -32,14 +35,21 @@ export type ChatActivityProps = {
   state: "live" | "final";
   /** `compact` is the ask bar: one line, no expansion. */
   variant?: "full" | "compact";
+  /** The answer's first words have arrived: the live trail folds away unless opened by hand. */
+  answerStarted?: boolean;
   className?: string;
 };
 
-export function ChatActivity({ steps, state, variant = "full", className }: ChatActivityProps) {
+/** The orbit scene is secondary to the trail, so it sits at this fraction of its size. */
+const ORBIT_ZOOM = 0.7;
+
+export function ChatActivity({ steps, state, variant = "full", answerStarted = false, className }: ChatActivityProps) {
   // Two separate flags: whether the live card is folded and whether the finished summary is
   // open are different questions, and sharing one would make the summary spring open (or
-  // shut) the instant the answer lands.
-  const [liveOpen, setLiveOpen] = useState(true);
+  // shut) the instant the answer lands. The live one is null until the person toggles it, and
+  // until then it follows the answer: open while working, folded once words arrive.
+  const [liveToggled, setLiveOpen] = useState<boolean | null>(null);
+  const liveOpen = liveToggled ?? !answerStarted;
   const [finalOpen, setFinalOpen] = useState(false);
   const reduceMotion = usePrefersReducedMotion();
 
@@ -55,10 +65,6 @@ export function ChatActivity({ steps, state, variant = "full", className }: Chat
     const running = [...steps].reverse().find((step) => step.status === "active");
     return running ?? steps[steps.length - 1] ?? null;
   }, [steps]);
-  const finished = useMemo(
-    () => steps.filter((step) => step.status === "done" && step.id !== current?.id),
-    [steps, current]
-  );
   const summary = useMemo(() => summarise(steps), [steps]);
   const people = useMemo(() => collectOrbitPeople(steps), [steps]);
 
@@ -71,31 +77,18 @@ export function ChatActivity({ steps, state, variant = "full", className }: Chat
       <>
         <OrbitMark reduceMotion={reduceMotion} />
         {/*
-          `mode="wait"` is load-bearing, not a preference. Overlapping enter/exit left the
-          outgoing label mounted, so the line accumulated every stage it had ever shown —
-          and because this is an aria-live region, a screen reader read the whole history
-          aloud on each change. Waiting for the exit guarantees exactly one label.
+          One plain line, swapped in place. An animated swap needs `mode="wait"` to keep this
+          aria-live region to exactly one label — overlapping enter/exit left every stage
+          mounted, and a screen reader read the whole history aloud on each change. The trail
+          below now carries the history, so the header has no reason to animate at all.
         */}
-        <span className="min-w-0 flex-1 text-left" aria-live="polite" aria-atomic="true">
-          <AnimatePresence initial={false} mode="wait">
-            <motion.span
-              key={label}
-              className="block truncate"
-              initial={reduceMotion ? false : { opacity: 0, y: 3 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -3 }}
-              transition={{ duration: DUR.fast, ease: EASE_HOUSE }}
-            >
-              {/* Shimmer on the stage name only — the detail beside it is a fact, not
-                  the "still working" signal. `data-text` must mirror the label. */}
-              <span className="t-shimmer max-w-full truncate align-bottom" data-text={label}>
-                {label}
-              </span>
-              {current?.detail ? (
-                <span className="text-muted-foreground/70"> · {current.detail}</span>
-              ) : null}
-            </motion.span>
-          </AnimatePresence>
+        <span className="min-w-0 flex-1 truncate text-left" aria-live="polite" aria-atomic="true">
+          {/* Shimmer on the stage name only — the detail beside it is a fact, not the "still
+              working" signal. `data-text` must mirror the label. */}
+          <span className="t-shimmer max-w-full truncate align-bottom" data-text={label}>
+            {label}
+          </span>
+          {current?.detail ? <span className="text-muted-foreground/70"> · {current.detail}</span> : null}
         </span>
       </>
     );
@@ -112,7 +105,7 @@ export function ChatActivity({ steps, state, variant = "full", className }: Chat
       <div className={cn("rounded-xl border border-primary/30 bg-muted/30", className)}>
         <button
           type="button"
-          onClick={() => setLiveOpen((v) => !v)}
+          onClick={() => setLiveOpen(!liveOpen)}
           aria-expanded={liveOpen}
           className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-foreground"
         >
@@ -135,26 +128,33 @@ export function ChatActivity({ steps, state, variant = "full", className }: Chat
               transition={{ duration: DUR.base, ease: EASE_HOUSE }}
               className="overflow-hidden"
             >
-              {/* The scene is the loading animation, so it is here from the first step —
-                  not held back until something has finished — with the finished stages
-                  ticked off beside it, or above it where there is no room to sit beside. */}
-              <div className="flex flex-col items-center gap-2 px-3 pb-3 sm:flex-row sm:items-center sm:gap-4">
-                <ul className="w-full min-w-0 flex-1 space-y-1.5 pl-[1.4rem]">
-                  {finished.map((step) => (
-                    <li
-                      key={step.id}
-                      className="relative text-xs leading-snug text-muted-foreground"
-                    >
-                      <Check
-                        className="absolute -left-[1.15rem] top-px size-3.5 text-primary"
-                        aria-hidden="true"
-                      />
+              {/* The trail is the record of what ran, in the order it started; the scene beside
+                  it (above it where there is no room) shows who is in play, smaller, because
+                  it decorates the trail rather than explaining anything on its own. */}
+              <div className="flex flex-col items-center gap-2 px-3 pb-3 sm:flex-row sm:items-start sm:gap-4">
+                <ol className="w-full min-w-0 flex-1 space-y-1.5 pl-[1.4rem]">
+                  {steps.map((step) => (
+                    <li key={step.id} className="relative text-xs leading-snug text-muted-foreground">
+                      {step.status === "done" ? (
+                        <Check className="absolute -left-[1.15rem] top-px size-3.5 text-primary" aria-hidden="true" />
+                      ) : (
+                        <CircleDashed
+                          className={cn(
+                            "absolute -left-[1.15rem] top-px size-3.5 text-muted-foreground",
+                            !reduceMotion && "animate-spin [animation-duration:2.5s]"
+                          )}
+                          aria-hidden="true"
+                        />
+                      )}
                       <span className="text-foreground/80">{step.label}</span>
                       {step.detail && <span> · {step.detail}</span>}
+                      <span className="sr-only">{step.status === "done" ? " (done)" : " (running)"}</span>
                     </li>
                   ))}
-                </ul>
-                <ChatOrbit people={people} reduceMotion={reduceMotion} />
+                </ol>
+                <div style={{ zoom: ORBIT_ZOOM }}>
+                  <ChatOrbit people={people} reduceMotion={reduceMotion} />
+                </div>
               </div>
             </motion.div>
           )}

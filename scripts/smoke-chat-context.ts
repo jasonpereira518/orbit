@@ -24,6 +24,9 @@ import { resolveAiAccess } from "../src/lib/ai-access";
 import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 import { saveWritingInstructionsFor } from "../src/lib/writing-instructions-store";
 import { isoDay } from "../src/lib/dates";
+import { factLane } from "../src/lib/chat-lanes";
+import { fallbackParsedQuery } from "../src/lib/chat-retrieval";
+import { NULL_STEPS } from "../src/lib/chat-steps";
 
 const USER = "smoke-chat-context-user";
 
@@ -306,6 +309,7 @@ async function main() {
         company: "Ramp",
         title: "Head of Platform",
         relationshipScore: 4,
+        howMet: "Intro from Priya",
       })
       .returning()
   )[0].id;
@@ -358,16 +362,42 @@ async function main() {
     attachedMarcus.timeline[0]!.line
   );
   check("the interaction count is the real total", attachedMarcus.totalInteractions === 2);
+  // One @mention is a question about that person: it takes the focus path, so the person is
+  // pinned first with their whole record — and not rendered a second time as "attached".
+  check(
+    "a single mention becomes the focus, pinned first",
+    attachedCtx.modelContacts[0]?.id === marcus && attachedCtx.scopedQuestion.includes(`[Focus:`),
+    JSON.stringify(attachedCtx.modelContacts.map((c) => c.id))
+  );
+  check("…and is not rendered twice", attachedCtx.attachedContext === null, attachedCtx.attachedContext ?? "null");
+  check(
+    "…with the relationship facts from the user's own record",
+    (attachedCtx.focusProfile ?? "").includes("Relationship:") &&
+      (attachedCtx.focusProfile ?? "").includes("How you met: Intro from Priya"),
+    attachedCtx.focusProfile ?? "null"
+  );
+  check("…and stays recommendable", attachedCtx.allowedContacts.has(marcus));
+
+  // Two or more stay attached: there is no single person to answer "primarily about".
+  const dana = (
+    await db
+      .insert(contacts)
+      .values({ userId: USER, fullName: "Dana Ortiz", company: "Brex", school: "UNC Chapel Hill" })
+      .returning()
+  )[0].id;
+  const pairCtx = await prepareChatContext(USER, "what should I ask next time?", {
+    contextContactIds: [marcus, dana],
+  });
   check(
     "the rendered block reaches the context",
-    (attachedCtx.attachedContext ?? "").includes(`[id=${marcus}]`),
-    attachedCtx.attachedContext ?? "null"
+    (pairCtx.attachedContext ?? "").includes(`[id=${marcus}]`) &&
+      (pairCtx.attachedContext ?? "").includes("Studied at UNC Chapel Hill"),
+    pairCtx.attachedContext ?? "null"
   );
   check(
     "an attached person is recommendable even if retrieval never saw them",
-    attachedCtx.allowedContacts.has(marcus) &&
-      !attachedCtx.modelContacts.some((c) => c.id === marcus),
-    JSON.stringify(attachedCtx.modelContacts.map((c) => c.id))
+    pairCtx.allowedContacts.has(marcus) && !pairCtx.modelContacts.some((c) => c.id === marcus),
+    JSON.stringify(pairCtx.modelContacts.map((c) => c.id))
   );
 
   // Someone else's contact id must not become someone else's context.
@@ -478,10 +508,19 @@ async function main() {
     const c = await prepareChatContext(USER, "Who is hiring site reliability engineers in Paris?", {});
     check("a reminder due today reaches the prompt with its id", Boolean(c.openReminders?.includes(`reminder_id=${reminder!.id}`)), c.openReminders ?? "null");
     check("and is on the reminder allowlist", c.reminderTitles?.get(reminder!.id) === "Call Ada about the summit");
-    const passage = c.notePassages?.find((p) => /Paris/.test(p.snippet));
-    check("a note-only fact reaches the fast path as a passage", Boolean(passage), JSON.stringify(c.notePassages));
+    // Keyless, the parse falls back to "open" and no fact lane runs; the lane itself is what
+    // carries a note-only fact, so it is asked directly with a fact-shaped parse.
+    const lane = await factLane(
+      USER,
+      "Who is hiring site reliability engineers in Paris?",
+      { ...fallbackParsedQuery("Who is hiring site reliability engineers in Paris?"), shape: "fact" },
+      { embedding: null, person: null },
+      NULL_STEPS
+    );
+    const passage = lane.passages.find((p) => /Paris/.test(p.snippet));
+    check("a note-only fact reaches the fact lane as a passage", Boolean(passage), JSON.stringify(lane.passages));
     check("naming who the note is about", passage?.contactName === "Grace Hopper", JSON.stringify(passage));
-    check("and that person can be recommended", c.allowedContacts.has(grace));
+    check("and that person is handed on to be recommended", lane.people.some((p) => p.id === grace), JSON.stringify(lane.people));
 
     check("about-you: nothing known, nothing said", renderAboutUser(null) === null && renderAboutUser({ senderBio: "  ", careerProfile: null }) === null);
     const about = renderAboutUser({

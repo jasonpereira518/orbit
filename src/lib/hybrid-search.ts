@@ -133,6 +133,20 @@ function anyLike(column: SQL, values: string[]): SQL {
  * The correlation is kept alongside the literal: belt and braces, and it stays correct if
  * a caller ever passes a userId that disagrees with the row.
  */
+/**
+ * "Went to one of these schools": the contact's own `school`, or an education entry from
+ * their stored LinkedIn history. Shared by chat's `schools` filter and the Contacts list's
+ * School filter, so the two can't disagree about who is an alum. Substring, case-insensitive.
+ * The outer query must read FROM `contacts` unaliased.
+ */
+export function schoolCondition(userId: string, schools: string[]): SQL {
+  return sql`(${anyLike(sql`lower(coalesce(contacts.school, ''))`, schools)} or ${experienceExists(
+    userId,
+    schools,
+    ["education"]
+  )})`;
+}
+
 function experienceExists(userId: string, values: string[], kinds: readonly string[]): SQL {
   return sql`exists (
     select 1 from contact_experiences ce
@@ -179,15 +193,7 @@ function filterCondition(
   const industries = clean(filters.industries);
   if (industries.length) parts.push(anyLike(sql`lower(coalesce(contacts.industry, ''))`, industries));
   const schools = clean(filters.schools);
-  if (schools.length) {
-    parts.push(
-      sql`(${anyLike(sql`lower(coalesce(contacts.school, ''))`, schools)} or ${experienceExists(
-        userId,
-        schools,
-        ["education"]
-      )})`
-    );
-  }
+  if (schools.length) parts.push(schoolCondition(userId, schools));
   // A country arrives as itself plus its cities (chat-retrieval's understandQuery): up to 8.
   const locations = clean(filters.locations, 8);
   if (locations.length) parts.push(anyLike(sql`lower(coalesce(contacts.location, ''))`, locations));
@@ -214,6 +220,112 @@ function filterCondition(
 
   if (!parts.length) return null;
   return sql`(${sql.join(parts, sql` and `)})`;
+}
+
+/** A day window over interaction dates; see `TimeScope` in `@/lib/chat-retrieval`. */
+export type InteractionWindow = {
+  mode: "interacted" | "quiet";
+  /** YYYY-MM-DD, inclusive. */
+  after?: string;
+  /** YYYY-MM-DD, inclusive. */
+  before?: string;
+};
+
+export type ContactListing = {
+  /** Everyone matching, before the listing cap. Exact even when `people` is truncated. */
+  total: number;
+  people: Array<{
+    id: string;
+    name: string;
+    title: string | null;
+    company: string | null;
+    /** ISO day of the newest logged interaction, or null when none is logged. */
+    lastInteraction: string | null;
+  }>;
+  truncated: boolean;
+};
+
+export const CONTACT_LISTING_CAP = 200;
+
+/** UTC day bounds as timestamptz literals: `after` from its midnight, `before` through its end. */
+function dayStart(day: string): string {
+  return `${day}T00:00:00Z`;
+}
+function dayAfter(day: string): string {
+  const next = new Date(`${day}T00:00:00Z`);
+  next.setUTCDate(next.getUTCDate() + 1);
+  return next.toISOString();
+}
+
+function windowCondition(userId: string, window: InteractionWindow): SQL | null {
+  const touched = (range: SQL) =>
+    sql`exists (select 1 from interactions i where i.user_id = ${userId} and i.contact_id = contacts.id and ${range})`;
+  if (window.mode === "quiet") {
+    // In touch before the day, and not since. Read from interactions rather than
+    // contacts.last_interaction_at, which holds the date added when nothing was logged.
+    if (!window.after) return null;
+    const from = dayStart(window.after);
+    return sql`(${touched(sql`i.interaction_date < ${from}::timestamptz`)} and not ${touched(
+      sql`i.interaction_date >= ${from}::timestamptz`
+    )})`;
+  }
+  const parts: SQL[] = [];
+  if (window.after) parts.push(sql`i.interaction_date >= ${dayStart(window.after)}::timestamptz`);
+  if (window.before) parts.push(sql`i.interaction_date < ${dayAfter(window.before)}::timestamptz`);
+  if (!parts.length) return null;
+  return touched(sql.join(parts, sql` and `));
+}
+
+/**
+ * EVERY contact matching the filters and the interaction window — the exhaustive answer a
+ * relevance-ranked top 12 cannot give to "everyone I know at Duke" or "who did I meet in
+ * September". Null when there is nothing to narrow by: an unfiltered list is the whole
+ * network, which is not an answer to anything.
+ *
+ * Closest first, then most recently in touch. The total is exact past the cap.
+ */
+export async function listContactsMatching(
+  userId: string,
+  options: { filters?: SearchFilters | null; window?: InteractionWindow | null; limit?: number }
+): Promise<ContactListing | null> {
+  const conditions = [
+    filterCondition(userId, options.filters),
+    options.window ? windowCondition(userId, options.window) : null,
+  ].filter((c): c is SQL => c !== null);
+  if (!conditions.length) return null;
+  const limit = Math.min(Math.max(options.limit ?? CONTACT_LISTING_CAP, 1), CONTACT_LISTING_CAP);
+  const db = await getDb();
+  const result = await db.execute(sql`
+    select contacts.id, contacts.full_name, contacts.title, contacts.company,
+           count(*) over() as total,
+           (select max(i.interaction_date) from interactions i
+             where i.user_id = ${userId} and i.contact_id = contacts.id) as last_at
+      from contacts
+     where contacts.user_id = ${userId} and ${sql.join(conditions, sql` and `)}
+     order by case contacts.closeness_tier when 'inner' then 0 when 'mid' then 1 when 'outer' then 2 else 3 end,
+              last_at desc nulls last, contacts.full_name
+     limit ${limit}
+  `);
+  const rows = rowsOf<{
+    id: string;
+    full_name: string;
+    title: string | null;
+    company: string | null;
+    total: number | string;
+    last_at: Date | string | null;
+  }>(result);
+  const total = rows.length ? Number(rows[0]!.total) : 0;
+  return {
+    total,
+    people: rows.map((r) => ({
+      id: String(r.id),
+      name: r.full_name,
+      title: r.title,
+      company: r.company,
+      lastInteraction: r.last_at ? new Date(r.last_at).toISOString().slice(0, 10) : null,
+    })),
+    truncated: total > rows.length,
+  };
 }
 
 async function ftsArm(

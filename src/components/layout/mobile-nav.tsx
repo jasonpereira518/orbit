@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMotionValue } from "motion/react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { MessageSquarePlus, Sparkles } from "lucide-react";
+import { Lock, MessageSquarePlus, Sparkles } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
 import {
   APP_NAV,
@@ -31,7 +31,10 @@ import {
   isHrefComingSoon,
   isHrefHidden,
   orderNavItems,
+  surfaceKeyForHref,
+  tierTagPlan,
 } from "@/lib/surfaces";
+import { PLAN_SHORT_LABELS, type Plan } from "@/lib/plans/plan-config";
 import { NavPendingDot } from "@/components/layout/nav-pending-dot";
 import { MobileCaptureButton } from "@/components/layout/mobile-capture-button";
 import {
@@ -55,12 +58,28 @@ type DraggableEntry = { type: "more" } | { type: "link"; href: string };
 // loads. The plain CSS pill shows until the lens reports it is drawn.
 const NavLens = dynamic(() => import("@/components/layout/nav-lens"), { ssr: false });
 
+/** The More panel's tag for a page an operator limited to some tiers. Same as the sidebar's. */
+function TierTag({ plans }: { plans: readonly Plan[] | undefined }) {
+  if (!plans) return null;
+  const plan = tierTagPlan(plans);
+  return (
+    <span
+      data-plan={plan}
+      className="inline-flex items-center gap-1 rounded-full border border-tier-border px-1.5 py-px text-[10px] uppercase tracking-wide text-tier-accent"
+    >
+      <Lock aria-hidden className="size-2.5" />
+      {PLAN_SHORT_LABELS[plan]}
+    </span>
+  );
+}
+
 export function MobileNav({
   clerkOn,
   demoMode,
   hidden,
   comingSoon,
   navOrder,
+  tierTags,
 }: {
   clerkOn: boolean;
   demoMode: boolean;
@@ -70,6 +89,8 @@ export function MobileNav({
   comingSoon: ReadonlySet<string>;
   /** Operator-chosen order, as surface keys. */
   navOrder: readonly string[];
+  /** Tier-limited pages → the plans that may open them. */
+  tierTags: Readonly<Record<string, Plan[]>>;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -676,10 +697,12 @@ export function MobileNav({
                 >
                   <Icon className="h-5 w-5 shrink-0" />
                   {item.label}
-                  {isHrefComingSoon(item.href, comingSoon) && (
+                  {isHrefComingSoon(item.href, comingSoon) ? (
                     <span className="rounded-full border border-warning/40 px-1.5 py-px text-[10px] uppercase tracking-wide text-warning">
                       Soon
                     </span>
+                  ) : (
+                    <TierTag plans={tierTags[surfaceKeyForHref(item.href) ?? ""]} />
                   )}
                   <NavPendingDot className="top-1/2 right-3 -translate-y-1/2" />
                 </IntentLink>

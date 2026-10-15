@@ -34,6 +34,7 @@ import {
   looksLikeLinkedInPositions,
   looksLikeLinkedInProfile,
   looksLikeLinkedInSkills,
+  looksLikeLinkedInEducation,
 } from "@/lib/linkedin-you-shape";
 import {
   detectChatSource,
@@ -57,6 +58,7 @@ export type ImportTarget =
   | "linkedin_positions"
   | "linkedin_skills"
   | "linkedin_alerts"
+  | "linkedin_education"
   | "contacts_file"
   | "calendar_ics"
   | "calendar_csv"
@@ -271,6 +273,9 @@ export function classifyByHead(head: string, name = ""): Classification | null {
   if (looksLikeLinkedInAlerts(fields)) {
     return { target: "linkedin_alerts", confidence: "likely", reason: "your LinkedIn job alerts" };
   }
+  if (looksLikeLinkedInEducation(fields)) {
+    return { target: "linkedin_education", confidence: "likely", reason: "your LinkedIn education" };
+  }
   if (looksLikeLinkedInSkills(fields) && /^skills\.csv$/i.test(baseName(name))) {
     return { target: "linkedin_skills", confidence: "likely", reason: "your LinkedIn skills" };
   }
@@ -392,6 +397,7 @@ const ZIP_MEMBERS: {
     { pattern: /(^|\/)positions\.csv$/i, target: "linkedin_positions", reason: "your LinkedIn positions", verify: true },
     { pattern: /(^|\/)skills\.csv$/i, target: "linkedin_skills", reason: "your LinkedIn skills", verify: true },
     { pattern: /(^|\/)savedjobalerts\.csv$/i, target: "linkedin_alerts", reason: "your LinkedIn job alerts", verify: true },
+    { pattern: /(^|\/)education\.csv$/i, target: "linkedin_education", reason: "your LinkedIn education", verify: true },
     {
       pattern: /(^|\/)connections\.csv$/i,
       target: "linkedin_connections",

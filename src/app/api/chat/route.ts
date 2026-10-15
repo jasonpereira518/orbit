@@ -5,7 +5,8 @@ import { getDb } from "@/db";
 import { chatWithNetworkStream, completeJsonOn } from "@/lib/ai";
 import { resolveAiAccess, type AiAccess } from "@/lib/ai-access";
 import { requireAuthenticatedUser, type AuthenticatedUser } from "@/lib/auth";
-import { prepareChatContext } from "@/lib/chat-context";
+import { buildChatBlocks, prepareChatContext } from "@/lib/chat-context";
+import { expandLists, peopleIdsIn, stripInvalidDirectives } from "@/lib/chat-directives";
 import { answerDeadlineMs, maybeGather } from "@/lib/chat-gather";
 import { CHAT_QUESTION_TOO_LONG_MESSAGE, isChatQuestionTooLong } from "@/lib/chat-question";
 import { discardEmptyThread, discardUnansweredQuestion, persistAssistantTurn } from "@/lib/chat-persist";
@@ -202,12 +203,18 @@ export async function POST(request: Request) {
 
         // One retrieval answers most questions; the ones whose shape says it cannot — what
         // was discussed and when, a path to someone, a follow-up that refers back — get a
-        // bounded research loop first. See `chooseDepth` and `gatherEvidence`.
+        // bounded research loop first. See `routeFromParsed` and `gatherEvidence`.
         const { evidence, notePassages } = await maybeGather(userId, ctx, {
           requestStartedAt,
           signal: request.signal,
           steps,
         });
+
+        // What the answer's `::people` / `::list` blocks may show, before its first word, so
+        // a block renders the moment its line arrives. Built after research, which can add
+        // people the answer may name.
+        const blocks = buildChatBlocks(ctx);
+        send({ type: "blocks", blocks });
 
         steps.start("answer", "Writing the answer");
         // Secrets and fence markers are scrubbed from the LIVE stream, not only from what is
@@ -243,7 +250,13 @@ export async function POST(request: Request) {
                 notePassages,
                 writingPreferences: ctx.writingInstructions,
                 openReminders: ctx.openReminders,
+                userSchools: ctx.userSchools,
                 access: ctx.access,
+                // Every id the prompt minted, so `[eN]` becomes a chip as it streams. The cited
+                // subset replaces this once the answer is done.
+                onEvidence: (all) => {
+                  if (Object.keys(all).length) send({ type: "evidence", items: all });
+                },
               }
             ),
           { userId }
@@ -257,18 +270,44 @@ export async function POST(request: Request) {
         // actually shown (`result.evidence`'s keys), not just the ones it used, so a marker
         // for an id outside that set can only be an invented citation.
         const validIds = new Set(Object.keys(result.evidence));
-        const { text: cleanAnswer, strippedCount } = stripUnresolvedMarkers(result.answer, validIds);
+        const { text: unblocked, strippedCount } = stripUnresolvedMarkers(result.answer, validIds);
+        // The same for blocks: an id the server never offered, or a roster that was not
+        // there, is dropped before anything is stored.
+        const { text: cleanAnswer, removed: strayBlockIds } = stripInvalidDirectives(unblocked, {
+          people: new Set(Object.keys(blocks.people)),
+          lists: new Set(Object.keys(blocks.lists)),
+        });
         const cited = citedIds(cleanAnswer);
         const citedEvidence = Object.fromEntries(cited.map((id) => [id, result.evidence[id]]));
         if (strippedCount > 0) {
           steps.done("verify", { label: `Removed ${plural(strippedCount, "unsupported citation")}` });
         }
+        if (strayBlockIds > 0) {
+          steps.done("verify", { label: `Removed ${plural(strayBlockIds, "person or list", "people or lists")} not in your network` });
+        }
 
         const rawRecommendations = result.recommendations as ChatRecommendation[];
-        const recommendations = ctx.filterRecommendations(rawRecommendations);
+        const listed = ctx.filterRecommendations(rawRecommendations);
+        // The people the answer placed as cards ARE its recommendations — stored as such, so a
+        // reload re-renders them and the chat Gmail send (which only mails a recommended
+        // contact) still works. Their line comes from the server, never the model; a draft is
+        // written on demand from the card. Model-listed ones (recruiters) follow.
+        const placed = peopleIdsIn(cleanAnswer);
+        const placedSet = new Set(placed);
+        const recommendations: ChatRecommendation[] = [
+          ...placed.map((id) => ({
+            contact_id: id,
+            recruiter_id: null,
+            name: blocks.people[id]!.name,
+            reason: blocks.people[id]!.subtitle ?? "",
+            suggested_action: "",
+            draft_message: null,
+          })),
+          ...listed.filter((r) => !r.contact_id || !placedSet.has(r.contact_id)),
+        ];
         // Only worth a step when it actually caught something — a filter that passed
         // everything through did no work the user needs to hear about.
-        const dropped = (rawRecommendations?.length ?? 0) - recommendations.length;
+        const dropped = (rawRecommendations?.length ?? 0) - listed.length;
         if (dropped > 0) {
           steps.done("verify", {
             label: `Dropped ${plural(dropped, "suggestion")} not in your network`,
@@ -304,7 +343,9 @@ export async function POST(request: Request) {
         // CLEANED text, not what streamed live — an invented citation was already visible
         // for that turn, but a reload should never show a dead `[e99]` nobody can resolve.
         const saved = await persistAssistantTurn(userId, threadId, ctx.thread?.title ?? null, ctx.q, {
-          answer: cleanAnswer,
+          // Lists are stored as the table they rendered as, so a reload needs no block data;
+          // people blocks stay as directives and re-render from `recommendations`.
+          answer: expandLists(cleanAnswer, blocks.lists),
           recommendations,
           activity: steps.snapshot(),
           title,

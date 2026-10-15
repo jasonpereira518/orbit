@@ -4,7 +4,7 @@ import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import { preloadCaptureFlow } from "@/components/capture/capture-flow-lazy";
 import { preloadChatPanel } from "@/components/chat/chat-panel-lazy";
-import { Plus, Search } from "lucide-react";
+import { Lock, Plus, Search } from "lucide-react";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/lib/ask-bar-events";
 import { UserButton } from "@clerk/nextjs";
 import { motion } from "motion/react";
@@ -15,7 +15,16 @@ import {
   isNavActive,
   type AppNavItem,
 } from "@/components/layout/app-nav";
-import { isHrefComingSoon, isHrefHidden, orderNavItems, surfaceKeyForHref } from "@/lib/surfaces";
+import {
+  COMING_SOON_UNLOCK_PLAN,
+  isHrefComingSoon,
+  isHrefHidden,
+  orderNavItems,
+  surfaceKeyForHref,
+  tierTagPlan,
+  tierTagTitle,
+} from "@/lib/surfaces";
+import { PLAN_LABELS, PLAN_SHORT_LABELS } from "@/lib/plans/plan-config";
 import { NavPendingDot } from "@/components/layout/nav-pending-dot";
 import { OrbitLogo } from "@/components/orbit-logo";
 import type { Plan } from "@/lib/plan-limits";
@@ -37,9 +46,12 @@ function SidebarNavLink({
   pathname,
   hiddenFromUsers = false,
   soon,
+  tiers,
 }: {
   item: AppNavItem;
   pathname: string;
+  /** The plans that may open this page, when an operator limited it (`tierTags`). */
+  tiers?: readonly Plan[];
   /** Pages currently marked coming soon (operator-controlled). */
   soon: ReadonlySet<string>;
   /**
@@ -54,6 +66,8 @@ function SidebarNavLink({
   // Shown to operators too, who still reach the real page: the tag is how they know what
   // everyone else gets. "Hidden" outranks it, because a hidden page is not even announced.
   const comingSoon = !hiddenFromUsers && isHrefComingSoon(item.href, soon);
+  // After both: an unreleased or hidden page's plan is beside the point until it opens.
+  const tierPlan = !hiddenFromUsers && !comingSoon && tiers ? tierTagPlan(tiers) : null;
   // Hover or focus upgrades a link to a full prefetch, so the click that follows lands
   // without a skeleton (see `@/lib/intent-prefetch`). Not for the page already open. The
   // daily routes (`prefetchFull`) are NOT prefetched in full ahead of that here, unlike the
@@ -72,8 +86,10 @@ function SidebarNavLink({
         hiddenFromUsers
           ? `${item.label} — hidden from users`
           : comingSoon
-            ? `${item.label} — coming soon`
-            : item.label
+            ? `${item.label} — coming soon · unlocks with ${PLAN_LABELS[COMING_SOON_UNLOCK_PLAN]}`
+            : tiers && tierPlan
+              ? tierTagTitle(item.label, tiers)
+              : item.label
       }
       className={cn(
         "relative flex items-center justify-center gap-2.5 rounded-xl px-2 py-2.5 text-sm transition-colors lg:justify-start lg:px-3 lg:py-2",
@@ -111,6 +127,22 @@ function SidebarNavLink({
           />
         </>
       )}
+      {tierPlan && (
+        <>
+          <span
+            data-plan={tierPlan}
+            className="relative z-10 ml-auto hidden items-center gap-1 rounded-full border border-tier-border px-1.5 py-px text-[10px] uppercase tracking-wide text-tier-accent lg:inline-flex"
+          >
+            <Lock aria-hidden className="size-2.5" />
+            {PLAN_SHORT_LABELS[tierPlan]}
+          </span>
+          <span
+            aria-hidden
+            data-plan={tierPlan}
+            className="absolute top-1.5 right-2.5 z-10 size-1.5 rounded-full bg-tier-accent lg:hidden"
+          />
+        </>
+      )}
       <NavPendingDot />
     </NavLink>
   );
@@ -125,6 +157,7 @@ export function AppSidebar({
   hiddenForUsers,
   comingSoon,
   navOrder,
+  tierTags,
 }: {
   pathname: string;
   clerkOn: boolean;
@@ -138,6 +171,8 @@ export function AppSidebar({
   comingSoon: ReadonlySet<string>;
   /** Operator-chosen order, as surface keys. */
   navOrder: readonly string[];
+  /** Tier-limited pages → the plans that may open them. */
+  tierTags: Readonly<Record<string, Plan[]>>;
 }) {
   // One ordered list, then split: a page marked coming soon always drops below the divider,
   // whatever group the code declared it in, and keeps its place in the operator's order
@@ -153,6 +188,10 @@ export function AppSidebar({
   const tagged = (item: AppNavItem) => {
     const key = surfaceKeyForHref(item.href);
     return key !== null && hiddenForUsers.has(key);
+  };
+  const tiersOf = (item: AppNavItem) => {
+    const key = surfaceKeyForHref(item.href);
+    return key === null ? undefined : tierTags[key];
   };
 
   return (
@@ -234,6 +273,7 @@ export function AppSidebar({
             item={item}
             pathname={pathname}
             hiddenFromUsers={tagged(item)}
+            tiers={tiersOf(item)}
           />
         ))}
 
@@ -255,6 +295,7 @@ export function AppSidebar({
             item={item}
             pathname={pathname}
             hiddenFromUsers={tagged(item)}
+            tiers={tiersOf(item)}
           />
         ))}
 

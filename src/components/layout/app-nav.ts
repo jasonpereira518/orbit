@@ -14,6 +14,7 @@ import {
   PartyPopper,
   Radar,
   AudioLines,
+  UserSearch,
 } from "lucide-react";
 
 export type AppNavItem = {
@@ -101,6 +102,11 @@ const MEETINGS: AppNavItem = {
   label: "Meetings",
   icon: AudioLines,
 };
+const FIND: AppNavItem = {
+  href: "/find",
+  label: "Find people",
+  icon: UserSearch,
+};
 const KNOWLEDGE: AppNavItem = {
   href: "/knowledge",
   label: "Knowledge",
@@ -127,7 +133,7 @@ export const APP_NAV_CORE: AppNavItem[] = [
  * coming soon below the divider (see `AppSidebar`). Kept as a separate list as the code's
  * default order.
  */
-export const APP_NAV_EXTRAS: AppNavItem[] = [MEETINGS, EVENTS, OUTREACH, KNOWLEDGE];
+export const APP_NAV_EXTRAS: AppNavItem[] = [MEETINGS, FIND, EVENTS, OUTREACH, KNOWLEDGE];
 
 export const APP_NAV_SETTINGS: AppNavItem = {
   href: "/settings",
@@ -157,6 +163,7 @@ export const MOBILE_MORE_NAV = [
   IMPORTS,
   CONSTELLATION,
   MEETINGS,
+  FIND,
   EVENTS,
   OUTREACH,
   KNOWLEDGE,

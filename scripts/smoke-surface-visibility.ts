@@ -12,12 +12,14 @@
  */
 import "./smoke/_env";
 
-import { readFileSync } from "node:fs";
-import { eq, like } from "drizzle-orm";
+import { readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
+import { eq, inArray, like } from "drizzle-orm";
 import { callsIn } from "./smoke-connect-gates";
 import { getDb } from "../src/db";
 import { adminAuditLog, appSurfaceFlags, userSettings } from "../src/db/schema";
 import { DEMO_WORKSPACE_EMAILS } from "../src/lib/demo-workspace";
+import { isPaywallError } from "../src/lib/entitlements";
 import {
   isSurfaceHiddenError,
   requireReleasedSurface,
@@ -29,6 +31,7 @@ import {
   setNavOrder,
   setSurfaceComingSoon,
   setSurfaceHidden,
+  setSurfaceTiers,
 } from "../src/lib/surface-visibility";
 import {
   COMING_SOON_COMPANIONS,
@@ -39,7 +42,10 @@ import {
   FEEDBACK_SURFACE_KEY,
   SURFACES,
   effectiveComingSoonKeys,
+  canTierLock,
   orderNavItems,
+  parseTierRules,
+  tierLockedFor,
   getSurface,
   surfaceForPathname,
   surfaceKeyForHref,
@@ -51,6 +57,125 @@ import { SETTINGS_SECTIONS } from "../src/components/settings/sections";
 const ADMIN = "smoke-surface-admin";
 const USER = "smoke-surface-user";
 const DEMO_USER = "smoke-surface-demo";
+const FREE_USER = "smoke-surface-free";
+const MAX_USER = "smoke-surface-max";
+const MAIN_ROUTES = "src/app/(clerk)/(app)/(main)";
+
+/** Every page.tsx under `dir`, recursively. */
+function pageFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? pageFiles(path.join(dir, e.name)) : e.name === "page.tsx" ? [path.join(dir, e.name)] : []
+  );
+}
+
+/**
+ * A layout cannot gate a page here — Next renders the two in parallel, so the page's queries
+ * run behind it — and the shared `(main)` layout does not even re-run on a sidebar click.
+ * So every page under a surface that can be marked coming soon or limited to some tiers must
+ * call `pageVisibilityGate` with its OWN surface key. Fails for a page added without it.
+ */
+function pageGateChecks() {
+  console.log("\nevery lockable page gates itself");
+  for (const file of pageFiles(MAIN_ROUTES)) {
+    const route = "/" + path.relative(MAIN_ROUTES, path.dirname(file)).split(path.sep).join("/");
+    const surface = surfaceForPathname(route);
+    if (!surface || !canTierLock(surface.key)) continue;
+    check(
+      `${route} calls pageVisibilityGate("${surface.key}")`,
+      readFileSync(file, "utf8").includes(`pageVisibilityGate("${surface.key}")`)
+    );
+  }
+}
+
+async function tierChecks(db: Awaited<ReturnType<typeof getDb>>) {
+  console.log("\ntier rules");
+  const rules = parseTierRules([
+    "tiers:page.radar:max,lifetime",
+    "tiers:page.settings:free", // an escape hatch: never lockable
+    "tiers:page.chat:bogus", // no real plan: no rule
+    "order:page.chat",
+    "page.radar",
+  ]);
+  check(
+    "tier rows parse to page → plans, ignoring escape hatches and junk",
+    rules.size === 1 && rules.get("page.radar")?.join() === "max,lifetime",
+    JSON.stringify([...rules])
+  );
+  check(
+    "a plan outside a rule is locked out of that page, a plan inside is not",
+    tierLockedFor(rules, "free").get("page.radar")?.join() === "max,lifetime" &&
+      tierLockedFor(rules, "orbit").has("page.radar") &&
+      !tierLockedFor(rules, "max").has("page.radar") &&
+      !tierLockedFor(rules, "lifetime").has("page.radar")
+  );
+
+  const TARGET = "page.knowledge";
+  const users = [FREE_USER, MAX_USER, DEMO_USER];
+  await db.delete(userSettings).where(inArray(userSettings.userId, users));
+  await db.insert(userSettings).values([
+    { userId: FREE_USER },
+    { userId: MAX_USER, compedPlan: "max" },
+    { userId: DEMO_USER, email: DEMO_WORKSPACE_EMAILS[0] },
+  ]);
+  const priorAdmins = process.env.ADMIN_USER_IDS;
+  const priorClerk = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  process.env.ADMIN_USER_IDS = ADMIN;
+  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||= "pk_test_smoke";
+  try {
+    await setSurfaceTiers(ADMIN, TARGET, ["max", "lifetime"]);
+    check("the tier row is written", (await hiddenKeysFresh()).has(`tiers:${TARGET}:max,lifetime`));
+    const free = await resolveSurfaceVisibility(FREE_USER);
+    check("a Free account is locked out, told which plans open it", free.tierLocked.get(TARGET)?.join() === "max,lifetime");
+    check("a tier rule never counts as a hidden surface", [...free.hiddenForUsers].every((k) => !k.startsWith("tiers:")));
+    check("a Max account is not", !(await resolveSurfaceVisibility(MAX_USER)).tierLocked.has(TARGET));
+    const admin = await resolveSurfaceVisibility(ADMIN);
+    check("an exempt operator is not, but still sees the rule", !admin.tierLocked.has(TARGET) && admin.tierRules.has(TARGET));
+    check("the demo workspace is not", !(await resolveSurfaceVisibility(DEMO_USER)).tierLocked.has(TARGET));
+    for (const [guard, label] of [[requireVisibleSurface, "requireVisibleSurface"], [requireReleasedSurface, "requireReleasedSurface"]] as const) {
+      let thrown: unknown = null;
+      try { await guard(FREE_USER, TARGET); } catch (err) { thrown = err; }
+      check(`${label} refuses a locked plan with an upgrade message`, isPaywallError(thrown) && /Max and Lifetime/.test((thrown as Error).message), String(thrown));
+      let ok: unknown = null;
+      try { await guard(MAX_USER, TARGET); } catch (err) { ok = err; }
+      check(`${label} lets an allowed plan through`, ok === null, String(ok));
+    }
+    check("a locked page is not live for that plan", !(await isSurfaceLive(FREE_USER, TARGET)));
+
+    // Precedence: a page switched off is off, whatever the plan — "unavailable", not "upgrade".
+    await setSurfaceHidden(ADMIN, TARGET, true);
+    try {
+      let thrown: unknown = null;
+      try { await requireVisibleSurface(FREE_USER, TARGET); } catch (err) { thrown = err; }
+      check("hidden outranks a tier rule", isSurfaceHiddenError(thrown));
+    } finally {
+      await setSurfaceHidden(ADMIN, TARGET, false);
+    }
+
+    await setSurfaceTiers(ADMIN, TARGET, ["free", "orbit", "max", "lifetime"]);
+    check(
+      "allowing every plan deletes the rule",
+      ![...(await hiddenKeysFresh())].some((k) => k.startsWith(`tiers:${TARGET}:`)) &&
+        !(await resolveSurfaceVisibility(FREE_USER)).tierLocked.has(TARGET)
+    );
+    for (const [label, key, plans] of [
+      ["an empty plan list", TARGET, []],
+      ["an unknown plan", TARGET, ["platinum"]],
+      ["an escape-hatch page", "page.settings", ["max"]],
+      ["a non-page surface", COMPOSE_SURFACE_KEY, ["max"]],
+    ] as const) {
+      let rejected = false;
+      try { await setSurfaceTiers(ADMIN, key, [...plans]); } catch { rejected = true; }
+      check(`${label} is refused`, rejected);
+    }
+  } finally {
+    await db.delete(appSurfaceFlags).where(like(appSurfaceFlags.surfaceKey, "tiers:%"));
+    await db.delete(userSettings).where(inArray(userSettings.userId, users));
+    if (priorAdmins === undefined) delete process.env.ADMIN_USER_IDS;
+    else process.env.ADMIN_USER_IDS = priorAdmins;
+    if (priorClerk === undefined) delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+    else process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = priorClerk;
+  }
+}
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -177,6 +302,7 @@ function registryChecks() {
 
 async function main() {
   registryChecks();
+  pageGateChecks();
 
   console.log("\nwrite path");
   const db = await getDb();
@@ -438,6 +564,8 @@ async function main() {
     }
     check("an escape-hatch page cannot be marked coming soon", settingsRejected);
 
+    await tierChecks(db);
+
     console.log("\nsidebar order");
     const navItems = [{ href: "/contacts" }, { href: "/capture" }, { href: "/chat" }, { href: "/x" }];
     check(
@@ -473,7 +601,8 @@ async function main() {
     check(
       "every toggle wrote an audit row",
       entries.some((e) => e.action === "product.surface.hide") &&
-        entries.some((e) => e.action === "product.surface.show"),
+        entries.some((e) => e.action === "product.surface.show") &&
+        entries.some((e) => e.action === "product.surface.tiers"),
       JSON.stringify(entries)
     );
   } finally {

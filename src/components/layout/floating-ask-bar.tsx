@@ -1,5 +1,6 @@
 "use client";
 
+import type { ChatBlocks } from "@/lib/chat-directives";
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import dynamic from "next/dynamic";
@@ -92,6 +93,8 @@ type AssistantMessage = {
   streaming?: boolean;
   /** The stages the server reported, so this bar narrates the same work `/chat` does. */
   steps?: ChatStep[];
+  /** What the answer's `::list` blocks show; its `::people` show as the cards below. */
+  blocks?: ChatBlocks;
 };
 
 type ThreadMessage = UserMessage | AssistantMessage;
@@ -472,6 +475,10 @@ export function FloatingAskBar() {
                 next[at] = step;
                 return { ...m, steps: next };
               });
+            },
+            onBlocks: (blocks) => {
+              ensurePlaceholder();
+              patch((m) => ({ ...m, blocks }));
             },
             onDone: (info) => {
               smoother.flush();
@@ -980,7 +987,9 @@ const AssistantBubble = memo(function AssistantBubble({
       )}
       {msg.answer && (
         <div className="text-sm leading-relaxed text-foreground/90">
-          <ChatMarkdown>{msg.answer}</ChatMarkdown>
+          <ChatMarkdown blocks={msg.blocks} streaming={msg.streaming}>
+            {msg.answer}
+          </ChatMarkdown>
         </div>
       )}
       {msg.recommendations.map((r) => (

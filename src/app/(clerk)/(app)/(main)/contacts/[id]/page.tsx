@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { Suspense } from "react";
 import { listContactPendingSendsAction } from "@/actions/email-compose";
 import { PendingSends } from "@/components/email/pending-sends";
@@ -25,7 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { computeCloseness, formatInteractionFrequency } from "@/lib/closeness";
 import { getContactCloseness } from "@/lib/closeness-cohort";
 import { getConstellationConfig } from "@/lib/constellation-config";
-import { constellationEligibility } from "@/lib/constellation-eligibility";
+import { constellationEligibility, userTagCount } from "@/lib/constellation-eligibility";
 import { requireUserId } from "@/lib/auth";
 import { getEventsWithContact } from "@/actions/events";
 import { ContactEventsTogether } from "@/components/contacts/contact-events-together";
@@ -62,6 +63,9 @@ export default async function ContactDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const gate = await pageVisibilityGate("page.contacts");
+  if (gate) return gate;
+
   const { id } = await params;
 
   // Every side query needs only the route param — start them all before the
@@ -356,7 +360,7 @@ export default async function ContactDetailPage({
                       statedCloseness: contact.statedCloseness,
                       priorityLevel: contact.priorityLevel,
                       nextFollowUpAt: contact.nextFollowUpAt,
-                      tagCount: contact.tags.length,
+                      userTagCount: userTagCount(contact.tags),
                     },
                     constellationConfig.thresholds
                   ).eligible,
