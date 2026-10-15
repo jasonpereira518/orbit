@@ -5,12 +5,20 @@
  */
 import { z } from "zod";
 import { completeJson, parseAiJson } from "@/lib/ai";
-import { fenceUntrusted } from "@/lib/ai-security";
+import { cleanSingleLine, fenceUntrusted } from "@/lib/ai-security";
 import type { MessageWindow, PreviousDigest } from "@/lib/relationship-engine/types";
+import { sanitizeAgentText } from "@/lib/mcp/sanitize";
 
 export const DIGEST_MAX_OUTPUT_TOKENS = 2_000;
 
 const str = z.string().nullish().transform((v) => v?.trim() || null);
+/**
+ * Model text over other people's messages that is stored, applied with no review and re-read
+ * by later prompts: one line (a newline opens a row the sender wrote), bidi/HTML gone, capped.
+ */
+const line = (max: number) => z.string().nullish().transform((v) => cleanSingleLine(v, max));
+const requiredLine = (max: number) =>
+  z.string().transform((v) => cleanSingleLine(v, max) ?? "").pipe(z.string().min(1));
 const conf = z
   .number()
   .nullish()
@@ -50,21 +58,21 @@ function eachValid<T extends z.ZodType>(item: T) {
     );
 }
 
-const jobChange = z.object({ company: z.string().trim().min(1), title: str, excerpt });
+const jobChange = z.object({ company: requiredLine(200), title: line(200), excerpt });
 
 export const relationshipDigestSchema = z.object({
-  what_they_do: str,
-  working_on: str,
+  what_they_do: line(300),
+  working_on: line(300),
   job_change: z.unknown().optional().transform((v) => {
     const r = jobChange.safeParse(v);
     return r.success ? r.data : null;
   }),
-  summary: z.string().nullish().transform((v) => v?.trim() || ""),
-  topics: eachValid(z.string().trim().min(1)).transform((v) => v.slice(0, 8)),
-  facts: eachValid(z.object({ text: z.string().min(1), excerpt })),
+  summary: z.string().nullish().transform((v) => (v ? sanitizeAgentText(v).trim().slice(0, 1200) : "")),
+  topics: eachValid(requiredLine(60)).transform((v) => v.slice(0, 8)),
+  facts: eachValid(z.object({ text: requiredLine(300), excerpt })).transform((v) => v.slice(0, 20)),
   commitments: eachValid(
     z.object({
-      title: z.string().min(1),
+      title: requiredLine(300),
       owed_by: owedRequired,
       raw_date_phrase: str,
       date: z.string().nullish().transform((v) => v ?? ""),
@@ -77,7 +85,7 @@ export const relationshipDigestSchema = z.object({
   ),
   implied: eachValid(
     z.object({
-      text: z.string().min(1),
+      text: requiredLine(300),
       owed_by: owedOptional,
       within_days: withinDays,
       confidence: conf,

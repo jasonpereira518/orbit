@@ -18,6 +18,7 @@ import { ConnectivityBanner } from "@/components/layout/connectivity-banner";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { AvatarBackfill } from "@/components/contacts/avatar-backfill";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
+import { CloudNotesWatcher } from "@/components/notifications/cloud-notes-watcher";
 import { PlanCelebrationWatcher } from "@/components/celebration/plan-celebration-watcher";
 import { CreditsIntroWatcher } from "@/components/credits-intro/credits-intro-watcher";
 import { LinkedInReminderWatcher } from "@/components/linkedin-reminder/linkedin-reminder-watcher";
@@ -65,6 +66,7 @@ export function AppShell({
   hiddenForUsers,
   comingSoon,
   navOrder,
+  tierTags,
   viewingAsUser,
   linkedinReminder,
   creditsIntroDue,
@@ -84,6 +86,8 @@ export function AppShell({
   comingSoon: string[];
   /** Operator-chosen sidebar order, as surface keys. */
   navOrder: string[];
+  /** Tier-limited pages to tag in the nav → the plans that may open them. */
+  tierTags: Record<string, Plan[]>;
   viewingAsUser: boolean;
   /** The full-screen LinkedIn export reminder — see `LinkedInReminderWatcher`. */
   linkedinReminder: { due: boolean; requested: boolean; email: string | null };
@@ -185,6 +189,7 @@ export function AppShell({
           )}
           <AvatarBackfill />
           <DueNotificationsWatcher />
+          <CloudNotesWatcher />
           <PlanCelebrationWatcher plan={plan} />
           {/* The credits intro and the export reminder both wait until the tour is over: two
               full-screen guides at once would be one too many. The intro mounts first; the
@@ -212,6 +217,7 @@ export function AppShell({
               hiddenForUsers={hiddenForUsersSet}
               comingSoon={comingSoonSet}
               navOrder={navOrder}
+              tierTags={tierTags}
             />
           </div>
           <main
@@ -318,6 +324,7 @@ export function AppShell({
               hidden={hiddenSet}
               comingSoon={comingSoonSet}
               navOrder={navOrder}
+              tierTags={tierTags}
             />
           </main>
         </div>

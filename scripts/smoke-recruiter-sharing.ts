@@ -256,6 +256,30 @@ async function main() {
       refetchedC?.firm === MARK && (refetchedC?.specialty?.length ?? 0) === 1
     );
 
+    // logRecruiter({ recruiterId }) links only a row the viewer could already see (Oct 13 audit).
+    // Demo mode signs the action in as demo-user.
+    const { logRecruiter } = await import("../src/actions/recruiters");
+    const [hidden] = await db.insert(recruiters).values({ fullName: `${MARK} Hidden`, nameNormalized: `${MARK} hidden`.toLowerCase(), firm: MARK, createdByUserId: USER_B }).returning();
+    const [ownRow] = await db.insert(recruiters).values({ fullName: `${MARK} Own`, nameNormalized: `${MARK} own`.toLowerCase(), firm: MARK, createdByUserId: "demo-user" }).returning();
+    created.push(hidden!.id, ownRow!.id);
+    const savedEnv = { ...process.env };
+    Object.assign(process.env, { NODE_ENV: "development" });
+    delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+    delete process.env.CLERK_SECRET_KEY;
+    const refused = await logRecruiter({ fullName: "", recruiterId: hidden!.id }).then(
+      () => false,
+      (e) => e instanceof Error && /not found/i.test(e.message)
+    );
+    check("logging another account's private recruiter by id is refused", refused);
+    const hiddenLinks = await db.select().from(userRecruiterLinks).where(eq(userRecruiterLinks.recruiterId, hidden!.id));
+    check("…and links nothing", hiddenLinks.length === 0);
+    // revalidatePath throws outside a request, after the write; the link row is the effect.
+    await logRecruiter({ fullName: "", recruiterId: ownRow!.id }).catch(() => null);
+    const ownLinks = await db.select().from(userRecruiterLinks).where(eq(userRecruiterLinks.recruiterId, ownRow!.id));
+    check("logging a recruiter the viewer created still links it", ownLinks.length === 1 && ownLinks[0]!.userId === "demo-user");
+    process.env = savedEnv;
+    await db.delete(userRecruiterLinks).where(eq(userRecruiterLinks.userId, "demo-user"));
+
     console.log("\nall recruiter sharing checks passed");
   } finally {
     await cleanup(created);

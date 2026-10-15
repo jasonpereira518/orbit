@@ -364,7 +364,7 @@ export function NoteBatchResultView({
                   {m.context ? <span className="text-muted-foreground"> — {m.context}</span> : null}
                   <span className="ml-2 text-xs text-muted-foreground">Not in your contacts yet</span>
                 </span>
-                <Link href={`/capture?mode=structured`} className="shrink-0 text-xs font-medium text-primary hover:underline">
+                <Link href="/contacts/new" className="shrink-0 text-xs font-medium text-primary hover:underline">
                   Add as contact
                 </Link>
               </li>

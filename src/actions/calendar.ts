@@ -7,6 +7,8 @@ import { calendarSubscriptions } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { requireSyncUser } from "@/lib/plan-guards";
 import {
+  maskIcsUrl,
+  sealIcsUrl,
   syncCalendarSubscription,
   syncDueCalendarSubscriptions,
 } from "@/lib/calendar-sync";
@@ -48,13 +50,19 @@ function normalizeIcsUrl(raw: string) {
   return parsed.toString();
 }
 
+/** A row as the browser gets it: the secret feed URL reduced to its host. */
+function forClient<T extends { icsUrl: string }>(row: T): T {
+  return { ...row, icsUrl: maskIcsUrl(row.icsUrl) };
+}
+
 export async function listCalendarSubscriptions() {
   const userId = await requireUserId();
   const db = await getDb();
-  return db.query.calendarSubscriptions.findMany({
+  const rows = await db.query.calendarSubscriptions.findMany({
     where: eq(calendarSubscriptions.userId, userId),
     orderBy: (s, { desc }) => [desc(s.createdAt)],
   });
+  return rows.map(forClient);
 }
 
 export async function addCalendarSubscription(input: {
@@ -71,7 +79,7 @@ export async function addCalendarSubscription(input: {
       .insert(calendarSubscriptions)
       .values({
         userId,
-        icsUrl,
+        icsUrl: sealIcsUrl(icsUrl),
         label: input.label?.trim() || "Calendar",
         selfEmail: input.selfEmail?.trim().toLowerCase() || null,
         enabled: 1,
@@ -100,7 +108,7 @@ export async function addCalendarSubscription(input: {
     revalidatePath("/");
     revalidatePath("/contacts");
 
-    return { subscription, stats, syncError };
+    return { subscription: forClient(subscription), stats, syncError };
   });
 }
 
@@ -121,7 +129,7 @@ export async function updateCalendarSubscription(
     .set({
       ...(input.label !== undefined ? { label: input.label.trim() || "Calendar" } : {}),
       ...(input.icsUrl !== undefined
-        ? { icsUrl: normalizeIcsUrl(input.icsUrl) }
+        ? { icsUrl: sealIcsUrl(normalizeIcsUrl(input.icsUrl)) }
         : {}),
       ...(input.selfEmail !== undefined
         ? { selfEmail: input.selfEmail?.trim().toLowerCase() || null }
@@ -138,7 +146,7 @@ export async function updateCalendarSubscription(
     .returning();
 
   revalidatePath("/imports");
-  return row;
+  return row ? forClient(row) : row;
 }
 
 export async function removeCalendarSubscription(id: string) {

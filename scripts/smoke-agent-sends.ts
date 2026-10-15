@@ -33,7 +33,7 @@ import { countSendsToday } from "../src/lib/outreach-send";
 import { approveAgentSend } from "../src/lib/agent-send-approve";
 import { encrypt } from "../src/lib/crypto";
 import { GOOGLE_SCOPES } from "../src/lib/google-scopes";
-import { countEmailSendsToday } from "../src/lib/email/sender";
+import { countEmailRecipientsToday } from "../src/lib/email/sender";
 import { dispatchEmailSend } from "../src/lib/email/outbox";
 import { setProviderOverride } from "../src/lib/email/providers";
 import { MailProviderError, type MailProvider } from "../src/lib/email/providers/types";
@@ -251,12 +251,12 @@ run(async () => {
       scopes: GOOGLE_SCOPES.gmailSend,
       status: "active",
     });
-    const before = await countEmailSendsToday(USER);
+    const before = await countEmailRecipientsToday(USER);
     const good = await noMailbox.run();
     check("approval sends", good.sent && good.status === "sent" && good.via === "gmail", JSON.stringify(good));
     const row = await getAgentSendRequest(USER, noMailbox.id);
     check("the draft reads as sent", row?.status === "sent");
-    check("and counts against the shared email cap", (await countEmailSendsToday(USER)) === before + 1);
+    check("and counts against the shared email cap", (await countEmailRecipientsToday(USER)) === before + 1);
 
     next = "permanent";
     const bad = await approveDraft("sam@acme-corp.io");

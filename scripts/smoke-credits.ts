@@ -244,6 +244,16 @@ run(async () => {
   const measured = await measuredActionCosts(Date.now() + 4 * 60 * 60 * 1000);
   check("with enough captures, a capture costs the sum of its calls per capture", measured.capture === 8_000, measured);
 
+  console.log("\nA balance read is one round once the ledger is current");
+  await reset();
+  const { startQueryCount, stopQueryCount } = await import("../src/lib/query-counter");
+  const fresh = await ledger.getCreditBalance(USER, "free", null);
+  check("a Free account seen only through its balance gets the allowance and the starter", fresh.spendable === 75 * 10_000 && fresh.starterRemaining === 25 * 10_000, fresh);
+  startQueryCount();
+  const again = await ledger.getCreditBalance(USER, "free", null);
+  const statements = stopQueryCount();
+  check("…and the next read writes nothing: grants and holds, two statements in parallel", statements === 2 && again.spendable === fresh.spendable, { statements });
+
   console.log("\nSettling releases the live hold, not an expired one");
   await reset();
   await ledger.ensureAllowance(USER, "orbit", cycle1);

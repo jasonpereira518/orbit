@@ -5,11 +5,16 @@ import type { Plan } from "@/lib/plan-limits";
  * chat, agent approvals, recruiters) — see the direct-email spec §3. Pure: no DB, no
  * next/server, safe for client and pure smokes.
  */
-export const EMAIL_SEND_DAILY_CAP: Record<Plan, number> = {
-  free: 20,
-  orbit: 100,
-  max: 100,
-  lifetime: 100,
+/**
+ * People emailed per rolling 24 hours: every To, Cc and Bcc counts. A cap on messages let
+ * one account reach 2,000 addresses a day (100 messages × 20 recipients) from its own
+ * mailbox — bulk mail, which is what Google's gmail.send review exists to rule out.
+ */
+export const EMAIL_RECIPIENT_DAILY_CAP: Record<Plan, number> = {
+  free: 40,
+  orbit: 200,
+  max: 200,
+  lifetime: 200,
 };
 
 /** How long an interactive send waits before it goes out — the Undo window. */

@@ -11,13 +11,30 @@ import { cn } from "@/lib/utils";
 
 type Snippet = Awaited<ReturnType<typeof getEvidenceSnippet>>;
 
+const CHIP =
+  "mx-0.5 inline-flex size-4 -translate-y-0.5 items-center justify-center rounded-full bg-muted text-[10px] font-medium text-muted-foreground align-super";
+
 /**
- * A `[eN]` marker in an answer, rendered as a small numbered chip. Clicking it fetches the
- * snippet behind it live — nothing about the source is on the wire until then, and a
- * deleted or edited note reads as "removed" or shows what it says today rather than a stale
- * copy written down when the answer was.
+ * A `[eN]` marker in an answer, rendered as a small numbered chip. Hovering or clicking it
+ * fetches the snippet behind it live — nothing about the source is on the wire until then,
+ * and a deleted or edited note reads as "removed" or shows what it says today rather than a
+ * stale copy written down when the answer was.
+ *
+ * Without `messageId` (the answer is still streaming, so there is no saved row to read the
+ * source from yet) it is the same chip, numbered, with nothing to open.
  */
-export function SourceChip({ messageId, id, number }: { messageId: string; id: string; number: number }) {
+export function SourceChip({ messageId, id, number }: { messageId?: string; id: string; number: number }) {
+  if (!messageId) {
+    return (
+      <span className={CHIP} aria-label={`Source ${number}`}>
+        {number}
+      </span>
+    );
+  }
+  return <LiveSourceChip messageId={messageId} id={id} number={number} />;
+}
+
+function LiveSourceChip({ messageId, id, number }: { messageId: string; id: string; number: number }) {
   const [snippet, setSnippet] = useState<Snippet | null>(null);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
@@ -43,7 +60,9 @@ export function SourceChip({ messageId, id, number }: { messageId: string; id: s
       }}
     >
       <PopoverTrigger
-        className="mx-0.5 inline-flex size-4 -translate-y-0.5 items-center justify-center rounded-full bg-muted text-[10px] font-medium text-muted-foreground align-super transition-colors hover:bg-primary hover:text-primary-foreground"
+        openOnHover
+        delay={200}
+        className={cn(CHIP, "transition-colors hover:bg-primary hover:text-primary-foreground")}
         aria-label={`Source ${number}`}
       >
         {number}
