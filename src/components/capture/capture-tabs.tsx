@@ -4,7 +4,7 @@ import { motion } from "motion/react";
 import { SPRING_PILL } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
-export type CaptureMode = "messy" | "voice" | "meeting" | "library" | "structured";
+export type CaptureMode = "messy" | "voice" | "meeting" | "library" | "cloud";
 
 export const CAPTURE_MODES: ReadonlyArray<{ id: CaptureMode; label: string; blurb: string }> = [
   {
@@ -32,9 +32,10 @@ export const CAPTURE_MODES: ReadonlyArray<{ id: CaptureMode; label: string; blur
       "Backfilling? Drop a folder of meeting notes and each file becomes its own meeting — its own date, its own people, its own entry on their timeline.",
   },
   {
-    id: "structured",
-    label: "Structured Logging",
-    blurb: "Fill in the fields yourself for a clean interaction log on a contact.",
+    id: "cloud",
+    label: "Drive & OneDrive",
+    blurb:
+      "Pick meeting notes straight from Google Drive or OneDrive — one or a stack of them. Each becomes its own capture to review.",
   },
 ];
 
@@ -57,11 +58,14 @@ export function CaptureTabs({
   mode,
   onChange,
   disabled = false,
+  showCloud = false,
 }: {
   mode: CaptureMode;
   onChange: (mode: CaptureMode) => void;
   /** A job is in flight or a meeting is recording — switching would lose it. */
   disabled?: boolean;
+  /** The Drive & OneDrive tab — only while the cloud-notes surface is live for this viewer. */
+  showCloud?: boolean;
 }) {
   return (
     <div
@@ -69,7 +73,7 @@ export function CaptureTabs({
       aria-label="Capture mode"
       className="inline-flex w-full rounded-lg bg-muted p-[3px] sm:w-auto"
     >
-      {CAPTURE_MODES.map((m) => (
+      {CAPTURE_MODES.filter((m) => showCloud || m.id !== "cloud").map((m) => (
         <ModeTab
           key={m.id}
           id={captureTabId(m.id)}

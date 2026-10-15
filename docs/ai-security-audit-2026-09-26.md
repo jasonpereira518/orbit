@@ -62,7 +62,7 @@ Severity reflects impact if the model is fully compromised, which is the assumpt
 | 14 | Low | AI-written outreach can be bulk-sent with an injected link | Fixed | `smoke-ai-guardrails` |
 | 15 | Med | Drive import accepted every parsed person and merge target with no reviewer | Fixed | `smoke-drive-import` |
 | 16 | Low-Med | The output guard ran only after the answer had streamed | Fixed | `smoke-ai-guardrails` |
-| 17 | Low-Med | MCP OAuth tokens got read+write whatever their scopes | Fixed in code; enforcement needs Clerk | `smoke-ai-guardrails` |
+| 17 | Low-Med | MCP OAuth tokens got read+write whatever their scopes | Fixed in code | `smoke-ai-guardrails` |
 | 18 | Low-Med | Extraction prompts' untrusted content was not fenced | Fixed | `smoke-ai-guardrails` + prompt suites |
 | 19 | Low | Recruiter rows written before #2 are not cleaned | Fixed (backfill script) | `smoke-ai-guardrails-db` |
 | 20 | Low | Transcription continuation context went into the prompt raw | Fixed | `smoke-dictation` |
@@ -212,11 +212,7 @@ Severity reflects impact if the model is fully compromised, which is the assumpt
   - `orbit:read` → read only.
   - No Orbit scope → refused when `MCP_OAUTH_REQUIRE_SCOPES=1`, otherwise the legacy read+write grant.
 - The protected-resource metadata now publishes `scopes_supported: ["orbit:read", "orbit:write"]`.
-- **To finish, in order:**
-  1. Define `orbit:read` and `orbit:write` in the Clerk instance (OAuth applications → Scopes).
-  2. Confirm that new connections carry them.
-  3. Set `MCP_OAUTH_REQUIRE_SCOPES=1`.
-- Setting the flag before step 1 would disconnect every OAuth assistant.
+- **Enforcement** is a dashboard step, tracked privately.
 
 ### 18. Extraction prompts' content fenced (Low-Medium)
 
@@ -238,12 +234,9 @@ Severity reflects impact if the model is fully compromised, which is the assumpt
 
 ## Remaining
 
-| # | Sev | Item | Recommended next step |
-|---|---|---|---|
-| 1 | Low | **Scope enforcement for MCP OAuth** is implemented but off until Clerk publishes `orbit:read`/`orbit:write` (see #17). | A dashboard change, then set `MCP_OAUTH_REQUIRE_SCOPES=1`. |
-| 2 | Low | **The `aiSummary` second hop.** A brief or enrichment steered by one email persists and is re-read by chat. It is now fenced at write time (#18) and in chat, and zod-bounded. | Store a provenance flag on model-written summaries and mark them in the chat prompt. This needs a schema change, so it was left out of this branch. |
-| 3 | Info | **The injection tripwire is regex-based.** | Review `ai.security` events weekly for false negatives and positives. Consider an offline classifier on sampled writes. Never make it blocking. |
-| 4 | Info | **Run the recruiter backfill** (#19) once against production. | `npx tsx scripts/backfill-recruiter-clean.ts --dry`, then without `--dry`. |
+Tracked privately (status as of 2026-10-13): this repository is public. The Oct 13 audit also
+fenced the draft writers' inputs, added a link warning to every AI draft surface, and cleaned
+web-sourced work history before it is stored.
 
 ## Already done well (unchanged, verified)
 

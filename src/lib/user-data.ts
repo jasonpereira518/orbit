@@ -26,6 +26,8 @@ import {
   captureHandoffs,
   captureJobs,
   capturePhotos,
+  cloudNoteFiles,
+  cloudNoteSources,
   aiBatchJobs,
   aiResultCache,
   chatMessages,
@@ -289,13 +291,14 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   notes: {
-    exports: [own(interactions), own(noteBatches), own(interactionMentions), own(actionItems), own(meetingSessions), own(meetingTranscriptSegments), own(captureJobs), own(captureHandoffs), own(ignoredPeople), withUrl(own(capturePhotos), "/api/capture/photos/")],
+    exports: [own(interactions), own(noteBatches), own(interactionMentions), own(actionItems), own(meetingSessions), own(meetingTranscriptSegments), own(captureJobs), own(captureHandoffs), own(ignoredPeople), own(cloudNoteFiles), withUrl(own(capturePhotos), "/api/capture/photos/")],
     counts: [
       interactions,
       noteBatches,
       meetingSessions,
       captureJobs,
       ignoredPeople,
+      cloudNoteFiles,
     ],
     run: async (db, userId) => {
       // Capture photos before the batches they belong to. The rows WOULD cascade from
@@ -330,6 +333,10 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // extracted profile in `result`; the ignored list holds names from those notes.
       await db.delete(captureJobs).where(eq(captureJobs.userId, userId));
       await db.delete(ignoredPeople).where(eq(ignoredPeople.userId, userId));
+      // Cloud notes: the names and links of docs in the user's Drive/OneDrive, and the cursor
+      // that says how far the scan has read.
+      await db.delete(cloudNoteFiles).where(eq(cloudNoteFiles.userId, userId));
+      await db.delete(cloudNoteSources).where(eq(cloudNoteSources.userId, userId));
     },
   },
   reminders: {
@@ -428,7 +435,15 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // leave a tombstone per event behind — a list of every Luma link and calendar UID the
       // user ever had, pointing at nothing, outliving the account.
       await db.delete(eventAliases).where(eq(eventAliases.userId, userId));
+      // Covers sit at a public, guessable path (`event-covers/<eventId>`) with no foreign key:
+      // read which are this user's before the rows go, delete them after (as with avatars).
+      const coverRows = await db.execute(sql`
+        SELECT cover_image_url AS url FROM events
+         WHERE user_id = ${userId} AND cover_image_url LIKE '%.blob.vercel-storage.com/event-covers/%'
+      `);
+      const coverUrls = rowsOf<{ url: string }>(coverRows).map((r) => r.url);
       await db.delete(events).where(eq(events.userId, userId));
+      if (coverUrls.length && hasBlobStorage()) await del(coverUrls).catch(() => {});
     },
   },
   goals: {

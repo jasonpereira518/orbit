@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, CalendarDays, Clock, Users } from "lucide-react";
@@ -51,6 +52,9 @@ export default async function MeetingDetailPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ q?: string }>;
 }) {
+  const gate = await pageVisibilityGate("page.meetings");
+  if (gate) return gate;
+
   const { id } = await params;
   const q = ((await searchParams).q ?? "").trim().slice(0, SEARCH_MAX);
   const userId = await requireUserId();

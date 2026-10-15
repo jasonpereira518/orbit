@@ -43,7 +43,7 @@ const identity = [
   MICROSOFT_SCOPES.offlineAccess,
   MICROSOFT_SCOPES.userRead,
 ];
-const featureScopes: string[] = [MICROSOFT_SCOPES.contacts, MICROSOFT_SCOPES.calendar, MICROSOFT_SCOPES.mail, MICROSOFT_SCOPES.mailSend];
+const featureScopes: string[] = [MICROSOFT_SCOPES.contacts, MICROSOFT_SCOPES.calendar, MICROSOFT_SCOPES.mail, MICROSOFT_SCOPES.mailSend, MICROSOFT_SCOPES.files];
 
 console.log("Scopes per purpose");
 for (const purpose of MICROSOFT_PURPOSES) {

@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { Suspense } from "react";
 import Link from "next/link";
 import { BookOpen, Sparkles } from "lucide-react";
@@ -27,6 +28,9 @@ export default async function KnowledgePage({
 }: {
   searchParams: Promise<{ view?: string; p?: string }>;
 }) {
+  const gate = await pageVisibilityGate("page.knowledge");
+  if (gate) return gate;
+
   const sp = await searchParams;
   const view = sp.view === "overview" ? "overview" : "people";
   const selectedId = view === "people" && typeof sp.p === "string" && UUID.test(sp.p) ? sp.p : null;

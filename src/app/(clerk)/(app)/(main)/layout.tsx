@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import { ComingSoon } from "@/components/coming-soon/coming-soon";
+import { TierLocked } from "@/components/locked-feature";
 import { SurfaceGate } from "@/components/coming-soon/surface-gate";
 import { SurfaceUnavailable } from "@/components/surface-unavailable";
 import { requireUserId } from "@/lib/auth";
@@ -57,7 +58,7 @@ export default async function MainAppLayout({
   const pathname = (await headers()).get("x-pathname") ?? "";
   const surface = surfaceForPathname(pathname);
   if (surface) {
-    const { hidden, comingSoon } = await resolveSurfaceVisibility(userId);
+    const { hidden, comingSoon, tierLocked } = await resolveSurfaceVisibility(userId);
     // Wrapped, never returned bare: this layout is NOT re-run when the user clicks to
     // another route in the group, so a bare `return <ComingSoon/>` stays on screen forever
     // and hides every page they navigate to. `SurfaceGate` lets it step aside on the client
@@ -76,6 +77,15 @@ export default async function MainAppLayout({
           surfaceKey={surface.key}
           blocked={<ComingSoon surfaceKey={surface.key} label={surface.label} />}
         >
+          {children}
+        </SurfaceGate>
+      );
+    }
+    // Last: a page that is off or unreleased is that, whatever the viewer's plan.
+    const plans = tierLocked.get(surface.key);
+    if (plans) {
+      return (
+        <SurfaceGate surfaceKey={surface.key} blocked={<TierLocked surfaceKey={surface.key} plans={plans} />}>
           {children}
         </SurfaceGate>
       );

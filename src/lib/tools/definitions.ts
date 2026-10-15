@@ -20,6 +20,7 @@ import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { actionItems, contacts, interactions } from "@/db/schema";
 import { hybridSearchContacts } from "@/lib/hybrid-search";
+import { matchContactsByName } from "@/lib/chat-lanes";
 import { findOrgRosters } from "@/lib/chat-roster";
 import { loadDueFollowUps } from "@/lib/due-follow-ups";
 import { getClosenessCohortSlim } from "@/lib/closeness-cohort";
@@ -490,21 +491,15 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       // have to know which kind of name they are holding.
       const [rosters, named] = await Promise.all([
         findOrgRosters(userId, args.target),
-        // A name lookup: only id, name, company and title are read below.
-        hybridSearchContacts(userId, { query: args.target, limit: 5, withProse: false }),
+        matchContactsByName(userId, args.target),
       ]);
 
       // The shortest path is no path: if the target is already a contact, say so first.
-      // Substring both ways so "Dana" matches "Dana Wu" and "Dana Wu from Stripe" matches
-      // "Dana Wu" — a rank alone would promote whoever came top of an unrelated search.
-      const needle = args.target.trim().toLowerCase();
-      const alreadyKnown = named
-        .filter((c) => {
-          const name = c.fullName.toLowerCase();
-          return name.includes(needle) || needle.includes(name);
-        })
+      // Only a strong name match ("Dana" ↔ "Dana Wu") counts: a shared surname is not
+      // "already known", and a path search for the person should still run.
+      const alreadyKnown = named.strong
         .slice(0, 3)
-        .map((c) => ({ contactId: c.id, name: c.fullName, company: c.company, title: c.title }));
+        .map((c) => ({ contactId: c.id, name: c.name, company: c.company, title: c.title }));
 
       const known = new Set(alreadyKnown.map((c) => c.contactId));
       const via = new Map<string, string>();

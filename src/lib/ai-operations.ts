@@ -134,6 +134,7 @@ export const AI_OPERATIONS = {
   "capture.merge_target": { label: "Capture: matching existing contacts (decision model)", tier: "decision" },
   "capture.checks": { label: "Capture: checking people, tags and referrals (decision model)", tier: "decision" },
   "calendar.kind": { label: "Calendar: which events are meetings (decision model)", tier: "decision", background: true },
+  "notes.detect": { label: "Cloud notes: which docs are meeting notes (decision model)", tier: "decision", background: true },
   "capture.dates.gate": { label: "Capture: any dates to extract? (decision model)", tier: "decision" },
   "contact.brief.gate": { label: "Contact briefs: anything new? (decision model)", tier: "decision" },
   "extension.starters.gate": { label: "Extension: enough for openers? (decision model)", tier: "decision" },
@@ -147,6 +148,7 @@ export const AI_OPERATIONS = {
   // (decisions/llm.ts). Own ids: the answer cache keys on the operation, not the model.
   "duplicates.same_person.llm": { label: "Duplicates: same person?", tier: "fast", thinking: "minimal", background: true },
   "mentions.resolve.llm": { label: "Capture: linking mentions", tier: "fast", thinking: "minimal" },
+  "notes.detect.llm": { label: "Cloud notes: which docs are meeting notes", tier: "fast", thinking: "minimal", background: true },
   "import.linkedin.timeline": {
     label: "LinkedIn timeline events",
     tier: "fast",
