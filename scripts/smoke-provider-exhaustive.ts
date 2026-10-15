@@ -225,9 +225,9 @@ const ALLOWLIST: Record<string, string> = {
   // webSearchJson: four explicit arms in order — gemini, openrouter, openai, then anthropic
   // as the fallthrough. OpenRouter has its own arm (its search is a request plugin, not the
   // Responses API tool the openai arm uses), so neither literal below can receive it.
-  "src/lib/ai.ts:2765": "webSearchJson's gemini arm; the explicit `provider === \"openrouter\"` " +
+  "src/lib/ai.ts:2766": "webSearchJson's gemini arm; the explicit `provider === \"openrouter\"` " +
     "arm follows it, so the four arms are exhaustive over AiProvider.",
-  "src/lib/ai.ts:2818": "webSearchJson's openai arm — OpenRouter took its own explicit arm just " +
+  "src/lib/ai.ts:2819": "webSearchJson's openai arm — OpenRouter took its own explicit arm just " +
     "above (plugin-based search, not the Responses API), so it never reaches this one.",
   "src/lib/errors.ts:37": "aiProviderLabel has a fourth `provider === \"openrouter\" ? " +
     "\"OpenRouter\"` arm right after this one; the four checks together are exhaustive.",

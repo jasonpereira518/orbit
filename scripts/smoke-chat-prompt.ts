@@ -118,6 +118,33 @@ check(
   promptWithSchool.user.includes("Schools the user went to: UNC Chapel Hill")
 );
 
+// --- where they're based reaches the prompt: "who do I know in Canada?" -----------------
+// The row carried no location, so a Toronto contact retrieved for that question reached the
+// model with nothing saying Toronto, and it named nobody (eval chat-13, every run).
+
+const promptWithLocation = buildChatPrompt({
+  ...baseChatPromptArgs(),
+  question: "who do I know in Canada?",
+  contactsContext: [
+    {
+      id: "c4",
+      fullName: "Omar Haddad",
+      company: "Stripe",
+      title: "Solutions Architect",
+      location: "Toronto",
+      relationshipScore: 50,
+      aiSummary: null,
+      notes: null,
+      keyFacts: [],
+      timeline: [],
+      tags: [],
+      relevance: 0.9,
+    },
+  ],
+  focusProfile: null,
+});
+check("the contact's location appears in the built prompt", promptWithLocation.user.includes("based in Toronto"), promptWithLocation.user);
+
 const promptWithoutCareer = buildChatPrompt({
   ...baseChatPromptArgs(),
   question: "who has worked at NASA?",
