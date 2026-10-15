@@ -5903,6 +5903,84 @@
             }
           },
           {
+            "name": "upcoming_meetings",
+            "title": "The user's calendar",
+            "description": "Meetings and events on the user's calendar, from two days ago to two weeks ahead. Use it for anything about their schedule: what is on today or tomorrow, when they next see someone, who they are meeting this week, or which meeting \"my 3pm\" is. Each event has the attendees Orbit knows (contactId), so follow up with get_contact or get_timeline to prepare for a meeting. Times are already in the user's own time zone. Narrow by day with after/before (YYYY-MM-DD, the user's local days) and to one person with contactId.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "after": {
+                  "description": "Only events on or after this local day. Default: now.",
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "before": {
+                  "description": "Only events on or before this local day. Default: a week ahead.",
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "contactId": {
+                  "description": "Only events this person is on.",
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                },
+                "query": {
+                  "description": "Match words in the event title.",
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "limit": {
+                  "default": 20,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 50
+                }
+              }
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "free_time",
+            "title": "When the user is free",
+            "description": "The gaps between the user's meetings, per day, inside 9:00–18:00 in their own time zone — for \"when am I free\", \"do I have time Thursday afternoon\" or finding a slot to suggest. Declined meetings don't count as busy; all-day events are ignored. Days are YYYY-MM-DD in the user's zone, at most two weeks ahead.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "after": {
+                  "description": "First local day. Default: today.",
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "before": {
+                  "description": "Last local day. Default: the same as after.",
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "minMinutes": {
+                  "default": 30,
+                  "description": "Shortest gap worth reporting.",
+                  "type": "integer",
+                  "minimum": 15,
+                  "maximum": 240
+                }
+              }
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
             "name": "log_interaction",
             "title": "Log an interaction",
             "description": "Record that the user talked to someone — a meeting, a call, an email or a message.",
