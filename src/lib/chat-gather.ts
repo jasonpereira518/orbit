@@ -26,7 +26,8 @@ import { runToolLoop, type ExecutedCall, type ToolLoopOutcome } from "@/lib/chat
 import { sanitizeProfileLine } from "@/lib/contact-profile-format";
 import { recordAiSecurityEvent, UNTRUSTED_DATA_RULES } from "@/lib/ai-security";
 import { ORBIT_TOOLS } from "@/lib/tools/definitions";
-import { isToolError, runTool, toolsFor, type OrbitTool } from "@/lib/tools/registry";
+import { isToolError, releasedTools, runTool, toolsFor, type OrbitTool } from "@/lib/tools/registry";
+import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 
 /** Rounds of lookups. Most research questions finish in one or two. */
 const MAX_ROUNDS = 3;
@@ -75,7 +76,7 @@ const GATHER_SYSTEM = `You are the research step for Orbit, a personal networkin
 
 The answer-writer already has the contacts listed under "Already found", with their summaries, notes and recent interactions. Do not look those up again unless you need something specific about one of them.
 
-Reach for search_notes first for anything about what was said, discussed, promised or learned, and when — that lives in the user's notes, not on a contact card. When the question is about a call the user recorded — "in my meeting with…", "what came up about pricing on the call" — also try search_meetings, which searches the recorded transcripts and summaries; its passages say when something was said but never who said it. Use after/before to scope a date ("in March" means that month of the most recent year that is not in the future). Use who_do_i_know_at and search_contacts to find people; get_contact to read one person's full record. Use get_timeline for when or how often something happened with one person, find_path_to for who could introduce the user to a company or a person, list_open_commitments for what they owe, and get_goals when the question is open-ended enough that what they are working towards decides the answer.
+Reach for search_notes first for anything about what was said, discussed, promised or learned, and when — that lives in the user's notes, not on a contact card. When the question is about a call the user recorded — "in my meeting with…", "what came up about pricing on the call" — also try search_meetings, which searches the recorded transcripts and summaries; its passages say when something was said but never who said it. Use after/before to scope a date ("in March" means that month of the most recent year that is not in the future). Use who_do_i_know_at and search_contacts to find people; get_contact to read one person's full record. Use get_timeline for when or how often something happened with one person, find_path_to for who could introduce the user to a company or a person, list_open_commitments for what they owe, and get_goals when the question is open-ended enough that what they are working towards decides the answer. When the question is about someone the user does not know yet — "who is…", "brief me on…", "research…" — and search_contacts finds nobody by that name, use research_person (it needs a company, domain or LinkedIn link besides the name; take them from the question). For a company beyond who the user knows there, use research_company. To find NEW people matching a description ("find me PMs at Stripe", "people outside my network who…"), use find_people. All three search the public web and are slow: at most one of them per turn, and only if they are offered.
 
 Make at most three lookups per turn. When you have what the question needs — or when nothing more would help — reply with the single word DONE and make no lookups.
 
@@ -314,6 +315,21 @@ function executorFor(userId: string, tools: OrbitTool[]) {
   };
 }
 
+/**
+ * The read tools this asker's chat may use: every chat tool, minus those whose page has not
+ * been released to them. A visibility read that fails drops the gated tools — closed, not open.
+ */
+async function chatToolsFor(userId: string): Promise<OrbitTool[]> {
+  const all = toolsFor(ORBIT_TOOLS, "chat", ["read"]);
+  if (!all.some((t) => t.releasedSurface)) return all;
+  try {
+    const { hidden, comingSoon } = await resolveSurfaceVisibility(userId);
+    return releasedTools(all, (key) => !hidden.has(key) && !comingSoon.has(key));
+  } catch {
+    return releasedTools(all, () => false);
+  }
+}
+
 export async function gatherEvidence(
   userId: string,
   ctx: ChatContext,
@@ -327,7 +343,7 @@ export async function gatherEvidence(
   }
 ): Promise<GatherResult> {
   const steps = options.steps ?? NULL_STEPS;
-  const tools = toolsFor(ORBIT_TOOLS, "chat", ["read"]);
+  const tools = await chatToolsFor(userId);
   const modelTools: ModelTool[] = tools.map((t) => ({
     name: t.name,
     description: t.description,
