@@ -34,6 +34,10 @@
  *      exists in `entitlements.ts` and the plumbing sits one import away; that distance is
  *      the control. If you are adding one, read this comment as a request to think it
  *      through first.
+ *      The one reach outside Orbit, `research_person` / `research_company` / `find_people`, was thought
+ *      through and is CHAT_ONLY: it asks the user's AI provider to search the web with a
+ *      name and a company — no URL a model chose is ever fetched by Orbit — and it is
+ *      never offered here, where an outside agent could drive it at volume.
  *   2. NEVER let a tool approve a draft, and never accept an "approved" flag from an agent.
  *      The approval must cost a human a look and a click, or the seam above is decorative.
  *
