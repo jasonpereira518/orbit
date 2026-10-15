@@ -39,11 +39,25 @@ export type SplitResult = {
   parseError?: string;
 };
 
+/**
+ * The marker as the model actually writes it. The prompt asks for `---RECOMMENDATIONS---`, but
+ * models drop the leading dashes (`RECOMMENDATIONS--- {…}`), and the tail then streamed into
+ * the prose as raw JSON. So the all-caps word plus a dash run is the marker; the leading dashes
+ * are optional. The lookahead keeps a dash run split across chunks (`--` then `-\n{`) from
+ * matching early and leaving a stray `-` at the front of the JSON.
+ */
+const MARKER_RE = /-{0,3}[ \t]*RECOMMENDATIONS[ \t]*-{2,}(?=[^-])/;
+/** A marker with nothing after it — the stream ended right on it. */
+const MARKER_AT_END_RE = /-{0,3}[ \t]*RECOMMENDATIONS[ \t]*-{2,}\s*$/;
+const MARKER_WORD = "RECOMMENDATIONS";
+
 /** How much prose to hold back: anything that could still turn out to be the marker. */
 function markerPrefixLength(tail: string): number {
-  const max = Math.min(tail.length, RECOMMENDATIONS_MARKER.length - 1);
+  const max = Math.min(tail.length, MARKER_WORD.length + 12);
   for (let n = max; n > 0; n -= 1) {
-    if (RECOMMENDATIONS_MARKER.startsWith(tail.slice(-n))) return n;
+    const rest = /^-{0,3}[ \t]*([\s\S]*)$/.exec(tail.slice(-n))?.[1] ?? "";
+    if (MARKER_WORD.startsWith(rest)) return n;
+    if (rest.startsWith(MARKER_WORD) && /^[ \t]*-*$/.test(rest.slice(MARKER_WORD.length))) return n;
   }
   return 0;
 }
@@ -61,10 +75,10 @@ export function createAnswerSplitter() {
         return "";
       }
       pending += delta;
-      const at = pending.indexOf(RECOMMENDATIONS_MARKER);
-      if (at >= 0) {
-        const out = pending.slice(0, at);
-        afterMarker = pending.slice(at + RECOMMENDATIONS_MARKER.length);
+      const m = MARKER_RE.exec(pending);
+      if (m) {
+        const out = pending.slice(0, m.index);
+        afterMarker = pending.slice(m.index + m[0].length);
         pending = "";
         prose += out;
         return out;
@@ -78,7 +92,7 @@ export function createAnswerSplitter() {
     /** Flush whatever was held back and parse the recommendations. */
     finish(): SplitResult {
       if (afterMarker === null) {
-        prose += pending;
+        prose += pending.replace(MARKER_AT_END_RE, "");
         pending = "";
         return { answer: prose.trim(), recommendations: [], proposedActions: [] };
       }
