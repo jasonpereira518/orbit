@@ -61,6 +61,7 @@ import {
   gateEvents,
   gmailConnections,
   ignoredPeople,
+  importFiles,
   importJobRows,
   imports,
   interactionMentions,
@@ -344,9 +345,12 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   imports: {
-    exports: [own(imports), own(importJobRows)],
+    exports: [own(imports), own(importJobRows), own(importFiles)],
     counts: [imports],
     run: async (db, userId) => {
+      // `import_files` cascades from `imports`; deleted first anyway so a row whose import was
+      // already gone (it can't be, but the FK is the only thing saying so) still goes.
+      await db.delete(importFiles).where(eq(importFiles.userId, userId));
       await db.delete(imports).where(eq(imports.userId, userId));
     },
   },

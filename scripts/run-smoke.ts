@@ -480,6 +480,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-capture-history": "pglite",
   "smoke-capture-duplicate-upload": "pglite",
   "smoke-linkedin-you-db": "pglite",
+  "smoke-import-files": "pglite",
   "smoke-org-brand-colors": "pglite",
   "smoke-meeting-sessions": "pglite",
   "smoke-meetings-list": "pglite",
