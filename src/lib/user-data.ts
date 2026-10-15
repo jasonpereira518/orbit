@@ -26,6 +26,8 @@ import {
   captureHandoffs,
   captureJobs,
   capturePhotos,
+  cloudNoteFiles,
+  cloudNoteSources,
   aiBatchJobs,
   aiResultCache,
   chatMessages,
@@ -290,13 +292,14 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   notes: {
-    exports: [own(interactions), own(noteBatches), own(interactionMentions), own(actionItems), own(meetingSessions), own(meetingTranscriptSegments), own(captureJobs), own(captureHandoffs), own(ignoredPeople), withUrl(own(capturePhotos), "/api/capture/photos/")],
+    exports: [own(interactions), own(noteBatches), own(interactionMentions), own(actionItems), own(meetingSessions), own(meetingTranscriptSegments), own(captureJobs), own(captureHandoffs), own(ignoredPeople), own(cloudNoteFiles), withUrl(own(capturePhotos), "/api/capture/photos/")],
     counts: [
       interactions,
       noteBatches,
       meetingSessions,
       captureJobs,
       ignoredPeople,
+      cloudNoteFiles,
     ],
     run: async (db, userId) => {
       // Capture photos before the batches they belong to. The rows WOULD cascade from
@@ -331,6 +334,10 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // extracted profile in `result`; the ignored list holds names from those notes.
       await db.delete(captureJobs).where(eq(captureJobs.userId, userId));
       await db.delete(ignoredPeople).where(eq(ignoredPeople.userId, userId));
+      // Cloud notes: the names and links of docs in the user's Drive/OneDrive, and the cursor
+      // that says how far the scan has read.
+      await db.delete(cloudNoteFiles).where(eq(cloudNoteFiles.userId, userId));
+      await db.delete(cloudNoteSources).where(eq(cloudNoteSources.userId, userId));
     },
   },
   reminders: {

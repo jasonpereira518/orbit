@@ -43,6 +43,7 @@ import { purgeUserData } from "@/lib/user-data";
 
 export { recordAdminAction } from "@/lib/admin-audit";
 import { recordAdminAction } from "@/lib/admin-audit";
+import { dropCloudNoteSource } from "@/lib/cloud-notes/sources";
 
 export function requireReason(reason: string, minimum = 4): string {
   const trimmed = reason.trim();
@@ -408,6 +409,7 @@ export async function disconnectIntegration(adminUserId: string, input: {
   const table =
     input.provider === "gmail" ? gmailConnections : outlookConnections;
   await db.delete(table).where(eq(table.userId, input.targetUserId));
+  await dropCloudNoteSource(input.targetUserId, input.provider === "gmail" ? "google" : "microsoft");
 
 }
 

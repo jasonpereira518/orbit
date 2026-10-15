@@ -81,13 +81,10 @@ export function ConstellationFilterPanel({ config }: { config: ConstellationConf
             Only show people they have engaged with
           </p>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            The star chart draws only contacts with notes, a logged meeting, a real
-            back-and-forth on LinkedIn, or a closeness rating. Everyone else stays in
-            Contacts, search and chat — they just aren&apos;t drawn.
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Never applies to a network where too little would survive it, so a new account
-            or a connections-only import still sees its whole sky.
+            The star chart draws only contacts with notes, a logged meeting or call, a real
+            back-and-forth over LinkedIn, email or chat, a closeness rating, or a tag the user
+            added. Import tags don&apos;t count. Everyone else stays in Contacts, search and
+            chat, and one click on the chart shows them all.
           </p>
           {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
         </div>
@@ -118,7 +115,7 @@ export function ConstellationFilterPanel({ config }: { config: ConstellationConf
         )}
       >
         <p className="text-xs text-muted-foreground">
-          How much LinkedIn back-and-forth counts as a real conversation. Both sides must
+          How much back-and-forth (LinkedIn, email, chat) counts as a real conversation. Both sides must
           clear their number, so a one-sided thread never qualifies however long it is.
         </p>
         <div className="flex flex-wrap items-end gap-3">

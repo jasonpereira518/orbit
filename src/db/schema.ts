@@ -9,6 +9,7 @@ import {
   uuid,
   index,
   uniqueIndex,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
 import type {
@@ -183,6 +184,8 @@ export const userSettings = pgTable("user_settings", {
    * single conditional UPDATE so two tabs cannot both play it. See `src/lib/credits-intro.ts`.
    */
   creditsIntroShownAt: timestamp("credits_intro_shown_at", { withTimezone: true }),
+  /** Cloud notes: extract new meeting notes found in Drive/OneDrive without asking (still reviewed on /capture). 0/1. */
+  cloudNotesAutoExtract: integer("cloud_notes_auto_extract").default(0).notNull(),
   theme: text("theme").$type<"light" | "dark" | "system">(),
   ycModeEnabled: boolean("yc_mode_enabled").default(false),
   /**
@@ -3263,6 +3266,62 @@ export const recruiterScanState = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [index("recruiter_scan_state_user_idx").on(t.userId)]
+);
+
+/**
+ * Cloud notes: one row per drive Orbit is watching for meeting notes. The row existing IS the
+ * opt-in — created when the Drive/OneDrive read grant lands, deleted on disconnect. Keeps its
+ * own change cursor: `gmail_connections.sync_cursor` belongs to calendar sync.
+ */
+export const cloudNoteSources = pgTable(
+  "cloud_note_sources",
+  {
+    userId: text("user_id").notNull(),
+    provider: text("provider").$type<"google" | "microsoft">().notNull(),
+    /** Drive `changes` page token / Graph delta link. Null until the first pass. */
+    cursor: text("cursor"),
+    /** Set once the first pass has looked back 30 days; later finds are never `from_backfill`. */
+    backfilledAt: timestamp("backfilled_at", { withTimezone: true }),
+    nextScanAt: timestamp("next_scan_at", { withTimezone: true }).defaultNow().notNull(),
+    /** The claim that stops two overlapping cron runs scanning one drive. */
+    leaseUntil: timestamp("lease_until", { withTimezone: true }),
+    lastScanAt: timestamp("last_scan_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.provider] }), index("cloud_note_sources_due_idx").on(t.nextScanAt)]
+);
+
+/**
+ * Cloud notes: one row per doc found (or picked) in a drive. The dedupe, the notification
+ * panel row and the review dialog all read this. `dismissed` never comes back.
+ */
+export const cloudNoteFiles = pgTable(
+  "cloud_note_files",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    provider: text("provider").$type<"google" | "microsoft">().notNull(),
+    fileId: text("file_id").notNull(),
+    name: text("name").notNull(),
+    webUrl: text("web_url"),
+    modifiedAt: timestamp("modified_at", { withTimezone: true }),
+    status: text("status").$type<"found" | "queued" | "dismissed">().default("found").notNull(),
+    /** Why it looked like notes — shown as the hint in the dialog and picker. */
+    reason: text("reason"),
+    detectedBy: text("detected_by").$type<"rules" | "decision" | "picked">().default("rules").notNull(),
+    /** Found by the first look-back, not as a new doc: auto-extract never runs on these. */
+    fromBackfill: integer("from_backfill").default(0).notNull(),
+    captureJobId: uuid("capture_job_id"),
+    /** Stamped once the toast has fired, so it fires once across devices. */
+    notifiedAt: timestamp("notified_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("cloud_note_files_user_file_uidx").on(t.userId, t.provider, t.fileId),
+    index("cloud_note_files_user_status_idx").on(t.userId, t.status),
+  ]
 );
 
 export const gmailConnections = pgTable(

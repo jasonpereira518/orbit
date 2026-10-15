@@ -87,6 +87,37 @@ check(
   promptWithCareer.user
 );
 
+// --- school: the contact's on its row, the user's own as a "my school" line ------------
+
+const promptWithSchool = buildChatPrompt({
+  ...baseChatPromptArgs(),
+  question: "who went to my school?",
+  userSchools: ["UNC Chapel Hill"],
+  contactsContext: [
+    {
+      id: "c3",
+      fullName: "Ana Alum",
+      company: null,
+      title: null,
+      relationshipScore: 50,
+      aiSummary: null,
+      notes: null,
+      keyFacts: [],
+      timeline: [],
+      tags: [],
+      relevance: 0.9,
+      career: null,
+      school: "UNC Chapel Hill",
+    },
+  ],
+  focusProfile: null,
+});
+check("a contact's school reaches their row", promptWithSchool.user.includes("school=UNC Chapel Hill"));
+check(
+  "the user's own schools are named, so \"my school\" resolves",
+  promptWithSchool.user.includes("Schools the user went to: UNC Chapel Hill")
+);
+
 const promptWithoutCareer = buildChatPrompt({
   ...baseChatPromptArgs(),
   question: "who has worked at NASA?",
@@ -636,6 +667,45 @@ check(
     return new Set(ids).size === 1 && ids.length === 2;
   })(),
   sameInteractionTwice.user
+);
+
+// --- the shape lanes: a filtered roster, and a passage that says who it is about ---------
+
+const laned = buildChatPrompt({
+  ...baseChatPromptArgs(),
+  question: "Everyone I know from Duke?",
+  focusProfile: null,
+  contactsContext: [],
+  orgRosters: [
+    {
+      kind: "filter" as const,
+      name: "Contacts matching schools: Duke",
+      total: 2,
+      people: [
+        { id: "d1", name: "Ada Park", title: "Engineer @ Stripe" },
+        { id: "d2", name: "Leo Chen", title: null },
+      ],
+      truncated: false,
+    },
+  ],
+  notePassages: [
+    { sourceId: "int-9", contactId: "d1", contactName: "Ada Park", date: "2026-09-02", snippet: "Raising a seed round in the spring." },
+  ],
+});
+check(
+  "a filtered roster renders as complete, with its total, keyed for a ::list block",
+  laned.user.includes("[r1] Contacts matching schools: Duke — 2 people (complete)") && laned.user.includes("[id=d1] Ada Park — Engineer @ Stripe"),
+  laned.user
+);
+check(
+  "and the rule calls it complete only for what the records say",
+  laned.systemCore.includes("A filtered roster is complete only for what the records say"),
+  laned.systemCore
+);
+check(
+  "a passage line says who it is about",
+  /\[e1\] 2026-09-02, about Ada Park: Raising a seed round/.test(laned.user),
+  laned.user
 );
 
 if (failures > 0) {

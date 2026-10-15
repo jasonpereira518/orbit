@@ -147,6 +147,8 @@ console.log("\nDerived lists");
         "import.enrich.gate",
         "import.linkedin.timeline",
         "import.linkedin.timeline.decide",
+        "notes.detect",
+        "notes.detect.llm",
         "radar.draft",
         "radar.rerank",
         "radar.why",

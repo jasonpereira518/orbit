@@ -288,6 +288,7 @@ async function main() {
         company: "Ramp",
         title: "Head of Platform",
         relationshipScore: 4,
+        howMet: "Intro from Priya",
       })
       .returning()
   )[0].id;
@@ -340,16 +341,42 @@ async function main() {
     attachedMarcus.timeline[0]!.line
   );
   check("the interaction count is the real total", attachedMarcus.totalInteractions === 2);
+  // One @mention is a question about that person: it takes the focus path, so the person is
+  // pinned first with their whole record — and not rendered a second time as "attached".
+  check(
+    "a single mention becomes the focus, pinned first",
+    attachedCtx.modelContacts[0]?.id === marcus && attachedCtx.scopedQuestion.includes(`[Focus:`),
+    JSON.stringify(attachedCtx.modelContacts.map((c) => c.id))
+  );
+  check("…and is not rendered twice", attachedCtx.attachedContext === null, attachedCtx.attachedContext ?? "null");
+  check(
+    "…with the relationship facts from the user's own record",
+    (attachedCtx.focusProfile ?? "").includes("Relationship:") &&
+      (attachedCtx.focusProfile ?? "").includes("How you met: Intro from Priya"),
+    attachedCtx.focusProfile ?? "null"
+  );
+  check("…and stays recommendable", attachedCtx.allowedContacts.has(marcus));
+
+  // Two or more stay attached: there is no single person to answer "primarily about".
+  const dana = (
+    await db
+      .insert(contacts)
+      .values({ userId: USER, fullName: "Dana Ortiz", company: "Brex", school: "UNC Chapel Hill" })
+      .returning()
+  )[0].id;
+  const pairCtx = await prepareChatContext(USER, "what should I ask next time?", {
+    contextContactIds: [marcus, dana],
+  });
   check(
     "the rendered block reaches the context",
-    (attachedCtx.attachedContext ?? "").includes(`[id=${marcus}]`),
-    attachedCtx.attachedContext ?? "null"
+    (pairCtx.attachedContext ?? "").includes(`[id=${marcus}]`) &&
+      (pairCtx.attachedContext ?? "").includes("Studied at UNC Chapel Hill"),
+    pairCtx.attachedContext ?? "null"
   );
   check(
     "an attached person is recommendable even if retrieval never saw them",
-    attachedCtx.allowedContacts.has(marcus) &&
-      !attachedCtx.modelContacts.some((c) => c.id === marcus),
-    JSON.stringify(attachedCtx.modelContacts.map((c) => c.id))
+    pairCtx.allowedContacts.has(marcus) && !pairCtx.modelContacts.some((c) => c.id === marcus),
+    JSON.stringify(pairCtx.modelContacts.map((c) => c.id))
   );
 
   // Someone else's contact id must not become someone else's context.

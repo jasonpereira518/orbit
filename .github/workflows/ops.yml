@@ -53,6 +53,8 @@ on:
     # Once a day: Radar's nightly pass. Accounts aim at 04:00 UTC (radar_next_at), and :17
     # sits clear of the hourly :07 and :23 jobs and of the Deepgram reconciliation above.
     - cron: "17 4 * * *"
+    # Cloud notes: every 30 minutes at :29 and :59, clear of every */10, */15 and hourly line above.
+    - cron: "29,59 * * * *"
   workflow_dispatch:
 
 # One group PER SCHEDULE, never one for the whole workflow. GitHub keeps at most one
@@ -288,6 +290,19 @@ jobs:
           curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/radar/run"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      # Cloud notes (every 30 minutes): checks watched Drive/OneDrive folders for new meeting
+      # notes and reads their first lines. Its own line: provider calls and, for auto-extract,
+      # model calls on people's own AI must never hold up the alerting path.
+      - name: Run the cloud notes scan (every 30 minutes)
+        if: github.event.schedule == '29,59 * * * *' && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/cloud-notes/run"
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}

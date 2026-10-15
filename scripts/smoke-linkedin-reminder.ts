@@ -20,6 +20,7 @@ import {
   LINKEDIN_REMINDER_MIN_AGE_MS,
   isLinkedInNudgeVisible,
   isLinkedInReminderDue,
+  linkedInRefreshLevel,
 } from "../src/lib/linkedin-export";
 import {
   claimLinkedInReminderFor,
@@ -99,6 +100,13 @@ function pureChecks() {
     "hidden past 30 days",
     !nudge({ requestedAt: ago(HOUR), createdAt: ago(LINKEDIN_NUDGE_MAX_AGE_MS + HOUR) }),
   );
+
+  console.log("\nrefresh reminder (pure)");
+  check("never imported: the first-import reminder owns it", linkedInRefreshLevel(null, now) === null);
+  check("29 days: fresh", linkedInRefreshLevel(ago(29 * DAY), now) === null);
+  check("30 days: bell", linkedInRefreshLevel(ago(30 * DAY), now) === "notify");
+  check("89 days: still the bell", linkedInRefreshLevel(ago(89 * DAY), now) === "notify");
+  check("90 days: urgent, top of the dashboard", linkedInRefreshLevel(ago(90 * DAY), now) === "urgent");
 }
 
 async function main() {

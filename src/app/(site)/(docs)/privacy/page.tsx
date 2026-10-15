@@ -70,7 +70,7 @@ const PROCESSORS = [
   { name: "Google", badge: "Optional", body: "Gmail, Contacts and Calendar, one permission per feature you turn on. See Google user data." },
   { name: "Apple iCloud", badge: "Optional", body: "Your iCloud calendars, if you connect them with an app-specific password, which Orbit stores encrypted. Used to log meetings with people you know." },
   { name: "Bluesky and Mastodon", badge: "Optional", body: "For contacts whose Bluesky or Mastodon handle you added, a nightly read of their public posts for Radar. Each request carries only that public handle, to the server that hosts it." },
-  { name: "Microsoft", badge: "Optional", body: "Outlook, one permission per feature you turn on: your contacts to import, your calendar to log meetings with people you know, your mail for the recruiter scan you start, and sending the email you write from your own address. See What Orbit collects and The recruiter scan." },
+  { name: "Microsoft", badge: "Optional", body: "Outlook, one permission per feature you turn on: your contacts to import, your calendar to log meetings with people you know, your mail for the recruiter scan you start, and sending the email you write from your own address, and your OneDrive files for cloud notes. See What Orbit collects and The recruiter scan." },
   { name: "Eventbrite", badge: "Optional", body: "Guest lists of events you host, through Eventbrite sign-in." },
   { name: "Luma", badge: "Optional", body: "Guest lists of events you host (with your Luma API key), and your personal Luma calendar link if you paste it." },
   { name: "Partiful", badge: "Optional", body: "Your personal Partiful calendar link, if you paste it, to list events you are going to." },
@@ -147,7 +147,10 @@ export default function PrivacyPage() {
               your latest message with a contact when you reply in that conversation (its
               Message-ID, subject and date only), and to check your Sent Items so a retried send is
               never delivered twice; and permission to send mail (Mail.Send), only for email you
-              write and press Send on. Each connection also asks for your Microsoft sign-in
+              write and press Send on; and read access to your OneDrive files (Files.Read), for
+              cloud notes: listing recent files so you can pick notes to import, and reading the
+              title and first lines of recently changed ones to spot meeting notes — a whole file is
+              read only when you extract it or turned on automatic extraction. Each connection also asks for your Microsoft sign-in
               identity and email address, to show which account is connected. Orbit cannot read,
               change or delete anything else in your Microsoft account. Disconnecting deletes the tokens Orbit holds; to
               also revoke the grant on Microsoft&rsquo;s side, remove Orbit from your Microsoft

@@ -33,6 +33,7 @@ const PARSED = new Set([
   "positions.csv",
   "skills.csv",
   "savedjobalerts.csv",
+  "education.csv",
   "invitations.csv",
   "notes.csv",
   "recommendations_received.csv",

@@ -42,6 +42,7 @@ import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 import { demoWorkspaceEmail, isDemoWorkspace } from "@/lib/demo-workspace";
 import { demoGmailConnectionStatus } from "@/lib/demo-workspace-connections";
 import { recordDemoRecruiterScan } from "@/lib/demo-workspace-actions";
+import { dropCloudNoteSource } from "@/lib/cloud-notes/sources";
 
 const OAUTH_STATE_COOKIE = "orbit_gmail_oauth_state";
 
@@ -241,6 +242,7 @@ export async function disconnectGmail(opts: { alsoDelete?: boolean } = {}) {
   // id would otherwise never dedupe against the orphaned row and seedCalendarSources would
   // double the calendar.
   await deleteCalendarSourcesForProvider(userId, "google");
+  await dropCloudNoteSource(userId, "google");
   if (grant) await revokeGoogleGrant(grant);
   if (opts.alsoDelete === true) {
     await purgeUserData(userId, { only: DISCONNECT_DELETE_CATEGORIES.gmail });

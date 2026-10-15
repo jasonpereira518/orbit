@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, interactions } from "@/db/schema";
 import { sanitizeProfileLine } from "@/lib/contact-profile-format";
@@ -23,6 +23,8 @@ export const ATTACHED_LIMIT = 5;
 export const TIMELINE_LIMIT = 12;
 /** A hard ceiling on the block as a whole, independent of the per-field limits. */
 export const ATTACHED_MAX_CHARS = 9_000;
+/** Per-entry cap: a whole short note, not just its first line. */
+export const TIMELINE_ENTRY_CHARS = 500;
 
 export type AttachedTimelineEntry = {
   dateIso: string;
@@ -38,6 +40,10 @@ export type AttachedPerson = {
   company: string | null;
   location: string | null;
   relationshipScore: number;
+  /** Optional so render-only fixtures need not spell them out. */
+  school?: string | null;
+  howMet?: string | null;
+  tags?: string[];
   keyFacts: string[];
   aiSummary: string | null;
   notes: string | null;
@@ -48,12 +54,15 @@ export type AttachedPerson = {
   timeline: AttachedTimelineEntry[];
 };
 
-/** One line per interaction: the summary if there is one, else the first line of the note. */
+/**
+ * One entry per interaction: the summary if there is one, else the note — the whole note up
+ * to `TIMELINE_ENTRY_CHARS`, newlines folded at render. It used to keep only the first line
+ * at 220 characters, which turned a meeting note into its heading.
+ */
 function timelineLine(aiSummary: string | null, rawNotes: string | null): string {
   const text = (aiSummary || rawNotes || "").trim();
   if (!text) return "";
-  const first = text.split(/\n/)[0]?.trim() || text;
-  return first.length > 220 ? `${first.slice(0, 217)}…` : first;
+  return text.length > TIMELINE_ENTRY_CHARS ? `${text.slice(0, TIMELINE_ENTRY_CHARS - 1)}…` : text;
 }
 
 /**
@@ -74,7 +83,7 @@ export async function loadAttachedPeople(
   if (!ids.length) return [];
 
   const db = await getDb();
-  const [rows, history] = await Promise.all([
+  const [rows, history, totals] = await Promise.all([
     // Both projected to what the mapping below reads — not whole rows (inline avatars,
     // enrichment blobs) for a handful of prompt fields.
     db.query.contacts.findMany({
@@ -86,6 +95,8 @@ export async function loadAttachedPeople(
         title: true,
         company: true,
         location: true,
+        school: true,
+        howMet: true,
         relationshipScore: true,
         keyFacts: true,
         aiSummary: true,
@@ -93,6 +104,9 @@ export async function loadAttachedPeople(
         firstInteractionAt: true,
         lastInteractionAt: true,
         nextFollowUpAt: true,
+      },
+      with: {
+        contactTags: { columns: { tagId: true }, with: { tag: { columns: { name: true } } } },
       },
     }),
     db.query.interactions.findMany({
@@ -108,12 +122,18 @@ export async function loadAttachedPeople(
       // Bounded by the number of people, not by the size of any one history.
       limit: ids.length * (TIMELINE_LIMIT + 8),
     }),
+    // The real totals. Counting the bounded page above said "20 logged interactions" for
+    // anyone with more, and split unevenly across several people.
+    db
+      .select({ contactId: interactions.contactId, n: sql<number>`count(*)::int` })
+      .from(interactions)
+      .where(and(eq(interactions.userId, userId), inArray(interactions.contactId, ids)))
+      .groupBy(interactions.contactId),
   ]);
 
   const byContact = new Map<string, AttachedTimelineEntry[]>();
-  const counts = new Map<string, number>();
+  const counts = new Map(totals.map((t) => [t.contactId, Number(t.n)]));
   for (const row of history) {
-    counts.set(row.contactId, (counts.get(row.contactId) ?? 0) + 1);
     const list = byContact.get(row.contactId) ?? [];
     if (list.length >= TIMELINE_LIMIT) continue;
     const line = timelineLine(row.aiSummary, row.rawNotes);
@@ -136,6 +156,9 @@ export async function loadAttachedPeople(
       title: c.title,
       company: c.company,
       location: c.location,
+      school: c.school,
+      howMet: c.howMet,
+      tags: c.contactTags.map((ct) => ct.tag.name),
       relationshipScore: c.relationshipScore,
       keyFacts: c.keyFacts || [],
       aiSummary: c.aiSummary,
@@ -169,6 +192,8 @@ export function renderAttachedPeople(people: readonly AttachedPerson[]): string 
 
     const facts: string[] = [];
     if (p.location) facts.push(`Based in ${sanitizeProfileLine(p.location)}`);
+    if (p.school) facts.push(`Studied at ${sanitizeProfileLine(p.school)}`);
+    if (p.howMet) facts.push(`Met: ${sanitizeProfileLine(p.howMet)}`);
     facts.push(`closeness ${p.relationshipScore}/5`);
     if (p.totalInteractions) {
       facts.push(
@@ -187,6 +212,7 @@ export function renderAttachedPeople(people: readonly AttachedPerson[]): string 
     if (p.keyFacts.length) {
       lines.push(`Key facts: ${p.keyFacts.slice(0, 8).map(sanitizeProfileLine).join("; ")}`);
     }
+    if (p.tags?.length) lines.push(`Tags: ${p.tags.map(sanitizeProfileLine).join(", ")}`);
 
     if (p.timeline.length) {
       lines.push(`Timeline (most recent first, ${p.timeline.length} shown):`);
