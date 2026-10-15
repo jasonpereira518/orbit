@@ -515,19 +515,24 @@ node scripts/bench/meeting-recorder.mjs --ab after=http://localhost:3102 --soak-
 - Chrome's auto-select now and then refuses a share; the script retries Start, and retries a
   run whose tab dies.
 
-## Measured on Oct 15 2026 (Chrome 155, dev servers, 3 interleaved reps, medians)
+## Measured on Oct 15 2026 (Chrome 155, new-headless, dev servers, 1 rep, 60 s scenarios)
 
-CPU is % of one core above the idle baseline, all Chrome processes.
+CPU is % of one core above the idle baseline, all Chrome processes. Single rep, so read
+differences under ~2 points as noise.
 
-| | before (f9714cf6) | after |
-|---|---|---|
-| A recording, tab visible | 9.6% | 5.4% (−44%) |
-| B recording, tab in background | 7.6% | 6.1% (−20%) |
-| C paused, share kept | 4.9% | 0.4% (−92%) |
-| worklet messages / live sends per second | 375 / 375 | 31 / 31 |
-| recorder main thread, A / B / C | 5.9% / 4.3% / 2.1% | 2.6% / 3.5% / 0.1% |
+| | base (f9714cf6) | #449 batching | #450 + meter memo |
+|---|---|---|---|
+| A recording, tab visible (61 fps) | 20.9% | 24.0% | 20.3% |
+| B recording, tab hidden | 12.9% | 13.2% | 10.0% |
+| C paused, share kept | 9.9% | 5.2% | 3.2% |
+| worklet messages / live sends per second | 375 / 375 | 31 / 31 | 31 / 31 |
 
-Every run: one `getDisplayMedia` call through pause and resume, streamed audio 99.9–100.1% of
-wall-clock, meters moving. Heap growth over a soak is the same in both builds (~0.5 MB/min
-after GC, retained per-render motion closures from the hidden panel's meters plus dev-only
-React stacks) — not changed here.
+A visible tab is dominated by painting at 60 fps (renderer ~15%), which batching does not
+touch. An earlier headful run reported "visible −44%", but its window was occluded: the page
+was hidden, so that number was a second hidden-tab run. The bench now runs new-headless with the
+recorder in its own window (visible, rAF running; minimized for B) and records
+`visibilityState` and rAF rate in A so it cannot happen silently again.
+
+Heap over a 5-minute hidden soak (`--heap-diff`): ~0.5 MB/min before #450 (motion jobs queued
+by the meters re-subscribing every render), ~0.2 MB/min after (transcript lines, dev-only
+React stacks).
