@@ -35,7 +35,7 @@ export async function POST(request: Request, ctx: Params) {
   }
 
   const origin = request.headers.get("origin");
-  if (origin && new URL(origin).host !== new URL(request.url).host) {
+  if (origin && URL.parse(origin)?.host !== new URL(request.url).host) {
     return NextResponse.json({ error: "Cross-origin upload refused" }, { status: 403 });
   }
 

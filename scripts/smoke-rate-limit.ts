@@ -12,7 +12,10 @@
  */
 import "./smoke/_env";
 
-import { RateLimitedError, consumeBucket } from "../src/lib/rate-limit";
+import { sql } from "drizzle-orm";
+import { getDb, rowsOf } from "../src/db";
+import { ipBucketKey } from "../src/lib/client-ip";
+import { RateLimitedError, consumeBucket, pruneRateLimitBuckets } from "../src/lib/rate-limit";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -60,6 +63,25 @@ async function main() {
   await new Promise((r) => setTimeout(r, 1200));
   const after = await consumeBucket("smoke.expiry", KEY, { limit: 1, windowSec: 1 });
   check("after the window the budget resets", after.remaining === 0);
+
+  console.log("Addresses are never stored...");
+  const ip = "203.0.113.7";
+  const ipKey = ipBucketKey(ip);
+  check("an IP key does not contain the address", !ipKey.includes(ip) && !ipKey.includes("203.0.113"));
+  check("the same IP lands in the same bucket", ipKey === ipBucketKey(ip));
+  check("another IP lands in another", ipKey !== ipBucketKey("203.0.113.8"));
+  await consumeBucket("smoke.ip", ipKey, { limit: 5, windowSec: 60 });
+  const db = await getDb();
+  const stored = rowsOf<{ bucket: string }>(await db.execute(sql`SELECT bucket FROM rate_limit_buckets WHERE bucket LIKE 'smoke.ip:%'`));
+  check("the stored bucket name holds no address", stored.length > 0 && stored.every((r) => !r.bucket.includes(ip)));
+
+  console.log("Expired buckets are pruned...");
+  await db.execute(sql`INSERT INTO rate_limit_buckets (bucket, window_started_at, count) VALUES (${`smoke.old:${KEY}`}, now() - interval '3 days', 1)`);
+  await consumeBucket("smoke.fresh", KEY, { limit: 5, windowSec: 60 });
+  await pruneRateLimitBuckets();
+  const left = rowsOf<{ bucket: string }>(await db.execute(sql`SELECT bucket FROM rate_limit_buckets WHERE bucket IN (${`smoke.old:${KEY}`}, ${`smoke.fresh:${KEY}`})`)).map((r) => r.bucket);
+  check("a bucket past two days is deleted", !left.includes(`smoke.old:${KEY}`));
+  check("a live bucket is kept", left.includes(`smoke.fresh:${KEY}`));
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

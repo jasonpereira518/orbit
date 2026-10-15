@@ -15,11 +15,8 @@
  * twenty-five docs would put twenty-five parses behind a single request's time budget.
  */
 import { after } from "next/server";
-import { and, desc, eq, ne } from "drizzle-orm";
-import { getDb } from "@/db";
-import { captureJobs } from "@/db/schema";
 import { runCaptureJobById } from "@/lib/capture-job-runner";
-import { createCaptureJob } from "@/lib/capture-jobs";
+import { createCaptureFromText, type CaptureFromTextOutcome } from "@/lib/cloud-notes/extract";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
 import {
   DriveFileTooLargeError,
@@ -33,12 +30,8 @@ import { getValidAccessToken } from "@/lib/gmail";
 import { DRIVE_MIME, type PickedDriveFile } from "@/lib/imports/drive-triage";
 import { requireSyncUser } from "@/lib/plan-guards";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
-import { hashSourceNote } from "@/lib/suggested-reminder-utils";
 
-export type DriveCaptureOutcome =
-  | { status: "queued"; jobId: string }
-  /** This exact text was captured before; nothing new was queued. */
-  | { status: "duplicate"; jobId: string };
+export type DriveCaptureOutcome = CaptureFromTextOutcome;
 
 const DRIVE_ID = /^[A-Za-z0-9_-]{10,200}$/;
 const ALLOWED_MIME = new Set<string>(Object.values(DRIVE_MIME));
@@ -69,23 +62,15 @@ export async function queueDriveCapture(input: {
     const text = await readDoc(userId, file.id);
     if (!text.trim()) throw new UserFacingError(`“${file.name}” is empty`);
 
-    // The same doc picked twice — or the same text captured some other way — is not read
-    // again. `source_hash` is written by the parse, over the corpus it read, which for a
-    // plain doc is this text.
-    if (!input.force) {
-      const prior = await priorCaptureOf(userId, hashSourceNote(text));
-      if (prior) return { status: "duplicate", jobId: prior };
-    }
-
-    const row = await createCaptureJob(userId, {
-      sourceKind: "messy",
-      status: "queued",
-      inputText: text,
+    // The same doc picked twice — or the same text captured some other way — is not read again.
+    const outcome = await createCaptureFromText(userId, {
+      text,
+      label: file.name,
       batchGroupId: input.batchGroupId,
-      sourceLabel: file.name.slice(0, 200),
+      force: input.force,
     });
-    after(() => runCaptureJobById(row.id).catch(() => null));
-    return { status: "queued", jobId: row.id };
+    if (outcome.status === "queued") after(() => runCaptureJobById(outcome.jobId).catch(() => null));
+    return outcome;
   });
 }
 
@@ -106,21 +91,4 @@ async function readDoc(userId: string, fileId: string): Promise<string> {
     if (err instanceof DriveFileUnavailableError) throw new UserFacingError("That file is gone or can’t be opened");
     throw err;
   }
-}
-
-async function priorCaptureOf(userId: string, sourceHash: string): Promise<string | null> {
-  const db = await getDb();
-  const [row] = await db
-    .select({ id: captureJobs.id })
-    .from(captureJobs)
-    .where(
-      and(
-        eq(captureJobs.userId, userId),
-        eq(captureJobs.sourceHash, sourceHash),
-        ne(captureJobs.status, "discarded")
-      )
-    )
-    .orderBy(desc(captureJobs.updatedAt))
-    .limit(1);
-  return row?.id ?? null;
 }

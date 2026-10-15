@@ -1,3 +1,4 @@
+import type { ChatBlocks } from "@/lib/chat-directives";
 import type { ChatRecommendation } from "@/db/schema";
 import type { EvidenceSource } from "@/lib/chat-evidence";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
@@ -28,6 +29,8 @@ export type ChatStreamHandlers = {
   onEvidence?: (items: Record<string, EvidenceSource>) => void;
   /** Actions this answer proposed, already validated. Sent once, if any. */
   onActions?: (items: StoredProposedAction[]) => void;
+  /** What the answer's `::people` / `::list` blocks show — see `@/lib/chat-directives`. */
+  onBlocks?: (blocks: ChatBlocks) => void;
   onDone: (info: DoneInfo) => void;
   onError: (message: string) => void;
 };
@@ -173,6 +176,9 @@ function dispatch(event: ChatStreamEvent, handlers: ChatStreamHandlers) {
       return;
     case "actions":
       handlers.onActions?.(event.items);
+      return;
+    case "blocks":
+      handlers.onBlocks?.(event.blocks);
       return;
     case "done":
       handlers.onDone(event);
