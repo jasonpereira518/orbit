@@ -202,7 +202,7 @@ export async function POST(request: Request) {
 
         // One retrieval answers most questions; the ones whose shape says it cannot — what
         // was discussed and when, a path to someone, a follow-up that refers back — get a
-        // bounded research loop first. See `chooseDepth` and `gatherEvidence`.
+        // bounded research loop first. See `routeFromParsed` and `gatherEvidence`.
         const { evidence, notePassages } = await maybeGather(userId, ctx, {
           requestStartedAt,
           signal: request.signal,

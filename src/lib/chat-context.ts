@@ -24,15 +24,10 @@ import {
   type RankEngine,
   understandQuery,
   type ChatTimelineEntry,
+  type ParsedQuery,
 } from "@/lib/chat-retrieval";
 import { openDecider, type Decider } from "@/lib/decisions/jev";
-import {
-  gateRosters,
-  routeChatQuestion,
-  rulesRoute,
-  type ChatRoute,
-  type ParsedIntent,
-} from "@/lib/decisions/chat-route";
+import { gateRosters, routeFromParsed, type ChatRoute, type PriorTurn } from "@/lib/decisions/chat-route";
 import { findOrgRosters, type OrgRoster } from "@/lib/chat-roster";
 import { attachPhotos, createPhotoCache, type PhotoCache } from "@/lib/chat-photos";
 import { describeArms, NULL_STEPS, plural, toRefs, type StepEmitter } from "@/lib/chat-steps";
@@ -274,12 +269,13 @@ async function retrieveRankedContacts(
   steps: StepEmitter = NULL_STEPS,
   photos: PhotoCache = createPhotoCache(),
   /**
-   * Shared with the router (`prepareChatContext`): the decider it already opened, and a hook
-   * that hands it the parser's intent flags the moment they exist.
+   * Shared with the router (`prepareChatContext`): the decider it already opened, the earlier
+   * turns the parser reads, and a hook that hands the router the parse the moment it exists.
    */
   routing?: {
     decider: Promise<Decider | null>;
-    onIntent: (intent: ParsedIntent | null) => void;
+    priorTurns?: Promise<PriorTurn[]>;
+    onParsed: (parsed: ParsedQuery | null) => void;
     /** The account read the question shares; undefined means each call opens its own. */
     access?: Promise<AiAccess | undefined>;
   }
@@ -297,10 +293,15 @@ async function retrieveRankedContacts(
       searchNotice = embeddingFailureNotice(err);
       return null;
     }),
-    understandQuery(userId, q, activeGoals, complete).then((parsed) => {
-      routing?.onIntent(parsed.intent ?? null);
-      return parsed;
-    }),
+    // The earlier turns are one indexed read the parser alone waits on (for "she" and "the
+    // second one"); the embedding beside it does not.
+    (routing?.priorTurns ?? Promise.resolve([] as PriorTurn[]))
+      .catch(() => [] as PriorTurn[])
+      .then((priorTurns) => understandQuery(userId, q, activeGoals, complete, { priorTurns }))
+      .then((parsed) => {
+        routing?.onParsed(parsed);
+        return parsed;
+      }),
     // Beside the two above, so an account read costs the question no time. Null (no
     // TypeSafe key) for most accounts, and the rank step then runs the LLM rerank.
     routing?.decider ?? openDecider(userId, access),
@@ -527,11 +528,9 @@ export async function prepareChatContext(
   const steps = options.steps ?? NULL_STEPS;
   const photos = createPhotoCache();
 
-  // ROUTING (decisions/chat-route.ts). Decided beside retrieval, never in front of it: the
-  // decision model answers in ~200ms and retrieval takes 1–5s, so the branches it gates
-  // (attention brief, recruiter list) chain off it without adding to the question's time.
-  // Without a decision model it waits for the parser's intent flags (the call retrieval
-  // already makes), and without those, the keyword rules route as they always did.
+  // ROUTING (decisions/chat-route.ts). Read from the question parse retrieval already makes,
+  // so it costs no extra round trip; the branches it gates (attention brief, recruiter list)
+  // chain off it while the search runs. A failed parse routes to the one-pass default.
   const priorRowsP = threadId
     ? db.query.chatMessages
         .findMany({
@@ -562,20 +561,11 @@ export async function prepareChatContext(
     ? Promise.resolve(options.access)
     : resolveAiAccess(userId).catch(() => undefined);
   const deciderP = accessP.then((access) => openDecider(userId, access));
-  let settleIntent: (intent: ParsedIntent | null) => void = () => {};
-  const intentP = new Promise<ParsedIntent | null>((resolve) => {
-    settleIntent = resolve;
+  let settleParsed: (parsed: ParsedQuery | null) => void = () => {};
+  const parsedP = new Promise<ParsedQuery | null>((resolve) => {
+    settleParsed = resolve;
   });
-  const routeP: Promise<ChatRoute> = Promise.all([deciderP, priorRowsP])
-    .then(([decider, rows]) =>
-      routeChatQuestion({
-        decider,
-        question: q,
-        priorTurns: rows.slice().reverse(),
-        intent: () => intentP,
-      })
-    )
-    .catch(() => rulesRoute(q, false));
+  const routeP: Promise<ChatRoute> = parsedP.then((parsed) => routeFromParsed(parsed, q));
 
   // Everything that depends only on the question and the user, at once. Retrieval is its
   // own multi-stage pipeline (see retrieveRankedContacts) that runs as one unit here.
@@ -598,9 +588,12 @@ export async function prepareChatContext(
         : Promise.resolve(null),
       priorRowsP,
       // Whatever happens to retrieval, the router is never left waiting on the parser.
-      retrieveRankedContacts(userId, q, steps, photos, { decider: deciderP, onIntent: settleIntent, access: accessP }).finally(
-        () => settleIntent(null)
-      ),
+      retrieveRankedContacts(userId, q, steps, photos, {
+        decider: deciderP,
+        priorTurns: priorRowsP.then((rows) => rows.slice().reverse()),
+        onParsed: settleParsed,
+        access: accessP,
+      }).finally(() => settleParsed(null)),
       // Exhaustive membership for any organisation the question names — the one thing a
       // relevance-ranked top-K cannot supply. Never fatal.
       // Runs for every question, but only worth reporting when it actually names an org.

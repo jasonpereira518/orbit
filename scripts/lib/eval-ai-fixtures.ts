@@ -7,6 +7,8 @@
  * extra topic or phrases a summary differently is not marked wrong.
  */
 
+import type { QuestionShape } from "../../src/lib/chat-retrieval";
+
 /** `scripts/eval-fixtures/ai-capture-eval.json` — runs the whole capture parse (people + dates). */
 export type CaptureEvalFixture = {
   cases: Array<{
@@ -169,12 +171,19 @@ export type ResearchEvalFixture = {
 };
 
 export type ChatRoutingEvalFixture = {
+  /** What "today" is for relative dates, so the time labels stay true. */
+  today: string;
   cases: Array<{
     id: string;
     question: string;
     priorTurns?: Array<{ role: "user" | "assistant"; content: string }>;
     expect: {
       depth: "single" | "research";
+      /** The question shape; an array accepts any of them. */
+      shape: QuestionShape | QuestionShape[];
+      /** A substring the parsed person must contain (case-insensitive). */
+      person?: string;
+      time?: "interacted" | "quiet";
       attention: boolean;
       recruiters: boolean;
       /** Seeded company names whose rosters should attach. */

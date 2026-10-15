@@ -2,7 +2,7 @@
  * The research step before a multi-step answer: what it is shown, which tools it gets, and
  * what it hands to the answer.
  *
- * It runs only when `chooseDepth` says one retrieval cannot answer the question, and it
+ * It runs only when the router says one retrieval cannot answer the question, and it
  * never writes the answer. It hands back two things: an evidence block the answer prompt
  * fences as untrusted data, and the ids of every contact its lookups surfaced — which join
  * the recommendation allowlist, so a person found in round two is recommendable instead of
@@ -20,7 +20,7 @@ import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { createToolDriver, type ModelTool, type ToolCall } from "@/lib/ai-tools";
 import type { ChatContext } from "@/lib/chat-context";
-import { chooseDepth, type DepthDecision } from "@/lib/chat-depth";
+import type { DepthDecision } from "@/lib/decisions/chat-route";
 import { NULL_STEPS, plural, toRefs, type StepEmitter } from "@/lib/chat-steps";
 import { runToolLoop, type ExecutedCall, type ToolLoopOutcome } from "@/lib/chat-tool-loop";
 import { sanitizeProfileLine } from "@/lib/contact-profile-format";
@@ -431,9 +431,9 @@ export async function maybeGather(
   depth: DepthDecision;
   research: ResearchSummary | null;
 }> {
-  // Decided with the rest of the routing (decisions/chat-route.ts) while retrieval ran; the
-  // rules answer here only for a context built without it.
-  const depth = ctx.route?.depth ?? chooseDepth(ctx.q, { hasPriorTurns: ctx.priorTurns.length > 0 });
+  // Decided with the rest of the routing (decisions/chat-route.ts) while retrieval ran; a
+  // context built without it gets one pass.
+  const depth: DepthDecision = ctx.route?.depth ?? { depth: "single", reason: "one retrieval answers it" };
   if (depth.depth !== "research") return { evidence: null, notePassages: [], depth, research: null };
 
   const now = Date.now();

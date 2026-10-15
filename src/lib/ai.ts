@@ -2589,7 +2589,7 @@ export async function chatWithNetwork(
   attentionLite: string | null = null,
   /**
    * What the research step looked up, rendered as text. Present only when the question was
-   * routed to it — see `chooseDepth` (@/lib/chat-depth) and `gatherEvidence` (@/lib/chat-gather).
+   * routed to it — see `routeFromParsed` (@/lib/decisions/chat-route) and `gatherEvidence` (@/lib/chat-gather).
    */
   evidence: string | null = null,
   /**
