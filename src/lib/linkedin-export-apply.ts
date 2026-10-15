@@ -69,6 +69,7 @@ export async function applyExportExtras(userId: string, importId: string): Promi
         importedAt: new Date().toISOString(),
       },
       senderBio: null,
+      schools: null,
       message: "",
     });
   }
