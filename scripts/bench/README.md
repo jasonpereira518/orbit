@@ -487,3 +487,47 @@ client's server actions one at a time, so everything else queued behind it):
 
 Simply opening and closing the chart was, and is, indistinguishable from never opening it: no
 leaked timers, listeners, DOM or heap.
+
+# Meeting recorder benchmark
+
+`meeting-recorder.mjs` measures what recording a meeting costs the laptop while a real tab is
+shared: CPU summed over every Chrome process (`SystemInfo.getProcessInfo`, so the capturer,
+GPU and audio service count, not just JS), RSS, the recorder tab's main thread and JS heap,
+and the recorder's own rates (worklet messages/s, live-socket sends/s). Full method in the
+script's header.
+
+```bash
+# one tree copy per build (rsync + `cp -cR node_modules`), each a demo-mode dev server:
+ORBIT_DEEPGRAM=off ORBIT_MANAGED_OPENAI_API_KEY=bench-fake ORBIT_MANAGED_ANTHROPIC_API_KEY=bench-fake \
+  npx next dev -p 3101    # base commit; the branch on 3102
+caffeinate -dimsu node scripts/bench/meeting-recorder.mjs \
+  --ab before=http://localhost:3101,after=http://localhost:3102 --reps 3 --scenario-ms 120000 --out ab.json
+node scripts/bench/meeting-recorder.mjs --ab after=http://localhost:3102 --soak-ms 600000 --heap-diff
+```
+
+- Chrome runs **headful** (a window appears) and auto-selects the "Orbit Bench Call" tab, so
+  `getDisplayMedia` is the real thing. Deepgram and chunk uploads are faked in the page;
+  nothing leaves the machine.
+- Scenarios: idle baseline (call playing) → A recording, /capture visible → B recording,
+  Orbit in a background tab → C paused with the share kept → resume check.
+- `--profile` CPU-profiles the recorder tab during B; `--heap-diff` diffs heap snapshots by
+  constructor over a soak. Both are diagnostics, not measurements.
+- Chrome's auto-select now and then refuses a share; the script retries Start, and retries a
+  run whose tab dies.
+
+## Measured on Oct 15 2026 (Chrome 155, dev servers, 3 interleaved reps, medians)
+
+CPU is % of one core above the idle baseline, all Chrome processes.
+
+| | before (f9714cf6) | after |
+|---|---|---|
+| A recording, tab visible | 9.6% | 5.4% (−44%) |
+| B recording, tab in background | 7.6% | 6.1% (−20%) |
+| C paused, share kept | 4.9% | 0.4% (−92%) |
+| worklet messages / live sends per second | 375 / 375 | 31 / 31 |
+| recorder main thread, A / B / C | 5.9% / 4.3% / 2.1% | 2.6% / 3.5% / 0.1% |
+
+Every run: one `getDisplayMedia` call through pause and resume, streamed audio 99.9–100.1% of
+wall-clock, meters moving. Heap growth over a soak is the same in both builds (~0.5 MB/min
+after GC, retained per-render motion closures from the hidden panel's meters plus dev-only
+React stacks) — not changed here.
