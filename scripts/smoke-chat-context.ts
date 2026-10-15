@@ -23,6 +23,7 @@ import { ensureUserSettings } from "../src/lib/user-settings";
 import { resolveAiAccess } from "../src/lib/ai-access";
 import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 import { saveWritingInstructionsFor } from "../src/lib/writing-instructions-store";
+import { isoDay } from "../src/lib/dates";
 
 const USER = "smoke-chat-context-user";
 
@@ -92,7 +93,8 @@ async function main() {
   );
   check(
     "the question carries today's date, so relative dates are not guessed",
-    ctx.scopedQuestion.startsWith(`[Today is ${new Date().toISOString().slice(0, 10)}.]`),
+    // Local day, as the prompt writes it: a UTC day failed this every evening after 8pm EDT.
+    ctx.scopedQuestion.startsWith(`[Today is ${isoDay(new Date())}.]`),
     ctx.scopedQuestion
   );
   check(
