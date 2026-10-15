@@ -23,6 +23,9 @@ import { ensureUserSettings } from "../src/lib/user-settings";
 import { resolveAiAccess } from "../src/lib/ai-access";
 import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 import { saveWritingInstructionsFor } from "../src/lib/writing-instructions-store";
+import { factLane } from "../src/lib/chat-lanes";
+import { fallbackParsedQuery } from "../src/lib/chat-retrieval";
+import { NULL_STEPS } from "../src/lib/chat-steps";
 
 const USER = "smoke-chat-context-user";
 
@@ -476,10 +479,19 @@ async function main() {
     const c = await prepareChatContext(USER, "Who is hiring site reliability engineers in Paris?", {});
     check("a reminder due today reaches the prompt with its id", Boolean(c.openReminders?.includes(`reminder_id=${reminder!.id}`)), c.openReminders ?? "null");
     check("and is on the reminder allowlist", c.reminderTitles?.get(reminder!.id) === "Call Ada about the summit");
-    const passage = c.notePassages?.find((p) => /Paris/.test(p.snippet));
-    check("a note-only fact reaches the fast path as a passage", Boolean(passage), JSON.stringify(c.notePassages));
+    // Keyless, the parse falls back to "open" and no fact lane runs; the lane itself is what
+    // carries a note-only fact, so it is asked directly with a fact-shaped parse.
+    const lane = await factLane(
+      USER,
+      "Who is hiring site reliability engineers in Paris?",
+      { ...fallbackParsedQuery("Who is hiring site reliability engineers in Paris?"), shape: "fact" },
+      { embedding: null, person: null },
+      NULL_STEPS
+    );
+    const passage = lane.passages.find((p) => /Paris/.test(p.snippet));
+    check("a note-only fact reaches the fact lane as a passage", Boolean(passage), JSON.stringify(lane.passages));
     check("naming who the note is about", passage?.contactName === "Grace Hopper", JSON.stringify(passage));
-    check("and that person can be recommended", c.allowedContacts.has(grace));
+    check("and that person is handed on to be recommended", lane.people.some((p) => p.id === grace), JSON.stringify(lane.people));
 
     check("about-you: nothing known, nothing said", renderAboutUser(null) === null && renderAboutUser({ senderBio: "  ", careerProfile: null }) === null);
     const about = renderAboutUser({

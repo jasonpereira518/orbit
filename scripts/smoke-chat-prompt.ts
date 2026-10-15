@@ -654,10 +654,48 @@ check(
 check("and the rules tell the model what the ids are for", withReminders.systemCore.includes("complete_reminder or snooze_reminder"));
 check(
   "a passage names who it is about, on one line",
-  withReminders.user.includes("a note on Grace Hopper [id=c9]: Hiring SREs in Paris."),
+  withReminders.user.includes("about Grace Hopper [id=c9]: Hiring SREs in Paris."),
   withReminders.user
 );
 check("no reminders, no reminder block or rule", !buildChatPrompt({ ...baseChatPromptArgs(), question: "x", focusProfile: null, contactsContext: [] }).systemCore.includes("Open reminders"));
+// --- the shape lanes: a filtered roster, and a passage that says who it is about ---------
+
+const laned = buildChatPrompt({
+  ...baseChatPromptArgs(),
+  question: "Everyone I know from Duke?",
+  focusProfile: null,
+  contactsContext: [],
+  orgRosters: [
+    {
+      kind: "filter" as const,
+      name: "Contacts matching schools: Duke",
+      total: 2,
+      people: [
+        { id: "d1", name: "Ada Park", title: "Engineer @ Stripe" },
+        { id: "d2", name: "Leo Chen", title: null },
+      ],
+      truncated: false,
+    },
+  ],
+  notePassages: [
+    { sourceId: "int-9", contactId: "d1", contactName: "Ada Park", date: "2026-09-02", snippet: "Raising a seed round in the spring." },
+  ],
+});
+check(
+  "a filtered roster renders as complete, with its total, keyed for a ::list block",
+  laned.user.includes("[r1] Contacts matching schools: Duke — 2 people (complete)") && laned.user.includes("[id=d1] Ada Park — Engineer @ Stripe"),
+  laned.user
+);
+check(
+  "and the rule calls it complete only for what the records say",
+  laned.systemCore.includes("A filtered roster is complete only for what the records say"),
+  laned.systemCore
+);
+check(
+  "a passage line says who it is about",
+  /\[e1\] 2026-09-02, about Ada Park \[id=d1\]: Raising a seed round/.test(laned.user),
+  laned.user
+);
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);

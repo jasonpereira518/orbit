@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { Suspense } from "react";
 import { getGraphData } from "@/actions/graph";
@@ -16,7 +17,10 @@ import { RenderStamp } from "@/components/layout/render-stamp";
  * a Suspense boundary. Before, the page awaited the scan at the top, so the first byte
  * waited for the whole payload — on a large network, seconds of blank.
  */
-export default function GraphPage() {
+export default async function GraphPage() {
+  const gate = await pageVisibilityGate("page.graph");
+  if (gate) return gate;
+
   return (
     <div className="-mx-1 space-y-3 overflow-hidden md:-mx-2">
       <RenderStamp />
