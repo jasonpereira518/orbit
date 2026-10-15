@@ -20,7 +20,7 @@ import { classifyRecruiterSender, RECRUITER_CONFIDENCE_FLOOR, RULED_OUT_VERDICT 
 import { looksLikeRecruiter } from "../../src/lib/recruiter-detect";
 import { openDecider, type AnswerFor, type Decider, type Question } from "../../src/lib/decisions/jev";
 import { admitRecruiterCandidates, rulesOutRecruiter } from "../../src/lib/decisions/recruiter";
-import { gateRosters, routeChatQuestion } from "../../src/lib/decisions/chat-route";
+import { gateRosters, routeFromParsed } from "../../src/lib/decisions/chat-route";
 import { understandQuery } from "../../src/lib/chat-retrieval";
 import { findOrgRosters } from "../../src/lib/chat-roster";
 import { openEngines } from "../../src/lib/decisions/engine";
@@ -41,6 +41,7 @@ import { parseProfileFields } from "../../src/lib/extension/parse-profile";
 import type { PageContext } from "../../src/lib/extension/contract";
 import {
   chatWithNetwork,
+  chatWithNetworkStream,
   completeJson,
   parseAiJson,
   transcribeAudioWithAI,
@@ -48,6 +49,7 @@ import {
 } from "../../src/lib/ai";
 import { deepgramConfigured, transcribeFile as transcribeDeepgramFile } from "../../src/lib/deepgram";
 import { loadNetworkVocabulary } from "../../src/lib/transcription-vocabulary";
+import { peopleIdsIn } from "../../src/lib/chat-directives";
 import { prepareChatContext } from "../../src/lib/chat-context";
 import { maybeGather } from "../../src/lib/chat-gather";
 import { runEmbeddingBackfill } from "../../src/lib/embedding-backfill";
@@ -80,6 +82,7 @@ import {
   characterErrorRate,
   count,
   mean,
+  median,
   mentions,
   rate,
   sameField,
@@ -818,15 +821,15 @@ const ROUTING_COMPANIES = ["Stripe", "Ramp", "Notion", "Square", "Block", "Figma
 
 /**
  * How chat questions are routed (decisions/chat-route.ts), end to end through the same
- * function the chat path calls. What answers depends on the run:
- *  - `--decisions jev` → Jev;
- *  - an LLM key and no `--decisions` → the question parser's intent flags;
- *  - neither → the keyword rules (the baseline).
- * Rosters go through `findOrgRosters` over a few seeded contacts, then the roster gate.
- * No chat answer is generated, so a Jev or rules run needs no LLM key.
+ * parse the chat path makes: the question shape (and the person or time window it names),
+ * depth, attention and recruiters. Without an LLM key every case gets the one-pass default,
+ * and the shape metrics measure that floor.
+ * Rosters go through `findOrgRosters` over a few seeded contacts, then the roster gate
+ * (Jev with `--decisions jev`, otherwise as matched). No chat answer is generated.
  */
 export async function runChatRoutingTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
-  const cases = fixture<ChatRoutingEvalFixture>("ai-chat-routing-eval.json").cases.slice(0, limit);
+  const routing = fixture<ChatRoutingEvalFixture>("ai-chat-routing-eval.json");
+  const cases = routing.cases.slice(0, limit);
   const db = await getDb();
   await db.delete(contacts).where(eq(contacts.userId, userId));
   for (const [i, company] of ROUTING_COMPANIES.entries()) {
@@ -848,18 +851,19 @@ export async function runChatRoutingTask({ userId, limit, log }: RunOpts): Promi
   let recOk = 0;
   let rosterCases = 0;
   let rosterOk = 0;
+  let shapeOk = 0;
+  let personCases = 0;
+  let personOk = 0;
+  let timeCases = 0;
+  let timeOk = 0;
   const engines = new Map<string, number>();
 
   for (const c of cases) {
     const priorTurns = c.priorTurns ?? [];
-    const route = await timed(latenciesMs, () =>
-      routeChatQuestion({
-        decider,
-        question: c.question,
-        priorTurns,
-        intent: async () => (await understandQuery(userId, c.question, [])).intent ?? null,
-      })
+    const parsed = await timed(latenciesMs, () =>
+      understandQuery(userId, c.question, [], undefined, { today: routing.today, priorTurns })
     );
+    const route = routeFromParsed(parsed, c.question);
     engines.set(route.engine, (engines.get(route.engine) ?? 0) + 1);
     const matched = await findOrgRosters(userId, c.question).catch(() => []);
     const { rosters } = await gateRosters(decider, c.question, matched);
@@ -883,7 +887,26 @@ export async function runChatRoutingTask({ userId, limit, log }: RunOpts): Promi
       if (got === want) rosterOk += 1;
     }
 
+    const shapes = ([] as string[]).concat(c.expect.shape);
+    const shapeRight = shapes.includes(route.shape);
+    if (shapeRight) shapeOk += 1;
+    const personRight = c.expect.person
+      ? (parsed.person ?? "").toLowerCase().includes(c.expect.person.toLowerCase())
+      : true;
+    if (c.expect.person) {
+      personCases += 1;
+      if (personRight) personOk += 1;
+    }
+    const timeRight = c.expect.time ? parsed.time?.mode === c.expect.time : true;
+    if (c.expect.time) {
+      timeCases += 1;
+      if (timeRight) timeOk += 1;
+    }
+
     const wrong: string[] = [];
+    if (!shapeRight) wrong.push(`shape ${route.shape}`);
+    if (!personRight) wrong.push(`person ${parsed.person ?? "-"}`);
+    if (!timeRight) wrong.push(`time ${parsed.time?.mode ?? "-"}`);
     if (research !== wantResearch) wrong.push(`depth ${route.depth.depth} (${route.depth.reason})`);
     if (route.attention !== c.expect.attention) wrong.push(`attention ${route.attention}`);
     if (route.recruiters !== c.expect.recruiters) wrong.push(`recruiters ${route.recruiters}`);
@@ -908,6 +931,9 @@ export async function runChatRoutingTask({ userId, limit, log }: RunOpts): Promi
       attentionRecall: attPositives ? tpA / attPositives : null,
       recruiterAccuracy: cases.length ? recOk / cases.length : null,
       rosterAccuracy: rosterCases ? rosterOk / rosterCases : null,
+      shapeAccuracy: cases.length ? shapeOk / cases.length : null,
+      personAccuracy: personCases ? personOk / personCases : null,
+      timeAccuracy: timeCases ? timeOk / timeCases : null,
     },
   };
 }
@@ -1368,22 +1394,43 @@ async function seedNetwork(userId: string): Promise<Map<string, { id: string; fu
 }
 
 export async function runChatTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
-  const cases = fixture<ChatEvalFixture>("ai-chat-eval.json").cases.slice(0, limit);
+  const chatFixture = fixture<ChatEvalFixture>("ai-chat-eval.json");
+  const cases = chatFixture.cases.slice(0, limit);
   const network = await seedNetwork(userId);
+  const db = await getDb();
+  for (const group of chatFixture.bulk ?? []) {
+    await db.insert(contacts).values(
+      Array.from({ length: group.count }, (_, i) => ({
+        userId,
+        fullName: `${group.namePrefix} ${i + 1}`,
+        school: group.school,
+        company: group.company,
+        location: group.location,
+      }))
+    );
+  }
   const answered = tally();
   const retrieved = tally();
+  const listed = tally();
+  const counted = tally();
+  const resolved = tally();
   const misses: string[] = [];
   const latenciesMs: number[] = [];
+  /** Request start to the first answer token, per non-research case: the "under 6s" goal. */
+  const firstTokenMs: number[] = [];
+  let inventedDirectiveIds = 0;
 
   for (const c of cases) {
     try {
       const { ctx, result } = await timed(latenciesMs, async () => {
         const requestStartedAt = Date.now();
         const ctx = await prepareChatContext(userId, c.question, {});
-        // The research round runs here as it does in production (`askNetwork`, the route), so
-        // this task's cost and latency include it — and a routing change shows up in both.
-        const { evidence, notePassages } = await maybeGather(userId, ctx, { requestStartedAt });
-        const result = await chatWithNetwork(
+        // The research round runs here as it does in production (the route), so this task's
+        // cost and latency include it — and a routing change shows up in both.
+        const { evidence, notePassages, depth } = await maybeGather(userId, ctx, { requestStartedAt });
+        let firstAt: number | null = null;
+        // The streaming call the route makes, so time to first token is measured on the real path.
+        const result = await chatWithNetworkStream(
           userId,
           ctx.scopedQuestion,
           ctx.modelContacts,
@@ -1391,21 +1438,48 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
           ctx.orgRosters,
           ctx.attention,
           ctx.modelRecruiters,
+          () => {
+            firstAt ??= Date.now();
+          },
           ctx.focusProfile,
           ctx.attachedContext,
-          ctx.goals,
-          ctx.attentionLite,
-          evidence,
-          notePassages,
-          ctx.writingInstructions
+          {
+            goals: ctx.goals,
+            attentionLite: ctx.attentionLite,
+            evidence,
+            notePassages,
+            writingPreferences: ctx.writingInstructions,
+          }
         );
+        if (firstAt !== null && depth.depth === "single") firstTokenMs.push(firstAt - requestStartedAt);
         return { ctx, result };
       });
-      const recommended = new Set(
-        ((result.recommendations ?? []) as Array<{ contact_id?: string | null }>).map((r) => r.contact_id)
-      );
+      // People placed as `::people` cards count as named, exactly like the old JSON tail's
+      // recommendations; an id there the prompt never offered is an invented person.
+      const placed = peopleIdsIn(result.answer ?? "");
+      inventedDirectiveIds += placed.filter((id) => !ctx.allowedContacts.has(id)).length;
+      const recommended = new Set([
+        ...((result.recommendations ?? []) as Array<{ contact_id?: string | null }>).map((r) => r.contact_id),
+        ...placed,
+      ]);
       const shown = new Set(ctx.modelContacts.map((m) => m.id));
       let missed = false;
+      if (c.expectList) {
+        const ok = ctx.orgRosters.some((r) => r.kind === "filter" && r.total === c.expectList!.total);
+        count(listed, ok);
+        missed ||= !ok;
+      }
+      if (c.expectCount !== undefined) {
+        const ok = new RegExp(`\\b${c.expectCount}\\b`).test(result.answer ?? "");
+        count(counted, ok);
+        missed ||= !ok;
+      }
+      if (c.expectPerson) {
+        const person = network.get(c.expectPerson);
+        const ok = Boolean(person) && ctx.retrieved[0]?.id === person!.id && ctx.scopedQuestion.startsWith("[Focus:");
+        count(resolved, ok);
+        missed ||= !ok;
+      }
       for (const email of c.mustMention) {
         const person = network.get(email);
         if (!person) throw new Error(`fixture names ${email}, which contact-search-eval.json does not have`);
@@ -1419,6 +1493,9 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
     } catch (err) {
       misses.push(c.id);
       for (let i = 0; i < c.mustMention.length; i++) count(answered, false);
+      if (c.expectList) count(listed, false);
+      if (c.expectCount !== undefined) count(counted, false);
+      if (c.expectPerson) count(resolved, false);
       log(`  FAIL chat/${c.id} — ${err instanceof Error ? err.message : String(err)}`);
     }
   }
@@ -1427,7 +1504,15 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
     cases: cases.length,
     misses,
     latenciesMs,
-    metrics: { mentionRecall: rate(answered), retrievalRecall: rate(retrieved) },
+    metrics: {
+      mentionRecall: rate(answered),
+      retrievalRecall: rate(retrieved),
+      firstTokenP50Ms: median(firstTokenMs),
+      listCompleteness: rate(listed),
+      countAccuracy: rate(counted),
+      personResolution: rate(resolved),
+      inventedDirectiveIds,
+    },
   };
 }
 
