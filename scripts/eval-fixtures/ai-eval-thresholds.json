@@ -76,7 +76,8 @@
     "firstTokenP50Ms": { "maxRise": 1500 },
     "listCompleteness": { "maxDrop": 0 },
     "countAccuracy": { "maxDrop": 0.1 },
-    "personResolution": { "maxDrop": 0.05 }
+    "personResolution": { "maxDrop": 0.05 },
+    "inventedDirectiveIds": { "maxRise": 0 }
   },
   "research": {
     "mentionRecall": { "maxDrop": 0.05 },

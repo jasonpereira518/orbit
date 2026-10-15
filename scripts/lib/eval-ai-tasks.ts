@@ -49,6 +49,7 @@ import {
 } from "../../src/lib/ai";
 import { deepgramConfigured, transcribeFile as transcribeDeepgramFile } from "../../src/lib/deepgram";
 import { loadNetworkVocabulary } from "../../src/lib/transcription-vocabulary";
+import { peopleIdsIn } from "../../src/lib/chat-directives";
 import { prepareChatContext } from "../../src/lib/chat-context";
 import { maybeGather } from "../../src/lib/chat-gather";
 import { runEmbeddingBackfill } from "../../src/lib/embedding-backfill";
@@ -1417,6 +1418,7 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
   const latenciesMs: number[] = [];
   /** Request start to the first answer token, per non-research case: the "under 6s" goal. */
   const firstTokenMs: number[] = [];
+  let inventedDirectiveIds = 0;
 
   for (const c of cases) {
     try {
@@ -1452,9 +1454,14 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
         if (firstAt !== null && depth.depth === "single") firstTokenMs.push(firstAt - requestStartedAt);
         return { ctx, result };
       });
-      const recommended = new Set(
-        ((result.recommendations ?? []) as Array<{ contact_id?: string | null }>).map((r) => r.contact_id)
-      );
+      // People placed as `::people` cards count as named, exactly like the old JSON tail's
+      // recommendations; an id there the prompt never offered is an invented person.
+      const placed = peopleIdsIn(result.answer ?? "");
+      inventedDirectiveIds += placed.filter((id) => !ctx.allowedContacts.has(id)).length;
+      const recommended = new Set([
+        ...((result.recommendations ?? []) as Array<{ contact_id?: string | null }>).map((r) => r.contact_id),
+        ...placed,
+      ]);
       const shown = new Set(ctx.modelContacts.map((m) => m.id));
       let missed = false;
       if (c.expectList) {
@@ -1504,6 +1511,7 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
       listCompleteness: rate(listed),
       countAccuracy: rate(counted),
       personResolution: rate(resolved),
+      inventedDirectiveIds,
     },
   };
 }

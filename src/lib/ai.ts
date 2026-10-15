@@ -2073,15 +2073,17 @@ export function buildChatPrompt({
     return `${overdueBlock}${queue ? `\n\nOutreach queue:\n${queue}` : ""}`;
   })();
 
+  // Keyed `[r1]`, `[r2]` so the streamed answer can place one as a table (`::list[r1]`, see
+  // `@/lib/chat-directives`); the route keys the same rosters the same way.
   const rosterBlock = orgRosters
-    .map((r) => {
+    .map((r, i) => {
       const shown = r.people
         .map((p) => `- [id=${p.id}] ${p.name}${p.title ? ` — ${p.title}` : ""}`)
         .join("\n");
       const note = r.truncated
         ? `(closest ${r.people.length} of ${r.total} listed)`
         : "(complete)";
-      return `${r.name} — ${r.total} ${r.total === 1 ? "person" : "people"} ${note}\n${shown}`;
+      return `[r${i + 1}] ${r.name} — ${r.total} ${r.total === 1 ? "person" : "people"} ${note}\n${shown}`;
     })
     .join("\n\n");
 
@@ -2341,15 +2343,21 @@ though the action already happened — it has not; a person still has to confirm
 "proposed_actions" as an empty array when none of this applies, which is most answers.`;
 
 const CHAT_STREAM_TAIL = `
-Write the answer as plain prose (markdown is fine), then on its own line write exactly
+Write the answer as prose (markdown is fine). Two blocks can sit between paragraphs, each on a
+line of its own and nothing else on that line:
+- ::people[<id>,<id>] shows up to 6 contacts as cards the user can act on (draft a message, set
+  a reminder). Use it when the answer recommends specific people to reach out to or ask, after
+  the sentence that says why. Ids come from the [id=…] values in the provided lists.
+- ::list[r1] shows a whole "Complete roster" section as a table with its exact count. Use it
+  when the question asks who or how many — never type that list out yourself.
+Otherwise name people in the prose; most answers need no block at all, and a block never
+replaces saying in words why those people.
+Only when you recommend recruiters or propose an action, end with a line containing exactly
 ${RECOMMENDATIONS_MARKER}
-followed by a JSON object: {"recommendations": [...], "proposed_actions": [...]}. Nothing after
-the JSON.
-"recommendations" is an array of objects with the fields "contact_id" (string|null),
-"recruiter_id" (string|null), "name", "reason", "suggested_action" and "draft_message"
-(string|null). Only use contact_ids and recruiter_ids from the provided lists. For recruiter
-recommendations set recruiter_id and leave contact_id null (unless recommending a contact who
-is also a recruiter).
+followed by a JSON object: {"recommendations": [...], "proposed_actions": [...]}, and nothing
+after the JSON. "recommendations" is for recruiters only: objects with "contact_id" (null),
+"recruiter_id", "name", "reason", "suggested_action" and "draft_message" (string|null), ids from
+the provided lists.
 ${PROPOSED_ACTIONS_TAIL}`;
 
 
@@ -2431,6 +2439,11 @@ export async function chatWithNetworkStream(
     writingPreferences?: string | null;
     /** The account already resolved for this request (see `AiAccess.forUser`). */
     access?: AiAccess;
+    /**
+     * Every citation id the prompt minted, before the first word streams — so the client
+     * can render `[eN]` as a numbered chip as it arrives rather than as raw text.
+     */
+    onEvidence?: (evidence: Record<string, EvidenceSource>) => void;
   } = {}
 ): Promise<SplitResult & { evidence: Record<string, EvidenceSource> }> {
   const prompt = buildChatPrompt({
@@ -2450,6 +2463,7 @@ export async function chatWithNetworkStream(
   });
   const splitter = createAnswerSplitter();
   const system = `${prompt.systemCore}${CHAT_STREAM_TAIL}`;
+  options.onEvidence?.(prompt.evidence);
   await streamText(
     userId,
     {

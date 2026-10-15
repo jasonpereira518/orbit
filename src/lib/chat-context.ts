@@ -32,6 +32,7 @@ import { gateRosters, routeFromParsed, type ChatRoute, type PriorTurn } from "@/
 import { findOrgRosters, type OrgRoster } from "@/lib/chat-roster";
 import { factLane, filterLane, personLane } from "@/lib/chat-lanes";
 import type { NotePassage } from "@/lib/chat-gather";
+import type { ChatBlocks } from "@/lib/chat-directives";
 import { attachPhotos, createPhotoCache, type PhotoCache } from "@/lib/chat-photos";
 import { describeArms, NULL_STEPS, plural, toRefs, type StepEmitter } from "@/lib/chat-steps";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
@@ -70,6 +71,8 @@ import { sanitizeDraft } from "@/lib/chat-draft";
  */
 
 const PRIOR_TURN_LIMIT = 8;
+/** Characters of each earlier turn replayed as history. */
+const PRIOR_TURN_CHARS = 3000;
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 
@@ -770,10 +773,15 @@ export async function prepareChatContext(
   // Everyone matching a list or count question, beside any organisation the question named.
   if (retrieval.filterRoster) orgRosters.push(retrieval.filterRoster);
 
+  // Each earlier turn is capped: a stored answer can hold a 200-row list table, and replaying
+  // it whole would crowd this question's own context out of the prompt.
   const priorTurns: ChatTurn[] = priorRows
     .slice()
     .reverse()
-    .map((m) => ({ role: m.role as ChatTurn["role"], content: m.content }));
+    .map((m) => ({
+      role: m.role as ChatTurn["role"],
+      content: m.content.length > PRIOR_TURN_CHARS ? `${m.content.slice(0, PRIOR_TURN_CHARS)}…` : m.content,
+    }));
 
   if (focusContactId) {
     // Exactly the fields the RankedContact entry below is built from — not the whole row
@@ -1003,5 +1011,34 @@ export async function prepareChatContext(
             ? { ...r, draft_message: sanitizeDraft(r.draft_message) }
             : r
         ),
+  };
+}
+
+/**
+ * What the answer's directives may point at (`@/lib/chat-directives`): every person the
+ * answer may name, with the role line retrieval or a roster knows, and every roster keyed
+ * the way the prompt showed it (`r1`, `r2`, …). Built from the context alone — nothing here
+ * is new to the user, it is what the model was already shown.
+ */
+export function buildChatBlocks(ctx: ChatContext): ChatBlocks {
+  const subtitle = new Map<string, string>();
+  for (const roster of ctx.orgRosters) {
+    for (const p of roster.people) if (p.title) subtitle.set(p.id, p.title);
+  }
+  // Retrieval's own row wins: the same "title · company" line the cards have always shown.
+  for (const c of ctx.retrieved) {
+    const line = [c.title, c.company].filter(Boolean).join(" · ");
+    if (line) subtitle.set(c.id, line);
+  }
+  return {
+    people: Object.fromEntries(
+      [...ctx.contactNames].map(([id, name]) => [id, { name, subtitle: subtitle.get(id) ?? null }])
+    ),
+    lists: Object.fromEntries(
+      ctx.orgRosters.map((r, i) => [
+        `r${i + 1}`,
+        { label: r.name, total: r.total, truncated: r.truncated, people: r.people },
+      ])
+    ),
   };
 }

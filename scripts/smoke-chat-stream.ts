@@ -66,6 +66,15 @@ function main() {
   r = run([`Ada.\n${RECOMMENDATIONS_MARKER}\n{not json`]);
   check("bad JSON after the marker keeps the prose and reports a parse error", r.result.answer === "Ada." && r.result.recommendations.length === 0 && Boolean(r.result.parseError));
 
+  r = run([`Ada.\n${RECOMMENDATIONS_MARKER}\n{"proposed_actions":[{"kind":"create_reminder"}]}`]);
+  check(
+    "a tail with only proposed_actions (people now sit in the prose) parses without an error",
+    r.result.recommendations.length === 0 && r.result.proposedActions.length === 1 && !r.result.parseError,
+    JSON.stringify(r.result)
+  );
+  r = run([`Ada.\n${RECOMMENDATIONS_MARKER}\n{"recommendations":"nope"}`]);
+  check("a recommendations field of the wrong type is still an error", Boolean(r.result.parseError));
+
   r = run([`Ada.\n${RECOMMENDATIONS_MARKER}\n\`\`\`json\n${RECS}\n\`\`\``]);
   check("a fenced JSON block is tolerated", r.result.recommendations.length === 1);
 

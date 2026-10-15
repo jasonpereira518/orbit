@@ -662,8 +662,8 @@ const laned = buildChatPrompt({
   ],
 });
 check(
-  "a filtered roster renders as complete, with its total",
-  laned.user.includes("Contacts matching schools: Duke — 2 people (complete)") && laned.user.includes("[id=d1] Ada Park — Engineer @ Stripe"),
+  "a filtered roster renders as complete, with its total, keyed for a ::list block",
+  laned.user.includes("[r1] Contacts matching schools: Duke — 2 people (complete)") && laned.user.includes("[id=d1] Ada Park — Engineer @ Stripe"),
   laned.user
 );
 check(
