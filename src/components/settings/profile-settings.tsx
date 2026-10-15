@@ -41,6 +41,12 @@ function careerRows(c: CareerProfile): [string, string][] {
     ["Location", c.profile?.location],
     ["Skills", c.skills?.length ? `${c.skills.length}: ${c.skills.slice(0, 6).join(", ")}${c.skills.length > 6 ? "…" : ""}` : undefined],
     ["Job titles", c.roleKeywords?.join(", ")],
+    [
+      "Background",
+      c.background?.length
+        ? `${c.background.length}: ${c.background.slice(0, 4).map((b) => b.title).join(", ")}${c.background.length > 4 ? "…" : ""}`
+        : undefined,
+    ],
     ["Imported", c.importedAt ? new Date(c.importedAt).toLocaleDateString() : undefined],
   ];
   return rows.filter((r): r is [string, string] => Boolean(r[1]));

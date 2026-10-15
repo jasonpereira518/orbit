@@ -1783,9 +1783,20 @@ export type CareerProfile = {
   profile?: { headline?: string; summary?: string; industry?: string; location?: string };
   role?: { title: string; company: string };
   skills?: string[];
-  /** Job titles from saved job alerts, de-duplicated. */
+  /** Job titles from saved job alerts and the export's job-seeker preferences, de-duplicated. */
   roleKeywords?: string[];
+  /** Certifications, honors, projects, volunteering, organizations, publications. Display only. */
+  background?: CareerBackgroundEntry[];
   importedAt?: string;
+};
+
+export type CareerBackgroundEntry = {
+  kind: "certification" | "honor" | "project" | "volunteering" | "organization" | "publication";
+  title: string;
+  org?: string;
+  /** As LinkedIn writes it: "Mar 2024". */
+  start?: string;
+  end?: string;
 };
 
 export type ProfileSkill = { name: string };
@@ -2321,7 +2332,26 @@ export type ChatConversationRowPayload = {
   sessions: { startAt: string; endAt: string; messageCount: number; direction: "in" | "out" | null; transcript: string }[];
 };
 
+/**
+ * One per-person note from a kept LinkedIn export (`import_type = 'linkedin_export'`): a
+ * connection-request message, a note the user wrote in LinkedIn, or a recommendation. Matched
+ * to someone already in Orbit and never creates anyone — see `linkedinSignalsAdapter`.
+ */
+export type LinkedInSignalRowPayload = {
+  kind: "linkedin_signal";
+  signal: "invitation_sent" | "invitation_received" | "note" | "recommendation_received" | "recommendation_given";
+  /** Stable across re-uploads of the same export; the interaction's dedupe key. */
+  externalKey: string;
+  date: string | null;
+  fullName: string;
+  linkedinUrl: string | null;
+  company: string | null;
+  title: string | null;
+  text: string;
+};
+
 export type ImportJobRowPayload =
+  | LinkedInSignalRowPayload
   | LinkedInImportRowPayload
   | GmailSenderRowPayload
   | OutlookSenderRowPayload
