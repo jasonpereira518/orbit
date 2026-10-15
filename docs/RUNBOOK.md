@@ -7,7 +7,7 @@ What to do when something is wrong, and how the routine things are done. Short o
 | Signal | Where |
 |---|---|
 | Something is down | Better Stack monitor on `/api/health` → `#orbit-ops-critical` |
-| Backups stopped (`backup.stale`) | Better Stack heartbeat "orbit backup" (36 h without a ping) → `#orbit-ops-critical`; then GitHub → Actions → `backup` |
+| Backups stopped (`backup.stale`) | Better Stack heartbeat "orbit backup" (36 h without a ping) → `#orbit-ops-critical`; then the private ops repository → Actions → `backup` |
 | A known condition opened / recovered | ops sweep → `#orbit-ops` (critical also → `#orbit-ops-critical`) |
 | An exception nobody anticipated | Sentry (linked from `/admin/health`) |
 | What is open right now | `/admin/health` → System status strip and Open alerts |
@@ -53,16 +53,15 @@ BEHIND the code — a build whose migration did not run — and is worth waking 
 ## Scheduled workflows were disabled (GitHub's 60-day rule)
 
 GitHub disables a public repository's scheduled workflows after 60 days without repository
-activity. That stops `ops` (sweep, process-stalled, drain, connector sync) and `backup` at once;
-the Better Stack heartbeat goes quiet within 30 minutes.
+activity. That stops `ops` (sweep, process-stalled, drain, connector sync); the Better Stack
+heartbeat goes quiet within 30 minutes. (`backup` lives in the private ops repository, which
+the rule does not apply to.)
 
 ```bash
 gh api repos/jasonpereira518/orbit/actions/workflows --jq '.workflows[] | [.name, .state] | @tsv'
 # a disabled one reads "disabled_inactivity"
 gh workflow enable ops.yml --repo jasonpereira518/orbit
-gh workflow enable backup.yml --repo jasonpereira518/orbit
 gh workflow run ops.yml --repo jasonpereira518/orbit
-gh workflow run backup.yml --repo jasonpereira518/orbit
 ```
 
 Or GitHub → Actions → the workflow → **Enable workflow**, then **Run workflow**. Any push to
@@ -215,8 +214,10 @@ the delivery detail when it happened.
 
 ## Restore the database
 
-Daily encrypted dumps: GitHub → Actions → `backup` → artifacts (90 days). Take a fresh one
-first with **Run workflow** if the database is still readable.
+Daily encrypted dumps: the private ops repository → Actions → `backup` → artifacts (90 days).
+They are kept out of this repository on purpose: a public repository's workflow artifacts can
+be downloaded by anyone signed in to GitHub. Take a fresh one first with **Run workflow** if
+the database is still readable.
 
 You need `age` and a `pg_restore` at least as new as the `pg_dump` that wrote the file
 (`PG_MAJOR` in `backup.yml`, 18 today — an older one stops with "unsupported version in file

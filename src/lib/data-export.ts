@@ -12,7 +12,8 @@ import { exportSourcesFor, ownRowsSource, type ExportSource } from "@/lib/user-d
  */
 const PAGE = 500;
 const REDACTED_SUFFIX = /(_encrypted|token|secret|_hash)$/i;
-const EXCLUDED = new Set(["embedding", "embedding_vector", "blob_url", "inline_data"]);
+// `ics_url` is a calendar's secret address: read access to it, so a credential like the rest.
+const EXCLUDED = new Set(["embedding", "embedding_vector", "blob_url", "inline_data", "ics_url"]);
 const ACCOUNT_SOURCES: ExportSource[] = [ownRowsSource(billingEvents)];
 
 export type UserExport = {

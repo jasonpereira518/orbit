@@ -52,7 +52,7 @@ import { ensureUserSettings } from "@/lib/user-settings";
  * Neon HTTP every separate query is its own round trip, and one statement the planner runs
  * as a handful of index lookups is the same work at a fraction of the latency.
  *
- * Measured (`scripts/smoke-account-alerts.ts`, case 19): at most 4 statements called
+ * Measured (`scripts/smoke-account-alerts.ts`, case 19): at most 5 statements called
  * standalone with no request context, where the `cache()` memos cannot help. Inside a
  * request that has already resolved settings and surface visibility (or passes the row in),
  * the marginal cost is the one combined select. A paid account never pays for the contact count.

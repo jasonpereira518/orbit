@@ -13,7 +13,7 @@ import {
 import { logInteractionForUser } from "@/lib/contact-writes";
 import {
   EMAIL_LEASE_SECONDS,
-  EMAIL_SEND_DAILY_CAP,
+  EMAIL_RECIPIENT_DAILY_CAP,
   MAX_EMAIL_ATTEMPTS,
   SCHEDULE_MAX_LEAD_MS,
   SCHEDULE_MIN_LEAD_MS,
@@ -26,7 +26,7 @@ import { originHooks } from "@/lib/email/origins";
 import { providerFor } from "@/lib/email/providers";
 import { MailProviderError, type SendResult } from "@/lib/email/providers/types";
 import { normalizeRecipients } from "@/lib/email/recipients";
-import { countEmailSendsToday, resolveSender, type MailboxId } from "@/lib/email/sender";
+import { countEmailRecipientsToday, resolveSender, type MailboxId } from "@/lib/email/sender";
 import { getEntitlements } from "@/lib/entitlements";
 import { markOutlookNeedsReauth } from "@/lib/outlook";
 import { consumeBucket, isRateLimitedError, RATE_LIMITS } from "@/lib/rate-limit";
@@ -68,7 +68,7 @@ export const ENQUEUE_COPY: Record<EnqueueRefusal, string> = {
   not_connected: "Connect your email to send from your own address",
   no_send_scope: "Allow Orbit to send from your email, then try again",
   needs_reauth: "Your email connection expired — reconnect to send",
-  cap_reached: "You've reached today's email limit — it resets over the next 24 hours",
+  cap_reached: "That's past today's limit of people to email — it resets over the next 24 hours",
   rate_limited: "That's a lot of email in a few minutes — try again shortly",
   no_recipient: "Add at least one recipient",
   too_many: "That's more than 20 recipients — trim the list",
@@ -165,8 +165,8 @@ export async function enqueueEmail(userId: string, input: EnqueueInput): Promise
     if (limited) return limited;
   }
 
-  const [ent, used] = await Promise.all([getEntitlements(userId), countEmailSendsToday(userId)]);
-  if (used >= EMAIL_SEND_DAILY_CAP[ent.plan]) return refuse("cap_reached");
+  const [ent, used] = await Promise.all([getEntitlements(userId), countEmailRecipientsToday(userId)]);
+  if (used + recipients.all.length > EMAIL_RECIPIENT_DAILY_CAP[ent.plan]) return refuse("cap_reached");
 
   const contactIds = input.contactIds ?? (await resolveRecipientContacts(userId, recipients.all));
   const db = await getDb();

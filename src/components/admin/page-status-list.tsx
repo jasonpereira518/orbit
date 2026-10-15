@@ -7,10 +7,19 @@ import {
   setNavOrderAction,
   setSurfaceComingSoonAction,
   setSurfaceHiddenAction,
+  setSurfaceTiersAction,
 } from "@/actions/admin";
 import { APP_NAV_CORE, APP_NAV_EXTRAS } from "@/components/layout/app-nav";
 import {
+  PLANS,
+  PLAN_SHORT_LABELS,
+  planHasFeature,
+  type FeatureKey,
+  type Plan,
+} from "@/lib/plans/plan-config";
+import {
   canMarkComingSoon,
+  canTierLock,
   orderNavItems,
   surfaceKeyForHref,
   type Surface,
@@ -94,6 +103,73 @@ function StatusSegment({
 }
 
 /**
+ * Pages whose plan gate lives in code (`PLAN_CONFIG.features`). A tier rule can only narrow
+ * who opens them, never widen it, so the chips for plans the code already refuses are off.
+ */
+const PAGE_FEATURE: Record<string, FeatureKey> = {
+  "page.recruiters": "recruiters",
+  "page.outreach": "outreach",
+  "page.meetings": "meetings",
+};
+
+function TierChips({
+  label,
+  surfaceKey,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  surfaceKey: string;
+  value: readonly Plan[];
+  onChange: (next: Plan[]) => void;
+  disabled?: boolean;
+}) {
+  const feature = PAGE_FEATURE[surfaceKey];
+  const codeBlocks = (plan: Plan) => feature !== undefined && !planHasFeature(plan, feature);
+  // Plans that can really open it: a rule naming a plan the code refuses still leaves it out.
+  const open = value.filter((p) => !codeBlocks(p));
+  return (
+    <div role="group" aria-label={`${label}: plans that can open it`} className="flex shrink-0 gap-1">
+      {PLANS.map((plan) => {
+        const codeBlocked = codeBlocks(plan);
+        const on = !codeBlocked && value.includes(plan);
+        const last = on && open.length === 1;
+        return (
+          <button
+            key={plan}
+            type="button"
+            data-plan={plan}
+            aria-pressed={on}
+            disabled={disabled || codeBlocked || last}
+            title={
+              codeBlocked
+                ? `${PLAN_SHORT_LABELS[plan]} doesn't include this feature`
+                : last
+                  ? "At least one plan must open it. To close it for everyone, hide it"
+                  : on
+                    ? `${PLAN_SHORT_LABELS[plan]} can open it — click to lock them out`
+                    : `${PLAN_SHORT_LABELS[plan]} is locked out — click to let them in`
+            }
+            onClick={() => onChange(on ? value.filter((p) => p !== plan) : PLANS.filter((p) => p === plan || value.includes(p)))}
+            className={cn(
+              "rounded-md border px-2 py-0.5 text-[11px] transition-colors duration-fast",
+              on
+                ? "border-tier-border bg-tier-surface font-medium text-tier-accent"
+                : "border-border/60 text-muted-foreground/70 line-through decoration-muted-foreground/40 hover:text-foreground",
+              codeBlocked && "opacity-40",
+              last && "cursor-not-allowed"
+            )}
+          >
+            {PLAN_SHORT_LABELS[plan]}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
  * Every page in one list, in the order the sidebar shows them.
  *
  * Replaces two separate panels (the per-page switches and the sidebar order editor) that
@@ -113,11 +189,14 @@ export function PageStatusList({
   order,
   hidden,
   comingSoon,
+  tierRules,
 }: {
   pages: Surface[];
   order: string[];
   hidden: string[];
   comingSoon: string[];
+  /** Tier-limited pages → the plans that may open them. Absent means every plan. */
+  tierRules: Record<string, Plan[]>;
 }) {
   const router = useRouter();
   const [flagOverrides, setFlagOverrides] = useState<Record<string, Flags>>({});
@@ -125,6 +204,8 @@ export function PageStatusList({
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [orderBusy, setOrderBusy] = useState(false);
+  const [tierOverrides, setTierOverrides] = useState<Record<string, Plan[]>>({});
+  const tiersFor = (key: string): Plan[] => tierOverrides[key] ?? tierRules[key] ?? [...PLANS];
 
   const hiddenSet = new Set(hidden);
   const soonSet = new Set(comingSoon);
@@ -174,6 +255,29 @@ export function PageStatusList({
       router.refresh();
     } catch (err) {
       setFlagOverrides((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      setError(key, err instanceof Error ? err.message : "Could not save that.");
+    } finally {
+      setBusy((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
+  }
+
+  async function changeTiers(key: string, plans: Plan[]) {
+    setTierOverrides((prev) => ({ ...prev, [key]: plans }));
+    setBusy((prev) => new Set(prev).add(key));
+    setError(key, null);
+    try {
+      await setSurfaceTiersAction({ surfaceKey: key, plans });
+      router.refresh();
+    } catch (err) {
+      setTierOverrides((prev) => {
         const next = { ...prev };
         delete next[key];
         return next;
@@ -259,6 +363,16 @@ export function PageStatusList({
                 )}
               </div>
 
+              {canTierLock(row.key) && (
+                <TierChips
+                  label={surface.label}
+                  surfaceKey={row.key}
+                  value={tiersFor(row.key)}
+                  disabled={busy.has(row.key)}
+                  onChange={(next) => void changeTiers(row.key, next)}
+                />
+              )}
+
               {locked ? (
                 <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
                   <Lock className="size-3" aria-hidden />
@@ -314,7 +428,8 @@ export function PageStatusList({
         </button>
         <p className="text-xs text-muted-foreground">
           Arrows set the sidebar order. Pages marked Soon always sit under the sidebar&apos;s
-          divider; order only ranks them within it.
+          divider; order only ranks them within it. Plan chips choose who can open a page:
+          a plan that is struck through sees it locked, with an upgrade screen.
         </p>
         {errors.__order && (
           <p role="alert" className="text-xs text-destructive">
