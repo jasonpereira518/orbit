@@ -29,7 +29,7 @@ import {
   refreshCalendarWindow,
 } from "../src/lib/calendar-events";
 import { refreshUserCalendarWindows } from "../src/lib/calendar-window";
-import { setSourceEnabled } from "../src/lib/calendar-sources";
+import { deleteCalendarSourcesForProvider, setSourceEnabled } from "../src/lib/calendar-sources";
 import { GOOGLE_SCOPES } from "../src/lib/google-scopes";
 import { getMeetingContext, nextKnownMeeting } from "../src/lib/meeting-context";
 import { ORBIT_TOOLS } from "../src/lib/tools/definitions";
@@ -373,6 +373,38 @@ async function main() {
   check(
     "the iCloud read is per calendar",
     appleAskedFor === "https://caldav.example/home/" && mirrored.some((r) => r.sourceId === icloudSource.id)
+  );
+
+  // --- disconnecting a provider ------------------------------------------------------------
+  const [held] = await db
+    .insert(calendarEvents)
+    .values({
+      userId: MULTI,
+      sourceId: outlookSource.id,
+      providerEventId: "graph-past",
+      title: "Already held",
+      startAt: new Date(NOW.getTime() - 3 * 3_600_000),
+      endAt: new Date(NOW.getTime() - 2 * 3_600_000),
+      attendees: [],
+      attendeeCount: 0,
+    })
+    .returning();
+  await db.insert(reminders).values([
+    { userId: MULTI, title: "Prep for Sync with Grace", status: "pending", calendarEventKey: "graph-1" },
+    { userId: MULTI, title: "Follow up after Already held", status: "pending", calendarEventKey: held.providerEventId },
+  ]);
+  await deleteCalendarSourcesForProvider(MULTI, "microsoft");
+  const afterDisconnect = await db.select().from(reminders).where(eq(reminders.userId, MULTI));
+  check(
+    "disconnecting Outlook dismisses the prep for a meeting still to come, keeps a held meeting's follow-up",
+    afterDisconnect.find((r) => r.calendarEventKey === "graph-1")?.status === "dismissed" &&
+      afterDisconnect.find((r) => r.calendarEventKey === "graph-past")?.status === "pending",
+    JSON.stringify(afterDisconnect.map((r) => [r.calendarEventKey, r.status]))
+  );
+  check(
+    "…and its meetings are gone while iCloud's stay",
+    (await db.select().from(calendarEvents).where(eq(calendarEvents.sourceId, outlookSource.id))).length === 0 &&
+      (await db.select().from(calendarEvents).where(eq(calendarEvents.sourceId, icloudSource.id))).length === 1
   );
 
   if (failures) {
