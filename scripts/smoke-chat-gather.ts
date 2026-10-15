@@ -141,6 +141,12 @@ async function main() {
     labels.some((l) => l.includes("Searching your notes for") && l.includes("Series A")),
     JSON.stringify(labels)
   );
+  const lookup = seen.filter((st) => st.id === "gather:1").at(-1);
+  check(
+    "each lookup is its own step, finished with what it found",
+    lookup?.status === "done" && /^Searched your notes for .+ → (\d+ results?|nothing found)$/.test(lookup.label),
+    JSON.stringify(lookup)
+  );
   const last = seen.filter((st) => st.kind === "gather").at(-1);
   check(
     "and finishes counting only the lookups that worked",
@@ -155,7 +161,19 @@ async function main() {
 
   // --- the allowlist: a person found in research survives the recommendation filter ---------
 
-  const ctx2 = await prepareChatContext(USER, question, {});
+  // The router reads the question parse, which needs an AI key this smoke does not have, so
+  // the research route is set the way a parse that flagged it would set it.
+  const research = (ctx: Awaited<ReturnType<typeof prepareChatContext>>) => {
+    ctx.route = {
+      depth: { depth: "research", reason: "needs more than one lookup" },
+      shape: "open",
+      attention: false,
+      recruiters: false,
+      engine: "llm",
+    };
+    return ctx;
+  };
+  const ctx2 = research(await prepareChatContext(USER, question, {}));
   const retrievedPriya = ctx2.allowedContacts.has(priya.id);
   const s2 = scripted([{ calls: [call("search_notes", { query: "Series A" })], text: "" }]);
   const routed = await maybeGather(USER, ctx2, { requestStartedAt: Date.now(), driver: s2.driver });
@@ -180,7 +198,7 @@ async function main() {
     },
     addResults: s3.driver.addResults,
   };
-  const late = await maybeGather(USER, await prepareChatContext(USER, question, {}), {
+  const late = await maybeGather(USER, research(await prepareChatContext(USER, question, {})), {
     // 27s into a request: less than the minimum left before the 30s cut-off.
     requestStartedAt: Date.now() - 27_000,
     driver: counting,
@@ -199,7 +217,7 @@ async function main() {
 
   const { seen: seen4, steps: steps4 } = recorder();
   let threw: unknown = null;
-  const keyless = await maybeGather(USER, await prepareChatContext(USER, question, {}), {
+  const keyless = await maybeGather(USER, research(await prepareChatContext(USER, question, {})), {
     requestStartedAt: Date.now(),
     steps: steps4,
   }).catch((err) => {
