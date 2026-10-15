@@ -18,6 +18,12 @@ import {
   beginChatImport,
   startChatImport,
 } from "@/actions/chat-imports";
+import {
+  appendLinkedInExportFiles,
+  beginLinkedInExport,
+  startLinkedInExport,
+} from "@/actions/linkedin-export-files";
+import { gzipBase64, MAX_EXPORT_APPEND_CHARS, MAX_EXPORT_FILE_GZ_CHARS } from "@/lib/imports/export-upload";
 import type { ChatConversationRowPayload } from "@/db/schema";
 import { MAX_APPEND_ROWS } from "@/lib/conversations/types";
 import { importPayloadFits } from "@/lib/capture-limits";
@@ -46,7 +52,8 @@ export type ImportJobKind =
   | "contacts_file"
   | "calendar"
   | "drive_docs"
-  | "chat";
+  | "chat"
+  | "linkedin_export";
 
 export type ImportJobSnapshot = {
   id: string;
@@ -97,6 +104,14 @@ export type ImportJobInput =
       fileName: string;
       selfNames: string[];
       rows: ChatConversationRowPayload[];
+    }
+  | {
+      kind: "linkedin_export";
+      fileName: string;
+      /** Every kept CSV; `read` yields its text (a folder `File`, or a ZIP member already open). */
+      files: { path: string; bytes: number; read: () => Promise<string> }[];
+      /** Private members left on the device, counted for the history row. */
+      privateCount: number;
     };
 
 type Listener = () => void;
@@ -120,6 +135,7 @@ function importedLabelFor(kind: ServerOwnedKind): string {
   if (kind === "calendar") return "meetings logged";
   // Each staged chat row is one participant, linked or created, not necessarily a new contact.
   if (kind === "chat") return "people";
+  if (kind === "linkedin_export") return "files kept";
   return "contacts imported";
 }
 
@@ -157,6 +173,8 @@ function importJobLabel(kind: ImportJobKind) {
       return "Reading Google Drive files";
     case "chat":
       return "Importing chats";
+    case "linkedin_export":
+      return "Keeping your LinkedIn export";
   }
 }
 
@@ -331,7 +349,8 @@ type ServerOwnedKind =
   | "contacts_file"
   | "calendar"
   | "drive_docs"
-  | "chat";
+  | "chat"
+  | "linkedin_export";
 
 /** Polls a server-owned import job's status until it leaves "processing"/"pending". */
 async function pollServerOwnedImportJob(
@@ -403,6 +422,7 @@ function completionMessage(
   status: ImportJobStatus,
   kind?: ImportJobKind,
 ): string {
+  if (kind === "linkedin_export") return exportCompletionMessage(status);
   const logsMeetings = kind === "calendar";
   const readsFiles = kind === "drive_docs";
   const parts = logsMeetings
@@ -445,6 +465,16 @@ function completionMessage(
       : "Nothing new to import \u2014 everyone was already in your orbit";
   }
   return `Imported: ${parts.join(", ")}`;
+}
+
+/** What keeping an export did: the files, then whatever its extras added. */
+function exportCompletionMessage(status: ImportJobStatus): string {
+  const n = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
+  const parts = [`${n(status.filesSaved, "file")} kept`];
+  if (status.interactionsLogged > 0) parts.push(`${n(status.interactionsLogged, "note")} added to people`);
+  if (status.targetsAdded > 0) parts.push(`${n(status.targetsAdded, "target company", "target companies")} added`);
+  if (status.backgroundAdded > 0) parts.push(`${n(status.backgroundAdded, "background entry", "background entries")} added`);
+  return `LinkedIn export: ${parts.join(", ")}`;
 }
 
 /**
@@ -623,6 +653,42 @@ async function stageAndStartChatImport(
   return { importId: begun.importId, totalRows: started.totalRows };
 }
 
+/**
+ * Gzip each kept file in the browser and send them in appends under the request cap, then
+ * close the upload. A file still too big once gzipped is counted, not sent.
+ */
+async function stageAndStartExport(
+  job: Extract<ImportJobInput, { kind: "linkedin_export" }>,
+): Promise<{ importId: string; totalRows: number }> {
+  const begun = await beginLinkedInExport(job.fileName);
+  if ("error" in begun) throw new UserFacingError(begun.error);
+  let batch: { path: string; byteSize: number; gz: string }[] = [];
+  let chars = 0;
+  let tooLarge = 0;
+  const flush = async () => {
+    if (!batch.length) return;
+    const res = await appendLinkedInExportFiles(begun.importId, batch);
+    if ("error" in res) throw new UserFacingError(res.error);
+    batch = [];
+    chars = 0;
+  };
+  for (const file of job.files) {
+    const text = await file.read();
+    const gz = await gzipBase64(text);
+    if (gz.length > MAX_EXPORT_FILE_GZ_CHARS) {
+      tooLarge++;
+      continue;
+    }
+    if (batch.length && chars + gz.length > MAX_EXPORT_APPEND_CHARS) await flush();
+    batch.push({ path: file.path, byteSize: new TextEncoder().encode(text).length, gz });
+    chars += gz.length;
+  }
+  await flush();
+  const started = await startLinkedInExport(begun.importId, { tooLarge, private: job.privateCount });
+  if ("error" in started) throw new UserFacingError(started.error);
+  return started;
+}
+
 function importStarter(
   input: ImportJobInput,
 ): () => Promise<{ importId: string; totalRows: number }> {
@@ -668,6 +734,8 @@ function importStarter(
         });
       case "chat":
         return stageAndStartChatImport(job);
+      case "linkedin_export":
+        return stageAndStartExport(job);
     }
   };
 }
@@ -698,7 +766,9 @@ export function startImportJob(
         ? "files"
         : input.kind === "chat"
           ? "people"
-          : input.ids.length === 1
+          : input.kind === "linkedin_export"
+            ? "files"
+            : input.ids.length === 1
             ? "person"
             : "people";
   const total =
@@ -708,7 +778,9 @@ export function startImportJob(
         ? input.files.length
         : input.kind === "chat"
           ? input.rows.length
-          : input.ids.length;
+          : input.kind === "linkedin_export"
+            ? input.files.length
+            : input.ids.length;
 
   const kind = input.kind;
   const begin = importStarter(input);

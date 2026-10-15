@@ -76,6 +76,8 @@ export function tabForImportJob(kind: ImportJobKind): IntegrationTabId | null {
       return null;
     case "drive_docs":
       return null;
+    case "linkedin_export":
+      return "linkedin";
   }
 }
 
