@@ -247,6 +247,19 @@ function initialQuestionFromUrl() {
   return new URLSearchParams(window.location.search).get("q")?.trim() ?? "";
 }
 
+/**
+ * `/chat?contact=<id>&name=…` — the contact page's "Ask": that person attached, their token
+ * waiting in the box. Same `addMentionPick` as the composer's `+`, so the token and the pick
+ * cannot disagree. Prefilled, never sent, like `?q=`.
+ */
+function initialAttachFromUrl(): { picks: ContextPerson[]; token: string } | null {
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  const id = params.get("contact")?.trim() ?? "";
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+  return addMentionPick([], id, [params.get("name")?.trim()]);
+}
+
 type LoadedThread = Awaited<ReturnType<typeof getChatThread>>;
 
 export function ChatPanel({
@@ -294,7 +307,8 @@ export function ChatPanel({
   const [versionSlot, setVersionSlot] = useState<string | null>(null);
   /** Which user bubble is mid-edit, if any. Only the LAST one is ever editable. */
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
-  const [question, setQuestion] = useState(initialQuestionFromUrl);
+  const [urlAttach] = useState(initialAttachFromUrl);
+  const [question, setQuestion] = useState(() => (urlAttach ? `${urlAttach.token} ` : initialQuestionFromUrl()));
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
   /** The list on screen, readable from async work (a thread revalidation checks it is untouched). */
   const messagesRef = useRef(messages);
@@ -336,7 +350,7 @@ export function ChatPanel({
    * nothing watching for it, and a stale entry here is inert because it appears in neither.
    * `clearComposer` sweeps them.
    */
-  const [attached, setAttached] = useState<ContextPerson[]>([]);
+  const [attached, setAttached] = useState<ContextPerson[]>(() => urlAttach?.picks ?? []);
   const [pending, start] = useTransition();
   // Streaming is deliberately NOT a transition: updates inside `startTransition` are
   // deferred, which would hold every streamed token back until the whole answer landed.
@@ -606,12 +620,13 @@ export function ChatPanel({
     }
   }, [olderCursor, loadingOlder]);
 
-  // The other half of `initialQuestionFromUrl`: take `q` back out of the address bar, so a
+  // The other half of `initialQuestionFromUrl` and `initialAttachFromUrl`: take `q`, `contact`
+  // and `name` back out of the address bar, so a
   // reload or a shared link does not re-seed a question that was already dealt with.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (!params.has("q")) return;
-    params.delete("q");
+    if (!["q", "contact", "name"].some((key) => params.has(key))) return;
+    for (const key of ["q", "contact", "name"]) params.delete(key);
     const rest = params.toString();
     window.history.replaceState(null, "", `${window.location.pathname}${rest ? `?${rest}` : ""}`);
     textareaRef.current?.focus();
