@@ -37,19 +37,28 @@ const POSITIVE: [RegExp, string][] = [
   [/\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}\/\d{1,2}(\/\d{2,4})?\b/, "Has a date in the name"],
 ];
 
+/**
+ * The name alone: `yes` named like notes, `no` named like something else (or nothing at all),
+ * `unknown` when the name says neither. Cloud notes reads the doc's first lines on `unknown`.
+ */
+export function triageName(rawName: string): { verdict: "yes" | "no" | "unknown"; why: string } {
+  const name = rawName.trim();
+  if (!name || /^untitled( document| presentation)?$/i.test(name)) {
+    return { verdict: "no", why: "The name gives nothing to go on" };
+  }
+  for (const [re, why] of NEGATIVE) {
+    if (re.test(name)) return { verdict: "no", why };
+  }
+  for (const [re, why] of POSITIVE) {
+    if (re.test(name)) return { verdict: "yes", why };
+  }
+  return { verdict: "unknown", why: "Nothing in the name says notes" };
+}
+
 export function triageDriveFile(
   file: PickedDriveFile,
   _now: Date,
 ): { likely: boolean; why: string } {
-  const name = file.name.trim();
-  if (!name || /^untitled( document| presentation)?$/i.test(name)) {
-    return { likely: false, why: "The name gives nothing to go on" };
-  }
-  for (const [re, why] of NEGATIVE) {
-    if (re.test(name)) return { likely: false, why };
-  }
-  for (const [re, why] of POSITIVE) {
-    if (re.test(name)) return { likely: true, why };
-  }
-  return { likely: false, why: "Nothing in the name says notes" };
+  const { verdict, why } = triageName(file.name);
+  return { likely: verdict === "yes", why };
 }

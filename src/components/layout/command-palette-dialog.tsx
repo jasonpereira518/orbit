@@ -99,8 +99,8 @@ const ACTIONS: Command[] = [
   {
     id: "action:structured",
     label: "Log an interaction",
-    hint: "Fill in the fields yourself",
-    href: "/capture?mode=structured",
+    hint: "Type or paste what happened",
+    href: "/capture",
     icon: NotebookPen,
     keywords: "meeting call coffee note structured manual",
   },

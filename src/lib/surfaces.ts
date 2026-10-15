@@ -246,6 +246,8 @@ export const OUTLOOK_SEND_SURFACE_KEY = "feature.outlook-send";
 export const REPLY_INBOX_SURFACE_KEY = "feature.reply-inbox";
 /** The key the chat-imports feature (WhatsApp / iMessage exports) gates on. */
 export const CHAT_IMPORTS_SURFACE_KEY = "feature.chat-imports";
+/** Cloud notes: watch Drive/OneDrive for meeting notes, and the /capture Drive & OneDrive tab. */
+export const CLOUD_NOTES_SURFACE_KEY = "feature.cloud-notes";
 const FEATURES: Surface[] = [
   {
     key: COMPOSE_SURFACE_KEY,
@@ -276,6 +278,15 @@ const FEATURES: Surface[] = [
     label: "Chat imports (WhatsApp, iMessage)",
     description:
       "Upload WhatsApp and iMessage exports for relationship analysis. Hidden until the privacy policy discloses chat content.",
+    comingSoon: true,
+  },
+  {
+    key: CLOUD_NOTES_SURFACE_KEY,
+    kind: "feature",
+    label: "Cloud notes (Drive & OneDrive)",
+    description:
+      "Finds meeting notes in Google Drive or OneDrive, offers to extract them, and adds the Drive & OneDrive tab on Capture.",
+    // Google's drive.readonly is restricted: until CASA passes only consent-screen test users can grant it.
     comingSoon: true,
   },
 ];
