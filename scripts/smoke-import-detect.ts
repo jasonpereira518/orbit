@@ -99,6 +99,7 @@ const YOU_PROFILE =
   "First Name,Last Name,Maiden Name,Address,Birth Date,Headline,Summary,Industry,Zip Code,Geo Location,Twitter Handles,Websites,Instant Messengers\nAda,T,,,,Engineer,,Technology,,Arlington,,,\n";
 const YOU_POSITIONS = "Company Name,Title,Description,Location,Started On,Finished On\nAcme,Engineer,,,May 2026,\n";
 const YOU_SKILLS = "Name\nGo\nPython\n";
+const YOU_EDUCATION = "School Name,Start Date,End Date,Notes,Degree Name,Activities\nState University,2020,2024,,BS,\n";
 const YOU_ALERTS =
   "ALERT_PARAMETERS,QUERY_CONTEXT,SAVED_SEARCH_ID\n\"{frequency=DAILY}\",\"{keywords=Software Engineer, spellCheckEnabled=true}\",1\n";
 
@@ -412,10 +413,11 @@ async function main() {
     drop("SavedJobAlerts.csv", YOU_ALERTS),
     drop("Skills.csv", YOU_SKILLS),
     drop("other.csv", YOU_SKILLS),
+    drop("Education.csv", YOU_EDUCATION),
   ]);
   check(
     "loose files are recognised by their headers; a lone Name column is skills only when the file is called Skills.csv",
-    ["linkedin_profile", "linkedin_skills", "linkedin_alerts"].every((t) =>
+    ["linkedin_profile", "linkedin_skills", "linkedin_alerts", "linkedin_education"].every((t) =>
       loose.staged.some((d) => d.target === t)
     ) && !loose.staged.some((d) => d.file.name === "other.csv" && d.target === "linkedin_skills"),
     loose.staged.map((d) => `${d.file.name}:${d.target}`).join(" | ")
@@ -545,6 +547,7 @@ async function main() {
     "linkedin_positions",
     "linkedin_skills",
     "linkedin_alerts",
+    "linkedin_education",
     "calendar_ics",
     "calendar_csv",
   ];

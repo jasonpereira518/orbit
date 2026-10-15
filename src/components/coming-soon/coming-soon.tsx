@@ -2,6 +2,8 @@ import Link from "next/link";
 import { PartyPopper, Radar, Send, Sparkles, type LucideIcon } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { UnlocksWith } from "@/components/locked-feature";
+import { COMING_SOON_UNLOCK_PLAN } from "@/lib/surfaces";
 
 /**
  * What renders in place of a page that is announced but not released (`comingSoon` in
@@ -139,7 +141,7 @@ export function ComingSoon({ surfaceKey, label }: { surfaceKey: string; label: s
             <DryDock icon={feature.icon} />
           </div>
           <div
-            className="reveal-mount min-w-0 max-w-sm space-y-3 text-center md:text-left"
+            className="reveal-mount min-w-0 max-w-sm space-y-3 text-center md:pb-16 md:text-left"
             style={{ "--reveal-delay": "80ms" } as React.CSSProperties}
           >
             <h1 className="font-[family-name:var(--font-display)] text-ink">
@@ -149,6 +151,7 @@ export function ComingSoon({ surfaceKey, label }: { surfaceKey: string; label: s
               <span className="mt-1 block text-4xl md:text-5xl">Coming soon</span>
             </h1>
             <p className="text-sm leading-relaxed text-muted-foreground">{feature.teaser}</p>
+            <UnlocksWith plan={COMING_SOON_UNLOCK_PLAN} className="justify-center md:justify-start" />
           </div>
         </div>
 

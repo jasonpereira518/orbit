@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import type { ContactSort } from "@/lib/contacts-page";
 import { Copy, Plus } from "lucide-react";
-import { listContactLetters, listContactsPage } from "@/actions/contacts";
+import { listContactLetters, listContactSchoolOptions, listContactsPage } from "@/actions/contacts";
 import {
   CONTACTS_PAGE_SIZE,
   isContactSort,
@@ -33,6 +33,8 @@ export default async function ContactsPage({
     quiet?: string;
     letter?: string;
     tag?: string;
+    /** Alumni of one school, or "@mine" for anyone who went to one of the user's. */
+    school?: string;
     /** Marks one import's new people in the list (`ContactsList` draws them in yellow). */
     importId?: string;
   }>;
@@ -57,6 +59,7 @@ export default async function ContactsPage({
     sort,
     letter: params.letter,
     tag: params.tag,
+    school: params.school,
     importId: params.importId,
   };
 
@@ -66,6 +69,7 @@ export default async function ContactsPage({
       params.minScore ||
       params.followUp === "due" ||
       params.tag?.trim() ||
+      params.school?.trim() ||
       quiet !== null
   );
 
@@ -74,12 +78,13 @@ export default async function ContactsPage({
   // thing in this `Promise.all`, so it decided when the list appeared. The quota notice
   // stays here — it renders a line above the list for every free account, and arriving
   // late it would shove the list down after it had painted.
-  const [page, letters, planOverview] = await Promise.all([
+  const [page, letters, planOverview, schoolOptions] = await Promise.all([
     // One page, not the whole network. Filtering, searching and ordering all happen in
     // Postgres now, so this costs the same whether the user knows 50 people or 50,000.
     listContactsPage({ ...filters, limit: CONTACTS_PAGE_SIZE }),
     listContactLetters(),
     getPlanOverview(),
+    listContactSchoolOptions(),
   ]);
 
   return (
@@ -131,6 +136,8 @@ export default async function ContactsPage({
           initialSort={sort}
           initialQuiet={quiet === null ? "" : String(quiet)}
           initialTag={params.tag || ""}
+          initialSchool={params.school || ""}
+          schoolOptions={schoolOptions}
           initialLetter={params.letter || ""}
           importId={params.importId}
         >
@@ -141,7 +148,7 @@ export default async function ContactsPage({
             down and rebuilt the whole subtree.
           */}
           <ContactsList
-            key={[params.q, params.company, params.minScore, params.followUp, params.tag, String(quiet), sort, params.importId].join("|")}
+            key={[params.q, params.company, params.minScore, params.followUp, params.tag, params.school, String(quiet), sort, params.importId].join("|")}
             initialItems={page.items}
             initialCursor={page.nextCursor}
             total={page.total}
