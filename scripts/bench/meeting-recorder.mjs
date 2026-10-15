@@ -146,7 +146,8 @@ const PRELUDE = `(() => {
     }
   }
   function Socket(url, protocols) {
-    return String(url).startsWith("wss://api.deepgram.com") ? new FakeDeepgram(url, protocols) : new Real(url, protocols);
+    // Intercepted, never dialled: any Deepgram host gets the fake.
+    return new URL(String(url), location.href).hostname.endsWith(".deepgram.com") ? new FakeDeepgram(url, protocols) : new Real(url, protocols);
   }
   Object.assign(Socket, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 });
   Socket.prototype = Real.prototype;
