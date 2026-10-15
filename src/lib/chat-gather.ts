@@ -28,6 +28,7 @@ import { recordAiSecurityEvent, UNTRUSTED_DATA_RULES } from "@/lib/ai-security";
 import { ORBIT_TOOLS } from "@/lib/tools/definitions";
 import { isToolError, releasedTools, runTool, toolsFor, type OrbitTool } from "@/lib/tools/registry";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
+import { reportError } from "@/lib/report-error";
 
 /** Rounds of lookups. Most research questions finish in one or two. */
 const MAX_ROUNDS = 3;
@@ -390,9 +391,11 @@ export async function gatherEvidence(
       signal: options.signal,
       maxResultChars: MAX_RESULT_CHARS,
     });
-  } catch {
+  } catch (err) {
     // No research grant, a provider that is down: the answer runs from retrieval alone, as
-    // every question did before this existed. The step says so rather than vanishing.
+    // every question did before this existed. The step says so rather than vanishing — and
+    // so does Sentry, since an answer quietly missing its research reads as a bad answer.
+    reportError(err, { where: "chat.gather", userId, level: "warning" });
     steps.done("gather", { label: "Answered from what was already found" });
     return EMPTY;
   }

@@ -64,6 +64,29 @@ async function main() {
   const nonString = await understandQuery("u1", 42 as never, [], failStub);
   check("non-string question never throws", nonString.semanticQuery === "");
 
+  // ---- follow-ups: history reaches the parse, and the rewrite comes back ----
+  let seenPrompt = "";
+  const historyStub = (async (_userId: string, input: { user: string }) => {
+    seenPrompt = input.user;
+    return JSON.stringify({ standaloneQuery: "Where is Amelia Brooks moving?", semanticQuery: "Amelia Brooks", filters: {}, expansionTerms: [] });
+  }) as never;
+  const followUp = await understandQuery("u1", "and her?", [], historyStub, {
+    priorTurns: [
+      { role: "user", content: "Who do I know at the New York Times?" },
+      { role: "assistant", content: "Amelia Brooks, a data journalist." },
+    ],
+    aboutUser: "About the user — current role: Founder at Ledgerly",
+  });
+  check("a short follow-up is parsed when there is history, not skipped", seenPrompt.includes("Amelia Brooks, a data journalist."));
+  check("the parse sees who the user is", seenPrompt.includes("Founder at Ledgerly"));
+  check("the standalone rewrite comes back", followUp.standaloneQuery === "Where is Amelia Brooks moving?");
+  check(
+    "no rewrite when the parse echoes the question",
+    sanitizeParsedQuery({ standaloneQuery: "who knows rust?", semanticQuery: "x" }, "who knows rust?").standaloneQuery === undefined
+  );
+  const noHistory = await understandQuery("u1", "her?", [], historyStub);
+  check("without history a short question still skips the parse", noHistory.standaloneQuery === undefined && noHistory.semanticQuery === "her?");
+
   // ---- rerank ----
   const mkCandidate = (id: string, name: string): RankedContact => ({
     id, fullName: name, preferredName: null, company: null, school: null,

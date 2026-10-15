@@ -1449,6 +1449,7 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
             evidence,
             notePassages,
             writingPreferences: ctx.writingInstructions,
+            openReminders: ctx.openReminders ?? null,
           }
         );
         if (firstAt !== null && depth.depth === "single") firstTokenMs.push(firstAt - requestStartedAt);
@@ -1595,7 +1596,10 @@ export async function runResearchTask({ userId, limit, log }: RunOpts): Promise<
           ctx.attachedContext,
           ctx.goals,
           ctx.attentionLite,
-          gathered.evidence
+          gathered.evidence,
+          gathered.notePassages,
+          ctx.writingInstructions,
+          ctx.openReminders ?? null
         );
         return { ctx, gathered, result };
       });

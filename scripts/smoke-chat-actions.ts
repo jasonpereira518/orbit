@@ -21,6 +21,7 @@ import { getDb } from "../src/db";
 import { chatMessages, chatThreads, contacts, interactions, reminders } from "../src/db/schema";
 import { validateProposedActions, type StoredProposedAction } from "../src/lib/chat-proposed-actions";
 import { commitProposedAction, dismissProposedAction } from "../src/actions/chat-actions";
+import { createReminderForUser } from "../src/lib/reminder-writes";
 
 const USER = "demo-user";
 
@@ -145,6 +146,49 @@ async function main() {
       .returning();
     const res = await commitProposedAction(foreignMsg!.id, "a1");
     check("refused — the message is scoped to its own user, not just its id", res.ok === false);
+  }
+
+  console.log("committing update_contact, create_contact, complete_reminder and snooze_reminder");
+  {
+    const reminder = await createReminderForUser(USER, { title: "Send Ada the deck", reminderType: "manual" });
+    const reminder2 = await createReminderForUser(USER, { title: "Book the venue", reminderType: "manual" });
+    const db2 = await getDb();
+    const [thread] = await db2.insert(chatThreads).values({ userId: USER }).returning();
+    const [c] = await db2.insert(contacts).values({ userId: USER, fullName: "Grace Hopper", title: "Engineer" }).returning();
+    const actions = validateProposedActions(
+      [
+        { kind: "update_contact", contact_id: c!.id, title: "Rear Admiral", company: "US Navy" },
+        { kind: "create_contact", full_name: "Katherine Johnson", title: "Mathematician", email: "kj@nasa.example" },
+        { kind: "complete_reminder", reminder_id: reminder!.id },
+      ],
+      new Set([c!.id]),
+      new Map([[c!.id, "Grace Hopper"]]),
+      new Map([[reminder!.id, reminder!.title], [reminder2!.id, reminder2!.title]])
+    );
+    const snooze = validateProposedActions([{ kind: "snooze_reminder", reminder_id: reminder2!.id, days: 3 }], new Set(), new Map(), new Map([[reminder2!.id, reminder2!.title]]));
+    const all = [...actions, ...snooze];
+    const [msg] = await db2.insert(chatMessages).values({ threadId: thread!.id, userId: USER, role: "assistant", content: "x", proposedActions: all }).returning();
+    const results = [];
+    for (const a of all) results.push(await commitProposedAction(msg!.id, a.id));
+    check("all four commit", results.every((r) => r.ok), JSON.stringify(results));
+
+    const grace = await db2.query.contacts.findFirst({ where: eq(contacts.id, c!.id) });
+    check("update_contact wrote exactly the proposed fields", grace?.title === "Rear Admiral" && grace?.company === "US Navy", JSON.stringify(grace && { title: grace.title, company: grace.company }));
+    const kj = await db2.query.contacts.findFirst({ where: and(eq(contacts.userId, USER), eq(contacts.fullName, "Katherine Johnson")) });
+    check("create_contact created the person", kj?.title === "Mathematician");
+    check("and its resultId is the new contact", results[1]!.ok && results[1]!.resultId === kj?.id);
+    const done = await db2.query.reminders.findFirst({ where: eq(reminders.id, reminder!.id) });
+    check("complete_reminder completed it", done?.status === "done", JSON.stringify(done && { status: done.status }));
+    const snoozed = await db2.query.reminders.findFirst({ where: eq(reminders.id, reminder2!.id) });
+    check("snooze_reminder pushed it out ~3 days", Boolean(snoozed?.dueDate) && new Date(snoozed!.dueDate!).getTime() > Date.now() + 2 * 86_400_000, JSON.stringify(snoozed?.dueDate));
+
+    console.log("adding someone already in the network is refused, not doubled");
+    const dupe = validateProposedActions([{ kind: "create_contact", full_name: "Katherine Johnson", email: "kj@nasa.example" }], new Set(), new Map());
+    const [msg2] = await db2.insert(chatMessages).values({ threadId: thread!.id, userId: USER, role: "assistant", content: "x", proposedActions: dupe }).returning();
+    const res = await commitProposedAction(msg2!.id, dupe[0]!.id);
+    check("the commit fails with a reason a person can read", res.ok === false && /already in your contacts/.test(res.reason), JSON.stringify(res));
+    const kjs = await db2.query.contacts.findMany({ where: and(eq(contacts.userId, USER), eq(contacts.fullName, "Katherine Johnson")) });
+    check("still one Katherine Johnson", kjs.length === 1, String(kjs.length));
   }
 
   console.log("a contact deleted between propose and click fails the write and releases the claim");
