@@ -281,6 +281,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-meeting-nudge": "pure",
   "smoke-meeting-upload-queue": "pure",
   "smoke-meeting-live-coverage": "pure",
+  "smoke-pcm-worklet": "pure",
   "smoke-outreach-email": "pure",
   "smoke-vocabulary-terms": "pure",
   "smoke-warp-journeys": "pure",
