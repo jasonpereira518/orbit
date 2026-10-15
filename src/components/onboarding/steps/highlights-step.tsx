@@ -320,11 +320,9 @@ function ChapterRail({
                 {seen ? <Check className="size-3.5" aria-hidden /> : <Icon className="size-3.5" aria-hidden />}
               </span>
               <span className="relative whitespace-nowrap font-medium">{c.label}</span>
-              {soon ? (
-                <SoonTag className="relative ml-auto" />
-              ) : (
-                locked && <ProTag className="relative ml-auto" />
-              )}
+              {/* Coming-soon chapters still say which plan they will unlock on. */}
+              {soon && <SoonTag className="relative ml-auto" />}
+              {(soon || locked) && <ProTag className={cn("relative", !soon && "ml-auto")} />}
             </button>
           </li>
         );
@@ -363,7 +361,8 @@ function ChapterCopy({
         <span className="flex size-9 items-center justify-center rounded-xl bg-accent text-primary">
           <Icon className="size-4.5" aria-hidden />
         </span>
-        {soon ? <SoonTag /> : chapterLocked && <ProTag />}
+        {soon && <SoonTag />}
+        {(soon || chapterLocked) && <ProTag />}
         <NeedTag chapter={chapter} facts={facts} />
       </StaggerItem>
       <StaggerItem>
@@ -379,9 +378,10 @@ function ChapterCopy({
             <span className="min-w-0">
               {b.label}
               {b.soon && <SoonTag className="ml-1.5 align-[1px]" />}
-              {!b.soon && b.entitlement && !chapterLocked && !planFlags[b.entitlement] && (
+              {(b.soon && !soon && !chapterLocked) ||
+              (!b.soon && b.entitlement && !chapterLocked && !planFlags[b.entitlement]) ? (
                 <ProTag className="ml-1.5 align-[1px]" />
-              )}
+              ) : null}
             </span>
           </StaggerItem>
         ))}

@@ -190,10 +190,12 @@ Return JSON: {"standaloneQuery": string, "semanticQuery": string, "filters": {"c
  * Accuracy-only stage: on any failure or timeout it returns the pass-through
  * fallback. It must never throw and never block the pipeline.
  *
- * Self-references ("my company") resolve against `context.aboutUser` — the user's own
- * description and imported role (`renderAboutUser`). There is no school field to resolve
- * "my school" against unless the user wrote it there, so it stays unfiltered otherwise.
- * `context.priorTurns` is what lets a follow-up be rewritten into `standaloneQuery`.
+ * Self-references resolve against what the user told Orbit: "my school" against
+ * `user_settings.schools` (typed in Settings or imported from Education.csv), "my company"
+ * against `context.aboutUser` — their own description and imported role
+ * (`renderAboutUser`). Anything the context does not name is left unfiltered (see
+ * UNDERSTAND_SYSTEM) rather than guessed. `context.priorTurns` is what lets a follow-up be
+ * rewritten into `standaloneQuery`.
  * @param userGoals - the user's active networking goals, used as context.
  */
 export async function understandQuery(
@@ -203,12 +205,14 @@ export async function understandQuery(
   completeFn: typeof completeJson = completeJson,
   /**
    * Today (for relative dates), the earlier turns oldest first (for pronouns and the
-   * standalone rewrite), and who the user is (for "my company").
+   * standalone rewrite), the schools the user went to (so "my school" can become a filter)
+   * and who the user is (for "my company").
    */
   context: {
     today?: string;
     priorTurns?: ReadonlyArray<{ role: string; content: string }>;
     aboutUser?: string | null;
+    userSchools?: readonly string[];
   } = {}
 ): Promise<ParsedQuery> {
   const fallback = fallbackParsedQuery(typeof question === "string" ? question : "");
@@ -216,9 +220,12 @@ export async function understandQuery(
   // A short follow-up ("and her?") is exactly the question history exists to rewrite.
   if (typeof question !== "string" || (question.trim().length < 8 && !history.length)) return fallback;
   try {
-    const goalsBlock = userGoals.length
-      ? `User context — their active networking goals:\n${userGoals.map((g) => `- ${g}`).join("\n")}\n\n`
-      : "";
+    const userSchools = context.userSchools ?? [];
+    const goalsBlock =
+      (userGoals.length
+        ? `User context — their active networking goals:\n${userGoals.map((g) => `- ${g}`).join("\n")}\n\n`
+        : "") +
+      (userSchools.length ? `User context — schools the user went to: ${userSchools.join("; ")}\n\n` : "");
     const aboutBlock = context.aboutUser ? `User context — ${context.aboutUser}\n\n` : "";
     // Earlier answers are model output over untrusted notes: context for resolving a
     // reference, never instructions. Cut short — a name, not a whole answer, is the point.
@@ -459,6 +466,7 @@ export type BudgetedContact = {
   relevance: number;
   /** Compact career summary — "Ramp, ex-Stripe · MIT". Null when no profile is stored. */
   career: string | null;
+  school: string | null;
 };
 
 /**
@@ -482,6 +490,12 @@ const CONTEXT_TIERS = [
   { upto: Infinity, notes: 300, summary: 240, entries: 2, entryChars: 160, facts: 4 },
 ] as const;
 const TOTAL_CONTEXT_CHAR_BUDGET = 48000;
+/**
+ * The pinned person's row (a focused question, or a single @mention): the question is about
+ * them, so they get their whole record, not the top tier's trim. Still finite — the focus
+ * block's own cap is the backstop for a pathological record.
+ */
+const PINNED_TIER = { notes: 4000, summary: 1500, entries: 12, entryChars: 600, facts: 12 } as const;
 
 export function budgetContactsContext(
   contacts: RankedContact[],
@@ -494,13 +508,15 @@ export function budgetContactsContext(
    * and a couple of smoke scripts call this without a query and should not change behaviour.
    * See `pickNoteWindow` (@/lib/note-window) for why the head was the wrong 1,200 characters.
    */
-  query: string = ""
+  query: string = "",
+  /** The focused contact, whose row skips the tiers (`PINNED_TIER`). */
+  pinnedId: string | null = null
 ): BudgetedContact[] {
   const out: BudgetedContact[] = [];
   let spent = 0;
   for (let index = 0; index < contacts.length; index++) {
     const c = contacts[index];
-    const tier = CONTEXT_TIERS.find((t) => index < t.upto)!;
+    const tier = c.id === pinnedId ? PINNED_TIER : CONTEXT_TIERS.find((t) => index < t.upto)!;
     const notes = pickNoteWindow(c.notes, query, tier.notes).text || null;
     const aiSummary = (c.aiSummary || "").slice(0, tier.summary) || null;
     const keyFacts = c.keyFacts.slice(0, tier.facts);
@@ -511,7 +527,7 @@ export function budgetContactsContext(
 
     const cost =
       c.fullName.length + (c.company?.length ?? 0) + (c.title?.length ?? 0) +
-      (notes?.length ?? 0) + (aiSummary?.length ?? 0) + (career?.length ?? 0) +
+      (notes?.length ?? 0) + (aiSummary?.length ?? 0) + (career?.length ?? 0) + (c.school?.length ?? 0) +
       keyFacts.join("").length + timeline.map((t) => t.line).join("").length +
       c.tags.join("").length + 80; // formatting overhead
     // Budget exhaustion stops serialization entirely — a later, cheaper
@@ -532,6 +548,7 @@ export function budgetContactsContext(
       tags: c.tags,
       relevance: c.relevance,
       career,
+      school: c.school ?? null,
     });
   }
   return out;

@@ -250,6 +250,7 @@ export async function POST(request: Request) {
                 notePassages,
                 writingPreferences: ctx.writingInstructions,
                 openReminders: ctx.openReminders,
+                userSchools: ctx.userSchools,
                 access: ctx.access,
                 // Every id the prompt minted, so `[eN]` becomes a chip as it streams. The cited
                 // subset replaces this once the answer is done.

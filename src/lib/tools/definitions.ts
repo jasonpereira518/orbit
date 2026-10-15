@@ -119,9 +119,9 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
     // so MCP gets the curated summary only. In Orbit's own chat the same text is already in
     // the prompt behind a fence, so withholding it would cost grounding and buy nothing.
     fields: {
-      mcp: ["id", "name", "company", "title", "location", "closenessTier", "relevance", "summary"],
+      mcp: ["id", "name", "company", "title", "school", "location", "closenessTier", "relevance", "summary"],
       chat: [
-        "id", "name", "company", "title", "location", "closenessTier", "relevance", "summary",
+        "id", "name", "company", "title", "school", "location", "closenessTier", "relevance", "summary",
         "notes",
       ],
     },
@@ -137,6 +137,7 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         name: c.fullName,
         company: c.company,
         title: c.title,
+        school: c.school ?? null,
         location: c.location,
         closenessTier: c.closenessTier ?? null,
         relevance: c.relevance,
@@ -172,6 +173,7 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
             fullName: true,
             company: true,
             title: true,
+            school: true,
             email: true,
             location: true,
             linkedinUrl: true,
@@ -210,6 +212,7 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         name: contact.fullName,
         company: contact.company,
         title: contact.title,
+        school: contact.school,
         email: contact.email,
         location: contact.location,
         linkedinUrl: contact.linkedinUrl,

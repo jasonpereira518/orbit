@@ -133,6 +133,20 @@ function anyLike(column: SQL, values: string[]): SQL {
  * The correlation is kept alongside the literal: belt and braces, and it stays correct if
  * a caller ever passes a userId that disagrees with the row.
  */
+/**
+ * "Went to one of these schools": the contact's own `school`, or an education entry from
+ * their stored LinkedIn history. Shared by chat's `schools` filter and the Contacts list's
+ * School filter, so the two can't disagree about who is an alum. Substring, case-insensitive.
+ * The outer query must read FROM `contacts` unaliased.
+ */
+export function schoolCondition(userId: string, schools: string[]): SQL {
+  return sql`(${anyLike(sql`lower(coalesce(contacts.school, ''))`, schools)} or ${experienceExists(
+    userId,
+    schools,
+    ["education"]
+  )})`;
+}
+
 function experienceExists(userId: string, values: string[], kinds: readonly string[]): SQL {
   return sql`exists (
     select 1 from contact_experiences ce
@@ -179,15 +193,7 @@ function filterCondition(
   const industries = clean(filters.industries);
   if (industries.length) parts.push(anyLike(sql`lower(coalesce(contacts.industry, ''))`, industries));
   const schools = clean(filters.schools);
-  if (schools.length) {
-    parts.push(
-      sql`(${anyLike(sql`lower(coalesce(contacts.school, ''))`, schools)} or ${experienceExists(
-        userId,
-        schools,
-        ["education"]
-      )})`
-    );
-  }
+  if (schools.length) parts.push(schoolCondition(userId, schools));
   const locations = clean(filters.locations);
   if (locations.length) parts.push(anyLike(sql`lower(coalesce(contacts.location, ''))`, locations));
 
