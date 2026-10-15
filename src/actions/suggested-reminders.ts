@@ -53,7 +53,8 @@ export async function listSuggestedReminders(options?: {
             eq(suggestedReminders.status, "pending")
           ),
     orderBy: [asc(suggestedReminders.dueDate)],
-    limit: options?.limit ?? 50,
+    // Bounded: a server action's arguments come from any client.
+    limit: Math.min(Math.max(Math.trunc(Number(options?.limit) || 50), 1), 200),
   });
 
   if (!rows.length) return [];

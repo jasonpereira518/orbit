@@ -39,6 +39,7 @@ import {
   serializeMicrosoftPurposes,
   type MicrosoftPurpose,
 } from "@/lib/microsoft-scopes";
+import { dropCloudNoteSource } from "@/lib/cloud-notes/sources";
 
 const OAUTH_STATE_COOKIE = "orbit_outlook_oauth_state";
 
@@ -223,6 +224,7 @@ export async function disconnectOutlook(opts: { alsoDelete?: boolean } = {}) {
   // id would otherwise never dedupe against the orphaned row and seedCalendarSources would
   // double the calendar.
   await deleteCalendarSourcesForProvider(userId, "microsoft");
+  await dropCloudNoteSource(userId, "microsoft");
   const extra = DISCONNECT_DELETE_CATEGORIES.outlook;
   if (opts.alsoDelete === true && extra.length > 0) {
     await purgeUserData(userId, { only: extra });

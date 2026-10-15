@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { after } from "next/server";
 import Link from "next/link";
 import { getLatestFinishedImport, listImports } from "@/actions/imports";
@@ -23,6 +24,9 @@ import { RenderStamp } from "@/components/layout/render-stamp";
 export const maxDuration = 300;
 
 export default async function ImportsPage() {
+  const gate = await pageVisibilityGate("page.imports");
+  if (gate) return gate;
+
   // Keep the history paint fast; refresh subscriptions after the response.
   after(() => {
     void syncStaleCalendarSubscriptions().catch(() => {});

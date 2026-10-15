@@ -1,6 +1,6 @@
-import { and, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { aiSuggestions, captureJobs, contacts, reminders, suggestedReminders } from "@/db/schema";
+import { aiSuggestions, captureJobs, cloudNoteFiles, contacts, reminders, suggestedReminders } from "@/db/schema";
 import { entitlementsFromSettings, getEntitlements } from "@/lib/entitlements";
 import {
   getAccountAlerts,
@@ -34,7 +34,7 @@ const UPCOMING_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
 export async function loadNotificationPanel(
   userId: string,
   now: Date,
-  opts: { withAlerts: boolean; radar?: boolean } & Partial<AccountHealthContext> = { withAlerts: true }
+  opts: { withAlerts: boolean; radar?: boolean; cloudNotes?: boolean } & Partial<AccountHealthContext> = { withAlerts: true }
 ) {
   const db = await getDb();
   const context: AccountHealthContext | undefined = opts.settings
@@ -53,6 +53,7 @@ export async function loadNotificationPanel(
     alerts,
     captureRows,
     radarRows,
+    cloudNoteRows,
   ] = await Promise.all([
     db.query.reminders.findMany({
       where: and(eq(reminders.userId, userId), eq(reminders.status, "pending")),
@@ -123,13 +124,35 @@ export async function loadNotificationPanel(
            WHERE r.user_id = ${userId} AND r.status = 'pending' AND r.expires_at > ${now}
         `)
       : null,
+    // Cloud notes: docs found and waiting, plus ones the scan extracted that nobody has been
+    // told about yet. Same gating as Radar — off unless the viewer can use the feature.
+    opts.cloudNotes
+      ? db
+          .select({
+            id: cloudNoteFiles.id,
+            fileId: cloudNoteFiles.fileId,
+            name: cloudNoteFiles.name,
+            provider: cloudNoteFiles.provider,
+            status: cloudNoteFiles.status,
+            notifiedAt: cloudNoteFiles.notifiedAt,
+          })
+          .from(cloudNoteFiles)
+          .where(
+            and(
+              eq(cloudNoteFiles.userId, userId),
+              sql`(${cloudNoteFiles.status} = 'found' OR (${cloudNoteFiles.status} = 'queued' AND ${cloudNoteFiles.notifiedAt} IS NULL AND ${cloudNoteFiles.detectedBy} <> 'picked'))`
+            )
+          )
+          .orderBy(desc(cloudNoteFiles.modifiedAt))
+          .limit(50)
+      : [],
   ]);
   const radarRow = radarRows ? rowsOf<{ n: number; drafts: number; names: string[] | null }>(radarRows)[0] : undefined;
   const radarCount = Number(radarRow?.n ?? 0);
 
   type PanelItem = {
     id: string;
-    kind: "reminder" | "follow_up" | "suggestion" | "suggested_reminder" | "capture_review";
+    kind: "reminder" | "follow_up" | "suggestion" | "suggested_reminder" | "capture_review" | "cloud_notes";
     title: string;
     body: string | null;
     url: string;
@@ -278,6 +301,25 @@ export async function loadNotificationPanel(
     });
   }
 
+  // One row for every doc waiting, never one per doc: a first look-back can find a dozen.
+  const found = cloudNoteRows.filter((r) => r.status === "found");
+  if (found.length > 0) {
+    const providers = new Set(found.map((r) => r.provider));
+    const where = providers.size > 1 ? "Drive and OneDrive" : providers.has("google") ? "Google Drive" : "OneDrive";
+    items.push({
+      id: "cloud-notes:found",
+      kind: "cloud_notes",
+      title: `${found.length} meeting ${found.length === 1 ? "note" : "notes"} found in ${where}`,
+      body: found
+        .slice(0, 2)
+        .map((r) => r.name)
+        .join(", ") + (found.length > 2 ? ` and ${found.length - 2} more` : ""),
+      url: "/capture?mode=cloud&review=1",
+      dueAt: null,
+      urgency: "info",
+    });
+  }
+
   const urgencyRank = { due: 0, upcoming: 1, info: 2 } as const;
   items.sort((a, b) => {
     const ur = urgencyRank[a.urgency] - urgencyRank[b.urgency];
@@ -314,6 +356,18 @@ export async function loadNotificationPanel(
      */
     alerts,
     alertDot: hasErrorAlert(alerts),
+    /**
+     * Docs nobody has been toasted about yet — the watcher toasts once, then stamps them.
+     * Absent when empty, like `radar`.
+     */
+    cloudNotes: cloudNoteRows.some((r) => !r.notifiedAt)
+      ? {
+          newFound: cloudNoteRows
+            .filter((r) => r.status === "found" && !r.notifiedAt)
+            .map((r) => ({ id: r.id, name: r.name, provider: r.provider, fileId: r.fileId })),
+          newExtracted: cloudNoteRows.filter((r) => r.status === "queued").map((r) => ({ id: r.id, name: r.name })),
+        }
+      : undefined,
   };
 }
 

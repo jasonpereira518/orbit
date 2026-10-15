@@ -60,6 +60,7 @@ export function FollowUpDraftSheet({
 }) {
   const router = useRouter();
   const [draft, setDraft] = useState("");
+  const [aiDraft, setAiDraft] = useState<string | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const [sendOptions, setSendOptions] =
     useState<ContactFollowUpSendOptions | null>(null);
@@ -72,6 +73,7 @@ export function FollowUpDraftSheet({
     if (!open) return;
     const session = ++sessionRef.current;
     setDraft("");
+    setAiDraft(null);
     setAiError(null);
     setSendOptions(null);
 
@@ -96,7 +98,10 @@ export function FollowUpDraftSheet({
       // Opening the sheet shows the draft already written for this context; only
       // Regenerate below pays for a new one. A draft handed in (Radar's) needs no read at all.
       const handed = initialDraft?.trim();
-      if (handed) setDraft(handed);
+      if (handed) {
+        setDraft(handed);
+        setAiDraft(handed);
+      }
       const draftRead = handed
         ? Promise.resolve()
         : draftContactFollowUp(contactId, { reuse: true, intent }).then(
@@ -105,6 +110,7 @@ export function FollowUpDraftSheet({
               if (!result.ok) return setAiError(result.error);
               setAiError(null);
               setDraft(result.body);
+              setAiDraft(result.body);
             },
             report
           );
@@ -125,6 +131,7 @@ export function FollowUpDraftSheet({
         }
         setAiError(null);
         setDraft(result.body);
+        setAiDraft(result.body);
         toast.success("Draft ready");
       } catch (err) {
         toast.error(
@@ -213,6 +220,7 @@ export function FollowUpDraftSheet({
           <FollowUpDraftComposer
             contactName={contactName}
             draft={draft}
+            aiDraft={aiDraft}
             onDraftChange={setDraft}
             sendOptions={sendOptions}
             pending={pending}

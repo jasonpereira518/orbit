@@ -1,4 +1,5 @@
 import { completeJson } from "@/lib/ai";
+import { fenceUntrusted } from "@/lib/ai-security";
 import { senderProfileBlock } from "@/lib/sender-profile";
 import { loadSenderBio } from "@/lib/sender-profile-server";
 import { withWritingPreferences } from "@/lib/writing-instructions";
@@ -135,7 +136,7 @@ Return JSON: { "subject": string|null, "body": string }`,
     user: `${withWritingPreferences(goalsBlock, input.writingInstructions)}
 ${senderBlock ? `${senderBlock}\n` : ""}
 Prospect:
-${prospectBlock}
+${fenceUntrusted("PROSPECT", prospectBlock)}
 
 ${stepBlock}
 
