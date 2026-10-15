@@ -56,6 +56,8 @@ const soakMs = Number(flag("soak-ms", "0"));
 const out = flag("out", null);
 /** Diagnosis only: with --soak-ms, diff heap snapshots (first sample vs end) by constructor. */
 const heapDiff = argv.includes("--heap-diff");
+/** Diagnosis only: with --heap-diff, also write the end-of-soak snapshot here (for retainer paths in DevTools). */
+const saveSnapshot = flag("save-snapshot", null);
 /** Diagnosis only: CPU-profile the recorder tab during scenario B and print the top self time. */
 const profile = argv.includes("--profile");
 
@@ -475,7 +477,7 @@ async function runOnce(build) {
 }
 
 /** Self size and count per node name (constructor / string / closure), from a full heap snapshot. */
-async function heapByConstructor(cdp, rec) {
+async function heapByConstructor(cdp, rec, save = null) {
   const chunks = [];
   const on = (p) => chunks.push(p.chunk);
   cdp.on("HeapProfiler.addHeapSnapshotChunk", on, rec.sessionId);
@@ -483,7 +485,9 @@ async function heapByConstructor(cdp, rec) {
   await rec.s("HeapProfiler.takeHeapSnapshot", { reportProgress: false });
   const listener = cdp.listeners?.find((l) => l.fn === on);
   if (listener) listener.method = "(done)";
-  const snap = JSON.parse(chunks.join(""));
+  const raw = chunks.join("");
+  if (save) writeFileSync(save, raw);
+  const snap = JSON.parse(raw);
   const f = snap.snapshot.meta.node_fields, types = snap.snapshot.meta.node_types[0];
   const iType = f.indexOf("type"), iName = f.indexOf("name"), iSize = f.indexOf("self_size"), n = f.length;
   const out = new Map();
@@ -525,7 +529,7 @@ async function soak(build) {
       console.error(`[${build.label}] soak ${samples.at(-1).atS}s heap ${samples.at(-1).heapMbAfterGc}MB cpu ${w.cpuPct}% rss ${w.rssMb}MB`);
     }
     if (heapDiff) {
-      const end = await heapByConstructor(cdp, rec);
+      const end = await heapByConstructor(cdp, rec, saveSnapshot);
       const growth = [...end]
         .map(([k, v]) => [k, v.size - (firstSnapshot.get(k)?.size ?? 0), v.count - (firstSnapshot.get(k)?.count ?? 0)])
         .sort((a, b) => b[1] - a[1])
