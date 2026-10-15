@@ -1,4 +1,5 @@
 import { SETTINGS_SECTIONS } from "@/components/settings/sections";
+import { PLANS, PLAN_SHORT_LABELS, type Plan } from "@/lib/plans/plan-config";
 
 /**
  * The catalogue of things an operator can hide from every user at once.
@@ -371,6 +372,55 @@ export function effectiveComingSoonKeys(flagRows: Iterable<string>): Set<string>
  * `order:page.a,page.b,...`. Like the coming-soon overrides, this avoids a schema change.
  */
 export const ORDER_FLAG_PREFIX = "order:";
+
+/**
+ * Tier rules: `tiers:<pageKey>:<plan,plan>` — the plans allowed to open that page. No row
+ * means every plan may. One more row shape in `app_surface_flags`, like the overrides above,
+ * so limiting a page to some tiers needs no schema change.
+ */
+export const TIERS_FLAG_PREFIX = "tiers:";
+
+/** Pages an operator may limit to some tiers: the same set that can be marked coming soon. */
+export const canTierLock = canMarkComingSoon;
+
+/** `tiers:` rows → page key → allowed plans. Pure; ignores malformed or unknown rows. */
+export function parseTierRules(flagRows: Iterable<string>): Map<string, Plan[]> {
+  const rules = new Map<string, Plan[]>();
+  for (const row of flagRows) {
+    if (!row.startsWith(TIERS_FLAG_PREFIX)) continue;
+    const rest = row.slice(TIERS_FLAG_PREFIX.length);
+    const split = rest.lastIndexOf(":");
+    if (split === -1) continue;
+    const key = rest.slice(0, split);
+    const listed = rest.slice(split + 1).split(",");
+    const plans = PLANS.filter((p) => listed.includes(p));
+    if (canTierLock(key) && plans.length > 0) rules.set(key, plans);
+  }
+  return rules;
+}
+
+/**
+ * The pages `plan` may not open under `rules`, each with the plans that may. What the nav
+ * locks and the gates refuse for one viewer.
+ */
+export function tierLockedFor(
+  rules: ReadonlyMap<string, readonly Plan[]>,
+  plan: Plan
+): Map<string, Plan[]> {
+  const locked = new Map<string, Plan[]>();
+  for (const [key, plans] of rules) if (!plans.includes(plan)) locked.set(key, [...plans]);
+  return locked;
+}
+
+/** The plan a tier-limited page's nav tag names: the cheapest paid plan that opens it. */
+export function tierTagPlan(plans: readonly Plan[]): Plan {
+  return plans.find((p) => p !== "free") ?? plans[0];
+}
+
+/** "Radar — Max and Lifetime only", the tag's tooltip. */
+export function tierTagTitle(label: string, plans: readonly Plan[]): string {
+  return `${label} — ${plans.map((p) => PLAN_SHORT_LABELS[p]).join(" and ")} only`;
+}
 
 /**
  * `items` sorted by the operator's order (surface keys). Items the order does not mention —
