@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
@@ -13,6 +14,9 @@ export default async function NoteBatchPage({
 }: {
   params: Promise<{ batchId: string }>;
 }) {
+  const gate = await pageVisibilityGate("page.capture");
+  if (gate) return gate;
+
   const { batchId } = await params;
   const batch = await getNoteBatch(batchId);
   if (!batch) notFound();
