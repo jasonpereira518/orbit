@@ -27,6 +27,7 @@ import type {
 } from "@/lib/extension/contract";
 import { parseAiJson, userCanUseAi } from "@/lib/ai";
 import { cachedCompleteJson } from "@/lib/ai-result-cache";
+import { fenceUntrusted } from "@/lib/ai-security";
 import { gateSkips, gateText } from "@/lib/decisions/gates";
 import { openEngines, type Engines } from "@/lib/decisions/engine";
 import { daysAgo } from "@/lib/duplicates";
@@ -553,7 +554,7 @@ function userPrompt(ctx: StarterContext, limit: number): string {
   const blocks: string[] = [];
 
   if (ctx.contact) {
-    blocks.push(buildProfileBlock(ctx.contact as ContactRow));
+    blocks.push(fenceUntrusted("CONTACT", buildProfileBlock(ctx.contact as ContactRow)));
     const transcript = buildConversationTranscript(
       ctx.recentInteractions.map((i) => ({
         interactionType: i.interactionType,
@@ -567,7 +568,7 @@ function userPrompt(ctx: StarterContext, limit: number): string {
         rawNotes: i.rawNotes,
       }))
     );
-    if (transcript) blocks.push(`Recent conversations:\n${transcript}`);
+    if (transcript) blocks.push(`Recent conversations:\n${fenceUntrusted("HISTORY", transcript)}`);
     if (ctx.tags.length) blocks.push(`Tags: ${ctx.tags.join(", ")}`);
     if (ctx.openReminders.length) {
       blocks.push(

@@ -184,6 +184,18 @@ export async function logRecruiter(input: LogRecruiterInput) {
         where: eq(recruiters.id, recruiterId),
       });
       if (!existing) throw new Error("Recruiter not found");
+      // Only a row this viewer could already see: one they created or link, or one in the
+      // pool while they share. Any other id — someone's private recruiter — reads as missing.
+      const visible =
+        existing.createdByUserId === userId ||
+        Boolean(
+          await db.query.userRecruiterLinks.findFirst({
+            where: and(eq(userRecruiterLinks.userId, userId), eq(userRecruiterLinks.recruiterId, existing.id)),
+            columns: { id: true },
+          })
+        ) ||
+        (await pooledIdsForViewer(userId, [existing.id])).has(existing.id);
+      if (!visible) throw new Error("Recruiter not found");
       // Patch THIS row directly: going back through upsertCanonicalRecruiter would let an
       // email match — and then patch — a different recruiter than the one being logged.
       // Only a sharing user may fill gaps on the shared row at all: firm and specialty are

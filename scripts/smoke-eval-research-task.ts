@@ -8,7 +8,8 @@
  *
  *  - the network and the notes seed, and the notes index through the real sweep;
  *  - routing is scored for EVERY case even though every answer fails — it is decided before
- *    any answer is written, and the fixture's expectations must match the router exactly;
+ *    any answer is written. With no key the parse fails and every case gets the one-pass
+ *    default, so accuracy must equal the fixture's share of one-pass cases exactly;
  *  - a case with no grant fails as a scored miss, not as a crash that loses the whole run;
  *  - the task leaves its user empty, so the chat task in the same invocation starts clean.
  *
@@ -21,6 +22,7 @@ import { getDb } from "../src/db";
 import { chatThreads, contacts, interactions, memoryChunks } from "../src/db/schema";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { runResearchTask } from "./lib/eval-ai-tasks";
+import researchFixture from "./eval-fixtures/ai-research-eval.json";
 
 const USER = "smoke-eval-research-user";
 
@@ -39,9 +41,11 @@ async function main() {
   const result = await runResearchTask({ userId: USER, log: (l) => lines.push(l) });
 
   check("every fixture case ran", result.cases === 10, String(result.cases));
+  const onePassShare =
+    researchFixture.cases.filter((c) => c.expectDepth === "single").length / researchFixture.cases.length;
   check(
-    "routing was scored for every case, and matches the fixture exactly",
-    result.metrics.routingAccuracy === 1,
+    "routing was scored for every case, and keyless it is the one-pass default exactly",
+    result.metrics.routingAccuracy === onePassShare,
     `${result.metrics.routingAccuracy} — ${lines.filter((l) => l.includes("research/")).join(" | ")}`
   );
   check(

@@ -6,6 +6,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { onReconnect, useConnectivity } from "@/lib/connectivity-store";
 import { isNetworkError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
+import { reportClientError } from "@/lib/sentry-lazy";
 
 /**
  * The one error boundary body, shared by every route group's `error.tsx`.
@@ -13,10 +14,10 @@ import { cn } from "@/lib/utils";
  * Reports the error to Sentry from the browser (a render error inside a boundary never
  * reaches `onRequestError` on the server), then offers a retry and a way home.
  *
- * Sentry is imported inside the effect, never at the top. This boundary is on every page,
- * and its server render resolves `@sentry/nextjs` to the whole Node SDK (~1.7 MB) — loaded
- * on every cold start for an effect that only ever runs in the browser, where
- * `instrumentation-client.ts` has already loaded the SDK and the import is free.
+ * Sentry is reached through `sentry-lazy.ts`, never imported at the top. This boundary is on
+ * every page, and its server render would resolve `@sentry/nextjs` to the whole Node SDK
+ * (~1.7 MB) — loaded on every cold start for an effect that only ever runs in the browser.
+ * In the browser the loader reuses the SDK if it has loaded, or loads it to report this.
  */
 export function ErrorFallback({
   error,
@@ -35,7 +36,7 @@ export function ErrorFallback({
 
   useEffect(() => {
     console.error(error);
-    if (!offline) void import("@sentry/nextjs").then((Sentry) => Sentry.captureException(error));
+    if (!offline) reportClientError(error);
     // Decided once per error: a report must not fire later just because the connection
     // came back while this screen was up.
     // eslint-disable-next-line react-hooks/exhaustive-deps

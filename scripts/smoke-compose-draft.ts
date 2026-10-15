@@ -9,6 +9,7 @@ import {
   readComposeDraft,
   writeComposeDraft,
 } from "../src/lib/compose-draft";
+import { forgetPreviousAccount } from "../src/lib/local-data-owner";
 
 function check(label: string, ok: boolean, detail?: string) {
   if (!ok) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -64,4 +65,21 @@ check(
     return readComposeDraft(broken, key) === null;
   })()
 );
+// A different account signing in on the same browser (src/lib/local-data-owner.ts).
+{
+  const local = memory();
+  const session = memory();
+  check("the first account on a browser wipes nothing", forgetPreviousAccount("u1", [local, session]) === false);
+  writeComposeDraft(local, composeDraftKey("u1", "c1"), draft, Date.now());
+  local.setItem("orbit:meeting-notes:s1", "Maya is leaving Acme");
+  local.setItem("orbit:kept-notifications:v1", "[]");
+  local.setItem("orbit:chat-rail-open", "1");
+  session.setItem("orbit:chat-send-resume", "{}");
+  check("the same account coming back keeps its drafts", forgetPreviousAccount("u1", [local, session]) === false && local.getItem(composeDraftKey("u1", "c1")) !== null);
+  check("a different account wipes the last one's data", forgetPreviousAccount("u2", [local, session]) === true);
+  check("…drafts, notes and notifications are gone", local.getItem(composeDraftKey("u1", "c1")) === null && local.getItem("orbit:meeting-notes:s1") === null && local.getItem("orbit:kept-notifications:v1") === null);
+  check("…from session storage too", session.getItem("orbit:chat-send-resume") === null);
+  check("…and plain preferences stay", local.getItem("orbit:chat-rail-open") === "1");
+  check("blocked storage never throws out", forgetPreviousAccount("u3", [broken]) === false);
+}
 console.log("\nAll compose-draft checks passed.");

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { reportClientError } from "@/lib/sentry-lazy";
 
 /**
  * Replaces the root layout when IT throws. Must carry its own <html>/<body> and cannot
@@ -14,8 +15,8 @@ export default function GlobalError({
   unstable_retry: () => void;
 }) {
   useEffect(() => {
-    // Imported here, not at the top: see `ErrorFallback` — the server render must not load the SDK.
-    void import("@sentry/nextjs").then((Sentry) => Sentry.captureException(error));
+    // Through the lazy loader: the server render must not load the SDK (see `sentry-lazy.ts`).
+    reportClientError(error);
   }, [error]);
 
   return (

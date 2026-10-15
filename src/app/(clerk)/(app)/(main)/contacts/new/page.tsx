@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import Link from "next/link";
 import { ContactForm } from "@/components/contacts/contact-form";
 import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
@@ -10,6 +11,9 @@ export default async function NewContactPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  const gate = await pageVisibilityGate("page.contacts");
+  if (gate) return gate;
+
   // "Add" from a meeting's prep card: the guest's name and address, prefilled.
   const params = await searchParams;
   const one = (v: string | string[] | undefined) => (typeof v === "string" ? v.trim().slice(0, 200) : "");
