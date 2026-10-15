@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Lock, Mail, Phone, ExternalLink } from "lucide-react";
@@ -22,6 +23,9 @@ export default async function RecruiterDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const gate = await pageVisibilityGate("page.recruiters");
+  if (gate) return gate;
+
   const { id } = await params;
   const { canUseRecruiters } = await getEntitlements(await requireUserId());
   if (!canUseRecruiters) return <RecruitersLocked />;

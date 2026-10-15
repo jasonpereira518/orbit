@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { Suspense } from "react";
 import { getContactLabel } from "@/actions/contacts";
 import { getActiveCaptureJob, getActiveCaptureJobs } from "@/actions/capture-jobs";
@@ -21,6 +22,9 @@ export default async function CapturePage({
 }: {
   searchParams: Promise<{ contactId?: string; mode?: string }>;
 }) {
+  const gate = await pageVisibilityGate("page.capture");
+  if (gate) return gate;
+
   const params = await searchParams;
   const requestedContactId = params.contactId || null;
   const modeParam: CaptureMode | null =
