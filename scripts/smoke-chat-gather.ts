@@ -141,6 +141,12 @@ async function main() {
     labels.some((l) => l.includes("Searching your notes for") && l.includes("Series A")),
     JSON.stringify(labels)
   );
+  const lookup = seen.filter((st) => st.id === "gather:1").at(-1);
+  check(
+    "each lookup is its own step, finished with what it found",
+    lookup?.status === "done" && /^Searched your notes for .+ → (\d+ results?|nothing found)$/.test(lookup.label),
+    JSON.stringify(lookup)
+  );
   const last = seen.filter((st) => st.kind === "gather").at(-1);
   check(
     "and finishes counting only the lookups that worked",

@@ -108,6 +108,24 @@ function digest(ctx: ChatContext, today: string): string {
     .join("\n\n");
 }
 
+/** "Searching your notes…" → "Searched your notes…", for a lookup that finished. */
+function pastTense(label: string): string {
+  return label.replace(/^(Search|Check|Look)ing\b/, "$1ed").replace(/^Reading\b/, "Read");
+}
+
+/** What one lookup came back with, as the end of its step line. */
+function describeOutcome(out: { ok: boolean; result: unknown }): string {
+  if (!out.ok) return "failed";
+  const r = out.result as Record<string, unknown> | unknown[] | null;
+  const rows = Array.isArray(r)
+    ? r
+    : r && typeof r === "object"
+      ? (Object.values(r).find(Array.isArray) as unknown[] | undefined)
+      : undefined;
+  if (!rows) return "done";
+  return rows.length ? `${plural(rows.length, "result")}` : "nothing found";
+}
+
 /** The step line for one lookup — model-chosen text, so sanitized and shortened. */
 function describeCall(call: ToolCall, ctx: ChatContext): string {
   const args = (call.args && typeof call.args === "object" ? call.args : {}) as Record<string, unknown>;
@@ -331,13 +349,30 @@ export async function gatherEvidence(
         // The account read retrieval already made; the grant is still this driver's own.
         access: ctx.access,
       }));
-    outcome = await runToolLoop(driver, executorFor(userId, tools), {
+    // Every lookup is its own step, finished with what it found, so the trail shows the whole
+    // research — not one line relabelled until only the last lookup is left on it.
+    const run = executorFor(userId, tools);
+    let lookups = 0;
+    const narrated = async (call: ToolCall) => {
+      const id = `gather:${++lookups}`;
+      const label = describeCall(call, ctx);
+      steps.start("gather", label, undefined, id);
+      try {
+        const out = await run(call);
+        steps.done("gather", { id, label: `${pastTense(label)} → ${describeOutcome(out)}` });
+        return out;
+      } catch (err) {
+        // The loop reports the throw to the model; the trail must not leave it spinning.
+        steps.done("gather", { id, label: `${pastTense(label)} → failed` });
+        throw err;
+      }
+    };
+    outcome = await runToolLoop(driver, narrated, {
       maxRounds: MAX_ROUNDS,
       maxCalls: MAX_CALLS,
       deadline: options.deadline,
       signal: options.signal,
       maxResultChars: MAX_RESULT_CHARS,
-      onCall: (call) => steps.update("gather", { label: describeCall(call, ctx) }),
     });
   } catch {
     // No research grant, a provider that is down: the answer runs from retrieval alone, as

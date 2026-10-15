@@ -208,6 +208,8 @@ type AssistantMessage = {
   persisted?: boolean;
   /** The user cut this answer short. */
   stopped?: boolean;
+  /** The stream failed partway, with this message; what arrived before it stays on screen. */
+  failed?: string;
   /**
    * Drafts on this answer that have already been emailed, by contact id → send time. Read
    * from the timeline when a thread loads, so a card cannot offer to send again what has gone.
@@ -1042,10 +1044,18 @@ export function ChatPanel({
               // A stop is the user's own doing, not a failure: keep whatever arrived and
               // say plainly that it was cut short rather than deleting it and apologising.
               if (controller.signal.aborted) return;
-              // The bubble is about to be removed; there is nothing to reveal into.
-              smoother.cancel();
-              toast.error(message);
-              setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
+              if (placed) {
+                // Work already reached the screen — the trail, maybe half an answer. Keep it,
+                // say what went wrong beneath it, and put the question back to try again,
+                // rather than wiping everything the person just watched happen.
+                smoother.flush();
+                patch((m) => ({ ...m, streaming: false, failed: message }));
+              } else {
+                // Nothing arrived; there is nothing to keep or reveal into.
+                smoother.cancel();
+                toast.error(message);
+                setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
+              }
               resetQuestion(q);
             },
           },
@@ -2039,7 +2049,7 @@ const AssistantBubble = memo(function AssistantBubble({
     <div className="flex justify-start">
       <div className="w-full min-w-0 max-w-[92%] space-y-3">
         {steps.length > 0 && (
-          <ChatActivity steps={steps} state={msg.streaming ? "live" : "final"} />
+          <ChatActivity steps={steps} state={msg.streaming ? "live" : "final"} answerStarted={Boolean(msg.answer)} />
         )}
         {msg.answer && (
           <div className="text-sm leading-relaxed text-foreground">
@@ -2053,6 +2063,11 @@ const AssistantBubble = memo(function AssistantBubble({
         {msg.stopped && (
           <p className="text-xs text-muted-foreground">
             Stopped — this turn wasn’t saved.
+          </p>
+        )}
+        {msg.failed && (
+          <p role="alert" className="text-xs text-destructive">
+            {msg.failed.replace(/[.!?]?$/, ".")} This turn wasn’t saved — your question is back in the box to try again.
           </p>
         )}
         {msg.recommendations.length > 0 && (
