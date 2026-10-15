@@ -23,7 +23,7 @@ import {
   type SenderKind,
 } from "../src/lib/recruiter-triage";
 
-const ME = "jasonpereira518@gmail.com";
+const ME = "candidate@gmail.example";
 let failures = 0;
 
 function check(label: string, condition: boolean, detail?: string) {

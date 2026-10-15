@@ -18,6 +18,7 @@ import { stashSendResume } from "@/lib/chat-send-resume";
 import type { MailboxId } from "@/lib/email/sender";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { DraftLinkWarning } from "@/components/follow-up/draft-link-warning";
 
 /**
  * The confirmation step before a chat draft is emailed from the user's own Gmail.
@@ -245,6 +246,7 @@ function SendPanel({
             <p className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border/70 bg-muted/40 p-2.5 text-sm">
               {finalBody}
             </p>
+            <DraftLinkWarning text={finalBody} />
           </div>
 
           <Blocker ctx={ctx} name={name} contactId={contactId} onConnect={connect} busy={busy} />

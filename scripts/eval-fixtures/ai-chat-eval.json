@@ -1,4 +1,13 @@
 {
+  "$comment": "Whole chat answers over the contact-search-eval.json network. mustMention: contacts the answer must name. expectList: a list question whose complete filtered roster (chat-lanes filterLane) must reach the prompt with this total; `bulk` seeds 20 Duke alumni so it is more than the 12 a relevance rank keeps. expectCount: a number the answer must state. expectPerson: a person question whose name must resolve to this contact and pin it (chat-lanes personLane).",
+  "bulk": [
+    {
+      "count": 20,
+      "namePrefix": "Duke Alum",
+      "school": "Duke University",
+      "location": "Raleigh"
+    }
+  ],
   "cases": [
     {
       "id": "chat-01-company-stripe",
@@ -110,6 +119,47 @@
       "mustMention": [
         "erik@spotify.example"
       ]
+    },
+    {
+      "id": "chat-16-list-duke",
+      "question": "Everyone I know who went to Duke",
+      "mustMention": [],
+      "expectList": {
+        "total": 20
+      }
+    },
+    {
+      "id": "chat-17-count-duke",
+      "question": "How many people do I know from Duke?",
+      "mustMention": [],
+      "expectList": {
+        "total": 20
+      },
+      "expectCount": 20
+    },
+    {
+      "id": "chat-18-person-first-name",
+      "question": "What do I know about Maya?",
+      "mustMention": [
+        "maya@stripe.example"
+      ],
+      "expectPerson": "maya@stripe.example"
+    },
+    {
+      "id": "chat-19-person-misspelled",
+      "question": "Tell me about Jim Okafor",
+      "mustMention": [
+        "james@sequoia.example"
+      ],
+      "expectPerson": "james@sequoia.example"
+    },
+    {
+      "id": "chat-20-person-no-accent",
+      "question": "What does Tomas Rivera do?",
+      "mustMention": [
+        "tom@datadog.example"
+      ],
+      "expectPerson": "tom@datadog.example"
     }
   ]
 }
