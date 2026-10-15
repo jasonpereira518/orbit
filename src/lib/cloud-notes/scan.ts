@@ -271,6 +271,39 @@ export async function runCloudNotesPass(deps: ScanDeps = {}): Promise<CloudNotes
   return stats;
 }
 
+/** Opening the app re-checks a drive whose last scan is at least this old. */
+export const OPEN_RESCAN_MS = 60 * 60_000;
+
+/**
+ * Claim this person's drives not scanned in the last hour — the same lease as the cron, so an
+ * app open and a cron run never scan one drive at once. A drive parked on a dead grant stays
+ * parked until its retry time: opening the app cannot fix a revoked permission.
+ */
+export async function claimStaleSourcesForUser(userId: string, now: Date): Promise<CloudProvider[]> {
+  const db = await getDb();
+  const lease = new Date(now.getTime() + LEASE_MS);
+  const staleBefore = new Date(now.getTime() - OPEN_RESCAN_MS);
+  const rows = rowsOf<{ provider: CloudProvider }>(
+    await db.execute(sql`
+      UPDATE cloud_note_sources SET lease_until = ${lease}
+       WHERE user_id = ${userId}
+         AND (last_scan_at IS NULL OR last_scan_at <= ${staleBefore})
+         AND (lease_until IS NULL OR lease_until < ${now})
+         AND (last_error IS NULL OR next_scan_at <= ${now})
+      RETURNING provider
+    `),
+  );
+  return rows.map((r) => r.provider);
+}
+
+/** On app open: scan whichever of this person's drives went an hour or more without a scan. */
+export async function scanStaleCloudNotesForUser(userId: string, deps: ScanDeps = {}): Promise<{ scanned: number; found: number }> {
+  const providers = await claimStaleSourcesForUser(userId, deps.now ?? new Date());
+  let found = 0;
+  for (const provider of providers) found += (await scanSource(userId, provider, deps)).found;
+  return { scanned: providers.length, found };
+}
+
 /** "Check now": every drive this person has, due or not. */
 export async function scanCloudNotesForUser(userId: string, deps: ScanDeps = {}): Promise<{ found: number }> {
   const db = await getDb();

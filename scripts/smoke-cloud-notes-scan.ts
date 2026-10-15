@@ -12,7 +12,15 @@ import "./smoke/_env";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { captureJobs, cloudNoteFiles, cloudNoteSources, userSettings } from "../src/db/schema";
-import { claimDueSources, MAX_AUTO_EXTRACT, MAX_READS, scanSource, type ScanDeps } from "../src/lib/cloud-notes/scan";
+import {
+  claimDueSources,
+  claimStaleSourcesForUser,
+  MAX_AUTO_EXTRACT,
+  MAX_READS,
+  scanSource,
+  scanStaleCloudNotesForUser,
+  type ScanDeps,
+} from "../src/lib/cloud-notes/scan";
 import { NO_ENGINES } from "../src/lib/decisions/engine";
 import { loadNotificationPanel } from "../src/lib/notification-panel";
 import { ensureUserSettings } from "../src/lib/user-settings";
@@ -136,6 +144,19 @@ async function main() {
   const off = await loadNotificationPanel(USER, new Date(), { withAlerts: false });
   check("no row when the feature is off for the viewer", !off.items.some((i) => i.kind === "cloud_notes") && off.cloudNotes === undefined);
 
+  console.log("\nOpening the app");
+  const lastScan = (await source()).lastScanAt!;
+  const after = (min: number) => new Date(lastScan.getTime() + min * 60_000);
+  check("a drive scanned half an hour ago is left alone", (await claimStaleSourcesForUser(USER, after(30))).length === 0);
+  const opened = await claimStaleSourcesForUser(USER, after(61));
+  check("an hour away claims the drive", opened.join() === "google");
+  check("…once: a second open during the scan claims nothing", (await claimStaleSourcesForUser(USER, after(61.5))).length === 0);
+  await db.update(cloudNoteSources).set({ leaseUntil: null }).where(eq(cloudNoteSources.userId, USER));
+  const pass5 = fakeDrive([], { s4: { docs: [{ id: "doc-open-aaaa", name: "Intro call", text: NOTES }], next: "s5" } });
+  const onOpen = await scanStaleCloudNotesForUser(USER, deps(pass5.fetchImpl, after(90)));
+  check("the open scan reads the changes and files the new notes", onOpen.scanned === 1 && onOpen.found === 1);
+  check("…and the drive is fresh again", (await source()).lastScanAt?.getTime() === after(90).getTime() && (await source()).cursor === "s5");
+
   console.log("\nA dead grant");
   const dead: typeof fetch = async () => new Response("", { status: 401 });
   const t5 = new Date("2026-10-14T12:04:00Z");
@@ -143,6 +164,7 @@ async function main() {
   src = await source();
   check("parks the drive instead of failing", r5.found === 0 && Boolean(src.lastError) && src.leaseUntil === null);
   check("for a day", src.nextScanAt.getTime() === t5.getTime() + 24 * 60 * 60_000);
+  check("opening the app does not retry a dead grant", (await claimStaleSourcesForUser(USER, new Date("2026-10-14T15:00:00Z"))).length === 0);
 
   console.log("\nThe lease");
   check("a parked drive is not due", (await claimDueSources(10, new Date("2026-10-14T13:00:00Z"))).length === 0);

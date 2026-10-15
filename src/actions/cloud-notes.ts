@@ -6,21 +6,22 @@
  * released — a Server Function answers a direct POST whether or not the tab is shown.
  */
 import { after } from "next/server";
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { cloudNoteFiles, cloudNoteSources, gmailConnections, outlookConnections, userSettings } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { cloudAccessToken, isCloudProvider, listRecentFiles, type CloudFile, type CloudProvider } from "@/lib/cloud-files";
 import { cloudReadError, extractCloudFiles, startCaptureRuns, type CloudExtractResult } from "@/lib/cloud-notes/extract";
-import { scanCloudNotesForUser } from "@/lib/cloud-notes/scan";
+import { OPEN_RESCAN_MS, scanCloudNotesForUser, scanStaleCloudNotesForUser } from "@/lib/cloud-notes/scan";
 import { grantCoversCloudNotes } from "@/lib/cloud-notes/sources";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
 import { asActionResult, UserFacingError, type ActionResult } from "@/lib/errors";
 import { requireSyncUser } from "@/lib/plan-guards";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { CLOUD_NOTES_SURFACE_KEY } from "@/lib/surfaces";
-import { requireReleasedSurface } from "@/lib/surface-visibility";
+import { isSurfaceLive, requireReleasedSurface } from "@/lib/surface-visibility";
+import { getEntitlements } from "@/lib/entitlements";
 
 export type CloudDriveState = {
   provider: CloudProvider;
@@ -203,6 +204,35 @@ export async function checkCloudNotesNow(): Promise<ActionResult<{ found: number
     await consumeBucket("capture", userId, RATE_LIMITS.capture);
     return scanCloudNotesForUser(userId);
   });
+}
+
+/**
+ * Called by the app shell when the app opens or its tab comes back into view. Scans, in the
+ * background, any drive that went an hour or more without a scan (the 30-minute cron is a
+ * floor, not a promise: GitHub's scheduler lags and pauses). Quiet for anyone the feature is
+ * not live for — every account's shell calls it. `started` says whether a scan was kicked, so
+ * the caller knows to refresh the pulse once it has had time to finish.
+ */
+export async function scanCloudNotesOnOpen(): Promise<{ started: boolean }> {
+  const userId = await requireUserId();
+  if (!(await isSurfaceLive(userId, CLOUD_NOTES_SURFACE_KEY))) return { started: false };
+  if (!(await getEntitlements(userId)).canUseSync || (await isDemoWorkspace(userId))) return { started: false };
+  const db = await getDb();
+  const [stale] = await db
+    .select({ provider: cloudNoteSources.provider })
+    .from(cloudNoteSources)
+    .where(
+      and(
+        eq(cloudNoteSources.userId, userId),
+        or(isNull(cloudNoteSources.lastScanAt), lte(cloudNoteSources.lastScanAt, new Date(Date.now() - OPEN_RESCAN_MS))),
+      ),
+    )
+    .limit(1);
+  if (!stale) return { started: false };
+  // After the response: a Server Action holds its tab's action lane until it returns, and a
+  // drive scan reads up to 25 docs.
+  after(() => scanStaleCloudNotesForUser(userId).catch(() => null));
+  return { started: true };
 }
 
 /** Never offer these docs again. */
