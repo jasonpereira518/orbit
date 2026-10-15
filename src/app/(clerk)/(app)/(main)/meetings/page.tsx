@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import Form from "next/form";
 import Link from "next/link";
 import { Search } from "lucide-react";
@@ -12,6 +13,9 @@ import { getResumableMeeting } from "@/lib/meeting-sessions";
 import { listMeetingsFor } from "@/lib/meetings-list";
 
 export default async function MeetingsPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
+  const gate = await pageVisibilityGate("page.meetings");
+  if (gate) return gate;
+
   const { q: rawQ } = await searchParams;
   const q = (rawQ ?? "").trim().slice(0, 100);
   const userId = await requireUserId();

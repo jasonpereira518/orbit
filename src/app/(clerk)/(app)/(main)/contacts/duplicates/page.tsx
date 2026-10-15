@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -28,6 +29,9 @@ export const metadata: Metadata = {
  * do, which is the normal case.
  */
 export default async function DuplicatesPage() {
+  const gate = await pageVisibilityGate("page.contacts");
+  if (gate) return gate;
+
   // The library function, NOT the server action that wraps it: the action calls
   // `revalidatePath`, and Next refuses that during a render. Nothing needs revalidating
   // here anyway — every contact surface is dynamic, so the next request re-reads.

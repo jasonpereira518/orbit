@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { Suspense } from "react";
 import Link from "next/link";
 import type { ContactSort } from "@/lib/contacts-page";
@@ -38,6 +39,9 @@ export default async function ContactsPage({
     importId?: string;
   }>;
 }) {
+  const gate = await pageVisibilityGate("page.contacts");
+  if (gate) return gate;
+
   const params = await searchParams;
   // An explicit `sort` always wins; `isContactSort` accepts every value the picker offers
   // plus `relevance`, which the picker deliberately does not (see `contacts-page.ts`).

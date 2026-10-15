@@ -96,11 +96,12 @@ export type Entitlements = {
  * UI to render a specific upgrade prompt rather than a generic failure.
  */
 export class PaywallError extends Error {
-  readonly feature: FeatureKey | "contacts";
+  /** `page`: an operator limited a whole page to some tiers (`setSurfaceTiers`). */
+  readonly feature: FeatureKey | "contacts" | "page";
   readonly currentPlan: Plan;
 
   constructor(
-    feature: FeatureKey | "contacts",
+    feature: FeatureKey | "contacts" | "page",
     currentPlan: Plan,
     message: string
   ) {

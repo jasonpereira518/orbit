@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { Suspense } from "react";
 import { listContactPendingSendsAction } from "@/actions/email-compose";
 import { PendingSends } from "@/components/email/pending-sends";
@@ -62,6 +63,9 @@ export default async function ContactDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const gate = await pageVisibilityGate("page.contacts");
+  if (gate) return gate;
+
   const { id } = await params;
 
   // Every side query needs only the route param — start them all before the

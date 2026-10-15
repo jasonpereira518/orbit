@@ -65,6 +65,7 @@ export function AppShell({
   hiddenForUsers,
   comingSoon,
   navOrder,
+  tierTags,
   viewingAsUser,
   linkedinReminder,
   creditsIntroDue,
@@ -84,6 +85,8 @@ export function AppShell({
   comingSoon: string[];
   /** Operator-chosen sidebar order, as surface keys. */
   navOrder: string[];
+  /** Tier-limited pages to tag in the nav → the plans that may open them. */
+  tierTags: Record<string, Plan[]>;
   viewingAsUser: boolean;
   /** The full-screen LinkedIn export reminder — see `LinkedInReminderWatcher`. */
   linkedinReminder: { due: boolean; requested: boolean; email: string | null };
@@ -212,6 +215,7 @@ export function AppShell({
               hiddenForUsers={hiddenForUsersSet}
               comingSoon={comingSoonSet}
               navOrder={navOrder}
+              tierTags={tierTags}
             />
           </div>
           <main
@@ -318,6 +322,7 @@ export function AppShell({
               hidden={hiddenSet}
               comingSoon={comingSoonSet}
               navOrder={navOrder}
+              tierTags={tierTags}
             />
           </main>
         </div>

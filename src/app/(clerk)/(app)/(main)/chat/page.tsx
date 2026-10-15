@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { listChatThreads } from "@/actions/chat";
 import { getSettings } from "@/actions/settings";
 import { AiKeyNotice } from "@/components/ai-key-notice";
@@ -8,6 +9,9 @@ import { RenderStamp } from "@/components/layout/render-stamp";
 export const maxDuration = 60;
 
 export default async function ChatPage() {
+  const gate = await pageVisibilityGate("page.chat");
+  if (gate) return gate;
+
   // AI runs on the user's own key, or on Orbit's for Lifetime: when neither applies, say so
   // here, before the first question fails, rather than in a toast after it.
   //
