@@ -11,7 +11,8 @@
  * so Start is enabled and the demo account (a Free plan: no meeting hours) is not refused at
  * session start. The browser still streams to the live socket, which the prelude fakes. Use a copy of the tree per build, each with its own `.data`.
  *
- * REAL CAPTURE, NOT A STUB. Chrome runs headful (a window appears) with
+ * REAL CAPTURE, NOT A STUB. Chrome runs new-headless (`--headful` for a window; see
+ * `headful` below for why that is not the default) with
  * `--auto-select-tab-capture-source-by-title`, so `getDisplayMedia` really captures a second
  * tab ("Orbit Bench Call") that plays speech-like audio — the capturer, the disabled video
  * track and the audio service are all billed. The mic is Chrome's fake device.
@@ -54,8 +55,17 @@ const baselineMs = Number(flag("baseline-ms", String(Math.round(scenarioMs / 2))
 const warmupMs = Number(flag("warmup-ms", "15000"));
 const soakMs = Number(flag("soak-ms", "0"));
 const out = flag("out", null);
+/**
+ * Headful Chrome is only as visible as its window: one behind other apps, on another Space or
+ * under a locked screen reports `visibilityState: "hidden"` and runs no rAF, which silently
+ * turns scenario A into a second background run. New-headless is always visible (rAF runs)
+ * and still really captures the call tab, so it is the default.
+ */
+const headful = argv.includes("--headful");
 /** Diagnosis only: with --soak-ms, diff heap snapshots (first sample vs end) by constructor. */
 const heapDiff = argv.includes("--heap-diff");
+/** Diagnosis only: with --heap-diff, also write the end-of-soak snapshot here (for retainer paths in DevTools). */
+const saveSnapshot = flag("save-snapshot", null);
 /** Diagnosis only: CPU-profile the recorder tab during scenario B and print the top self time. */
 const profile = argv.includes("--profile");
 
@@ -163,6 +173,7 @@ async function launchBrowser() {
     [
       `--remote-debugging-port=${port}`,
       `--user-data-dir=${profile}`,
+      ...(headful ? [] : ["--headless=new"]),
       "--no-first-run",
       "--no-default-browser-check",
       "--autoplay-policy=no-user-gesture-required",
@@ -222,7 +233,7 @@ async function launchBrowser() {
 }
 
 async function openTab(cdp, { prelude } = {}) {
-  const { targetId } = await cdp.send("Target.createTarget", { url: "about:blank" });
+  const { targetId } = await cdp.send("Target.createTarget", { url: "about:blank", newWindow: true });
   const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });
   const s = (method, params) => cdp.send(method, params, sessionId);
   await s("Page.enable");
@@ -272,6 +283,13 @@ async function openTab(cdp, { prelude } = {}) {
     return (await metrics()).JSHeapUsedSize;
   };
   return { targetId, sessionId, s, evaluate, goto, waitFor, clickButton, buttonExpr, metrics, gcHeap };
+}
+
+/** Hide or show the recorder: its own window, minimized for "Orbit in the background". */
+async function setRecorderHidden(cdp, rec, hidden) {
+  const { windowId } = await cdp.send("Browser.getWindowForTarget", { targetId: rec.targetId });
+  await cdp.send("Browser.setWindowBounds", { windowId, bounds: { windowState: hidden ? "minimized" : "normal" } });
+  await rec.waitFor(`document.visibilityState === ${JSON.stringify(hidden ? "hidden" : "visible")}`, 10000);
 }
 
 async function processSnapshot(cdp) {
@@ -421,23 +439,28 @@ const isRecording = (rec) =>
   });
 
 async function runOnce(build) {
-  const { cdp, call, rec, chunks } = await setupRun(build.base);
+  const { cdp, rec, chunks } = await setupRun(build.base);
   try {
     const result = { build: build.label };
     // Let the first-visit compile, hydration fetches and prefetches finish before the idle baseline.
     await sleep(20000);
     result.baseline = await measure(cdp, rec, baselineMs);
 
-    await cdp.send("Target.activateTarget", { targetId: rec.targetId });
     await startRecording(rec);
     const recStart = Date.now();
     await sleep(warmupMs);
     result.A_visible = await measure(cdp, rec, scenarioMs);
-    result.A_visible.meterMoving = await rec.evaluate(
+    // The meters' bar transforms, sampled twice: they must differ (moving), not just be set.
+    const meterBars = `JSON.stringify([...document.querySelectorAll(".origin-left")].map((e) => e.style.transform))`;
+    const bars1 = await rec.evaluate(meterBars);
+    await sleep(700);
+    result.A_visible.meterBars = [bars1, await rec.evaluate(meterBars)];
+    result.A_visible.page = await rec.evaluate(`new Promise((r) => { let n = 0; const t0 = performance.now(); const f = () => { n++; if (performance.now() - t0 < 1000) requestAnimationFrame(f); }; requestAnimationFrame(f); setTimeout(() => r({ vis: document.visibilityState, focus: document.hasFocus(), rafPerSec: n }), 1100); })`);
+    result.A_visible.meterMoving = bars1 !== result.A_visible.meterBars[1] && await rec.evaluate(
       `[...document.querySelectorAll("[style*='scale']")].some((e) => { const m = /scaleX?\\(([\\d.]+)/.exec(e.style.transform); return m && Number(m[1]) > 0.02; })`
     );
 
-    await cdp.send("Target.activateTarget", { targetId: call.targetId });
+    await setRecorderHidden(cdp, rec, true);
     await sleep(3000);
     if (profile) {
       await rec.s("Profiler.enable");
@@ -447,7 +470,7 @@ async function runOnce(build) {
     result.B_background = await measure(cdp, rec, scenarioMs);
     if (profile) result.B_profile = topSelfTime((await rec.s("Profiler.stop")).profile);
 
-    await cdp.send("Target.activateTarget", { targetId: rec.targetId });
+    await setRecorderHidden(cdp, rec, false);
     await sleep(1500);
     const streamedBeforePause = await rec.evaluate("window.__bench.audioMs");
     const recordedMs = Date.now() - recStart;
@@ -475,7 +498,7 @@ async function runOnce(build) {
 }
 
 /** Self size and count per node name (constructor / string / closure), from a full heap snapshot. */
-async function heapByConstructor(cdp, rec) {
+async function heapByConstructor(cdp, rec, save = null) {
   const chunks = [];
   const on = (p) => chunks.push(p.chunk);
   cdp.on("HeapProfiler.addHeapSnapshotChunk", on, rec.sessionId);
@@ -483,7 +506,9 @@ async function heapByConstructor(cdp, rec) {
   await rec.s("HeapProfiler.takeHeapSnapshot", { reportProgress: false });
   const listener = cdp.listeners?.find((l) => l.fn === on);
   if (listener) listener.method = "(done)";
-  const snap = JSON.parse(chunks.join(""));
+  const raw = chunks.join("");
+  if (save) writeFileSync(save, raw);
+  const snap = JSON.parse(raw);
   const f = snap.snapshot.meta.node_fields, types = snap.snapshot.meta.node_types[0];
   const iType = f.indexOf("type"), iName = f.indexOf("name"), iSize = f.indexOf("self_size"), n = f.length;
   const out = new Map();
@@ -511,10 +536,10 @@ function topSelfTime(p) {
 }
 
 async function soak(build) {
-  const { cdp, call, rec } = await setupRun(build.base);
+  const { cdp, rec } = await setupRun(build.base);
   try {
     await startRecording(rec);
-    await cdp.send("Target.activateTarget", { targetId: call.targetId });
+    await setRecorderHidden(cdp, rec, true);
     const samples = [];
     const t0 = Date.now();
     let firstSnapshot = null;
@@ -525,7 +550,7 @@ async function soak(build) {
       console.error(`[${build.label}] soak ${samples.at(-1).atS}s heap ${samples.at(-1).heapMbAfterGc}MB cpu ${w.cpuPct}% rss ${w.rssMb}MB`);
     }
     if (heapDiff) {
-      const end = await heapByConstructor(cdp, rec);
+      const end = await heapByConstructor(cdp, rec, saveSnapshot);
       const growth = [...end]
         .map(([k, v]) => [k, v.size - (firstSnapshot.get(k)?.size ?? 0), v.count - (firstSnapshot.get(k)?.count ?? 0)])
         .sort((a, b) => b[1] - a[1])
