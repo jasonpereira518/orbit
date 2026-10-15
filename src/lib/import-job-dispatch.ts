@@ -22,6 +22,7 @@ import { runGmailRecruiterScanJob } from "@/lib/gmail-scan-processor";
 import { OUTLOOK_SCAN_IMPORT_TYPE } from "@/lib/outlook-scan-type";
 import { runOutlookRecruiterScanJob } from "@/lib/outlook-scan-processor";
 import { DRIVE_IMPORT_TYPE } from "@/lib/drive-import-type";
+import { LINKEDIN_EXPORT_IMPORT_TYPE } from "@/lib/linkedin-export-type";
 import { runDriveImportJob } from "@/lib/drive-import-processor";
 
 /**
@@ -65,6 +66,7 @@ export const RESUMABLE_IMPORT_TYPES = [
   GMAIL_SCAN_IMPORT_TYPE,
   OUTLOOK_SCAN_IMPORT_TYPE,
   DRIVE_IMPORT_TYPE,
+  LINKEDIN_EXPORT_IMPORT_TYPE,
 ] as const;
 
 /**
@@ -98,6 +100,7 @@ export async function runImportJobById(importId: string): Promise<void> {
     case IMESSAGE_CHAT_IMPORT_TYPE:
     case CALENDAR_ICS_IMPORT_TYPE:
     case CALENDAR_CSV_IMPORT_TYPE:
+    case LINKEDIN_EXPORT_IMPORT_TYPE:
       return runImportJob(importId);
     default:
       // Import types with no server-side runner land here — none remain today.
