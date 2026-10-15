@@ -38,7 +38,7 @@ async function main() {
   const lines: string[] = [];
   const result = await runResearchTask({ userId: USER, log: (l) => lines.push(l) });
 
-  check("every fixture case ran", result.cases === 10, String(result.cases));
+  check("every fixture case ran", result.cases === 14, String(result.cases));
   check(
     "routing was scored for every case, and matches the fixture exactly",
     result.metrics.routingAccuracy === 1,

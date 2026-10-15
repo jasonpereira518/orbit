@@ -1397,7 +1397,8 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
           ctx.attentionLite,
           evidence,
           notePassages,
-          ctx.writingInstructions
+          ctx.writingInstructions,
+          ctx.openReminders ?? null
         );
         return { ctx, result };
       });
@@ -1510,7 +1511,10 @@ export async function runResearchTask({ userId, limit, log }: RunOpts): Promise<
           ctx.attachedContext,
           ctx.goals,
           ctx.attentionLite,
-          gathered.evidence
+          gathered.evidence,
+          gathered.notePassages,
+          ctx.writingInstructions,
+          ctx.openReminders ?? null
         );
         return { ctx, gathered, result };
       });

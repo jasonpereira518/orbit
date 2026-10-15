@@ -27,6 +27,7 @@ import { sanitizeProfileLine } from "@/lib/contact-profile-format";
 import { recordAiSecurityEvent, UNTRUSTED_DATA_RULES } from "@/lib/ai-security";
 import { ORBIT_TOOLS } from "@/lib/tools/definitions";
 import { isToolError, runTool, toolsFor, type OrbitTool } from "@/lib/tools/registry";
+import { reportError } from "@/lib/report-error";
 
 /** Rounds of lookups. Most research questions finish in one or two. */
 const MAX_ROUNDS = 3;
@@ -53,6 +54,8 @@ export type NotePassage = {
   /** A meeting passage: when in the call it was said (null for its summary), and its title. */
   startMs?: number | null;
   title?: string | null;
+  /** Who the note is about, when known — the fast path names them (`prepareChatContext`). */
+  contactName?: string | null;
 };
 
 export type GatherResult = {
@@ -337,9 +340,11 @@ export async function gatherEvidence(
       maxResultChars: MAX_RESULT_CHARS,
       onCall: (call) => steps.update("gather", { label: describeCall(call, ctx) }),
     });
-  } catch {
+  } catch (err) {
     // No research grant, a provider that is down: the answer runs from retrieval alone, as
-    // every question did before this existed. The step says so rather than vanishing.
+    // every question did before this existed. The step says so rather than vanishing — and
+    // so does Sentry, since an answer quietly missing its research reads as a bad answer.
+    reportError(err, { where: "chat.gather", userId, level: "warning" });
     steps.done("gather", { label: "Answered from what was already found" });
     return EMPTY;
   }
@@ -434,11 +439,14 @@ export async function maybeGather(
   // Decided with the rest of the routing (decisions/chat-route.ts) while retrieval ran; the
   // rules answer here only for a context built without it.
   const depth = ctx.route?.depth ?? chooseDepth(ctx.q, { hasPriorTurns: ctx.priorTurns.length > 0 });
-  if (depth.depth !== "research") return { evidence: null, notePassages: [], depth, research: null };
+  // The passages every question already searched for (`prepareChatContext`): the fast path's
+  // whole note search, and a floor under research's own.
+  const quick = ctx.notePassages ?? [];
+  if (depth.depth !== "research") return { evidence: null, notePassages: quick, depth, research: null };
 
   const now = Date.now();
   const deadline = Math.min(options.requestStartedAt + GATHER_ENDS_BY_MS, now + GATHER_MAX_MS);
-  if (deadline - now < GATHER_MIN_MS) return { evidence: null, notePassages: [], depth, research: null };
+  if (deadline - now < GATHER_MIN_MS) return { evidence: null, notePassages: quick, depth, research: null };
 
   const gathered = await gatherEvidence(userId, ctx, {
     deadline,
@@ -452,9 +460,10 @@ export async function maybeGather(
   // research found (not retrieval) has a name to preview, not a blank.
   for (const c of gathered.namedContacts) if (!ctx.contactNames.has(c.id)) ctx.contactNames.set(c.id, c.name);
   const o = gathered.outcome;
+  const found = new Set(gathered.notePassages.map((p) => p.sourceId));
   return {
     evidence: gathered.evidence,
-    notePassages: gathered.notePassages,
+    notePassages: [...gathered.notePassages, ...quick.filter((p) => !found.has(p.sourceId))],
     depth,
     research: o
       ? {

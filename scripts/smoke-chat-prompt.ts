@@ -638,6 +638,27 @@ check(
   sameInteractionTwice.user
 );
 
+const withReminders = buildChatPrompt({
+  ...baseChatPromptArgs(),
+  question: "what's on my plate today?",
+  focusProfile: null,
+  contactsContext: [],
+  notePassages: [{ sourceId: "int-9", contactId: "c9", contactName: "Grace\nHopper", date: "2026-09-01", snippet: "Hiring SREs in Paris." }],
+  openReminders: "- [reminder_id=r1] Call Ada · due 2026-10-14",
+});
+check(
+  "open reminders sit inside their own nonce fence",
+  /<<<REMINDERS_[0-9a-f]+\n[\s\S]*reminder_id=r1[\s\S]*\nREMINDERS_[0-9a-f]+/.test(withReminders.user),
+  withReminders.user
+);
+check("and the rules tell the model what the ids are for", withReminders.systemCore.includes("complete_reminder or snooze_reminder"));
+check(
+  "a passage names who it is about, on one line",
+  withReminders.user.includes("a note on Grace Hopper [id=c9]: Hiring SREs in Paris."),
+  withReminders.user
+);
+check("no reminders, no reminder block or rule", !buildChatPrompt({ ...baseChatPromptArgs(), question: "x", focusProfile: null, contactsContext: [] }).systemCore.includes("Open reminders"));
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);
   process.exit(1);

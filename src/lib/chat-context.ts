@@ -1,12 +1,18 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   chatMessages,
   chatThreads,
   contacts,
   interactions,
+  type CareerProfile,
   type ChatRecommendation,
 } from "@/db/schema";
+import { searchMemories } from "@/lib/memory-search";
+import { normalizeSenderBio } from "@/lib/sender-profile";
+import { queryRemindersPage } from "@/lib/reminders-page-query";
+import { getInboxListId } from "@/lib/reminder-lists";
+import type { NotePassage } from "@/lib/chat-gather";
 import {
   loadAttachedPeople,
   renderAttachedPeople,
@@ -72,6 +78,57 @@ import { sanitizeDraft } from "@/lib/chat-draft";
  */
 
 const PRIOR_TURN_LIMIT = 8;
+/** Note passages every question gets, research or not — see `retrieveRankedContacts`. */
+const QUICK_PASSAGES = 4;
+/** Open reminders shown to the model, so it can answer "what's on my plate" and propose completing one. */
+const OPEN_REMINDER_LIMIT = 8;
+const ABOUT_USER_MAX_CHARS = 600;
+
+/**
+ * Who "I" is, as one line for the query parse and the answer: the user's own words
+ * (`sender_bio`) and what their LinkedIn import recorded (`career_profile`). Without it,
+ * "my company" and "people like me" had nothing to resolve against. Null when neither exists
+ * — the prompt then says nothing, rather than "unknown".
+ */
+export function renderAboutUser(
+  row: { senderBio?: string | null; careerProfile?: CareerProfile | null } | null | undefined
+): string | null {
+  const parts: string[] = [];
+  const bio = normalizeSenderBio(row?.senderBio);
+  if (bio) parts.push(`in their own words: ${bio}`);
+  const career = row?.careerProfile;
+  const role = career?.role
+    ? [career.role.title, career.role.company].map((v) => sanitizeProfileLine(v ?? "")).filter(Boolean).join(" at ")
+    : "";
+  if (role) parts.push(`current role: ${role}`);
+  for (const [label, value] of [
+    ["headline", career?.profile?.headline],
+    ["based in", career?.profile?.location],
+  ] as const) {
+    const clean = value ? sanitizeProfileLine(value) : "";
+    if (clean) parts.push(`${label}: ${clean}`);
+  }
+  return parts.length ? `About the user — ${parts.join("; ")}`.slice(0, ABOUT_USER_MAX_CHARS) : null;
+}
+
+type PriorRow = { role: string; content: string; recommendations?: ChatRecommendation[] | null };
+
+/**
+ * Oldest first, and an assistant turn carries the names it suggested. The cards are not in
+ * the prose, so without them "the second one" pointed at nothing the parse could read.
+ */
+function rowsToTurns(rows: PriorRow[]): ChatTurn[] {
+  return rows
+    .slice()
+    .reverse()
+    .map((m) => {
+      const names = (m.recommendations ?? []).map((r) => r.name).filter(Boolean);
+      return {
+        role: m.role as ChatTurn["role"],
+        content: m.role === "assistant" && names.length ? `${m.content}\n(Suggested, in order: ${names.join(", ")})` : m.content,
+      };
+    });
+}
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 
@@ -136,6 +193,16 @@ export type ChatContext = {
   allowedRecruiters: Set<string>;
   /** The `contactsContext` argument of `chatWithNetwork`. */
   modelContacts: BudgetedContact[];
+  /**
+   * Note passages found for this question on the fast path — the research step's
+   * `search_notes`, run once on every question, so a fact that lives only in a note is not
+   * lost whenever the router picks "single". `maybeGather` hands these to the answer.
+   */
+  notePassages?: NotePassage[];
+  /** The user's open reminders (due today or overdue) as prompt lines, or null. */
+  openReminders?: string | null;
+  /** Ids of `openReminders`, id → title: the allowlist for a reminder proposal. */
+  reminderTitles?: Map<string, string>;
   /** The `recruitersContext` argument of `chatWithNetwork`. */
   modelRecruiters: Array<{
     id: string;
@@ -282,9 +349,24 @@ async function retrieveRankedContacts(
     onIntent: (intent: ParsedIntent | null) => void;
     /** The account read the question shares; undefined means each call opens its own. */
     access?: Promise<AiAccess | undefined>;
+    /** Earlier turns, so a follow-up is searched as the question it stands for. */
+    priorTurns?: Promise<ChatTurn[]>;
   }
-): Promise<{ ranked: RankedContact[]; searchNotice: string | null; goals: string[] }> {
-  const [activeGoals, access] = await Promise.all([loadActiveGoalTexts(userId), routing?.access]);
+): Promise<{
+  ranked: RankedContact[];
+  searchNotice: string | null;
+  goals: string[];
+  /** The question as searched: the standalone rewrite of a follow-up, else `q`. */
+  searchQuery: string;
+  aboutUser: string | null;
+  notePassages: NotePassage[];
+}> {
+  const [activeGoals, access, priorTurns] = await Promise.all([
+    loadActiveGoalTexts(userId),
+    routing?.access,
+    routing?.priorTurns ?? Promise.resolve([] as ChatTurn[]),
+  ]);
+  const aboutUser = renderAboutUser(access?.settings);
   // Every model call below shares the one account read; each still mints its own grant.
   const complete = completeJsonOn(access);
   let searchNotice: string | null = null;
@@ -297,7 +379,7 @@ async function retrieveRankedContacts(
       searchNotice = embeddingFailureNotice(err);
       return null;
     }),
-    understandQuery(userId, q, activeGoals, complete).then((parsed) => {
+    understandQuery(userId, q, activeGoals, complete, { priorTurns, aboutUser }).then((parsed) => {
       routing?.onIntent(parsed.intent ?? null);
       return parsed;
     }),
@@ -310,10 +392,41 @@ async function retrieveRankedContacts(
     detail: describeParsedQuery(parsedQuery),
   });
 
+  // A follow-up is searched as what it stands for. Its embedding is the one serial cost, and
+  // only a rewritten follow-up pays it; every other question reuses the one already made.
+  const searchQuery = parsedQuery.standaloneQuery ?? q;
+  const searchEmbedding =
+    searchQuery === q
+      ? queryEmbedding
+      : await getQueryEmbedding(userId, searchQuery, createEmbedding, defaultResolveScope, { access }).catch(
+          () => queryEmbedding
+        );
+  // Beside the contact search, never fatal: the same passage search research runs, so a fact
+  // that lives only in a note reaches the answer even when the question routes "single".
+  const passagesP = searchMemories(userId, { query: searchQuery, embedding: searchEmbedding, limit: QUICK_PASSAGES })
+    .then((rows) =>
+      rows.flatMap((p): NotePassage[] =>
+        // Words in common, not just a nearby meaning: there is no research model on this path
+        // to judge a near miss, and a weak passage still turns on the prompt's "looked up for
+        // this question" rule, which the answer then leans on over the contacts list.
+        p.sourceKind === "interaction" && p.matchedArms.includes("lexical")
+          ? [
+              {
+                sourceId: p.sourceId,
+                contactId: p.contactIds[0] ?? p.contactId ?? null,
+                date: p.occurredAt ? new Date(p.occurredAt).toISOString().slice(0, 10) : null,
+                snippet: p.snippet,
+              },
+            ]
+          : []
+      )
+    )
+    .catch(() => [] as NotePassage[]);
+
   steps.start("search", "Searching your network");
   const candidates = await hybridSearchContacts(userId, {
-    query: q,
-    embedding: queryEmbedding,
+    query: searchQuery,
+    embedding: searchEmbedding,
     filters: parsedQuery.filters,
     expansionTerms: parsedQuery.expansionTerms,
     limit: CANDIDATE_POOL,
@@ -336,7 +449,7 @@ async function retrieveRankedContacts(
   steps.start("rank", `Ranking ${plural(candidates.length, "candidate")}`);
   const { contacts: ranked, engine: rankEngine } = await rerankCandidatesWithEngine(
     userId,
-    q,
+    searchQuery,
     candidates,
     complete,
     parsedQuery.semanticQuery,
@@ -358,7 +471,7 @@ async function retrieveRankedContacts(
   // question, so the model that actually wrote the answer never learned what the user was
   // trying to accomplish — every other AI surface in the product (outreach, starters,
   // follow-up drafts) has been given them for months.
-  return { ranked, searchNotice, goals: activeGoals };
+  return { ranked, searchNotice, goals: activeGoals, searchQuery, aboutUser, notePassages: await passagesP };
 }
 
 /** What the query parser actually understood, as a line a person can check. */
@@ -543,7 +656,7 @@ export async function prepareChatContext(
           ),
           orderBy: [desc(chatMessages.createdAt)],
           limit: PRIOR_TURN_LIMIT,
-          columns: { role: true, content: true },
+          columns: { role: true, content: true, recommendations: true },
         })
         .then((rows) =>
           // A stopped turn persists its question with no reply. Newest-first, so that is
@@ -551,7 +664,7 @@ export async function prepareChatContext(
           // The router reads these too: an unanswered question is not a turn to follow up on.
           rows.length && rows[0]!.role === "user" ? rows.slice(1) : rows
         )
-    : Promise.resolve([] as Array<{ role: string; content: string }>);
+    : Promise.resolve([] as PriorRow[]);
   // ONE account read for the whole question. The decider, the query embedding and its cache
   // scope, the query parse, the rerank and the writing notes each used to open the account
   // for themselves — five-plus `user_settings` reads, several of them in series. Only the
@@ -571,7 +684,7 @@ export async function prepareChatContext(
       routeChatQuestion({
         decider,
         question: q,
-        priorTurns: rows.slice().reverse(),
+        priorTurns: rowsToTurns(rows),
         intent: () => intentP,
       })
     )
@@ -589,6 +702,8 @@ export async function prepareChatContext(
     recruitersForChat,
     attachedPeople,
     writingInstructions,
+    networkSize,
+    openReminderRows,
   ] = await Promise.all([
       threadId
         ? db.query.chatThreads.findFirst({
@@ -598,7 +713,12 @@ export async function prepareChatContext(
         : Promise.resolve(null),
       priorRowsP,
       // Whatever happens to retrieval, the router is never left waiting on the parser.
-      retrieveRankedContacts(userId, q, steps, photos, { decider: deciderP, onIntent: settleIntent, access: accessP }).finally(
+      retrieveRankedContacts(userId, q, steps, photos, {
+        decider: deciderP,
+        onIntent: settleIntent,
+        access: accessP,
+        priorTurns: priorRowsP.then(rowsToTurns),
+      }).finally(
         () => settleIntent(null)
       ),
       // Exhaustive membership for any organisation the question names — the one thing a
@@ -695,15 +815,26 @@ export async function prepareChatContext(
           access ? writingInstructionsFromRow(access.settings) : loadWritingInstructions(userId)
         )
         .catch(() => null),
+      // How big the network is, so "I don't see anyone" is never read off a 12-row page.
+      db
+        .select({ n: count() })
+        .from(contacts)
+        .where(eq(contacts.userId, userId))
+        .then(([row]) => row?.n ?? null)
+        .catch(() => null),
+      // UTC like the reminders tool: no request zone here, and each row carries its own date.
+      getInboxListId(userId)
+        .then((inboxId) =>
+          queryRemindersPage(db, userId, { view: "today", listId: null, limit: OPEN_REMINDER_LIMIT, tz: "UTC" }, { inboxId })
+        )
+        .then((page) => page.items)
+        .catch(() => []),
     ]);
 
   if (threadId && !thread) throw new Error("Chat not found");
   const retrieved = retrieval.ranked;
 
-  const priorTurns: ChatTurn[] = priorRows
-    .slice()
-    .reverse()
-    .map((m) => ({ role: m.role as ChatTurn["role"], content: m.content }));
+  const priorTurns = rowsToTurns(priorRows);
 
   if (focusContactId) {
     // Exactly the fields the RankedContact entry below is built from — not the whole row
@@ -771,7 +902,12 @@ export async function prepareChatContext(
   if (retrievedIds.length) {
     steps.start("read", `Reading notes on ${plural(retrievedIds.length, "person", "people")}`);
   }
-  const [snippets, careerLines, moveLines, focusMsgs, focusProfileData] = await Promise.all([
+  // A passage can name someone retrieval did not rank; one owned read names them, so the
+  // answer can say who said it and recommend them like anyone retrieval found.
+  const passageContactIds = [
+    ...new Set(retrieval.notePassages.map((p) => p.contactId).filter((id): id is string => Boolean(id))),
+  ].filter((id) => !retrievedIds.includes(id));
+  const [snippets, careerLines, moveLines, focusMsgs, focusProfileData, passageContacts] = await Promise.all([
     loadRecentInteractions(userId, retrievedIds),
     getCareerLines(userId, retrievedIds).catch(() => new Map<string, string>()),
     getRecentMoveLines(userId, retrievedIds).catch(() => new Map<string, string>()),
@@ -793,6 +929,14 @@ export async function prepareChatContext(
     focusContactId
       ? getContactProfile(userId, focusContactId).catch(() => null)
       : Promise.resolve(null),
+    passageContactIds.length
+      ? db.query.contacts
+          .findMany({
+            where: and(eq(contacts.userId, userId), inArray(contacts.id, passageContactIds)),
+            columns: { id: true, fullName: true, preferredName: true },
+          })
+          .catch(() => [])
+      : Promise.resolve([] as Array<{ id: string; fullName: string; preferredName: string | null }>),
   ]);
   if (retrievedIds.length) {
     // Count the people who actually had something written about them, not the page size —
@@ -831,6 +975,13 @@ export async function prepareChatContext(
 
   const userContext = thread?.contextNote?.trim() || null;
   const scopedQuestion = [
+    // Trusted, computed here: the date (relative dates and proposed due dates were guesses
+    // without it), who the user is, and how big the network is beyond the ranked page.
+    `[Today is ${isoDay(new Date())}.]`,
+    retrieval.aboutUser ? `[${retrieval.aboutUser}]` : null,
+    networkSize
+      ? `[The user has ${networkSize} contacts in total; the Contacts list below is only the ${retrieved.length} most relevant to this question.]`
+      : null,
     focusContactId
       ? `[Focus: answer primarily about the pinned contact id=${focusContactId}. You may use other contacts only for intros/context.]`
       : null,
@@ -849,7 +1000,7 @@ export async function prepareChatContext(
     const career = careerLines.get(id);
     careerLines.set(id, career ? `${career} · recent moves: ${moves}` : `Recent moves: ${moves}`);
   }
-  const modelContacts = budgetContactsContext(retrieved, snippets, careerLines, q);
+  const modelContacts = budgetContactsContext(retrieved, snippets, careerLines, retrieval.searchQuery);
 
   // Roster and attention contacts are as legitimate a recommendation as retrieved ones —
   // they came from the same user's own rows — so they must not be filtered out for being
@@ -874,7 +1025,22 @@ export async function prepareChatContext(
     ...orgRosters.flatMap((r) => r.people.map((p): [string, string] => [p.id, p.name])),
     ...(attention?.overdue.map((c): [string, string] => [c.id, c.name]) ?? []),
     ...(attention?.suggestions.map((c): [string, string] => [c.id, c.name]) ?? []),
+    ...passageContacts.map((c): [string, string] => [c.id, c.preferredName || c.fullName]),
   ]);
+  for (const c of passageContacts) allowedContacts.add(c.id);
+  const notePassages = retrieval.notePassages.map((p) => ({
+    ...p,
+    contactName: p.contactId ? (contactNames.get(p.contactId) ?? null) : null,
+  }));
+  const reminderTitles = new Map(openReminderRows.map((r) => [r.id, r.title]));
+  const openReminders = openReminderRows.length
+    ? openReminderRows
+        .map(
+          (r) =>
+            `- [reminder_id=${r.id}] ${sanitizeProfileLine(r.title)}${r.dueDate ? ` · due ${isoDay(new Date(r.dueDate))}` : " · no date"}${r.contactName ? ` · ${sanitizeProfileLine(r.contactName)}` : ""}`
+        )
+        .join("\n")
+    : null;
   const allowedRecruiters = new Set(recruitersForChat.map((r) => r.id));
   const maxScore = Math.max(1, ...recruitersForChat.map((r) => r.score));
 
@@ -899,6 +1065,9 @@ export async function prepareChatContext(
     contactNames,
     allowedRecruiters,
     modelContacts,
+    notePassages,
+    openReminders,
+    reminderTitles,
     focusProfile,
     writingInstructions,
     access: await accessP,

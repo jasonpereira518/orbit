@@ -423,7 +423,8 @@ async function askNetworkInner(
       ctx.attentionLite,
       evidence,
       notePassages,
-      ctx.writingInstructions
+      ctx.writingInstructions,
+      ctx.openReminders ?? null
     );
     const recommendations = ctx.filterRecommendations(
       (result.recommendations || []) as ChatRecommendation[]
@@ -433,7 +434,12 @@ async function askNetworkInner(
     const validIds = new Set(Object.keys(result.evidence));
     const { text: cleanAnswer } = stripUnresolvedMarkers(result.answer, validIds);
     const citedEvidence = Object.fromEntries(citedIds(cleanAnswer).map((id) => [id, result.evidence[id]]));
-    const proposedActions = validateProposedActions(result.proposedActions, ctx.allowedContacts, ctx.contactNames);
+    const proposedActions = validateProposedActions(
+      result.proposedActions,
+      ctx.allowedContacts,
+      ctx.contactNames,
+      ctx.reminderTitles
+    );
 
     const saved = await persistAssistantTurn(userId, threadId, ctx.thread?.title ?? null, ctx.q, {
       answer: cleanAnswer,

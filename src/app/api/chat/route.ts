@@ -19,7 +19,7 @@ import { traced } from "@/lib/perf-trace";
 import { isPaywallError } from "@/lib/entitlements";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { TOAST_COPY } from "@/lib/toast-copy";
-import { reportedFailure } from "@/lib/report-error";
+import { reportedFailure, reportError } from "@/lib/report-error";
 import { createStreamRedactor } from "@/lib/ai-security";
 import { requireVisibleSurface } from "@/lib/surface-visibility";
 
@@ -242,6 +242,7 @@ export async function POST(request: Request) {
                 evidence,
                 notePassages,
                 writingPreferences: ctx.writingInstructions,
+                openReminders: ctx.openReminders,
                 access: ctx.access,
               }
             ),
@@ -279,7 +280,21 @@ export async function POST(request: Request) {
         // Never a chat tool call, never executed here — only stored, for a person to confirm
         // from the transcript. See `@/lib/chat-proposed-actions` and the rule at the top of
         // `src/lib/mcp/server.ts`, which this mirrors on the chat surface's own output.
-        const proposedActions = validateProposedActions(result.proposedActions, ctx.allowedContacts, ctx.contactNames);
+        // A JSON tail that did not parse used to mean zero cards and zero actions with no trace
+        // anywhere. The answer still stands; this only makes the loss visible.
+        if (result.parseError) {
+          reportError(new Error(`chat answer JSON did not parse: ${result.parseError}`), {
+            where: "chat.stream.recommendations",
+            userId,
+            level: "warning",
+          });
+        }
+        const proposedActions = validateProposedActions(
+          result.proposedActions,
+          ctx.allowedContacts,
+          ctx.contactNames,
+          ctx.reminderTitles
+        );
         if (proposedActions.length > 0) send({ type: "actions", items: proposedActions });
 
         // A beat for a title that is nearly there, never longer: if it is not ready the thread
