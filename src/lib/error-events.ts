@@ -154,6 +154,20 @@ export type ErrorEventInput = {
  * failure: the steady-state cost is exactly zero, and the path it adds a write to has
  * already degraded. Never throws — it is only ever called from a path that already failed.
  */
+/** Context past this is diagnostics no one reads, and a place for personal data to pile up. */
+const MAX_CONTEXT_CHARS = 4_000;
+
+function boundedContext(context: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!context) return {};
+  try {
+    const json = JSON.stringify(context);
+    if (json.length <= MAX_CONTEXT_CHARS) return context;
+    return { truncated: true, keys: Object.keys(context).slice(0, 20) };
+  } catch {
+    return { unserializable: true };
+  }
+}
+
 export async function recordErrorEvent(input: ErrorEventInput): Promise<void> {
   try {
     const db = await getDb();
@@ -164,7 +178,7 @@ export async function recordErrorEvent(input: ErrorEventInput): Promise<void> {
       message: input.message
         ? toUserFacingError(input.message, "Unknown error").message.slice(0, 500)
         : null,
-      context: input.context ?? {},
+      context: boundedContext(input.context),
     });
   } catch {
     // Diagnostics must never become the failure.

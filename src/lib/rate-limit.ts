@@ -21,6 +21,7 @@ import { rateLimitBuckets } from "@/db/schema";
 const BUCKET_LABELS: Record<string, string> = {
   chat: "chat",
   emailSend: "email send",
+  emailAttachmentUpload: "attachment upload",
   capture: "capture",
   captureHandoff: "scan",
   captureParts: "capture",
@@ -97,9 +98,14 @@ export const RATE_LIMITS = {
    * follow-ups, approved assistant drafts, recruiter replies. Outbound and sent from the user's
    * real address, so tighter than anything else here and measured over ten minutes: the shape
    * to bound is a loop or a hijacked session mailing people in bulk, not a person sending a
-   * few follow-ups. The daily cap is separate and per plan (`EMAIL_SEND_DAILY_CAP`).
+   * few follow-ups. The daily cap is separate and per plan (`EMAIL_RECIPIENT_DAILY_CAP`).
    */
   emailSend: { limit: 10, windowSec: 600 },
+  /**
+   * Upload tokens for email attachments. Each is good for one 20 MB file in Orbit's store,
+   * so an unmetered route was free file hosting; ten messages' worth of attachments per window.
+   */
+  emailAttachmentUpload: { limit: 60, windowSec: 600 },
   /** Capture parsing, media ingestion and confirmation: each is a model call. */
   capture: { limit: 30, windowSec: 60 },
   /**

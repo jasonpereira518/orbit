@@ -33,11 +33,13 @@ export const MICROSOFT_SCOPES = {
    * `/me/sendMail` needs no access to what is already in the mailbox (direct-email P3).
    */
   mailSend: `${GRAPH_PREFIX}Mail.Send`,
+  /** Cloud notes: list recent OneDrive files and read the ones that look like meeting notes. */
+  files: `${GRAPH_PREFIX}Files.Read`,
 } as const;
 
 export type MicrosoftScope = (typeof MICROSOFT_SCOPES)[keyof typeof MICROSOFT_SCOPES];
 
-export const MICROSOFT_PURPOSES = ["contacts", "calendar", "recruiter_scan", "send"] as const;
+export const MICROSOFT_PURPOSES = ["contacts", "calendar", "recruiter_scan", "send", "files"] as const;
 export type MicrosoftPurpose = (typeof MICROSOFT_PURPOSES)[number];
 
 const IDENTITY_SCOPES: readonly MicrosoftScope[] = [
@@ -53,6 +55,7 @@ const PURPOSE_SCOPE: Record<MicrosoftPurpose, MicrosoftScope> = {
   calendar: MICROSOFT_SCOPES.calendar,
   recruiter_scan: MICROSOFT_SCOPES.mail,
   send: MICROSOFT_SCOPES.mailSend,
+  files: MICROSOFT_SCOPES.files,
 };
 
 export function isMicrosoftPurpose(value: unknown): value is MicrosoftPurpose {
@@ -177,6 +180,8 @@ export function missingScopeMessage(purpose: MicrosoftPurpose | null | undefined
       return "Microsoft didn’t grant calendar access — reconnect and allow it";
     case "send":
       return "Microsoft didn’t grant permission to send — reconnect and allow it";
+    case "files":
+      return "Microsoft didn’t grant OneDrive access — reconnect and allow it";
     default:
       return "Microsoft didn’t grant mail access — reconnect and allow it";
   }

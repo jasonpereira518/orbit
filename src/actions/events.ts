@@ -82,6 +82,7 @@ import {
 } from "@/lib/events/connections";
 import { buildEventbriteAuthUrl, eventbriteOAuthConfig } from "@/lib/events/connectors/eventbrite-oauth";
 import { LumaAuthError, listCalendarEvents } from "@/lib/events/connectors/luma";
+import { isDemoWorkspace } from "@/lib/demo-workspace";
 import type {
   AttendeeRole,
   ConnectSummary,
@@ -761,10 +762,21 @@ export async function getEventConnections(): Promise<{
   googleCalendarGranted: boolean;
 }> {
   const userId = await requireUserForReleasedSurface(SURFACE);
-  const [connections, grant] = await Promise.all([
+  const [connections, grant, demo] = await Promise.all([
     listEventConnections(userId),
     findGmailGrant(userId),
+    isDemoWorkspace(userId),
   ]);
+  // The demo workspace stores no OAuth grant but reads as connected everywhere else.
+  if (demo) {
+    return {
+      connections,
+      eventbriteConfigured: eventbriteOAuthConfig().configured,
+      googleConnected: true,
+      googleMailGranted: true,
+      googleCalendarGranted: true,
+    };
+  }
   return {
     connections,
     eventbriteConfigured: eventbriteOAuthConfig().configured,

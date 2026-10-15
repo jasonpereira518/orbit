@@ -2,7 +2,7 @@ import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { emailSends, gmailConnections, outlookConnections, type EmailProviderId } from "@/db/schema";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
-import { EMAIL_SEND_DAILY_CAP } from "@/lib/email/config";
+import { EMAIL_RECIPIENT_DAILY_CAP } from "@/lib/email/config";
 import { providerFor } from "@/lib/email/providers";
 import { loadSendPreference } from "@/lib/email/settings";
 import { getEntitlements } from "@/lib/entitlements";
@@ -92,10 +92,13 @@ export async function resolveSender(userId: string, preferred?: MailboxId | null
 }
 
 /** Rolling 24h, every origin, counting anything not canceled or failed. */
-export async function countEmailSendsToday(userId: string): Promise<number> {
+/** Recipients (To + Cc + Bcc) of this account's live and sent mail in the last 24 hours. */
+export async function countEmailRecipientsToday(userId: string): Promise<number> {
   const db = await getDb();
   const [row] = await db
-    .select({ n: sql<number>`count(*)::int` })
+    .select({
+      n: sql<number>`coalesce(sum(jsonb_array_length(${emailSends.to}) + jsonb_array_length(${emailSends.cc}) + jsonb_array_length(${emailSends.bcc})), 0)::int`,
+    })
     .from(emailSends)
     .where(
       and(
@@ -126,12 +129,12 @@ export async function getSendCapability(userId: string): Promise<SendCapability>
   const [sender, ent, usedToday, mailboxes, { defaultProvider }] = await Promise.all([
     resolveSender(userId),
     getEntitlements(userId),
-    countEmailSendsToday(userId),
+    countEmailRecipientsToday(userId),
     listMailboxes(userId, withOutlook),
     loadSendPreference(userId),
   ]);
   const context: CapabilityContext = {
-    dailyCap: EMAIL_SEND_DAILY_CAP[ent.plan],
+    dailyCap: EMAIL_RECIPIENT_DAILY_CAP[ent.plan],
     usedToday,
     mailboxes,
     defaultProvider,

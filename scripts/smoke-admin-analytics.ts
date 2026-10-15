@@ -1162,6 +1162,27 @@ async function main() {
   await beacon({ kind: "dwell", id: extRef, dwellMs: 12_000 });
   check("a dwell beacon through the route lands", (await viewOf(extRef))?.dwellMs === 12_000);
 
+  // The limiter is per IP and runs before every branch: rotating the User-Agent, or sending
+  // only dwell beacons, used to walk straight past it.
+  const from = (ip: string, ua: string, body: Record<string, unknown>) =>
+    track(
+      new Request("https://orbit.example/api/track", {
+        method: "POST",
+        headers: { "content-type": "application/json", host: "orbit.example", "user-agent": ua, "x-forwarded-for": ip },
+        body: JSON.stringify(body),
+      })
+    );
+  for (let i = 0; i < 260; i++) {
+    await from("198.51.100.9", `${realChrome} r${i}`, { kind: "dwell", id: extRef, dwellMs: 1 });
+  }
+  const floodView = randomUUID();
+  await from("198.51.100.9", `${realChrome} fresh`, { kind: "view", id: floodView, sessionId: randomUUID(), path: "/pricing", url: "https://orbit.example/pricing" });
+  check("past the limit an IP records nothing, whatever its User-Agent", (await viewOf(floodView)) == null);
+  const otherView = randomUUID();
+  await from("198.51.100.10", realChrome, { kind: "view", id: otherView, sessionId: randomUUID(), path: "/pricing", url: "https://orbit.example/pricing" });
+  check("another IP is unaffected", (await viewOf(otherView)) != null);
+  await db.delete(pageViews).where(eq(pageViews.id, otherView));
+
   for (const roundTrip of ["https://checkout.stripe.com/c/pay/cs_x", "https://accounts.google.com/o/oauth2"]) {
     const rtId = randomUUID();
     await beacon({ kind: "view", id: rtId, sessionId: randomUUID(), path: "/pricing", url: "https://orbit.example/pricing", referrer: roundTrip });

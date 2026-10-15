@@ -462,19 +462,22 @@ function systemPrompt(input: AnalyzeInput, part: { index: number; total: number 
     .join("\n");
 }
 
-function userPrompt(input: AnalyzeInput, transcript: string): string {
-  const context = [
+export function meetingUserPrompt(input: AnalyzeInput, transcript: string): string {
+  // Title and attendee names arrive pre-filled from calendar invites, which anyone can send.
+  const invite = [
     input.title ? `Meeting title: ${input.title}` : "",
-    `Date: ${input.startedAtIso.slice(0, 10)}`,
     input.attendees.length ? `Attendees the user listed: ${input.attendees.join(", ")}` : "",
     input.invite?.attendees.length ? `INVITED: ${input.invite.attendees.join(", ")}` : "",
-  ].filter(Boolean);
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const context = `Date: ${input.startedAtIso.slice(0, 10)}${invite ? `\n${fenceUntrusted("MEETING", invite)}` : ""}`;
   const agenda = input.invite?.agenda ? `\n\nAGENDA:\n${fenceUntrusted("AGENDA", input.invite.agenda)}` : "";
   const last = input.lastTime
     ? `\n\nLAST TIME (${input.lastTime.date}):\n${fenceUntrusted("LAST_TIME", input.lastTime.actionItems.map((a) => `- ${a}`).join("\n"))}`
     : "";
   const notes = input.userNotes ? `\n\nMY NOTES:\n${fenceUntrusted("NOTES", input.userNotes)}` : "";
-  return `${context.join("\n")}${agenda}${last}\n\nTRANSCRIPT:\n${fenceUntrusted("TRANSCRIPT", transcript)}${notes}`;
+  return `${context}${agenda}${last}\n\nTRANSCRIPT:\n${fenceUntrusted("TRANSCRIPT", transcript)}${notes}`;
 }
 
 function reducePrompt(input: AnalyzeInput) {
@@ -550,7 +553,7 @@ export async function analyzeMeetingTranscript(
       deps.parseJson,
       userId,
       systemPrompt(input, null),
-      userPrompt(input, transcript),
+      meetingUserPrompt(input, transcript),
       "meeting.digest"
     );
   } else {
@@ -561,7 +564,7 @@ export async function analyzeMeetingTranscript(
         deps.parseJson,
         userId,
         systemPrompt(input, { index: i + 1, total: pieces.length }),
-        userPrompt(input, piece),
+        meetingUserPrompt(input, piece),
         "meeting.digest.map"
       )
     );

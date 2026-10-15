@@ -16,7 +16,11 @@ import { ensureUserSettings } from "@/lib/user-settings";
  * `user_settings.email`, so it cannot be claimed by typing it somewhere. The list is code,
  * not config: widening it takes a reviewed commit, never an environment variable.
  */
-export const DEMO_WORKSPACE_EMAILS: readonly string[] = ["jasonnp510@gmail.com"];
+export const DEMO_WORKSPACE_EMAILS: readonly string[] = [
+  "jasonnp510@gmail.com",
+  // Gillings pitch competition account (UNC public-health persona).
+  "jamestjahjadi1@gmail.com",
+];
 
 export function isDemoWorkspaceEmail(email: string | null | undefined): boolean {
   if (!email) return false;

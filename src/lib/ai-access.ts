@@ -232,15 +232,17 @@ export async function managedPoolState(now = Date.now()): Promise<PoolState> {
     // whose balance ran dry (a managed `quota` error, `runOnGrant`) within the last 2 hours —
     // longer than the 1 h per-instance record throttle, so a dry provider stays out on every
     // instance until one of them tries it again after the window.
-    const [row] = rowsOf<{ paused: boolean | null; dry: string[] | null }>(
-      await db.execute(sql`
+    // The pool spend runs beside it: independent reads, so one round between them.
+    const [result, spentMicros] = await Promise.all([
+      db.execute(sql`
         SELECT (SELECT managed_ai_paused FROM site_settings WHERE id = 1) AS paused,
                (SELECT array_agg(DISTINCT context->>'provider') FROM error_events
                  WHERE source = ${ERROR_SOURCES.managedAi} AND kind = 'quota'
                    AND created_at > now() - interval '2 hours') AS dry
-      `)
-    );
-    const spentMicros = await managedPoolsSpent(new Date(now));
+      `),
+      managedPoolsSpent(new Date(now)),
+    ]);
+    const [row] = rowsOf<{ paused: boolean | null; dry: string[] | null }>(result);
     const spent = new Set<AiProvider>([
       ...(Object.keys(spentMicros) as AiProvider[]).filter((p) => (spentMicros[p] ?? 0) >= MANAGED_AI_POOLS[p]!.capMicros),
       ...((row?.dry ?? []) as AiProvider[]),

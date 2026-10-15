@@ -519,6 +519,8 @@ async function seed() {
   // The recruiter scan's watermark, kept separate from `gmail_connections` on purpose but
   // no less user data than anything else here.
   await db.insert(schema.recruiterScanState).values({ userId: USER });
+  await db.insert(schema.cloudNoteSources).values({ userId: USER, provider: "google", cursor: "c1" });
+  await db.insert(schema.cloudNoteFiles).values({ userId: USER, provider: "google", fileId: "doc-1", name: "1:1 notes" });
 
   // Duplicate-prevention rows. `contact_merges` is the one that matters most here: it has
   // no foreign key to either contact (the losing contact's row is deleted by design), so
