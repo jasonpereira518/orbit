@@ -124,7 +124,30 @@ export type ChatEvalFixture = {
     question: string;
     /** Emails (from contact-search-eval.json) of contacts the answer must name. */
     mustMention: string[];
+    /** Earlier turns of the thread, for a follow-up. */
+    priorTurns?: Array<{ role: "user" | "assistant"; content: string }>;
+    /** Facts the answer must state; `{networkSize}` is the number of contacts seeded. */
+    mustSay?: string[];
   }>;
+};
+
+/**
+ * `chat-large-network-eval.json`: generated look-alikes plus note-only targets, seeded on top
+ * of contact-search-eval.json by `--network large`. See its `$comment`.
+ */
+export type LargeNetworkFixture = ChatEvalFixture & {
+  distractors: number;
+  pools: Record<
+    "firstNames" | "lastNames" | "companies" | "titles" | "industries" | "locations" | "schools" | "notes" | "interactionNotes",
+    string[]
+  >;
+  contacts: SearchFixtureContact[];
+  notes: Array<{ id: string; email: string; date: string; type: string; text: string }>;
+};
+
+export type SearchFixtureContact = {
+  email: string; fullName: string; company: string; title: string; school: string;
+  industry: string; location: string; notes: string; tags: string[];
 };
 
 /** `scripts/eval-fixtures/ai-digest-eval.json` — meeting transcripts for the digest. */

@@ -163,8 +163,8 @@ function filterCondition(
 ): SQL | null {
   if (!filters) return null;
   const parts: SQL[] = [];
-  const clean = (xs?: string[]) =>
-    (xs ?? []).map((x) => x.trim()).filter((x) => x.length > 0).slice(0, 4);
+  const clean = (xs?: string[], max = 4) =>
+    (xs ?? []).map((x) => x.trim()).filter((x) => x.length > 0).slice(0, max);
 
   const companies = clean(filters.companies);
   if (companies.length) {
@@ -188,7 +188,8 @@ function filterCondition(
       )})`
     );
   }
-  const locations = clean(filters.locations);
+  // A country arrives as itself plus its cities (chat-retrieval's understandQuery): up to 8.
+  const locations = clean(filters.locations, 8);
   if (locations.length) parts.push(anyLike(sql`lower(coalesce(contacts.location, ''))`, locations));
 
   const tagNames = clean(filters.tags);
@@ -220,7 +221,8 @@ async function ftsArm(
   query: string,
   expansionTerms: string[],
   filter: SQL | null,
-  armLimit: number
+  armLimit: number,
+  places: readonly string[] = []
 ): Promise<string[]> {
   const db = await getDb();
   // websearch_to_tsquery understands OR; expansion terms widen recall without
@@ -239,7 +241,7 @@ async function ftsArm(
   // fusion bounds how much noise the loosened single-token alternatives can add.
   const tokens = query.trim().split(/\s+/).filter(Boolean);
   const extraTerms = tokens.length >= 3 ? contentTokens(query) : [];
-  const tsQuery = [query, ...expansionTerms.slice(0, 4), ...extraTerms]
+  const tsQuery = [query, ...expansionTerms.slice(0, 4), ...extraTerms, ...places]
     .map((t) => t.trim())
     .filter(Boolean)
     .join(" OR ");
@@ -538,7 +540,10 @@ async function runArms(
   armLimit: number
 ): Promise<ArmResult[]> {
   const [fts, trgm, vec, exp] = await Promise.all([
-    ftsArm(userId, options.query, options.expansionTerms ?? [], filter, armLimit),
+    // A location filter's places are searched for too, not only filtered on: "Canada" is
+    // parsed into its cities, which appear nowhere in the question, so no arm would
+    // otherwise produce the Toronto contact for the filter to keep.
+    ftsArm(userId, options.query, options.expansionTerms ?? [], filter, armLimit, options.filters?.locations ?? []),
     trigramArm(userId, options.query, filter, armLimit),
     options.embedding?.length
       ? semanticArm(userId, options.embedding, armLimit)

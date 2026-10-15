@@ -40,6 +40,14 @@ async function main() {
   check("drops invalid tier", sane.filters.closenessTiers!.length === 1 && sane.filters.closenessTiers![0] === "inner");
   check("drops non-string expansion terms", sane.expansionTerms.every((t) => typeof t === "string"));
 
+  // A country is expanded into its cities ("Canada" alone matches no stored location), so
+  // locations get more room than the other filters.
+  const canada = sanitizeParsedQuery(
+    { semanticQuery: "x", filters: { locations: ["Canada", "Toronto", "Vancouver", "Montreal", "Ottawa", "Calgary", "Edmonton", "Halifax", "Victoria"] } },
+    "who do I know in Canada?"
+  );
+  check("keeps a country plus its cities, capped at 8", canada.filters.locations!.length === 8 && canada.filters.locations!.includes("Ottawa"));
+
   const junk = sanitizeParsedQuery({ nonsense: true }, "raw question");
   check("garbage parse degrades to fallback", junk.semanticQuery === "raw question");
 

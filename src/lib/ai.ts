@@ -1964,7 +1964,7 @@ export function buildChatPrompt({
       // (@/lib/contact-profile-format) strips control characters and folds newlines before
       // the value ever gets here, so no organization name can open a second numbered row.
       // The fence is what keeps the block as a whole from being escaped.
-      return `${i + 1}. [id=${c.id}] ${c.fullName} | ${c.title || "?"} @ ${c.company || "?"} | career=${c.career || "n/a"} | score=${c.relationshipScore} | tags=${c.tags.join(", ")} | relevance=${c.relevance.toFixed(2)}\nSummary: ${c.aiSummary || "n/a"}${factsCite}\nNotes: ${(c.notes || "").slice(0, 1200)}${facts ? `\n${facts}` : ""}${messages ? `\n${messages}` : ""}`;
+      return `${i + 1}. [id=${c.id}] ${c.fullName} | ${c.title || "?"} @ ${c.company || "?"}${c.location ? ` | based in ${c.location}` : ""}${c.school ? ` | school=${c.school}` : ""} | career=${c.career || "n/a"} | score=${c.relationshipScore} | tags=${c.tags.join(", ")} | relevance=${c.relevance.toFixed(2)}\nSummary: ${c.aiSummary || "n/a"}${factsCite}\nNotes: ${(c.notes || "").slice(0, 1200)}${facts ? `\n${facts}` : ""}${messages ? `\n${messages}` : ""}`;
     })
     .join("\n\n");
 
@@ -2509,6 +2509,8 @@ export async function chatWithNetwork(
     fullName: string;
     company: string | null;
     title: string | null;
+    location?: string | null;
+    school?: string | null;
     relationshipScore: number;
     aiSummary: string | null;
     notes: string | null;

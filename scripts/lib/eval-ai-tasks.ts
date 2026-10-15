@@ -69,6 +69,8 @@ import type {
   CaptureEvalFixture,
   ChatEvalFixture,
   DigestEvalFixture,
+  LargeNetworkFixture,
+  SearchFixtureContact,
   ExtensionEvalFixture,
   OcrEvalFixture,
   RecruiterEvalFixture,
@@ -1332,19 +1334,72 @@ export async function runTranscribeTask({ userId, limit, log }: RunOpts): Promis
 
 /* --------------------------------------------------------------------------- chat ----- */
 
-type SearchFixture = {
-  contacts: Array<{
-    email: string; fullName: string; company: string; title: string; school: string;
-    industry: string; location: string; notes: string; tags: string[];
-  }>;
-};
+type SearchFixture = { contacts: SearchFixtureContact[] };
 
-/** Seeds `contact-search-eval.json`'s network for the eval user, embeddings included. */
+/**
+ * `--network large` (eval-ai.ts sets this): retrieval has to pick a dozen out of ~320. Off by
+ * default — it costs ~300 more embeddings a run, and the baselines were made without it.
+ */
+const largeNetwork = () =>
+  process.env.ORBIT_EVAL_NETWORK === "large" ? fixture<LargeNetworkFixture>("chat-large-network-eval.json") : null;
+
+/**
+ * `count` look-alikes from the fixture's pools, the same every run (a fixed-seed PRNG), with
+ * one interaction note per third of them so the note search has more than the targets to sift.
+ * Throws when a pool value would match a base-network filter: a generated "Stanford" alum
+ * would turn chat-02's answer into a guess.
+ */
+export function generateDistractors(large: LargeNetworkFixture, base: SearchFixtureContact[]) {
+  const p = large.pools;
+  // Per field, as the filters match: a company filter never reads a location.
+  for (const [field, pool] of [["company", p.companies], ["school", p.schools], ["location", p.locations], ["industry", p.industries]] as const) {
+    for (const value of pool) {
+      const v = value.toLowerCase();
+      const hit = base.map((c) => c[field].toLowerCase()).find((b) => v.includes(b) || b.includes(v));
+      if (hit) throw new Error(`large-network ${field} "${value}" collides with base-network "${hit}"`);
+    }
+  }
+  let seed = 42;
+  const rand = () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const pick = (xs: string[]) => xs[Math.floor(rand() * xs.length)];
+  const names = p.firstNames.flatMap((f) => p.lastNames.map((l) => `${f} ${l}`));
+  if (large.distractors > names.length) throw new Error("not enough name combinations for the distractors");
+  for (let i = names.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [names[i], names[j]] = [names[j], names[i]];
+  }
+  const contacts: SearchFixtureContact[] = [];
+  const notes: LargeNetworkFixture["notes"] = [];
+  for (let i = 0; i < large.distractors; i++) {
+    const email = `d${String(i).padStart(3, "0")}@distractor.example`;
+    contacts.push({
+      email, fullName: names[i], company: pick(p.companies), title: pick(p.titles), school: pick(p.schools),
+      industry: pick(p.industries), location: pick(p.locations), notes: pick(p.notes), tags: [],
+    });
+    if (i % 3 === 0) {
+      notes.push({ id: `distractor-${i}`, email, date: `2026-0${1 + (i % 9)}-15`, type: "note", text: pick(p.interactionNotes) });
+    }
+  }
+  return { contacts, notes };
+}
+
+/**
+ * Seeds `contact-search-eval.json`'s network for the eval user, embeddings included — plus,
+ * with `--network large`, the large fixture's targets, their notes and the distractors.
+ */
 async function seedNetwork(userId: string): Promise<Map<string, { id: string; fullName: string }>> {
-  const network = fixture<SearchFixture>("contact-search-eval.json");
+  const base = fixture<SearchFixture>("contact-search-eval.json").contacts;
+  const large = largeNetwork();
+  const extra = large ? generateDistractors(large, base) : null;
+  const people = large && extra ? [...base, ...large.contacts, ...extra.contacts] : base;
   const db = await getDb();
   const byEmail = new Map<string, { id: string; fullName: string }>();
-  for (const c of network.contacts) {
+  for (const c of people) {
     const [row] = await db
       .insert(contacts)
       .values({
@@ -1364,22 +1419,42 @@ async function seedNetwork(userId: string): Promise<Map<string, { id: string; fu
   await rebuildContactEmbeddingsBatch(userId, [...byEmail.values()].map((c) => c.id)).catch((err) =>
     console.warn(`  (embeddings unavailable: ${err instanceof Error ? err.message : String(err)})`)
   );
+  if (large && extra) {
+    const ids = new Map([...byEmail].map(([email, c]) => [email, c.id]));
+    await seedPassageNotes(userId, { notes: [...large.notes, ...extra.notes], cases: [] }, ids);
+    await runEmbeddingBackfill(userId).catch((err) =>
+      console.warn(`  (passage embeddings unavailable: ${err instanceof Error ? err.message : String(err)})`)
+    );
+  }
   return byEmail;
 }
 
 export async function runChatTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
-  const cases = fixture<ChatEvalFixture>("ai-chat-eval.json").cases.slice(0, limit);
+  const large = largeNetwork();
+  const cases = [...fixture<ChatEvalFixture>("ai-chat-eval.json").cases, ...(large?.cases ?? [])].slice(0, limit);
+  // The large network seeds notes, which deleting contacts between runs does not remove.
+  await clearResearchUser(userId);
   const network = await seedNetwork(userId);
+  const db = await getDb();
   const answered = tally();
   const retrieved = tally();
+  const said = tally();
   const misses: string[] = [];
   const latenciesMs: number[] = [];
 
   for (const c of cases) {
     try {
+      let threadId: string | null = null;
+      if (c.priorTurns?.length) {
+        const [thread] = await db.insert(chatThreads).values({ userId }).returning();
+        threadId = thread.id;
+        for (const turn of c.priorTurns) {
+          await db.insert(chatMessages).values({ threadId, userId, role: turn.role, content: turn.content });
+        }
+      }
       const { ctx, result } = await timed(latenciesMs, async () => {
         const requestStartedAt = Date.now();
-        const ctx = await prepareChatContext(userId, c.question, {});
+        const ctx = await prepareChatContext(userId, c.question, { threadId });
         // The research round runs here as it does in production (`askNetwork`, the route), so
         // this task's cost and latency include it — and a routing change shows up in both.
         const { evidence, notePassages } = await maybeGather(userId, ctx, { requestStartedAt });
@@ -1406,29 +1481,42 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
         ((result.recommendations ?? []) as Array<{ contact_id?: string | null }>).map((r) => r.contact_id)
       );
       const shown = new Set(ctx.modelContacts.map((m) => m.id));
-      let missed = false;
+      const why: string[] = [];
       for (const email of c.mustMention) {
         const person = network.get(email);
-        if (!person) throw new Error(`fixture names ${email}, which contact-search-eval.json does not have`);
+        if (!person) throw new Error(`fixture names ${email}, which the seeded network does not have`);
         const ok = mentions(result.answer ?? "", person.fullName) || recommended.has(person.id);
         count(answered, ok);
         count(retrieved, shown.has(person.id));
-        missed ||= !ok;
+        if (!ok) why.push(`did not name ${person.fullName}${shown.has(person.id) ? "" : " (not retrieved)"}`);
       }
-      if (missed) misses.push(c.id);
-      log(`  ${missed ? "MISS" : "ok  "} chat/${c.id}`);
+      for (const fact of c.mustSay ?? []) {
+        const want = fact.replace("{networkSize}", String(network.size));
+        const ok = mentions(result.answer ?? "", want);
+        count(said, ok);
+        if (!ok) why.push(`did not say "${want}"`);
+      }
+      if (why.length) misses.push(c.id);
+      log(`  ${why.length ? "MISS" : "ok  "} chat/${c.id}${why.length ? ` — ${why.join("; ")}` : ""}`);
+      if (why.length) log(`       answer: ${(result.answer ?? "").replace(/\s+/g, " ").slice(0, 300)}`);
     } catch (err) {
       misses.push(c.id);
       for (let i = 0; i < c.mustMention.length; i++) count(answered, false);
+      for (let i = 0; i < (c.mustSay?.length ?? 0); i++) count(said, false);
       log(`  FAIL chat/${c.id} — ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
+  await clearResearchUser(userId);
   return {
     cases: cases.length,
     misses,
     latenciesMs,
-    metrics: { mentionRecall: rate(answered), retrievalRecall: rate(retrieved) },
+    metrics: {
+      mentionRecall: rate(answered),
+      retrievalRecall: rate(retrieved),
+      ...(cases.some((c) => c.mustSay?.length) ? { factRecall: rate(said) } : {}),
+    },
   };
 }
 

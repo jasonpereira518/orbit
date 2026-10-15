@@ -27,6 +27,8 @@ const UNDERSTAND_TIMEOUT_MS = 2500;
 const HISTORY_TURNS = 2;
 const HISTORY_TURN_CHARS = 400;
 const MAX_FILTER_VALUES = 4;
+/** A country or region arrives as itself plus its main cities (see UNDERSTAND_SYSTEM). */
+const MAX_LOCATION_VALUES = 8;
 const VALID_TIERS = new Set(["inner", "mid", "outer"]);
 
 export function fallbackParsedQuery(question: string): ParsedQuery {
@@ -47,13 +49,13 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   }
 }
 
-function cleanStringArray(value: unknown): string[] {
+function cleanStringArray(value: unknown, max = MAX_FILTER_VALUES): string[] {
   if (!Array.isArray(value)) return [];
   return value
     .filter((v): v is string => typeof v === "string")
     .map((v) => v.trim())
     .filter((v) => v.length > 1)
-    .slice(0, MAX_FILTER_VALUES);
+    .slice(0, max);
 }
 
 export function sanitizeParsedQuery(raw: unknown, question: string): ParsedQuery {
@@ -73,7 +75,7 @@ export function sanitizeParsedQuery(raw: unknown, question: string): ParsedQuery
   if (industries.length) filters.industries = industries;
   const schools = cleanStringArray(rawFilters.schools);
   if (schools.length) filters.schools = schools;
-  const locations = cleanStringArray(rawFilters.locations);
+  const locations = cleanStringArray(rawFilters.locations, MAX_LOCATION_VALUES);
   if (locations.length) filters.locations = locations;
   const tags = cleanStringArray(rawFilters.tags);
   if (tags.length) filters.tags = tags;
@@ -107,6 +109,7 @@ const UNDERSTAND_SYSTEM = `You turn a question about someone's personal/professi
 Extract only what the question explicitly states or strongly implies. Do not guess.
 Filters narrow a database query over the user's contacts:
 - companies, industries, schools, locations: substring matches (e.g. "fintech", "Stanford")
+- locations are stored as cities ("Toronto", "Austin, TX"), so a country, state or region matches nobody by itself: give it AND its major cities (e.g. "Canada" -> ["Canada", "Toronto", "Vancouver", "Montreal", "Ottawa", "Calgary"]), at most 8 values
 - tags: user-defined labels (e.g. "mentor", "investor")
 - closenessTiers: subset of ["inner","mid","outer"] — ONLY when the question references closeness ("close friends" -> ["inner"], "acquaintances" -> ["outer"])
 Self-references ("my school", "my company") can only be resolved from the user context provided; if it does not name one, OMIT that filter — never invent a value.
@@ -187,7 +190,7 @@ Return JSON: {"scores": [{"id": string, "relevance": number}]}`;
 
 function candidateCard(c: RankedContact): string {
   const summary = (c.aiSummary || c.notes || "").replace(/\s+/g, " ").slice(0, 160);
-  return `[id=${c.id}] ${c.fullName} | ${c.title || "?"} @ ${c.company || "?"} | school=${c.school || "?"} | industry=${c.industry || "?"} | tier=${c.closenessTier || "?"} | tags=${c.tags.join(",") || "-"}${summary ? ` | ${summary}` : ""} | matches_filters=${c.filterMatched ? "yes" : "no"}`;
+  return `[id=${c.id}] ${c.fullName} | ${c.title || "?"} @ ${c.company || "?"} | school=${c.school || "?"} | location=${c.location || "?"} | industry=${c.industry || "?"} | tier=${c.closenessTier || "?"} | tags=${c.tags.join(",") || "-"}${summary ? ` | ${summary}` : ""} | matches_filters=${c.filterMatched ? "yes" : "no"}`;
 }
 
 /**
@@ -202,6 +205,7 @@ function decisionCard(c: RankedContact) {
     title: c.title,
     company: c.company,
     school: c.school,
+    location: c.location,
     industry: c.industry,
     closeness_tier: c.closenessTier,
     tags: c.tags.length ? c.tags : null,
@@ -374,6 +378,9 @@ export type BudgetedContact = {
   fullName: string;
   company: string | null;
   title: string | null;
+  /** Where they're based and where they studied — "who do I know in Canada?" needs the first. */
+  location: string | null;
+  school: string | null;
   relationshipScore: number;
   aiSummary: string | null;
   notes: string | null;
@@ -435,6 +442,7 @@ export function budgetContactsContext(
 
     const cost =
       c.fullName.length + (c.company?.length ?? 0) + (c.title?.length ?? 0) +
+      (c.location?.length ?? 0) + (c.school?.length ?? 0) +
       (notes?.length ?? 0) + (aiSummary?.length ?? 0) + (career?.length ?? 0) +
       keyFacts.join("").length + timeline.map((t) => t.line).join("").length +
       c.tags.join("").length + 80; // formatting overhead
@@ -448,6 +456,8 @@ export function budgetContactsContext(
       fullName: c.fullName,
       company: c.company,
       title: c.title,
+      location: c.location,
+      school: c.school,
       relationshipScore: c.relationshipScore,
       aiSummary,
       notes,
