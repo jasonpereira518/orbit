@@ -51,6 +51,7 @@ async function main() {
   check("an invitation stamp", parseExportStamp("9/22/26, 8:50 AM")?.toISOString() === "2026-09-22T08:50:00.000Z");
   check("a recommendation stamp, zero-padded PM", parseExportStamp("08/25/26, 07:03 PM")?.toISOString() === "2026-08-25T19:03:00.000Z");
   check("12 AM is midnight", parseExportStamp("1/1/26, 12:05 AM")?.toISOString() === "2026-01-01T00:05:00.000Z");
+  check("a bare day lands at noon UTC, the same day everywhere", parseExportStamp("2026-09-20")?.toISOString() === "2026-09-20T12:00:00.000Z");
   check("an empty or unreadable stamp is null", parseExportStamp("") === null && parseExportStamp("soon") === null);
 
   console.log("Per-person notes");

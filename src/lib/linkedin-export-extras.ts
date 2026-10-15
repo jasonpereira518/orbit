@@ -61,6 +61,9 @@ export function parseExportStamp(raw: string | undefined): Date | null {
     const d = new Date(Date.UTC(year, Number(m[1]) - 1, Number(m[2]), hour, Number(m[5])));
     return Number.isNaN(d.getTime()) ? null : d;
   }
+  // A bare day (Notes.csv) at noon UTC, so no timezone shows it as the day before.
+  const ymd = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (ymd) return new Date(Date.UTC(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]), 12));
   const t = Date.parse(s);
   return Number.isNaN(t) ? null : new Date(t);
 }
