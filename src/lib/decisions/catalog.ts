@@ -505,3 +505,27 @@ export const SKIP_GATE_TUNING = {
   cacheDays: 30,
   inputChars: 12_000,
 } as const;
+
+/* ------------------------------------------------------------------ cloud notes ------ */
+
+/**
+ * Cloud notes: a doc the rules could not call (`cloud-notes/detect.ts` said maybe). Asked on
+ * the name and the first lines only. Answered `true` means offer it to the person — a wrong
+ * yes costs one dismiss; nothing is extracted without them (or their auto-extract switch).
+ */
+export function notesKindQuestion(key: string) {
+  return noul(`Is \`docs.${key}\` notes from a meeting, call, event or conversation with other people, or a chat transcript?`, {
+    true: "Notes someone took during or after a meeting, call, interview, coffee chat or event; a meeting summary or transcript; a chat or message export between people.",
+    false: "Plans, specs, drafts, essays, résumés, lists, templates, class or book notes, journals, and documents that only mention a meeting in passing.",
+  });
+}
+
+export const NOTES_TUNING = {
+  /** START. At or above, a maybe is offered; below, it is dropped. */
+  offerAtOrAbove: 0.5,
+  chunkSize: 3,
+  concurrency: 3,
+  /** A scan pass, not a person waiting. */
+  budgetMs: 8_000,
+  cacheDays: 30,
+} as const;

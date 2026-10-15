@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { getContactLabel } from "@/actions/contacts";
 import { getActiveCaptureJob, getActiveCaptureJobs } from "@/actions/capture-jobs";
+import { getCloudNotesState } from "@/actions/cloud-notes";
 import { countIgnoredPeople } from "@/actions/ignored-people";
 import { getPlanOverview, getSettings } from "@/actions/settings";
 import { CaptureFlowLazy } from "@/components/capture/capture-flow-lazy";
@@ -10,6 +11,8 @@ import { requireUserId } from "@/lib/auth";
 import { FEATURE_DENIAL, getEntitlements } from "@/lib/entitlements";
 import { getResumableMeeting } from "@/lib/meeting-sessions";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { CLOUD_NOTES_SURFACE_KEY } from "@/lib/surfaces";
+import { isSurfaceLive } from "@/lib/surface-visibility";
 
 // Page-level, because it governs the server actions called from this page: summarizing an
 // hour-long meeting is a map-reduce over several model calls. The (main) layout is 60, so
@@ -19,14 +22,18 @@ export const maxDuration = 300;
 export default async function CapturePage({
   searchParams,
 }: {
-  searchParams: Promise<{ contactId?: string; mode?: string }>;
+  searchParams: Promise<{ contactId?: string; mode?: string; review?: string }>;
 }) {
   const params = await searchParams;
   const requestedContactId = params.contactId || null;
+  // `structured` was the form tab Drive & OneDrive replaced; old links land on the notes box,
+  // which takes the same contact.
   const modeParam: CaptureMode | null =
-    params.mode === "structured" || params.mode === "messy" || params.mode === "voice" || params.mode === "meeting"
+    params.mode === "messy" || params.mode === "voice" || params.mode === "meeting" || params.mode === "cloud"
       ? params.mode
-      : null;
+      : params.mode === "structured"
+        ? "messy"
+        : null;
 
   const userIdPromise = requireUserId();
   const settingsPromise = getSettings();
@@ -42,6 +49,11 @@ export default async function CapturePage({
   // the page actually needs to function.
   const jobsPromise = getActiveCaptureJobs().catch(() => []);
   const ignoredPromise = countIgnoredPeople().catch(() => 0);
+  // Null hides the Drive & OneDrive tab: the surface is not live for this viewer, or the read failed.
+  const cloudNotesPromise = userIdPromise
+    .then((userId) => isSurfaceLive(userId, CLOUD_NOTES_SURFACE_KEY))
+    .then((live) => (live ? getCloudNotesState() : null))
+    .catch(() => null);
 
   let contactId: string | null = null;
   let contactName: string | null = null;
@@ -61,10 +73,11 @@ export default async function CapturePage({
   const job = await jobPromise;
   const jobs = await jobsPromise;
   const ignoredCount = await ignoredPromise;
+  const cloudNotes = await cloudNotesPromise;
   // An unfinished meeting is the one thing on this page that can be lost by ignoring it,
   // so it opens on the Meeting tab unless the link asked for something specific.
   const defaultMode: CaptureMode =
-    modeParam || (contactId ? "structured" : resumableMeeting ? "meeting" : "messy");
+    modeParam || (resumableMeeting && !contactId ? "meeting" : "messy");
   // The gate's own answer for the engine chain in `transcribeAudioWithAI` (Whisper or
   // Gemini — or Orbit's on Lifetime). Anthropic has no speech-to-text, so an Anthropic-only
   // BYOK account can summarize but not transcribe.
@@ -78,10 +91,13 @@ export default async function CapturePage({
         <p className="mt-1 text-muted-foreground">
           {contactName
             ? `Log an interaction with ${contactName} — or paste notes that mention others too.`
-            : "Notes, a voice memo, a meeting, or a form. Orbit pulls out each person; you review them one card at a time."}
+            : "Notes, a voice memo, a meeting, or docs from your drive. Orbit pulls out each person; you review them one card at a time."}
         </p>
       </div>
       <CaptureFlowLazy
+        // The toast's and the bell's Review link to this same page: a client navigation would
+        // keep the flow's tab state and never open the dialog, so a review link remounts it.
+        key={params.review === "1" ? "cloud-review" : "capture"}
         initialJob={job}
         initialJobs={jobs}
         initialContactId={contactId}
@@ -97,6 +113,8 @@ export default async function CapturePage({
         quota={{ used: usage.used, limit: usage.limit }}
         userId={userId}
         canUseSync={canUseSync}
+        cloudNotes={cloudNotes}
+        openCloudReview={params.review === "1"}
         drive={{
           apiKey: process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY ?? null,
           appId: process.env.NEXT_PUBLIC_GOOGLE_APP_ID ?? null,
