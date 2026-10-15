@@ -43,6 +43,7 @@ import { purgeUserData } from "@/lib/user-data";
 
 export { recordAdminAction } from "@/lib/admin-audit";
 import { recordAdminAction } from "@/lib/admin-audit";
+import { dropCloudNoteSource } from "@/lib/cloud-notes/sources";
 
 export function requireReason(reason: string, minimum = 4): string {
   const trimmed = reason.trim();
@@ -165,8 +166,11 @@ export async function recordContactView(
 
 /* ---------------------------------------------------------------------- sign-in link */
 
-/** How long a minted link stays valid before its first (only) use. */
-const SIGN_IN_LINK_EXPIRES_SECONDS = 30 * 24 * 60 * 60;
+/**
+ * How long a minted link stays valid before its first (only) use. A leaked link is a sign-in
+ * as that account, admins included, so a week (room to hand a demo over) rather than a month.
+ */
+const SIGN_IN_LINK_EXPIRES_SECONDS = 7 * 24 * 60 * 60;
 
 /**
  * Mint a one-click sign-in URL for any account, for the operator to hand to whoever needs
@@ -405,6 +409,7 @@ export async function disconnectIntegration(adminUserId: string, input: {
   const table =
     input.provider === "gmail" ? gmailConnections : outlookConnections;
   await db.delete(table).where(eq(table.userId, input.targetUserId));
+  await dropCloudNoteSource(input.targetUserId, input.provider === "gmail" ? "google" : "microsoft");
 
 }
 

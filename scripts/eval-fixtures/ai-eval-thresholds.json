@@ -22,7 +22,10 @@
     "attentionPrecision": { "maxDrop": 0 },
     "attentionRecall": { "maxDrop": 0.06 },
     "recruiterAccuracy": { "maxDrop": 0.02 },
-    "rosterAccuracy": { "maxDrop": 0 }
+    "rosterAccuracy": { "maxDrop": 0 },
+    "shapeAccuracy": { "maxDrop": 0.03 },
+    "personAccuracy": { "maxDrop": 0.03 },
+    "timeAccuracy": { "maxDrop": 0.05 }
   },
   "duplicates": {
     "wrongMerges": { "maxRise": 0 },
@@ -69,7 +72,12 @@
   },
   "chat": {
     "mentionRecall": { "maxDrop": 0.03 },
-    "retrievalRecall": { "maxDrop": 0.03 }
+    "retrievalRecall": { "maxDrop": 0.03 },
+    "firstTokenP50Ms": { "maxRise": 1500 },
+    "listCompleteness": { "maxDrop": 0 },
+    "countAccuracy": { "maxDrop": 0.1 },
+    "personResolution": { "maxDrop": 0.05 },
+    "inventedDirectiveIds": { "maxRise": 0 }
   },
   "research": {
     "mentionRecall": { "maxDrop": 0.05 },

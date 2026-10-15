@@ -297,10 +297,37 @@ type OrgRow = {
  * The viewer's companies and schools, each with what Orbit has learned about its color —
  * one statement. `learned` is what the page registers; `missing` is what is worth learning.
  */
-export async function loadOrgBrandColors(userId: string): Promise<{
+export async function loadOrgBrandColors(userId: string): Promise<OrgBrandColors> {
+  const hit = brandMemo.get(userId);
+  if (hit && Date.now() - hit.at < BRAND_MEMO_TTL_MS) return hit.value;
+  const value = await readOrgBrandColors(userId);
+  if (brandMemo.size >= BRAND_MEMO_MAX) brandMemo.delete(brandMemo.keys().next().value!);
+  brandMemo.set(userId, { at: Date.now(), value });
+  return value;
+}
+
+type OrgBrandColors = {
   learned: LearnedBrand[];
   missing: Array<{ name: string; kind: BrandKind; nameKey: string }>;
-}> {
+};
+
+/**
+ * Per-instance copy per viewer. The (app) layout reads this on every full load and every
+ * `router.refresh()`, and the read scans every contact's school (~120 ms of database time at
+ * 25k contacts). Colors are cosmetic and change only when a learning pass stores one, which
+ * forgets its viewer here; other instances catch up within the TTL.
+ */
+const BRAND_MEMO_TTL_MS = 5 * 60_000;
+const BRAND_MEMO_MAX = 500;
+const brandMemo = new Map<string, { at: number; value: OrgBrandColors }>();
+
+/** Drop the cached copy — one viewer's, or everyone's. For writers and tests. */
+export function forgetOrgBrandColors(userId?: string): void {
+  if (userId) brandMemo.delete(userId);
+  else brandMemo.clear();
+}
+
+async function readOrgBrandColors(userId: string): Promise<OrgBrandColors> {
   const db = await getDb();
   const rows = rowsOf<OrgRow>(
     await db.execute(sql`
@@ -408,5 +435,6 @@ export async function learnOrgBrandColors(
       inFlight.delete(flightKey);
     }
   }
+  if (stored) forgetOrgBrandColors(userId);
   return stored;
 }

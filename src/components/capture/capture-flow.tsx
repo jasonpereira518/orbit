@@ -37,7 +37,8 @@ import { useMeetingFlow } from "@/components/capture/meeting-session";
 import { MeetingSummaryCard, type SelectableMeetingItem } from "@/components/capture/meeting-summary-card";
 import { MessyNotesCapture } from "@/components/capture/messy-notes-capture";
 import { PersonDeck } from "@/components/capture/review/person-deck";
-import { StructuredCaptureForm } from "@/components/capture/structured-capture-form";
+import { CloudNotesPicker } from "@/components/capture/cloud-notes-picker";
+import type { CloudNotesState } from "@/actions/cloud-notes";
 import { VoiceCapture } from "@/components/capture/voice-capture";
 import type { SuggestionReviewItem } from "@/components/chat/bulk-notes-panel";
 import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
@@ -85,6 +86,8 @@ export function CaptureFlow({
   history = null,
   canUseSync = false,
   drive = null,
+  cloudNotes = null,
+  openCloudReview = false,
   onSaved,
 }: {
   initialJob: CaptureJobView | null;
@@ -112,6 +115,10 @@ export function CaptureFlow({
   canUseSync?: boolean;
   /** Google Picker config, from the server's env. Any gap hides the Drive button. */
   drive?: DriveCaptureConfig | null;
+  /** The Drive & OneDrive tab's state; null while the cloud-notes surface is not live for this viewer. */
+  cloudNotes?: CloudNotesState | null;
+  /** Open the "these look like meeting notes" dialog on arrival (the toast's and the bell's Review). */
+  openCloudReview?: boolean;
   /**
    * Embedded in onboarding: notes only (no mode tabs, no ignored-people list), and a save
    * hands back to the caller instead of showing the saved screen. The store is cleared
@@ -143,7 +150,9 @@ export function CaptureFlow({
         : defaultMode;
     // Embedded (onboarding) hides the tabs and has no meetings, so a resumed failed meeting
     // would open on a blank denied panel. Its text prefills the notes box, so open there.
-    return onSaved && initial === "meeting" ? "messy" : initial;
+    const opened = onSaved && initial === "meeting" ? "messy" : initial;
+    // A link into the Drive tab for someone the tab is not live for.
+    return opened === "cloud" && !cloudNotes ? "messy" : opened;
   });
   /**
    * The queue over a multi-file drop.
@@ -519,7 +528,7 @@ export function CaptureFlow({
 
       {phase === "input" && !onSaved && (
         <div className="space-y-2">
-          <CaptureTabs mode={mode} onChange={setMode} disabled={inputLocked} />
+          <CaptureTabs mode={mode} onChange={setMode} disabled={inputLocked} showCloud={Boolean(cloudNotes)} />
           {blurb && <p className="text-sm text-muted-foreground">{blurb}</p>}
         </div>
       )}
@@ -621,10 +630,14 @@ export function CaptureFlow({
                 canUseSync={canUseSync}
               />
             )}
-            {mode === "structured" && (
-              <div id={capturePanelId("structured")} role="tabpanel" aria-labelledby={captureTabId("structured")}>
-                <StructuredCaptureForm initialContactId={initialContactId} initialContactName={initialContactName} />
-              </div>
+            {mode === "cloud" && cloudNotes && (
+              <CloudNotesPicker
+                state={cloudNotes}
+                openReview={openCloudReview}
+                panelId={capturePanelId("cloud")}
+                tabId={captureTabId("cloud")}
+                onQueued={refreshQueue}
+              />
             )}
           </motion.div>
         )}
