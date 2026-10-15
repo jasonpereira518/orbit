@@ -20,20 +20,19 @@ import {
 import {
   budgetContactsContext,
   CANDIDATE_POOL,
+  FINAL_CONTACT_COUNT,
   rerankCandidatesWithEngine,
   type RankEngine,
   understandQuery,
   type ChatTimelineEntry,
+  type ParsedQuery,
 } from "@/lib/chat-retrieval";
 import { openDecider, type Decider } from "@/lib/decisions/jev";
-import {
-  gateRosters,
-  routeChatQuestion,
-  rulesRoute,
-  type ChatRoute,
-  type ParsedIntent,
-} from "@/lib/decisions/chat-route";
+import { gateRosters, routeFromParsed, type ChatRoute, type PriorTurn } from "@/lib/decisions/chat-route";
 import { findOrgRosters, type OrgRoster } from "@/lib/chat-roster";
+import { factLane, filterLane, personLane } from "@/lib/chat-lanes";
+import type { NotePassage } from "@/lib/chat-gather";
+import type { ChatBlocks } from "@/lib/chat-directives";
 import { attachPhotos, createPhotoCache, type PhotoCache } from "@/lib/chat-photos";
 import { describeArms, NULL_STEPS, plural, toRefs, type StepEmitter } from "@/lib/chat-steps";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
@@ -72,6 +71,8 @@ import { sanitizeDraft } from "@/lib/chat-draft";
  */
 
 const PRIOR_TURN_LIMIT = 8;
+/** Characters of each earlier turn replayed as history. */
+const PRIOR_TURN_CHARS = 3000;
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 
@@ -129,6 +130,12 @@ export type ChatContext = {
    * depth from here instead of re-deciding it. Optional so hand-built contexts in tests work.
    */
   route?: ChatRoute;
+  /**
+   * Passages from the notes (and meetings) the fact lane found for a fact question, or for a
+   * person question once the name resolved. `maybeGather` hands them to the answer, with any
+   * the research step adds. Optional so hand-built contexts in tests work.
+   */
+  notePassages?: NotePassage[];
   /** Contacts the model may recommend: budgeted-in, on a roster, or in the attention brief. */
   allowedContacts: Set<string>;
   /** A name for every id in `allowedContacts` — see `validateProposedActions`'s `contactNames`. */
@@ -274,16 +281,27 @@ async function retrieveRankedContacts(
   steps: StepEmitter = NULL_STEPS,
   photos: PhotoCache = createPhotoCache(),
   /**
-   * Shared with the router (`prepareChatContext`): the decider it already opened, and a hook
-   * that hands it the parser's intent flags the moment they exist.
+   * Shared with the router (`prepareChatContext`): the decider it already opened, the earlier
+   * turns the parser reads, and a hook that hands the router the parse the moment it exists.
    */
   routing?: {
     decider: Promise<Decider | null>;
-    onIntent: (intent: ParsedIntent | null) => void;
+    priorTurns?: Promise<PriorTurn[]>;
+    onParsed: (parsed: ParsedQuery | null) => void;
     /** The account read the question shares; undefined means each call opens its own. */
     access?: Promise<AiAccess | undefined>;
   }
-): Promise<{ ranked: RankedContact[]; searchNotice: string | null; goals: string[] }> {
+): Promise<{
+  ranked: RankedContact[];
+  searchNotice: string | null;
+  goals: string[];
+  /** Everyone matching a list or count question's filters, as a roster. */
+  filterRoster: OrgRoster | null;
+  /** The contact a person question resolved to. */
+  personId: string | null;
+  notePassages: NotePassage[];
+  notePeople: Array<{ id: string; name: string }>;
+}> {
   const [activeGoals, access] = await Promise.all([loadActiveGoalTexts(userId), routing?.access]);
   // Every model call below shares the one account read; each still mints its own grant.
   const complete = completeJsonOn(access);
@@ -297,10 +315,15 @@ async function retrieveRankedContacts(
       searchNotice = embeddingFailureNotice(err);
       return null;
     }),
-    understandQuery(userId, q, activeGoals, complete).then((parsed) => {
-      routing?.onIntent(parsed.intent ?? null);
-      return parsed;
-    }),
+    // The earlier turns are one indexed read the parser alone waits on (for "she" and "the
+    // second one"); the embedding beside it does not.
+    (routing?.priorTurns ?? Promise.resolve([] as PriorTurn[]))
+      .catch(() => [] as PriorTurn[])
+      .then((priorTurns) => understandQuery(userId, q, activeGoals, complete, { priorTurns }))
+      .then((parsed) => {
+        routing?.onParsed(parsed);
+        return parsed;
+      }),
     // Beside the two above, so an account read costs the question no time. Null (no
     // TypeSafe key) for most accounts, and the rank step then runs the LLM rerank.
     routing?.decider ?? openDecider(userId, access),
@@ -310,10 +333,24 @@ async function retrieveRankedContacts(
     detail: describeParsedQuery(parsedQuery),
   });
 
+  // The shape's own lanes run beside the search (see `@/lib/chat-lanes`). Each narrates
+  // itself and settles to "nothing" on failure, so the search alone still answers.
+  const personP = personLane(userId, parsedQuery, steps).catch(() => null);
+  const lanesP = Promise.all([
+    filterLane(userId, parsedQuery, steps).catch(() => null),
+    personP,
+    personP.then((person) =>
+      factLane(userId, q, parsedQuery, { embedding: queryEmbedding, person }, steps).catch(() => ({
+        passages: [] as NotePassage[],
+        people: [] as Array<{ id: string; name: string }>,
+      }))
+    ),
+  ]);
+
   steps.start("search", "Searching your network");
   const candidates = await hybridSearchContacts(userId, {
     query: q,
-    embedding: queryEmbedding,
+    embedding: await semanticEmbedding(userId, q, parsedQuery.semanticQuery, queryEmbedding, access),
     filters: parsedQuery.filters,
     expansionTerms: parsedQuery.expansionTerms,
     limit: CANDIDATE_POOL,
@@ -333,15 +370,14 @@ async function retrieveRankedContacts(
   });
   attachPhotos(steps, "search", candidateRefs, userId, photos);
 
+  // Only an open question is ranked by a model. Every other shape has its own lane carrying
+  // the answer — the list, the person, the passages — so the contacts here are background,
+  // and search order is good enough for background. This is the fast path's biggest saving.
   steps.start("rank", `Ranking ${plural(candidates.length, "candidate")}`);
-  const { contacts: ranked, engine: rankEngine } = await rerankCandidatesWithEngine(
-    userId,
-    q,
-    candidates,
-    complete,
-    parsedQuery.semanticQuery,
-    decider
-  );
+  const { contacts: ranked, engine: rankEngine } =
+    parsedQuery.shape === "open"
+      ? await rerankCandidatesWithEngine(userId, q, candidates, complete, parsedQuery.semanticQuery, decider)
+      : { contacts: candidates.slice(0, FINAL_CONTACT_COUNT), engine: "search" as const };
   const keptRefs = toRefs(
     ranked.map((c) => ({ id: c.id, name: c.fullName })),
     "contact"
@@ -358,7 +394,47 @@ async function retrieveRankedContacts(
   // question, so the model that actually wrote the answer never learned what the user was
   // trying to accomplish — every other AI surface in the product (outreach, starters,
   // follow-up drafts) has been given them for months.
-  return { ranked, searchNotice, goals: activeGoals };
+  const [filterRoster, person, facts] = await lanesP;
+  return {
+    ranked,
+    searchNotice,
+    goals: activeGoals,
+    filterRoster,
+    personId: person?.id ?? null,
+    notePassages: facts.passages,
+    notePeople: facts.people,
+  };
+}
+
+/** How long the rewritten query's embedding may hold up the search before the question's own is used. */
+const SEMANTIC_EMBED_WAIT_MS = 600;
+
+/**
+ * The parser's rewrite ("a fintech founder in New York who raised a seed round") is a better
+ * meaning query than the question as typed, so the semantic arm uses it — when it arrives in
+ * time. Otherwise, or when the rewrite is the question itself, the question's own embedding.
+ */
+async function semanticEmbedding(
+  userId: string,
+  q: string,
+  rewrite: string,
+  fallback: number[] | null,
+  access: AiAccess | undefined
+): Promise<number[] | null> {
+  if (!fallback || rewrite.trim() === q.trim()) return fallback;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), SEMANTIC_EMBED_WAIT_MS);
+  });
+  try {
+    const rewritten = await Promise.race([
+      getQueryEmbedding(userId, rewrite, createEmbedding, defaultResolveScope, { access }).catch(() => null),
+      late,
+    ]);
+    return rewritten ?? fallback;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** What the query parser actually understood, as a line a person can check. */
@@ -520,18 +596,16 @@ export async function prepareChatContext(
   const q = question.trim();
   if (!q) throw new Error("Question is required");
   const threadId = options.threadId ?? null;
-  const focusContactId = options.focusContactId?.trim() || null;
+  const pinnedContactId = options.focusContactId?.trim() || null;
   const attachedIds = (options.contextContactIds ?? []).filter(
     (id): id is string => typeof id === "string" && id.trim().length > 0
   );
   const steps = options.steps ?? NULL_STEPS;
   const photos = createPhotoCache();
 
-  // ROUTING (decisions/chat-route.ts). Decided beside retrieval, never in front of it: the
-  // decision model answers in ~200ms and retrieval takes 1–5s, so the branches it gates
-  // (attention brief, recruiter list) chain off it without adding to the question's time.
-  // Without a decision model it waits for the parser's intent flags (the call retrieval
-  // already makes), and without those, the keyword rules route as they always did.
+  // ROUTING (decisions/chat-route.ts). Read from the question parse retrieval already makes,
+  // so it costs no extra round trip; the branches it gates (attention brief, recruiter list)
+  // chain off it while the search runs. A failed parse routes to the one-pass default.
   const priorRowsP = threadId
     ? db.query.chatMessages
         .findMany({
@@ -562,20 +636,11 @@ export async function prepareChatContext(
     ? Promise.resolve(options.access)
     : resolveAiAccess(userId).catch(() => undefined);
   const deciderP = accessP.then((access) => openDecider(userId, access));
-  let settleIntent: (intent: ParsedIntent | null) => void = () => {};
-  const intentP = new Promise<ParsedIntent | null>((resolve) => {
-    settleIntent = resolve;
+  let settleParsed: (parsed: ParsedQuery | null) => void = () => {};
+  const parsedP = new Promise<ParsedQuery | null>((resolve) => {
+    settleParsed = resolve;
   });
-  const routeP: Promise<ChatRoute> = Promise.all([deciderP, priorRowsP])
-    .then(([decider, rows]) =>
-      routeChatQuestion({
-        decider,
-        question: q,
-        priorTurns: rows.slice().reverse(),
-        intent: () => intentP,
-      })
-    )
-    .catch(() => rulesRoute(q, false));
+  const routeP: Promise<ChatRoute> = parsedP.then((parsed) => routeFromParsed(parsed, q));
 
   // Everything that depends only on the question and the user, at once. Retrieval is its
   // own multi-stage pipeline (see retrieveRankedContacts) that runs as one unit here.
@@ -598,9 +663,12 @@ export async function prepareChatContext(
         : Promise.resolve(null),
       priorRowsP,
       // Whatever happens to retrieval, the router is never left waiting on the parser.
-      retrieveRankedContacts(userId, q, steps, photos, { decider: deciderP, onIntent: settleIntent, access: accessP }).finally(
-        () => settleIntent(null)
-      ),
+      retrieveRankedContacts(userId, q, steps, photos, {
+        decider: deciderP,
+        priorTurns: priorRowsP.then((rows) => rows.slice().reverse()),
+        onParsed: settleParsed,
+        access: accessP,
+      }).finally(() => settleParsed(null)),
       // Exhaustive membership for any organisation the question names — the one thing a
       // relevance-ranked top-K cannot supply. Never fatal.
       // Runs for every question, but only worth reporting when it actually names an org.
@@ -699,11 +767,21 @@ export async function prepareChatContext(
 
   if (threadId && !thread) throw new Error("Chat not found");
   const retrieved = retrieval.ranked;
+  // The contact page's pin wins; otherwise the person a person question resolved to gets the
+  // same deeper slice — profile, sixteen interactions, first place in the list.
+  const focusContactId = pinnedContactId ?? retrieval.personId;
+  // Everyone matching a list or count question, beside any organisation the question named.
+  if (retrieval.filterRoster) orgRosters.push(retrieval.filterRoster);
 
+  // Each earlier turn is capped: a stored answer can hold a 200-row list table, and replaying
+  // it whole would crowd this question's own context out of the prompt.
   const priorTurns: ChatTurn[] = priorRows
     .slice()
     .reverse()
-    .map((m) => ({ role: m.role as ChatTurn["role"], content: m.content }));
+    .map((m) => ({
+      role: m.role as ChatTurn["role"],
+      content: m.content.length > PRIOR_TURN_CHARS ? `${m.content.slice(0, PRIOR_TURN_CHARS)}…` : m.content,
+    }));
 
   if (focusContactId) {
     // Exactly the fields the RankedContact entry below is built from — not the whole row
@@ -864,6 +942,8 @@ export async function prepareChatContext(
     ...orgRosters.flatMap((r) => r.people.map((p) => p.id)),
     ...(attention?.overdue.map((c) => c.id) ?? []),
     ...(attention?.suggestions.map((c) => c.id) ?? []),
+    // Someone a cited note is about is someone the user knows, found or not by the search.
+    ...retrieval.notePeople.map((p) => p.id),
   ]);
   // Every name paired with an id in `allowedContacts`, for a proposed action's preview text
   // ("Log a note on Ada Lovelace…") — same sources, same order, so a name is never missing
@@ -874,6 +954,7 @@ export async function prepareChatContext(
     ...orgRosters.flatMap((r) => r.people.map((p): [string, string] => [p.id, p.name])),
     ...(attention?.overdue.map((c): [string, string] => [c.id, c.name]) ?? []),
     ...(attention?.suggestions.map((c): [string, string] => [c.id, c.name]) ?? []),
+    ...retrieval.notePeople.map((p): [string, string] => [p.id, p.name]),
   ]);
   const allowedRecruiters = new Set(recruitersForChat.map((r) => r.id));
   const maxScore = Math.max(1, ...recruitersForChat.map((r) => r.score));
@@ -895,6 +976,7 @@ export async function prepareChatContext(
     recruitersForChat,
     attachedPeople,
     attachedContext: renderAttachedPeople(attachedPeople),
+    notePassages: retrieval.notePassages,
     allowedContacts,
     contactNames,
     allowedRecruiters,
@@ -929,5 +1011,34 @@ export async function prepareChatContext(
             ? { ...r, draft_message: sanitizeDraft(r.draft_message) }
             : r
         ),
+  };
+}
+
+/**
+ * What the answer's directives may point at (`@/lib/chat-directives`): every person the
+ * answer may name, with the role line retrieval or a roster knows, and every roster keyed
+ * the way the prompt showed it (`r1`, `r2`, …). Built from the context alone — nothing here
+ * is new to the user, it is what the model was already shown.
+ */
+export function buildChatBlocks(ctx: ChatContext): ChatBlocks {
+  const subtitle = new Map<string, string>();
+  for (const roster of ctx.orgRosters) {
+    for (const p of roster.people) if (p.title) subtitle.set(p.id, p.title);
+  }
+  // Retrieval's own row wins: the same "title · company" line the cards have always shown.
+  for (const c of ctx.retrieved) {
+    const line = [c.title, c.company].filter(Boolean).join(" · ");
+    if (line) subtitle.set(c.id, line);
+  }
+  return {
+    people: Object.fromEntries(
+      [...ctx.contactNames].map(([id, name]) => [id, { name, subtitle: subtitle.get(id) ?? null }])
+    ),
+    lists: Object.fromEntries(
+      ctx.orgRosters.map((r, i) => [
+        `r${i + 1}`,
+        { label: r.name, total: r.total, truncated: r.truncated, people: r.people },
+      ])
+    ),
   };
 }

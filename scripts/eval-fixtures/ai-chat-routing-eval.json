@@ -1,5 +1,6 @@
 {
- "$comment": "Chat routing labels (decisions/chat-route.ts): depth single|research, whether the attention brief should load, whether the recruiter list should, and which seeded company rosters should attach (Stripe, Ramp, Notion, Square, Block, Figma). Hard negatives carry a 'why'.",
+ "$comment": "Chat routing labels (decisions/chat-route.ts): shape person|list|count|fact|open (an array accepts any), the person a person question names, the time mode a period question needs, depth single|research (research ONLY for intros, multi-lookup synthesis, or a group from earlier turns), whether the attention brief should load, whether the recruiter list should, and which seeded company rosters should attach (Stripe, Ramp, Notion, Square, Block, Figma). Relative dates resolve against `today`. Hard negatives carry a 'why'.",
+ "today": "2026-10-15",
  "cases": [
   {
    "id": "lookup-01",
@@ -10,7 +11,8 @@
     "recruiters": false,
     "roster": [
      "Stripe"
-    ]
+    ],
+    "shape": "list"
    }
   },
   {
@@ -20,7 +22,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "list"
    }
   },
   {
@@ -30,7 +33,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "list"
    }
   },
   {
@@ -40,7 +44,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -50,7 +55,11 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": [
+     "open",
+     "list"
+    ]
    }
   },
   {
@@ -60,7 +69,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    },
    "why": "'who should i' must not fire the attention brief"
   },
@@ -71,7 +81,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    },
    "why": "an expertise lookup, not a research round ('talk to' rule)"
   },
@@ -82,7 +93,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    },
    "why": "expertise lookup; not a path, not recruiters"
   },
@@ -93,7 +105,9 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Ada"
    }
   },
   {
@@ -103,7 +117,9 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Ada"
    }
   },
   {
@@ -113,7 +129,9 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Marcus"
    }
   },
   {
@@ -125,6 +143,10 @@
     "recruiters": false,
     "roster": [
      "Ramp"
+    ],
+    "shape": [
+     "open",
+     "list"
     ]
    }
   },
@@ -137,7 +159,8 @@
     "recruiters": false,
     "roster": [
      "Notion"
-    ]
+    ],
+    "shape": "list"
    }
   },
   {
@@ -149,7 +172,8 @@
     "recruiters": false,
     "roster": [
      "Square"
-    ]
+    ],
+    "shape": "list"
    }
   },
   {
@@ -161,7 +185,8 @@
     "recruiters": false,
     "roster": [
      "Figma"
-    ]
+    ],
+    "shape": "list"
    }
   },
   {
@@ -171,7 +196,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    },
    "why": "'ramp' is an ordinary word here"
   },
@@ -182,7 +208,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    },
    "why": "'notion' is an ordinary word here"
   },
@@ -193,7 +220,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    },
    "why": "'square' is an ordinary word here"
   },
@@ -204,7 +232,9 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Ada"
    },
    "why": "a profile question; Stripe is background, not the subject"
   },
@@ -215,7 +245,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -225,7 +256,11 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": [
+     "open",
+     "list"
+    ]
    }
   },
   {
@@ -235,7 +270,11 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": [
+     "open",
+     "list"
+    ]
    }
   },
   {
@@ -245,7 +284,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "list"
    }
   },
   {
@@ -255,7 +295,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -265,7 +306,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -275,7 +317,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -287,7 +330,8 @@
     "recruiters": false,
     "roster": [
      "Block"
-    ]
+    ],
+    "shape": "list"
    }
   },
   {
@@ -297,7 +341,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    },
    "why": "'block' is an ordinary word here"
   },
@@ -310,6 +355,10 @@
     "recruiters": false,
     "roster": [
      "Stripe"
+    ],
+    "shape": [
+     "open",
+     "list"
     ]
    },
    "why": "'research' is just a team name"
@@ -321,7 +370,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    },
    "why": "'cold' must not fire the attention brief"
   },
@@ -332,7 +382,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    },
    "why": "'quietly' must not fire the attention brief"
   },
@@ -343,7 +394,11 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": [
+     "open",
+     "list"
+    ]
    }
   },
   {
@@ -353,7 +408,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "list"
    }
   },
   {
@@ -363,7 +419,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -373,7 +430,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -383,7 +441,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "list"
    }
   },
   {
@@ -393,7 +452,9 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Leo"
    }
   },
   {
@@ -403,7 +464,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -415,6 +477,10 @@
     "recruiters": false,
     "roster": [
      "Figma"
+    ],
+    "shape": [
+     "open",
+     "list"
     ]
    },
    "why": "about the company, not about recruiters"
@@ -428,6 +494,10 @@
     "recruiters": false,
     "roster": [
      "Stripe"
+    ],
+    "shape": [
+     "open",
+     "list"
     ]
    },
    "why": "people at Stripe who hire, not recruiters themselves"
@@ -441,6 +511,10 @@
     "recruiters": false,
     "roster": [
      "Ramp"
+    ],
+    "shape": [
+     "open",
+     "list"
     ]
    }
   },
@@ -453,6 +527,10 @@
     "recruiters": false,
     "roster": [
      "Notion"
+    ],
+    "shape": [
+     "open",
+     "list"
     ]
    },
    "why": "'staffing' is not recruiters"
@@ -464,7 +542,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -474,7 +553,11 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": [
+     "count",
+     "open"
+    ]
    },
    "why": "'this week' must not fire the attention brief; recent meetings are in context"
   },
@@ -485,7 +568,9 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Ada"
    },
    "why": "one named person: no attention brief"
   },
@@ -496,7 +581,9 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Marcus"
    },
    "why": "one named person: no attention brief"
   },
@@ -507,7 +594,9 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Dana"
    },
    "why": "advice about one person"
   },
@@ -518,7 +607,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -528,7 +618,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -538,107 +629,130 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
    "id": "said-01",
    "question": "What did Priya say about the Series A?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Priya"
    }
   },
   {
    "id": "said-02",
    "question": "What did I promise Marcus?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Marcus"
    }
   },
   {
    "id": "said-03",
    "question": "What did we discuss with Dana last time?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Dana"
    }
   },
   {
    "id": "said-04",
    "question": "What did James tell me about his new role?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "James"
    }
   },
   {
    "id": "said-05",
    "question": "Summarize my notes on Ada",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Ada"
    }
   },
   {
    "id": "said-06",
    "question": "What did I write about the offsite?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": [
+     "fact",
+     "open"
+    ]
    }
   },
   {
    "id": "said-07",
    "question": "Did Leo mention a timeline for the hire?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Leo"
    }
   },
   {
    "id": "said-08",
    "question": "What was my conversation with Tomas about?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Tomas"
    }
   },
   {
    "id": "said-09",
    "question": "Remind me what Kai asked me for",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Kai"
    }
   },
   {
    "id": "said-10",
    "question": "What advice did Maria give me?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Maria"
    },
    "why": "rules miss 'give'"
   },
@@ -646,20 +760,23 @@
    "id": "said-11",
    "question": "Any notes about pricing from my calls?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "fact"
    }
   },
   {
    "id": "said-12",
    "question": "What did I learn from coffee with Sam?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Sam"
    },
    "why": "rules miss 'learn'"
   },
@@ -667,40 +784,46 @@
    "id": "said-13",
    "question": "Which of my contacts talked about burnout?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "fact"
    }
   },
   {
    "id": "said-14",
    "question": "What feedback did investors give on my deck?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "fact"
    }
   },
   {
    "id": "said-15",
    "question": "What did Raj think of the product demo?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Raj"
    }
   },
   {
    "id": "said-16",
    "question": "What were Ada's concerns about the migration?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Ada"
    },
    "why": "rules miss: no speech verb"
   },
@@ -708,20 +831,23 @@
    "id": "said-17",
    "question": "Did anyone recommend a lawyer to me?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "fact"
    }
   },
   {
    "id": "said-18",
    "question": "What next steps did I agree with Leo?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Leo"
    }
   },
   {
@@ -731,7 +857,8 @@
     "depth": "research",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -741,7 +868,8 @@
     "depth": "research",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -753,7 +881,8 @@
     "recruiters": false,
     "roster": [
      "Figma"
-    ]
+    ],
+    "shape": "open"
    }
   },
   {
@@ -763,7 +892,8 @@
     "depth": "research",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -775,7 +905,8 @@
     "recruiters": false,
     "roster": [
      "Ramp"
-    ]
+    ],
+    "shape": "open"
    }
   },
   {
@@ -787,7 +918,8 @@
     "recruiters": false,
     "roster": [
      "Notion"
-    ]
+    ],
+    "shape": "open"
    }
   },
   {
@@ -797,7 +929,8 @@
     "depth": "research",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -809,7 +942,8 @@
     "recruiters": false,
     "roster": [
      "Stripe"
-    ]
+    ],
+    "shape": "open"
    }
   },
   {
@@ -819,7 +953,8 @@
     "depth": "research",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -831,87 +966,104 @@
     "recruiters": false,
     "roster": [
      "Square"
-    ]
+    ],
+    "shape": "open"
    }
   },
   {
    "id": "time-01",
    "question": "Who did I meet in March?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "count",
+    "time": "interacted"
    }
   },
   {
    "id": "time-02",
    "question": "What happened with Leo last month?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Leo"
    }
   },
   {
    "id": "time-03",
    "question": "Who did I talk to last week?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "count",
+    "time": "interacted"
    }
   },
   {
    "id": "time-04",
    "question": "When did I last see Ada?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Ada"
    }
   },
   {
    "id": "time-05",
    "question": "Who did I meet at conferences last year?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "count",
+    "time": "interacted"
    }
   },
   {
    "id": "time-06",
    "question": "What did I do with Dana in early June?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Dana"
    }
   },
   {
    "id": "time-07",
    "question": "How long ago did I meet Tom?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Tom"
    }
   },
   {
    "id": "time-08",
    "question": "Who did I catch up with during September?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "count",
+    "time": "interacted"
    },
    "why": "'catch up' here is past meetings, not the attention brief"
   },
@@ -919,20 +1071,26 @@
    "id": "time-09",
    "question": "Which intros did I make in the past quarter?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": [
+     "fact",
+     "count"
+    ]
    }
   },
   {
    "id": "time-10",
    "question": "Who did I have coffee with over the summer?",
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "count",
+    "time": "interacted"
    },
    "why": "rules miss 'over the summer'"
   },
@@ -950,10 +1108,12 @@
     }
    ],
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Ada"
    }
   },
   {
@@ -970,10 +1130,12 @@
     }
    ],
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Leo"
    }
   },
   {
@@ -993,7 +1155,8 @@
     "depth": "research",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -1010,11 +1173,14 @@
     }
    ],
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
-   }
+    "roster": [],
+    "shape": "person",
+    "person": "Leo"
+   },
+   "why": "'him' resolves from the earlier turn to one person: a person lookup, not research"
   },
   {
    "id": "follow-05",
@@ -1030,10 +1196,12 @@
     }
    ],
    "expect": {
-    "depth": "research",
+    "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "person",
+    "person": "Maria"
    }
   },
   {
@@ -1055,7 +1223,8 @@
     "recruiters": false,
     "roster": [
      "Ramp"
-    ]
+    ],
+    "shape": "list"
    },
    "why": "a new lookup, not a follow-up"
   },
@@ -1076,7 +1245,11 @@
     "depth": "single",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": [
+     "open",
+     "list"
+    ]
    },
    "why": "a new lookup despite the thread"
   },
@@ -1097,7 +1270,8 @@
     "depth": "research",
     "attention": false,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -1107,7 +1281,8 @@
     "depth": "single",
     "attention": true,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -1117,7 +1292,8 @@
     "depth": "single",
     "attention": true,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -1127,7 +1303,8 @@
     "depth": "single",
     "attention": true,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    },
    "why": "rules miss"
   },
@@ -1138,7 +1315,8 @@
     "depth": "single",
     "attention": true,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -1148,7 +1326,8 @@
     "depth": "single",
     "attention": true,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -1158,7 +1337,8 @@
     "depth": "single",
     "attention": true,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    },
    "why": "curly apostrophe: rules miss"
   },
@@ -1169,7 +1349,8 @@
     "depth": "single",
     "attention": true,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -1179,7 +1360,8 @@
     "depth": "single",
     "attention": true,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -1189,7 +1371,8 @@
     "depth": "single",
     "attention": true,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -1199,7 +1382,8 @@
     "depth": "single",
     "attention": true,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -1209,7 +1393,8 @@
     "depth": "single",
     "attention": true,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -1219,7 +1404,8 @@
     "depth": "single",
     "attention": true,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -1229,7 +1415,8 @@
     "depth": "single",
     "attention": true,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -1239,7 +1426,8 @@
     "depth": "single",
     "attention": true,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -1249,7 +1437,12 @@
     "depth": "single",
     "attention": true,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": [
+     "count",
+     "open"
+    ],
+    "time": "quiet"
    }
   },
   {
@@ -1259,7 +1452,8 @@
     "depth": "single",
     "attention": true,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    },
    "why": "rules miss"
   },
@@ -1270,7 +1464,8 @@
     "depth": "single",
     "attention": true,
     "recruiters": false,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    },
    "why": "rules miss"
   },
@@ -1281,7 +1476,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": true,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -1291,7 +1487,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": true,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -1301,7 +1498,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": true,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -1311,7 +1509,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": true,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -1321,7 +1520,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": true,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -1331,7 +1531,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": true,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    },
    "why": "rules miss 'head hunter'"
   },
@@ -1342,7 +1543,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": true,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    },
    "why": "rules miss 'recruitment'"
   },
@@ -1353,7 +1555,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": true,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
   },
   {
@@ -1363,7 +1566,8 @@
     "depth": "single",
     "attention": false,
     "recruiters": true,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    },
    "why": "rules miss 'talent partner'"
   },
@@ -1374,8 +1578,207 @@
     "depth": "single",
     "attention": false,
     "recruiters": true,
-    "roster": []
+    "roster": [],
+    "shape": "open"
    }
+  },
+  {
+   "id": "shape-list-01",
+   "question": "Everyone I know who went to Duke",
+   "expect": {
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "depth": "single",
+    "shape": "list"
+   }
+  },
+  {
+   "id": "shape-list-02",
+   "question": "List my contacts in fintech in New York",
+   "expect": {
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "depth": "single",
+    "shape": "list"
+   }
+  },
+  {
+   "id": "shape-list-03",
+   "question": "How many people do I know at Figma?",
+   "expect": {
+    "attention": false,
+    "recruiters": false,
+    "roster": [
+     "Figma"
+    ],
+    "depth": "single",
+    "shape": "list"
+   }
+  },
+  {
+   "id": "shape-list-04",
+   "question": "Show me all my mentors",
+   "expect": {
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "depth": "single",
+    "shape": [
+     "list",
+     "open"
+    ]
+   },
+   "why": "'mentor' is a tag the filters can express"
+  },
+  {
+   "id": "shape-count-01",
+   "question": "How many people did I meet in September?",
+   "expect": {
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "depth": "single",
+    "shape": "count",
+    "time": "interacted"
+   }
+  },
+  {
+   "id": "shape-count-02",
+   "question": "Who haven't I talked to in 3 months?",
+   "expect": {
+    "attention": true,
+    "recruiters": false,
+    "roster": [],
+    "depth": "single",
+    "shape": "count",
+    "time": "quiet"
+   },
+   "why": "a period makes it a count; it is also an attention question"
+  },
+  {
+   "id": "shape-count-03",
+   "question": "Who did I have calls with in the first week of October?",
+   "expect": {
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "depth": "single",
+    "shape": "count",
+    "time": "interacted"
+   }
+  },
+  {
+   "id": "shape-count-04",
+   "question": "Which contacts have I not spoken to since January?",
+   "expect": {
+    "attention": true,
+    "recruiters": false,
+    "roster": [],
+    "depth": "single",
+    "shape": "count",
+    "time": "quiet"
+   }
+  },
+  {
+   "id": "shape-person-01",
+   "question": "What do I know about Jim Okafor?",
+   "expect": {
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "depth": "single",
+    "shape": "person",
+    "person": "Okafor"
+   },
+   "why": "a misspelled name still resolves downstream"
+  },
+  {
+   "id": "shape-person-02",
+   "question": "When did I last talk to Priya?",
+   "expect": {
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "depth": "single",
+    "shape": "person",
+    "person": "Priya"
+   }
+  },
+  {
+   "id": "shape-person-03",
+   "question": "Remind me who Sofia Reyes is",
+   "expect": {
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "depth": "single",
+    "shape": "person",
+    "person": "Sofia"
+   }
+  },
+  {
+   "id": "shape-fact-01",
+   "question": "Who mentioned they're raising a seed round?",
+   "expect": {
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "depth": "single",
+    "shape": "fact"
+   }
+  },
+  {
+   "id": "shape-fact-02",
+   "question": "Did anyone tell me about a good accountant?",
+   "expect": {
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "depth": "single",
+    "shape": "fact"
+   }
+  },
+  {
+   "id": "shape-fact-03",
+   "question": "Which of my contacts said they were moving to Austin?",
+   "expect": {
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "depth": "single",
+    "shape": "fact"
+   }
+  },
+  {
+   "id": "shape-research-01",
+   "question": "Who at Stripe have I discussed pricing with, and who could intro me to their CFO?",
+   "expect": {
+    "attention": false,
+    "recruiters": false,
+    "roster": [
+     "Stripe"
+    ],
+    "depth": "research",
+    "shape": "open"
+   },
+   "why": "two lookups combined"
+  },
+  {
+   "id": "shape-research-02",
+   "question": "Compare what Ada and Leo each said about the migration",
+   "expect": {
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "depth": "research",
+    "shape": [
+     "open",
+     "fact"
+    ]
+   },
+   "why": "several people's notes side by side"
   }
  ]
 }

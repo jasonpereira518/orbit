@@ -3,7 +3,8 @@ import { loadNotificationPanel } from "@/lib/notification-panel";
 import type { AccountHealthContext } from "@/lib/account-health";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { isAdminUser } from "@/lib/admin";
-import { isSurfaceLive, isViewingAsUser } from "@/lib/surface-visibility";
+import { resolveSurfaceVisibility, isViewingAsUser } from "@/lib/surface-visibility";
+import { CLOUD_NOTES_SURFACE_KEY } from "@/lib/surfaces";
 import type { Plan } from "@/lib/plan-limits";
 import { lastUnloggedMeeting, nextKnownMeeting } from "@/lib/meeting-context";
 
@@ -58,9 +59,17 @@ export async function loadAppPulse(
   const settings = loadedSettings ?? (await ensureUserSettings(userId));
   const entitlements = entitlementsFromSettings(userId, settings);
   const [rawPanel, canOpenAdmin, nextMeeting, unloggedMeeting] = await Promise.all([
-    isSurfaceLive(userId, "page.radar").then((radar) =>
-      loadNotificationPanel(userId, now, { withAlerts: true, settings, entitlements, radar })
-    ),
+    // One visibility read for both gated rows (what `isSurfaceLive` checks, per key).
+    resolveSurfaceVisibility(userId).then(({ hidden, comingSoon }) => {
+      const live = (key: string) => !hidden.has(key) && !comingSoon.has(key);
+      return loadNotificationPanel(userId, now, {
+        withAlerts: true,
+        settings,
+        entitlements,
+        radar: live("page.radar"),
+        cloudNotes: live(CLOUD_NOTES_SURFACE_KEY),
+      });
+    }),
     isAdminUser(userId) ? isViewingAsUser(userId).then((v) => !v) : Promise.resolve(false),
     // Best-effort: a calendar read must never cost the panel its pulse.
     nextKnownMeeting(userId, now, NEXT_MEETING_WITHIN_MS).catch(() => null),

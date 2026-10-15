@@ -15,7 +15,7 @@
  */
 
 import { useSyncExternalStore } from "react";
-import { getMeetingCandidates } from "@/actions/meetings";
+import type { MeetingCandidatesResult } from "@/actions/meetings";
 import { showDesktopNotification } from "@/lib/browser-notifications";
 import type { MeetingCandidate } from "@/lib/meeting-calendar";
 import { nudgeKey, nudgeTiming, pickNudge } from "@/lib/meeting-nudge";
@@ -152,7 +152,9 @@ async function refresh(): Promise<void> {
   if (stopped || !isMeetingNudgeOn()) return;
   lastRefresh = Date.now();
   try {
-    const res = await getMeetingCandidates();
+    // A route, not the Server Action: a live Google call must not hold the tab's action
+    // queue (see src/app/api/meetings/candidates/route.ts).
+    const res = (await fetch("/api/meetings/candidates").then((r) => r.json())) as MeetingCandidatesResult;
     if (!res.ok || res.status !== "ok") {
       stopped = true;
       events = [];

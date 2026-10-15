@@ -119,8 +119,8 @@ export function EmailSettings({
                 ))}
             <p className="text-xs text-muted-foreground">
               {!capability.ok && capability.reason === "cap_reached"
-                ? `You’ve reached today’s email limit (${capability.dailyCap})`
-                : `${capability.usedToday} of ${capability.dailyCap} sent today`}
+                ? `You’ve reached today’s limit of ${capability.dailyCap} people emailed`
+                : `${capability.usedToday} of ${capability.dailyCap} people emailed today`}
             </p>
           </div>
         )}

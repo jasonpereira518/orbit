@@ -7,6 +7,7 @@ import { ConnectMailboxButton } from "@/components/email/connect-mailbox-button"
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { DraftLinkWarning } from "@/components/follow-up/draft-link-warning";
 
 /**
  * The one-line hint above the draft. Until the send options arrive it is a placeholder bar of
@@ -60,6 +61,7 @@ export function FollowUpDraftComposer({
   onMarkSent,
   onOpenLinkedIn,
   emptyHint,
+  aiDraft,
 }: {
   contactName: string;
   draft: string;
@@ -73,6 +75,8 @@ export function FollowUpDraftComposer({
   onMarkSent: (channel: "email" | "linkedin_message" | "note") => void;
   onOpenLinkedIn: (url: string) => void;
   emptyHint?: string;
+  /** What the model wrote, so a link it planted stays flagged while the person edits. */
+  aiDraft?: string | null;
 }) {
   const hint = !sendOptions
     ? "Loading send options…"
@@ -142,6 +146,7 @@ export function FollowUpDraftComposer({
         onChange={(e) => onDraftChange(e.target.value)}
         className="resize-y text-sm"
       />
+      <DraftLinkWarning text={draft} aiText={aiDraft} />
       <div className="flex flex-wrap gap-2">
         <Button type="button" variant="outline" size="sm" onClick={onCopy}>
           <Copy className="size-3.5" />
