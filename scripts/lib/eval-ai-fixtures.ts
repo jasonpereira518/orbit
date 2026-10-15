@@ -194,6 +194,10 @@ export type ChatRoutingEvalFixture = {
       time?: "interacted" | "quiet";
       attention: boolean;
       recruiters: boolean;
+      /** About the user's own upcoming schedule (the calendar block). Absent means false. */
+      calendar?: boolean;
+      /** Asks when the user is free. Absent means false. */
+      availability?: boolean;
       /** Seeded company names whose rosters should attach. */
       roster: string[];
     };

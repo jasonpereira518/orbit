@@ -36,7 +36,20 @@ export type ParsedQuery = {
    * How the question should be routed, from the same call (decisions/chat-route.ts). Absent
    * when the parser did not answer; the question then gets one pass.
    */
-  intent?: { needsResearch: boolean; attention: boolean; recruiters: boolean };
+  intent?: {
+    needsResearch: boolean;
+    attention: boolean;
+    recruiters: boolean;
+    /** About the user's own schedule: upcoming meetings, who they will see. */
+    calendar?: boolean;
+    /** Asks when the user is free or busy. */
+    availability?: boolean;
+  };
+  /**
+   * The days a calendar question asks about, as YYYY-MM-DD in the user's zone — forward-looking,
+   * unlike `time`, which is about when the user WAS in touch.
+   */
+  calendarWindow?: { after: string; before: string };
 };
 
 const UNDERSTAND_TIMEOUT_MS = 2500;
@@ -95,6 +108,15 @@ function cleanTime(value: unknown): TimeScope | undefined {
   return { mode: raw.mode, ...(after ? { after } : {}), ...(before ? { before } : {}) };
 }
 
+function cleanCalendarWindow(value: unknown): { after: string; before: string } | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const after = cleanDay(raw.after);
+  const before = cleanDay(raw.before) ?? after;
+  if (!after || !before || after > before) return undefined;
+  return { after, before };
+}
+
 export function sanitizeParsedQuery(raw: unknown, question: string): ParsedQuery {
   const fallback = fallbackParsedQuery(question);
   if (!raw || typeof raw !== "object") return fallback;
@@ -127,7 +149,14 @@ export function sanitizeParsedQuery(raw: unknown, question: string): ParsedQuery
     typeof rawIntent.needs_research === "boolean" &&
     typeof rawIntent.attention === "boolean" &&
     typeof rawIntent.recruiters === "boolean"
-      ? { needsResearch: rawIntent.needs_research, attention: rawIntent.attention, recruiters: rawIntent.recruiters }
+      ? {
+          needsResearch: rawIntent.needs_research,
+          attention: rawIntent.attention,
+          recruiters: rawIntent.recruiters,
+          // Optional on purpose: a reply without them keeps the rest of its route.
+          ...(rawIntent.calendar === true ? { calendar: true } : {}),
+          ...(rawIntent.availability === true ? { availability: true } : {}),
+        }
       : undefined;
 
   const shape = (QUESTION_SHAPES as readonly string[]).includes(obj.shape as string)
@@ -138,6 +167,7 @@ export function sanitizeParsedQuery(raw: unknown, question: string): ParsedQuery
       ? obj.person.trim().slice(0, MAX_PERSON_CHARS)
       : undefined;
   const time = cleanTime(obj.time);
+  const calendarWindow = intent?.calendar ? cleanCalendarWindow(obj.calendarWindow) : undefined;
 
   return {
     semanticQuery,
@@ -148,6 +178,7 @@ export function sanitizeParsedQuery(raw: unknown, question: string): ParsedQuery
     ...(person ? { person } : {}),
     ...(time ? { time } : {}),
     ...(intent ? { intent } : {}),
+    ...(calendarWindow ? { calendarWindow } : {}),
   };
 }
 
@@ -174,7 +205,10 @@ intent — how to answer it:
 - needs_research: true ONLY for an introduction or warm path to a person or organisation, a question that needs several separate lookups combined (compare people, people at X who also discussed Y), or one about a GROUP of people from the earlier turns ("which of them…"). False for every single-shape question above, including what one person said and who was met in a period.
 - attention: true ONLY when asking which people across the network to reconnect or follow up with, or who has gone quiet or is overdue. False for one named person, drafting a message, or "who should I ask about X".
 - recruiters: true ONLY when asking for recruiters, headhunters or talent-acquisition people themselves.
-Return JSON: {"semanticQuery": string, "filters": {"companies"?: string[], "industries"?: string[], "schools"?: string[], "locations"?: string[], "tags"?: string[], "closenessTiers"?: string[]}, "expansionTerms": string[], "shape": "person"|"list"|"count"|"fact"|"open", "person"?: string, "time"?: {"mode": "interacted"|"quiet", "after"?: string, "before"?: string}, "intent": {"needs_research": boolean, "attention": boolean, "recruiters": boolean}}`;
+- calendar: true when asking about the user's OWN upcoming schedule — what is on a day, their next meeting, who they will see or when they next see someone, who is coming to a meeting, preparing for a meeting. False for when they were in touch in the past, or someone else's schedule.
+- availability: true when asking when the user is free, busy or has an open slot (implies calendar).
+calendarWindow — only when calendar is true: the days asked about as {"after": day, "before": day} in YYYY-MM-DD, resolved against Today ("tomorrow" -> after = before = tomorrow; "this week" -> Today to Sunday; "Thursday" -> the coming Thursday). Omit when no day is named.
+Return JSON: {"semanticQuery": string, "filters": {"companies"?: string[], "industries"?: string[], "schools"?: string[], "locations"?: string[], "tags"?: string[], "closenessTiers"?: string[]}, "expansionTerms": string[], "shape": "person"|"list"|"count"|"fact"|"open", "person"?: string, "time"?: {"mode": "interacted"|"quiet", "after"?: string, "before"?: string}, "intent": {"needs_research": boolean, "attention": boolean, "recruiters": boolean, "calendar": boolean, "availability": boolean}, "calendarWindow"?: {"after": string, "before": string}}`;
 
 /**
  * Accuracy-only stage: on any failure or timeout it returns the pass-through

@@ -1,3 +1,4 @@
+import { loadChatCalendar, type ChatCalendar } from "@/lib/chat-calendar";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
@@ -103,6 +104,8 @@ export type ChatContext = {
   goals: string[];
   orgRosters: OrgRoster[];
   attention: AttentionBrief | null;
+  /** The user's upcoming meetings, for a schedule question; null otherwise. */
+  calendar: ChatCalendar | null;
   /**
    * The overdue queue as one line, present for every question.
    *
@@ -652,6 +655,7 @@ export async function prepareChatContext(
     attention,
     attentionLite,
     recruitersForChat,
+    calendar,
     attachedPeople,
     writingInstructions,
   ] = await Promise.all([
@@ -735,6 +739,25 @@ export async function prepareChatContext(
             });
           })()
         : Promise.resolve([] as Recruiters)),
+      // The stored calendar window, for a schedule question. Never fatal.
+      Promise.all([routeP, parsedP]).then(([route, parsed]) =>
+        route.calendar
+          ? (() => {
+              steps.start("calendar", "Checking your calendar");
+              return loadChatCalendar(userId, parsed, route.availability, new Date())
+                .catch(() => null)
+                .then((cal) => {
+                  const refs = cal?.people.length ? toRefs(cal.people, "contact") : undefined;
+                  steps.done("calendar", {
+                    label: cal ? `Checked ${plural(cal.eventCount, "meeting")}` : "Checked your calendar",
+                    refs,
+                  });
+                  attachPhotos(steps, "calendar", refs, userId, photos);
+                  return cal;
+                });
+            })()
+          : null
+      ),
       // Depends on ids the client already resolved, so it needs neither the question nor
       // the search. Never fatal: a question with a dead attachment is still a question.
       attachedIds.length
@@ -942,6 +965,8 @@ export async function prepareChatContext(
     ...orgRosters.flatMap((r) => r.people.map((p) => p.id)),
     ...(attention?.overdue.map((c) => c.id) ?? []),
     ...(attention?.suggestions.map((c) => c.id) ?? []),
+    // On a meeting the calendar block lists: someone the user knows, by their own invite.
+    ...(calendar?.people.map((p) => p.id) ?? []),
     // Someone a cited note is about is someone the user knows, found or not by the search.
     ...retrieval.notePeople.map((p) => p.id),
   ]);
@@ -954,6 +979,7 @@ export async function prepareChatContext(
     ...orgRosters.flatMap((r) => r.people.map((p): [string, string] => [p.id, p.name])),
     ...(attention?.overdue.map((c): [string, string] => [c.id, c.name]) ?? []),
     ...(attention?.suggestions.map((c): [string, string] => [c.id, c.name]) ?? []),
+    ...(calendar?.people.map((p): [string, string] => [p.id, p.name]) ?? []),
     ...retrieval.notePeople.map((p): [string, string] => [p.id, p.name]),
   ]);
   const allowedRecruiters = new Set(recruitersForChat.map((r) => r.id));
@@ -973,6 +999,7 @@ export async function prepareChatContext(
     orgRosters,
     attention,
     attentionLite,
+    calendar,
     recruitersForChat,
     attachedPeople,
     attachedContext: renderAttachedPeople(attachedPeople),

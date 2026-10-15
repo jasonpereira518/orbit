@@ -849,6 +849,10 @@ export async function runChatRoutingTask({ userId, limit, log }: RunOpts): Promi
   let tpA = 0;
   let fpA = 0;
   let recOk = 0;
+  let calOk = 0;
+  let tpC = 0;
+  let fpC = 0;
+  let availOk = 0;
   let rosterCases = 0;
   let rosterOk = 0;
   let shapeOk = 0;
@@ -878,6 +882,11 @@ export async function runChatRoutingTask({ userId, limit, log }: RunOpts): Promi
     if (route.attention && c.expect.attention) tpA += 1;
     if (route.attention && !c.expect.attention) fpA += 1;
     if (route.recruiters === c.expect.recruiters) recOk += 1;
+    const wantCalendar = c.expect.calendar ?? false;
+    if (route.calendar === wantCalendar) calOk += 1;
+    if (route.calendar && wantCalendar) tpC += 1;
+    if (route.calendar && !wantCalendar) fpC += 1;
+    if (route.availability === (c.expect.availability ?? false)) availOk += 1;
 
     const got = rosters.map((r) => r.name).sort().join(",");
     const want = [...c.expect.roster].sort().join(",");
@@ -910,6 +919,8 @@ export async function runChatRoutingTask({ userId, limit, log }: RunOpts): Promi
     if (research !== wantResearch) wrong.push(`depth ${route.depth.depth} (${route.depth.reason})`);
     if (route.attention !== c.expect.attention) wrong.push(`attention ${route.attention}`);
     if (route.recruiters !== c.expect.recruiters) wrong.push(`recruiters ${route.recruiters}`);
+    if (route.calendar !== wantCalendar) wrong.push(`calendar ${route.calendar}`);
+    if (route.availability !== (c.expect.availability ?? false)) wrong.push(`availability ${route.availability}`);
     if (rosterCase && got !== want) wrong.push(`roster [${got}]`);
     if (wrong.length) misses.push(c.id);
     log(`  ${wrong.length ? "MISS" : "ok  "} routing/${c.id} [${route.engine}]${wrong.length ? ` — ${wrong.join("; ")}` : ""}`);
@@ -918,6 +929,7 @@ export async function runChatRoutingTask({ userId, limit, log }: RunOpts): Promi
   log(`  engines: ${[...engines].map(([k, v]) => `${k} ${v}`).join(", ")}`);
 
   const attPositives = cases.filter((c) => c.expect.attention).length;
+  const calPositives = cases.filter((c) => c.expect.calendar).length;
   return {
     cases: cases.length,
     misses,
@@ -934,6 +946,10 @@ export async function runChatRoutingTask({ userId, limit, log }: RunOpts): Promi
       shapeAccuracy: cases.length ? shapeOk / cases.length : null,
       personAccuracy: personCases ? personOk / personCases : null,
       timeAccuracy: timeCases ? timeOk / timeCases : null,
+      calendarAccuracy: cases.length ? calOk / cases.length : null,
+      calendarPrecision: tpC + fpC === 0 ? null : tpC / (tpC + fpC),
+      calendarRecall: calPositives ? tpC / calPositives : null,
+      availabilityAccuracy: cases.length ? availOk / cases.length : null,
     },
   };
 }

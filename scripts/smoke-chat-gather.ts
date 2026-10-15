@@ -169,6 +169,8 @@ async function main() {
       shape: "open",
       attention: false,
       recruiters: false,
+      calendar: false,
+      availability: false,
       engine: "llm",
     };
     return ctx;

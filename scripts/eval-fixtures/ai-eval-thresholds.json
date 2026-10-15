@@ -25,7 +25,10 @@
     "rosterAccuracy": { "maxDrop": 0 },
     "shapeAccuracy": { "maxDrop": 0.03 },
     "personAccuracy": { "maxDrop": 0.03 },
-    "timeAccuracy": { "maxDrop": 0.05 }
+    "timeAccuracy": { "maxDrop": 0.05 },
+    "calendarAccuracy": { "maxDrop": 0.02 },
+    "calendarRecall": { "maxDrop": 0.05 },
+    "availabilityAccuracy": { "maxDrop": 0.03 }
   },
   "duplicates": {
     "wrongMerges": { "maxRise": 0 },

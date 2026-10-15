@@ -28,6 +28,10 @@ export type ChatRoute = {
   shape: QuestionShape;
   attention: boolean;
   recruiters: boolean;
+  /** Load the user's upcoming meetings into the answer (chat-context's calendar block). */
+  calendar: boolean;
+  /** …with the free gaps between them. */
+  availability: boolean;
   engine: "llm" | "default";
 };
 
@@ -36,37 +40,49 @@ export type PriorTurn = { role: string; content: string };
 const ONE_PASS: DepthDecision = { depth: "single", reason: "one retrieval answers it" };
 
 /**
- * Retrieval reads contacts and notes, not the calendar — only the research step's
- * `upcoming_meetings` and `meeting_context` tools can. Free, so it holds with or without a parse.
+ * The free fallback for when the parser does not answer: a calendar question still gets the
+ * calendar block. The parser's `intent.calendar` covers phrasings this misses.
  */
 const CALENDAR_QUESTION =
-  /\b(my (calendar|schedule|agenda|next meeting|meetings?|calls?)|meeting (with|today|tomorrow)|on my plate|what'?s on (today|tomorrow|this week)|(today|tomorrow)'?s (meetings?|calls?|schedule)|prep(are)? me|next (see|meet|meeting)|am i (meeting|seeing)|my \d{1,2}(:\d{2})? ?(am|pm)?\b)/i;
-const CALENDAR: DepthDecision = { depth: "research", reason: "asks about the calendar" };
+  /\b(my (calendar|schedule|agenda|next meeting|meetings?|calls?)|meeting (with|today|tomorrow)|on my plate|what'?s on (today|tomorrow|this week)|(today|tomorrow)'?s (meetings?|calls?|schedule)|prep(are)? me|next (see|meet|meeting)|am i (meeting|seeing|free|busy|available)|my \d{1,2}(:\d{2})? ?(am|pm)?\b|(free|open) (slot|time)|when am i free)/i;
+const AVAILABILITY_QUESTION = /\b(am i (free|busy|available)|free (slot|time)|open (slot|time)|when am i free|availability)\b/i;
+/**
+ * Preparing for one meeting wants `meeting_context` — each attendee's history and what is open —
+ * which only the research step calls. A schedule question is answered from the calendar block.
+ */
+const PREP_QUESTION = /\b(prep(are)? me|brief me|get me ready)\b/i;
+const PREP: DepthDecision = { depth: "research", reason: "prepares for a meeting" };
 
 export function routeFromParsed(parsed: ParsedQuery | null, question: string): ChatRoute {
   const intent = parsed?.intent;
-  const calendar = CALENDAR_QUESTION.test(question);
+  const keywordCalendar = CALENDAR_QUESTION.test(question);
+  const prep = PREP_QUESTION.test(question);
   if (!parsed || !intent) {
     return {
-      depth: calendar ? CALENDAR : ONE_PASS,
+      depth: prep ? PREP : ONE_PASS,
       shape: parsed?.shape ?? "open",
       attention: isAttentionQuestion(question),
       recruiters: isRecruiterIntent(question),
+      calendar: keywordCalendar,
+      availability: AVAILABILITY_QUESTION.test(question),
       engine: "default",
     };
   }
   // A bare name or a two-word query stays a lookup whatever the parser says: a research
   // round on "Ada Park" is pure waste.
   const short = question.trim().split(/\s+/).length <= 2;
+  const availability = intent.availability === true || AVAILABILITY_QUESTION.test(question);
   return {
-    depth: calendar
-      ? CALENDAR
+    depth: prep
+      ? PREP
       : intent.needsResearch && !short
         ? { depth: "research", reason: "needs more than one lookup" }
         : ONE_PASS,
     shape: parsed.shape,
     attention: intent.attention,
     recruiters: intent.recruiters,
+    calendar: intent.calendar === true || availability || keywordCalendar,
+    availability,
     engine: "llm",
   };
 }

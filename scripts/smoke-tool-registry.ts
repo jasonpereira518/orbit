@@ -18,7 +18,8 @@ import "./smoke/_env";
 
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, interactions } from "../src/db/schema";
+import { randomUUID } from "node:crypto";
+import { calendarEvents, calendarSources, contacts, interactions } from "../src/db/schema";
 import { ORBIT_TOOLS } from "../src/lib/tools/definitions";
 import {
   MCP_FAN_OUT_DENIED_FIELDS,
@@ -70,6 +71,10 @@ const EXPECTED_MCP_TOOLS = [
   "get_timeline",
   "get_goals",
   "find_path_to",
+  // The calendar: titles, times and guest names inside the server's fence, never the location,
+  // an agenda or an address; and the free gaps, which carry no one else's words at all.
+  "upcoming_meetings",
+  "free_time",
 ].sort();
 
 /** Every string anywhere in a payload, however deeply nested. */
@@ -113,7 +118,7 @@ async function main() {
   );
   check(
     "chat gets every shared read tool plus its own five",
-    chatTools.length === 14,
+    chatTools.length === 15,
     chatTools.map((t) => t.name).join(", ")
   );
   check(
@@ -128,8 +133,8 @@ async function main() {
     chatTools.map((t) => t.name).join(", ")
   );
   check(
-    "upcoming_meetings and meeting_context are chat-only too — anyone who sends an invite writes its title",
-    ["upcoming_meetings", "meeting_context"].every(
+    "meeting_context is chat-only — it carries notes and briefs about everyone on the invite",
+    ["meeting_context"].every(
       (name) =>
         chatTools.some((t) => t.name === name) &&
         !toolsFor(ORBIT_TOOLS, "mcp", ["read", "write"]).some((t) => t.name === name)
@@ -182,6 +187,27 @@ async function main() {
     interactionDate: new Date(),
   });
 
+  // A meeting whose invite carries text that must stay off MCP: a location, an agenda and a
+  // guest's address.
+  await db.delete(calendarSources).where(eq(calendarSources.userId, USER));
+  const [source] = await db
+    .insert(calendarSources)
+    .values({ userId: USER, provider: "google", connectionId: randomUUID(), calendarId: "primary" })
+    .returning();
+  const inviteStart = new Date(Date.now() + 3_600_000);
+  await db.insert(calendarEvents).values({
+    userId: USER,
+    sourceId: source.id,
+    providerEventId: "smoke-registry-event",
+    title: "Pilot sync",
+    startAt: inviteStart,
+    endAt: new Date(inviteStart.getTime() + 1_800_000),
+    location: "CANARY-LOCATION",
+    agenda: NOTE_MARKER,
+    attendees: [{ name: "", email: "canary-guest@example.com", contactId: null }],
+    attendeeCount: 1,
+  });
+
   const readTools = toolsFor(ORBIT_TOOLS, "mcp", ["read"]);
   const argsFor: Record<string, unknown> = {
     search_contacts: { query: "Ada", limit: 10 },
@@ -193,6 +219,8 @@ async function main() {
     get_timeline: { contactId: contact.id, limit: 20 },
     get_goals: {},
     find_path_to: { target: "Acme", limit: 8 },
+    upcoming_meetings: { limit: 20 },
+    free_time: { minMinutes: 30 },
   };
 
   for (const tool of readTools) {
@@ -207,6 +235,15 @@ async function main() {
       check(`${tool.name} does not fan out free-text notes over MCP`, !leaked, JSON.stringify(payload).slice(0, 200));
     }
   }
+
+  const meetingsTool = ORBIT_TOOLS.find((t) => t.name === "upcoming_meetings") as OrbitTool;
+  const mcpMeetings = deepStrings(await runTool(meetingsTool, USER, { limit: 20 }, { surface: "mcp" }));
+  check(
+    "upcoming_meetings over MCP: the title, never the location or a guest's address",
+    mcpMeetings.includes("Pilot sync") &&
+      !mcpMeetings.some((s) => s.includes("CANARY-LOCATION") || s.includes("@")),
+    JSON.stringify(mcpMeetings)
+  );
 
   // --- and the same search, on the chat surface, DOES carry the note ---------------------
 

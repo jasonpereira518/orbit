@@ -55,12 +55,26 @@ async function main() {
   route = routeFromParsed(parsed({ shape: "person", person: "Ada Park", intent: { ...NO_INTENT, needs_research: true } }), "Ada Park");
   check("a flagged research on a two-word query stays a lookup", route.depth.depth === "single");
 
-  console.log("\nThe calendar lives behind research");
-  for (const q of ["What's on my calendar tomorrow?", "what's on tomorrow", "prep me for my 3pm", "who am I meeting this week?", "when do I next see Priya?"]) {
+  console.log("\nThe calendar is answered in one pass");
+  for (const q of ["What's on my calendar tomorrow?", "what's on tomorrow", "who am I meeting this week?", "when do I next see Priya?"]) {
     const viaParse = routeFromParsed(parsed({ shape: "open", intent: NO_INTENT }), q);
     const noParse = routeFromParsed(null, q);
-    check(`"${q}" → research, parsed or not`, viaParse.depth.depth === "research" && noParse.depth.depth === "research", { viaParse, noParse });
+    check(
+      `"${q}" → the calendar block, one pass, parsed or not`,
+      viaParse.calendar && noParse.calendar && viaParse.depth.depth === "single" && noParse.depth.depth === "single",
+      { viaParse, noParse }
+    );
   }
+  route = routeFromParsed(parsed({ shape: "open", intent: { ...NO_INTENT, calendar: true } }), "Who's coming to the board meeting?");
+  check("the parser's calendar flag catches what no keyword does", route.calendar && route.depth.depth === "single", route);
+  route = routeFromParsed(parsed({ shape: "open", intent: { ...NO_INTENT, availability: true } }), "Do I have any gaps Thursday?");
+  check("availability implies the calendar, with free time", route.calendar && route.availability, route);
+  route = routeFromParsed(null, "am I free tomorrow afternoon?");
+  check("…and its keyword fallback", route.calendar && route.availability, route);
+  route = routeFromParsed(parsed({ shape: "open", intent: { ...NO_INTENT, calendar: true } }), "prep me for my 3pm");
+  check("preparing for a meeting still goes to research (meeting_context)", route.calendar && route.depth.depth === "research", route);
+  route = routeFromParsed(parsed({ shape: "count", intent: NO_INTENT }), "Who did I meet last week?");
+  check("a past-meetings question is not a calendar question", !route.calendar, route);
 
   console.log("\nThe one-pass default");
   route = routeFromParsed(null, "What did Priya say about the Series A?");
@@ -86,6 +100,14 @@ async function main() {
   check("a quiet window needs its start", parsed({ time: { mode: "quiet", before: "2026-09-01" } }).time === undefined);
   check("an unknown mode is dropped", parsed({ time: { mode: "soon", after: "2026-09-01" } }).time === undefined);
   check("the fallback is shape open", fallbackParsedQuery("anything").shape === "open");
+  const withCal = parsed({ intent: { ...NO_INTENT, calendar: true }, calendarWindow: { after: "2026-10-16", before: "2026-10-16" } });
+  check("the calendar flag and its window are read", withCal.intent?.calendar === true && withCal.calendarWindow?.after === "2026-10-16");
+  check("an intent without the calendar flag keeps its other flags",
+    parsed({ intent: { needs_research: true, attention: false, recruiters: false } }).intent?.needsResearch === true);
+  check("a calendar window without the flag is dropped", parsed({ intent: NO_INTENT, calendarWindow: { after: "2026-10-16" } }).calendarWindow === undefined);
+  check("one day is a one-day window", parsed({ intent: { ...NO_INTENT, calendar: true }, calendarWindow: { after: "2026-10-16" } }).calendarWindow?.before === "2026-10-16");
+  check("a backwards window is dropped",
+    parsed({ intent: { ...NO_INTENT, calendar: true }, calendarWindow: { after: "2026-10-20", before: "2026-10-16" } }).calendarWindow === undefined);
 
   console.log("\nThe roster gate");
   const rosters: OrgRoster[] = [

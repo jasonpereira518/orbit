@@ -53,8 +53,9 @@ import { searchMemories } from "@/lib/memory-search";
 import { getQueryEmbedding } from "@/lib/embedding-cache";
 import { searchMeetingPassagesFor } from "@/lib/meetings-list";
 import { listUpcomingEvents } from "@/lib/calendar-events";
-import { eventView, getMeetingContext, userTimeZone, type MeetingSelector } from "@/lib/meeting-context";
-import { ymdInZone } from "@/lib/reminder-due-bucket";
+import { eventView, getMeetingContext, hhmmInZone, userTimeZone, type MeetingSelector } from "@/lib/meeting-context";
+import { addDaysYmd, ymdInZone } from "@/lib/reminder-due-bucket";
+import { freeSlots } from "@/lib/calendar-free";
 
 const BOTH = ["mcp", "chat"] as const;
 const MCP_ONLY = ["mcp"] as const;
@@ -637,10 +638,14 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       limit: z.number().int().min(1).max(50).default(20),
     },
     annotations: { readOnlyHint: true },
-    // Event titles and guest lists are written by whoever sent the invite — a stranger can put
-    // text in front of the model just by inviting the user — so this stays off MCP like the
-    // other free-text fan-outs.
-    surfaces: CHAT_ONLY,
+    // Event titles are written by whoever sent the invite, so a stranger can put a line in front
+    // of the model just by inviting the user. Over MCP that is bounded: a title is one short line
+    // inside the server's untrusted-data fence, and the allowlist below keeps the location and
+    // anything longer off it (there is no agenda here at all).
+    surfaces: BOTH,
+    fields: {
+      mcp: ["eventId", "title", "day", "start", "end", "timeZone", "call", "response", "attendees", "attendeeCount", "guestListHidden"],
+    },
     scope: "read",
     resultLabel: "calendar events",
     async run(
@@ -665,6 +670,50 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         })
         .slice(0, args.limit);
       return rows.map((e) => eventView(e, tz));
+    },
+  },
+
+  {
+    name: "free_time",
+    title: "When the user is free",
+    description:
+      "The gaps between the user's meetings, per day, inside 9:00–18:00 in their own time zone — " +
+      "for \"when am I free\", \"do I have time Thursday afternoon\" or finding a slot to suggest. " +
+      "Declined meetings don't count as busy; all-day events are ignored. Days are YYYY-MM-DD in " +
+      "the user's zone, at most two weeks ahead.",
+    inputSchema: {
+      after: isoDay.optional().describe("First local day. Default: today."),
+      before: isoDay.optional().describe("Last local day. Default: the same as after."),
+      minMinutes: z.number().int().min(15).max(240).default(30).describe("Shortest gap worth reporting."),
+    },
+    annotations: { readOnlyHint: true },
+    // Times only — no titles, no people — so nothing anyone else wrote reaches the caller.
+    surfaces: BOTH,
+    scope: "read",
+    resultLabel: "free time",
+    async run(userId, args: { after?: string; before?: string; minMinutes: number }) {
+      const tz = await userTimeZone(userId);
+      const now = new Date();
+      const today = ymdInZone(now, tz);
+      const first = args.after && args.after > today ? args.after : today;
+      const last = [args.before ?? first, addDaysYmd(today, 14)].sort()[0]!;
+      if (last < first) return [];
+      const rows = await listUpcomingEvents(userId, {
+        from: new Date(dayBound(first, false)!.getTime() - 14 * 3_600_000),
+        to: new Date(dayBound(last, true)!.getTime() + 14 * 3_600_000),
+        limit: 200,
+      });
+      const out: Array<{ day: string; timeZone: string; free: string[] }> = [];
+      for (let day = first; day <= last; day = addDaysYmd(day, 1)) {
+        const slots = freeSlots(rows.filter((e) => ymdInZone(e.startAt, tz) === day), day, tz, {
+          minMinutes: args.minMinutes,
+        })
+          // Today's gaps start no earlier than now.
+          .filter((g) => g.end > now)
+          .map((g) => `${hhmmInZone(g.start < now ? now : g.start, tz)}–${hhmmInZone(g.end, tz)}`);
+        out.push({ day, timeZone: tz, free: slots });
+      }
+      return out;
     },
   },
 
