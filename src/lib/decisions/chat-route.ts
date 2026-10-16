@@ -81,7 +81,9 @@ export function routeFromParsed(parsed: ParsedQuery | null, question: string): C
     shape: parsed.shape,
     attention: intent.attention,
     recruiters: intent.recruiters,
-    calendar: intent.calendar === true || availability || keywordCalendar,
+    // The parser answered, so its word stands: the keyword list is only the fallback ("notes
+    // from my calls" is about notes, not the schedule — eval said-11).
+    calendar: intent.calendar === true || availability,
     availability,
     engine: "llm",
   };
