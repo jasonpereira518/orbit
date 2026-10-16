@@ -78,6 +78,7 @@ const ROUTE_AREAS: Array<[prefix: string, area: FeedbackArea]> = [
   ["/chat", "chat"],
   ["/graph", "graph"],
   ["/outreach", "outreach"],
+  ["/find", "outreach"],
   ["/recruiters", "outreach"],
   ["/knowledge", "knowledge"],
   ["/settings", "settings"],

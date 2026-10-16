@@ -1,0 +1,50 @@
+{
+  "$comment": "Opt-in with `eval-ai.ts --network large`. Adds `distractors` generated look-alikes (deterministic, from `pools`) and the `contacts` below to contact-search-eval.json's network, so retrieval has to choose a dozen out of ~320 instead of returning nearly everyone. The pools share no company, school, location or industry with the base network (seedNetwork throws if one does), so every base case keeps its answer. The `contacts` here look like distractors on their profile; what sets each apart lives ONLY in an interaction note (`notes`), so their cases pass only when the note reaches the answer. `cases` run in the chat task on top of ai-chat-eval.json's: note-only facts asked as profile questions (the fast path), follow-ups that name nobody, and the network's size. `mustSay` is scored like the research task's; `{networkSize}` is replaced with the number of contacts seeded.",
+  "distractors": 300,
+  "pools": {
+    "firstNames": ["Aaron", "Bianca", "Caleb", "Dana", "Eli", "Fiona", "Gabe", "Harper", "Isaac", "Jade", "Kyle", "Lucy", "Miles", "Nora", "Owen", "Paige", "Quinn", "Reid", "Sage", "Tara", "Victor", "Wren", "Yusuf", "Zoe"],
+    "lastNames": ["Abbott", "Barlow", "Carver", "Dalton", "Ellis", "Foster", "Grady", "Hollis", "Ingram", "Jarvis", "Keller", "Lowry", "Marsh", "Nolan", "Osborne", "Pruitt", "Quigley", "Ramsey", "Sutton", "Tolliver"],
+    "companies": ["Corvid Labs", "Tallgrass Software", "Bluefin Logistics", "Harborview Health", "Northwind Freight", "Quarry Analytics", "Pinecrest Insurance", "Lumen Energy", "Kestrel Games", "Ridgeline Biotech", "Alder Education", "Copperleaf Realty", "Granite Telecom", "Meridian Hotels", "Saltbox Manufacturing", "Juniper Systems"],
+    "titles": ["Software Engineer", "Account Executive", "Operations Manager", "Data Analyst", "Customer Success Manager", "Project Manager", "QA Engineer", "Business Analyst", "Sales Director", "Supply Chain Manager", "Office Manager", "Backend Engineer"],
+    "industries": ["software", "logistics", "healthcare", "insurance", "energy", "gaming", "biotech", "education", "real estate", "telecom", "hospitality", "manufacturing"],
+    "locations": ["Denver", "Austin", "Seattle", "Atlanta", "Portland", "Phoenix", "Minneapolis", "Nashville", "Salt Lake City", "Raleigh", "Pittsburgh", "Columbus"],
+    "schools": ["Ohio State", "Purdue", "Arizona State", "University of Colorado", "Rutgers", "Penn State", "Texas A&M", "University of Utah", "Iowa State", "Clemson"],
+    "notes": ["Met at a regional conference.", "Former colleague from an earlier job.", "Introduced through a mutual friend.", "Caught up over coffee last spring.", "Sat next to them on a long flight.", "Neighbor from the old apartment building.", "Quick call about their team's roadmap."],
+    "interactionNotes": ["Caught up on family, travel and the usual weekend plans.", "Talked about their team's quarterly roadmap and a reorg that is still settling.", "Compared notes on commuting and the new train timetable.", "Long lunch; mostly about a television series neither of us finished.", "Short call to swap a couple of book recommendations."]
+  },
+  "contacts": [
+    { "email": "nadia@corvid.example", "fullName": "Nadia Brennan", "company": "Corvid Labs", "title": "Software Engineer", "school": "Purdue", "industry": "software", "location": "Denver", "notes": "Former colleague from an earlier job.", "tags": [] },
+    { "email": "marcus@tallgrass.example", "fullName": "Marcus Webb", "company": "Tallgrass Software", "title": "Account Executive", "school": "Rutgers", "industry": "software", "location": "Austin", "notes": "Met at a regional conference.", "tags": [] },
+    { "email": "elena@bluefin.example", "fullName": "Elena Sato", "company": "Bluefin Logistics", "title": "Operations Manager", "school": "University of Utah", "industry": "logistics", "location": "Seattle", "notes": "Introduced through a mutual friend.", "tags": [] }
+  ],
+  "notes": [
+    { "id": "large-bees", "email": "nadia@corvid.example", "date": "2026-08-20", "type": "coffee", "text": "Coffee with Nadia. She keeps bees now, two hives behind her house, and sells the honey at the Saturday farmers market." },
+    { "id": "large-marathon", "email": "marcus@tallgrass.example", "date": "2026-09-03", "type": "call", "text": "Marcus is training for his first marathon this fall and runs ten miles before work most days." },
+    { "id": "large-brazil", "email": "elena@bluefin.example", "date": "2026-07-15", "type": "meeting", "text": "Elena grew up in Sao Paulo and speaks Portuguese. She offered to help if we ever launch in Brazil." }
+  ],
+  "cases": [
+    { "id": "large-notes-bees", "question": "Do I know anyone who keeps bees?", "mustMention": ["nadia@corvid.example"] },
+    { "id": "large-notes-marathon", "question": "Which of my contacts is training for a marathon?", "mustMention": ["marcus@tallgrass.example"] },
+    { "id": "large-notes-brazil", "question": "Who could help us launch in Brazil?", "mustMention": ["elena@bluefin.example"] },
+    {
+      "id": "large-follow-up-company",
+      "question": "Who else do I know at his company?",
+      "priorTurns": [
+        { "role": "user", "content": "Tell me about Omar Haddad." },
+        { "role": "assistant", "content": "Omar Haddad is a Solutions Architect at Stripe. He helped with your billing integration." }
+      ],
+      "mustMention": ["maya@stripe.example"]
+    },
+    {
+      "id": "large-follow-up-where",
+      "question": "Which city is she based in?",
+      "priorTurns": [
+        { "role": "user", "content": "Do I know anyone who keeps bees?" },
+        { "role": "assistant", "content": "Yes, Nadia Brennan keeps two hives and sells the honey at a farmers market." }
+      ],
+      "mustMention": ["nadia@corvid.example"],
+      "mustSay": ["Denver"]
+    },
+    { "id": "large-network-size", "question": "How many contacts do I have in total?", "mustMention": [], "mustSay": ["{networkSize}"] }
+  ]
+}
