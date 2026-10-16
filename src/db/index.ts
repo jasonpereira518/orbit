@@ -4726,7 +4726,31 @@ const alters = [
  * has been silently missing from production since August 2026. Now: columns first, and
  * every real failure is returned rather than only logged.
  */
+/**
+ * #184 (never merged; its schema 56) created a different `calendar_events` — keyed by provider
+ * and `external_id` — on any database a preview of it migrated. `CREATE TABLE IF NOT EXISTS`
+ * would then keep that one, every index on `source_id`/`start_at` would fail, and the build
+ * would refuse to deploy. Set it aside first: renamed, not dropped — nothing reads it, but
+ * deleting someone's rows is not a migration's call. Its indexes keep names ours never use.
+ * Exported for `smoke-calendar-events`.
+ */
+export async function setAsideAbandonedCalendarEvents(run: StatementRunner, failed: SchemaFailure[]): Promise<void> {
+  let legacy = false;
+  try {
+    legacy =
+      rowsOf<unknown>(
+        await run(
+          `SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'calendar_events' AND column_name = 'external_id'`
+        )
+      ).length > 0;
+  } catch {
+    return;
+  }
+  if (legacy) await runStatements(run, ["ALTER TABLE calendar_events RENAME TO calendar_events_abandoned_v56"], "DDL", failed);
+}
+
 async function applySchema(run: StatementRunner, failed: SchemaFailure[]): Promise<void> {
+  await setAsideAbandonedCalendarEvents(run, failed);
   const statements = DDL.split(";")
     .map((s) => s.trim())
     .filter(Boolean);
