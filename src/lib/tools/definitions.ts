@@ -704,6 +704,10 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         attendeeCount: e.attendeeCount,
         guestListHidden: e.guestsHidden,
       }));
+    },
+  },
+
+  {
     name: "research_person",
     title: "Research someone outside the network",
     description:
