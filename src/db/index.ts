@@ -268,6 +268,7 @@ CREATE TABLE IF NOT EXISTS reminders (
   raw_date_phrase text,
   date_basis text,
   item_hash text,
+  calendar_event_key text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS suggested_reminders (
@@ -1882,6 +1883,7 @@ CREATE TABLE IF NOT EXISTS meeting_sessions (
   digest jsonb,
   digest_error text,
   note_batch_id uuid,
+  calendar_event_key text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -2698,7 +2700,12 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 164 (#446), and a database stamped 164 would never run a 160. NOT 165:
 // claude/linkedin-export-upload-cc7326 holds it. Rescanned every local and remote ref and
 // every worktree's working file on Oct 15 2026: 165 was the highest claimed anywhere.
-export const SCHEMA_VERSION = 166;
+//
+// 167 = reminders.calendar_event_key + meeting_sessions.calendar_event_key (event-linked
+// reminders and recordings). Built as 155 on Oct 12, renumbered to 161 on Oct 14 and to 167 on
+// Oct 15, above 166 (this stack's calendar_events), since main reached 164. Rescanned Oct 15
+// 2026: 166 was the highest claimed.
+export const SCHEMA_VERSION = 167;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3493,6 +3500,8 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "contacts", "constellation_pin", "text");
   await ensureColumn(client, "user_settings", "sender_bio", "text");
   await ensureColumn(client, "user_settings", "career_profile", "jsonb");
+  await ensureColumn(client, "reminders", "calendar_event_key", "text");
+  await ensureColumn(client, "meeting_sessions", "calendar_event_key", "text");
   await ensureColumn(client, "user_settings", "email_activity_sync", "integer NOT NULL DEFAULT 0");
   await ensureColumn(
     client,
@@ -4289,6 +4298,10 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS sender_bio text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS career_profile jsonb`,
+  // Schema v161: the calendar event a reminder or a recording belongs to — the provider's
+  // per-instance id, not a calendar_events FK, because that table only holds a two-week window.
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS calendar_event_key text`,
+  `ALTER TABLE meeting_sessions ADD COLUMN IF NOT EXISTS calendar_event_key text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_activity_sync integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS terms_accepted_at timestamptz`,

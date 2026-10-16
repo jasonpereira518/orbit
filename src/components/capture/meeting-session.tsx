@@ -62,6 +62,8 @@ export type MeetingFormState = {
   attendeesText: string;
   includeMic: boolean;
   emailsRef: { current: Record<string, string> };
+  /** The calendar event this recording is of, while the form still names it. */
+  calendarEventKey: string | null;
 };
 
 /** Everything the engine owns. */
@@ -262,15 +264,21 @@ export function MeetingSessionProvider({
   const Engine = useSyncExternalStore(subscribeModule, () => engineModule, () => null)?.MeetingEngine;
   const engine = useSyncExternalStore(subscribeValue, () => engineValue, () => null);
 
+  const [calendarMeeting, setCalendarMeeting] = useState<{
+    title: string;
+    endIso: string | null;
+    eventKey: string | null;
+  } | null>(null);
+  // Only while the form still names that event: a retitled or fresh recording is not it.
+  const linked = calendarMeeting && calendarMeeting.title === title ? calendarMeeting : null;
+
   const form = useMemo<MeetingFormState>(
-    () => ({ title, attendeesText, includeMic, emailsRef }),
-    [title, attendeesText, includeMic]
+    () => ({ title, attendeesText, includeMic, emailsRef, calendarEventKey: linked?.eventKey ?? null }),
+    [title, attendeesText, includeMic, linked?.eventKey]
   );
 
-  const [calendarMeeting, setCalendarMeeting] = useState<{ title: string; endIso: string | null } | null>(null);
-
   const applyCalendarMeeting = (meeting: MeetingCandidate) => {
-    setCalendarMeeting({ title: meeting.title, endIso: meeting.endIso });
+    setCalendarMeeting({ title: meeting.title, endIso: meeting.endIso, eventKey: meeting.eventKey });
     emailsRef.current = Object.fromEntries(
       meeting.attendees.filter((a) => a.email).map((a) => [a.name.trim().toLowerCase(), a.email])
     );
@@ -295,8 +303,7 @@ export function MeetingSessionProvider({
     includeMic,
     setIncludeMic,
     applyCalendarMeeting,
-    // Only while the form still names that event: a retitled or fresh recording is not it.
-    calendarEndIso: calendarMeeting && calendarMeeting.title === title ? calendarMeeting.endIso : null,
+    calendarEndIso: linked?.endIso ?? null,
   };
 
   const busy = engine?.flow.busy ?? false;

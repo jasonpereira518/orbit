@@ -10,6 +10,7 @@ import { and, asc, eq, gte, inArray, lt, notInArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { calendarEvents, contactIdentities, contacts, type CalendarEventAttendee } from "@/db/schema";
 import { toStoredEvent, type StoredCalendarEvent } from "@/lib/connectors/google-calendar";
+import { syncCalendarReminders } from "@/lib/calendar-reminders";
 
 export const EVENTS_WINDOW_PAST_MS = 2 * 86_400_000;
 export const EVENTS_WINDOW_FUTURE_MS = 14 * 86_400_000;
@@ -81,16 +82,16 @@ export async function refreshCalendarWindow(
       );
   }
 
-  if (events.length) {
-    const rows = events.map((e) => ({
-      userId,
-      sourceId,
-      ...e,
-      attendees: e.attendees.map(
-        (a): CalendarEventAttendee => ({ ...a, contactId: (a.email && byEmail.get(a.email)) || null })
-      ),
-      updatedAt: now,
-    }));
+  const rows = events.map((e) => ({
+    userId,
+    sourceId,
+    ...e,
+    attendees: e.attendees.map(
+      (a): CalendarEventAttendee => ({ ...a, contactId: (a.email && byEmail.get(a.email)) || null })
+    ),
+    updatedAt: now,
+  }));
+  if (rows.length) {
     await db
       .insert(calendarEvents)
       .values(rows)
@@ -115,6 +116,8 @@ export async function refreshCalendarWindow(
         },
       });
   }
+  // Prep and post-meeting reminders read the same rows, with attendees already resolved.
+  await syncCalendarReminders(userId, rows, read.complete, now);
   return { stored: events.length };
 }
 

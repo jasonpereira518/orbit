@@ -259,6 +259,7 @@
         "origin": "explicit",
         "confidenceScore": null,
         "itemHash": null,
+        "calendarEventKey": null,
         "createdAt": "<ts>"
       },
       {
@@ -283,6 +284,7 @@
         "origin": "explicit",
         "confidenceScore": null,
         "itemHash": null,
+        "calendarEventKey": null,
         "createdAt": "<ts>"
       },
       {
@@ -307,6 +309,7 @@
         "origin": "explicit",
         "confidenceScore": null,
         "itemHash": null,
+        "calendarEventKey": null,
         "createdAt": "<ts>"
       },
       {
@@ -331,6 +334,7 @@
         "origin": "explicit",
         "confidenceScore": null,
         "itemHash": null,
+        "calendarEventKey": null,
         "createdAt": "<ts>"
       },
       {
@@ -355,6 +359,7 @@
         "origin": "explicit",
         "confidenceScore": null,
         "itemHash": null,
+        "calendarEventKey": null,
         "createdAt": "<ts>"
       },
       {
@@ -379,6 +384,7 @@
         "origin": "explicit",
         "confidenceScore": null,
         "itemHash": null,
+        "calendarEventKey": null,
         "createdAt": "<ts>"
       },
       {
@@ -403,6 +409,7 @@
         "origin": "explicit",
         "confidenceScore": null,
         "itemHash": null,
+        "calendarEventKey": null,
         "createdAt": "<ts>"
       },
       {
@@ -427,6 +434,7 @@
         "origin": "explicit",
         "confidenceScore": null,
         "itemHash": null,
+        "calendarEventKey": null,
         "createdAt": "<ts>"
       }
     ],
@@ -5140,6 +5148,7 @@
         "origin": "explicit",
         "confidenceScore": null,
         "itemHash": null,
+        "calendarEventKey": null,
         "createdAt": "<ts>"
       }
     ],
@@ -6986,6 +6995,7 @@
           "origin": "explicit",
           "confidenceScore": null,
           "itemHash": null,
+          "calendarEventKey": null,
           "createdAt": "<ts>"
         }
       ]
@@ -7712,6 +7722,7 @@
         "origin": "explicit",
         "confidenceScore": null,
         "itemHash": null,
+        "calendarEventKey": null,
         "createdAt": "<ts>"
       },
       {
@@ -7736,6 +7747,7 @@
         "origin": "explicit",
         "confidenceScore": null,
         "itemHash": null,
+        "calendarEventKey": null,
         "createdAt": "<ts>"
       },
       {
@@ -7760,6 +7772,7 @@
         "origin": "explicit",
         "confidenceScore": null,
         "itemHash": null,
+        "calendarEventKey": null,
         "createdAt": "<ts>"
       },
       {
@@ -7784,6 +7797,7 @@
         "origin": "explicit",
         "confidenceScore": null,
         "itemHash": null,
+        "calendarEventKey": null,
         "createdAt": "<ts>"
       },
       {
@@ -7808,6 +7822,7 @@
         "origin": "explicit",
         "confidenceScore": null,
         "itemHash": null,
+        "calendarEventKey": null,
         "createdAt": "<ts>"
       },
       {
@@ -7832,6 +7847,7 @@
         "origin": "explicit",
         "confidenceScore": null,
         "itemHash": null,
+        "calendarEventKey": null,
         "createdAt": "<ts>"
       },
       {
@@ -7856,6 +7872,7 @@
         "origin": "explicit",
         "confidenceScore": null,
         "itemHash": null,
+        "calendarEventKey": null,
         "createdAt": "<ts>"
       },
       {
@@ -7880,6 +7897,7 @@
         "origin": "explicit",
         "confidenceScore": null,
         "itemHash": null,
+        "calendarEventKey": null,
         "createdAt": "<ts>"
       },
       {
@@ -7904,6 +7922,7 @@
         "origin": "explicit",
         "confidenceScore": null,
         "itemHash": null,
+        "calendarEventKey": null,
         "createdAt": "<ts>"
       },
       {
@@ -7928,6 +7947,7 @@
         "origin": "explicit",
         "confidenceScore": null,
         "itemHash": null,
+        "calendarEventKey": null,
         "createdAt": "<ts>"
       },
       {
@@ -7952,6 +7972,7 @@
         "origin": "explicit",
         "confidenceScore": null,
         "itemHash": null,
+        "calendarEventKey": null,
         "createdAt": "<ts>"
       }
     ],
@@ -13797,6 +13818,7 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "calendar_event_key": null,
       "source_interaction_id": null
     },
     {
@@ -13821,6 +13843,7 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "calendar_event_key": null,
       "source_interaction_id": null
     },
     {
@@ -13845,6 +13868,7 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "calendar_event_key": null,
       "source_interaction_id": null
     },
     {
@@ -13869,6 +13893,7 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "calendar_event_key": null,
       "source_interaction_id": null
     },
     {
@@ -13893,6 +13918,7 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "calendar_event_key": null,
       "source_interaction_id": null
     },
     {
@@ -13917,6 +13943,7 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "calendar_event_key": null,
       "source_interaction_id": null
     },
     {
@@ -13941,6 +13968,7 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "calendar_event_key": null,
       "source_interaction_id": null
     },
     {
@@ -13965,6 +13993,7 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "calendar_event_key": null,
       "source_interaction_id": null
     },
     {
@@ -13989,6 +14018,7 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "calendar_event_key": null,
       "source_interaction_id": null
     },
     {
@@ -14013,6 +14043,7 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "calendar_event_key": null,
       "source_interaction_id": null
     },
     {
@@ -14037,6 +14068,7 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "calendar_event_key": null,
       "source_interaction_id": null
     },
     {
@@ -14061,6 +14093,7 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "calendar_event_key": null,
       "source_interaction_id": null
     }
   ],
