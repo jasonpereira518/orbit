@@ -1,0 +1,11 @@
+/*
+ * The marketing pages' sheet: the same theme and rules as globals.css (theme.css), but
+ * Tailwind utilities generated only from the files those pages render (site-sources.css,
+ * generated — `npm run css:site`) and no Clerk theme. 28 KB gzipped instead of 49: this is
+ * render-blocking on the landing page's cold load. Styles go in theme.css, not here.
+ */
+@import "tailwindcss" source(none);
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "./theme.css";
+@import "./site-sources.css";
