@@ -61,6 +61,7 @@ const BUCKET_LABELS: Record<string, string> = {
   "poll.vote": "vote",
   "poll.results": "results check",
   "work-history": "work-history lookup",
+  "web-research": "research lookup",
   "work-history-background": "background work-history check",
 };
 
@@ -172,6 +173,12 @@ export const RATE_LIMITS = {
    * out — so a day has a ceiling that no ordinary use of LinkedIn pulls comes near.
    */
   workHistoryResearch: { limit: 60, windowSec: 86_400 },
+  /**
+   * Web research on people outside the network (`src/lib/web-research.ts`), per user per
+   * day. Cache hits are free; each miss is up to two billed searches on the account's key,
+   * and on Orbit's managed key those fees are not in any credit count — this is the cap.
+   */
+  webResearch: { limit: 30, windowSec: 86_400 },
   /**
    * The hourly sweep's own daily allowance per account (lib/work-history-sweep.ts), keyed
    * per UTC day. Separate from `workHistoryResearch` so background re-checks can never use

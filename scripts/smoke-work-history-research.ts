@@ -102,6 +102,18 @@ async function main() {
   );
   check("the profile's source URL is the LinkedIn URL", stored?.sourceUrl === "https://www.linkedin.com/in/priya-rao");
 
+  // --- the school research found fills an empty contacts.school, never a set one --------
+  const db = await getDb();
+  const schoolOf = async (id: string) =>
+    (await db.query.contacts.findFirst({ where: eq(contacts.id, id), columns: { school: true } }))?.school ?? null;
+  check("an empty school is filled from the education entry", (await schoolOf(priya)) === "MIT", String(await schoolOf(priya)));
+  const kept = await makeContact("Kept School", "https://www.linkedin.com/in/kept-school");
+  await db.update(contacts).set({ school: "Stanford" }).where(eq(contacts.id, kept));
+  await researchContactWorkHistory(USER, kept, {
+    researcher: fake({ experiences: [role("Stripe", { isCurrent: true }), { ...role("MIT"), kind: "education" }] }).researcher,
+  });
+  check("a school already set is never overwritten", (await schoolOf(kept)) === "Stanford", String(await schoolOf(kept)));
+
   // --- a recent web history is not searched again; a forced search is ----------------
   const again = fake({ experiences: [role("Ramp", { isCurrent: true })] });
   const fresh = await researchContactWorkHistory(USER, priya, { researcher: again.researcher });

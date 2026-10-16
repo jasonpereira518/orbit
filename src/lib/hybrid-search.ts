@@ -133,6 +133,20 @@ function anyLike(column: SQL, values: string[]): SQL {
  * The correlation is kept alongside the literal: belt and braces, and it stays correct if
  * a caller ever passes a userId that disagrees with the row.
  */
+/**
+ * "Went to one of these schools": the contact's own `school`, or an education entry from
+ * their stored LinkedIn history. Shared by chat's `schools` filter and the Contacts list's
+ * School filter, so the two can't disagree about who is an alum. Substring, case-insensitive.
+ * The outer query must read FROM `contacts` unaliased.
+ */
+export function schoolCondition(userId: string, schools: string[]): SQL {
+  return sql`(${anyLike(sql`lower(coalesce(contacts.school, ''))`, schools)} or ${experienceExists(
+    userId,
+    schools,
+    ["education"]
+  )})`;
+}
+
 function experienceExists(userId: string, values: string[], kinds: readonly string[]): SQL {
   return sql`exists (
     select 1 from contact_experiences ce
@@ -163,8 +177,8 @@ function filterCondition(
 ): SQL | null {
   if (!filters) return null;
   const parts: SQL[] = [];
-  const clean = (xs?: string[]) =>
-    (xs ?? []).map((x) => x.trim()).filter((x) => x.length > 0).slice(0, 4);
+  const clean = (xs?: string[], max = 4) =>
+    (xs ?? []).map((x) => x.trim()).filter((x) => x.length > 0).slice(0, max);
 
   const companies = clean(filters.companies);
   if (companies.length) {
@@ -179,16 +193,9 @@ function filterCondition(
   const industries = clean(filters.industries);
   if (industries.length) parts.push(anyLike(sql`lower(coalesce(contacts.industry, ''))`, industries));
   const schools = clean(filters.schools);
-  if (schools.length) {
-    parts.push(
-      sql`(${anyLike(sql`lower(coalesce(contacts.school, ''))`, schools)} or ${experienceExists(
-        userId,
-        schools,
-        ["education"]
-      )})`
-    );
-  }
-  const locations = clean(filters.locations);
+  if (schools.length) parts.push(schoolCondition(userId, schools));
+  // A country arrives as itself plus its cities (chat-retrieval's understandQuery): up to 8.
+  const locations = clean(filters.locations, 8);
   if (locations.length) parts.push(anyLike(sql`lower(coalesce(contacts.location, ''))`, locations));
 
   const tagNames = clean(filters.tags);
@@ -326,7 +333,8 @@ async function ftsArm(
   query: string,
   expansionTerms: string[],
   filter: SQL | null,
-  armLimit: number
+  armLimit: number,
+  places: readonly string[] = []
 ): Promise<string[]> {
   const db = await getDb();
   // websearch_to_tsquery understands OR; expansion terms widen recall without
@@ -345,7 +353,7 @@ async function ftsArm(
   // fusion bounds how much noise the loosened single-token alternatives can add.
   const tokens = query.trim().split(/\s+/).filter(Boolean);
   const extraTerms = tokens.length >= 3 ? contentTokens(query) : [];
-  const tsQuery = [query, ...expansionTerms.slice(0, 4), ...extraTerms]
+  const tsQuery = [query, ...expansionTerms.slice(0, 4), ...extraTerms, ...places]
     .map((t) => t.trim())
     .filter(Boolean)
     .join(" OR ");
@@ -644,7 +652,10 @@ async function runArms(
   armLimit: number
 ): Promise<ArmResult[]> {
   const [fts, trgm, vec, exp] = await Promise.all([
-    ftsArm(userId, options.query, options.expansionTerms ?? [], filter, armLimit),
+    // A location filter's places are searched for too, not only filtered on: "Canada" is
+    // parsed into its cities, which appear nowhere in the question, so no arm would
+    // otherwise produce the Toronto contact for the filter to keep.
+    ftsArm(userId, options.query, options.expansionTerms ?? [], filter, armLimit, options.filters?.locations ?? []),
     trigramArm(userId, options.query, filter, armLimit),
     options.embedding?.length
       ? semanticArm(userId, options.embedding, armLimit)

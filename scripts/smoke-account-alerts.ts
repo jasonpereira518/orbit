@@ -303,6 +303,22 @@ async function main() {
     !(await codes()).includes("import.stalled")
   );
 
+  // --- 9c. LinkedIn refresh: 30 days after the last finished upload ---------------------
+  await reset();
+  await addImport({ status: "completed", createdAt: ago(29 * DAY) });
+  check("9c a 29-day-old LinkedIn import is fresh", !(await codes()).includes("import.linkedin_stale"));
+
+  await reset();
+  await addImport({ status: "completed", createdAt: ago(45 * DAY) });
+  await addImport({ status: "completed", createdAt: ago(31 * DAY), revertedAt: new Date() });
+  const stale = (await getAccountAlerts(USER)).find((a) => a.code === "import.linkedin_stale");
+  check("9c a 45-day-old LinkedIn import asks for a refresh", stale !== undefined);
+  check("9c it is a dismissible warning", stale?.severity === "warn" && stale?.dismissible === true);
+  check("9c an undone upload does not reset the clock", stale?.body?.includes("45 days") === true, stale?.body ?? undefined);
+
+  await addImport({ status: "completed", createdAt: ago(DAY), importType: "linkedin_messages" });
+  check("9c a newer messages upload counts as a refresh", !(await codes()).includes("import.linkedin_stale"));
+
   await reset();
   for (let i = 0; i < 3; i += 1) {
     await addImport({ status: "failed", updatedAt: new Date(), fileName: `f${i}.csv` });
@@ -473,6 +489,7 @@ async function main() {
     "import.failed",
     "email.send_failed",
     "import.stalled",
+    "import.linkedin_stale",
     "calendar.sync_error",
     "plan.contact_cap_near",
   ];
