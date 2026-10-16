@@ -1936,6 +1936,16 @@ export type ImportStats = {
    */
   interactionsLogged?: number;
   /**
+   * A LinkedIn export (`import_type = 'linkedin_export'`): files kept in `import_files`, files
+   * too big to keep, files that stayed on the device because they are private, and what the
+   * parsed extras added outside `interactions` (target companies, background entries).
+   */
+  filesSaved?: number;
+  filesTooLarge?: number;
+  filesPrivate?: number;
+  targetsAdded?: number;
+  backgroundAdded?: number;
+  /**
    * Rows the engine isolated as unwritable and marked `import_job_rows.status = 'failed'`
    * (see `writeWithNarrowing`/`onBadRow` in `import-engine.ts`). Distinct from both
    * `skipped` (rows that parsed but had nothing to attach to) and `blockedByPlan` (rows
@@ -2374,6 +2384,41 @@ export const importJobRows = pgTable(
   },
   (t) => [
     index("import_job_rows_import_status_idx").on(t.importId, t.status),
+  ]
+);
+
+/**
+ * The raw files of a LinkedIn export, kept so Orbit can read them again when it learns a
+ * new one. Hung off the export's own `imports` row (`import_type = 'linkedin_export'`), so
+ * deleting that row, or the account, takes them with it.
+ *
+ * Only the latest export's files are kept: saving a new export drops the old one's. Files
+ * LinkedIn includes that Orbit has no business holding (receipts, ID verification, the
+ * sign-up IP) never leave the browser — see `linkedInExportRole`.
+ *
+ * `gz` is the file gzipped in the browser, base64 — text rather than bytea so the Neon
+ * HTTP driver and PGlite hand back the same thing. A whole export is ~300 KB this way.
+ */
+export const importFiles = pgTable(
+  "import_files",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    importId: uuid("import_id")
+      .notNull()
+      .references(() => imports.id, { onDelete: "cascade" }),
+    /** Path inside the export, e.g. `Connections.csv` or `Jobs/Saved Jobs.csv`. */
+    path: text("path").notNull(),
+    /** Uncompressed size. */
+    byteSize: integer("byte_size").notNull(),
+    /** `parsed`: Orbit reads it. `stored`: kept, not read (yet). */
+    role: text("role").$type<"parsed" | "stored">().notNull(),
+    gz: text("gz").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("import_files_user_idx").on(t.userId),
+    uniqueIndex("import_files_import_path_uidx").on(t.importId, t.path),
   ]
 );
 

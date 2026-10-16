@@ -40,7 +40,7 @@ async function main() {
   const lines: string[] = [];
   const result = await runResearchTask({ userId: USER, log: (l) => lines.push(l) });
 
-  check("every fixture case ran", result.cases === 10, String(result.cases));
+  check("every fixture case ran", result.cases === researchFixture.cases.length, String(result.cases));
   const onePassShare =
     researchFixture.cases.filter((c) => c.expectDepth === "single").length / researchFixture.cases.length;
   check(

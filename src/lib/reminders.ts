@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, getTableColumns, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, inArray, isNull, notInArray, sql, type SQL } from "drizzle-orm";
 import { getDb, rowsOf, runAtomicWrite, type AtomicStatement } from "@/db";
 import { awaitingReplies, awaitingReplyDescription } from "@/lib/awaiting-reply";
 import {
@@ -8,6 +8,7 @@ import {
   contactTags,
   interactions,
   reminders,
+  tags as tagsTable,
   userGoals,
 } from "@/db/schema";
 import { daysAgo } from "@/lib/duplicates";
@@ -27,7 +28,7 @@ import { compareDueFollowUps, DUE_FOLLOW_UP_CAP } from "@/lib/due-follow-ups";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { contactHasNotesSql } from "@/lib/contact-notes-sql";
 import { getConstellationConfig } from "@/lib/constellation-config";
-import { constellationEligibility } from "@/lib/constellation-eligibility";
+import { constellationEligibility, IMPORT_SOURCE_TAGS } from "@/lib/constellation-eligibility";
 import {
   DORMANT_DAYS,
   LINKEDIN_QUIET_MAX_DAYS,
@@ -987,13 +988,20 @@ export async function getDashboardData(
     getDashboardCounts(userId),
     getDashboardVocabularies(userId),
     getGoalAlignedContactIds(userId, GOAL_ALIGNED_CAP),
-    // Tags per contact, for eligibility: one grouped pass over the join table, scoped by
-    // the owner through `contacts`, instead of an aggregate per scanned row.
+    // User-chosen tags per contact, for eligibility: one grouped pass over the join table,
+    // scoped by the owner through `contacts`, instead of an aggregate per scanned row. Import
+    // source tags are left out here, as `userTagCount` leaves them out on the other callers.
     db
       .select({ contactId: contactTags.contactId, n: sql<number>`count(*)::int` })
       .from(contactTags)
       .innerJoin(contacts, eq(contacts.id, contactTags.contactId))
-      .where(eq(contacts.userId, userId))
+      .innerJoin(tagsTable, eq(tagsTable.id, contactTags.tagId))
+      .where(
+        and(
+          eq(contacts.userId, userId),
+          notInArray(sql`lower(trim(${tagsTable.name}))`, [...IMPORT_SOURCE_TAGS])
+        )
+      )
       .groupBy(contactTags.contactId),
   ]);
   const tagCountById = new Map(tagCountRows.map((r) => [r.contactId, Number(r.n)]));
@@ -1021,7 +1029,7 @@ export async function getDashboardData(
         nextFollowUpAt: c.nextFollowUpAt ?? null,
         // A COUNT from SQL, where this used to be `(c.tags ?? []).length` over a joined
         // array of tag rows. The predicate only ever wanted the number.
-        tagCount: tagCountById.get(c.id) ?? 0,
+        userTagCount: tagCountById.get(c.id) ?? 0,
       },
       constellationConfig.thresholds
     );

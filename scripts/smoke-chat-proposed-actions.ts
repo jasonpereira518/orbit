@@ -81,6 +81,45 @@ console.log("bounds and hygiene");
   check("zero or negative days clamps up to 1", (zeroDays[0]!.args as { days: number }).days >= 1);
 }
 
+console.log("contact edits and new contacts");
+{
+  const out = validateProposedActions(
+    [
+      { kind: "update_contact", contact_id: "c1", title: "VP Engineering", company: "Stripe", email: "not an email" },
+      { kind: "create_contact", full_name: "Priya Shah", title: "Founder", company: "Ledgerly" },
+    ],
+    ALLOWED,
+    NAMES
+  );
+  const update = out[0]?.args as { kind: string; fields: Record<string, string> } | undefined;
+  check("update_contact survives with the fields it named", update?.kind === "update_contact" && update.fields.title === "VP Engineering" && update.fields.company === "Stripe", JSON.stringify(out[0]));
+  check("a malformed email is dropped from the patch, not stored", update?.fields.email === undefined);
+  check("the update preview names the person and every change", /Ada Lovelace/.test(out[0]!.preview) && /VP Engineering/.test(out[0]!.preview) && /Stripe/.test(out[0]!.preview), out[0]?.preview);
+  check("create_contact survives", out[1]?.args.kind === "create_contact" && out[1]!.preview.includes("Priya Shah (Founder @ Ledgerly)"), out[1]?.preview);
+  check("an update to someone the model was not shown is dropped", validateProposedActions([{ kind: "update_contact", contact_id: "forged", title: "x" }], ALLOWED).length === 0);
+  check("an update with nothing to change is dropped", validateProposedActions([{ kind: "update_contact", contact_id: "c1" }], ALLOWED).length === 0);
+  check("notes cannot ride along — the patch has no notes field", !("notes" in (validateProposedActions([{ kind: "update_contact", contact_id: "c1", title: "x", notes: "wiped" }], ALLOWED)[0]!.args as { fields: object }).fields));
+}
+
+console.log("reminders: only ones the model was shown");
+{
+  const REMINDERS = new Map([["r1", "Send Ada the deck"]]);
+  const out = validateProposedActions(
+    [
+      { kind: "complete_reminder", reminder_id: "r1" },
+      { kind: "snooze_reminder", reminder_id: "r1", days: 500 },
+    ],
+    ALLOWED,
+    NAMES,
+    REMINDERS
+  );
+  check("complete and snooze survive", out.length === 2, JSON.stringify(out));
+  check("the preview quotes the reminder", out[0]!.preview.includes("Send Ada the deck"), out[0]?.preview);
+  check("snooze days clamp to 90", (out[1]!.args as { days: number }).days === 90);
+  check("a reminder id outside the shown list is dropped", validateProposedActions([{ kind: "complete_reminder", reminder_id: "r9" }], ALLOWED, NAMES, REMINDERS).length === 0);
+  check("with no reminders shown, none can be proposed", validateProposedActions([{ kind: "complete_reminder", reminder_id: "r1" }], ALLOWED).length === 0);
+}
+
 console.log("never claims the write already happened");
 {
   const out = validateProposedActions([{ kind: "create_reminder", contact_id: "c1", title: "Follow up" }], ALLOWED, NAMES);
