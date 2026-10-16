@@ -474,17 +474,28 @@ async function researchOnce(
       detectJobChanges(baseline, answer.experiences),
       { source: "web", now }
     );
+    const patch: { company?: string; title?: string; school?: string } = {};
     // Nothing known about where they work until now: fill it in, without calling it a move.
     if (!moves.length && !baseline.hasBaseline) {
       const current = answer.experiences.find((e) => e.kind === "role" && e.isCurrent);
       if (current) {
-        await updateContactForUser(
-          userId,
-          contactId,
-          { company: current.organization, ...(current.title ? { title: current.title } : {}) },
-          { skipRevalidate: true, skipEmbedding: true, skipSummary: true }
-        );
+        patch.company = current.organization;
+        if (current.title) patch.title = current.title;
       }
+    }
+    // The same for school: LinkedIn's Connections.csv has no school column, so research is
+    // where an imported contact's school comes from. The answer lists the most recent first.
+    // Never overwrites a school the user (or a LinkedIn paste) already set.
+    if (!contact.school?.trim()) {
+      const school = answer.experiences.find((e) => e.kind === "education")?.organization;
+      if (school) patch.school = school;
+    }
+    if (Object.keys(patch).length) {
+      await updateContactForUser(userId, contactId, patch, {
+        skipRevalidate: true,
+        skipEmbedding: true,
+        skipSummary: true,
+      });
     }
   } catch (err) {
     // The history is stored, and the snapshot a later check compares against is now the

@@ -146,6 +146,18 @@ async function main() {
   check("tag filter keeps Grace", hits.length === 1 && hits[0].id === grace.id);
   check("tag-filtered Grace is filterMatched", hits[0]?.filterMatched === true);
 
+  // 6b. A country parsed into its cities: the cities are searched for, not only filtered on
+  // (the question names none of them), and the fifth value still counts.
+  hits = await hybridSearchContacts(U, {
+    query: "Who do I know in England?",
+    filters: { locations: ["England", "Manchester", "Birmingham", "Leeds", "London"] },
+  });
+  check(
+    "country-as-cities filter finds the London contacts as filtered matches",
+    [ada.id, alan.id].every((id) => hits.some((h) => h.id === id && h.filterMatched)),
+    JSON.stringify(hits.map((h) => [h.fullName, h.filterMatched]))
+  );
+
   // 7. Recall guard: absurd filter falls back to unfiltered rather than empty.
   hits = await hybridSearchContacts(U, {
     query: "Hopper", filters: { companies: ["nonexistent-corp"] },

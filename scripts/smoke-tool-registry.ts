@@ -22,8 +22,10 @@ import { randomUUID } from "node:crypto";
 import { calendarEvents, calendarSources, contacts, interactions } from "../src/db/schema";
 import { ORBIT_TOOLS } from "../src/lib/tools/definitions";
 import {
+  isToolError,
   MCP_FAN_OUT_DENIED_FIELDS,
   project,
+  releasedTools,
   runTool,
   toolsFor,
   type OrbitTool,
@@ -117,8 +119,8 @@ async function main() {
     chatTools.filter((t) => t.scope !== "read").map((t) => t.name).join(", ")
   );
   check(
-    "chat gets every shared read tool plus its own five",
-    chatTools.length === 15,
+    "chat gets every shared read tool plus its own nine",
+    chatTools.length === 18,
     chatTools.map((t) => t.name).join(", ")
   );
   check(
@@ -145,6 +147,32 @@ async function main() {
     chatTools.some((t) => t.name === "search_meetings") &&
       !toolsFor(ORBIT_TOOLS, "mcp", ["read", "write"]).some((t) => t.name === "search_meetings"),
     chatTools.map((t) => t.name).join(", ")
+  );
+
+  for (const name of ["research_person", "research_company", "find_people"]) {
+    const tool = chatTools.find((t) => t.name === name);
+    check(
+      `${name} is chat-only and read-scoped — reaching the web is never offered over MCP`,
+      tool?.scope === "read" && !toolsFor(ORBIT_TOOLS, "mcp", ["read", "write"]).some((t) => t.name === name)
+    );
+    check(`${name} belongs to /find, so it ships closed with it`, tool?.releasedSurface === "page.find");
+  }
+  check(
+    "a tool whose page is not released is dropped from chat; ungated tools stay",
+    !releasedTools(chatTools, () => false).some((t) => t.releasedSurface) &&
+      releasedTools(chatTools, () => false).length === chatTools.length - 3 &&
+      releasedTools(chatTools, () => true).length === chatTools.length
+  );
+  const gatedRun = await runTool(
+    chatTools.find((t) => t.name === "research_person")!,
+    USER,
+    { name: "Priya Rao", company: "Stripe" },
+    { surface: "chat", scopes: ["read"] }
+  );
+  check(
+    "research_person refuses inside run while /find is coming soon, before any search",
+    isToolError(gatedRun) && /not available/.test(gatedRun.error),
+    JSON.stringify(gatedRun)
   );
 
   // --- the projection actually strips ----------------------------------------------------

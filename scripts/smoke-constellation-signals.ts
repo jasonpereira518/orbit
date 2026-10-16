@@ -100,6 +100,13 @@ run(async () => {
 
   const untouched = await addContact("Never Touched");
 
+  // Email and chat threads are two-way channels too; a logged call is a conversation.
+  const emailed = await addContact("Email Thread");
+  await log(emailed, "email", { direction: "in" });
+  await log(emailed, "email", { direction: "out" });
+  await log(emailed, "message", { direction: "out" });
+  await log(emailed, "call");
+
   for (const label of ["fresh cohort", "stored cohort"] as const) {
     console.log(`\nTallies from the ${label}…`);
     const cohort = await getClosenessCohort(USER);
@@ -113,7 +120,7 @@ run(async () => {
     );
     check(
       "its messages are counted by direction instead",
-      at(messagesOnly).linkedInInbound === 2 && at(messagesOnly).linkedInOutbound === 2,
+      at(messagesOnly).messageInbound === 2 && at(messagesOnly).messageOutbound === 2,
       JSON.stringify(at(messagesOnly))
     );
     check(
@@ -126,13 +133,20 @@ run(async () => {
     );
     check(
       "undirected message rows are tallied apart from directed ones",
-      at(legacy).linkedInUndirected === 7 &&
-        at(legacy).linkedInInbound === 0 &&
-        at(legacy).linkedInOutbound === 0
+      at(legacy).messageUndirected === 7 &&
+        at(legacy).messageInbound === 0 &&
+        at(legacy).messageOutbound === 0
     );
     check(
       "email and reach_out are neither notes nor meetings, whatever they carry",
       at(noisy).noteInteractions === 0 && at(noisy).meetingInteractions === 0
+    );
+    check(
+      "email and chat messages count by direction; a call counts as a meeting",
+      at(emailed).messageInbound === 1 &&
+        at(emailed).messageOutbound === 2 &&
+        at(emailed).meetingInteractions === 1,
+      JSON.stringify(at(emailed))
     );
     check(
       "a contact with no interactions has no entry and reads as all zeroes",
@@ -140,7 +154,7 @@ run(async () => {
     );
     check(
       "tallies do not leak between contacts",
-      at(noted).linkedInInbound === 0 && at(messagesOnly).meetingInteractions === 0
+      at(noted).messageInbound === 0 && at(messagesOnly).meetingInteractions === 0
     );
   }
 
