@@ -63,6 +63,26 @@ npx tsx scripts/eval-ai-report.ts docs/ai-evals/2026-09-21-gemini-research-basel
 
 Its plumbing is also checked without a key by `scripts/smoke-eval-research-task.ts`.
 
+## The large network (`--network large`)
+
+The 16-person network in `contact-search-eval.json` is small enough that retrieval returns
+nearly everyone, so a change to retrieval or grounding cannot show in `chat` or `research`.
+`--network large` (opt-in) adds 300 deterministic look-alikes and three people whose only
+distinguishing fact lives in a note (`scripts/eval-fixtures/chat-large-network-eval.json`),
+plus six chat cases: note-only facts asked as profile questions, follow-ups that name nobody,
+and the network's size. Compare large runs only with large runs.
+
+Gemini 3.8 Flash, `--task chat,research --runs 3`, Oct 14 2026:
+
+| | chat mentionRecall | chat factRecall | research mentionRecall | research routing |
+|---|---|---|---|---|
+| before the Oct 14 chat work (`2026-10-14-chat-large-network-before.json`) | 76.9% | 50.0% | 93.8% | 92.9% |
+| after it, plus the location fix (`2026-10-14-chat-large-network-after.json`) | 100% | 100% | 100% | 100% |
+
+Before, six chat cases missed on all three runs: chat-13 ("Who do I know in Canada?"), the
+three note-only facts, the "his company" follow-up and the network size. The small network
+on the same code is `2026-10-14-chat-canada-fix.json` (chat 100%, chat-13 3/3).
+
 ## What is recorded here
 
 `2026-09-19-gemini-baseline/` is Gemini as Orbit shipped it before the cost work:

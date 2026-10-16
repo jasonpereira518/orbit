@@ -32,6 +32,7 @@ import { integrationHref } from "@/components/settings/sections";
  * day becomes a permanent badge. See `IMPORT_ALERT_WINDOW_MS`.
  */
 import { icsFailureLine, importFailureLine } from "@/lib/import-errors";
+import { daysSince, linkedInRefreshLevel } from "@/lib/linkedin-export";
 
 /** How many alerts the server will ever return. A pathological account cannot balloon the payload. */
 export const MAX_ACCOUNT_ALERTS = 6;
@@ -85,6 +86,8 @@ export type HealthCode =
   | "calendar.sync_error"
   | "import.failed"
   | "import.stalled"
+  /** The last LinkedIn upload is a month old: new connections are not reaching Orbit. */
+  | "import.linkedin_stale"
   | "email.send_failed"
   | "plan.contact_cap_reached"
   | "plan.contact_cap_near"
@@ -191,6 +194,8 @@ export type HealthInput = {
    */
   /** Live REST API keys + webhook endpoints held on a plan that no longer includes them. */
   pausedApiItems?: number;
+  /** Newest finished, not-undone LinkedIn upload (`getLastLinkedInImportAt`). Absent = skip. */
+  lastLinkedInImportAt?: Date | null;
   credits?: {
     allowanceGranted: number;
     allowanceRemaining: number;
@@ -388,6 +393,16 @@ export function evaluateAccountHealth(
     });
   }
 
+  // Advisory: the bell nudges at 30 days, the dashboard card takes over at 90
+  // (`linkedInRefreshLevel`). Dismissible, so the 7-day snooze is the cadence after that.
+  if (input.lastLinkedInImportAt && linkedInRefreshLevel(input.lastLinkedInImportAt, now)) {
+    findings.push({
+      code: "import.linkedin_stale",
+      severity: "warn",
+      data: { days: daysSince(input.lastLinkedInImportAt, now) },
+    });
+  }
+
   // --- Contact cap --------------------------------------------------------------------
   // The two are mutually exclusive by construction (`>=` vs `<`), never by ordering.
   if (input.contactLimit !== null && input.contactCount !== null) {
@@ -496,6 +511,8 @@ const DISMISSIBLE_CODES: ReadonlySet<HealthCode> = new Set<HealthCode>([
   "email.send_failed",
   // Retried automatically by the stalled-import cron.
   "import.stalled",
+  // Advisory: nothing is broken, the snapshot is just getting old.
+  "import.linkedin_stale",
   // One input among several, and `lastSyncStatus` stays "error" until the next SUCCESS —
   // so a single transient feed failure would otherwise sit there for days.
   "calendar.sync_error",
@@ -533,6 +550,7 @@ const KIND_BY_CODE: Record<HealthCode, AccountAlertKind> = {
   "calendar.sync_error": "calendar",
   "import.failed": "import",
   "import.stalled": "import",
+  "import.linkedin_stale": "import",
   "email.send_failed": "email",
   "plan.contact_cap_reached": "plan_limit",
   "plan.contact_cap_near": "plan_limit",
@@ -577,6 +595,7 @@ const CODE_RANK: HealthCode[] = [
   "email.send_failed",
   "import.failed",
   "import.stalled",
+  "import.linkedin_stale",
   "calendar.sync_error",
 ];
 
@@ -773,6 +792,20 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
             href: "/imports#import-history",
             external: false,
           },
+          surfaceKey: "page.imports",
+        });
+        break;
+      }
+
+      case "import.linkedin_stale": {
+        const days = int(f.data.days) ?? 30;
+        alerts.push({
+          ...base,
+          title: "Time to refresh your LinkedIn export",
+          body: `Your last LinkedIn import was ${days} days ago, so newer connections aren't in Orbit yet. Request a fresh export from LinkedIn (it takes about a day), then upload it.`,
+          // In-app: the alert CTA renders as an app link, and /imports carries LinkedIn's
+          // export link plus the upload panel.
+          cta: { label: "Refresh LinkedIn", href: "/imports#import-panel-connections", external: false },
           surfaceKey: "page.imports",
         });
         break;

@@ -26,6 +26,8 @@ import type { DemoAccountReason } from "@/lib/demo-account";
  * TWO RULES THIS COPY KEEPS:
  *  - Only shipped features. Outreach and Events are behind their coming-soon gates, and the
  *    Chrome extension stays out of plan copy until `EXTENSION_PUBLISHED`; none appear until they ship.
+ *    (The coming-soon screen and nav tooltip may say which plan a surface WILL unlock on —
+ *    `COMING_SOON_UNLOCK_PLAN` — but pricing and plan cards still never list it.)
  *  - No fake urgency: no struck-through prices, countdowns or scarcity. A founding price is
  *    shown only to an eligible account, and always with its full terms.
  *

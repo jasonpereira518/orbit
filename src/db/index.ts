@@ -466,6 +466,18 @@ CREATE TABLE IF NOT EXISTS import_job_rows (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS import_job_rows_import_status_idx ON import_job_rows(import_id, status);
+CREATE TABLE IF NOT EXISTS import_files (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  import_id uuid NOT NULL REFERENCES imports(id) ON DELETE CASCADE,
+  path text NOT NULL,
+  byte_size integer NOT NULL,
+  role text NOT NULL,
+  gz text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS import_files_user_idx ON import_files(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS import_files_import_path_uidx ON import_files(import_id, path);
 CREATE TABLE IF NOT EXISTS ai_suggestions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -2676,6 +2688,10 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // (#420–#436 renumbered Oct 14). Rescanned every local branch and remote ref on Oct 14 2026:
 // 163 was the highest claimed anywhere.
 //
+// 165 = the raw files of a LinkedIn export: import_files. NOT 160-164: the calendar stack holds
+// 160-163 and claude/cloud-notes-auto-extract-799187 holds 164 (the job-change-alerts-radar
+// worktree also has an uncommitted 164). Rescanned every ref and worktree on Oct 15 2026.
+//
 // 166 = calendar_events (new table): a mirror of the near calendar (two days back, two weeks
 // ahead) for calendar-aware chat, event-linked reminders and the recorder. Built as 152 on
 // Oct 11, renumbered to 160 on Oct 14, and to 166 on Oct 15 when merging main: main reached
@@ -4170,6 +4186,10 @@ const alters = [
   `CREATE TABLE IF NOT EXISTS cloud_note_files (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, provider text NOT NULL, file_id text NOT NULL, name text NOT NULL, web_url text, modified_at timestamptz, status text NOT NULL DEFAULT 'found', reason text, detected_by text NOT NULL DEFAULT 'rules', from_backfill integer NOT NULL DEFAULT 0, capture_job_id uuid, notified_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE UNIQUE INDEX IF NOT EXISTS cloud_note_files_user_file_uidx ON cloud_note_files(user_id, provider, file_id)`,
   `CREATE INDEX IF NOT EXISTS cloud_note_files_user_status_idx ON cloud_note_files(user_id, status)`,
+  // Schema v165: the raw files of a LinkedIn export (import_files), hung off its imports row.
+  `CREATE TABLE IF NOT EXISTS import_files (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, import_id uuid NOT NULL REFERENCES imports(id) ON DELETE CASCADE, path text NOT NULL, byte_size integer NOT NULL, role text NOT NULL, gz text NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE INDEX IF NOT EXISTS import_files_user_idx ON import_files(user_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS import_files_import_path_uidx ON import_files(import_id, path)`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS x_handle text`,
   `CREATE INDEX IF NOT EXISTS contacts_user_linkedin_idx ON contacts(user_id, linkedin_url)`,
   `CREATE INDEX IF NOT EXISTS contacts_user_x_idx ON contacts(user_id, x_handle)`,

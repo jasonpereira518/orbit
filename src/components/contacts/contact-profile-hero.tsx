@@ -4,6 +4,7 @@ import { ExampleTag } from "@/components/onboarding/example-tag";
 import { isTourExampleSource } from "@/lib/onboarding-examples/marker";
 
 import { ComposeButton } from "@/components/email/compose-button";
+import { AskAboutButton } from "@/components/chat/ask-about-button";
 import {
   useEffect,
   useRef,
@@ -199,6 +200,7 @@ function StickyMiniBar({
         <div className="hidden sm:block">
           <ContactChannelIcons {...channels} className="justify-end" />
         </div>
+        <AskAboutButton contactId={contactId} name={displayName} />
         <ComposeButton contactId={contactId} />
         <ContactEditSheet
           contactId={contactId}
@@ -381,6 +383,7 @@ export function ContactProfileHero({
           aria-hidden={compact}
         >
           <ContactChannelIcons {...channels} />
+          <AskAboutButton contactId={contactId} name={displayName} />
           <ComposeButton contactId={contactId} />
           <ContactEditSheet
             contactId={contactId}

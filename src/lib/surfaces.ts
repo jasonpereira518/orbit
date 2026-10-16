@@ -1,5 +1,5 @@
 import { SETTINGS_SECTIONS } from "@/components/settings/sections";
-import { PLANS, PLAN_SHORT_LABELS, type Plan } from "@/lib/plans/plan-config";
+import { PLANS, PLAN_SHORT_LABELS, type Plan, type PurchasablePlan } from "@/lib/plans/plan-config";
 
 /**
  * The catalogue of things an operator can hide from every user at once.
@@ -100,6 +100,17 @@ const PAGES: Surface[] = [
     label: "Meetings",
     description: "Past recorded meetings, searchable.",
     href: "/meetings",
+  },
+  {
+    // Ships dark. Brief someone who is not in the network yet, from a web search on the
+    // account's own AI key (`src/lib/web-research.ts`); briefs are kept 14 days, and only
+    // the people a user saves become contacts.
+    key: "page.find",
+    kind: "page",
+    label: "Find people",
+    description: "Research anyone outside your network before you reach out or meet.",
+    href: "/find",
+    comingSoon: true,
   },
   {
     key: "page.imports",
@@ -342,6 +353,13 @@ export function isHrefHidden(href: string, hidden: ReadonlySet<string>): boolean
   const key = surfaceKeyForHref(href);
   return key !== null && hidden.has(key);
 }
+
+/**
+ * The plan a coming-soon surface will unlock on, said on its screen and in the nav tooltip.
+ * Every one is Pro today (Jason, Oct 2026). Only Outreach is gated in code so far — Radar and
+ * Events need a `FeatureKey` + `requireEntitlement` before they ship, or this copy over-promises.
+ */
+export const COMING_SOON_UNLOCK_PLAN: PurchasablePlan = "orbit";
 
 /** Page and feature surfaces that ship as announced-but-not-released, before any operator override. */
 export const DEFAULT_COMING_SOON_KEYS: ReadonlySet<string> = new Set(
