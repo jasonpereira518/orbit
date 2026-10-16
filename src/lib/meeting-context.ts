@@ -51,7 +51,9 @@ export function eventView(e: CalendarEventRow, tz: string) {
     location: e.location,
     call: e.conferenceKind,
     response: e.selfResponse,
-    attendees: e.attendees.map((a) => ({ name: a.name || a.email, contactId: a.contactId })),
+    // Never the address: these go to the chat model and over MCP. A guest with no display name
+    // is "Guest" unless they are a contact (their name then comes from get_contact).
+    attendees: e.attendees.map((a) => ({ name: a.name || "Guest", contactId: a.contactId })),
     attendeeCount: e.attendeeCount,
     guestListHidden: e.guestsHidden,
   };

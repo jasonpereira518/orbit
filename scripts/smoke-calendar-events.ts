@@ -191,8 +191,8 @@ async function main() {
   // --- the tool ------------------------------------------------------------------------
   const tool = ORBIT_TOOLS.find((t) => t.name === "upcoming_meetings") as OrbitTool;
   check(
-    "upcoming_meetings is chat-only",
-    toolsFor(ORBIT_TOOLS, "chat", ["read"]).includes(tool) && !toolsFor(ORBIT_TOOLS, "mcp", ["read", "write"]).includes(tool)
+    "upcoming_meetings is on chat and MCP (MCP gets an allowlist: smoke-tool-registry)",
+    toolsFor(ORBIT_TOOLS, "chat", ["read"]).includes(tool) && toolsFor(ORBIT_TOOLS, "mcp", ["read"]).includes(tool)
   );
 
   const result = (await runTool(tool, USER, { limit: 20 }, { surface: "chat" })) as Array<Record<string, unknown>>;

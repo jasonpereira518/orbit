@@ -1,5 +1,5 @@
 {
- "$comment": "Chat routing labels (decisions/chat-route.ts): shape person|list|count|fact|open (an array accepts any), the person a person question names, the time mode a period question needs, depth single|research (research ONLY for intros, multi-lookup synthesis, or a group from earlier turns), whether the attention brief should load, whether the recruiter list should, and which seeded company rosters should attach (Stripe, Ramp, Notion, Square, Block, Figma). Relative dates resolve against `today`. Hard negatives carry a 'why'.",
+ "$comment": "Chat routing labels (decisions/chat-route.ts): shape person|list|count|fact|open (an array accepts any), the person a person question names, the time mode a period question needs, depth single|research (research ONLY for intros, multi-lookup synthesis, or a group from earlier turns), whether the attention brief should load, whether the recruiter list should, and which seeded company rosters should attach (Stripe, Ramp, Notion, Square, Block, Figma). Relative dates resolve against `today`. Hard negatives carry a 'why'. calendar (default false): the question is about the user's own upcoming schedule; availability: when they are free.",
  "today": "2026-10-15",
  "cases": [
   {
@@ -1779,6 +1779,174 @@
     ]
    },
    "why": "several people's notes side by side"
+  },
+  {
+   "id": "cal-01",
+   "question": "What's on my calendar tomorrow?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "shape": "open",
+    "calendar": true
+   }
+  },
+  {
+   "id": "cal-02",
+   "question": "what's on tomorrow",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "shape": "open",
+    "calendar": true
+   }
+  },
+  {
+   "id": "cal-03",
+   "question": "Who am I meeting this week?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "shape": [
+     "open",
+     "list"
+    ],
+    "calendar": true
+   }
+  },
+  {
+   "id": "cal-04",
+   "question": "When do I next see Priya?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "shape": [
+     "person",
+     "open"
+    ],
+    "calendar": true,
+    "person": "Priya"
+   }
+  },
+  {
+   "id": "cal-05",
+   "question": "Who's coming to the board meeting?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "shape": "open",
+    "calendar": true
+   },
+   "why": "No calendar keyword: only the parser can tell this is about an invite."
+  },
+  {
+   "id": "cal-06",
+   "question": "Am I free Thursday afternoon?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "shape": "open",
+    "calendar": true,
+    "availability": true
+   }
+  },
+  {
+   "id": "cal-07",
+   "question": "Do I have any gaps on Monday for a coffee chat?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "shape": "open",
+    "calendar": true,
+    "availability": true
+   },
+   "why": "Availability with no 'free' keyword."
+  },
+  {
+   "id": "cal-08",
+   "question": "What's my first meeting on Friday?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "shape": "open",
+    "calendar": true
+   }
+  },
+  {
+   "id": "cal-09",
+   "question": "Prep me for my 3pm",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "shape": "open",
+    "calendar": true
+   },
+   "why": "Preparing for one meeting wants meeting_context, which only research calls."
+  },
+  {
+   "id": "cal-10",
+   "question": "Is my call with Dana still on for tomorrow?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "shape": [
+     "person",
+     "open"
+    ],
+    "calendar": true,
+    "person": "Dana"
+   }
+  },
+  {
+   "id": "cal-neg-01",
+   "question": "Who did I meet last week?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "shape": [
+     "count"
+    ],
+    "calendar": false
+   },
+   "why": "Past interactions, not the schedule."
+  },
+  {
+   "id": "cal-neg-02",
+   "question": "What's Priya's schedule like at her new job?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": [],
+    "shape": [
+     "person",
+     "open"
+    ],
+    "calendar": false,
+    "person": "Priya"
+   },
+   "why": "Someone else's schedule."
   }
  ]
 }

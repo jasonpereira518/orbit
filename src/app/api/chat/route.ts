@@ -249,6 +249,7 @@ export async function POST(request: Request) {
                 evidence,
                 notePassages,
                 writingPreferences: ctx.writingInstructions,
+                calendar: ctx.calendar?.text ?? null,
                 openReminders: ctx.openReminders,
                 userSchools: ctx.userSchools,
                 access: ctx.access,

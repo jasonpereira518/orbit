@@ -159,6 +159,8 @@ export type ChatStepKind =
   | "roster"
   | "attention"
   | "recruiters"
+  /** The user's upcoming meetings, for a schedule question (`@/lib/chat-calendar`). */
+  | "calendar"
   | "attached"
   | "read"
   /** The shape lanes (`@/lib/chat-lanes`): an exhaustive filtered list, a name resolved, notes searched. */
