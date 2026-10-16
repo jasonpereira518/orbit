@@ -5,7 +5,8 @@ import { requireUserId } from "@/lib/auth";
 import { actionFailure } from "@/lib/action-failure";
 import { eventView, getMeetingContext, type GuestNotInOrbit, type MeetingPerson } from "@/lib/meeting-context";
 import { generateTalkingPoints, type TalkingPointsResult } from "@/lib/meeting-talking-points";
-import { lookUpGuestFor } from "@/lib/guest-profiles";
+import { lookUpGuestFor, type GuestBrief } from "@/lib/guest-profiles";
+import { saveResearchedPersonForUser } from "@/lib/web-research";
 
 export type MeetingPrep = {
   event: ReturnType<typeof eventView>;
@@ -53,17 +54,18 @@ export async function getTalkingPoints(
   }
 }
 
-const LOOKUP_COPY: Record<"no_anchor" | "not_a_guest", string> = {
+const LOOKUP_COPY: Record<"no_anchor" | "not_a_guest" | "not_sure", string> = {
+  not_sure: "Couldn’t be sure which person this is",
   no_anchor: "Not enough to look them up safely — a personal email address doesn’t say where they work",
   not_a_guest: "They’re not on that meeting any more",
 };
 
-/** "Look up" for one guest who isn't a contact: one web search on the user's own AI key. */
+/** "Look up" for one guest who isn't a contact: Find people's research, on the user's own AI key. */
 export async function lookUpGuest(
   eventId: string,
   email: string
 ): Promise<
-  | { ok: true; found: boolean; profile: { title: string | null; company: string | null; headline: string | null; linkedinUrl: string | null } | null }
+  | { ok: true; profile: GuestBrief }
   | { ok: false; error: string }
 > {
   try {
@@ -71,14 +73,26 @@ export async function lookUpGuest(
     const id = z.string().uuid().parse(eventId);
     const address = z.string().email().max(320).parse(email);
     const res = await lookUpGuestFor(userId, id, address);
-    if (res.status === "no_anchor" || res.status === "not_a_guest") return { ok: false, error: LOOKUP_COPY[res.status] };
-    const p = res.profile;
-    return {
-      ok: true,
-      found: res.status === "found",
-      profile: res.status === "found" ? { title: p.title, company: p.company, headline: p.headline, linkedinUrl: p.linkedinUrl } : null,
-    };
+    if (res.status === "found") return { ok: true, profile: res.brief };
+    if (res.status === "refused") return { ok: false, error: res.message };
+    return { ok: false, error: LOOKUP_COPY[res.status] };
   } catch (err) {
     return { ok: false, error: await actionFailure(err, "Couldn’t look them up", "calendar.look-up-guest") };
+  }
+}
+
+/**
+ * "Add" for a guest who was looked up: the brief becomes a contact with its work history, the
+ * way Find people's "Save to Orbit" does. Takes the brief's key, never its content, and only
+ * this account's cached brief can be read — so nothing the client sends is written as fact.
+ */
+export async function addGuestFromBrief(key: string): Promise<{ ok: true; contactId: string } | { ok: false; error: string }> {
+  try {
+    const userId = await requireUserId();
+    const saved = await saveResearchedPersonForUser(userId, z.string().regex(/^[0-9a-f]{64}$/).parse(key));
+    if (!saved) return { ok: false, error: "That lookup has expired — look them up again to add them" };
+    return { ok: true, contactId: saved.contactId };
+  } catch (err) {
+    return { ok: false, error: await actionFailure(err, "Couldn’t add them", "calendar.add-guest") };
   }
 }

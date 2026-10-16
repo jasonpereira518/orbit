@@ -335,6 +335,38 @@ export async function loadResearchedPerson(userId: string, key: string): Promise
   return row ? asDossier(row.result) : null;
 }
 
+/**
+ * The cache key `researchPerson` would file this subject under — so a caller that already knows
+ * who it asked about (a meeting guest) can find the brief again without keeping its own copy.
+ * Null when the subject would be refused.
+ */
+export function personResearchKey(input: Parameters<typeof normalizePersonSubject>[0]): string | null {
+  const normalized = normalizePersonSubject(input);
+  return normalized.ok ? aiResultCacheKey(PERSON_OPERATION, personKeyParts(normalized.subject)) : null;
+}
+
+/** Several cached briefs by key, in one read; expired or missing keys are simply absent. */
+export async function loadResearchedPeople(userId: string, keys: string[]): Promise<Map<string, PersonDossier>> {
+  const wanted = [...new Set(keys.filter((k) => /^[0-9a-f]{64}$/.test(k)))];
+  if (!wanted.length) return new Map();
+  const db = await getDb();
+  const rows = await db
+    .select({ key: aiResultCache.inputHash, result: aiResultCache.result })
+    .from(aiResultCache)
+    .where(
+      and(
+        eq(aiResultCache.userId, userId),
+        eq(aiResultCache.operation, PERSON_OPERATION),
+        inArray(aiResultCache.inputHash, wanted),
+        gt(aiResultCache.createdAt, freshSince()),
+      ),
+    );
+  return new Map(rows.flatMap((r) => {
+    const dossier = asDossier(r.result);
+    return dossier ? [[r.key, dossier] as const] : [];
+  }));
+}
+
 /** The account's recent briefs, people and companies, newest first — the /find "Recent" list. */
 export async function listRecentResearch(
   userId: string,

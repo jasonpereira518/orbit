@@ -23,7 +23,6 @@ import {
   planMeterUsage,
   calendarEvents,
   calendarSources,
-  guestProfiles,
   calendarSubscriptions,
   captureHandoffs,
   captureJobs,
@@ -370,7 +369,6 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       own(appleConnections),
       own(calendarEvents),
       own(calendarSources),
-      own(guestProfiles),
       own(calendarSubscriptions),
       own(eventProviderConnections),
       own(connectorConnections),
@@ -383,7 +381,6 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       appleConnections,
       calendarEvents,
       calendarSources,
-      guestProfiles,
       calendarSubscriptions,
       eventProviderConnections,
       connectorConnections,
@@ -404,7 +401,6 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // calendar_events cascades from calendar_sources; deleted first anyway so a row whose
       // source is somehow gone does not outlive the account.
       await db.delete(calendarEvents).where(eq(calendarEvents.userId, userId));
-      await db.delete(guestProfiles).where(eq(guestProfiles.userId, userId));
       await db.delete(calendarSources).where(eq(calendarSources.userId, userId));
       await db.delete(calendarSubscriptions).where(eq(calendarSubscriptions.userId, userId));
       await db.delete(gmailConnections).where(eq(gmailConnections.userId, userId));
