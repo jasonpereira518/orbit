@@ -9,7 +9,16 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb, setAsideAbandonedCalendarEvents, type SchemaFailure } from "../src/db";
 import { PGlite } from "@electric-sql/pglite";
-import { calendarEvents, calendarSources, contactIdentities, contacts, userSettings } from "../src/db/schema";
+import {
+  calendarEvents,
+  calendarSources,
+  contactBriefs,
+  contactIdentities,
+  contacts,
+  interactions,
+  reminders,
+  userSettings,
+} from "../src/db/schema";
 import { conferenceOf, toStoredEvent } from "../src/lib/connectors/google-calendar";
 import { listUpcomingEvents, refreshCalendarWindow } from "../src/lib/calendar-events";
 import { ORBIT_TOOLS } from "../src/lib/tools/definitions";
@@ -187,6 +196,40 @@ async function main() {
   check("query matches title words", Array.isArray(byTitle) && byTitle.length === 1);
   const otherSees = (await runTool(tool, OTHER, { query: "ada", limit: 20 }, { surface: "chat" })) as unknown[];
   check("another user cannot see these events", Array.isArray(otherSees) && otherSees.length === 0);
+
+  // --- meeting_context -------------------------------------------------------------------
+  const ctxTool = ORBIT_TOOLS.find((t) => t.name === "meeting_context") as OrbitTool;
+  const db2 = await getDb();
+  await db2.insert(interactions).values([
+    { userId: USER, contactId: ada.id, interactionType: "call", interactionDate: new Date(NOW.getTime() - 10 * 86_400_000), aiSummary: "Talked about the Series A" },
+    // This meeting itself, as calendar sync logs it: not history yet.
+    { userId: USER, contactId: ada.id, interactionType: "meeting", interactionDate: new Date(NOW.getTime() + 26 * 3_600_000), aiSummary: "Ada 1:1" },
+  ]);
+  await db2.insert(reminders).values({ userId: USER, contactId: ada.id, title: "Send Ada the deck", status: "pending" });
+  await db2.insert(contactBriefs).values({ userId: USER, contactId: ada.id, standing: "Warm; mid fundraise", nextStep: "Send the deck" });
+
+  const startNy = new Intl.DateTimeFormat("en-GB", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(ONE_ON_ONE.start.dateTime));
+  type Ctx = { event: { title: string }; people: Array<{ standing: string | null; nextStep: string | null; recent: Array<{ summary: string | null }>; open: string[] }>; notInOrbit: string[] };
+  const byTime = (await runTool(ctxTool, USER, { time: startNy }, { surface: "chat" })) as Ctx;
+  check("meeting_context finds \"my 3pm\" by local time", byTime?.event?.title === "Ada 1:1 (moved)", JSON.stringify(byTime));
+  const next = (await runTool(ctxTool, USER, {}, { surface: "chat" })) as Ctx;
+  check("with no arguments it is the next meeting with someone known", next?.event?.title === "Ada 1:1 (moved)");
+  const ada0 = next?.people?.[0];
+  check("it carries the brief", ada0?.standing === "Warm; mid fundraise" && ada0.nextStep === "Send the deck");
+  check(
+    "recent history is the past only",
+    ada0?.recent.length === 1 && ada0.recent[0].summary === "Talked about the Series A",
+    JSON.stringify(ada0?.recent)
+  );
+  check(
+    "open to-dos, without the meeting's own prep reminder",
+    ada0?.open.includes("Send Ada the deck") === true && !ada0.open.some((o) => o.startsWith("Prep for")),
+    JSON.stringify(ada0?.open)
+  );
+  const none = await runTool(ctxTool, USER, { query: "no such meeting" }, { surface: "chat" });
+  check("no match is an error, not a guess", typeof (none as { error?: unknown })?.error === "string");
+  const theirsCtx = await runTool(ctxTool, OTHER, { eventId: meeting?.eventId as string }, { surface: "chat" });
+  check("another user cannot open this meeting by id", typeof (theirsCtx as { error?: unknown })?.error === "string");
 
   // --- the cascade ---------------------------------------------------------------------
   await db.delete(calendarSources).where(eq(calendarSources.id, source.id));
