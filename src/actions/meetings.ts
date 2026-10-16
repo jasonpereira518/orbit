@@ -2,15 +2,15 @@
 
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { gmailConnections, meetingSessions, type MeetingDigest } from "@/db/schema";
+import { calendarSources, gmailConnections, meetingSessions, type MeetingDigest } from "@/db/schema";
 import { completeJson, parseAiJson, type CaptureParseHints } from "@/lib/ai";
 import { requireUserId } from "@/lib/auth";
 import { deepgramEnabled } from "@/lib/deepgram";
 import { ReauthRequiredError } from "@/lib/errors";
 import { getValidAccessToken, hasCalendarScope } from "@/lib/gmail";
 import { fetchCalendarWindow } from "@/lib/connectors/google-calendar";
-import { meetingCandidatesFrom, type MeetingCandidate } from "@/lib/meeting-calendar";
-import { findEventByKey, matchEventForSession } from "@/lib/calendar-events";
+import { meetingCandidatesFrom, meetingCandidatesFromRows, type MeetingCandidate } from "@/lib/meeting-calendar";
+import { findEventByKey, listUpcomingEvents, matchEventForSession } from "@/lib/calendar-events";
 import { buildMeetingRecap, type MeetingRecap } from "@/lib/meeting-recap";
 import { listMeetingsFor, type MeetingsPage } from "@/lib/meetings-list";
 import {
@@ -444,7 +444,23 @@ export async function getMeetingCandidates(): Promise<MeetingCandidatesResult> {
     await consumeBucket("meetingCandidates", userId, RATE_LIMITS.meetingCandidates);
     const db = await getDb();
     const conn = await db.query.gmailConnections.findFirst({ where: eq(gmailConnections.userId, userId) });
-    if (!conn) return { ok: true, status: "not-connected", events: [] };
+    if (!conn) {
+      // Outlook or iCloud: no live read here, but the mirrored window has the same meetings.
+      const now = new Date();
+      const hasCalendar = await db.query.calendarSources.findFirst({
+        where: and(eq(calendarSources.userId, userId), eq(calendarSources.enabled, 1)),
+        columns: { id: true },
+      });
+      if (!hasCalendar) return { ok: true, status: "not-connected", events: [] };
+      const rows = await listUpcomingEvents(userId, {
+        from: new Date(now.getTime() - CANDIDATES_PAST_MS),
+        to: new Date(now.getTime() + CANDIDATES_FUTURE_MS),
+        limit: 25,
+      });
+      const result: MeetingCandidatesResult = { ok: true, status: "ok", events: meetingCandidatesFromRows(rows, now) };
+      candidatesCache.set(userId, { at: Date.now(), result });
+      return result;
+    }
     if (!hasCalendarScope(conn.scopes)) return { ok: true, status: "needs-scope", events: [] };
     if (conn.status !== "active") return { ok: true, status: "reauth", events: [] };
 

@@ -9,7 +9,13 @@
  * Nothing in here is stored: a suggestion exists for as long as the setup card is on screen.
  */
 import { counterpartsOf } from "@/lib/calendar-classify";
-import { conferenceOf, selfEmailsFrom, toParsedEvent, type ConferenceKind } from "@/lib/connectors/google-calendar";
+import {
+  conferenceOf,
+  selfEmailsFrom,
+  toParsedEvent,
+  type ConferenceKind,
+  type StoredCalendarEvent,
+} from "@/lib/connectors/google-calendar";
 
 type RawGoogleEvent = Parameters<typeof toParsedEvent>[0];
 
@@ -96,6 +102,54 @@ export function meetingCandidatesFrom(items: RawGoogleEvent[], now: Date, max = 
   }
 
   return ranked
+    .sort((a, b) => a.rank - b.rank || a.distance - b.distance)
+    .slice(0, max)
+    .map((r) => r.c);
+}
+
+type MirroredEvent = { conferenceKind: string | null } & Pick<
+  StoredCalendarEvent,
+  | "providerEventId"
+  | "icalUid"
+  | "seriesId"
+  | "title"
+  | "startAt"
+  | "endAt"
+  | "allDay"
+  | "attendees"
+  | "attendeeCount"
+  | "guestsHidden"
+  | "selfResponse"
+>;
+
+/**
+ * The same suggestions from `calendar_events` rows — for an Outlook or iCloud calendar, which
+ * the recorder has no live read for. The rows already leave out the owner and rooms.
+ */
+export function meetingCandidatesFromRows(rows: MirroredEvent[], now: Date, max = 4): MeetingCandidate[] {
+  const nowMs = now.getTime();
+  return rows
+    .filter((e) => !e.allDay && e.selfResponse !== "declined" && e.title.trim() && (e.attendeeCount > 0 || e.conferenceKind))
+    .map((e) => {
+      const start = e.startAt.getTime();
+      const end = e.endAt?.getTime() ?? start;
+      return {
+        c: {
+          id: e.icalUid ?? e.providerEventId,
+          title: e.title.trim().slice(0, 200),
+          startIso: e.startAt.toISOString(),
+          endIso: e.endAt?.toISOString() ?? null,
+          attendees: e.attendees.slice(0, MAX_ATTENDEES).map((a) => ({ name: prettyName(a.name, a.email), email: a.email })),
+          // The column only ever holds a `ConferenceKind` (every provider's mapping writes one).
+          call: e.conferenceKind as ConferenceKind | null,
+          webinar: Boolean(e.conferenceKind) && (e.guestsHidden || e.attendeeCount === 0 || e.attendeeCount >= WEBINAR_CROWD),
+          seriesId: e.seriesId,
+          eventKey: e.providerEventId,
+        },
+        rank: start <= nowMs && nowMs <= end ? 0 : start > nowMs ? 1 : 2,
+        distance: Math.abs(start - nowMs),
+      };
+    })
     .sort((a, b) => a.rank - b.rank || a.distance - b.distance)
     .slice(0, max)
     .map((r) => r.c);

@@ -8,20 +8,9 @@
  */
 import { and, asc, eq, gte, inArray, lt, notInArray, sql, type SQL } from "drizzle-orm";
 import { getDb } from "@/db";
-import {
-  calendarEvents,
-  calendarSources,
-  contactIdentities,
-  contacts,
-  gmailConnections,
-  reminders,
-  type CalendarEventAttendee,
-} from "@/db/schema";
-import { fetchCalendarWindow, toStoredEvent, type StoredCalendarEvent } from "@/lib/connectors/google-calendar";
+import { calendarEvents, contactIdentities, contacts, reminders, type CalendarEventAttendee } from "@/db/schema";
+import type { StoredCalendarEvent } from "@/lib/connectors/google-calendar";
 import { syncCalendarReminders } from "@/lib/calendar-reminders";
-import { getValidAccessToken, hasCalendarScope } from "@/lib/gmail";
-import { ReauthRequiredError } from "@/lib/errors";
-import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 
 export const EVENTS_WINDOW_PAST_MS = 2 * 86_400_000;
 export const EVENTS_WINDOW_FUTURE_MS = 14 * 86_400_000;
@@ -115,53 +104,6 @@ export function pruneStaleCalendarEvents(now: Date): Promise<number> {
   return dropCalendarEvents(lt(calendarEvents.updatedAt, new Date(now.getTime() - STALE_EVENT_MS)), now);
 }
 
-const recentWindowTries = new Map<string, number>();
-
-/**
- * The user's window, re-read now — for the app pulse, so a meeting added or cancelled since the
- * last scheduled sync (every 30 minutes, often later) reaches the prep card and record nudge.
- * At most one read per user per ten minutes; a throttled call is "fresh enough" and does nothing.
- */
-export async function refreshUserCalendarWindows(
-  userId: string,
-  now: Date,
-  deps: { getAccessToken?: typeof getValidAccessToken; fetchWindow?: typeof fetchCalendarWindow } = {}
-): Promise<{ refreshed: number }> {
-  // The pulse calls this every 90 seconds per tab: an instance that tried lately skips even the
-  // bucket write, and the bucket keeps instances (and tabs) from stacking reads.
-  // ponytail: per-instance Map, never pruned — one entry per active user, fine at this size.
-  const last = recentWindowTries.get(userId);
-  if (last !== undefined && now.getTime() - last < RATE_LIMITS.calendarWindow.windowSec * 1000) return { refreshed: 0 };
-  recentWindowTries.set(userId, now.getTime());
-  try {
-    await consumeBucket("calendarWindow", userId, RATE_LIMITS.calendarWindow);
-  } catch (err) {
-    if (isRateLimitedError(err)) return { refreshed: 0 };
-    throw err;
-  }
-  const db = await getDb();
-  const conn = await db.query.gmailConnections.findFirst({ where: eq(gmailConnections.userId, userId) });
-  if (!conn || conn.status !== "active" || !hasCalendarScope(conn.scopes)) return { refreshed: 0 };
-  // Only a source the scheduler already made: creating one is the sync's job.
-  const source = await db.query.calendarSources.findFirst({
-    where: and(eq(calendarSources.connectionId, conn.id), eq(calendarSources.enabled, 1)),
-    orderBy: asc(calendarSources.createdAt),
-  });
-  if (!source) return { refreshed: 0 };
-  let accessToken: string;
-  try {
-    accessToken = await (deps.getAccessToken ?? getValidAccessToken)(userId);
-  } catch (err) {
-    // Needs reconnecting: Settings says so; the pulse has nothing to add.
-    if (err instanceof ReauthRequiredError) return { refreshed: 0 };
-    throw err;
-  }
-  const { from, to } = eventsWindow(now);
-  const read = await (deps.fetchWindow ?? fetchCalendarWindow)({ accessToken, from, to, maxPages: 4, timeoutMs: 10_000 });
-  await refreshCalendarWindow(userId, source.id, read, now);
-  return { refreshed: 1 };
-}
-
 /**
  * Rewrite one source's window from a fresh read. `complete: false` (a truncated or failed read)
  * upserts what arrived and deletes nothing, because absence from a partial read proves nothing.
@@ -169,12 +111,12 @@ export async function refreshUserCalendarWindows(
 export async function refreshCalendarWindow(
   userId: string,
   sourceId: string,
-  read: { items: Parameters<typeof toStoredEvent>[0][]; complete: boolean },
+  read: { events: StoredCalendarEvent[]; complete: boolean },
   now: Date
 ): Promise<{ stored: number }> {
   const db = await getDb();
   const { to } = eventsWindow(now);
-  const events = read.items.map(toStoredEvent).filter((e): e is StoredCalendarEvent => e !== null);
+  const { events } = read;
   const emails = [...new Set(events.flatMap((e) => e.attendees.map((a) => a.email).filter(Boolean)))];
   const byEmail = await contactIdsByEmail(userId, emails);
 

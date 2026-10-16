@@ -3,7 +3,7 @@
 import { after } from "next/server";
 import { requireAuthenticatedUser } from "@/lib/auth";
 import { loadAppPulse } from "@/lib/app-pulse";
-import { refreshUserCalendarWindows } from "@/lib/calendar-events";
+import { refreshUserCalendarWindows } from "@/lib/calendar-window";
 import { reportError } from "@/lib/report-error";
 
 /** The one periodic read per tab. See `src/lib/app-pulse.ts` and `src/lib/app-pulse-store.ts`. */
