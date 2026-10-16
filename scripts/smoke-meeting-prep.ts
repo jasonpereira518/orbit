@@ -9,9 +9,11 @@ import "./smoke/_env";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { aiResultCache, calendarEvents, calendarSources, contacts, memoryChunks, rateLimitBuckets, reminders } from "../src/db/schema";
+import { aiResultCache, calendarEvents, calendarSources, contacts, eventAliases, events, memoryChunks, rateLimitBuckets, reminders } from "../src/db/schema";
+import { createEventForUser, upsertEventAttendees } from "../src/lib/events/store";
+import { upsertEventAliases } from "../src/lib/events/discovery/aliases";
 import { companyFromEmail, lookUpGuestFor } from "../src/lib/guest-profiles";
-import { getMeetingContext } from "../src/lib/meeting-context";
+import { eventView, getMeetingContext } from "../src/lib/meeting-context";
 import { prepReasons } from "../src/lib/calendar-reminders";
 import {
   generateTalkingPoints,
@@ -47,6 +49,8 @@ async function main() {
   for (const u of [USER, OTHER]) {
     await db.delete(calendarSources).where(eq(calendarSources.userId, u));
     await db.delete(contacts).where(eq(contacts.userId, u));
+    await db.delete(eventAliases).where(eq(eventAliases.userId, u));
+    await db.delete(events).where(eq(events.userId, u));
     await db.delete(aiResultCache).where(eq(aiResultCache.userId, u));
     await db.delete(rateLimitBuckets).where(eq(rateLimitBuckets.bucket, `web-research:${u}`));
   }
@@ -273,6 +277,63 @@ async function main() {
   );
   const noKey = await generateTalkingPoints(USER, ctx!, { canUseAi: async () => false });
   check("without a key it falls back to the facts", noKey.source === "facts" && noKey.points.length > 0);
+
+  // --- the event behind a platform invite -------------------------------------------------------
+  check("a plain meeting has no linked event", ctx?.linkedEvent === null);
+  const party = await createEventForUser(USER, { title: "Founders Mixer", organizerName: "Dana Host", attendeeCount: 80 });
+  const guest = { email: null, company: null, title: null, linkedinUrl: null, xHandle: null };
+  await upsertEventAttendees(
+    USER,
+    party.id,
+    [
+      { ...guest, fullName: "Lee Speaker", attendeeRole: "speaker", identityKey: "nm:lee speaker" },
+      { ...guest, fullName: "Ana Founder", company: "Acme", title: "CEO", identityKey: "nm:ana founder" },
+    ],
+    "page"
+  );
+  // Linked by the invite's own UID, the key calendar discovery writes…
+  await upsertEventAliases(USER, party.id, [{ kind: "source_ref", value: "gcal:party-uid@google.com" }], "gcal");
+  const [invite] = await db
+    .insert(calendarEvents)
+    .values({
+      userId: USER,
+      sourceId: source.id,
+      providerEventId: "party-1",
+      icalUid: "party-uid@google.com",
+      title: "Founders Mixer",
+      startAt: new Date(now + 3 * 3_600_000),
+      attendees: [{ name: "Priya Raman", email: "priya@acme.io", contactId: priya.id, response: "tentative" }],
+      attendeeCount: 1,
+    })
+    .returning();
+  const partyCtx = await getMeetingContext(USER, { eventId: invite.id }, new Date(now));
+  const linked = partyCtx?.linkedEvent;
+  check("an invite resolves to its event by UID", linked?.eventId === party.id, JSON.stringify(linked));
+  check(
+    "hosts include the organizer and speakers",
+    !!linked && linked.hosts.includes("Dana Host") && linked.hosts.includes("Lee Speaker"),
+    JSON.stringify(linked?.hosts)
+  );
+  check("the page's guest count wins over the roster size", linked?.guestCount === 80 && linked.rosterSize === 2);
+  // …and by an event link in the location, with no UID at all.
+  await upsertEventAliases(USER, party.id, [{ kind: "url", value: "luma.com/founders-mixer" }], "gcal");
+  const [byLink] = await db
+    .insert(calendarEvents)
+    .values({
+      userId: USER,
+      sourceId: source.id,
+      providerEventId: "party-2",
+      title: "Founders Mixer (copy)",
+      location: "https://lu.ma/founders-mixer",
+      startAt: new Date(now + 4 * 3_600_000),
+    })
+    .returning();
+  const linkCtx = await getMeetingContext(USER, { eventId: byLink.id }, new Date(now));
+  check("an invite resolves to its event by link", linkCtx?.linkedEvent?.eventId === party.id, JSON.stringify(linkCtx?.linkedEvent));
+  // Another user's alias never links.
+  const otherCtx = await getMeetingContext(OTHER, { eventId: invite.id }, new Date(now));
+  check("another user's invite is invisible", otherCtx === null);
+  check("a guest's RSVP reaches the event view", partyCtx ? eventView(partyCtx.event, "UTC").attendees[0]?.response === "tentative" : false);
 
   if (failures) {
     console.error(`\nsmoke-meeting-prep: ${failures} failure(s)`);

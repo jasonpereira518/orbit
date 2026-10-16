@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { requireUserId } from "@/lib/auth";
 import { actionFailure } from "@/lib/action-failure";
-import { eventView, getMeetingContext, type GuestNotInOrbit, type MeetingPerson } from "@/lib/meeting-context";
+import { eventView, getMeetingContext, type GuestNotInOrbit, type LinkedEvent, type MeetingPerson } from "@/lib/meeting-context";
 import { generateTalkingPoints, type TalkingPointsResult } from "@/lib/meeting-talking-points";
 import { lookUpGuestFor, type GuestBrief } from "@/lib/guest-profiles";
 import { saveResearchedPersonForUser } from "@/lib/web-research";
@@ -13,6 +13,7 @@ export type MeetingPrep = {
   people: MeetingPerson[];
   notInOrbit: GuestNotInOrbit[];
   lastTime: { day: string; decisions: string[]; actionItems: string[] } | null;
+  linkedEvent: LinkedEvent | null;
 };
 
 /** The prep card's "Show brief": the same facts the `meeting_context` chat tool reads, no model. */
@@ -31,6 +32,7 @@ export async function getMeetingPrep(
             people: found.people,
             notInOrbit: found.notInOrbit,
             lastTime: found.lastTime,
+            linkedEvent: found.linkedEvent,
           }
         : null,
     };

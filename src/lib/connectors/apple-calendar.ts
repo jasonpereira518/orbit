@@ -235,7 +235,9 @@ export function toStoredEvent(e: ParsedCalendarEvent, ownerEmail: string): Store
     conferenceKind: conference?.kind ?? null,
     attendees: guestsHidden
       ? []
-      : others.map((a) => ({ name: a.name, email: a.email })).slice(0, MAX_STORED_ATTENDEES),
+      : others
+          .map((a) => ({ name: a.name, email: a.email, response: (a.partstat && PARTSTAT_WORDS[a.partstat]) || null }))
+          .slice(0, MAX_STORED_ATTENDEES),
     attendeeCount: others.length,
     guestsHidden,
     selfResponse: (mine?.partstat && PARTSTAT_WORDS[mine.partstat]) || null,

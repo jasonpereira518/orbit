@@ -774,6 +774,19 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         }),
         // A recurring meeting that was recorded before: what it decided and left open.
         lastTime: found.lastTime,
+        // A Luma/Partiful/Eventbrite invite: who hosts, how big the room is, who is worth finding.
+        linkedEvent: found.linkedEvent
+          ? {
+              title: found.linkedEvent.title,
+              hosts: found.linkedEvent.hosts,
+              guestCount: found.linkedEvent.guestCount,
+              worthFinding: found.linkedEvent.worthFinding.map((r) => ({
+                name: r.name,
+                role: [r.title, r.company].filter(Boolean).join(" at ") || null,
+                contactId: r.contactId,
+              })),
+            }
+          : null,
       };
     },
   },

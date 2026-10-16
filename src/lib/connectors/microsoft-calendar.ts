@@ -48,6 +48,7 @@ const CALENDAR_VIEW_API = "https://graph.microsoft.com/v1.0/me/calendarView";
 type GraphAttendee = {
   emailAddress?: { name?: string; address?: string };
   type?: "required" | "optional" | "resource";
+  status?: { response?: GraphResponse };
 };
 
 type GraphResponse = "none" | "organizer" | "tentativelyAccepted" | "accepted" | "declined" | "notResponded";
@@ -340,7 +341,11 @@ export function toStoredEvent(raw: GraphEvent, ownerEmail: string): StoredCalend
     attendees: guestsHidden
       ? []
       : others
-          .map((a) => ({ name: a.emailAddress?.name || "", email: (a.emailAddress?.address || "").toLowerCase() }))
+          .map((a) => ({
+            name: a.emailAddress?.name || "",
+            email: (a.emailAddress?.address || "").toLowerCase(),
+            response: selfResponseOf(a.status?.response),
+          }))
           .filter((a) => a.name || a.email)
           .slice(0, MAX_STORED_ATTENDEES),
     attendeeCount: others.length,

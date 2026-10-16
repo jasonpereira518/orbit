@@ -20,6 +20,12 @@ import { companyFromEmail, loadGuestBriefs, type GuestBrief } from "@/lib/guest-
 import { listUpcomingEvents, relinkEvents, type CalendarEventRow } from "@/lib/calendar-events";
 import { resolveTimeZone, ymdInZone } from "@/lib/reminder-due-bucket";
 import { lastSeriesMeeting } from "@/lib/meeting-sessions";
+import { extractEventLinks, platformOf } from "@/lib/events/platforms";
+import { canonicalEventKey } from "@/lib/events/discovery/keys";
+import { combineResolutions, resolveAliases } from "@/lib/events/discovery/aliases";
+import type { AliasKey } from "@/lib/events/discovery/types";
+import { getEventForUser, listRosterForUser } from "@/lib/events/store";
+import { whoToTalkTo, type WhoToTalkToRow } from "@/lib/events/who-to-talk-to";
 
 /** The user's own zone, as Settings/Radar last saw it; UTC until then. */
 export async function userTimeZone(userId: string): Promise<string> {
@@ -53,7 +59,11 @@ export function eventView(e: CalendarEventRow, tz: string) {
     response: e.selfResponse,
     // Never the address: these go to the chat model and over MCP. A guest with no display name
     // is "Guest" unless they are a contact (their name then comes from get_contact).
-    attendees: e.attendees.map((a) => ({ name: a.name || "Guest", contactId: a.contactId })),
+    attendees: e.attendees.map((a) => ({
+      name: a.name || "Guest",
+      contactId: a.contactId,
+      ...(a.response ? { response: a.response } : {}),
+    })),
     attendeeCount: e.attendeeCount,
     guestListHidden: e.guestsHidden,
   };
@@ -91,6 +101,67 @@ export type GuestNotInOrbit = {
 };
 
 /**
+ * The Luma/Partiful/Eventbrite event behind a calendar invite. A platform invite carries one
+ * guest — the user — so without this, prep for a party says nothing about who will be there.
+ * Names only: this goes to the chat model.
+ */
+export type LinkedEvent = {
+  eventId: string;
+  title: string;
+  url: string | null;
+  hosts: string[];
+  /** What the page said ("120 going"), else the roster we hold. */
+  guestCount: number | null;
+  rosterSize: number;
+  when: "upcoming" | "past";
+  worthFinding: Array<Pick<WhoToTalkToRow, "name" | "company" | "title" | "contactId" | "bucket">>;
+};
+
+/**
+ * Resolved through the same alias keys discovery wrote: the invite's own UID (`gcal:` from
+ * Google, `ics:` from every other feed) and any event link in its location or agenda.
+ */
+export async function linkedEventFor(
+  userId: string,
+  e: Pick<CalendarEventRow, "icalUid" | "location" | "agenda">
+): Promise<LinkedEvent | null> {
+  const keys: AliasKey[] = [];
+  for (const href of extractEventLinks(`${e.location ?? ""}\n${e.agenda ?? ""}`, { max: 3 })) {
+    const match = platformOf(href);
+    if (match?.providerEventId) keys.push({ kind: "provider", value: `${match.platform}:${match.providerEventId}` });
+    const url = canonicalEventKey(href);
+    if (url) keys.push({ kind: "url", value: url });
+  }
+  if (e.icalUid) {
+    keys.push({ kind: "source_ref", value: `gcal:${e.icalUid}` }, { kind: "source_ref", value: `ics:${e.icalUid}` });
+  }
+  if (!keys.length) return null;
+  const hit = combineResolutions(keys, await resolveAliases(userId, keys));
+  if (!hit.eventId || hit.dismissed) return null;
+  const record = await getEventForUser(userId, hit.eventId);
+  if (!record) return null;
+  const roster = await listRosterForUser(userId, record.id);
+  const ranked = roster.length ? await whoToTalkTo(userId, record, { limit: 5 }) : null;
+  const hosts = roster
+    .filter((r) => r.attendeeRole === "host" || r.attendeeRole === "speaker")
+    .map((r) => r.fullName)
+    .filter((n): n is string => !!n);
+  if (record.organizerName && !hosts.includes(record.organizerName)) hosts.unshift(record.organizerName);
+  return {
+    eventId: record.id,
+    title: record.title,
+    url: record.url,
+    hosts: hosts.slice(0, 6),
+    guestCount: record.attendeeCount ?? (roster.length || null),
+    rosterSize: roster.length,
+    when: ranked?.when ?? (record.startsAt && record.startsAt.getTime() < Date.now() ? "past" : "upcoming"),
+    worthFinding: (ranked?.rows ?? [])
+      .filter((r) => r.bucket !== "skip")
+      .map(({ name, company, title, contactId, bucket }) => ({ name, company, title, contactId, bucket })),
+  };
+}
+
+/**
  * One meeting and its people. By id, by local start time (and day), by title words, or — with
  * none of those — the next meeting with someone the user knows. Null when nothing matches.
  */
@@ -105,6 +176,7 @@ export async function getMeetingContext(
   notInOrbit: GuestNotInOrbit[];
   /** For a recurring meeting that was recorded before: what the last one decided and left open. */
   lastTime: { day: string; decisions: string[]; actionItems: string[] } | null;
+  linkedEvent: LinkedEvent | null;
 } | null> {
   const tz = await userTimeZone(userId);
   const all = await listUpcomingEvents(userId, {
@@ -127,7 +199,10 @@ export async function getMeetingContext(
 
   const ids = [...new Set(event.attendees.map((a) => a.contactId).filter((c): c is string => !!c))].slice(0, 8);
   const strangers = event.attendees.filter((a) => !a.contactId).slice(0, 10);
-  const looked = await loadGuestBriefs(userId, strangers);
+  const [looked, linkedEvent] = await Promise.all([
+    loadGuestBriefs(userId, strangers),
+    linkedEventFor(userId, event),
+  ]);
   const notInOrbit: GuestNotInOrbit[] = strangers.map((a) => ({
     name: a.name,
     email: a.email,
@@ -142,7 +217,7 @@ export async function getMeetingContext(
         actionItems: last.actionItems.map((a) => (a.owner ? `${a.text} — ${a.owner === "me" ? "you" : a.owner}` : a.text)),
       }
     : null;
-  if (!ids.length) return { event, tz, people: [], notInOrbit, lastTime };
+  if (!ids.length) return { event, tz, people: [], notInOrbit, lastTime, linkedEvent };
 
   const db = await getDb();
   const [people, briefs, todos, items, recent, notes] = await Promise.all([
@@ -216,6 +291,7 @@ export async function getMeetingContext(
     tz,
     notInOrbit,
     lastTime,
+    linkedEvent,
     people: people.map((c) => {
       const brief = briefs.find((b) => b.contactId === c.id);
       return {

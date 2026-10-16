@@ -3451,7 +3451,8 @@ export const calendarSources = pgTable(
   ]
 );
 
-export type CalendarEventAttendee = { name: string; email: string; contactId: string | null };
+/** `response` is the guest's own RSVP (accepted / tentative / declined / needsAction); absent on older rows. */
+export type CalendarEventAttendee = { name: string; email: string; contactId: string | null; response?: string | null };
 
 /**
  * A mirror of the near calendar — two days back to two weeks ahead — rewritten on every sync

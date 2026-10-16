@@ -117,6 +117,7 @@ function PrepBrief({ prep, eventId }: { prep: MeetingPrep; eventId: string }) {
           </ul>
         </div>
       )}
+      {prep.linkedEvent && <LinkedEventBlock event={prep.linkedEvent} />}
       {prep.people.map((p) => (
         <div key={p.contactId} className="space-y-0.5">
           <Link href={`/contacts/${p.contactId}`} className="font-medium text-ink underline-offset-2 hover:underline">
@@ -165,6 +166,37 @@ function PrepBrief({ prep, eventId }: { prep: MeetingPrep; eventId: string }) {
             <GuestRow key={p.email || p.name} guest={p} eventId={eventId} />
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** The Luma/Partiful/Eventbrite event behind the invite: hosts, room size, who to find. */
+function LinkedEventBlock({ event }: { event: NonNullable<MeetingPrep["linkedEvent"]> }) {
+  const facts = [
+    event.hosts.length ? `Hosted by ${event.hosts.slice(0, 3).join(", ")}` : null,
+    event.guestCount ? `${event.guestCount} going` : null,
+  ].filter(Boolean);
+  return (
+    <div className="space-y-0.5">
+      <Link href={`/events/${event.eventId}`} className="font-medium text-ink underline-offset-2 hover:underline">
+        {event.title}
+      </Link>
+      {facts.length > 0 && <p className="text-muted-foreground">{facts.join(" · ")}</p>}
+      {event.worthFinding.length > 0 && (
+        <>
+          <p className="text-muted-foreground">Worth finding</p>
+          <ul className="list-disc pl-4 text-ink">
+            {event.worthFinding.map((r, i) => (
+              <li key={i}>
+                {r.name}
+                {(r.title || r.company) && (
+                  <span className="text-muted-foreground"> · {[r.title, r.company].filter(Boolean).join(" at ")}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </div>
   );
