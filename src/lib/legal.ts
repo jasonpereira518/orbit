@@ -9,10 +9,11 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
  * `scripts/smoke-legal-pages.ts` holds a lock over the two page sources and fails when they
  * move and these two do not, so the rule above is enforced rather than merely written down.
  */
-// ".2": a second revision the same day — 2026-10-14 (#438, shared LinkedIn photos) had already
-// shipped when the cloud-notes disclosure (Drive/OneDrive read access) landed.
-export const TERMS_VERSION = "2026-10-14.2";
-export const LEGAL_LAST_UPDATED = "October 14, 2026 (revised)";
+// 2026-10-15: the calendar features — the two-week calendar window Orbit keeps, what of a
+// meeting reaches the AI provider (Chat, recording summaries, talking points), guest Look up's
+// web search, and upcoming meetings for connected assistants.
+export const TERMS_VERSION = "2026-10-15";
+export const LEGAL_LAST_UPDATED = "October 15, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.
@@ -95,7 +96,7 @@ export const GOOGLE_SCOPE_DISCLOSURES: readonly {
   {
     scope: GOOGLE_SCOPES.calendar,
     permission: "See your calendar events (calendar.readonly)",
-    use: "Reads recent and upcoming events on your primary calendar and adds meetings with people in your network to their timelines.",
+    use: "Reads your primary calendar from two days back to two weeks ahead and keeps that window in Orbit, updating it as your calendar changes and deleting meetings that leave it. Adds meetings with people in your network to their timelines, and uses upcoming meetings for prep and follow-up reminders, recording suggestions, meeting prep, recording summaries and answers in Chat and in assistants you connect.",
     askedWhen: "Connect Google Calendar on Events",
   },
   {

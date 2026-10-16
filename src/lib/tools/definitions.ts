@@ -767,7 +767,10 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         notInOrbit: found.notInOrbit.map((p) => {
           const at = p.profile?.company ?? p.company;
           const role = p.profile?.title ? `${p.profile.title}${at ? ` at ${at}` : ""}` : at;
-          return role ? `${p.name || p.email} (${role})` : p.name || p.email;
+          // Never the address — this goes to the chat model. A nameless guest is described by
+          // their company, which the prep card (not the model) can still look up by address.
+          const who = p.name || "A guest";
+          return role ? `${who} (${role})` : who;
         }),
         // A recurring meeting that was recorded before: what it decided and left open.
         lastTime: found.lastTime,

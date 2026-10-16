@@ -253,7 +253,9 @@ export async function analyzeMeetingSession(
     const seriesId = t.session.calendarSeriesId ?? event?.seriesId ?? null;
     const last = seriesId ? await lastSeriesMeeting(userId, seriesId, t.session.id) : null;
     const lastOpen = last?.actionItems.map((a) => (a.owner ? `${a.text} (${a.owner})` : a.text)) ?? [];
-    const invited = event?.guestsHidden ? [] : (event?.attendees ?? []).map((a) => a.name || a.email).filter(Boolean);
+    // Names only: this goes to the AI provider, and an invitee with no display name would
+    // otherwise be their address.
+    const invited = event?.guestsHidden ? [] : (event?.attendees ?? []).map((a) => a.name).filter(Boolean);
 
     // A 1:1's other voice is the other person; the transcript then reads "Priya:" not "Speaker 1:".
     const voices = speakerNames(t.segments, invited.length ? invited : (t.session.attendees ?? []).map((a) => a.name));
