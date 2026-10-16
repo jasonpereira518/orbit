@@ -25,6 +25,7 @@ import { getDb, rowsOf } from "@/db";
 import {
   combineResolutions,
   resolveAliases,
+  restoreEventForUser,
   upsertEventAliases,
 } from "@/lib/events/discovery/aliases";
 import { canonicalEventKey, candidateKeys, keyId } from "@/lib/events/discovery/keys";
@@ -37,7 +38,7 @@ import {
 import { mergeCandidates } from "@/lib/events/discovery/keys";
 import { isAttendingReport } from "@/lib/events/attendance";
 import { attendeeIdentityKey } from "@/lib/events/identity";
-import { upsertEventAttendees } from "@/lib/events/store";
+import { createEventForUser, upsertEventAttendees, type CreateEventInput } from "@/lib/events/store";
 import { resolveThemeColor } from "@/lib/events/theme";
 import { UNTITLED_EVENT } from "@/lib/events/types";
 import type { ParsedAttendee } from "@/lib/events/parse-roster";
@@ -368,6 +369,33 @@ export async function claimEventAliases(
 ): Promise<void> {
   if (keys.length === 0) return;
   await upsertEventAliases(userId, eventId, keys, source, { repoint: true });
+}
+
+/**
+ * The event a link the user handed us names: the one they already have — restored if they had
+ * dismissed it as a suggestion, since a link given by hand outranks "not mine" — or a new row
+ * that claims the link's keys with `repoint`, so it also overrides a tombstone. Shared by "add
+ * by link" and the extension's guest-list save: both are the user saying "this one".
+ */
+export async function findOrCreateEventByLink(
+  userId: string,
+  input: CreateEventInput,
+  source: string
+): Promise<{ id: string; existing: boolean }> {
+  const keys = keysForEvent({ url: input.url ?? null });
+  if (keys.length > 0) {
+    const known = combineResolutions(keys, await resolveAliases(userId, keys));
+    if (known.eventId) {
+      if (known.dismissed) await restoreEventForUser(userId, known.eventId);
+      return { id: known.eventId, existing: true };
+    }
+  }
+  // Seeded from the link (or title) so the card has an identity immediately; enrichment may
+  // improve it, but nothing renders grey in the meantime.
+  const theme = resolveThemeColor({ seed: input.url ?? input.title });
+  const event = await createEventForUser(userId, { themeColor: theme.color, themeSource: theme.source, ...input });
+  if (keys.length > 0) await claimEventAliases(userId, event.id, keys, source);
+  return { id: event.id, existing: false };
 }
 
 /** The keys an event already known to us should be recognised by. */

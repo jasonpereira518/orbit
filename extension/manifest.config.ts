@@ -104,6 +104,9 @@ export default defineManifest(({ mode }) => {
       "https://*.linkedin.com/*",
       "https://x.com/*",
       "https://mail.google.com/*",
+      "https://luma.com/*",
+      "https://lu.ma/*",
+      "https://partiful.com/*",
     ],
 
     commands: {

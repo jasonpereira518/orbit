@@ -3451,7 +3451,8 @@ export const calendarSources = pgTable(
   ]
 );
 
-export type CalendarEventAttendee = { name: string; email: string; contactId: string | null };
+/** `response` is the guest's own RSVP (accepted / tentative / declined / needsAction); absent on older rows. */
+export type CalendarEventAttendee = { name: string; email: string; contactId: string | null; response?: string | null };
 
 /**
  * A mirror of the near calendar — two days back to two weeks ahead — rewritten on every sync
@@ -5623,7 +5624,7 @@ export const eventAttendees = pgTable(
     attendeeRole: text("attendee_role").$type<"attendee" | "host" | "speaker">(),
     /** Which acquisition path produced this row. Rendered as a badge, so it must be honest. */
     source: text("source")
-      .$type<"paste" | "csv" | "screenshot" | "page" | "calendar" | "luma" | "eventbrite">()
+      .$type<"paste" | "csv" | "screenshot" | "page" | "calendar" | "extension" | "luma" | "eventbrite">()
       .default("paste")
       .notNull(),
     /** The provider's own guest id, where there is one. */

@@ -204,9 +204,18 @@ const HEADERS: Record<
   phone: ["phone", "phone number", "mobile", "cell phone", "telephone"],
 };
 
+/**
+ * A header as the aliases are written: Luma exports `first_name` and `phone_number`, Excel
+ * leaves a byte-order mark on the first column, and people type "First  Name". All of those
+ * are the alias "first name".
+ */
+function headerKey(header: string): string {
+  return header.replace(/^\uFEFF/, "").trim().toLowerCase().replace(/[_\s]+/g, " ");
+}
+
 function pick(row: Record<string, string>, keys: string[]): string | null {
   for (const key of keys) {
-    const match = Object.keys(row).find((h) => h.trim().toLowerCase() === key);
+    const match = Object.keys(row).find((h) => headerKey(h) === key);
     if (match) {
       const value = clean(row[match]);
       if (value) return value;

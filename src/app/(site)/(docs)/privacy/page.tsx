@@ -72,8 +72,8 @@ const PROCESSORS = [
   { name: "Bluesky and Mastodon", badge: "Optional", body: "For contacts whose Bluesky or Mastodon handle you added, a nightly read of their public posts for Radar. Each request carries only that public handle, to the server that hosts it." },
   { name: "Microsoft", badge: "Optional", body: "Outlook, one permission per feature you turn on: your contacts to import, your calendar to log meetings with people you know and for meeting prep, reminders and Chat, your mail for the recruiter scan you start, and sending the email you write from your own address, and your OneDrive files for cloud notes. See What Orbit collects and The recruiter scan." },
   { name: "Eventbrite", badge: "Optional", body: "Guest lists of events you host, through Eventbrite sign-in." },
-  { name: "Luma", badge: "Optional", body: "Guest lists of events you host (with your Luma API key), and your personal Luma calendar link if you paste it." },
-  { name: "Partiful", badge: "Optional", body: "Your personal Partiful calendar link, if you paste it, to list events you are going to." },
+  { name: "Luma", badge: "Optional", body: "Guest lists of events you host (with your Luma API key), your personal Luma calendar link if you paste it, and the guest list you have open on an event page when you save it from the browser extension." },
+  { name: "Partiful", badge: "Optional", body: "Your personal Partiful calendar link, if you paste it, to list events you are going to, and the guest list you have open on an event page when you save it from the browser extension." },
   { name: "Apollo", badge: "Optional", body: "People search and contact enrichment, with your own Apollo key. Orbit does not run it on an Apollo account of its own." },
   { name: "Resend", badge: "Optional", body: "Email Orbit sends on its own behalf: the waitlist confirmation and outreach campaigns you send from Orbit. Email you write to a person goes from your own Gmail or Outlook instead." },
   { name: "Twilio", badge: "Optional", body: "SMS outreach you send, through the Twilio account you connect." },
@@ -165,7 +165,12 @@ export default function PrivacyPage() {
               prep card, link a recording to its invite, and answer questions about your
               schedule in Chat. Guests&rsquo; addresses are used only to recognise people you
               already know; they are never sent to an AI provider. Disconnecting a calendar
-              deletes these meetings and the prep reminders made for meetings still to come.
+              deletes these meetings and the prep reminders made for meetings still to come. A
+              past meeting with people you know is also logged to their history, with the
+              meeting&rsquo;s title, location and the first 500 characters of its description.
+              When an invite is for a Luma, Partiful or Eventbrite event Orbit already holds, the
+              prep card and Chat also show that event&rsquo;s hosts, guest count and the guests
+              worth finding — by name and role, never their addresses.
             </li>
             <li>
               <strong>Email you send</strong> — when you send email from Orbit through your Gmail or
@@ -177,7 +182,12 @@ export default function PrivacyPage() {
             <li>
               <strong>The browser extension</strong> — when you open its panel on a LinkedIn profile,
               it sends that page&rsquo;s text to Orbit, which fills in a contact using your key or Orbit&rsquo;s included AI. A
-              contact is created only when you save it.
+              contact is created only when you save it. On a Luma or Partiful event page, it reads
+              the guest list you have open in your own signed-in session — names, and the
+              platform&rsquo;s profile links where it shows them — and sends it to Orbit only when you
+              press Save. The guests are kept on that event in Orbit, never sent to an AI provider,
+              and none becomes a contact unless you add them one by one. Orbit&rsquo;s servers never
+              fetch a guest list themselves.
             </li>
             <li>
               <strong>Secrets you provide</strong> — API keys for AI, enrichment, email, SMS and

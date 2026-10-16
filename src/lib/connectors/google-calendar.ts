@@ -257,7 +257,7 @@ export type StoredCalendarEvent = {
   conferenceUrl: string | null;
   conferenceKind: ConferenceKind | null;
   /** Everyone but the owner and rooms; empty when the guest list is not ours to keep. */
-  attendees: Array<{ name: string; email: string }>;
+  attendees: Array<{ name: string; email: string; response?: string | null }>;
   /** How many other people are on it, which stays honest even when the names are hidden. */
   attendeeCount: number;
   guestsHidden: boolean;
@@ -298,7 +298,7 @@ export function toStoredEvent(raw: GoogleEvent): StoredCalendarEvent | null {
     attendees: guestsHidden
       ? []
       : others
-          .map((a) => ({ name: a.displayName || "", email: (a.email || "").toLowerCase() }))
+          .map((a) => ({ name: a.displayName || "", email: (a.email || "").toLowerCase(), response: a.responseStatus ?? null }))
           .filter((a) => a.name || a.email)
           .slice(0, MAX_STORED_ATTENDEES),
     attendeeCount: others.length,

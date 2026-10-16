@@ -12,8 +12,11 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // 2026-10-15: the calendar features — the two-week calendar window Orbit keeps, what of a
 // meeting reaches the AI provider (Chat, recording summaries, talking points), guest Look up's
 // web search, and upcoming meetings for connected assistants.
-export const TERMS_VERSION = "2026-10-15";
-export const LEGAL_LAST_UPDATED = "October 15, 2026";
+// 2026-10-16: the browser extension saves the Luma/Partiful guest list you have open, on your
+// click; meeting prep shows the event behind an invite; meeting history keeps 500 characters
+// of an invite's description (always true, now said).
+export const TERMS_VERSION = "2026-10-16";
+export const LEGAL_LAST_UPDATED = "October 16, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.
