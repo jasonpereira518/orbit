@@ -9,9 +9,9 @@ import "./smoke/_env";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { aiResultCache, calendarEvents, calendarSources, contacts, memoryChunks, rateLimitBuckets, reminders } from "../src/db/schema";
+import { aiResultCache, calendarEvents, calendarSources, contacts, memoryChunks, rateLimitBuckets, reminders, userSettings } from "../src/db/schema";
 import { companyFromEmail, lookUpGuestFor } from "../src/lib/guest-profiles";
-import { getMeetingContext } from "../src/lib/meeting-context";
+import { getMeetingContext, isHandle, pairNames, titleNames } from "../src/lib/meeting-context";
 import { prepReasons } from "../src/lib/calendar-reminders";
 import {
   generateTalkingPoints,
@@ -196,6 +196,102 @@ async function main() {
     (await getMeetingContext(USER, { eventId: event.id }, new Date(now)))?.notInOrbit.find((g) => g.email === "sam@acme.io")?.profile === null
   );
 
+  // --- who the meeting is with: title names, handles, research ---------------------------------
+  check("the user is not a title name", JSON.stringify(titleNames("Chat with David/Jason", ["Jason", "Pereira"])) === '["David"]');
+  check("meeting words are not names", titleNames("Weekly Sync", []).length === 0);
+  check(
+    "handles",
+    isHandle("calvintwong25") && isHandle("dmcraver", "dmcraver@gmail.com") && isHandle("") && !isHandle("Calvin Wong") && !isHandle("Cher")
+  );
+  check(
+    "an initial + surname address is the first name only",
+    JSON.stringify(pairNames(["David"], [{ name: "", email: "dmcraver@gmail.com" }]).get("dmcraver@gmail.com")) ===
+      '{"name":"David","full":false}'
+  );
+  check(
+    "first.last is the full name",
+    pairNames(["David"], [{ name: "", email: "David.Craver@x.com" }]).get("david.craver@x.com")?.name === "David Craver"
+  );
+  check(
+    "two guests who could be David pair neither",
+    pairNames(["David"], [
+      { name: "", email: "dmcraver@gmail.com" },
+      { name: "", email: "dan.lee@gmail.com" },
+    ]).size === 0
+  );
+  check("a guest with a real name is not renamed", pairNames(["David"], [{ name: "Dan Moss", email: "dmoss@x.com" }]).size === 0);
+
+  await db.delete(userSettings).where(eq(userSettings.userId, USER));
+  await db.insert(userSettings).values({ userId: USER, firstName: "Jason", lastName: "Pereira" });
+  const [david] = await db
+    .insert(contacts)
+    .values({ userId: USER, fullName: "dmcraver", email: "dmcraver@gmail.com", linkedinUrl: "https://www.linkedin.com/in/davidcraver" })
+    .returning();
+  const [dana] = await db
+    .insert(contacts)
+    .values({ userId: USER, fullName: "Dana Wu", email: "dana@acme.io", company: "Acme" })
+    .returning();
+  const [chat] = await db
+    .insert(calendarEvents)
+    .values({
+      userId: USER,
+      sourceId: source.id,
+      providerEventId: "prep-david",
+      title: "Chat with David/Jason",
+      startAt: new Date(now + 3_600_000),
+      endAt: new Date(now + 5_400_000),
+      attendees: [
+        { name: "", email: "dmcraver@gmail.com", contactId: null },
+        { name: "", email: "dana@acme.io", contactId: null },
+        { name: "Lee Park", email: "lee@acme.io", contactId: null },
+        { name: "", email: "who@gmail.com", contactId: null },
+      ],
+      attendeeCount: 4,
+    })
+    .returning();
+  const subjects: string[] = [];
+  const web: PersonResearcher = async (_u, subject) => {
+    subjects.push(JSON.stringify(subject));
+    const david = subject.linkedinUrl?.includes("davidcraver");
+    return {
+      json: JSON.stringify({
+        match: "confident",
+        name: david ? "David Craver" : subject.fullName,
+        headline: david ? "Founder at Craver Labs" : "Engineer",
+        current: { organization: david ? "Craver Labs" : "Acme", title: david ? "Founder" : "Engineer" },
+        summary: david ? "Builds developer tools." : "Works at Acme.",
+        talkingPoints: [{ text: "Launched a beta last month", url: "https://example.com/launch" }],
+        experiences: [],
+      }),
+      sources: [],
+    };
+  };
+  const prep = await getMeetingContext(USER, { eventId: chat.id }, new Date(now), { research: true, researcher: web });
+  const d = prep?.people.find((x) => x.contactId === david.id);
+  check("at most two people are searched", subjects.length === 2, subjects.join("\n"));
+  check("strangers first, and a contact by their LinkedIn", subjects[0]!.includes("Lee Park") && subjects.some((x) => x.includes("linkedin.com/in/davidcraver")), subjects.join("\n"));
+  check(
+    "the handle contact is David, found and researched",
+    d?.name === "David Craver" && d.profile?.title === "Founder" && d.linkedinUrl?.includes("davidcraver") === true,
+    JSON.stringify(d)
+  );
+  check(
+    "…and saved under the full name",
+    (await db.query.contacts.findFirst({ where: eq(contacts.id, david.id) }))?.fullName === "David Craver"
+  );
+  check("a real name is never overwritten", (await db.query.contacts.findFirst({ where: eq(contacts.id, dana.id) }))?.fullName === "Dana Wu");
+  check(
+    "the invite names known people, not Guest",
+    prep?.event.attendees.find((a) => a.contactId === david.id)?.name === "David Craver",
+    JSON.stringify(prep?.event.attendees)
+  );
+  check("a gmail guest with no name has nothing to search on", prep?.unresearched.includes("A guest") === true, JSON.stringify(prep?.unresearched));
+  const card = await getMeetingContext(USER, { eventId: chat.id }, new Date(now), { researcher: web });
+  check(
+    "the prep card never searches, but reads what was found",
+    subjects.length === 2 && card?.notInOrbit.find((g) => g.email === "lee@acme.io")?.profile?.title === "Engineer"
+  );
+
   // --- talking points --------------------------------------------------------------------------
   const facts = talkingFacts(
     {
@@ -228,7 +324,7 @@ async function main() {
           name: "Sam Guest",
           email: "sam@acme.io",
           company: "Acme",
-          profile: { key: "k", title: null, company: "Acme", headline: null, summary: null, talkingPoints: [{ text: "Spoke at the Payments Summit", url: null }] },
+          profile: { key: "k", name: null, title: null, company: "Acme", headline: null, summary: null, talkingPoints: [{ text: "Spoke at the Payments Summit", url: null }] },
         },
         { name: "Unknown", email: "u@acme.io", company: "Acme", profile: null },
       ],

@@ -8,6 +8,7 @@ import { requireAuthenticatedUser, type AuthenticatedUser } from "@/lib/auth";
 import { buildChatBlocks, prepareChatContext } from "@/lib/chat-context";
 import { expandLists, peopleIdsIn, stripInvalidDirectives } from "@/lib/chat-directives";
 import { answerDeadlineMs, maybeGather } from "@/lib/chat-gather";
+import { isHandle } from "@/lib/meeting-context";
 import { CHAT_QUESTION_TOO_LONG_MESSAGE, isChatQuestionTooLong } from "@/lib/chat-question";
 import { discardEmptyThread, discardUnansweredQuestion, persistAssistantTurn } from "@/lib/chat-persist";
 import { createStepEmitter, deriveFollowUps, plural } from "@/lib/chat-steps";
@@ -204,7 +205,7 @@ export async function POST(request: Request) {
         // One retrieval answers most questions; the ones whose shape says it cannot — what
         // was discussed and when, a path to someone, a follow-up that refers back — get a
         // bounded research loop first. See `routeFromParsed` and `gatherEvidence`.
-        const { evidence, notePassages } = await maybeGather(userId, ctx, {
+        const { evidence, notePassages, named } = await maybeGather(userId, ctx, {
           requestStartedAt,
           signal: request.signal,
           steps,
@@ -369,7 +370,11 @@ export async function POST(request: Request) {
             question: ctx.q,
             topRosterCompany: ctx.orgRosters[0]?.name ?? null,
             firstOverdueName: ctx.attention?.overdue[0]?.name ?? null,
-            topContactName: ctx.retrieved[0]?.fullName ?? null,
+            // Prep: the meeting's person, not the search's top hit. Never a handle ("calvintwong25").
+            topContactName:
+              (ctx.route?.prep
+                ? named.find((n) => !isHandle(n.name))?.name
+                : [ctx.retrieved[0]?.preferredName || ctx.retrieved[0]?.fullName].find((n) => n && !isHandle(n))) ?? null,
           }),
           retrieved: ctx.retrieved.map((c) => ({
             id: c.id,

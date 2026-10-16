@@ -79,6 +79,8 @@ import { sanitizeDraft } from "@/lib/chat-draft";
  */
 
 const PRIOR_TURN_LIMIT = 8;
+/** Search hits a meeting-prep answer keeps beside the meeting's own people. */
+const PREP_SEARCH_KEEP = 3;
 /** Characters of each earlier turn replayed as history. */
 const PRIOR_TURN_CHARS = 3000;
 /** Open reminders shown to the model, so it can answer "what's on my plate" and propose completing one. */
@@ -411,8 +413,9 @@ async function retrieveRankedContacts(
   });
 
   // A follow-up is searched as what it stands for ("where is she moving?" -> "where is
-  // Amelia Brooks moving?"); every other question as asked.
-  const searchQuery = parsedQuery.standaloneQuery ?? q;
+  // Amelia Brooks moving?"); every other question as asked. Never a prep question: its rewrite
+  // drags in whoever the last turns were about, and the meeting decides who it is about.
+  const searchQuery = routeFromParsed(parsedQuery, q).prep ? q : (parsedQuery.standaloneQuery ?? q);
   // The shape's own lanes run beside the search (see `@/lib/chat-lanes`). Each narrates
   // itself and settles to "nothing" on failure, so the search alone still answers.
   const personP = personLane(userId, parsedQuery, steps).catch(() => null);
@@ -949,7 +952,8 @@ export async function prepareChatContext(
     ]);
 
   if (threadId && !thread) throw new Error("Chat not found");
-  const retrieved = retrieval.ranked;
+  // Prep is about the meeting's people (meeting_context, in research); the search keeps a few.
+  const retrieved = (await routeP).prep ? retrieval.ranked.slice(0, PREP_SEARCH_KEEP) : retrieval.ranked;
   // The contact page's pin wins; otherwise the person a person question resolved to gets the
   // same deeper slice — profile, sixteen interactions, first place in the list.
   const focusContactId = pinnedContactId ?? retrieval.personId;
@@ -1168,13 +1172,15 @@ export async function prepareChatContext(
   // Every name paired with an id in `allowedContacts`, for a proposed action's preview text
   // ("Log a note on Ada Lovelace…") — same sources, same order, so a name is never missing
   // for an id the allowlist itself accepts.
+  // The calendar's names first: it says "a contact" for someone it cannot name, and a later
+  // source's real name must win.
   const contactNames = new Map<string, string>([
+    ...(calendar?.people.map((p): [string, string] => [p.id, p.name]) ?? []),
     ...modelContacts.map((c): [string, string] => [c.id, c.fullName]),
     ...attachedPeople.map((p): [string, string] => [p.id, p.name]),
     ...orgRosters.flatMap((r) => r.people.map((p): [string, string] => [p.id, p.name])),
     ...(attention?.overdue.map((c): [string, string] => [c.id, c.name]) ?? []),
     ...(attention?.suggestions.map((c): [string, string] => [c.id, c.name]) ?? []),
-    ...(calendar?.people.map((p): [string, string] => [p.id, p.name]) ?? []),
     ...retrieval.notePeople.map((p): [string, string] => [p.id, p.name]),
   ]);
   const reminderTitles = new Map(openReminderRows.map((r) => [r.id, r.title]));
