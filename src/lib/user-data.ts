@@ -21,11 +21,14 @@ import {
   creditGrants,
   creditHolds,
   planMeterUsage,
+  calendarEvents,
   calendarSources,
   calendarSubscriptions,
   captureHandoffs,
   captureJobs,
   capturePhotos,
+  cloudNoteFiles,
+  cloudNoteSources,
   aiBatchJobs,
   aiResultCache,
   chatMessages,
@@ -61,6 +64,7 @@ import {
   gateEvents,
   gmailConnections,
   ignoredPeople,
+  importFiles,
   importJobRows,
   imports,
   interactionMentions,
@@ -206,6 +210,8 @@ const withUrl = (source: ExportSource, prefix: string): ExportSource => ({
   ...source,
   transform: (row) => ({ ...row, url: `${prefix}${String(row.id)}` }),
 });
+// Exports the contact's OWN photo reference only: a shared LinkedIn photo is pooled across
+// accounts, not this user's data, so it is deliberately left out.
 const contactsSource: ExportSource = {
   ...own(contacts),
   // An inline avatar is replaced below whatever its bytes are, so only its `data:` prefix is
@@ -287,13 +293,14 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   notes: {
-    exports: [own(interactions), own(noteBatches), own(interactionMentions), own(actionItems), own(meetingSessions), own(meetingTranscriptSegments), own(captureJobs), own(captureHandoffs), own(ignoredPeople), withUrl(own(capturePhotos), "/api/capture/photos/")],
+    exports: [own(interactions), own(noteBatches), own(interactionMentions), own(actionItems), own(meetingSessions), own(meetingTranscriptSegments), own(captureJobs), own(captureHandoffs), own(ignoredPeople), own(cloudNoteFiles), withUrl(own(capturePhotos), "/api/capture/photos/")],
     counts: [
       interactions,
       noteBatches,
       meetingSessions,
       captureJobs,
       ignoredPeople,
+      cloudNoteFiles,
     ],
     run: async (db, userId) => {
       // Capture photos before the batches they belong to. The rows WOULD cascade from
@@ -328,6 +335,10 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // extracted profile in `result`; the ignored list holds names from those notes.
       await db.delete(captureJobs).where(eq(captureJobs.userId, userId));
       await db.delete(ignoredPeople).where(eq(ignoredPeople.userId, userId));
+      // Cloud notes: the names and links of docs in the user's Drive/OneDrive, and the cursor
+      // that says how far the scan has read.
+      await db.delete(cloudNoteFiles).where(eq(cloudNoteFiles.userId, userId));
+      await db.delete(cloudNoteSources).where(eq(cloudNoteSources.userId, userId));
     },
   },
   reminders: {
@@ -342,9 +353,12 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   imports: {
-    exports: [own(imports), own(importJobRows)],
+    exports: [own(imports), own(importJobRows), own(importFiles)],
     counts: [imports],
     run: async (db, userId) => {
+      // `import_files` cascades from `imports`; deleted first anyway so a row whose import was
+      // already gone (it can't be, but the FK is the only thing saying so) still goes.
+      await db.delete(importFiles).where(eq(importFiles.userId, userId));
       await db.delete(imports).where(eq(imports.userId, userId));
     },
   },
@@ -353,6 +367,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       own(gmailConnections),
       own(outlookConnections),
       own(appleConnections),
+      own(calendarEvents),
       own(calendarSources),
       own(calendarSubscriptions),
       own(eventProviderConnections),
@@ -364,6 +379,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       gmailConnections,
       outlookConnections,
       appleConnections,
+      calendarEvents,
       calendarSources,
       calendarSubscriptions,
       eventProviderConnections,
@@ -382,6 +398,9 @@ const STEPS: Record<DataCategory, CategoryStep> = {
         .where(eq(gmailConnections.userId, userId));
       // Before the connection tables: `calendar_sources` has no FK (the three connection
       // tables are separate by design — see provider-connections.ts), so nothing cascades it.
+      // calendar_events cascades from calendar_sources; deleted first anyway so a row whose
+      // source is somehow gone does not outlive the account.
+      await db.delete(calendarEvents).where(eq(calendarEvents.userId, userId));
       await db.delete(calendarSources).where(eq(calendarSources.userId, userId));
       await db.delete(calendarSubscriptions).where(eq(calendarSubscriptions.userId, userId));
       await db.delete(gmailConnections).where(eq(gmailConnections.userId, userId));
@@ -426,7 +445,15 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // leave a tombstone per event behind — a list of every Luma link and calendar UID the
       // user ever had, pointing at nothing, outliving the account.
       await db.delete(eventAliases).where(eq(eventAliases.userId, userId));
+      // Covers sit at a public, guessable path (`event-covers/<eventId>`) with no foreign key:
+      // read which are this user's before the rows go, delete them after (as with avatars).
+      const coverRows = await db.execute(sql`
+        SELECT cover_image_url AS url FROM events
+         WHERE user_id = ${userId} AND cover_image_url LIKE '%.blob.vercel-storage.com/event-covers/%'
+      `);
+      const coverUrls = rowsOf<{ url: string }>(coverRows).map((r) => r.url);
       await db.delete(events).where(eq(events.userId, userId));
+      if (coverUrls.length && hasBlobStorage()) await del(coverUrls).catch(() => {});
     },
   },
   goals: {

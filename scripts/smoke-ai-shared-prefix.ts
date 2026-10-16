@@ -177,7 +177,7 @@ async function main() {
     spec.thinking = undefined;
   }
 
-  await getDb().then((db) => db.delete(userSettings).where(eq(userSettings.userId, USER)));
+  await (await getDb()).delete(userSettings).where(eq(userSettings.userId, USER));
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
     process.exit(1);

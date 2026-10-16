@@ -15,6 +15,7 @@ import {
   Check,
   CheckCircle2,
   Clock,
+  FileText,
   Loader2,
   NotebookPen,
   Radar,
@@ -139,7 +140,7 @@ export function NotificationsPanelButton({
   // Captured notes waiting for review (or that failed) are the one "info" item worth a
   // slot here: the user has to act on them, and nothing else will surface them.
   const captureItems = useMemo(
-    () => data?.items.filter((i) => i.kind === "capture_review") ?? [],
+    () => data?.items.filter((i) => i.kind === "capture_review" || i.kind === "cloud_notes") ?? [],
     [data]
   );
   const alerts = data?.alerts ?? [];
@@ -291,7 +292,7 @@ export function NotificationsPanelButton({
           </SheetHeader>
 
           <div className="min-h-[7rem] flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-3 [scrollbar-width:thin]">
-            {data && <ExtensionPromo canUseExtension={data.canUseExtension} />}
+            {data && <ExtensionPromo />}
 
             {loading && !data ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
@@ -676,10 +677,12 @@ function NotificationRow({
       ? UserRound
       : item.kind === "capture_review"
         ? NotebookPen
-        : Bell;
+        : item.kind === "cloud_notes"
+          ? FileText
+          : Bell;
   const when = item.dueAt
     ? formatDistanceToNow(new Date(item.dueAt), { addSuffix: true })
-    : item.kind === "capture_review"
+    : item.kind === "capture_review" || item.kind === "cloud_notes"
       ? "Waiting on you"
       : "No due date";
 

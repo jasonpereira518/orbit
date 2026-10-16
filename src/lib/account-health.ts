@@ -37,6 +37,7 @@ import {
 } from "@/lib/outlook";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { ensureUserSettings } from "@/lib/user-settings";
+import { LINKEDIN_IMPORT_TYPE, LINKEDIN_MESSAGES_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-import-types";
 
 /**
  * The server half of account alerts: loads the facts, hands them to the pure predicates in
@@ -52,7 +53,7 @@ import { ensureUserSettings } from "@/lib/user-settings";
  * Neon HTTP every separate query is its own round trip, and one statement the planner runs
  * as a handful of index lookups is the same work at a fraction of the latency.
  *
- * Measured (`scripts/smoke-account-alerts.ts`, case 19): at most 4 statements called
+ * Measured (`scripts/smoke-account-alerts.ts`, case 19): at most 5 statements called
  * standalone with no request context, where the `cache()` memos cannot help. Inside a
  * request that has already resolved settings and surface visibility (or passes the row in),
  * the marginal cost is the one combined select. A paid account never pays for the contact count.
@@ -326,6 +327,15 @@ export async function loadAccountHealthInput(
           AND ${imports.updatedAt} > ${importWindowStart}
         ORDER BY ${imports.updatedAt} DESC LIMIT 1)`,
 
+      // Not windowed, and needn't be: it is advisory and dismissible, and moves forward with
+      // every upload. Same rule as `getLastLinkedInImportAt`.
+      lastLinkedInImportAt: sql<string | null>`(
+        SELECT max(${imports.createdAt}) FROM ${imports}
+        WHERE ${imports.userId} = ${userId}
+          AND ${imports.importType} IN (${LINKEDIN_IMPORT_TYPE}, ${LINKEDIN_MESSAGES_IMPORT_TYPE})
+          AND ${imports.status} = 'completed'
+          AND ${imports.revertedAt} IS NULL)`,
+
       // Windowed like imports: a failure is history, and an unwindowed one would be a
       // permanent badge on a device that never dismissed it.
       emailSendFailedCount: sql<number>`(
@@ -395,6 +405,7 @@ export async function loadAccountHealthInput(
     importStalledRows: row.importStalledRows == null ? null : num(row.importStalledRows),
     importStalledTotal: row.importStalledTotal == null ? null : num(row.importStalledTotal),
     emailSendFailedCount: num(row.emailSendFailedCount),
+    lastLinkedInImportAt: row.lastLinkedInImportAt ? new Date(row.lastLinkedInImportAt) : null,
 
     plan: entitlements.plan,
     planSource: entitlements.source,

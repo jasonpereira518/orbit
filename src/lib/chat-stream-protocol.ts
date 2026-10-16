@@ -13,6 +13,7 @@
  *     in the browser across arbitrary chunk boundaries.
  */
 
+import type { ChatBlocks } from "@/lib/chat-directives";
 import type { EvidenceSource } from "@/lib/chat-evidence";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 
@@ -38,11 +39,25 @@ export type SplitResult = {
   parseError?: string;
 };
 
+/**
+ * The marker as the model actually writes it. The prompt asks for `---RECOMMENDATIONS---`, but
+ * models drop the leading dashes (`RECOMMENDATIONS--- {…}`), and the tail then streamed into
+ * the prose as raw JSON. So the all-caps word plus a dash run is the marker; the leading dashes
+ * are optional. The lookahead keeps a dash run split across chunks (`--` then `-\n{`) from
+ * matching early and leaving a stray `-` at the front of the JSON.
+ */
+const MARKER_RE = /-{0,3}[ \t]*RECOMMENDATIONS[ \t]*-{2,}(?=[^-])/;
+/** A marker with nothing after it — the stream ended right on it. */
+const MARKER_AT_END_RE = /-{0,3}[ \t]*RECOMMENDATIONS[ \t]*-{2,}\s*$/;
+const MARKER_WORD = "RECOMMENDATIONS";
+
 /** How much prose to hold back: anything that could still turn out to be the marker. */
 function markerPrefixLength(tail: string): number {
-  const max = Math.min(tail.length, RECOMMENDATIONS_MARKER.length - 1);
+  const max = Math.min(tail.length, MARKER_WORD.length + 12);
   for (let n = max; n > 0; n -= 1) {
-    if (RECOMMENDATIONS_MARKER.startsWith(tail.slice(-n))) return n;
+    const rest = /^-{0,3}[ \t]*([\s\S]*)$/.exec(tail.slice(-n))?.[1] ?? "";
+    if (MARKER_WORD.startsWith(rest)) return n;
+    if (rest.startsWith(MARKER_WORD) && /^[ \t]*-*$/.test(rest.slice(MARKER_WORD.length))) return n;
   }
   return 0;
 }
@@ -60,10 +75,10 @@ export function createAnswerSplitter() {
         return "";
       }
       pending += delta;
-      const at = pending.indexOf(RECOMMENDATIONS_MARKER);
-      if (at >= 0) {
-        const out = pending.slice(0, at);
-        afterMarker = pending.slice(at + RECOMMENDATIONS_MARKER.length);
+      const m = MARKER_RE.exec(pending);
+      if (m) {
+        const out = pending.slice(0, m.index);
+        afterMarker = pending.slice(m.index + m[0].length);
         pending = "";
         prose += out;
         return out;
@@ -77,7 +92,7 @@ export function createAnswerSplitter() {
     /** Flush whatever was held back and parse the recommendations. */
     finish(): SplitResult {
       if (afterMarker === null) {
-        prose += pending;
+        prose += pending.replace(MARKER_AT_END_RE, "");
         pending = "";
         return { answer: prose.trim(), recommendations: [], proposedActions: [] };
       }
@@ -97,11 +112,18 @@ function parseRecommendations(raw: string): Pick<SplitResult, "recommendations" 
     // Both the bare array (recommendations only, the original shape) and the wrapper object
     // (recommendations plus proposed_actions) are tolerated — a model that has not been asked
     // for proposals, or answers a question with none, still parses the same way it always did.
+    // An object with only "proposed_actions" is the common case now that people are placed
+    // in the prose (`@/lib/chat-directives`): no recommendations, not a malformed list.
+    const wrapped = value && typeof value === "object" && !Array.isArray(value)
+      ? (value as { recommendations?: unknown }).recommendations
+      : undefined;
     const list = Array.isArray(value)
       ? value
-      : value && typeof value === "object" && Array.isArray((value as { recommendations?: unknown }).recommendations)
-        ? (value as { recommendations: unknown[] }).recommendations
-        : null;
+      : Array.isArray(wrapped)
+        ? wrapped
+        : value && typeof value === "object" && wrapped === undefined
+          ? []
+          : null;
     if (!list) return { recommendations: [], proposedActions: [], parseError: "recommendations is not an array" };
     const proposedActions =
       value && typeof value === "object" && Array.isArray((value as { proposed_actions?: unknown }).proposed_actions)
@@ -137,8 +159,14 @@ export type ChatStepKind =
   | "roster"
   | "attention"
   | "recruiters"
+  /** The user's upcoming meetings, for a schedule question (`@/lib/chat-calendar`). */
+  | "calendar"
   | "attached"
   | "read"
+  /** The shape lanes (`@/lib/chat-lanes`): an exhaustive filtered list, a name resolved, notes searched. */
+  | "filter"
+  | "resolve"
+  | "notes"
   /** The research loop before a multi-step answer — one step, relabelled per lookup. */
   | "gather"
   | "answer"
@@ -186,6 +214,12 @@ export type ChatStreamEvent =
   | { type: "evidence"; items: Record<string, EvidenceSource> }
   /** Actions this answer proposed, already validated — see `@/lib/chat-proposed-actions`. */
   | { type: "actions"; items: StoredProposedAction[] }
+  /**
+   * What the answer's `::people` and `::list` directives may point at, sent once before the
+   * first word — see `@/lib/chat-directives`. Names and role lines of people the user already
+   * has, and the rosters the prompt was shown; nothing the answer could not already name.
+   */
+  | { type: "blocks"; blocks: ChatBlocks }
   | {
       type: "done";
       messageId: string | null;

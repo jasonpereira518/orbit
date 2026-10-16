@@ -1,5 +1,6 @@
 "use client";
 
+import type { ChatBlocks } from "@/lib/chat-directives";
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import dynamic from "next/dynamic";
@@ -38,6 +39,7 @@ import { ChatActivity } from "@/components/chat/chat-activity";
 import { OrbitMark } from "@/components/chat/orbit-mark";
 import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
 import { CONTACT_PAGE_SUGGESTIONS, type ChatSuggestion } from "@/lib/chat-suggestions";
+import { CHAT_QUESTION_MAX_CHARS } from "@/lib/chat-question";
 import { getAskBarContact } from "@/actions/contacts";
 import { searchDashboardContacts } from "@/actions/search";
 import { createReminder } from "@/actions/reminders";
@@ -91,6 +93,8 @@ type AssistantMessage = {
   streaming?: boolean;
   /** The stages the server reported, so this bar narrates the same work `/chat` does. */
   steps?: ChatStep[];
+  /** What the answer's `::list` blocks show; its `::people` show as the cards below. */
+  blocks?: ChatBlocks;
 };
 
 type ThreadMessage = UserMessage | AssistantMessage;
@@ -141,6 +145,8 @@ export function FloatingAskBar() {
   const wrapRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<number | null>(null);
+  /** The same id as state, for the "Open in Chat" link — the ref is what async sends read. */
+  const [chatThreadId, setChatThreadId] = useState<string | null>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
   const chatThreadIdRef = useRef<string | null>(null);
 
@@ -369,6 +375,7 @@ export function FloatingAskBar() {
     if (chatThreadIdRef.current) return chatThreadIdRef.current;
     const created = await createChatThread();
     chatThreadIdRef.current = created.id;
+    setChatThreadId(created.id);
     return created.id;
   }, []);
 
@@ -469,6 +476,10 @@ export function FloatingAskBar() {
                 return { ...m, steps: next };
               });
             },
+            onBlocks: (blocks) => {
+              ensurePlaceholder();
+              patch((m) => ({ ...m, blocks }));
+            },
             onDone: (info) => {
               smoother.flush();
               ensurePlaceholder();
@@ -504,6 +515,7 @@ export function FloatingAskBar() {
     setHits([]);
     setAskDenial(null);
     chatThreadIdRef.current = null;
+    setChatThreadId(null);
   }
 
   const showPanel = open;
@@ -615,6 +627,15 @@ export function FloatingAskBar() {
                           : "Ask your network"}
                 </p>
                 <div className="flex items-center gap-0.5">
+                  {chatThreadId && messages.length > 0 && !chatPending && (
+                    <Link
+                      href={`/chat?thread=${chatThreadId}`}
+                      onClick={() => setOpen(false)}
+                      className="inline-flex h-7 items-center rounded-full px-2.5 text-xs text-muted-foreground hover:bg-muted hover:text-ink"
+                    >
+                      Open in Chat
+                    </Link>
+                  )}
                   {messages.length > 0 && (
                     <Button
                       type="button"
@@ -841,6 +862,7 @@ export function FloatingAskBar() {
             value={query}
             placeholder={placeholder}
             disabled={chatPending}
+            maxLength={CHAT_QUESTION_MAX_CHARS}
             autoComplete="off"
             className={cn(
               // 16px on phones: iOS Safari zooms the page into any focused input with
@@ -965,7 +987,9 @@ const AssistantBubble = memo(function AssistantBubble({
       )}
       {msg.answer && (
         <div className="text-sm leading-relaxed text-foreground/90">
-          <ChatMarkdown>{msg.answer}</ChatMarkdown>
+          <ChatMarkdown blocks={msg.blocks} streaming={msg.streaming}>
+            {msg.answer}
+          </ChatMarkdown>
         </div>
       )}
       {msg.recommendations.map((r) => (

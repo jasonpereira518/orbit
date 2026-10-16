@@ -25,6 +25,7 @@ import {
   PREVIEW_UNRELEASED_COOKIE,
   setNavOrder,
   setSurfaceComingSoon,
+  setSurfaceTiers,
   setSurfaceHidden,
   VIEW_AS_USER_COOKIE,
 } from "@/lib/surface-visibility";
@@ -42,6 +43,7 @@ import {
   type SiteInviteResult,
 } from "@/lib/site-invites";
 import { UserFacingError } from "@/lib/errors";
+import { blockSharedAvatar, unblockSharedAvatar } from "@/lib/admin-avatars";
 
 /**
  * Every export here re-asserts `requireAdminUserId()`.
@@ -342,6 +344,23 @@ export async function setSurfaceComingSoonAction(input: {
   const adminUserId = await requireAdminUserId();
 
   await setSurfaceComingSoon(adminUserId, input.surfaceKey, input.soon);
+
+  revalidatePath("/", "layout");
+  revalidatePath("/admin/product");
+  return { ok: true };
+}
+
+/**
+ * Limit a page to some tiers, or open it to all of them. Same shape and invalidation as the
+ * two toggles above: the app shell tags and locks the sidebar from these rules.
+ */
+export async function setSurfaceTiersAction(input: {
+  surfaceKey: string;
+  plans: string[];
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+
+  await setSurfaceTiers(adminUserId, input.surfaceKey, input.plans);
 
   revalidatePath("/", "layout");
   revalidatePath("/admin/product");
@@ -1091,4 +1110,26 @@ export async function setManagedAiPausedAction(input: {
   const state = await setManagedAiPaused(adminUserId, input.paused === true, input.reason);
   revalidatePath("/admin/billing");
   return state;
+}
+
+/* ------------------------------------------------- Shared LinkedIn photo takedown ------- */
+
+function revalidateAvatars() {
+  revalidatePath("/admin/avatars");
+  revalidatePath("/admin/users");
+}
+
+/** Remove a shared LinkedIn photo and block the slug from being re-fetched or re-contributed. */
+export async function blockSharedAvatarAction(input: { slug: string; reason: string }): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  await blockSharedAvatar(adminUserId, input);
+  revalidateAvatars();
+  return { ok: true };
+}
+
+export async function unblockSharedAvatarAction(input: { slug: string; reason: string }): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  await unblockSharedAvatar(adminUserId, input);
+  revalidateAvatars();
+  return { ok: true };
 }

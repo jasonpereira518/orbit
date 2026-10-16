@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   linkedin_export_requested_at timestamptz,
   linkedin_reminder_shown_at timestamptz,
   credits_intro_shown_at timestamptz,
+  cloud_notes_auto_extract integer NOT NULL DEFAULT 0,
   first_name text,
   last_name text,
   profile_image_url text,
@@ -162,6 +163,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   mastodon_acct text,
   profile_image_url text,
   profile_image_checked_at timestamp,
+  profile_image_source text,
   relationship_score integer NOT NULL DEFAULT 2,
   priority_level integer NOT NULL DEFAULT 0,
   source text,
@@ -266,6 +268,7 @@ CREATE TABLE IF NOT EXISTS reminders (
   raw_date_phrase text,
   date_basis text,
   item_hash text,
+  calendar_event_key text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS suggested_reminders (
@@ -464,6 +467,18 @@ CREATE TABLE IF NOT EXISTS import_job_rows (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS import_job_rows_import_status_idx ON import_job_rows(import_id, status);
+CREATE TABLE IF NOT EXISTS import_files (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  import_id uuid NOT NULL REFERENCES imports(id) ON DELETE CASCADE,
+  path text NOT NULL,
+  byte_size integer NOT NULL,
+  role text NOT NULL,
+  gz text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS import_files_user_idx ON import_files(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS import_files_import_path_uidx ON import_files(import_id, path);
 CREATE TABLE IF NOT EXISTS ai_suggestions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -977,6 +992,30 @@ CREATE TABLE IF NOT EXISTS calendar_sources (
 );
 CREATE INDEX IF NOT EXISTS calendar_sources_user_idx ON calendar_sources(user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS calendar_sources_conn_cal_uidx ON calendar_sources(connection_id, calendar_id);
+CREATE TABLE IF NOT EXISTS calendar_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  source_id uuid NOT NULL REFERENCES calendar_sources(id) ON DELETE CASCADE,
+  provider_event_id text NOT NULL,
+  ical_uid text,
+  series_id text,
+  title text NOT NULL DEFAULT '',
+  start_at timestamptz NOT NULL,
+  end_at timestamptz,
+  all_day boolean NOT NULL DEFAULT false,
+  location text,
+  agenda text,
+  conference_url text,
+  conference_kind text,
+  attendees jsonb NOT NULL DEFAULT '[]',
+  attendee_count integer NOT NULL DEFAULT 0,
+  guests_hidden boolean NOT NULL DEFAULT false,
+  self_response text,
+  organizer_email text,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS calendar_events_source_event_uidx ON calendar_events(source_id, provider_event_id);
+CREATE INDEX IF NOT EXISTS calendar_events_user_start_idx ON calendar_events(user_id, start_at);
 CREATE TABLE IF NOT EXISTS usage_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1481,6 +1520,47 @@ CREATE TABLE IF NOT EXISTS org_brand_colors (
   resolved_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS org_brand_colors_key_uidx ON org_brand_colors(name_key, kind);
+CREATE TABLE IF NOT EXISTS linkedin_avatars (
+  slug text PRIMARY KEY,
+  image_url text,
+  source text NOT NULL,
+  resolved_at timestamptz NOT NULL DEFAULT now(),
+  blocked_at timestamptz,
+  blocked_by text
+);
+CREATE INDEX IF NOT EXISTS linkedin_avatars_resolved_at_idx ON linkedin_avatars(resolved_at);
+CREATE TABLE IF NOT EXISTS cloud_note_sources (
+  user_id text NOT NULL,
+  provider text NOT NULL,
+  cursor text,
+  backfilled_at timestamptz,
+  next_scan_at timestamptz NOT NULL DEFAULT now(),
+  lease_until timestamptz,
+  last_scan_at timestamptz,
+  last_error text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, provider)
+);
+CREATE INDEX IF NOT EXISTS cloud_note_sources_due_idx ON cloud_note_sources(next_scan_at);
+CREATE TABLE IF NOT EXISTS cloud_note_files (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  provider text NOT NULL,
+  file_id text NOT NULL,
+  name text NOT NULL,
+  web_url text,
+  modified_at timestamptz,
+  status text NOT NULL DEFAULT 'found',
+  reason text,
+  detected_by text NOT NULL DEFAULT 'rules',
+  from_backfill integer NOT NULL DEFAULT 0,
+  capture_job_id uuid,
+  notified_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS cloud_note_files_user_file_uidx ON cloud_note_files(user_id, provider, file_id);
+CREATE INDEX IF NOT EXISTS cloud_note_files_user_status_idx ON cloud_note_files(user_id, status);
 CREATE TABLE IF NOT EXISTS site_settings (
   id integer PRIMARY KEY DEFAULT 1,
   stealth_enabled boolean,
@@ -1804,6 +1884,8 @@ CREATE TABLE IF NOT EXISTS meeting_sessions (
   digest jsonb,
   digest_error text,
   note_batch_id uuid,
+  calendar_event_key text,
+  calendar_series_id text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -2600,7 +2682,45 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // NOT 152 or 153: claude/calendar-events-p0 holds 152 and claude/sprint-c-audience holds 153.
 // Rescanned every remote ref, every local branch and every worktree's working file on
 // Oct 12 2026: 153 was the highest claimed anywhere.
-export const SCHEMA_VERSION = 154;
+//
+// 159 = the shared LinkedIn photo cache: linkedin_avatars (global, keyed by profile slug) and
+// contacts.profile_image_source. NOT 155, 156 or 158: the calendar branches hold them
+// (claude/calendar-prep-c holds 158, and the gate never re-runs a lower version).
+//
+// 164 = cloud notes (Drive/OneDrive meeting notes): cloud_note_sources, cloud_note_files and
+// user_settings.cloud_notes_auto_extract. NOT 160–163: the calendar stack holds them
+// (#420–#436 renumbered Oct 14). Rescanned every local branch and remote ref on Oct 14 2026:
+// 163 was the highest claimed anywhere.
+//
+// 165 = the raw files of a LinkedIn export: import_files. NOT 160-164: the calendar stack holds
+// 160-163 and claude/cloud-notes-auto-extract-799187 holds 164 (the job-change-alerts-radar
+// worktree also has an uncommitted 164). Rescanned every ref and worktree on Oct 15 2026.
+//
+// 166 = calendar_events (new table): a mirror of the near calendar (two days back, two weeks
+// ahead) for calendar-aware chat, event-linked reminders and the recorder. Built as 152 on
+// Oct 11, renumbered to 160 on Oct 14, and to 166 on Oct 15 when merging main: main reached
+// 164 (#446), and a database stamped 164 would never run a 160. NOT 165:
+// claude/linkedin-export-upload-cc7326 holds it. Rescanned every local and remote ref and
+// every worktree's working file on Oct 15 2026: 165 was the highest claimed anywhere.
+//
+// 167 = reminders.calendar_event_key + meeting_sessions.calendar_event_key (event-linked
+// reminders and recordings). Built as 155 on Oct 12, renumbered to 161 on Oct 14 and to 167 on
+// Oct 15, above 166 (this stack's calendar_events), since main reached 164. Rescanned Oct 15
+// 2026: 166 was the highest claimed.
+//
+// 168 = calendar_events.agenda + meeting_sessions.calendar_series_id (the summarizer reads the
+// calendar invite). Built as 156 on Oct 13, renumbered to 162 on Oct 14 and to 168 on Oct 15,
+// above 167, since main reached 164. Rescanned Oct 15 2026: 167 (this stack) was the highest claimed.
+//
+// 169 = guest_profiles (new table): what an on-demand "Look up" found about a meeting guest who
+// is not a contact. Built as 158 on Oct 13, renumbered to 163 on Oct 14 and to 169 on Oct 15,
+// above 168, since main reached 164. Rescanned Oct 15 2026: 168 (this stack) was the highest claimed.
+//
+// 170 = guest_profiles dropped: guest "Look up" runs on Find people's research (researchPerson)
+// and its briefs live in ai_result_cache, read back by key. The table was a day old (v169) and
+// held only cached web lookups. Rescanned every ref and worktree on Oct 15 2026: 169 was the
+// highest claimed anywhere.
+export const SCHEMA_VERSION = 170;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3395,6 +3515,10 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "contacts", "constellation_pin", "text");
   await ensureColumn(client, "user_settings", "sender_bio", "text");
   await ensureColumn(client, "user_settings", "career_profile", "jsonb");
+  await ensureColumn(client, "reminders", "calendar_event_key", "text");
+  await ensureColumn(client, "meeting_sessions", "calendar_event_key", "text");
+  await ensureColumn(client, "meeting_sessions", "calendar_series_id", "text");
+  await ensureColumn(client, "calendar_events", "agenda", "text");
   await ensureColumn(client, "user_settings", "email_activity_sync", "integer NOT NULL DEFAULT 0");
   await ensureColumn(
     client,
@@ -3445,6 +3569,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "contacts", "school", "text");
   await ensureColumn(client, "contacts", "profile_image_url", "text");
   await ensureColumn(client, "contacts", "profile_image_checked_at", "timestamp");
+  await ensureColumn(client, "contacts", "profile_image_source", "text");
   await ensureColumn(
     client,
     "user_settings",
@@ -3493,6 +3618,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "linkedin_export_requested_at", "timestamptz");
   await ensureColumn(client, "user_settings", "linkedin_reminder_shown_at", "timestamptz");
   await ensureColumn(client, "user_settings", "credits_intro_shown_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "cloud_notes_auto_extract", "integer NOT NULL DEFAULT 0");
   await ensureColumn(client, "user_settings", "email", "text");
   await ensureColumn(client, "user_settings", "calendar_feed_token", "text");
   await ensureColumn(client, "user_settings", "inbound_log_token", "text");
@@ -4072,6 +4198,24 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS school text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_url text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_checked_at timestamp`,
+  // Schema v159: where a contact's photo came from (google|outlook|gravatar|apollo|public|
+  // extension|upload), and the cross-user LinkedIn photo cache keyed by profile slug. Null
+  // source = unknown (older rows); no backfill.
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_source text`,
+  `CREATE TABLE IF NOT EXISTS linkedin_avatars (slug text PRIMARY KEY, image_url text, source text NOT NULL, resolved_at timestamptz NOT NULL DEFAULT now(), blocked_at timestamptz, blocked_by text)`,
+  `CREATE INDEX IF NOT EXISTS linkedin_avatars_resolved_at_idx ON linkedin_avatars(resolved_at)`,
+  // Schema v164: cloud notes. One row per watched drive (its own change cursor — never
+  // gmail_connections.sync_cursor, which calendar sync owns) and one per doc found or extracted,
+  // which is the dedupe, the panel row and the review dialog. Plus the auto-extract switch.
+  `CREATE TABLE IF NOT EXISTS cloud_note_sources (user_id text NOT NULL, provider text NOT NULL, cursor text, backfilled_at timestamptz, next_scan_at timestamptz NOT NULL DEFAULT now(), lease_until timestamptz, last_scan_at timestamptz, last_error text, created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (user_id, provider))`,
+  `CREATE INDEX IF NOT EXISTS cloud_note_sources_due_idx ON cloud_note_sources(next_scan_at)`,
+  `CREATE TABLE IF NOT EXISTS cloud_note_files (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, provider text NOT NULL, file_id text NOT NULL, name text NOT NULL, web_url text, modified_at timestamptz, status text NOT NULL DEFAULT 'found', reason text, detected_by text NOT NULL DEFAULT 'rules', from_backfill integer NOT NULL DEFAULT 0, capture_job_id uuid, notified_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS cloud_note_files_user_file_uidx ON cloud_note_files(user_id, provider, file_id)`,
+  `CREATE INDEX IF NOT EXISTS cloud_note_files_user_status_idx ON cloud_note_files(user_id, status)`,
+  // Schema v165: the raw files of a LinkedIn export (import_files), hung off its imports row.
+  `CREATE TABLE IF NOT EXISTS import_files (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, import_id uuid NOT NULL REFERENCES imports(id) ON DELETE CASCADE, path text NOT NULL, byte_size integer NOT NULL, role text NOT NULL, gz text NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE INDEX IF NOT EXISTS import_files_user_idx ON import_files(user_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS import_files_import_path_uidx ON import_files(import_id, path)`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS x_handle text`,
   `CREATE INDEX IF NOT EXISTS contacts_user_linkedin_idx ON contacts(user_id, linkedin_url)`,
   `CREATE INDEX IF NOT EXISTS contacts_user_x_idx ON contacts(user_id, x_handle)`,
@@ -4171,6 +4315,14 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS sender_bio text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS career_profile jsonb`,
+  // Schema v161: the calendar event a reminder or a recording belongs to — the provider's
+  // per-instance id, not a calendar_events FK, because that table only holds a two-week window.
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS calendar_event_key text`,
+  `ALTER TABLE meeting_sessions ADD COLUMN IF NOT EXISTS calendar_event_key text`,
+  // Schema v162: the invite’s agenda (for the meeting summarizer) and the recurring series a
+  // recording belongs to (for "last time" in the next one).
+  `ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS agenda text`,
+  `ALTER TABLE meeting_sessions ADD COLUMN IF NOT EXISTS calendar_series_id text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_activity_sync integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS terms_accepted_at timestamptz`,
@@ -4195,6 +4347,7 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS linkedin_export_requested_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS linkedin_reminder_shown_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credits_intro_shown_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS cloud_notes_auto_extract integer NOT NULL DEFAULT 0`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS slot uuid`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true`,
@@ -4555,6 +4708,10 @@ const alters = [
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS acted_at timestamptz`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS outcome_at timestamptz`,
   `DROP INDEX IF EXISTS recommendations_live_uidx`,
+  // Schema v170: guest "Look up" now files its briefs in ai_result_cache with Find people's
+  // research, so the table v169 created holds nothing anything reads — only short-lived
+  // copies of web lookups, re-runnable on demand. Dropped rather than left behind unpurged.
+  `DROP TABLE IF EXISTS guest_profiles`,
   // Schema v136: what autopilot scheduled for a card, so its Undo reverses exactly that.
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS autopilot jsonb`,
   // Schema v143: user_settings.radar_apollo_cursor, the cursor for a Radar-owned Apollo
@@ -4594,7 +4751,31 @@ const alters = [
  * has been silently missing from production since August 2026. Now: columns first, and
  * every real failure is returned rather than only logged.
  */
+/**
+ * #184 (never merged; its schema 56) created a different `calendar_events` — keyed by provider
+ * and `external_id` — on any database a preview of it migrated. `CREATE TABLE IF NOT EXISTS`
+ * would then keep that one, every index on `source_id`/`start_at` would fail, and the build
+ * would refuse to deploy. Set it aside first: renamed, not dropped — nothing reads it, but
+ * deleting someone's rows is not a migration's call. Its indexes keep names ours never use.
+ * Exported for `smoke-calendar-events`.
+ */
+export async function setAsideAbandonedCalendarEvents(run: StatementRunner, failed: SchemaFailure[]): Promise<void> {
+  let legacy = false;
+  try {
+    legacy =
+      rowsOf<unknown>(
+        await run(
+          `SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'calendar_events' AND column_name = 'external_id'`
+        )
+      ).length > 0;
+  } catch {
+    return;
+  }
+  if (legacy) await runStatements(run, ["ALTER TABLE calendar_events RENAME TO calendar_events_abandoned_v56"], "DDL", failed);
+}
+
 async function applySchema(run: StatementRunner, failed: SchemaFailure[]): Promise<void> {
+  await setAsideAbandonedCalendarEvents(run, failed);
   const statements = DDL.split(";")
     .map((s) => s.trim())
     .filter(Boolean);

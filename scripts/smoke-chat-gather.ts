@@ -23,7 +23,7 @@ import { getDb } from "../src/db";
 import { contacts, interactions, memoryChunks } from "../src/db/schema";
 import type { ToolCall, ToolDriver, ToolStep } from "../src/lib/ai-tools";
 import { prepareChatContext } from "../src/lib/chat-context";
-import { gatherEvidence, maybeGather } from "../src/lib/chat-gather";
+import { ANSWER_ENDS_BY_MS, answerDeadlineMs, GATHER_ENDS_BY_MS, gatherEvidence, maybeGather } from "../src/lib/chat-gather";
 import type { ChatStep } from "../src/lib/chat-stream-protocol";
 import { createStepEmitter } from "../src/lib/chat-steps";
 import { logNoteInteractionForUser } from "../src/lib/contact-writes";
@@ -141,6 +141,12 @@ async function main() {
     labels.some((l) => l.includes("Searching your notes for") && l.includes("Series A")),
     JSON.stringify(labels)
   );
+  const lookup = seen.filter((st) => st.id === "gather:1").at(-1);
+  check(
+    "each lookup is its own step, finished with what it found",
+    lookup?.status === "done" && /^Searched your notes for .+ → (\d+ results?|nothing found)$/.test(lookup.label),
+    JSON.stringify(lookup)
+  );
   const last = seen.filter((st) => st.kind === "gather").at(-1);
   check(
     "and finishes counting only the lookups that worked",
@@ -155,7 +161,22 @@ async function main() {
 
   // --- the allowlist: a person found in research survives the recommendation filter ---------
 
-  const ctx2 = await prepareChatContext(USER, question, {});
+  // The router reads the question parse, which needs an AI key this smoke does not have, so
+  // the research route is set the way a parse that flagged it would set it.
+  const research = (ctx: Awaited<ReturnType<typeof prepareChatContext>>) => {
+    ctx.route = {
+      depth: { depth: "research", reason: "needs more than one lookup" },
+      shape: "open",
+      prep: false,
+      attention: false,
+      recruiters: false,
+      calendar: false,
+      availability: false,
+      engine: "llm",
+    };
+    return ctx;
+  };
+  const ctx2 = research(await prepareChatContext(USER, question, {}));
   const retrievedPriya = ctx2.allowedContacts.has(priya.id);
   const s2 = scripted([{ calls: [call("search_notes", { query: "Series A" })], text: "" }]);
   const routed = await maybeGather(USER, ctx2, { requestStartedAt: Date.now(), driver: s2.driver });
@@ -180,18 +201,26 @@ async function main() {
     },
     addResults: s3.driver.addResults,
   };
-  const late = await maybeGather(USER, await prepareChatContext(USER, question, {}), {
-    // 36s into a request: less than the minimum left before the 38s cut-off.
-    requestStartedAt: Date.now() - 36_000,
+  const late = await maybeGather(USER, research(await prepareChatContext(USER, question, {})), {
+    // 27s into a request: less than the minimum left before the 30s cut-off.
+    requestStartedAt: Date.now() - 27_000,
     driver: counting,
   });
   check("with too little time left, research does not start", asked === 0 && late.evidence === null, `${asked} rounds`);
+
+  // --- the clock: research ends, then the answer, both inside maxDuration (60s) --------------
+
+  check("gathering ends by 30s and the answer by 55s", GATHER_ENDS_BY_MS === 30_000 && ANSWER_ENDS_BY_MS === 55_000);
+  check("the answer deadline is the time left until 55s", answerDeadlineMs(1_000, 11_000) === 45_000);
+  check("at the start it is the whole 55s", answerDeadlineMs(5_000, 5_000) === ANSWER_ENDS_BY_MS);
+  check("it never goes below 1s (AbortSignal.timeout throws on a negative delay)", answerDeadlineMs(0, 54_500) === 1_000 && answerDeadlineMs(0, 90_000) === 1_000);
+  check("so it is always a delay AbortSignal.timeout accepts", (() => { try { AbortSignal.timeout(answerDeadlineMs(0, 90_000)); return true; } catch { return false; } })());
 
   // --- no grant: an answer from retrieval, not an error --------------------------------------
 
   const { seen: seen4, steps: steps4 } = recorder();
   let threw: unknown = null;
-  const keyless = await maybeGather(USER, await prepareChatContext(USER, question, {}), {
+  const keyless = await maybeGather(USER, research(await prepareChatContext(USER, question, {})), {
     requestStartedAt: Date.now(),
     steps: steps4,
   }).catch((err) => {

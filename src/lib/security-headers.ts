@@ -120,6 +120,9 @@ export function buildSecurityHeaders(options: {
       key: "Permissions-Policy",
       value: "camera=(self), microphone=(self), display-capture=(self), geolocation=(), payment=()",
     },
+    // A page Orbit opens (or that opens Orbit) gets no handle on its window. `allow-popups`,
+    // not `same-origin`: Clerk, the Google Picker and Google sign-in talk to the popups they open.
+    { key: "Cross-Origin-Opener-Policy", value: "same-origin-allow-popups" },
     {
       key: options.enforce ? "Content-Security-Policy" : "Content-Security-Policy-Report-Only",
       value: directives.join("; "),
@@ -147,7 +150,9 @@ function waitlistHeaders(options: { dev: boolean; enforce: boolean }): SecurityH
     `img-src 'self' data: blob:`,
     `style-src 'self' 'unsafe-inline'`,
     `font-src 'self' data:`,
-    `frame-src 'none'`,
+    // Vercel BotID's challenge is proxied same-origin (`withBotId` in next.config.ts), and
+    // the package marks its own path frameable by 'self' only — so 'self', never wider.
+    `frame-src 'self'`,
     `object-src 'none'`,
     `base-uri 'self'`,
     `form-action 'self'`,
@@ -162,6 +167,8 @@ function waitlistHeaders(options: { dev: boolean; enforce: boolean }): SecurityH
       key: "Permissions-Policy",
       value: "camera=(), microphone=(), display-capture=(), geolocation=(), payment=()",
     },
+    // The waitlist opens no popups, so nothing needs a window handle at all.
+    { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
     {
       key: options.enforce ? "Content-Security-Policy" : "Content-Security-Policy-Report-Only",
       value: directives.join("; "),

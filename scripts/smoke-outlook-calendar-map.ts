@@ -13,8 +13,10 @@ import {
   CalendarSyncTokenExpiredError,
   advanceCursor,
   fetchCalendarPage,
+  fetchCalendarWindow,
   toNetworkEvents,
   toParsedEvent,
+  toStoredEvent,
 } from "../src/lib/connectors/microsoft-calendar";
 
 let failures = 0;
@@ -197,6 +199,54 @@ async function main() {
     );
     check("on the last page the new deltaLink is adopted", finished?.syncToken === "fresh-delta-link");
     check("on the last page the page token is cleared", finished?.pageToken === null);
+  }
+
+  // --- The calendar_events window ----------------------------------------------------------
+  {
+    const TEAMS_CALL = {
+      ...REAL_EVENT,
+      id: "instance-1",
+      seriesMasterId: "master-1",
+      body: { contentType: "html", content: "<p>Agenda:</p><ul><li>Pricing</li></ul><p>Join Microsoft Teams Meeting</p>" },
+      onlineMeeting: { joinUrl: "https://teams.microsoft.com/l/meetup-join/abc" },
+      responseStatus: { response: "tentativelyAccepted" as const },
+      attendees: [
+        ...REAL_EVENT.attendees,
+        { emailAddress: { name: "Me", address: "ME@example.com" }, type: "required" as const },
+      ],
+    };
+    const row = toStoredEvent(TEAMS_CALL, OWNER);
+    check("window row is keyed on the per-instance id", row?.providerEventId === "instance-1" && row.seriesId === "master-1");
+    check("Teams link from onlineMeeting", row?.conferenceKind === "teams" && row.conferenceUrl?.includes("teams.microsoft.com") === true);
+    check(
+      "attendees leave out the owner (any case) and rooms",
+      row?.attendees.length === 1 && row.attendees[0].email === "ada@example.com" && row.attendeeCount === 1,
+      JSON.stringify(row?.attendees)
+    );
+    check("Graph's RSVP becomes Google's word", row?.selfResponse === "tentative");
+    check("the agenda is the body's text, without the join line", row?.agenda === "Agenda:\n- Pricing", JSON.stringify(row?.agenda));
+    check("the organizer's own meeting counts as accepted", toStoredEvent({ ...TEAMS_CALL, responseStatus: { response: "organizer" } }, OWNER)?.selfResponse === "accepted");
+    check("a cancelled occurrence is not stored", toStoredEvent({ ...TEAMS_CALL, isCancelled: true }, OWNER) === null);
+    check("an all-day event is flagged", toStoredEvent({ ...TEAMS_CALL, isAllDay: true }, OWNER)?.allDay === true);
+    const hidden = toStoredEvent({ ...TEAMS_CALL, hideAttendees: true }, OWNER);
+    check("a hidden guest list keeps the count, not the names", hidden?.attendees.length === 0 && hidden.attendeeCount === 1 && hidden.guestsHidden);
+
+    const from = new Date("2026-03-08T00:00:00Z");
+    const to = new Date("2026-03-22T00:00:00Z");
+    const one = stubFetch({ value: [TEAMS_CALL] });
+    const read = await fetchCalendarWindow({ accessToken: "t", from, to, fetchImpl: one.impl });
+    const url = new URL(one.calls[0] ?? "");
+    check(
+      "the window is the plain calendarView, not the delta endpoint",
+      url.pathname.endsWith("/me/calendarView") && url.searchParams.get("startDateTime") === from.toISOString(),
+      one.calls[0]
+    );
+    check("one page with no nextLink is complete", read.complete && read.items.length === 1);
+    const more = stubFetch({ value: [TEAMS_CALL], "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/calendarView?page=2" });
+    const cut = await fetchCalendarWindow({ accessToken: "t", from, to, maxPages: 2, fetchImpl: more.impl });
+    check("a window that runs past maxPages is not complete", !cut.complete && more.calls.length === 2);
+    const failed = await fetchCalendarWindow({ accessToken: "t", from, to, fetchImpl: stubFetch({}, 401).impl });
+    check("a failed read is not complete", !failed.complete && failed.status === 401);
   }
 
   if (failures > 0) {

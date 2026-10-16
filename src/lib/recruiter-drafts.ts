@@ -1,4 +1,5 @@
 import { completeJson, parseAiJson } from "@/lib/ai";
+import { fenceUntrusted } from "@/lib/ai-security";
 import { renderWritingPreferences } from "@/lib/writing-instructions";
 
 /**
@@ -102,7 +103,7 @@ export async function generateRecruiterDraft(
       ? `Roles previously discussed: ${input.rolesDiscussed.join(", ")}`
       : null,
     describeGap(input.lastEmailAt),
-    input.history ? `History with them:\n${input.history}` : "No prior history recorded.",
+    input.history ? `History with them:\n${fenceUntrusted("HISTORY", input.history)}` : "No prior history recorded.",
     input.userGoals.length
       ? `What the sender is looking for: ${input.userGoals.join("; ")}`
       : null,

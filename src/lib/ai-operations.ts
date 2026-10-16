@@ -92,6 +92,12 @@ export const AI_OPERATIONS = {
   // the result pages it reads as input — which cost per token on the pricier model too. The
   // namesake risk is carried by the prompt's "confident or nothing" rule, not model size.
   "contact.work_history": { label: "Work history (web search)", tier: "fast", thinking: "minimal", background: true },
+  // Briefing someone who is not a contact yet (/find), grounded in a web search on the
+  // account's own key. Same cost reasoning as work history: the searches dominate the bill,
+  // and the namesake risk is carried by the prompt's "confident or nothing" rule.
+  "research.person": { label: "Research a person (web search)", tier: "fast", thinking: "minimal" },
+  "research.company": { label: "Research a company (web search)", tier: "fast", thinking: "minimal" },
+  "research.discover": { label: "Find people by description (web search)", tier: "fast", thinking: "minimal" },
   "events.why": { label: "Events: why talk to them", tier: "fast", thinking: "minimal" },
   // One sentence about a Radar card the scorer already chose, written during the nightly
   // pass on the account's own key: work on the person's behalf, not something they wait on.
@@ -108,6 +114,8 @@ export const AI_OPERATIONS = {
   "radar.draft": { label: "Radar: drafts for Today", tier: "user", background: true },
   "extension.parse": { label: "Extension: reading profiles", tier: "fast", thinking: "minimal" },
   "extension.starters": { label: "Extension: conversation starters", tier: "user" },
+  // "Talking points" on a meeting's prep card: the user asked, so a foreground operation.
+  "meeting.talking_points": { label: "Meeting: talking points", tier: "fast", thinking: "minimal" },
   "followup.draft": { label: "Follow-up drafts", tier: "user" },
   "outreach.draft": { label: "Outreach drafts", tier: "user" },
   "outreach.apollo": { label: "Outreach: prospect search", tier: "user" },
@@ -128,6 +136,7 @@ export const AI_OPERATIONS = {
   "capture.merge_target": { label: "Capture: matching existing contacts (decision model)", tier: "decision" },
   "capture.checks": { label: "Capture: checking people, tags and referrals (decision model)", tier: "decision" },
   "calendar.kind": { label: "Calendar: which events are meetings (decision model)", tier: "decision", background: true },
+  "notes.detect": { label: "Cloud notes: which docs are meeting notes (decision model)", tier: "decision", background: true },
   "capture.dates.gate": { label: "Capture: any dates to extract? (decision model)", tier: "decision" },
   "contact.brief.gate": { label: "Contact briefs: anything new? (decision model)", tier: "decision" },
   "extension.starters.gate": { label: "Extension: enough for openers? (decision model)", tier: "decision" },
@@ -141,6 +150,7 @@ export const AI_OPERATIONS = {
   // (decisions/llm.ts). Own ids: the answer cache keys on the operation, not the model.
   "duplicates.same_person.llm": { label: "Duplicates: same person?", tier: "fast", thinking: "minimal", background: true },
   "mentions.resolve.llm": { label: "Capture: linking mentions", tier: "fast", thinking: "minimal" },
+  "notes.detect.llm": { label: "Cloud notes: which docs are meeting notes", tier: "fast", thinking: "minimal", background: true },
   "import.linkedin.timeline": {
     label: "LinkedIn timeline events",
     tier: "fast",

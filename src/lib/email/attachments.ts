@@ -111,6 +111,8 @@ export async function verifyAttachmentRefs(
     } catch {
       return { ok: false, reason: "not_found", message: NOT_AVAILABLE };
     }
+    // Only the composer's own (private) uploads are attachments; see the sweep below.
+    if (isPublicBlobUrl(meta.url)) return { ok: false, reason: "not_found", message: NOT_AVAILABLE };
     total += meta.size;
     refs.push({
       blobKey: meta.pathname,
@@ -186,7 +188,15 @@ export async function sweepEmailAttachments(now = new Date(), limit = 200): Prom
   try {
     // One page a run; each run starts over. Fine at this volume.
     const page = await client.list({ prefix: `${ATTACHMENT_PREFIX}/`, limit: 1000 });
-    const stale = page.blobs.filter((b) => new Date(b.uploadedAt).getTime() < now.getTime() - ORPHAN_UPLOAD_TTL_MS);
+    // The composer only uploads private files, but the upload token cannot pin `access` — a
+    // public object here was uploaded around the composer (file hosting on Orbit's store) and
+    // goes at once, attached to a send or not.
+    for (const b of page.blobs.filter((x) => isPublicBlobUrl(x.url))) {
+      if (await deleteQuietly(b.pathname)) orphans++;
+    }
+    const stale = page.blobs.filter(
+      (b) => !isPublicBlobUrl(b.url) && new Date(b.uploadedAt).getTime() < now.getTime() - ORPHAN_UPLOAD_TTL_MS
+    );
     for (const b of stale) {
       const live = rowsOf(
         await db.execute(sql`
@@ -202,6 +212,14 @@ export async function sweepEmailAttachments(now = new Date(), limit = 200): Prom
     reportError(err, { where: "email.attachment-sweep", level: "warning" });
   }
   return { settled, orphans };
+}
+
+function isPublicBlobUrl(url: string): boolean {
+  try {
+    return new URL(url).hostname.endsWith(".public.blob.vercel-storage.com");
+  } catch {
+    return false;
+  }
 }
 
 async function deleteQuietly(pathname: string): Promise<boolean> {

@@ -15,7 +15,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { motion, useTransform, type MotionValue } from "motion/react";
-import { AudioLines, Headphones, Loader2, Mic, MicOff, MonitorUp, Pause, Play, TriangleAlert } from "lucide-react";
+import { AudioLines, Headphones, Loader2, Mic, MicOff, MonitorUp, Pause, Play, TriangleAlert, type LucideIcon } from "lucide-react";
 import type { ResumableMeeting } from "@/lib/meeting-sessions";
 import { formatMeetingDuration } from "@/lib/format-meeting-duration";
 import { Button } from "@/components/ui/button";
@@ -37,6 +37,7 @@ import { MeetingCalendarSuggestions } from "@/components/capture/meeting-calenda
 import { MeetingSaveStatus } from "@/components/capture/meeting-save-status";
 import { SideNotes } from "@/components/capture/meeting-side-notes";
 import { cn } from "@/lib/utils";
+import { useNow } from "@/lib/use-now";
 import { AiKeyNotice } from "@/components/ai-key-notice";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 
@@ -110,6 +111,10 @@ function PanelBody({
   micSupported = false,
 }: PanelProps & { session: MeetingSession; flow: MeetingFlow }) {
   const { recorder } = s;
+  // The calendar says the meeting is over and the call has gone quiet: offer to wrap up.
+  const now = useNow(30_000, Boolean(s.calendarEndIso));
+  const callSoundsOver =
+    recorder.callQuiet && s.calendarEndIso !== null && now !== null && now > Date.parse(s.calendarEndIso);
 
   // While this is on screen the widget would only repeat it.
   const { registerInlineView } = flow;
@@ -278,12 +283,12 @@ function PanelBody({
         </div>
 
         <div className="grid gap-2 sm:grid-cols-2">
-          <Meter label="Call audio" icon={<AudioLines className="size-4" />} level={recorder.callLevel} />
+          <Meter label="Call audio" icon={AudioLines} level={recorder.callLevel} />
           <div className="flex items-stretch gap-2">
             <div className="min-w-0 flex-1">
               <Meter
                 label={!recorder.micActive ? "Microphone off" : recorder.micMuted ? "Microphone muted" : "Your microphone"}
-                icon={recorder.micMuted ? <MicOff className="size-4" /> : <Mic className="size-4" />}
+                icon={recorder.micMuted ? MicOff : Mic}
                 level={recorder.micLevel}
                 muted={!recorder.micActive || recorder.micMuted}
               />
@@ -341,7 +346,18 @@ function PanelBody({
             </button>
           </p>
         )}
-        {recorder.callQuiet && !s.heardNothing && (
+        {callSoundsOver && !s.heardNothing && (
+          <p
+            role="status"
+            className="rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground"
+          >
+            The meeting has ended on your calendar and the call has gone quiet.{" "}
+            <button type="button" onClick={s.finish} className="font-medium underline underline-offset-2">
+              Finish and summarize
+            </button>
+          </p>
+        )}
+        {recorder.callQuiet && !callSoundsOver && !s.heardNothing && (
           <p
             role="status"
             className="rounded-xl border border-warning-border bg-warning-surface px-3 py-2 text-xs text-foreground"
@@ -679,28 +695,38 @@ function FinishButton({ onConfirm, disabled = false }: { onConfirm: () => void; 
   );
 }
 
-function Meter({
+/**
+ * Memoised, with an icon COMPONENT rather than an element, so it renders only when its label
+ * or muted state changes — not on every engine render (each interim transcript). That is a
+ * memory fix, not a speed one: `useTransform` re-subscribes on every render, and motion's
+ * unsubscribe queues a `frame.read` job holding that render's closures. In a background tab
+ * no frame runs, so those jobs piled up for as long as the meeting stayed hidden (~0.5 MB a
+ * minute, measured with `scripts/bench/meeting-recorder.mjs --heap-diff`).
+ */
+const Meter = memo(function Meter({
   label,
-  icon,
+  icon: Icon,
   level,
   muted = false,
 }: {
   label: string;
-  icon: React.ReactNode;
+  icon: LucideIcon;
   level: MotionValue<number>;
   muted?: boolean;
 }) {
   const scaleX = useTransform(level, [0, 1], [0.02, 1]);
   return (
     <div className={cn("flex items-center gap-2 rounded-xl border border-border/60 px-3 py-2", muted && "opacity-50")}>
-      <span className="text-muted-foreground">{icon}</span>
+      <span className="text-muted-foreground">
+        <Icon className="size-4" />
+      </span>
       <span className="w-28 shrink-0 text-xs text-muted-foreground">{label}</span>
       <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted" aria-hidden>
         <motion.div className="h-full origin-left rounded-full bg-primary" style={{ scaleX }} />
       </div>
     </div>
   );
-}
+});
 
 function FatalNotice({ message }: { message: string }) {
   return (

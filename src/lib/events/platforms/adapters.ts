@@ -13,6 +13,12 @@
  * cookie, never calls an internal endpoint, and never paginates anything. That rule is the
  * reason this feature can exist at all, and it is not a rule to relax quietly later.
  *
+ * It was relaxed once, loudly (Oct 2026, with a privacy-policy change), and only off the
+ * server: the browser extension may read a guest list the USER has open in their own signed-in
+ * session, when they click the icon and press Save (`extension/src/inject/adapters/
+ * event-roster.ts`, saved by `src/lib/extension/event-roster.ts`). The server still never
+ * fetches one, and nothing on that path adds a guest to the user's contacts.
+ *
  * The counts (`guest_count`, `goingGuestCount`) are numbers a page renders to everyone. They
  * tell the user how big the room was; they name nobody.
  *

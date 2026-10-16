@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import Link from "next/link";
 import { ContactForm } from "@/components/contacts/contact-form";
 import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
@@ -5,7 +6,26 @@ import { LockedFeature } from "@/components/locked-feature";
 import { getPlanOverview } from "@/actions/settings";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
-export default async function NewContactPage() {
+export default async function NewContactPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const gate = await pageVisibilityGate("page.contacts");
+  if (gate) return gate;
+
+  // "Add" from a meeting's prep card: the guest's name and address, prefilled.
+  const params = await searchParams;
+  const one = (v: string | string[] | undefined) => (typeof v === "string" ? v.trim().slice(0, 200) : "");
+  const initial =
+    one(params.name) || one(params.email)
+      ? {
+          fullName: one(params.name),
+          email: one(params.email),
+          ...(one(params.company) ? { company: one(params.company) } : {}),
+          ...(one(params.title) ? { title: one(params.title) } : {}),
+        }
+      : undefined;
   const { usage } = await getPlanOverview();
   const atLimit = usage.limit !== null && usage.remaining === 0;
 
@@ -46,7 +66,7 @@ export default async function NewContactPage() {
         </p>
       </div>
       <ContactQuotaNotice used={usage.used} limit={usage.limit} />
-      <ContactForm />
+      <ContactForm initial={initial} />
     </div>
   );
 }

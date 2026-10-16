@@ -1,122 +1,96 @@
-import { chooseDepth, type DepthDecision } from "@/lib/chat-depth";
 import { isAttentionQuestion } from "@/lib/chat-attention-match";
 import { isRecruiterIntent } from "@/lib/recruiters";
 import type { OrgRoster } from "@/lib/chat-roster";
-import {
-  CHAT_ROUTE_TUNING,
-  DEPTH_REASONS,
-  chatRouteQuestions,
-  rosterQuestion,
-  type DepthReason,
-} from "@/lib/decisions/catalog";
+import type { ParsedQuery, QuestionShape } from "@/lib/chat-retrieval";
+import { CHAT_ROUTE_TUNING, rosterQuestion } from "@/lib/decisions/catalog";
 import { decide, type Engine } from "@/lib/decisions/engine";
 import type { Decider } from "@/lib/decisions/jev";
 
+export type ChatDepth = "single" | "research";
+
+export type DepthDecision = {
+  depth: ChatDepth;
+  /** Why, for the step label and for debugging a surprising choice. */
+  reason: string;
+};
+
 /**
- * How a chat question is routed: one lookup or a research round, whether the attention brief
- * (with its "answer from this" rule) loads, and whether the recruiter list does.
+ * How a chat question is routed: its shape (which retrieval lanes run), one pass or a
+ * research round, whether the attention brief (with its "answer from this" rule) loads, and
+ * whether the recruiter list does.
  *
- * The chain, per the decisions plan:
- *  1. Jev — one call, all three questions, beside retrieval (no added latency).
- *  2. The question parser's own `intent` flags (`understandQuery`) — the call already runs on
- *     every question, so the person's chat model routes it at no extra cost.
- *  3. The keyword rules that route today (`chooseDepth`, `isAttentionQuestion`,
- *     `isRecruiterIntent`).
+ * Decided by the question parser (`understandQuery`) in the call retrieval already makes, so
+ * routing costs no extra round trip. When that call fails the question gets the safe
+ * default: one pass, shape "open", and only the two keyword checks that cost nothing.
  */
 export type ChatRoute = {
   depth: DepthDecision;
+  shape: QuestionShape;
   attention: boolean;
   recruiters: boolean;
-  engine: Engine;
+  /** Load the user's upcoming meetings into the answer (chat-context's calendar block). */
+  calendar: boolean;
+  /** …with the free gaps between them. */
+  availability: boolean;
+  /** Preparing for one meeting: its people are the subject, not whoever the search ranks. */
+  prep: boolean;
+  engine: "llm" | "default";
 };
-
-/** What the question parser says about routing, when it answered. */
-export type ParsedIntent = { needsResearch: boolean; attention: boolean; recruiters: boolean };
 
 export type PriorTurn = { role: string; content: string };
 
-export function rulesRoute(question: string, hasPriorTurns: boolean): ChatRoute {
-  return {
-    depth: chooseDepth(question, { hasPriorTurns }),
-    attention: isAttentionQuestion(question),
-    recruiters: isRecruiterIntent(question),
-    engine: "rules",
-  };
-}
+const ONE_PASS: DepthDecision = { depth: "single", reason: "one retrieval answers it" };
 
-/** The parser's flags as a route. Booleans only: an LLM's routing has no probability to trust. */
-export function routeFromIntent(intent: ParsedIntent, question: string, hasPriorTurns: boolean): ChatRoute {
-  const rules = chooseDepth(question, { hasPriorTurns });
-  // A bare name or a two-word query stays a lookup whatever the parser says — the same floor
-  // the rules have, because a research round on "Ada Park" is pure waste.
-  const short = rules.reason === "short lookup";
+/**
+ * The free fallback for when the parser does not answer: a calendar question still gets the
+ * calendar block. The parser's `intent.calendar` covers phrasings this misses.
+ */
+const CALENDAR_QUESTION =
+  /\b(my (calendar|schedule|agenda|next meeting|meetings?|calls?)|meeting (with|today|tomorrow)|on my plate|what'?s on (today|tomorrow|this week)|(today|tomorrow)'?s (meetings?|calls?|schedule)|prep(are)? me|next (see|meet|meeting)|am i (meeting|seeing|free|busy|available)|my \d{1,2}(:\d{2})? ?(am|pm)?\b|(free|open) (slot|time)|when am i free)/i;
+const AVAILABILITY_QUESTION = /\b(am i (free|busy|available)|free (slot|time)|open (slot|time)|when am i free|availability)\b/i;
+/**
+ * Preparing for one meeting wants `meeting_context` — each attendee's history and what is open —
+ * which only the research step calls. A schedule question is answered from the calendar block.
+ */
+const PREP_QUESTION = /\b(prep(are)? me|brief me|get me ready)\b/i;
+const PREP: DepthDecision = { depth: "research", reason: "prepares for a meeting" };
+
+export function routeFromParsed(parsed: ParsedQuery | null, question: string): ChatRoute {
+  const intent = parsed?.intent;
+  const keywordCalendar = CALENDAR_QUESTION.test(question);
+  const prep = PREP_QUESTION.test(question);
+  if (!parsed || !intent) {
+    return {
+      depth: prep ? PREP : ONE_PASS,
+      shape: parsed?.shape ?? "open",
+      attention: isAttentionQuestion(question),
+      recruiters: isRecruiterIntent(question),
+      calendar: keywordCalendar,
+      availability: AVAILABILITY_QUESTION.test(question),
+      prep,
+      engine: "default",
+    };
+  }
+  // A bare name or a two-word query stays a lookup whatever the parser says: a research
+  // round on "Ada Park" is pure waste.
+  const short = question.trim().split(/\s+/).length <= 2;
+  const availability = intent.availability === true || AVAILABILITY_QUESTION.test(question);
   return {
-    depth: intent.needsResearch && !short
-      ? { depth: "research", reason: "needs more than one lookup" }
-      : short
-        ? rules
-        : { depth: "single", reason: "one retrieval answers it" },
+    depth: prep
+      ? PREP
+      : intent.needsResearch && !short
+        ? { depth: "research", reason: "needs more than one lookup" }
+        : ONE_PASS,
+    shape: parsed.shape,
     attention: intent.attention,
     recruiters: intent.recruiters,
+    // The parser answered, so its word stands: the keyword list is only the fallback ("notes
+    // from my calls" is about notes, not the schedule — eval said-11).
+    calendar: intent.calendar === true || availability,
+    availability,
+    prep,
     engine: "llm",
   };
-}
-
-function priorTurnState(turns: readonly PriorTurn[]) {
-  return turns
-    .slice(-CHAT_ROUTE_TUNING.priorTurns)
-    .map((t) => ({ role: t.role, text: t.content.replace(/\s+/g, " ").slice(0, CHAT_ROUTE_TUNING.priorTurnChars) }));
-}
-
-export async function routeChatQuestion(input: {
-  decider: Decider | null;
-  question: string;
-  /** Oldest first, as `ChatContext.priorTurns`. */
-  priorTurns: readonly PriorTurn[];
-  /** Resolves to the parser's flags, or null when it did not answer. Awaited only without Jev. */
-  intent: () => Promise<ParsedIntent | null>;
-}): Promise<ChatRoute> {
-  const hasPriorTurns = input.priorTurns.length > 0;
-  const rules = rulesRoute(input.question, hasPriorTurns);
-  // The rules' short-lookup floor is not a judgement anything could improve on.
-  if (rules.depth.reason === "short lookup" && !rules.attention && !rules.recruiters) return rules;
-
-  if (input.decider) {
-    const decided = await decide(
-      { jev: input.decider, llm: null },
-      { engines: ["jev"], budgetMs: CHAT_ROUTE_TUNING.timeoutMs },
-      {
-        operation: "chat.route",
-        state: { question: input.question, prior_turns: priorTurnState(input.priorTurns) },
-        questions: chatRouteQuestions,
-      },
-    );
-    if (decided.engine === "jev") {
-      const { attention, recruiters } = decided.answers;
-      // The strongest research reason, if any clears the bar. A follow-up with no earlier
-      // turns has nothing to follow up on, so that one only counts with prior turns.
-      const reasons = (Object.keys(DEPTH_REASONS) as DepthReason[])
-        .filter((r) => r !== "followUp" || hasPriorTurns)
-        .map((r) => ({ r, p: decided.answers[r].probability }))
-        .sort((a, b) => b.p - a.p);
-      const top = reasons[0];
-      const research = Boolean(top && top.p >= CHAT_ROUTE_TUNING.researchAbove);
-      return {
-        depth: research
-          ? { depth: "research", reason: DEPTH_REASONS[top.r] }
-          : rules.depth.reason === "short lookup"
-            ? rules.depth
-            : { depth: "single", reason: "one retrieval answers it" },
-        attention: attention.probability >= CHAT_ROUTE_TUNING.attentionAbove,
-        recruiters: recruiters.probability >= CHAT_ROUTE_TUNING.recruitersAbove,
-        engine: "jev",
-      };
-    }
-  }
-
-  const intent = await input.intent().catch(() => null);
-  if (intent) return routeFromIntent(intent, input.question, hasPriorTurns);
-  return rules;
 }
 
 /**

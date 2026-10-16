@@ -25,6 +25,8 @@ import {
   CalendarSyncTokenExpiredError,
   advanceCursor as advanceGoogleCalendarCursor,
   fetchCalendarPage as fetchGoogleCalendarPage,
+  fetchCalendarWindow as fetchGoogleCalendarWindow,
+  storedEventsOf,
   toNetworkEventsDecided,
   type CalendarFetchResult,
 } from "@/lib/connectors/google-calendar";
@@ -38,10 +40,13 @@ import {
 import {
   advanceCursor as advanceMicrosoftCalendarCursor,
   fetchCalendarPage as fetchMicrosoftCalendarPage,
+  fetchCalendarWindow as fetchMicrosoftCalendarWindow,
+  storedEventsOf as storedMicrosoftEventsOf,
 } from "@/lib/connectors/microsoft-calendar";
 import {
   advanceCursor as advanceAppleCalendarCursor,
   fetchCalendarPage as fetchAppleCalendarPage,
+  fetchCalendarWindow as fetchAppleCalendarWindow,
 } from "@/lib/connectors/apple-calendar";
 import { appleCredentials } from "@/lib/apple";
 import {
@@ -75,6 +80,7 @@ import {
 } from "@/lib/connectors/connections";
 import { connectorById } from "@/lib/connectors/registry";
 import { finalizeIngest, ingestEvents, openIngestContext } from "@/lib/ingest/events";
+import { eventsWindow, pruneStaleCalendarEvents, refreshCalendarWindow } from "@/lib/calendar-events";
 import { ingestPeople } from "@/lib/ingest/people";
 import {
   initialBlockedCount,
@@ -207,11 +213,23 @@ export type SyncDeps = {
    * nothing and gets the registry.
    */
   resolveConnector?: typeof connectorById;
+  /**
+   * The windowed read behind `calendar_events`. Optional and NOT defaulted on purpose: a test
+   * that builds its own deps and does not stub it skips the mirror, rather than sending its
+   * fake token to Google.
+   */
+  fetchWindow?: typeof fetchGoogleCalendarWindow;
+  /** Outlook's and iCloud's `calendar_events` reads — optional and undefaulted, like `fetchWindow`. */
+  fetchMicrosoftWindow?: typeof fetchMicrosoftCalendarWindow;
+  fetchAppleWindow?: typeof fetchAppleCalendarWindow;
 };
 
 const DEFAULT_DEPS: SyncDeps = {
   getAccessToken: getValidGoogleAccessToken,
   fetchPage: fetchGoogleCalendarPage,
+  fetchWindow: fetchGoogleCalendarWindow,
+  fetchMicrosoftWindow: fetchMicrosoftCalendarWindow,
+  fetchAppleWindow: fetchAppleCalendarWindow,
   getMicrosoftAccessToken: getValidOutlookAccessToken,
   fetchMicrosoftPage: fetchMicrosoftCalendarPage,
   fetchApplePage: fetchAppleCalendarPage,
@@ -381,6 +399,19 @@ async function syncGoogleCalendar(
   }
 
   const accessToken = await deps.getAccessToken(conn.userId);
+
+  // The near-calendar mirror first: one windowed read, independent of the sync token below.
+  // Best-effort — a failure here costs chat a stale window, never the interactions sync.
+  if (deps.fetchWindow) {
+    try {
+      const { from, to } = eventsWindow(now);
+      const read = await deps.fetchWindow({ accessToken, from, to, maxPages: 4 });
+      await refreshCalendarWindow(conn.userId, source.id, { events: storedEventsOf(read.items), complete: read.complete }, now);
+    } catch (err) {
+      reportError(err, { where: "job.sync.gcal-window", userId: conn.userId, level: "warning" });
+    }
+  }
+
   const ctx = await openIngestContext(conn.userId, {
     source: "google_calendar",
     // A meeting is evidence the user knows this person, so calendar sync populates the
@@ -476,7 +507,8 @@ async function syncGoogleContacts(
     // calendar phase makes, and the opposite of the one-shot file import, which is a review
     // screen precisely because a file is somebody else's list.
     createsContacts: true,
-    // Same tag the one-shot Google import gives, so synced people reach the default sky.
+    // Same source tag the one-shot Google import gives. It does NOT put anyone on the sky:
+    // `constellationEligibility` ignores import source tags (`IMPORT_SOURCE_TAGS`).
     tagNames: ["google-contacts"],
   });
 
@@ -596,6 +628,23 @@ async function syncMicrosoftCalendar(
   if (!source) return { exhausted: false };
 
   const accessToken = await (deps.getMicrosoftAccessToken ?? getValidOutlookAccessToken)(conn.userId);
+
+  // The near-calendar mirror, best-effort — the same block as Google's.
+  if (deps.fetchMicrosoftWindow) {
+    try {
+      const { from, to } = eventsWindow(now);
+      const read = await deps.fetchMicrosoftWindow({ accessToken, from, to, maxPages: 4 });
+      await refreshCalendarWindow(
+        conn.userId,
+        source.id,
+        { events: storedMicrosoftEventsOf(read.items, conn.emailAddress), complete: read.complete },
+        now
+      );
+    } catch (err) {
+      reportError(err, { where: "job.sync.outlook-window", userId: conn.userId, level: "warning" });
+    }
+  }
+
   const ctx = await openIngestContext(conn.userId, {
     source: "microsoft_calendar",
     // Same business decision as the Google path — see its comment above.
@@ -856,6 +905,23 @@ async function syncAppleCalendar(
       exhausted = true;
       stats.budgetExhausted = true;
       break;
+    }
+
+    // The near-calendar mirror for this calendar, best-effort — the same block as Google's.
+    if (deps.fetchAppleWindow) {
+      try {
+        const { from, to } = eventsWindow(now);
+        const events = await deps.fetchAppleWindow({
+          creds,
+          calendarUrl: source.calendarId,
+          ownerEmail: conn.emailAddress,
+          from,
+          to,
+        });
+        await refreshCalendarWindow(conn.userId, source.id, { events, complete: true }, now);
+      } catch (err) {
+        reportError(err, { where: "job.sync.apple-window", userId: conn.userId, level: "warning" });
+      }
     }
 
     let cursor = source.syncCursor ?? null;
@@ -1373,6 +1439,10 @@ export async function runSyncPass(
   } else {
     stats.budgetExhausted = true;
   }
+
+  // One statement, outside the budget: meetings from a calendar that stopped refreshing a day
+  // ago must not keep driving nudges and prep reminders.
+  await pruneStaleCalendarEvents(now).catch(reportAndContinue({ where: "job.sync.calendar-events-prune" }, 0));
 
   return stats;
 }

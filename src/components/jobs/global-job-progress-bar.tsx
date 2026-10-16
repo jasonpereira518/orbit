@@ -9,6 +9,8 @@ import { useEtaCountdown } from "@/lib/use-eta-countdown";
 import { toast } from "@/lib/toast";
 import { MeetingNudgeCard, useMeetingNudgeCard } from "@/components/capture/meeting-nudge";
 import { MeetingWidget } from "@/components/capture/meeting-widget";
+import { MeetingPrepCard, useMeetingPrepCard } from "@/components/calendar/meeting-prep-card";
+import { MeetingNoteCard, useMeetingNoteCard } from "@/components/calendar/meeting-note-card";
 import { useMeetingFlow } from "@/components/capture/meeting-session";
 import {
   dismissBackgroundJob,
@@ -37,6 +39,12 @@ export function GlobalJobProgressBar() {
   // The offer to record a meeting that is about to start — see `MeetingNudgeCard`.
   const nudge = useMeetingNudgeCard();
   const showNudge = nudge !== null;
+  // Fifteen minutes out, before the nudge's five: what to know about who is on it.
+  const prep = useMeetingPrepCard();
+  const showPrep = prep !== null;
+  // After a meeting nobody recorded or wrote up: "How did it go?".
+  const note = useMeetingNoteCard();
+  const showNote = note !== null;
 
   // Publish how much of the corner this widget occupies so the toast stack can
   // sit above it instead of painting over it. On <html>, because the toaster is
@@ -64,9 +72,9 @@ export function GlobalJobProgressBar() {
       observer.disconnect();
       root.style.setProperty("--orbit-job-stack-height", "0px");
     };
-  }, [jobs.length, showMeeting, showNudge]);
+  }, [jobs.length, showMeeting, showNudge, showPrep, showNote]);
 
-  if (jobs.length === 0 && !showMeeting && !showNudge) return null;
+  if (jobs.length === 0 && !showMeeting && !showNudge && !showPrep && !showNote) return null;
 
   return (
     <div
@@ -75,6 +83,8 @@ export function GlobalJobProgressBar() {
       role="status"
       aria-live="polite"
     >
+      {note && <MeetingNoteCard offer={note} />}
+      {prep && <MeetingPrepCard offer={prep} />}
       {nudge && <MeetingNudgeCard snap={nudge} />}
       {showMeeting && <MeetingWidget />}
       {jobs.map((job) => (

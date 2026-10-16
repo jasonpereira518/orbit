@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, CalendarDays, Clock, Users } from "lucide-react";
@@ -5,8 +6,11 @@ import { RenderStamp } from "@/components/layout/render-stamp";
 import { formatMeetingDuration } from "@/lib/format-meeting-duration";
 import { requireUserId } from "@/lib/auth";
 import { formatElapsed } from "@/lib/format-elapsed";
-import { speakerLabel } from "@/lib/meeting-digest";
+import { speakerLabel, speakerNames } from "@/lib/meeting-digest";
 import { getMeetingTranscript } from "@/lib/meeting-sessions";
+import { MeetingRecapButton } from "@/components/meetings/meeting-recap-button";
+import { isSurfaceLive } from "@/lib/surface-visibility";
+import { COMPOSE_SURFACE_KEY } from "@/lib/surfaces";
 
 const SEARCH_MAX = 100;
 
@@ -51,11 +55,17 @@ export default async function MeetingDetailPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ q?: string }>;
 }) {
+  const gate = await pageVisibilityGate("page.meetings");
+  if (gate) return gate;
+
   const { id } = await params;
   const q = ((await searchParams).q ?? "").trim().slice(0, SEARCH_MAX);
   const userId = await requireUserId();
 
-  const meeting = await getMeetingTranscript(userId, id);
+  const [meeting, composeLive] = await Promise.all([
+    getMeetingTranscript(userId, id),
+    isSurfaceLive(userId, COMPOSE_SURFACE_KEY).catch(() => false),
+  ]);
   // The same two states the list shows. A meeting still being recorded is Capture's.
   if (!meeting || (meeting.session.status !== "analyzed" && meeting.session.status !== "saved")) notFound();
 
@@ -63,6 +73,8 @@ export default async function MeetingDetailPage({
   const digest = session.digest;
   const title = session.title?.trim() || digest?.title?.trim() || "Untitled meeting";
   const guests = (session.attendees ?? []).map((a) => a.name);
+  // The same 1:1 rule the summary used: one guest and one other voice is that guest.
+  const voices = speakerNames(segments, guests);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -106,6 +118,8 @@ export default async function MeetingDetailPage({
         )}
       </div>
 
+      {digest && <MeetingRecapButton sessionId={session.id} composeLive={composeLive} />}
+
       {digest ? (
         <div className="space-y-5 rounded-2xl border border-border/70 bg-card p-6">
           <p className="text-sm leading-relaxed text-foreground">{digest.summary}</p>
@@ -117,6 +131,22 @@ export default async function MeetingDetailPage({
           />
           <Section title="Blockers" items={digest.blockers.map((b) => b.text)} />
           <Section title="Open questions" items={digest.openQuestions.map((o) => o.text)} />
+          {digest.agenda && digest.agenda.length > 0 && (
+            <section className="space-y-1.5">
+              <h2 className="text-sm font-medium text-ink">
+                Agenda <span className="font-normal text-muted-foreground">· from the invite</span>
+              </h2>
+              <ul className="space-y-1 text-sm">
+                {digest.agenda.map((a, i) => (
+                  <li key={i} className={a.covered ? "text-foreground" : "text-muted-foreground"}>
+                    <span aria-hidden className="mr-1.5">{a.covered ? "✓" : "○"}</span>
+                    {a.item}
+                    {!a.covered && <span className="sr-only"> (not covered)</span>}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
         </div>
       ) : null}
 
@@ -135,7 +165,7 @@ export default async function MeetingDetailPage({
             {segments
               .filter((s) => s.text.trim())
               .map((s) => {
-                const who = speakerLabel(s.speaker);
+                const who = (s.speaker && voices.get(s.speaker)) || speakerLabel(s.speaker);
                 return (
                   <p key={s.seq} className="leading-relaxed">
                     <span className="mr-2 font-mono text-xs tabular-nums text-muted-foreground">

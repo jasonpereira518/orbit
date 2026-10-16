@@ -1,13 +1,14 @@
 /**
  * Constellation cluster assignment.
- * Priority: Company → School → Deep Space.
- * Clusters are only company names and schools — nothing else.
+ * Priority: Company → School → Industry → Deep Space.
+ * Clusters are company names, schools, and — for people no company or school groups —
+ * a shared industry ("Global Health", "Pharma & Biotech"), so they need not drift to Deep Space.
  * Exact company aliases (AWS ↔ Amazon Web Services) share one cluster.
  */
 
 import { canonicalCompanyClusterName } from "@/lib/company-family";
 
-export type ClusterKind = "company" | "school" | "other";
+export type ClusterKind = "company" | "school" | "industry" | "other";
 
 export type ClusterRef = {
   /** Stable map key */
@@ -21,6 +22,7 @@ export type ClusterContact = {
   id: string;
   company?: string | null;
   school?: string | null;
+  industry?: string | null;
 };
 
 const DEEP_SPACE = "Deep Space";
@@ -83,6 +85,11 @@ export function buildConstellationClusters(
 ): { clusters: BuiltCluster[]; byContactId: Map<string, ClusterRef> } {
   const companyCounts = new Map<string, number>();
   const schoolCounts = new Map<string, number>();
+  // Industry is free text ("Public Health", "public health"), so it groups case-insensitively
+  // and is labelled by the first spelling seen.
+  const industryCounts = new Map<string, number>();
+  const industryLabel = new Map<string, string>();
+  const industryKey = (raw: string | null | undefined) => trimLabel(raw).toLowerCase().replace(/\s+/g, " ");
 
   for (const c of contacts) {
     const company = companyClusterLabel(c.company);
@@ -91,6 +98,11 @@ export function buildConstellationClusters(
     }
     const school = trimLabel(c.school);
     if (school) schoolCounts.set(school, (schoolCounts.get(school) || 0) + 1);
+    const industry = industryKey(c.industry);
+    if (industry) {
+      industryCounts.set(industry, (industryCounts.get(industry) || 0) + 1);
+      if (!industryLabel.has(industry)) industryLabel.set(industry, trimLabel(c.industry));
+    }
   }
 
   const byContactId = new Map<string, ClusterRef>();
@@ -109,6 +121,9 @@ export function buildConstellationClusters(
       };
     } else if (school && (schoolCounts.get(school) || 0) >= 2) {
       ref = { id: normalizeKey("school", school), name: school, kind: "school" };
+    } else if ((industryCounts.get(industryKey(c.industry)) || 0) >= 2) {
+      const name = industryLabel.get(industryKey(c.industry))!;
+      ref = { id: normalizeKey("industry", name), name, kind: "industry" };
     } else {
       ref = assignCluster(c);
     }
@@ -136,7 +151,8 @@ export function buildConstellationClusters(
   const kindRank: Record<ClusterKind, number> = {
     company: 0,
     school: 1,
-    other: 2,
+    industry: 2,
+    other: 3,
   };
 
   const clusters = [...map.values()].sort((a, b) => {
@@ -173,8 +189,8 @@ const MIN_CLUSTER_MEMBERS = 2;
 export function toNamedGraphClusters(clusters: BuiltCluster[]) {
   return clusters
     .filter(
-      (c): c is BuiltCluster & { kind: "company" | "school" } =>
-        (c.kind === "company" || c.kind === "school") &&
+      (c): c is BuiltCluster & { kind: "company" | "school" | "industry" } =>
+        c.kind !== "other" &&
         c.count >= MIN_CLUSTER_MEMBERS
     )
     .map((c) => ({

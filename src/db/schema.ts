@@ -9,6 +9,7 @@ import {
   uuid,
   index,
   uniqueIndex,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
 import type {
@@ -183,6 +184,8 @@ export const userSettings = pgTable("user_settings", {
    * single conditional UPDATE so two tabs cannot both play it. See `src/lib/credits-intro.ts`.
    */
   creditsIntroShownAt: timestamp("credits_intro_shown_at", { withTimezone: true }),
+  /** Cloud notes: extract new meeting notes found in Drive/OneDrive without asking (still reviewed on /capture). 0/1. */
+  cloudNotesAutoExtract: integer("cloud_notes_auto_extract").default(0).notNull(),
   theme: text("theme").$type<"light" | "dark" | "system">(),
   ycModeEnabled: boolean("yc_mode_enabled").default(false),
   /**
@@ -668,6 +671,12 @@ export const contacts = pgTable(
      * skips a contact whose last attempt is inside AVATAR_RECHECK_DAYS.
      */
     profileImageCheckedAt: timestamp("profile_image_checked_at"),
+    /**
+     * Where `profileImageUrl` came from: google | outlook | gravatar | apollo | public |
+     * extension | upload. Null = unknown (rows from before this column). Precedence when a
+     * shared LinkedIn photo exists: upload > shared > this contact's own photo.
+     */
+    profileImageSource: text("profile_image_source"),
     /**
      * When this contact's work history is next due a web-search re-check. NULL = never
      * checked, which the sweep treats as due now. Also the sweep's lease: a claim pushes it
@@ -1183,6 +1192,12 @@ export const reminders = pgTable(
     confidenceScore: integer("confidence_score"),
     /** `buildSuggestionItemHash(sourceHash, dueIso, title)`; soft-unique per user (NULLs allowed) so a re-paste cannot recreate a reminder. */
     itemHash: text("item_hash"),
+    /**
+     * The calendar event this reminder is about (a prep or post-meeting reminder): the
+     * provider's per-instance id. Not a `calendar_events` FK — that table keeps only a
+     * two-week window, and a reminder outlives it.
+     */
+    calendarEventKey: text("calendar_event_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -1556,6 +1571,10 @@ export const meetingSessions = pgTable(
     digest: jsonb("digest").$type<MeetingDigest>(),
     digestError: text("digest_error"),
     noteBatchId: uuid("note_batch_id"),
+    /** The calendar event this was recorded from, when started from one (provider instance id). */
+    calendarEventKey: text("calendar_event_key"),
+    /** That event's recurring series, so the next occurrence can open with "last time". */
+    calendarSeriesId: text("calendar_series_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -1624,6 +1643,8 @@ export type MeetingDigest = {
   participants: { name: string; present: boolean; context: string | null }[];
   datedQuotes: string[];
   notes: string;
+  /** The calendar invite's agenda, item by item, and whether the call got to it. Absent before v156. */
+  agenda?: { item: string; covered: boolean }[];
 };
 
 /** The structured profile brief. 1:1 with contacts; kept off `contacts` because that table is scanned whole on hot paths. */
@@ -1926,6 +1947,16 @@ export type ImportStats = {
    * insert stopped being a plain `DO NOTHING`.
    */
   interactionsLogged?: number;
+  /**
+   * A LinkedIn export (`import_type = 'linkedin_export'`): files kept in `import_files`, files
+   * too big to keep, files that stayed on the device because they are private, and what the
+   * parsed extras added outside `interactions` (target companies, background entries).
+   */
+  filesSaved?: number;
+  filesTooLarge?: number;
+  filesPrivate?: number;
+  targetsAdded?: number;
+  backgroundAdded?: number;
   /**
    * Rows the engine isolated as unwritable and marked `import_job_rows.status = 'failed'`
    * (see `writeWithNarrowing`/`onBadRow` in `import-engine.ts`). Distinct from both
@@ -2368,6 +2399,41 @@ export const importJobRows = pgTable(
   ]
 );
 
+/**
+ * The raw files of a LinkedIn export, kept so Orbit can read them again when it learns a
+ * new one. Hung off the export's own `imports` row (`import_type = 'linkedin_export'`), so
+ * deleting that row, or the account, takes them with it.
+ *
+ * Only the latest export's files are kept: saving a new export drops the old one's. Files
+ * LinkedIn includes that Orbit has no business holding (receipts, ID verification, the
+ * sign-up IP) never leave the browser — see `linkedInExportRole`.
+ *
+ * `gz` is the file gzipped in the browser, base64 — text rather than bytea so the Neon
+ * HTTP driver and PGlite hand back the same thing. A whole export is ~300 KB this way.
+ */
+export const importFiles = pgTable(
+  "import_files",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    importId: uuid("import_id")
+      .notNull()
+      .references(() => imports.id, { onDelete: "cascade" }),
+    /** Path inside the export, e.g. `Connections.csv` or `Jobs/Saved Jobs.csv`. */
+    path: text("path").notNull(),
+    /** Uncompressed size. */
+    byteSize: integer("byte_size").notNull(),
+    /** `parsed`: Orbit reads it. `stored`: kept, not read (yet). */
+    role: text("role").$type<"parsed" | "stored">().notNull(),
+    gz: text("gz").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("import_files_user_idx").on(t.userId),
+    uniqueIndex("import_files_import_path_uidx").on(t.importId, t.path),
+  ]
+);
+
 /** What an import did with a row: made a new person, or folded into an existing one. */
 export type ImportRowOutcome = "created" | "merged";
 
@@ -2396,6 +2462,8 @@ export type ImportRevertSnapshot = {
   firstName: string | null;
   lastName: string | null;
   profileImageUrl: string | null;
+  /** Absent on snapshots taken before schema 157. */
+  profileImageSource?: string | null;
   source: string | null;
   howMet: string | null;
   metContext: string | null;
@@ -3182,6 +3250,62 @@ export const recruiterScanState = pgTable(
   (t) => [index("recruiter_scan_state_user_idx").on(t.userId)]
 );
 
+/**
+ * Cloud notes: one row per drive Orbit is watching for meeting notes. The row existing IS the
+ * opt-in — created when the Drive/OneDrive read grant lands, deleted on disconnect. Keeps its
+ * own change cursor: `gmail_connections.sync_cursor` belongs to calendar sync.
+ */
+export const cloudNoteSources = pgTable(
+  "cloud_note_sources",
+  {
+    userId: text("user_id").notNull(),
+    provider: text("provider").$type<"google" | "microsoft">().notNull(),
+    /** Drive `changes` page token / Graph delta link. Null until the first pass. */
+    cursor: text("cursor"),
+    /** Set once the first pass has looked back 30 days; later finds are never `from_backfill`. */
+    backfilledAt: timestamp("backfilled_at", { withTimezone: true }),
+    nextScanAt: timestamp("next_scan_at", { withTimezone: true }).defaultNow().notNull(),
+    /** The claim that stops two overlapping cron runs scanning one drive. */
+    leaseUntil: timestamp("lease_until", { withTimezone: true }),
+    lastScanAt: timestamp("last_scan_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.provider] }), index("cloud_note_sources_due_idx").on(t.nextScanAt)]
+);
+
+/**
+ * Cloud notes: one row per doc found (or picked) in a drive. The dedupe, the notification
+ * panel row and the review dialog all read this. `dismissed` never comes back.
+ */
+export const cloudNoteFiles = pgTable(
+  "cloud_note_files",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    provider: text("provider").$type<"google" | "microsoft">().notNull(),
+    fileId: text("file_id").notNull(),
+    name: text("name").notNull(),
+    webUrl: text("web_url"),
+    modifiedAt: timestamp("modified_at", { withTimezone: true }),
+    status: text("status").$type<"found" | "queued" | "dismissed">().default("found").notNull(),
+    /** Why it looked like notes — shown as the hint in the dialog and picker. */
+    reason: text("reason"),
+    detectedBy: text("detected_by").$type<"rules" | "decision" | "picked">().default("rules").notNull(),
+    /** Found by the first look-back, not as a new doc: auto-extract never runs on these. */
+    fromBackfill: integer("from_backfill").default(0).notNull(),
+    captureJobId: uuid("capture_job_id"),
+    /** Stamped once the toast has fired, so it fires once across devices. */
+    notifiedAt: timestamp("notified_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("cloud_note_files_user_file_uidx").on(t.userId, t.provider, t.fileId),
+    index("cloud_note_files_user_status_idx").on(t.userId, t.status),
+  ]
+);
+
 export const gmailConnections = pgTable(
   "gmail_connections",
   {
@@ -3324,6 +3448,48 @@ export const calendarSources = pgTable(
   (t) => [
     index("calendar_sources_user_idx").on(t.userId),
     uniqueIndex("calendar_sources_conn_cal_uidx").on(t.connectionId, t.calendarId),
+  ]
+);
+
+/** `response` is the guest's own RSVP (accepted / tentative / declined / needsAction); absent on older rows. */
+export type CalendarEventAttendee = { name: string; email: string; contactId: string | null; response?: string | null };
+
+/**
+ * A mirror of the near calendar — two days back to two weeks ahead — rewritten on every sync
+ * pass (`src/lib/calendar-events.ts`). Not history: `interactions` is that. This is what
+ * "what's on tomorrow" and "prep me for my 3pm" read without a Google round-trip.
+ */
+export const calendarEvents = pgTable(
+  "calendar_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    sourceId: uuid("source_id")
+      .notNull()
+      .references(() => calendarSources.id, { onDelete: "cascade" }),
+    /** The provider's per-INSTANCE id. A recurring series shares one iCalUID across instances. */
+    providerEventId: text("provider_event_id").notNull(),
+    icalUid: text("ical_uid"),
+    seriesId: text("series_id"),
+    title: text("title").notNull().default(""),
+    startAt: timestamp("start_at", { withTimezone: true }).notNull(),
+    endAt: timestamp("end_at", { withTimezone: true }),
+    allDay: boolean("all_day").notNull().default(false),
+    location: text("location"),
+    /** The invite's description as plain text, capped — the agenda the summarizer checks against. */
+    agenda: text("agenda"),
+    conferenceUrl: text("conference_url"),
+    conferenceKind: text("conference_kind"),
+    attendees: jsonb("attendees").$type<CalendarEventAttendee[]>().notNull().default([]),
+    attendeeCount: integer("attendee_count").notNull().default(0),
+    guestsHidden: boolean("guests_hidden").notNull().default(false),
+    selfResponse: text("self_response"),
+    organizerEmail: text("organizer_email"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("calendar_events_source_event_uidx").on(t.sourceId, t.providerEventId),
+    index("calendar_events_user_start_idx").on(t.userId, t.startAt),
   ]
 );
 
@@ -4687,7 +4853,7 @@ export const gateEvents = pgTable(
      * The cheapest plan that would have let them through (`unlockPlanFor`). Null on rows
      * written before pricing v2.
      */
-    unlockPlan: text("unlock_plan").$type<"orbit" | "max">(),
+    unlockPlan: text("unlock_plan").$type<"free" | "orbit" | "max">(),
     /** Route or action that hit the wall, for locating it in the product. */
     context: jsonb("context").$type<Record<string, unknown>>().default({}).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -4869,6 +5035,27 @@ export const orgBrandColors = pgTable(
     resolvedAt: timestamp("resolved_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [uniqueIndex("org_brand_colors_key_uidx").on(t.nameKey, t.kind)]
+);
+
+/**
+ * Cross-user LinkedIn photo cache, keyed by the profile slug (`contacts.linkedin_slug`, so
+ * reads JOIN on it). Global: no user_id. `imageUrl` null = looked and found nothing. Public
+ * lookups (Unavatar, Microlink) only; never an extension capture (those stay with the
+ * account) nor a mailbox or enrichment provider's photo.
+ * A row is deleted once no contact in any account carries the slug; `blockedAt` rows stay
+ * (admin takedown) so the slug is never fetched again.
+ */
+export const linkedinAvatars = pgTable(
+  "linkedin_avatars",
+  {
+    slug: text("slug").primaryKey(),
+    imageUrl: text("image_url"),
+    source: text("source").$type<"unavatar" | "microlink">().notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }).defaultNow().notNull(),
+    blockedAt: timestamp("blocked_at", { withTimezone: true }),
+    blockedBy: text("blocked_by"),
+  },
+  (t) => [index("linkedin_avatars_resolved_at_idx").on(t.resolvedAt)]
 );
 
 export const siteSettings = pgTable("site_settings", {
@@ -5437,7 +5624,7 @@ export const eventAttendees = pgTable(
     attendeeRole: text("attendee_role").$type<"attendee" | "host" | "speaker">(),
     /** Which acquisition path produced this row. Rendered as a badge, so it must be honest. */
     source: text("source")
-      .$type<"paste" | "csv" | "screenshot" | "page" | "calendar" | "luma" | "eventbrite">()
+      .$type<"paste" | "csv" | "screenshot" | "page" | "calendar" | "extension" | "luma" | "eventbrite">()
       .default("paste")
       .notNull(),
     /** The provider's own guest id, where there is one. */

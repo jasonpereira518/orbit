@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gt, lte, or, sql } from "drizzle-orm";
 import { getDb, rowsOf, runAtomicBatch } from "@/db";
 import { creditGrants, creditHolds } from "@/db/schema";
 import { FREE_STARTER_CREDITS, PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
@@ -216,6 +216,41 @@ export async function ensureAllowance(
     .onConflictDoNothing({ target: creditGrants.grantKey });
 }
 
+/**
+ * Whether `ensureAllowance` would leave the ledger exactly as it is, judged from grant rows
+ * already read. Mirrors its early returns line for line — when this says false, the caller
+ * runs `ensureAllowance` itself, so the write logic lives in one place.
+ */
+function allowanceIsCurrent(
+  rows: Array<typeof creditGrants.$inferSelect>,
+  starterKey: string,
+  plan: Plan,
+  period: CreditPeriod,
+  now: Date
+): boolean {
+  const credits = PLAN_CONFIG[plan].monthlyCredits;
+  if (!credits) return true;
+  if (plan === "free" && !rows.some((g) => g.grantKey === starterKey)) return false;
+  const current = rows
+    .filter(
+      (g) =>
+        g.kind === "allowance" &&
+        g.status === "active" &&
+        g.periodStart !== null &&
+        g.periodEnd !== null &&
+        g.periodStart <= now &&
+        g.periodEnd > now
+    )
+    .sort((x, y) => y.createdAt.getTime() - x.createdAt.getTime())[0];
+  if (!current) return false;
+  const samePeriod =
+    current.periodStart?.getTime() === period.start.getTime() && current.periodEnd?.getTime() === period.end.getTime();
+  const raise = current.microsGranted < creditsToMicros(credits);
+  if (samePeriod && !raise) return true;
+  const adopt = !samePeriod && period.start <= now && period.end > now;
+  return !adopt && !raise;
+}
+
 /** SQL: spendable micros for `userId` now, before holds. */
 function spendableSql(userId: string, packs: boolean) {
   return sql`(SELECT coalesce(sum(g.micros_remaining), 0) FROM credit_grants g
@@ -272,7 +307,7 @@ export async function placeHold(input: {
 
 /**
  * Deduct a managed call's real cost, allowance first, then starter, then adjustments, then packs
- * oldest-first, and release the oldest open hold for its operation. Never takes a grant
+ * oldest-first, and release the oldest open (unexpired) hold for its operation. Never takes a grant
  * below zero. Packs are always eligible here: a call only ran because its plan allowed it.
  */
 export async function settleCredits(input: { userId: string; operation: string; micros: number }): Promise<void> {
@@ -299,7 +334,7 @@ export async function settleCredits(input: { userId: string; operation: string; 
        WHERE g.id = u.id AND u.running - u.micros_remaining < ${amount}`),
     tx.execute(sql`DELETE FROM credit_holds WHERE id = (
         SELECT id FROM credit_holds
-         WHERE user_id = ${input.userId} AND operation = ${input.operation}
+         WHERE user_id = ${input.userId} AND operation = ${input.operation} AND expires_at > now()
          ORDER BY created_at, id LIMIT 1
       )`),
   ]);
@@ -350,20 +385,44 @@ export async function getCreditBalance(
   opts: { ensure?: boolean } = {}
 ): Promise<CreditBalance> {
   const period = creditPeriodFor(row, now);
-  // Read-only callers (the notification poll) pass `ensure: false`: a missing allowance just
-  // reads as none yet, and the next AI call or visit to the card creates it.
-  if (opts.ensure !== false && PLAN_CONFIG[plan].features.hostedAi) await ensureAllowance(userId, plan, period, now);
   const db = await getDb();
-  const [grants, holds] = await Promise.all([
-    db
-      .select()
-      .from(creditGrants)
-      .where(and(eq(creditGrants.userId, userId), eq(creditGrants.status, "active"))),
-    db
-      .select({ micros: sql<string>`coalesce(sum(${creditHolds.micros}), 0)` })
-      .from(creditHolds)
-      .where(and(eq(creditHolds.userId, userId), gt(creditHolds.expiresAt, now))),
-  ]);
+  const starterKey = `starter:${userId}`;
+  // One round: active grants, every pack (revoked ones still count for the nudge), and the
+  // starter key under any owner (`ensureStarterGrant`'s conflict target) — so whether
+  // `ensureAllowance` has anything to do is answered from rows this read already has.
+  const read = () =>
+    Promise.all([
+      db
+        .select()
+        .from(creditGrants)
+        .where(
+          or(
+            and(
+              eq(creditGrants.userId, userId),
+              or(eq(creditGrants.status, "active"), eq(creditGrants.kind, "pack"))
+            ),
+            eq(creditGrants.grantKey, starterKey)
+          )
+        ),
+      db
+        .select({ micros: sql<string>`coalesce(sum(${creditHolds.micros}), 0)` })
+        .from(creditHolds)
+        .where(and(eq(creditHolds.userId, userId), gt(creditHolds.expiresAt, now))),
+    ]);
+  let [rows, holds] = await read();
+  // Read-only callers (the notification poll) pass `ensure: false`: a missing allowance just
+  // reads as none yet, and the next AI call or visit to the card creates it. Everyone else
+  // writes only when the rows say a write is due (a new cycle, a raise, a missing starter),
+  // then reads again — instead of an INSERT and a SELECT in front of every balance.
+  if (
+    opts.ensure !== false &&
+    PLAN_CONFIG[plan].features.hostedAi &&
+    !allowanceIsCurrent(rows, starterKey, plan, period, now)
+  ) {
+    await ensureAllowance(userId, plan, period, now);
+    [rows, holds] = await read();
+  }
+  const grants = rows.filter((g) => g.userId === userId && g.status === "active");
   const inPeriod = (g: (typeof grants)[number]) =>
     g.periodStart !== null && g.periodEnd !== null && g.periodStart <= now && g.periodEnd > now;
   // The newest covering grant: the one `ensureAllowance` adopts, should an overlap ever exist.
@@ -379,11 +438,8 @@ export async function getCreditBalance(
   const held = Number(holds[0]?.micros ?? 0);
   const allowanceRemaining = allowanceGrant?.microsRemaining ?? 0;
   const cycleStart = allowanceGrant?.periodStart ?? period.start;
-  // Revoked packs still count as bought for the nudge, so read them separately.
-  const [{ n } = { n: 0 }] = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(creditGrants)
-    .where(and(eq(creditGrants.userId, userId), eq(creditGrants.kind, "pack"), gt(creditGrants.createdAt, cycleStart)));
+  // Revoked packs still count as bought for the nudge: `rows` carries every pack, any status.
+  const n = rows.filter((g) => g.userId === userId && g.kind === "pack" && g.createdAt > cycleStart).length;
   return {
     allowance: allowanceGrant
       ? {

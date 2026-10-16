@@ -5,8 +5,11 @@ import { getDb } from "@/db";
 import { chatWithNetworkStream, completeJsonOn } from "@/lib/ai";
 import { resolveAiAccess, type AiAccess } from "@/lib/ai-access";
 import { requireAuthenticatedUser, type AuthenticatedUser } from "@/lib/auth";
-import { prepareChatContext } from "@/lib/chat-context";
-import { maybeGather } from "@/lib/chat-gather";
+import { buildChatBlocks, prepareChatContext } from "@/lib/chat-context";
+import { expandLists, peopleIdsIn, stripInvalidDirectives } from "@/lib/chat-directives";
+import { answerDeadlineMs, maybeGather } from "@/lib/chat-gather";
+import { isHandle } from "@/lib/meeting-context";
+import { CHAT_QUESTION_TOO_LONG_MESSAGE, isChatQuestionTooLong } from "@/lib/chat-question";
 import { discardEmptyThread, discardUnansweredQuestion, persistAssistantTurn } from "@/lib/chat-persist";
 import { createStepEmitter, deriveFollowUps, plural } from "@/lib/chat-steps";
 import { generateChatTitle, settleWithin, TITLE_GRACE_MS } from "@/lib/chat-title";
@@ -18,7 +21,7 @@ import { traced } from "@/lib/perf-trace";
 import { isPaywallError } from "@/lib/entitlements";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { TOAST_COPY } from "@/lib/toast-copy";
-import { reportedFailure } from "@/lib/report-error";
+import { reportedFailure, reportError } from "@/lib/report-error";
 import { createStreamRedactor } from "@/lib/ai-security";
 import { requireVisibleSurface } from "@/lib/surface-visibility";
 
@@ -94,6 +97,14 @@ export async function POST(request: Request) {
     typeof versionOfRaw?.assistantMessageId === "string" ? versionOfRaw.assistantMessageId : null;
   const confirmDiscard = versionOfRaw?.confirmDiscard === true;
 
+  // What the person typed, checked before the version work below: that can already discard
+  // later turns, and a refused edit must not cost them anything.
+  const typed = versionAssistantId ? versionOfRaw?.question : body?.question;
+  const typedQuestion = typeof typed === "string" ? typed.trim() : "";
+  if (isChatQuestionTooLong(typedQuestion)) {
+    return NextResponse.json({ error: CHAT_QUESTION_TOO_LONG_MESSAGE }, { status: 400 });
+  }
+
   let question: string;
   let versionTarget: Awaited<ReturnType<typeof resolveVersionTarget>> | null = null;
   if (versionAssistantId) {
@@ -120,11 +131,9 @@ export async function POST(request: Request) {
       }
       return NextResponse.json({ error: friendlyError(err, "That answer couldn’t be found") }, { status: 404 });
     }
-    question =
-      (typeof versionOfRaw?.question === "string" ? versionOfRaw.question.trim() : "") ||
-      versionTarget.priorUserRow.content;
+    question = typedQuestion || versionTarget.priorUserRow.content;
   } else {
-    question = typeof body?.question === "string" ? body.question.trim() : "";
+    question = typedQuestion;
   }
   if (!question) return NextResponse.json({ error: "Question is required" }, { status: 400 });
 
@@ -195,12 +204,18 @@ export async function POST(request: Request) {
 
         // One retrieval answers most questions; the ones whose shape says it cannot — what
         // was discussed and when, a path to someone, a follow-up that refers back — get a
-        // bounded research loop first. See `chooseDepth` and `gatherEvidence`.
-        const { evidence, notePassages } = await maybeGather(userId, ctx, {
+        // bounded research loop first. See `routeFromParsed` and `gatherEvidence`.
+        const { evidence, notePassages, named } = await maybeGather(userId, ctx, {
           requestStartedAt,
           signal: request.signal,
           steps,
         });
+
+        // What the answer's `::people` / `::list` blocks may show, before its first word, so
+        // a block renders the moment its line arrives. Built after research, which can add
+        // people the answer may name.
+        const blocks = buildChatBlocks(ctx);
+        send({ type: "blocks", blocks });
 
         steps.start("answer", "Writing the answer");
         // Secrets and fence markers are scrubbed from the LIVE stream, not only from what is
@@ -226,12 +241,24 @@ export async function POST(request: Request) {
               ctx.attachedContext,
               {
                 signal: request.signal,
+                // A slow answer is cut here, inside `maxDuration`, so it ends as an `error` event
+                // rather than the platform killing the function mid-stream. Separate from
+                // `request.signal`, which the catch below reads to mean the person pressed Stop.
+                deadlineSignal: AbortSignal.timeout(answerDeadlineMs(requestStartedAt)),
                 goals: ctx.goals,
                 attentionLite: ctx.attentionLite,
                 evidence,
                 notePassages,
                 writingPreferences: ctx.writingInstructions,
+                calendar: ctx.calendar?.text ?? null,
+                openReminders: ctx.openReminders,
+                userSchools: ctx.userSchools,
                 access: ctx.access,
+                // Every id the prompt minted, so `[eN]` becomes a chip as it streams. The cited
+                // subset replaces this once the answer is done.
+                onEvidence: (all) => {
+                  if (Object.keys(all).length) send({ type: "evidence", items: all });
+                },
               }
             ),
           { userId }
@@ -245,18 +272,44 @@ export async function POST(request: Request) {
         // actually shown (`result.evidence`'s keys), not just the ones it used, so a marker
         // for an id outside that set can only be an invented citation.
         const validIds = new Set(Object.keys(result.evidence));
-        const { text: cleanAnswer, strippedCount } = stripUnresolvedMarkers(result.answer, validIds);
+        const { text: unblocked, strippedCount } = stripUnresolvedMarkers(result.answer, validIds);
+        // The same for blocks: an id the server never offered, or a roster that was not
+        // there, is dropped before anything is stored.
+        const { text: cleanAnswer, removed: strayBlockIds } = stripInvalidDirectives(unblocked, {
+          people: new Set(Object.keys(blocks.people)),
+          lists: new Set(Object.keys(blocks.lists)),
+        });
         const cited = citedIds(cleanAnswer);
         const citedEvidence = Object.fromEntries(cited.map((id) => [id, result.evidence[id]]));
         if (strippedCount > 0) {
           steps.done("verify", { label: `Removed ${plural(strippedCount, "unsupported citation")}` });
         }
+        if (strayBlockIds > 0) {
+          steps.done("verify", { label: `Removed ${plural(strayBlockIds, "person or list", "people or lists")} not in your network` });
+        }
 
         const rawRecommendations = result.recommendations as ChatRecommendation[];
-        const recommendations = ctx.filterRecommendations(rawRecommendations);
+        const listed = ctx.filterRecommendations(rawRecommendations);
+        // The people the answer placed as cards ARE its recommendations — stored as such, so a
+        // reload re-renders them and the chat Gmail send (which only mails a recommended
+        // contact) still works. Their line comes from the server, never the model; a draft is
+        // written on demand from the card. Model-listed ones (recruiters) follow.
+        const placed = peopleIdsIn(cleanAnswer);
+        const placedSet = new Set(placed);
+        const recommendations: ChatRecommendation[] = [
+          ...placed.map((id) => ({
+            contact_id: id,
+            recruiter_id: null,
+            name: blocks.people[id]!.name,
+            reason: blocks.people[id]!.subtitle ?? "",
+            suggested_action: "",
+            draft_message: null,
+          })),
+          ...listed.filter((r) => !r.contact_id || !placedSet.has(r.contact_id)),
+        ];
         // Only worth a step when it actually caught something — a filter that passed
         // everything through did no work the user needs to hear about.
-        const dropped = (rawRecommendations?.length ?? 0) - recommendations.length;
+        const dropped = (rawRecommendations?.length ?? 0) - listed.length;
         if (dropped > 0) {
           steps.done("verify", {
             label: `Dropped ${plural(dropped, "suggestion")} not in your network`,
@@ -268,7 +321,21 @@ export async function POST(request: Request) {
         // Never a chat tool call, never executed here — only stored, for a person to confirm
         // from the transcript. See `@/lib/chat-proposed-actions` and the rule at the top of
         // `src/lib/mcp/server.ts`, which this mirrors on the chat surface's own output.
-        const proposedActions = validateProposedActions(result.proposedActions, ctx.allowedContacts, ctx.contactNames);
+        // A JSON tail that did not parse used to mean zero cards and zero actions with no trace
+        // anywhere. The answer still stands; this only makes the loss visible.
+        if (result.parseError) {
+          reportError(new Error(`chat answer JSON did not parse: ${result.parseError}`), {
+            where: "chat.stream.recommendations",
+            userId,
+            level: "warning",
+          });
+        }
+        const proposedActions = validateProposedActions(
+          result.proposedActions,
+          ctx.allowedContacts,
+          ctx.contactNames,
+          ctx.reminderTitles
+        );
         if (proposedActions.length > 0) send({ type: "actions", items: proposedActions });
 
         // A beat for a title that is nearly there, never longer: if it is not ready the thread
@@ -278,7 +345,9 @@ export async function POST(request: Request) {
         // CLEANED text, not what streamed live — an invented citation was already visible
         // for that turn, but a reload should never show a dead `[e99]` nobody can resolve.
         const saved = await persistAssistantTurn(userId, threadId, ctx.thread?.title ?? null, ctx.q, {
-          answer: cleanAnswer,
+          // Lists are stored as the table they rendered as, so a reload needs no block data;
+          // people blocks stay as directives and re-render from `recommendations`.
+          answer: expandLists(cleanAnswer, blocks.lists),
           recommendations,
           activity: steps.snapshot(),
           title,
@@ -301,7 +370,11 @@ export async function POST(request: Request) {
             question: ctx.q,
             topRosterCompany: ctx.orgRosters[0]?.name ?? null,
             firstOverdueName: ctx.attention?.overdue[0]?.name ?? null,
-            topContactName: ctx.retrieved[0]?.fullName ?? null,
+            // Prep: the meeting's person, not the search's top hit. Never a handle ("calvintwong25").
+            topContactName:
+              (ctx.route?.prep
+                ? named.find((n) => !isHandle(n.name))?.name
+                : [ctx.retrieved[0]?.preferredName || ctx.retrieved[0]?.fullName].find((n) => n && !isHandle(n))) ?? null,
           }),
           retrieved: ctx.retrieved.map((c) => ({
             id: c.id,

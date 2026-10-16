@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { lt, sql } from "drizzle-orm";
 import { TIMELINE_DAILY_CONTACT_CAP } from "@/lib/timeline-cost";
 import { getDb } from "@/db";
 import { rateLimitBuckets } from "@/db/schema";
@@ -21,12 +21,15 @@ import { rateLimitBuckets } from "@/db/schema";
 const BUCKET_LABELS: Record<string, string> = {
   chat: "chat",
   emailSend: "email send",
+  emailAttachmentUpload: "attachment upload",
   capture: "capture",
   captureHandoff: "scan",
   captureParts: "capture",
   meetingChunk: "meeting transcription",
   meetingCandidates: "calendar lookup",
+  calendarWindow: "calendar refresh",
   avatarResolve: "photo lookup",
+  avatarFill: "photo fill",
   feedback: "feedback",
   radarRefresh: "Radar refresh",
   knowledgeRefresh: "refresh",
@@ -45,17 +48,21 @@ const BUCKET_LABELS: Record<string, string> = {
   eventWhy: "attendee lookup",
   lifetimeConfirm: "checkout check",
   speechToken: "speech transcription",
+  export: "export",
+  interestWelcome: "welcome email",
   // Scope strings some call sites pass verbatim (dotted / kebab). Keyed by the literal scope
   // rather than renaming the scope, which would reset those buckets' counters.
   contactForm: "contact form",
   "interest.join": "sign-up",
   "interest.name": "sign-up",
+  "interest.welcome": "welcome email",
   "interest.progress": "progress check",
   "avatar.resolve": "photo lookup",
   "lifetime-confirm": "checkout check",
   "poll.vote": "vote",
   "poll.results": "results check",
   "work-history": "work-history lookup",
+  "web-research": "research lookup",
   "work-history-background": "background work-history check",
 };
 
@@ -93,9 +100,14 @@ export const RATE_LIMITS = {
    * follow-ups, approved assistant drafts, recruiter replies. Outbound and sent from the user's
    * real address, so tighter than anything else here and measured over ten minutes: the shape
    * to bound is a loop or a hijacked session mailing people in bulk, not a person sending a
-   * few follow-ups. The daily cap is separate and per plan (`EMAIL_SEND_DAILY_CAP`).
+   * few follow-ups. The daily cap is separate and per plan (`EMAIL_RECIPIENT_DAILY_CAP`).
    */
   emailSend: { limit: 10, windowSec: 600 },
+  /**
+   * Upload tokens for email attachments. Each is good for one 20 MB file in Orbit's store,
+   * so an unmetered route was free file hosting; ten messages' worth of attachments per window.
+   */
+  emailAttachmentUpload: { limit: 60, windowSec: 600 },
   /** Capture parsing, media ingestion and confirmation: each is a model call. */
   capture: { limit: 30, windowSec: 60 },
   /**
@@ -130,6 +142,11 @@ export const RATE_LIMITS = {
    */
   meetingCandidates: { limit: 30, windowSec: 600 },
   /**
+   * The app pulse re-reading the user's calendar window (`refreshUserCalendarWindows`): one
+   * read per user per ten minutes however many tabs are open. Hitting it means "fresh enough".
+   */
+  calendarWindow: { limit: 1, windowSec: 600 },
+  /**
    * On-demand photo resolution in `/api/avatars/[contactId]`.
    *
    * Sized for the contacts list, where every photoless row visible resolves itself —
@@ -145,6 +162,11 @@ export const RATE_LIMITS = {
    * and the per-Lambda cooldowns cannot see each other.
    */
   avatarSourceShared: { limit: 25, windowSec: 86_400 },
+  /**
+   * The hourly shared-photo fill's own daily cap, so a Microlink key (which skips the shared
+   * allowance above) cannot turn it into hundreds of paid calls a day.
+   */
+  avatarFill: { limit: 60, windowSec: 86_400 },
   /** One user's daily slice of each source, so one large network cannot drain it for all. */
   avatarSourceUser: { limit: 5, windowSec: 86_400 },
   /** People searches per user per day on Orbit's HOSTED Apollo key. Own keys are uncapped. */
@@ -157,6 +179,12 @@ export const RATE_LIMITS = {
    * out — so a day has a ceiling that no ordinary use of LinkedIn pulls comes near.
    */
   workHistoryResearch: { limit: 60, windowSec: 86_400 },
+  /**
+   * Web research on people outside the network (`src/lib/web-research.ts`), per user per
+   * day. Cache hits are free; each miss is up to two billed searches on the account's key,
+   * and on Orbit's managed key those fees are not in any credit count — this is the cap.
+   */
+  webResearch: { limit: 30, windowSec: 86_400 },
   /**
    * The hourly sweep's own daily allowance per account (lib/work-history-sweep.ts), keyed
    * per UTC day. Separate from `workHistoryResearch` so background re-checks can never use
@@ -285,6 +313,20 @@ export const RATE_LIMITS = {
   lifetimeConfirm: { limit: 6, windowSec: 60 },
   /** One token per connection attempt; a stuck reconnect loop must not mint endlessly. */
   speechToken: { limit: 30, windowSec: 300 },
+  /**
+   * `/api/export`: a streamed read of every table the account owns, up to a 300s function.
+   * A person takes a copy now and then; a script or a retry loop re-running it is the shape
+   * to stop, since each run pages through the whole network.
+   */
+  export: { limit: 5, windowSec: 3600 },
+  /**
+   * The waitlist's welcome email, across EVERY sender (keyed "global"). `interestJoin` is per
+   * IP, so a flood of fresh addresses from many IPs still mails each one — from Orbit's
+   * domain, at Resend's cost, to inboxes that never asked. 200 an hour is far above a real
+   * launch-day hour and well inside the sending plan; past it the row and ticket still land
+   * and only the mail is skipped, since the welcome is best-effort by design.
+   */
+  interestWelcome: { limit: 200, windowSec: 3600 },
 } as const satisfies Record<string, BucketPolicy>;
 
 /**
@@ -326,4 +368,24 @@ export async function consumeBucket(
     throw new RateLimitedError(scope, Math.max(1, policy.windowSec - elapsed));
   }
   return { remaining: Math.max(0, policy.limit - count) };
+}
+
+/**
+ * A bucket idle this long is dead weight: `consumeBucket` resets an expired window on the
+ * next hit anyway, so deleting one loses nothing. Twice the longest window in `RATE_LIMITS`
+ * (a day), which `smoke-housekeeping-sweeps` asserts.
+ */
+export const RATE_LIMIT_BUCKET_RETENTION_MS = 2 * 24 * 60 * 60 * 1000;
+
+/**
+ * Drops long-expired buckets; nothing else ever does, so the table grows by one row per
+ * (scope, key) forever. Called by the process-stalled sweep.
+ * ponytail: seq scan on an unindexed column, fine while the table is small — index
+ * `window_started_at` if it ever reaches the hundreds of thousands.
+ */
+export async function pruneRateLimitBuckets(now: Date = new Date()): Promise<void> {
+  const db = await getDb();
+  await db
+    .delete(rateLimitBuckets)
+    .where(lt(rateLimitBuckets.windowStartedAt, new Date(now.getTime() - RATE_LIMIT_BUCKET_RETENTION_MS)));
 }

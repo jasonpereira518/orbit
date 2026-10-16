@@ -11,6 +11,7 @@
  */
 
 import { useState } from "react";
+import { useNow } from "@/lib/use-now";
 import Link from "next/link";
 import { Loader2, Mic, MicOff, Pause, Play, StickyNote } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -80,6 +81,7 @@ export function MeetingWidget() {
             <MeetingSaveStatus pending={s.pendingCount} failed={s.failedCount} onRetry={s.retryFailedParts} />
           </>
         )}
+        {phase === "live" && <EventEnded endIso={s.calendarEndIso} quiet={recorder.callQuiet} />}
         {s.fatal && <p className="truncate text-xs text-destructive">{s.fatal}</p>}
       </div>
 
@@ -138,5 +140,24 @@ export function MeetingWidget() {
       </div>
       {canNote && noting && <SideNotes compact autoFocus value={s.sideNotes} onChange={s.setSideNotes} />}
     </div>
+  );
+}
+
+/**
+ * "The meeting ended 3 min ago" while the recording runs on. A hint, not a stop: finishing
+ * summarizes, which starts from /capture (the Open link beside it). Only for an hour past the
+ * end — past that, the event is not what this recording is about.
+ */
+function EventEnded({ endIso, quiet }: { endIso: string | null; quiet: boolean }) {
+  const now = useNow(30_000, Boolean(endIso));
+  const end = endIso ? Date.parse(endIso) : NaN;
+  const late = now === null ? NaN : now - end;
+  if (!(late > 60_000 && late < 3_600_000)) return null;
+  return (
+    <p className="truncate text-xs text-amber-600 dark:text-warning">
+      {quiet
+        ? "The call sounds over — open to finish"
+        : `The meeting ended ${Math.round(late / 60_000)} min ago — finish when you’re done`}
+    </p>
   );
 }

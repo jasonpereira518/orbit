@@ -17,7 +17,7 @@ import { userSettings } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
 import { foundingAppliesToNewSubscription } from "@/lib/founding";
-import { isCheckoutConfigured } from "@/lib/stripe-config";
+import { CREDIT_PACK_PRICE_LABEL, isCheckoutConfigured } from "@/lib/stripe-config";
 
 export const metadata: Metadata = {
   title: "Upgrade — Orbit",
@@ -43,7 +43,7 @@ const TRUST = [
   {
     icon: Sparkles,
     title: "AI included, never auto-charged",
-    body: "Run out of credits and AI pauses until you choose a $5 pack or your allowance resets. Nothing is charged automatically.",
+    body: `Run out of credits and AI pauses until you choose a ${CREDIT_PACK_PRICE_LABEL} pack or your allowance resets. Nothing is charged automatically.`,
   },
 ];
 

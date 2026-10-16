@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { reportClientError } from "@/lib/sentry-lazy";
 // Renders its own <html>, outside every route group, so it brings its own sheet.
 import "./site.css";
 
@@ -16,8 +17,8 @@ export default function GlobalError({
   unstable_retry: () => void;
 }) {
   useEffect(() => {
-    // Imported here, not at the top: see `ErrorFallback` — the server render must not load the SDK.
-    void import("@sentry/nextjs").then((Sentry) => Sentry.captureException(error));
+    // Through the lazy loader: the server render must not load the SDK (see `sentry-lazy.ts`).
+    reportClientError(error);
   }, [error]);
 
   return (

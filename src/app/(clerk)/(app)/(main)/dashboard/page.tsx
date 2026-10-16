@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { getOutreachPerformanceSummary } from "@/actions/outreach";
 import { fetchDashboard } from "@/actions/reminders";
 import { AgentDraftsCard } from "@/components/dashboard/agent-drafts-card";
+import { TodayMeetingsSection } from "@/components/dashboard/today-meetings";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import {
   ChartsSection,
@@ -65,6 +66,11 @@ export default async function DashboardPage() {
     <div className="space-y-8">
       <RenderStamp />
       <DashboardHeader />
+
+      {/* Today's meetings, when the calendar has any — nothing at all otherwise. */}
+      <Suspense fallback={null}>
+        <TodayMeetingsSection now={new Date()} />
+      </Suspense>
 
       {/* Renders the LinkedIn export card or the arrival nudge, or nothing once a LinkedIn import exists. */}
       <Suspense fallback={null}>

@@ -21,6 +21,7 @@
  */
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import type { ProviderAttendee, ProviderEvent, ProviderPage } from "@/lib/events/types";
+import { canonicalLinkedInUrl, extractLinkedInProfileRefs } from "@/lib/linkedin-paste";
 
 const BASE = "https://public-api.luma.com/v1";
 const TIMEOUT_MS = 10_000;
@@ -145,6 +146,47 @@ export function toProviderEvent(entry: LumaEntry): ProviderEvent | null {
   };
 }
 
+/** A LinkedIn answer as guests type it: a full URL, `/in/slug`, or the bare slug. */
+function linkedinFrom(value: string | null): string | null {
+  const v = value?.trim();
+  if (!v) return null;
+  const ref = extractLinkedInProfileRefs(v.startsWith("/in/") ? `linkedin.com${v}` : v)[0];
+  if (ref) return ref.url;
+  return /^[a-z0-9-]{3,100}$/i.test(v) ? canonicalLinkedInUrl(v.toLowerCase()) : null;
+}
+
+/** An X/Twitter answer — `@ana`, `ana`, or a profile URL — as the bare handle. */
+function xHandleFrom(value: string | null): string | null {
+  const v = value?.trim().replace(/^https?:\/\/(?:www\.)?(?:x|twitter)\.com\//i, "").replace(/^@/, "").split(/[/?#]/)[0];
+  return v && /^[A-Za-z0-9_]{1,15}$/.test(v) ? v : null;
+}
+
+/**
+ * What the guest told the host at registration, by question TYPE — never by label, which is
+ * whatever the host wrote ("Where do you work?"). Luma types the useful ones: `company`
+ * carries company and job title, `linkedin` and `twitter` carry what the guest typed.
+ */
+function fromAnswers(raw: unknown): Pick<ProviderAttendee, "company" | "title" | "linkedinUrl" | "xHandle"> {
+  const out = { company: null, title: null, linkedinUrl: null, xHandle: null } as Pick<
+    ProviderAttendee,
+    "company" | "title" | "linkedinUrl" | "xHandle"
+  >;
+  if (!Array.isArray(raw)) return out;
+  for (const answer of raw as Array<Record<string, unknown>>) {
+    const type = str(answer?.question_type);
+    if (type === "company" && answer.value && typeof answer.value === "object") {
+      const value = answer.value as Record<string, unknown>;
+      out.company ??= str(value.company);
+      out.title ??= str(value.job_title);
+    } else if (type === "linkedin") {
+      out.linkedinUrl ??= linkedinFrom(str(answer.value));
+    } else if (type === "twitter") {
+      out.xHandle ??= xHandleFrom(str(answer.value));
+    }
+  }
+  return out;
+}
+
 export function toProviderAttendee(entry: Record<string, unknown>): ProviderAttendee | null {
   const guest = (entry.guest ?? entry) as Record<string, unknown>;
   const name = str(guest.name) ?? str(guest.user_name);
@@ -157,13 +199,11 @@ export function toProviderAttendee(entry: Record<string, unknown>): ProviderAtte
   if (status === "declined") return null;
 
   return {
-    externalRef: str(guest.api_id),
+    // `api_id` on the older guest shape, `id` on the current one.
+    externalRef: str(guest.api_id) ?? str(guest.id),
     fullName: name,
     email,
-    company: null,
-    title: null,
-    linkedinUrl: null,
-    xHandle: null,
+    ...fromAnswers(guest.registration_answers),
     phone: str(guest.phone_number) ?? str(guest.phone),
     attendeeRole: str(guest.role) === "host" ? "host" : "attendee",
   };

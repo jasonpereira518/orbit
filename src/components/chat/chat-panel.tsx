@@ -71,6 +71,7 @@ import {
 import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
 import { DictationButton } from "@/components/chat/dictation-button";
 import { ComposerSendButton } from "@/components/chat/composer-send-button";
+import { CHAT_QUESTION_MAX_CHARS } from "@/lib/chat-question";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { ChatActivity } from "@/components/chat/chat-activity";
 import { OrbitMark } from "@/components/chat/orbit-mark";
@@ -107,6 +108,7 @@ import { cn } from "@/lib/utils";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import type { ChatRecommendation } from "@/db/schema";
 import { streamChat, type DoneInfo } from "@/lib/chat-stream-client";
+import { directivesAsText, peopleIdsIn, type ChatBlocks } from "@/lib/chat-directives";
 import {
   createStreamSmoother,
   prefersReducedMotionNow,
@@ -116,6 +118,7 @@ import { activeMentions } from "@/lib/chat-mentions";
 import { addMentionPick } from "@/lib/mentions/mention-picks";
 import { ANCHOR_INTERFERENCE, shiftAnchor, spliceSpan } from "@/lib/dictation";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { draftContactFollowUp } from "@/actions/contacts";
 import { useDictation } from "@/lib/use-dictation";
 
 type ChatResult = Extract<
@@ -207,6 +210,13 @@ type AssistantMessage = {
   persisted?: boolean;
   /** The user cut this answer short. */
   stopped?: boolean;
+  /** The stream failed partway, with this message; what arrived before it stays on screen. */
+  failed?: string;
+  /**
+   * What this answer's `::people` / `::list` blocks show, from the stream. Absent on a
+   * reloaded answer, whose lists are stored expanded and whose people are `recommendations`.
+   */
+  blocks?: ChatBlocks;
   /**
    * Drafts on this answer that have already been emailed, by contact id → send time. Read
    * from the timeline when a thread loads, so a card cannot offer to send again what has gone.
@@ -244,6 +254,19 @@ function formatThreadLabel(thread: ThreadSummary) {
 function initialQuestionFromUrl() {
   if (typeof window === "undefined") return "";
   return new URLSearchParams(window.location.search).get("q")?.trim() ?? "";
+}
+
+/**
+ * `/chat?contact=<id>&name=…` — the contact page's "Ask": that person attached, their token
+ * waiting in the box. Same `addMentionPick` as the composer's `+`, so the token and the pick
+ * cannot disagree. Prefilled, never sent, like `?q=`.
+ */
+function initialAttachFromUrl(): { picks: ContextPerson[]; token: string } | null {
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  const id = params.get("contact")?.trim() ?? "";
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+  return addMentionPick([], id, [params.get("name")?.trim()]);
 }
 
 type LoadedThread = Awaited<ReturnType<typeof getChatThread>>;
@@ -293,7 +316,8 @@ export function ChatPanel({
   const [versionSlot, setVersionSlot] = useState<string | null>(null);
   /** Which user bubble is mid-edit, if any. Only the LAST one is ever editable. */
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
-  const [question, setQuestion] = useState(initialQuestionFromUrl);
+  const [urlAttach] = useState(initialAttachFromUrl);
+  const [question, setQuestion] = useState(() => (urlAttach ? `${urlAttach.token} ` : initialQuestionFromUrl()));
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
   /** The list on screen, readable from async work (a thread revalidation checks it is untouched). */
   const messagesRef = useRef(messages);
@@ -335,7 +359,7 @@ export function ChatPanel({
    * nothing watching for it, and a stale entry here is inert because it appears in neither.
    * `clearComposer` sweeps them.
    */
-  const [attached, setAttached] = useState<ContextPerson[]>([]);
+  const [attached, setAttached] = useState<ContextPerson[]>(() => urlAttach?.picks ?? []);
   const [pending, start] = useTransition();
   // Streaming is deliberately NOT a transition: updates inside `startTransition` are
   // deferred, which would hold every streamed token back until the whole answer landed.
@@ -605,12 +629,13 @@ export function ChatPanel({
     }
   }, [olderCursor, loadingOlder]);
 
-  // The other half of `initialQuestionFromUrl`: take `q` back out of the address bar, so a
+  // The other half of `initialQuestionFromUrl` and `initialAttachFromUrl`: take `q`, `contact`
+  // and `name` back out of the address bar, so a
   // reload or a shared link does not re-seed a question that was already dealt with.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (!params.has("q")) return;
-    params.delete("q");
+    if (!["q", "contact", "name"].some((key) => params.has(key))) return;
+    for (const key of ["q", "contact", "name"]) params.delete(key);
     const rest = params.toString();
     window.history.replaceState(null, "", `${window.location.pathname}${rest ? `?${rest}` : ""}`);
     textareaRef.current?.focus();
@@ -1002,6 +1027,10 @@ export function ChatPanel({
               ensurePlaceholder();
               patch((m) => ({ ...m, proposedActions: items }));
             },
+            onBlocks: (blocks) => {
+              ensurePlaceholder();
+              patch((m) => ({ ...m, blocks }));
+            },
             onStep: (step) => {
               // The first step arrives before any prose, which is the point: it replaces the
               // old blank wait. Steps are keyed by id, so a stage finishing updates its own
@@ -1041,10 +1070,18 @@ export function ChatPanel({
               // A stop is the user's own doing, not a failure: keep whatever arrived and
               // say plainly that it was cut short rather than deleting it and apologising.
               if (controller.signal.aborted) return;
-              // The bubble is about to be removed; there is nothing to reveal into.
-              smoother.cancel();
-              toast.error(message);
-              setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
+              if (placed) {
+                // Work already reached the screen — the trail, maybe half an answer. Keep it,
+                // say what went wrong beneath it, and put the question back to try again,
+                // rather than wiping everything the person just watched happen.
+                smoother.flush();
+                patch((m) => ({ ...m, streaming: false, failed: message }));
+              } else {
+                // Nothing arrived; there is nothing to keep or reveal into.
+                smoother.cancel();
+                toast.error(message);
+                setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
+              }
               resetQuestion(q);
             },
           },
@@ -1579,6 +1616,7 @@ export function ChatPanel({
                       <AssistantBubble
                         key={msg.id}
                         msg={msg}
+                        question={messages[i - 1]?.role === "user" ? (messages[i - 1] as UserMessage).content : undefined}
                         onRetry={isLastAssistant ? bubbleHandlers.regenerate : bubbleHandlers.askAgain}
                         retryLabel={isLastAssistant ? "Regenerate" : "Ask again"}
                         onFollowUp={bubbleHandlers.followUp}
@@ -1689,6 +1727,7 @@ export function ChatPanel({
                   onSelectionCollapsedChange={setSelectionCollapsed}
                   onCompositionChange={setComposing}
                   rows={1}
+                  maxLength={CHAT_QUESTION_MAX_CHARS}
                   placeholder="Ask about your network…"
                   data-dictating={dictation.listening || undefined}
                   textareaClassName={cn(
@@ -1917,6 +1956,7 @@ const UserBubble = memo(function UserBubble({
               }
             }}
             rows={2}
+            maxLength={CHAT_QUESTION_MAX_CHARS}
             aria-label="Edit your question"
             className="min-h-16 resize-none border-none bg-transparent p-1 text-sm shadow-none focus-visible:ring-0"
           />
@@ -1966,6 +2006,7 @@ const UserBubble = memo(function UserBubble({
 
 const AssistantBubble = memo(function AssistantBubble({
   msg,
+  question,
   onRetry,
   retryLabel,
   onFollowUp,
@@ -1974,6 +2015,8 @@ const AssistantBubble = memo(function AssistantBubble({
   onSwitchVersion,
 }: {
   msg: AssistantMessage;
+  /** The question this answers — what an on-demand draft is written for. */
+  question?: string;
   /** Called with this bubble's message id — the handlers are stable and shared by every bubble. */
   onRetry?: (id: string) => void;
   retryLabel?: string;
@@ -2029,6 +2072,46 @@ const AssistantBubble = memo(function AssistantBubble({
     return map;
   }, [msg.retrieved]);
 
+  // People the answer placed inline (`::people`) render there, as cards; the grid below keeps
+  // only the rest — recruiters, and every recommendation of an answer written before blocks.
+  const inlineIds = useMemo(() => new Set(peopleIdsIn(msg.answer)), [msg.answer]);
+  const recById = useMemo(
+    () => new Map(msg.recommendations.filter((r) => r.contact_id).map((r) => [r.contact_id!, r])),
+    [msg.recommendations]
+  );
+  const renderCard = (r: ChatRecommendation) => (
+    <RecommendationCard
+      key={`${msg.id}-${r.recruiter_id || r.contact_id}`}
+      rec={r}
+      question={question}
+      subtitle={r.contact_id ? subtitleById.get(r.contact_id) : undefined}
+      photoUrl={r.contact_id ? photoById.get(r.contact_id) : undefined}
+      // Only a saved answer can send: the server checks the message recommended this
+      // person, and a streamed-but-unsaved one has no row to check against.
+      messageId={msg.persisted ? msg.id : undefined}
+      sentAt={r.contact_id ? msg.sentTo?.[r.contact_id] : undefined}
+    />
+  );
+  const renderPeople = (ids: string[]) => {
+    // While streaming the cards come from the blocks the server sent; once saved, from the
+    // stored recommendations — the same people, the latter after the server's checks.
+    const recs = ids.flatMap((id): ChatRecommendation[] => {
+      const saved = recById.get(id);
+      if (saved) return [saved];
+      const person = msg.blocks?.people[id];
+      return person
+        ? [{ contact_id: id, recruiter_id: null, name: person.name, reason: person.subtitle ?? "", suggested_action: "", draft_message: null }]
+        : [];
+    });
+    return recs.length ? <div className="grid gap-2 sm:grid-cols-2">{recs.map(renderCard)}</div> : null;
+  };
+  const gridRecs = msg.recommendations.filter((r) => !r.contact_id || !inlineIds.has(r.contact_id));
+  const copyText = useMemo(
+    () =>
+      directivesAsText(msg.answer, (id) => recById.get(id)?.name ?? msg.blocks?.people[id]?.name, msg.blocks?.lists),
+    [msg.answer, recById, msg.blocks]
+  );
+
   return (
     // No bubble on the assistant side: the answer is the page's content, not a chat turn
     // from a stranger. The user's own words keep a bubble, so the two are still easy to
@@ -2036,13 +2119,22 @@ const AssistantBubble = memo(function AssistantBubble({
     <div className="flex justify-start">
       <div className="w-full min-w-0 max-w-[92%] space-y-3">
         {steps.length > 0 && (
-          <ChatActivity steps={steps} state={msg.streaming ? "live" : "final"} />
+          <ChatActivity steps={steps} state={msg.streaming ? "live" : "final"} answerStarted={Boolean(msg.answer)} />
         )}
         {msg.answer && (
           <div className="text-sm leading-relaxed text-foreground">
             {/* Only once persisted: `msg.id` is a client-minted placeholder until `done`
                 swaps in the real row id, and a chip needs the real id to fetch its snippet. */}
-            <ChatMarkdown people={people} messageId={msg.persisted ? msg.id : undefined} evidence={msg.evidence}>
+            <ChatMarkdown
+              people={people}
+              messageId={msg.persisted ? msg.id : undefined}
+              evidence={msg.evidence}
+              blocks={msg.blocks}
+              // A stopped or failed answer was cut off mid-stream too: the same hold-back keeps
+              // a half-written directive or citation at its end off the screen.
+              streaming={Boolean(msg.streaming || msg.stopped || msg.failed)}
+              renderPeople={renderPeople}
+            >
               {msg.answer}
             </ChatMarkdown>
           </div>
@@ -2052,22 +2144,12 @@ const AssistantBubble = memo(function AssistantBubble({
             Stopped — this turn wasn’t saved.
           </p>
         )}
-        {msg.recommendations.length > 0 && (
-          <div className="grid gap-2 sm:grid-cols-2">
-            {msg.recommendations.map((r) => (
-              <RecommendationCard
-                key={`${msg.id}-${r.recruiter_id || r.contact_id}`}
-                rec={r}
-                subtitle={r.contact_id ? subtitleById.get(r.contact_id) : undefined}
-                photoUrl={r.contact_id ? photoById.get(r.contact_id) : undefined}
-                // Only a saved answer can send: the server checks the message recommended this
-                // person, and a streamed-but-unsaved one has no row to check against.
-                messageId={msg.persisted ? msg.id : undefined}
-                sentAt={r.contact_id ? msg.sentTo?.[r.contact_id] : undefined}
-              />
-            ))}
-          </div>
+        {msg.failed && (
+          <p role="alert" className="text-xs text-destructive">
+            {msg.failed.replace(/[.!?]?$/, ".")} This turn wasn’t saved — your question is back in the box to try again.
+          </p>
         )}
+        {gridRecs.length > 0 && <div className="grid gap-2 sm:grid-cols-2">{gridRecs.map(renderCard)}</div>}
         {/* Only once persisted: committing needs a real row to address. */}
         {msg.persisted && (msg.proposedActions?.length ?? 0) > 0 && (
           <div className="flex flex-col gap-2">
@@ -2086,7 +2168,7 @@ const AssistantBubble = memo(function AssistantBubble({
           <div className="flex flex-wrap items-center gap-2">
             <AnswerActions
               messageId={msg.id}
-              answer={msg.answer}
+              answer={copyText}
               persisted={Boolean(msg.persisted)}
               initialFeedback={msg.feedback ?? null}
               onRetry={onRetry && (() => onRetry(msg.id))}
@@ -2157,12 +2239,15 @@ function VersionSwitcher({
 
 const RecommendationCard = memo(function RecommendationCard({
   rec,
+  question,
   subtitle,
   photoUrl,
   messageId,
   sentAt,
 }: {
   rec: ChatResult["recommendations"][number];
+  /** The question the answer was for — what a draft written on demand is about. */
+  question?: string;
   /** Role and company from retrieval — absent on a reloaded thread, which is fine. */
   subtitle?: string | null;
   /** The contact's stored photo, when the activity steps learned it. */
@@ -2191,7 +2276,26 @@ const RecommendationCard = memo(function RecommendationCard({
       ? `/contacts/${rec.contact_id}`
       : "#";
   const canRemind = Boolean(rec.contact_id);
-  const line = rec.recruiter_id ? "Recruiter" : subtitle;
+  // A person the answer placed inline (`::people`) carries the server's role line as its
+  // reason and no next step: the answer's own sentence says why, so the card shows who.
+  const placed = !rec.recruiter_id && !rec.suggested_action;
+  const line = rec.recruiter_id ? "Recruiter" : subtitle || (placed ? rec.reason : undefined);
+  // Drafts are written when asked for, not with every answer — most would never be read.
+  const [draft, setDraft] = useState(rec.draft_message);
+  const [drafting, setDrafting] = useState(false);
+  async function writeDraft() {
+    if (!rec.contact_id || drafting) return;
+    setDrafting(true);
+    try {
+      const result = await draftContactFollowUp(rec.contact_id, { channel: "email", intent: question });
+      if (result.ok) setDraft(result.body);
+      else toast.error(result.error);
+    } catch (err) {
+      toast.error(friendlyError(err, TOAST_COPY.draftFollowUpFailed));
+    } finally {
+      setDrafting(false);
+    }
+  }
 
   return (
     <div className="flex h-full flex-col rounded-xl border border-border/70 bg-background p-3">
@@ -2233,14 +2337,27 @@ const RecommendationCard = memo(function RecommendationCard({
           {line && <p className="truncate text-xs text-muted-foreground">{line}</p>}
         </div>
       </div>
-      <p className="mt-2 text-xs leading-snug text-muted-foreground">{rec.reason}</p>
-      <p className="mt-1.5 text-xs leading-snug">
-        <span className="font-medium">Next: </span>
-        {rec.suggested_action}
-      </p>
-      {rec.draft_message && (
+      {!placed && rec.reason && <p className="mt-2 text-xs leading-snug text-muted-foreground">{rec.reason}</p>}
+      {rec.suggested_action && (
+        <p className="mt-1.5 text-xs leading-snug">
+          <span className="font-medium">Next: </span>
+          {rec.suggested_action}
+        </p>
+      )}
+      {!draft && !resume && rec.contact_id && (
+        <button
+          type="button"
+          onClick={writeDraft}
+          disabled={drafting}
+          className="mt-2.5 inline-flex w-fit items-center gap-1.5 rounded-full border border-border/70 px-2.5 py-1 text-[11px] font-medium text-foreground/80 transition-colors hover:bg-muted disabled:opacity-60"
+        >
+          {drafting ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Mail className="size-3.5" aria-hidden />}
+          {drafting ? "Drafting…" : "Draft message"}
+        </button>
+      )}
+      {(draft || resume) && (
         <DraftEditor
-          initial={resume?.body ?? rec.draft_message}
+          initial={resume?.body ?? draft ?? ""}
           name={rec.name}
           actions={
             messageId && rec.contact_id

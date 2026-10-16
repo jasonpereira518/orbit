@@ -3,6 +3,7 @@
  * `detect-import-file` and `contacts-file` (papaparse and the parsers) into its first load.
  * Both originals re-export these, so every other importer is unchanged.
  */
+import { IMPORT_TEXT_MAX_BYTES } from "@/lib/capture-limits";
 import type { ImportTarget } from "@/lib/imports/detect-import-file";
 
 /**
@@ -20,8 +21,12 @@ export const RUN_ORDER: readonly ImportTarget[] = [
   "linkedin_positions",
   "linkedin_skills",
   "linkedin_alerts",
+  "linkedin_education",
   "calendar_ics",
   "calendar_csv",
+  // Last: its extras (invitations, notes, recommendations) attach to people, so the people
+  // from Connections.csv must already be here.
+  "linkedin_export",
 ];
 
 /**
@@ -34,3 +39,12 @@ export const RUN_ORDER: readonly ImportTarget[] = [
  * has to stop someone feeding `file.text()` something absurd.
  */
 export const MAX_CONTACTS_FILE_BYTES = 50 * 1024 * 1024;
+
+/**
+ * The most bytes a dropped file of this kind may have before it is skipped. Contacts files
+ * shrink in the browser (photos stripped); every other kind is sent as it is, so it has to
+ * fit one request. A ZIP member is measured after unzipping.
+ */
+export function maxImportBytesFor(target: ImportTarget): number {
+  return target === "contacts_file" ? MAX_CONTACTS_FILE_BYTES : IMPORT_TEXT_MAX_BYTES;
+}

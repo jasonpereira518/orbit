@@ -392,6 +392,10 @@ export type ImportJobStatus = {
   failedRows: number;
   /** Drive imports: docs actually read (skipped and unchanged ones excluded). */
   docsRead: number;
+  /** LinkedIn export: files kept, and what its extras added (see `ImportStats.filesSaved`). */
+  filesSaved: number;
+  targetsAdded: number;
+  backgroundAdded: number;
 };
 
 /** One row's worth of trouble, named for the person rather than for the database. */
@@ -532,6 +536,11 @@ export async function getImportDetail(
         undoneAt: row.stats?.undoneAt,
         undoneRemoved: row.stats?.undoneRemoved,
         undoneKept: row.stats?.undoneKept,
+        filesSaved: row.stats?.filesSaved,
+        filesTooLarge: row.stats?.filesTooLarge,
+        filesPrivate: row.stats?.filesPrivate,
+        targetsAdded: row.stats?.targetsAdded,
+        backgroundAdded: row.stats?.backgroundAdded,
       },
     },
     counts,
@@ -736,6 +745,9 @@ export async function getImportJobStatus(
     remindersCreated: row.stats?.remindersCreated ?? 0,
     failedRows: row.stats?.failedRows ?? 0,
     docsRead: row.stats?.docsRead ?? 0,
+    filesSaved: row.stats?.filesSaved ?? 0,
+    targetsAdded: row.stats?.targetsAdded ?? 0,
+    backgroundAdded: row.stats?.backgroundAdded ?? 0,
   };
 }
 
@@ -1026,6 +1038,12 @@ export type ImportHistoryItem = {
     undoneAt?: string;
     undoneRemoved?: number;
     undoneKept?: number;
+    /** A LinkedIn export: see `ImportStats.filesSaved`. */
+    filesSaved?: number;
+    filesTooLarge?: number;
+    filesPrivate?: number;
+    targetsAdded?: number;
+    backgroundAdded?: number;
   };
 };
 
@@ -1055,8 +1073,9 @@ export async function listImports(
     // day): nothing has been imported yet, so it is not history.
     where: and(eq(imports.userId, userId), ne(imports.status, "staging")),
     orderBy: (i, { desc }) => [desc(i.createdAt)],
-    limit: options.limit ?? IMPORT_HISTORY_PAGE,
-    offset: options.offset,
+    // Arguments to a server action come from any client: bounded, so one call can't page the table.
+    limit: Math.min(Math.max(Math.trunc(Number(options.limit) || IMPORT_HISTORY_PAGE), 1), 200),
+    offset: Math.max(Math.trunc(Number(options.offset) || 0), 0),
     columns: {
       id: true,
       importType: true,
@@ -1091,6 +1110,11 @@ export async function listImports(
       undoneAt: r.stats?.undoneAt,
       undoneRemoved: r.stats?.undoneRemoved,
       undoneKept: r.stats?.undoneKept,
+      filesSaved: r.stats?.filesSaved,
+      filesTooLarge: r.stats?.filesTooLarge,
+      filesPrivate: r.stats?.filesPrivate,
+      targetsAdded: r.stats?.targetsAdded,
+      backgroundAdded: r.stats?.backgroundAdded,
     },
   }));
 }
@@ -1915,6 +1939,7 @@ export async function matchGooglePhotos(): Promise<GooglePhotoMatchResult> {
     await db.execute(sql`
       UPDATE contacts AS c
          SET profile_image_url = v.url,
+             profile_image_source = 'google',
              -- A photo found here clears any cooldown the backfill set, so it caches promptly.
              profile_image_checked_at = NULL,
              updated_at = ${updatedAt}::timestamptz

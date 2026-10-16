@@ -24,7 +24,8 @@ import { settle, unwrap } from "@/lib/settled";
  * Nothing here is generated — it is a group-by.
  */
 export type OrgRoster = {
-  kind: "company" | "school";
+  /** "filter": everyone matching the question's filters (`filterLane` in `@/lib/chat-lanes`). */
+  kind: "company" | "school" | "filter";
   /** The organisation as the user's own data spells it. */
   name: string;
   /** Everyone at the org, before the listing cap. */

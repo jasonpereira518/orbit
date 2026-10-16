@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import Link from "next/link";
 import { PenLine, Plus } from "lucide-react";
 import {
@@ -27,6 +28,9 @@ export default async function RecruitersPage({
 }: {
   searchParams: Promise<{ q?: string; tab?: string }>;
 }) {
+  const gate = await pageVisibilityGate("page.recruiters");
+  if (gate) return gate;
+
   const params = await searchParams;
   const { canUseRecruiters } = await getEntitlements(await requireUserId());
 

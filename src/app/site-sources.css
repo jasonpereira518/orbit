@@ -56,6 +56,7 @@
 @source "../components/interest/referral-tracker.tsx";
 @source "../components/interest/rings-backdrop.tsx";
 @source "../components/interest/share-row.tsx";
+@source "../components/interest/signup-open-copy.tsx";
 @source "../components/interest/sky-hint.tsx";
 @source "../components/interest/tier-art.tsx";
 @source "../components/interest/tier-celebration.tsx";
@@ -129,6 +130,7 @@
 @source "../lib/attribution-parse.ts";
 @source "../lib/auth.ts";
 @source "../lib/big-dipper-figure.ts";
+@source "../lib/bot-check.ts";
 @source "../lib/calendar-feed.ts";
 @source "../lib/capture/closeness.ts";
 @source "../lib/capture/person-enrichment.ts";
@@ -168,6 +170,8 @@
 @source "../lib/deepgram.ts";
 @source "../lib/demo-account.ts";
 @source "../lib/demo-data/ensure.ts";
+@source "../lib/demo-data/gillings-real.ts";
+@source "../lib/demo-data/gillings.ts";
 @source "../lib/demo-data/long-tail.ts";
 @source "../lib/demo-data/network-extra.ts";
 @source "../lib/demo-data/network.ts";
@@ -221,6 +225,10 @@
 @source "../lib/report-error.ts";
 @source "../lib/safe-links.ts";
 @source "../lib/search.ts";
+@source "../lib/secret-patterns.ts";
+@source "../lib/sentry-browser.ts";
+@source "../lib/sentry-lazy.ts";
+@source "../lib/sentry-scrub.ts";
 @source "../lib/settled.ts";
 @source "../lib/site-access.ts";
 @source "../lib/sky-figures.ts";

@@ -66,11 +66,37 @@ function main() {
   r = run([`Ada.\n${RECOMMENDATIONS_MARKER}\n{not json`]);
   check("bad JSON after the marker keeps the prose and reports a parse error", r.result.answer === "Ada." && r.result.recommendations.length === 0 && Boolean(r.result.parseError));
 
+  r = run([`Ada.\n${RECOMMENDATIONS_MARKER}\n{"proposed_actions":[{"kind":"create_reminder"}]}`]);
+  check(
+    "a tail with only proposed_actions (people now sit in the prose) parses without an error",
+    r.result.recommendations.length === 0 && r.result.proposedActions.length === 1 && !r.result.parseError,
+    JSON.stringify(r.result)
+  );
+  r = run([`Ada.\n${RECOMMENDATIONS_MARKER}\n{"recommendations":"nope"}`]);
+  check("a recommendations field of the wrong type is still an error", Boolean(r.result.parseError));
+
   r = run([`Ada.\n${RECOMMENDATIONS_MARKER}\n\`\`\`json\n${RECS}\n\`\`\``]);
   check("a fenced JSON block is tolerated", r.result.recommendations.length === 1);
 
   r = run([`Ada.\n${RECOMMENDATIONS_MARKER}\n{"recommendations": ${RECS}}`]);
   check("an object wrapping the array is tolerated", r.result.recommendations.length === 1);
+
+  // The model sometimes drops the marker's leading dashes; the tail must still never reach the prose.
+  const ACTION = `{"recommendations":[], "proposed_actions":[{"kind":"log_interaction","contact_id":"c1","text":"Say hi"}]}`;
+  r = run([`Ask about NVIDIA.\n\nRECOMMENDATIONS--- ${ACTION}`]);
+  check("a marker without leading dashes, JSON on the same line, is split", r.emitted.join("") === "Ask about NVIDIA.\n\n", JSON.stringify(r.emitted));
+  check("its proposed action is parsed", r.result.proposedActions.length === 1 && !r.result.parseError, JSON.stringify(r.result));
+  check("the finished answer carries no marker or JSON", r.result.answer === "Ask about NVIDIA.");
+
+  r = run(["Ask about NVIDIA.\nRECOMM", "ENDATIONS--", "-\n", ACTION.slice(0, 30), ACTION.slice(30)]);
+  check("a dash-less marker split across chunks never leaks", r.emitted.join("") === "Ask about NVIDIA.\n", JSON.stringify(r.emitted));
+  check("and the JSON after it has no stray dash", r.result.proposedActions.length === 1 && !r.result.parseError, JSON.stringify(r.result));
+
+  r = run(["Ask about NVIDIA.\n", RECOMMENDATIONS_MARKER]);
+  check("a stream that ends on the marker drops it from the prose", r.result.answer === "Ask about NVIDIA." && r.emitted.join("") === "Ask about NVIDIA.\n", JSON.stringify(r));
+
+  r = run(["My recommendations --- are simple: ask about RECOMMENDATIONS in lowercase terms."]);
+  check("lowercase 'recommendations' in prose is not a marker", r.result.answer.includes("recommendations --- are simple"), JSON.stringify(r.result.answer));
 
   console.log("\nSSE framing...");
   const events: ChatStreamEvent[] = [

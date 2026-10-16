@@ -43,9 +43,11 @@ export function noticeLevelFor(grantedMicros: number, remainingMicros: number): 
 const UNSUBSCRIBE_LABEL = "orbit:credit-email-unsubscribe:v1";
 
 function unsubscribeKey(): Buffer {
-  // ENCRYPTION_SECRET is required in production (src/lib/env.ts); the fallback is dev-only.
-  const secret = process.env.ENCRYPTION_SECRET || "orbit-dev-credit-email";
-  return createHmac("sha256", secret).update(UNSUBSCRIBE_LABEL).digest();
+  // ENCRYPTION_SECRET is required in production (src/lib/env.ts); the fallback is dev-only,
+  // and refused outright in production: a known key would let anyone sign a token.
+  const secret = process.env.ENCRYPTION_SECRET;
+  if (!secret && process.env.NODE_ENV === "production") throw new Error("ENCRYPTION_SECRET must be set in production");
+  return createHmac("sha256", secret || "orbit-dev-credit-email").update(UNSUBSCRIBE_LABEL).digest();
 }
 
 export function creditEmailUnsubscribeToken(userId: string): string {
@@ -106,11 +108,12 @@ export function buildCreditEmail(notice: CreditNotice, unsubscribeUrl: string): 
   const pack = `$${(CREDIT_PACK_PRICE_CENTS / 100).toFixed(0)} pack of ${CREDIT_PACK_CREDITS} credits`;
   const resets = day(notice.resetsAt);
   const options = [
-    `add a ${pack}`,
+    // Packs only where the plan can buy one; Lifetime is left with its own key.
+    ...(PLAN_CONFIG[notice.plan].features.creditPacks ? [`add a ${pack}`] : []),
     ...(notice.plan === "orbit" ? [`move to Orbit Max, which includes ${PLAN_CONFIG.max.monthlyCredits} credits a month`] : []),
     "switch to your own AI key, which never uses credits",
   ];
-  const choices = `${options.slice(0, -1).join(", ")}, or ${options.at(-1)}`;
+  const choices = options.length > 1 ? `${options.slice(0, -1).join(", ")}, or ${options.at(-1)}` : options[0];
 
   let subject: string;
   let lines: string[];

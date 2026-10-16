@@ -6,7 +6,8 @@
  * ============================================================================
  *
  * Its two rules bind every definition below: nothing here sends, fetches a URL or registers
- * a webhook, and nothing here approves a draft. `request_send` stages a row and returns
+ * a webhook, and nothing here approves a draft. (The web research tools ask the user's AI
+ * provider to search; Orbit itself fetches nothing for them, and they are chat-only.) `request_send` stages a row and returns
  * `pending_approval`; the send happens in `approveAgentSend`, which no tool, key or scope
  * reaches. If you are adding a tool, that comment is the thing to read first.
  *
@@ -19,6 +20,7 @@ import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { actionItems, contacts, interactions } from "@/db/schema";
 import { hybridSearchContacts } from "@/lib/hybrid-search";
+import { matchContactsByName } from "@/lib/chat-lanes";
 import { findOrgRosters } from "@/lib/chat-roster";
 import { loadDueFollowUps } from "@/lib/due-follow-ups";
 import { getClosenessCohortSlim } from "@/lib/closeness-cohort";
@@ -51,6 +53,12 @@ import { toolError, type OrbitTool } from "@/lib/tools/registry";
 import { searchMemories } from "@/lib/memory-search";
 import { getQueryEmbedding } from "@/lib/embedding-cache";
 import { searchMeetingPassagesFor } from "@/lib/meetings-list";
+import { listUpcomingEvents } from "@/lib/calendar-events";
+import { eventView, getMeetingContext, hhmmInZone, userTimeZone, type MeetingSelector } from "@/lib/meeting-context";
+import { addDaysYmd, ymdInZone } from "@/lib/reminder-due-bucket";
+import { freeSlots } from "@/lib/calendar-free";
+import { requireReleasedSurface } from "@/lib/surface-visibility";
+import { discoverPeople, researchCompany, researchPerson } from "@/lib/web-research";
 
 const BOTH = ["mcp", "chat"] as const;
 const MCP_ONLY = ["mcp"] as const;
@@ -68,6 +76,15 @@ function dayBound(day: string | undefined, end: boolean): Date | null {
   const d = new Date(`${day}T${end ? "23:59:59" : "00:00:00"}Z`);
   return Number.isNaN(d.getTime()) ? null : d;
 }
+
+/**
+ * A web lookup's share of chat's research budget (`GATHER_MAX_MS` is 25s in chat-gather).
+ * A search that needs longer is finished on /find, which has a 150s route.
+ */
+const RESEARCH_TOOL_TIMEOUT_MS = 20_000;
+const PREP_RESEARCH_TIMEOUT_MS = 15_000;
+const RESEARCH_TIMEOUT_MESSAGE =
+  "The web search needs longer than chat allows. Tell the user to run it on Find people (/find), where it can finish.";
 
 /** One contact the user owns, or nothing. The tenant check every contact-scoped tool starts with. */
 async function ownedContact(userId: string, contactId: string) {
@@ -118,9 +135,9 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
     // so MCP gets the curated summary only. In Orbit's own chat the same text is already in
     // the prompt behind a fence, so withholding it would cost grounding and buy nothing.
     fields: {
-      mcp: ["id", "name", "company", "title", "location", "closenessTier", "relevance", "summary"],
+      mcp: ["id", "name", "company", "title", "school", "location", "closenessTier", "relevance", "summary"],
       chat: [
-        "id", "name", "company", "title", "location", "closenessTier", "relevance", "summary",
+        "id", "name", "company", "title", "school", "location", "closenessTier", "relevance", "summary",
         "notes",
       ],
     },
@@ -136,6 +153,7 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         name: c.fullName,
         company: c.company,
         title: c.title,
+        school: c.school ?? null,
         location: c.location,
         closenessTier: c.closenessTier ?? null,
         relevance: c.relevance,
@@ -171,6 +189,7 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
             fullName: true,
             company: true,
             title: true,
+            school: true,
             email: true,
             location: true,
             linkedinUrl: true,
@@ -209,6 +228,7 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         name: contact.fullName,
         company: contact.company,
         title: contact.title,
+        school: contact.school,
         email: contact.email,
         location: contact.location,
         linkedinUrl: contact.linkedinUrl,
@@ -479,21 +499,15 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       // have to know which kind of name they are holding.
       const [rosters, named] = await Promise.all([
         findOrgRosters(userId, args.target),
-        // A name lookup: only id, name, company and title are read below.
-        hybridSearchContacts(userId, { query: args.target, limit: 5, withProse: false }),
+        matchContactsByName(userId, args.target),
       ]);
 
       // The shortest path is no path: if the target is already a contact, say so first.
-      // Substring both ways so "Dana" matches "Dana Wu" and "Dana Wu from Stripe" matches
-      // "Dana Wu" — a rank alone would promote whoever came top of an unrelated search.
-      const needle = args.target.trim().toLowerCase();
-      const alreadyKnown = named
-        .filter((c) => {
-          const name = c.fullName.toLowerCase();
-          return name.includes(needle) || needle.includes(name);
-        })
+      // Only a strong name match ("Dana" ↔ "Dana Wu") counts: a shared surname is not
+      // "already known", and a path search for the person should still run.
+      const alreadyKnown = named.strong
         .slice(0, 3)
-        .map((c) => ({ contactId: c.id, name: c.fullName, company: c.company, title: c.title }));
+        .map((c) => ({ contactId: c.id, name: c.name, company: c.company, title: c.title }));
 
       const known = new Set(alreadyKnown.map((c) => c.contactId));
       const via = new Map<string, string>();
@@ -618,6 +632,349 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         before: dayBound(args.before, true),
         limit: args.limit,
       });
+    },
+  },
+
+  {
+    name: "upcoming_meetings",
+    title: "The user's calendar",
+    description:
+      "Meetings and events on the user's calendar, from two days ago to two weeks ahead. Use it " +
+      "for anything about their schedule: what is on today or tomorrow, when they next see " +
+      "someone, who they are meeting this week, or which meeting \"my 3pm\" is. Each event has " +
+      "the attendees Orbit knows (contactId), so follow up with get_contact or get_timeline to " +
+      "prepare for a meeting. Times are already in the user's own time zone. Narrow by day with " +
+      "after/before (YYYY-MM-DD, the user's local days) and to one person with contactId.",
+    inputSchema: {
+      after: isoDay.optional().describe("Only events on or after this local day. Default: now."),
+      before: isoDay.optional().describe("Only events on or before this local day. Default: a week ahead."),
+      contactId: z.string().uuid().optional().describe("Only events this person is on."),
+      query: z.string().max(100).optional().describe("Match words in the event title."),
+      limit: z.number().int().min(1).max(50).default(20),
+    },
+    annotations: { readOnlyHint: true },
+    // Event titles are written by whoever sent the invite, so a stranger can put a line in front
+    // of the model just by inviting the user. Over MCP that is bounded: a title is one short line
+    // inside the server's untrusted-data fence, and the allowlist below keeps the location and
+    // anything longer off it (there is no agenda here at all).
+    surfaces: BOTH,
+    fields: {
+      mcp: ["eventId", "title", "day", "start", "end", "timeZone", "call", "response", "attendees", "attendeeCount", "guestListHidden"],
+    },
+    scope: "read",
+    resultLabel: "calendar events",
+    async run(
+      userId,
+      args: { after?: string; before?: string; contactId?: string; query?: string; limit: number }
+    ) {
+      const tz = await userTimeZone(userId);
+      const now = new Date();
+      // Local days, read loosely in SQL (a day is at most 14h off UTC) and exactly below.
+      const pad = 14 * 3_600_000;
+      const from = args.after ? new Date(dayBound(args.after, false)!.getTime() - pad) : now;
+      const to = args.before
+        ? new Date(dayBound(args.before, true)!.getTime() + pad)
+        : new Date(now.getTime() + 7 * 86_400_000);
+      const words = (args.query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+      const rows = (await listUpcomingEvents(userId, { from, to, contactId: args.contactId, limit: 200 }))
+        .filter((e) => {
+          const day = ymdInZone(e.startAt, tz);
+          if (args.after && day < args.after) return false;
+          if (args.before && day > args.before) return false;
+          return words.every((w) => e.title.toLowerCase().includes(w));
+        })
+        .slice(0, args.limit);
+      return rows.map((e) => eventView(e, tz));
+    },
+  },
+
+  {
+    name: "free_time",
+    title: "When the user is free",
+    description:
+      "The gaps between the user's meetings, per day, inside 9:00–18:00 in their own time zone — " +
+      "for \"when am I free\", \"do I have time Thursday afternoon\" or finding a slot to suggest. " +
+      "Declined meetings don't count as busy; all-day events are ignored. Days are YYYY-MM-DD in " +
+      "the user's zone, at most two weeks ahead.",
+    inputSchema: {
+      after: isoDay.optional().describe("First local day. Default: today."),
+      before: isoDay.optional().describe("Last local day. Default: the same as after."),
+      minMinutes: z.number().int().min(15).max(240).default(30).describe("Shortest gap worth reporting."),
+    },
+    annotations: { readOnlyHint: true },
+    // Times only — no titles, no people — so nothing anyone else wrote reaches the caller.
+    surfaces: BOTH,
+    scope: "read",
+    resultLabel: "free time",
+    async run(userId, args: { after?: string; before?: string; minMinutes: number }) {
+      const tz = await userTimeZone(userId);
+      const now = new Date();
+      const today = ymdInZone(now, tz);
+      const first = args.after && args.after > today ? args.after : today;
+      const last = [args.before ?? first, addDaysYmd(today, 14)].sort()[0]!;
+      if (last < first) return [];
+      const rows = await listUpcomingEvents(userId, {
+        from: new Date(dayBound(first, false)!.getTime() - 14 * 3_600_000),
+        to: new Date(dayBound(last, true)!.getTime() + 14 * 3_600_000),
+        limit: 200,
+      });
+      const out: Array<{ day: string; timeZone: string; free: string[] }> = [];
+      for (let day = first; day <= last; day = addDaysYmd(day, 1)) {
+        const slots = freeSlots(rows.filter((e) => ymdInZone(e.startAt, tz) === day), day, tz, {
+          minMinutes: args.minMinutes,
+        })
+          // Today's gaps start no earlier than now.
+          .filter((g) => g.end > now)
+          .map((g) => `${hhmmInZone(g.start < now ? now : g.start, tz)}–${hhmmInZone(g.end, tz)}`);
+        out.push({ day, timeZone: tz, free: slots });
+      }
+      return out;
+    },
+  },
+
+  {
+    name: "meeting_context",
+    title: "Prepare for a meeting",
+    description:
+      "Everything worth knowing before one meeting, in one call: the event, and for each " +
+      "attendee Orbit knows their standing and suggested next step, the last few times you " +
+      "spoke, and what is still open with them. Pick the meeting by eventId (from " +
+      "upcoming_meetings), by local time (\"15:00\" for \"my 3pm\", optionally with a day), or " +
+      "by words in its title; with none of those it is the next meeting with someone you know. " +
+      "It reads who the meeting is with from the title too, and searches the web for up to two " +
+      "of them (their profile: role, summary, talking points with links). " +
+      "Use it for \"prep me\", \"what should I know before…\" and \"who is on my next call\".",
+    inputSchema: {
+      eventId: z.string().uuid().optional(),
+      time: z
+        .string()
+        .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:MM, 24-hour.")
+        .optional()
+        .describe("Local start time, 24-hour: \"15:00\" for 3pm."),
+      day: isoDay.optional().describe("Local day for time. Default: the next one at that time."),
+      query: z.string().max(100).optional().describe("Words in the event title."),
+    },
+    annotations: { readOnlyHint: true },
+    // Notes summaries and to-dos across several people, plus a stranger-written invite title:
+    // the same reasons the other calendar and notes tools stay off MCP.
+    surfaces: CHAT_ONLY,
+    scope: "read",
+    resultLabel: "meeting context",
+    async run(userId, args: MeetingSelector) {
+      // Prep is worth a web search on who is coming: up to two people, cached per account.
+      const found = await getMeetingContext(userId, args, new Date(), {
+        research: true,
+        // Shorter than research_person's: the research step must end by GATHER_ENDS_BY_MS.
+        signal: AbortSignal.timeout(PREP_RESEARCH_TIMEOUT_MS),
+      });
+      if (!found) return toolError("No matching meeting on the calendar in the next two weeks.");
+      return {
+        event: eventView(found.event, found.tz),
+        // `profile` is what a web search found — cite its talking points' links.
+        people: found.people,
+        // On the invite but not in Orbit — worth a "who is this?" before the call.
+        notInOrbit: found.notInOrbit.map((p) => {
+          const at = p.profile?.company ?? p.company;
+          const role = p.profile?.title ? `${p.profile.title}${at ? ` at ${at}` : ""}` : at;
+          // Never the address — this goes to the chat model. A nameless guest is described by
+          // their company, which the prep card (not the model) can still look up by address.
+          const who = p.profile?.name || p.name || "A guest";
+          const about = p.profile?.summary ? ` — ${p.profile.summary}` : "";
+          return `${role ? `${who} (${role})` : who}${about}`;
+        }),
+        // Nothing to search on: ask the user for their company or LinkedIn rather than guess.
+        ...(found.unresearched.length ? { noCompanyOrLinkedIn: found.unresearched } : {}),
+        // A recurring meeting that was recorded before: what it decided and left open.
+        lastTime: found.lastTime,
+        // A Luma/Partiful/Eventbrite invite: who hosts, how big the room is, who is worth finding.
+        linkedEvent: found.linkedEvent
+          ? {
+              title: found.linkedEvent.title,
+              hosts: found.linkedEvent.hosts,
+              guestCount: found.linkedEvent.guestCount,
+              worthFinding: found.linkedEvent.worthFinding.map((r) => ({
+                name: r.name,
+                role: [r.title, r.company].filter(Boolean).join(" at ") || null,
+                contactId: r.contactId,
+              })),
+            }
+          : null,
+      };
+    },
+  },
+
+  {
+    name: "research_person",
+    title: "Research someone outside the network",
+    description:
+      "Search the public web for a person who is NOT in the user's network — someone they are " +
+      "about to meet, were introduced to, or want to reach. Only use it after search_contacts " +
+      "found nobody by that name. Needs the person's name plus at least one of company, " +
+      "domain or linkedinUrl; a name alone is refused. Returns a short cited brief: current " +
+      "role, summary, things worth bringing up, and source links. match 'unsure' means the " +
+      "pages might be about a namesake: say so, and report no facts as theirs. It can take a " +
+      "while; if it times out, tell the user they can finish it on Find people.",
+    inputSchema: {
+      name: z.string().min(2).max(100).describe("Their full name."),
+      company: z.string().max(100).optional().describe("Where they work."),
+      domain: z.string().max(253).optional().describe("Their company's website domain, e.g. stripe.com."),
+      linkedinUrl: z
+        .string()
+        .max(300)
+        .regex(/^(https?:\/\/)?([a-z]{2,3}\.)?linkedin\.com\/in\/[^\s]+$/i, "Use a linkedin.com/in/ profile link.")
+        .optional(),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    // Chat only: the security comment in `mcp/server.ts` keeps anything that reaches the
+    // web off MCP. The search runs on the user's own AI provider, with only these typed
+    // fields; no URL here is fetched by Orbit (LinkedIn is a search anchor, never read).
+    surfaces: CHAT_ONLY,
+    scope: "read",
+    resultLabel: "web research",
+    releasedSurface: "page.find",
+    fields: {
+      chat: ["match", "name", "headline", "currentRole", "location", "summary", "talkingPoints", "experience", "sources", "note"],
+    },
+    async run(userId, args: { name: string; company?: string; domain?: string; linkedinUrl?: string }) {
+      try {
+        await requireReleasedSurface(userId, "page.find");
+      } catch {
+        return toolError("research_person is not available here.");
+      }
+      // Read the signal, not the error: `webSearchJson` rewraps a provider's abort.
+      const signal = AbortSignal.timeout(RESEARCH_TOOL_TIMEOUT_MS);
+      try {
+        const res = await researchPerson(
+          userId,
+          { fullName: args.name, company: args.company, domain: args.domain, linkedinUrl: args.linkedinUrl },
+          { signal },
+        );
+        if (!res.ok) return toolError(res.message);
+        const d = res.dossier;
+        return {
+          match: d.match,
+          name: d.subject.fullName,
+          headline: d.headline,
+          currentRole: d.current ? [d.current.title, d.current.organization].filter(Boolean).join(" at ") : null,
+          location: d.location,
+          summary: d.summary,
+          talkingPoints: d.talkingPoints,
+          experience: d.experiences
+            .slice(0, 6)
+            .map((e) => [e.title, e.organization, e.startYear ? `${e.startYear}–${e.isCurrent ? "now" : e.endYear ?? ""}` : null].filter(Boolean).join(", ")),
+          sources: d.sources.slice(0, 5).map((s) => s.url),
+          note: d.match === "confident" ? "From the public web; not in the user's network." : "Not confirmed to be this person — report no facts as theirs.",
+        };
+      } catch (err) {
+        if (signal.aborted) return toolError(RESEARCH_TIMEOUT_MESSAGE);
+        throw err;
+      }
+    },
+  },
+
+  {
+    name: "research_company",
+    title: "Research a company on the web",
+    description:
+      "Search the public web for a company: what they do, recent news, and people there worth " +
+      "talking to, each with the page that names them. Use it when the user asks about a " +
+      "company beyond who they already know there — use who_do_i_know_at for that, first. " +
+      "match 'unsure' means it might be a different company with the same name: say so, and " +
+      "report nothing as fact. It can take a while; if it times out, tell the user they can " +
+      "finish it on Find people.",
+    inputSchema: {
+      name: z.string().min(2).max(100).describe("The company's name."),
+      domain: z.string().max(253).optional().describe("Their website domain, e.g. stripe.com, if known."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    // Chat only, like research_person. The homepage read is for /find, where a person typed
+    // the domain; here the domain is the model's, so it is a search hint and nothing more.
+    surfaces: CHAT_ONLY,
+    scope: "read",
+    resultLabel: "web research",
+    releasedSurface: "page.find",
+    fields: {
+      chat: ["match", "name", "website", "description", "headquarters", "founded", "size", "news", "people", "sources", "note"],
+    },
+    async run(userId, args: { name: string; domain?: string }) {
+      try {
+        await requireReleasedSurface(userId, "page.find");
+      } catch {
+        return toolError("research_company is not available here.");
+      }
+      const signal = AbortSignal.timeout(RESEARCH_TOOL_TIMEOUT_MS);
+      try {
+        const res = await researchCompany(
+          userId,
+          { name: args.name, domain: args.domain },
+          { signal },
+        );
+        if (!res.ok) return toolError(res.message);
+        const d = res.dossier;
+        return {
+          match: d.match,
+          name: d.subject.name,
+          website: d.website,
+          description: d.description,
+          headquarters: d.headquarters,
+          founded: d.founded,
+          size: d.size,
+          news: d.news,
+          people: d.people,
+          sources: d.sources.slice(0, 5).map((s) => s.url),
+          note:
+            d.match === "confident"
+              ? "From the public web. These people are not in the user's network."
+              : "Not confirmed to be this company — report nothing as fact.",
+        };
+      } catch (err) {
+        if (signal.aborted) return toolError(RESEARCH_TIMEOUT_MESSAGE);
+        throw err;
+      }
+    },
+  },
+
+  {
+    name: "find_people",
+    title: "Find new people on the web",
+    description:
+      "Search the public web for people the user does NOT know yet who match a description — " +
+      "a role, a company, a school, a place: \"product managers at Stripe who went to Michigan\". " +
+      "Use it only when the user asks to find new people or people outside their network; for " +
+      "who they already know, use search_contacts or who_do_i_know_at. Returns at most 10 " +
+      "people, each with the page that shows the match and why they fit. It is never a complete " +
+      "list — say so. It can take a while; if it times out, tell the user they can finish it on Find people.",
+    inputSchema: {
+      query: z.string().min(3).max(300).describe("Who to look for, in plain words."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    // Chat only, like research_person: reaching the web stays off MCP.
+    surfaces: CHAT_ONLY,
+    scope: "read",
+    resultLabel: "web research",
+    releasedSurface: "page.find",
+    fields: {
+      chat: ["query", "candidates", "note"],
+    },
+    async run(userId, args: { query: string }) {
+      try {
+        await requireReleasedSurface(userId, "page.find");
+      } catch {
+        return toolError("find_people is not available here.");
+      }
+      const signal = AbortSignal.timeout(RESEARCH_TOOL_TIMEOUT_MS);
+      try {
+        const res = await discoverPeople(userId, args.query, { signal });
+        if (!res.ok) return toolError(res.message);
+        return {
+          query: res.result.query,
+          candidates: res.result.candidates,
+          note: "Found on the public web; not a complete list, and none of these people are in the user's network.",
+        };
+      } catch (err) {
+        if (signal.aborted) return toolError(RESEARCH_TIMEOUT_MESSAGE);
+        throw err;
+      }
     },
   },
 

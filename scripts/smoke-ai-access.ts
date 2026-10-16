@@ -37,7 +37,7 @@ process.env.ORBIT_MANAGED_GEMINI_API_KEY = "managed-gemini-key";
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { and, eq, inArray, like } from "drizzle-orm";
+import { and, eq, inArray, like, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import {
   billingEvents,
@@ -62,6 +62,7 @@ import {
   isAiAccessError,
   managedKeysConfigured,
   forgetManagedAiPause,
+  managedPoolState,
   resolveAiAccess,
   runOnGrant,
   typesafeClient,
@@ -72,8 +73,10 @@ import {
   AI_ACCESS_COPY,
   BACKGROUND_RESERVE_MESSAGE,
   FREE_LIMIT_MESSAGE,
+  MANAGED_LIMIT_MESSAGES,
   MANAGED_PROVIDER_FAILURE_MESSAGE,
   aiDenialFromMessage,
+  refusalCopyFor,
 } from "../src/lib/ai-access-copy";
 import { getCreditBalance } from "../src/lib/credits/ledger";
 import { PLAN_CONFIG } from "../src/lib/plans/plan-config";
@@ -117,7 +120,7 @@ function check(label: string, ok: boolean, detail?: unknown) {
 
 type Sent = { url: string; key: string | null; headers: Record<string, string>; body: string | null };
 const sent: Sent[] = [];
-let respondWith: "ok" | "key_refused" = "ok";
+let respondWith: "ok" | "key_refused" | "anthropic_out_of_credit" = "ok";
 
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -138,6 +141,12 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     return new Response(
       JSON.stringify({ error: { code: 400, message: "API key not valid. Please pass a valid API key.", status: "INVALID_ARGUMENT" } }),
       { status: 400, headers: { "content-type": "application/json" } },
+    );
+  }
+  if (respondWith === "anthropic_out_of_credit" && /api\.anthropic\.com/.test(url)) {
+    return Response.json(
+      { type: "error", error: { type: "invalid_request_error", message: "Your credit balance is too low to access the Anthropic API." } },
+      { status: 400 },
     );
   }
   if (/embedContent|batchEmbedContents/.test(url)) {
@@ -455,6 +464,10 @@ function purePolicy() {
       isMissingAiApiKeyError(copy),
     );
   }
+  for (const [plan, copy] of Object.entries(MANAGED_LIMIT_MESSAGES)) {
+    check(`${plan}: out-of-credits copy passes through, reads as managed_limit and flips the notice`,
+      friendlyError(new Error(copy), "x") === copy && aiDenialFromMessage(copy) === "managed_limit" && isMissingAiApiKeyError(copy), copy);
+  }
   check("the managed-failure copy passes through and reads as managed_unavailable",
     friendlyError(new Error(MANAGED_PROVIDER_FAILURE_MESSAGE), "x") === MANAGED_PROVIDER_FAILURE_MESSAGE &&
       aiDenialFromMessage(MANAGED_PROVIDER_FAILURE_MESSAGE) === "managed_unavailable");
@@ -674,6 +687,17 @@ async function realGate() {
   check("…which the client reads back as managed_limit", aiDenialFromMessage(FREE_LIMIT_MESSAGE) === "managed_limit");
   check("…and the status agrees", (await status(U.freeNone)) === "false:managed_limit:managed");
 
+  console.log("\nMax and Lifetime at zero: each hears only what its plan can do");
+  for (const [user, plan] of [[U.maxNone, "max"], [U.lifetimeNone, "lifetime"]] as const) {
+    await db.update(creditGrants).set({ microsRemaining: 0 }).where(eq(creditGrants.userId, user));
+    r = await lastSent(() => json(user, "chat.answer"));
+    check(`${plan}: refused with its own plan's out-of-credits words, nothing sent`,
+      isAiAccessError(r.err) && (r.err as AiAccessError).reason === "managed_limit" &&
+        (r.err as Error).message === MANAGED_LIMIT_MESSAGES[plan] && r.count === 0, r.err);
+  }
+  check("…Max is offered a pack and never Max", /pack/.test(MANAGED_LIMIT_MESSAGES.max) && !/move to Max/.test(MANAGED_LIMIT_MESSAGES.max));
+  check("…Lifetime is offered no pack", !/pack/i.test(MANAGED_LIMIT_MESSAGES.lifetime));
+
   console.log("\nA grant cannot be forged");
   const forged = Object.freeze({ provider: "gemini", model: "x", source: "managed", keyOwner: "orbit", operation: "x" }) as AiGrant;
   let threw = false;
@@ -746,7 +770,7 @@ async function transitions() {
   r = await lastSent(() => completeJson(U.capped, { system: "Return JSON.", user: "hi", operation: "chat.answer", access: sharedCapped }));
   check("…and on an access opened before (one per request), still refused per call",
     isAiAccessError(r.err) && (r.err as AiAccessError).reason === "managed_limit" && r.count === 0, r.err);
-  check("…with words that say so", friendlyError(r.err, "x") === AI_ACCESS_COPY.managed_limit);
+  check("…with words that say so (a Pro account's: pack or Max)", friendlyError(r.err, "x") === refusalCopyFor("managed_limit", "orbit") && /move to Max/.test(friendlyError(r.err, "x")));
   check("…and the UI is told the same", (await getAiAccessStatus(U.capped)).reason === "managed_limit");
 
   console.log("\nOnly the call already in flight gets through");
@@ -887,6 +911,52 @@ async function transitions() {
   const passthrough = new Error("401 unauthorized");
   const back = await runOnGrant(grant, Promise.reject(passthrough)).catch((e) => e);
   check("runOnGrant leaves personal-key failures alone", back === passthrough);
+
+  console.log("\nOrbit's own provider balance runs dry");
+  process.env.ORBIT_MANAGED_ANTHROPIC_API_KEY = ANTHROPIC_MANAGED;
+  process.env.ORBIT_MANAGED_OPENAI_API_KEY = OPENAI_MANAGED;
+  delete process.env.ORBIT_MANAGED_GEMINI_API_KEY;
+  const quotaEvents = and(eq(errorEvents.source, "ai.managed"), eq(errorEvents.kind, "quota"));
+  respondWith = "anthropic_out_of_credit";
+  try {
+    forgetManagedAiPause();
+    r = await lastSent(() => json(U.proNone));
+    check("a Pro user is told Orbit's AI is down, not to top up a balance they don't hold",
+      r.req?.key === ANTHROPIC_MANAGED && r.err instanceof Error && r.err.message === MANAGED_PROVIDER_FAILURE_MESSAGE, r.err);
+    const quota = await db.select().from(errorEvents).where(quotaEvents);
+    check("…and ops gets a quota error event naming the provider",
+      quota.some((e) => (e.context as { provider?: string })?.provider === "anthropic"), JSON.stringify(quota));
+    r = await lastSent(() => json(U.proNone));
+    check("the next call on this instance fails over to Orbit's OpenAI key", r.req?.key === OPENAI_MANAGED, r.req?.url ?? r.err);
+    forgetManagedAiPause();
+    check("a fresh pool read (any instance) has Anthropic spent", (await managedPoolState()).spent.has("anthropic"));
+    await db.update(errorEvents).set({ createdAt: new Date(Date.now() - 3 * 3_600_000) }).where(quotaEvents);
+    forgetManagedAiPause();
+    check("…for two hours, then Anthropic is tried again", !(await managedPoolState()).spent.has("anthropic"));
+
+    // A "managed" grant off Vercel is a developer's own key (localhost demo), not Orbit's: its
+    // dry balance must not take the provider out of production through the shared database.
+    const devGrant = { provider: "openai", model: "x", source: "managed", keyOwner: "orbit", operation: "x" } as const;
+    const dry = () => Promise.reject(new Error("You exceeded your current quota, please check your plan and billing details."));
+    const openaiQuota = and(eq(errorEvents.source, "ai.managed"), eq(errorEvents.kind, "quota"), sql`${errorEvents.context}->>'provider' = 'openai'`);
+    await managedPoolState();
+    delete process.env.VERCEL;
+    const offVercel = await runOnGrant(devGrant, dry()).catch((e) => e);
+    process.env.VERCEL = "1";
+    check("off Vercel a managed grant's quota error keeps the user-facing copy", offVercel instanceof Error && offVercel.message === MANAGED_PROVIDER_FAILURE_MESSAGE, offVercel);
+    check("…but leaves the pool unspent", !(await managedPoolState()).spent.has("openai"));
+    check("…and records no ai.managed event", (await db.select().from(errorEvents).where(openaiQuota)).length === 0);
+    await runOnGrant(devGrant, dry()).catch(() => null);
+    check("on Vercel the same error marks the provider spent", (await managedPoolState()).spent.has("openai"));
+    check("…and records the quota event", (await db.select().from(errorEvents).where(openaiQuota)).length === 1);
+  } finally {
+    respondWith = "ok";
+    await db.delete(errorEvents).where(quotaEvents);
+    delete process.env.ORBIT_MANAGED_ANTHROPIC_API_KEY;
+    delete process.env.ORBIT_MANAGED_OPENAI_API_KEY;
+    process.env.ORBIT_MANAGED_GEMINI_API_KEY = MANAGED;
+    forgetManagedAiPause();
+  }
 }
 
 /** `NODE_ENV` is readonly in the Node types; the gate reads it at call time either way. */

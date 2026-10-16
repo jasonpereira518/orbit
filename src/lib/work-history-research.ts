@@ -27,7 +27,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contactProfiles, contacts } from "@/db/schema";
 import { userCanUseAi, webSearchJson, parseAiJson, type WebSource } from "@/lib/ai";
-import { fenceUntrusted } from "@/lib/ai-security";
+import { auditUntrustedWrite, cleanSingleLine, fenceUntrusted } from "@/lib/ai-security";
 import {
   sanitizeIncomingExperiences,
   saveContactProfile,
@@ -182,8 +182,9 @@ export const checkCurrentRoleWithWebSearch: CurrentRoleChecker = async (userId, 
     maxOutputTokens: CURRENT_ROLE_OUTPUT_TOKENS,
   });
   const raw = parseAiJson<RawCurrentRole>(json);
-  const org = typeof raw.current?.organization === "string" ? raw.current.organization.trim() : "";
-  const title = typeof raw.current?.title === "string" && raw.current.title.trim() ? raw.current.title.trim() : null;
+  auditUntrustedWrite(userId, "work_history.recheck", "answer", json);
+  const org = cleanSingleLine(typeof raw.current?.organization === "string" ? raw.current.organization : null, 200) ?? "";
+  const title = cleanSingleLine(typeof raw.current?.title === "string" ? raw.current.title : null, 200);
   return {
     confident: raw.match === "confident",
     current: org ? { organization: org, title } : null,
@@ -200,9 +201,11 @@ export const researchWithWebSearch: WorkHistoryResearcher = async (userId, subje
     maxOutputTokens: MAX_OUTPUT_TOKENS,
   });
   const raw = parseAiJson<RawAnswer>(json);
+  // Tripwire, never a block: the answer was read off pages anyone can publish.
+  auditUntrustedWrite(userId, "work_history.research", "answer", json);
   return {
     confident: raw.match === "confident",
-    headline: typeof raw.headline === "string" && raw.headline.trim() ? raw.headline.trim() : null,
+    headline: cleanSingleLine(typeof raw.headline === "string" ? raw.headline : null, 300),
     experiences: sanitizeIncomingExperiences(raw.experiences),
     sources,
   };
@@ -471,17 +474,28 @@ async function researchOnce(
       detectJobChanges(baseline, answer.experiences),
       { source: "web", now }
     );
+    const patch: { company?: string; title?: string; school?: string } = {};
     // Nothing known about where they work until now: fill it in, without calling it a move.
     if (!moves.length && !baseline.hasBaseline) {
       const current = answer.experiences.find((e) => e.kind === "role" && e.isCurrent);
       if (current) {
-        await updateContactForUser(
-          userId,
-          contactId,
-          { company: current.organization, ...(current.title ? { title: current.title } : {}) },
-          { skipRevalidate: true, skipEmbedding: true, skipSummary: true }
-        );
+        patch.company = current.organization;
+        if (current.title) patch.title = current.title;
       }
+    }
+    // The same for school: LinkedIn's Connections.csv has no school column, so research is
+    // where an imported contact's school comes from. The answer lists the most recent first.
+    // Never overwrites a school the user (or a LinkedIn paste) already set.
+    if (!contact.school?.trim()) {
+      const school = answer.experiences.find((e) => e.kind === "education")?.organization;
+      if (school) patch.school = school;
+    }
+    if (Object.keys(patch).length) {
+      await updateContactForUser(userId, contactId, patch, {
+        skipRevalidate: true,
+        skipEmbedding: true,
+        skipSummary: true,
+      });
     }
   } catch (err) {
     // The history is stored, and the snapshot a later check compares against is now the

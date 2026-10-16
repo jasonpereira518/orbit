@@ -56,7 +56,7 @@ export type TourStop = {
    * once a note was extracted). Skipped in both directions while that stop is not done.
    */
   requiresDone?: TourStopId;
-  /** Only shown when the account has (or has not) a working AI key. */
+  /** Only shown when AI is (or is not) available to the account: included credits, or a key it added. */
   requires?: "ai_key" | "no_ai_key";
   /** Dropped when an operator has hidden this surface from the viewer. */
   surfaceKey?: string;
@@ -218,8 +218,8 @@ export const TOUR_STOPS: readonly TourStop[] = [
     cursorTarget: '[data-tour="capture.notes"] textarea',
     route: "/capture",
     anchor: "capture.notes",
-    title: "Capture, with or without a key",
-    body: "Paste notes here and Orbit’s AI works out who you met and what to do next, once you add a key in Settings. A LinkedIn profile URL on its own works today, no key needed.",
+    title: "Capture, even while AI is paused",
+    body: "Paste notes here and Orbit’s AI works out who you met and what to do next. AI is paused right now, so check Credits in Settings. A LinkedIn profile URL on its own works today, no AI needed.",
     tryThis: "Paste a LinkedIn profile URL to log a person.",
     chip: "Paste notes or a URL",
     doneWhen: null,
@@ -266,9 +266,9 @@ export const TOUR_STOPS: readonly TourStop[] = [
     route: "/chat",
     anchor: "chat.composer",
     title: "Ask your network",
-    body: "With an AI key, this answers questions like “who do I know at a fintech?” from your own notes, with a numbered source behind each claim.",
-    tryThis: "Add a key in Settings when you’re ready; this page lights up.",
-    chip: "Needs your AI key",
+    body: "With AI on, this answers questions like “who do I know at a fintech?” from your own notes, with a numbered source behind each claim.",
+    tryThis: "See Credits in Settings; this page lights up when AI is back.",
+    chip: "AI is paused",
     doneWhen: null,
     requires: "no_ai_key",
     surfaceKey: "page.chat",

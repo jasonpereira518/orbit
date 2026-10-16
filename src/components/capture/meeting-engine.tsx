@@ -19,8 +19,10 @@
  *               and sentences land a second or two behind the conversation. Chunks are still
  *               cut throughout as the recovery route.
  *   pausing   → Pause was pressed. The last sentence is flushed and the session marked ended.
- *   paused    → the share and mic are released. Resume re-asks for the share (a browser gate
- *               that needs a click) and carries on the same transcript and timeline.
+ *   paused    → the share and mic are KEPT and the audio graph suspended, so Resume is one
+ *               click with no picker. "Stop sharing" (`pause({ release: true })`) releases
+ *               them; Resume then re-asks for the share. Either way it carries on the same
+ *               transcript and timeline.
  *   finishing → the user CONFIRMED the meeting is done. The queue is drained.
  *   analyzing → the transcript becomes a digest (`analyzeMeetingSession`).
  *
@@ -147,7 +149,7 @@ export const MeetingEngine = memo(function MeetingEngine({ form }: { form: Meeti
   const router = useRouter();
   const [phase, setPhase] = useState<MeetingPhase>("setup");
   // The setup form lives in the shell (the calendar nudge fills it before this file loads).
-  const { title, attendeesText, includeMic } = form;
+  const { title, attendeesText, includeMic, calendarEventKey, calendarSeriesId } = form;
   const attendeeEmailsRef = form.emailsRef;
   const [segments, setSegments] = useState<Record<number, SegmentView>>({});
   const [fatal, setFatal] = useState<string | null>(null);
@@ -463,6 +465,8 @@ export const MeetingEngine = memo(function MeetingEngine({ form }: { form: Meeti
           includesMic: micActive,
           captureSurface: surface,
           recorderId: recorderIdRef.current,
+          calendarEventKey,
+          calendarSeriesId,
         });
         if (!res.ok) {
           fatalRef.current = true;
@@ -490,7 +494,7 @@ export const MeetingEngine = memo(function MeetingEngine({ form }: { form: Meeti
       // session existed is numbered first, then the live sentences.
       liveStart(id);
     },
-    [attendeeEmailsRef, attendeesText, includeMic, liveStart, openQueue, showTranscript, title, uploadChunk]
+    [attendeeEmailsRef, attendeesText, calendarEventKey, calendarSeriesId, includeMic, liveStart, openQueue, showTranscript, title, uploadChunk]
   );
 
   const handleEnd = useCallback(

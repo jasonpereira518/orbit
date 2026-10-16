@@ -97,6 +97,8 @@ export async function createMeetingSessionRow(
     includesMic: boolean;
     captureSurface?: string | null;
     recorderId: string;
+    calendarEventKey?: string | null;
+    calendarSeriesId?: string | null;
   },
 ): Promise<MeetingSessionRow> {
   const db = await getDb();
@@ -117,6 +119,9 @@ export async function createMeetingSessionRow(
       attendees: cleanAttendees(input.attendees),
       includesMic: input.includesMic ? 1 : 0,
       captureSurface: input.captureSurface?.slice(0, 32) ?? null,
+      // Client-supplied, so shape-checked: it is only ever compared against the user's own events.
+      calendarEventKey: calendarIdOrNull(input.calendarEventKey),
+      calendarSeriesId: calendarIdOrNull(input.calendarSeriesId),
       recorderId: input.recorderId,
       status: "recording",
       startedAt: now,
@@ -200,6 +205,55 @@ export async function updateMeetingDetails(
     .where(eq(meetingSessions.id, session.id))
     .returning();
   return row;
+}
+
+/** A provider event or series id from the client: shape-checked, since it is only ever compared. */
+function calendarIdOrNull(v: unknown): string | null {
+  return typeof v === "string" && /^[\w@.-]{1,256}$/.test(v) ? v : null;
+}
+
+/** Remember which calendar event a recording was of, once it is known (see `matchEventForSession`). */
+export async function linkMeetingSessionToEvent(
+  userId: string,
+  sessionId: string,
+  link: { eventKey: string; seriesId: string | null }
+): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(meetingSessions)
+    .set({ calendarEventKey: link.eventKey, calendarSeriesId: link.seriesId })
+    .where(and(eq(meetingSessions.id, sessionId), eq(meetingSessions.userId, userId)));
+}
+
+/**
+ * The most recent summarized meeting in a recurring series, before `beforeSessionId` when given:
+ * what "last time" means for a weekly 1:1.
+ */
+export async function lastSeriesMeeting(
+  userId: string,
+  seriesId: string,
+  beforeSessionId?: string
+): Promise<{ startedAt: Date; decisions: string[]; actionItems: { text: string; owner: string | null }[] } | null> {
+  const db = await getDb();
+  const rows = await db
+    .select({ id: meetingSessions.id, startedAt: meetingSessions.startedAt, digest: meetingSessions.digest })
+    .from(meetingSessions)
+    .where(
+      and(
+        eq(meetingSessions.userId, userId),
+        eq(meetingSessions.calendarSeriesId, seriesId),
+        inArray(meetingSessions.status, ["analyzed", "saved"])
+      )
+    )
+    .orderBy(desc(meetingSessions.startedAt))
+    .limit(3);
+  const last = rows.find((r) => r.id !== beforeSessionId && r.digest);
+  if (!last?.digest) return null;
+  return {
+    startedAt: last.startedAt,
+    decisions: last.digest.decisions.slice(0, 6),
+    actionItems: last.digest.actionItems.slice(0, 8).map((a) => ({ text: a.text, owner: a.owner })),
+  };
 }
 
 export async function storeMeetingDigest(

@@ -16,7 +16,8 @@ import type { AiAccessDenial } from "@/lib/managed-ai-policy";
  *  - No key on Free: add a key — or Pro and Max, which include AI.
  *  - Out of credits on Free: says when they refill, offering a key or a look at the plans.
  *  - Out of credits: buy a $5 pack, or (Free) compare plans, or (Pro) upgrade to Max, or use a key.
- *    Nothing is charged automatically; this is where the person chooses.
+ *    Lifetime has no packs and nothing above it, so it gets the key alone. Nothing is charged
+ *    automatically; this is where the person chooses.
  *  - Orbit's AI briefly unavailable: it comes back; a key keeps you going meanwhile.
  *
  * `compact` drops the explanation below `sm`, leaving the headline and the actions. On /chat
