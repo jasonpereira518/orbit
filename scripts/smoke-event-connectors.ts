@@ -98,6 +98,35 @@ async function main() {
     // Someone who declined was not in the room.
     check("declined guests are dropped", lumaAttendee({ guest: { name: "No", approval_status: "declined" } }) === null);
     check("an anonymous guest is dropped", lumaAttendee({ guest: {} }) === null);
+
+    // Registration answers, by question TYPE (the label is whatever the host wrote).
+    const answered = lumaAttendee({
+      guest: {
+        id: "gst-2",
+        user_name: "Ben Ops",
+        user_email: "ben@acme.io",
+        registration_answers: [
+          { label: "Where do you work?", question_id: "q1", question_type: "company", value: { company: "Acme", job_title: "COO" } },
+          { label: "LinkedIn", question_id: "q2", question_type: "linkedin", value: "linkedin.com/in/Ben-Ops/" },
+          { label: "Twitter", question_id: "q3", question_type: "twitter", value: "https://x.com/benops" },
+          { label: "Diet", question_id: "q4", question_type: "text", value: "Acme Corp" },
+        ],
+      },
+    })!;
+    check("the current guest shape's id is the external ref", answered.externalRef === "gst-2", String(answered.externalRef));
+    check("company and job title come from the company answer", answered.company === "Acme" && answered.title === "COO");
+    check(
+      "a LinkedIn answer becomes a canonical profile URL",
+      answered.linkedinUrl === "https://www.linkedin.com/in/ben-ops",
+      String(answered.linkedinUrl)
+    );
+    check("a Twitter answer becomes a bare handle", answered.xHandle === "benops", String(answered.xHandle));
+    const bare = lumaAttendee({
+      guest: { name: "Cy", email: "cy@x.io", registration_answers: [{ question_type: "linkedin", value: "cy-dev" }, { question_type: "twitter", value: "not a handle!" }] },
+    })!;
+    check("a bare LinkedIn slug is accepted", bare.linkedinUrl === "https://www.linkedin.com/in/cy-dev", String(bare.linkedinUrl));
+    check("junk in a Twitter answer is dropped", bare.xHandle === null);
+    check("no answers leaves the fields empty", g.company === null && g.linkedinUrl === null);
   }
 
   console.log("\nLuma pagination and failures");
