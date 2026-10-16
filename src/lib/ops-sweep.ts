@@ -31,8 +31,8 @@ export type { OpsDelivery } from "@/lib/ops-notify";
 
 /**
  * The ten-minute known-condition sweep: load, evaluate, diff against what was already
- * said, deliver the difference, remember. Triggered by `POST /api/ops/sweep` from the
- * GitHub Actions scheduler (Hobby crons are daily) and by the admin "Run sweep now"
+ * said, deliver the difference, remember. Triggered by `POST /api/ops/sweep` from QStash
+ * every ten minutes, from the GitHub drift run every thirty (Hobby crons are daily), and by the admin "Run sweep now"
  * button. Records itself in `cron_runs` as `ops.sweep`.
  *
  * If the database itself is unreachable this throws before recording anything, and the
@@ -333,7 +333,7 @@ export type OpsSweepDeps = {
 
 /**
  * Better Stack heartbeat: a GET the monitor expects every ten minutes. When it stops
- * arriving — a dead GitHub schedule, a broken deploy — the monitor pages. Best-effort;
+ * arriving — a dead QStash schedule, a broken deploy — the monitor pages. Best-effort;
  * a slow heartbeat endpoint must not fail the sweep that just succeeded.
  */
 async function pingHeartbeat(): Promise<void> {
@@ -494,7 +494,11 @@ export async function runOpsSweep(options: {
         .where(inArray(opsAlertState.id, plan.unchanged.map((c) => c.id)));
     }
 
-    for (const row of plan.recover) {
+    // Only the GitHub sweep says where `main` is; the QStash sweeps in between carry no deploy
+    // facts, so they cannot judge drift. Without this they would close an open
+    // `deploy.drift` that the next GitHub sweep reopens — a Slack open/recover pair per cycle.
+    const recover = options.deploy ? plan.recover : plan.recover.filter((r) => r.id !== "deploy.drift");
+    for (const row of recover) {
       // Closed first and unconditionally: the page must stop showing a condition that is gone.
       // A recovery message lost to a Slack outage is not retried — the open did reach Slack,
       // and /admin/health shows it closed.

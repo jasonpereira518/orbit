@@ -1,7 +1,7 @@
 /**
  * Radar's nightly pass: rebuild every due account's list of people to reach out to.
  *
- * Driven by GitHub Actions (.github/workflows/ops.yml) once a day at 04:17 UTC, the only
+ * Driven by QStash (scripts/qstash-schedules.ts) once a day at 04:17 UTC, the only
  * scheduler. Self-continuation posts back to this same route when a claim came back full or
  * the budget ran out, the same shape as `/api/sync/run`.
  *

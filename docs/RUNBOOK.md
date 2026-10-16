@@ -42,20 +42,28 @@ Then fix forward. The next deploy from `main` carries a version at or above the 
 one and health returns to `ok`. A **503 `schema_mismatch`** still means the database is
 BEHIND the code — a build whose migration did not run — and is worth waking up for.
 
-## The nightly job or the sweep stopped
+## The nightly job or the sweep stopped (the heartbeat went quiet)
 
-1. `/admin/health` → "Ops sweep" tile. Quiet for over 30 min means the GitHub schedule is not
-   firing — see "Scheduled workflows were disabled" below.
-2. "Nightly job" tile red (it runs hourly, from `ops.yml` only): trigger it by hand —
+Every job on a clock is an Upstash QStash schedule, set from `scripts/qstash-schedules.ts`.
+The Better Stack heartbeat is pinged by each completed ten-minute sweep, so a quiet
+heartbeat means QStash stopped calling, the call fails, or production is down.
+
+1. `/admin/health` → "Ops sweep" tile. Quiet for over 30 min: Upstash console → QStash →
+   Logs, filter on `orbit-ops-sweep`. A 401 means `CRON_SECRET` in Vercel no longer matches
+   the one the schedules forward — re-run the script with the current value. No calls at
+   all: check the schedules exist (Upstash → QStash → Schedules, 14 `orbit-*` rows) and the
+   account's billing, then re-run:
+   `npx tsx scripts/qstash-schedules.ts` (needs `APP_URL`, `CRON_SECRET`, `QSTASH_TOKEN` in `.env.local`).
+2. "Nightly job" tile red (it runs hourly, schedule `orbit-process-stalled`): trigger it by hand —
    `curl -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/imports/process-stalled`
-   A 401 means `CRON_SECRET` differs between Vercel and GitHub.
+   A 401 means `CRON_SECRET` differs between Vercel and what you sent.
 
 ## Scheduled workflows were disabled (GitHub's 60-day rule)
 
 GitHub disables a public repository's scheduled workflows after 60 days without repository
-activity. That stops `ops` (sweep, process-stalled, drain, connector sync); the Better Stack
-heartbeat goes quiet within 30 minutes. (`backup` lives in the private ops repository, which
-the rule does not apply to.)
+activity. `ops` now only posts the drift sweep and probes health, so this costs
+`deploy.drift` detection and the outside down-probe — not the jobs, which run from QStash.
+(`backup` lives in the private ops repository, which the rule does not apply to.)
 
 ```bash
 gh api repos/jasonpereira518/orbit/actions/workflows --jq '.workflows[] | [.name, .state] | @tsv'
@@ -65,8 +73,7 @@ gh workflow run ops.yml --repo jasonpereira518/orbit
 ```
 
 Or GitHub → Actions → the workflow → **Enable workflow**, then **Run workflow**. Any push to
-`main` resets the timer; a recurring calendar reminder every 45 days runs the `gh api` line
-above. Vercel Pro crons remove the rule entirely.
+`main` resets the timer.
 
 ## Alert → what to do
 
@@ -159,8 +166,8 @@ enrichment.
 - **Kill switch:** `ORBIT_DEEPGRAM=off` reverts every surface to the Whisper/Gemini chain
   (`deepgramEnabled()` in `deepgram.ts`). Use it if Deepgram is down or misbehaving; transcription
   keeps working, just on a different engine and without keyterm-boosted contact names.
-- **Nightly reconciliation:** `POST /api/ops/speech-usage`, run daily by the GitHub Actions
-  scheduler (`.github/workflows/ops.yml`). Meetings stream straight from the browser to Deepgram
+- **Nightly reconciliation:** `POST /api/ops/speech-usage`, run daily by the QStash
+  scheduler (`scripts/qstash-schedules.ts`). Meetings stream straight from the browser to Deepgram
   on Orbit's key and the browser self-reports its seconds into `speech_usage`, so this job
   compares Deepgram's own billed seconds per meeting (tag `meeting:<sessionId>`) against what was
   recorded and posts a `:warning:` to Slack (`ops-notify.ts`) for any meeting Deepgram reports

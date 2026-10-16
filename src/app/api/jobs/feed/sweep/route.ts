@@ -5,7 +5,7 @@
  *
  * NOT `/api/ops/sweep`: that route is `maxDuration = 60` and it is the ALERTING path.
  * Putting a 10 MB download behind it would make the alert cadence hostage to GitHub's CDN —
- * the identical argument `.github/workflows/ops.yml` already makes for the connector sync.
+ * the same reason the connector sync has its own route.
  *
  * NOT `/api/imports/process-stalled`: its own header says housekeeping must never endanger
  * the job resumption it exists for, and sharing it would make its `cron_runs` `partial`
