@@ -69,6 +69,13 @@ export type ClosenessCohortInputs = {
 };
 
 /**
+ * Two-way channels: a thread counts when both sides showed up (`messagesQualify`). Gmail sync
+ * and the chat importers stamp `direction`; forwarded mail and pre-direction LinkedIn rows
+ * land undirected and fall to the volume rule.
+ */
+const EXCHANGE_TYPES = sql.raw(`('linkedin_message', 'email', 'message')`);
+
+/**
  * Constellation-eligibility tallies, as extra aggregates on the per-contact interaction
  * `GROUP BY` this module already issues.
  *
@@ -90,18 +97,18 @@ const constellationSignalAggregates = {
     where ${interactions.interactionType} in ('note', 'meeting_note')
   )::int`,
   meetingInteractions: sql<number>`count(*) filter (
-    where ${interactions.interactionType} in ('meeting', 'in_person')
+    where ${interactions.interactionType} in ('meeting', 'in_person', 'call')
   )::int`,
-  linkedInInbound: sql<number>`count(*) filter (
-    where ${interactions.interactionType} = 'linkedin_message'
+  messageInbound: sql<number>`count(*) filter (
+    where ${interactions.interactionType} in ${EXCHANGE_TYPES}
       and ${interactions.direction} = 'in'
   )::int`,
-  linkedInOutbound: sql<number>`count(*) filter (
-    where ${interactions.interactionType} = 'linkedin_message'
+  messageOutbound: sql<number>`count(*) filter (
+    where ${interactions.interactionType} in ${EXCHANGE_TYPES}
       and ${interactions.direction} = 'out'
   )::int`,
-  linkedInUndirected: sql<number>`count(*) filter (
-    where ${interactions.interactionType} = 'linkedin_message'
+  messageUndirected: sql<number>`count(*) filter (
+    where ${interactions.interactionType} in ${EXCHANGE_TYPES}
       and ${interactions.direction} is null
   )::int`,
 } satisfies Record<keyof ContactSignalCounts, SQL<number>>;
@@ -116,9 +123,9 @@ function signalsFromRows(rows: SignalRow[]): Map<string, ContactSignalCounts> {
       {
         noteInteractions: Number(r.noteInteractions) || 0,
         meetingInteractions: Number(r.meetingInteractions) || 0,
-        linkedInInbound: Number(r.linkedInInbound) || 0,
-        linkedInOutbound: Number(r.linkedInOutbound) || 0,
-        linkedInUndirected: Number(r.linkedInUndirected) || 0,
+        messageInbound: Number(r.messageInbound) || 0,
+        messageOutbound: Number(r.messageOutbound) || 0,
+        messageUndirected: Number(r.messageUndirected) || 0,
       },
     ])
   );

@@ -41,10 +41,12 @@ import {
   type QueuePhase,
   type QueuedImport,
 } from "@/lib/imports/import-queue";
-import type {
-  Detected,
-  DetectionResult,
-  ImportTarget,
+import {
+  LINKEDIN_PRIVATE,
+  type Detected,
+  type DetectionResult,
+  type ExportMember,
+  type ImportTarget,
 } from "@/lib/imports/detect-import-file";
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
 import { toast } from "@/lib/toast";
@@ -72,6 +74,7 @@ const KIND_FOR_TARGET: Record<
   contacts_file: "contacts_file",
   calendar_ics: "calendar",
   calendar_csv: "calendar",
+  linkedin_export: "linkedin_export",
 };
 
 /** Previews are read-only server actions, so a couple at a time is safe and keeps the first
@@ -93,6 +96,8 @@ type QueueState = {
   you: Map<string, YouField[]>;
   /** Files the drop could not use, for the "Not imported" list. */
   ignored: { name: string; reason: string }[];
+  /** The LinkedIn export's CSVs to keep, held until its step runs. */
+  exportFiles: ExportMember[];
   truncated: boolean;
   phase: QueuePhase;
   /** Set while the whole queue is being torn down by the Stop button. */
@@ -105,6 +110,7 @@ const EMPTY: QueueState = {
   people: new Map(),
   you: new Map(),
   ignored: [],
+  exportFiles: [],
   truncated: false,
   phase: "idle",
   stopping: false,
@@ -134,7 +140,7 @@ export function getImportQueueState() {
 }
 
 export function clearImportQueue() {
-  state = { ...EMPTY, payloads: new Map(), people: new Map(), you: new Map() };
+  state = { ...EMPTY, payloads: new Map(), people: new Map(), you: new Map(), exportFiles: [] };
   emit();
 }
 
@@ -249,6 +255,18 @@ export async function stageDrop(result: DetectionResult): Promise<boolean> {
     return false;
   }
   const items = queueFromDetection(result.staged);
+  // The export is not a classified file, so it never passes through `staged` (the folder
+  // review rebuilds that). It is its own step, last, runnable without a preview.
+  if (result.exportFiles.length) {
+    items.push({
+      id: `q${items.length}-linkedin_export`,
+      target: "linkedin_export",
+      label: "LinkedIn export files",
+      fileName: `${result.exportFiles.length} files`,
+      status: "needs_review",
+      ids: ["export"],
+    });
+  }
   const payloads = new Map<
     string,
     { text: string; fileName: string; target: ImportTarget }
@@ -265,6 +283,7 @@ export async function stageDrop(result: DetectionResult): Promise<boolean> {
       name: d.displayName,
       reason: d.reason,
     })),
+    exportFiles: result.exportFiles,
     truncated: result.truncated,
     phase: items.length ? "previewing" : "done",
     stopping: false,
@@ -345,6 +364,21 @@ export function skipItem(itemId: string) {
 // ---------------------------------------------------------------------------------- running
 
 function inputFor(item: QueuedImport): ImportJobInput | null {
+  if (item.target === "linkedin_export") {
+    const files = state.exportFiles;
+    state.exportFiles = [];
+    if (!files.length) return null;
+    return {
+      kind: "linkedin_export",
+      fileName: "LinkedIn export",
+      files: files.map((m) => ({
+        path: m.path,
+        bytes: m.bytes,
+        read: () => (m.text !== undefined ? Promise.resolve(m.text) : (m.file as File).text()),
+      })),
+      privateCount: state.ignored.filter((f) => f.reason === LINKEDIN_PRIVATE).length,
+    };
+  }
   const payload = state.payloads.get(item.id);
   if (!payload) return null;
   const ids = item.ids ?? [];
@@ -498,7 +532,7 @@ export async function runQueue(): Promise<RunResult> {
 
   // Steps a Stop skipped never reached `inputFor`. The done card outlives the page — the
   // store is module-level and only its dismiss clears it — so drop their text now.
-  setState({ phase: "done", stopping: false, payloads: new Map() });
+  setState({ phase: "done", stopping: false, payloads: new Map(), exportFiles: [] });
   return { message: summaryMessage(state.items) };
 }
 
