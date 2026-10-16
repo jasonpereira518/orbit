@@ -2,17 +2,24 @@
  * Meeting guests who are not contacts yet.
  *
  * `companyFromEmail` is free and always on: a work address names its company. "Look up"
- * (`lookUpGuestFor`) is the paid part — one web search on the account's own AI key, only when
- * the user asks, anchored on that company. Never on the email itself (the web search never sees
- * an address — the rule `work-history-research.ts` keeps) and never on a name alone, which
- * finds namesakes: a gmail.com guest has no anchor and is not looked up.
+ * (`lookUpGuestFor`) is the paid part — the same person research Find people runs
+ * (`researchPerson` in `web-research.ts`), on the account's own AI key, only when the user
+ * asks. It is anchored on the guest's name plus the company their address names — never the
+ * address or its domain (the privacy page promises exactly that), and never a name alone, which finds namesakes: a gmail.com guest
+ * has no anchor and is not looked up. The brief lands in the same cache as a /find search, so
+ * it shows in Find people's recent list and "Add" can save it with its work history.
  */
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { calendarEvents, guestProfiles } from "@/db/schema";
+import { calendarEvents } from "@/db/schema";
 import { publicEmailDomain } from "@/lib/closeness-evidence";
-import { consumeBucket, RATE_LIMITS } from "@/lib/rate-limit";
-import { researchWithWebSearch, type WorkHistoryResearcher } from "@/lib/work-history-research";
+import {
+  loadResearchedPeople,
+  personResearchKey,
+  researchPerson,
+  type PersonDossier,
+  type PersonResearcher,
+} from "@/lib/web-research";
 
 /** Second-level labels under a country code: acme.co.uk is "acme", not "co". */
 const SECOND_LEVEL = new Set(["co", "com", "org", "net", "ac", "gov", "edu", "ltd", "plc"]);
@@ -33,88 +40,88 @@ export function companyFromEmail(email: string | null | undefined): string | nul
     .join(" ");
 }
 
-export type GuestProfile = typeof guestProfiles.$inferSelect;
-
-/** Stored lookups for these addresses, by lower-cased email. */
-export async function loadGuestProfiles(userId: string, emails: string[]): Promise<Map<string, GuestProfile>> {
-  const keys = [...new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean))];
-  if (!keys.length) return new Map();
-  const db = await getDb();
-  const rows = await db
-    .select()
-    .from(guestProfiles)
-    .where(and(eq(guestProfiles.userId, userId), inArray(guestProfiles.email, keys)));
-  return new Map(rows.map((r) => [r.email, r]));
+/** What the web search is told about a guest: their name and the company their address names. */
+function guestSubject(name: string, email: string): { fullName: string; company: string } | null {
+  const company = companyFromEmail(email);
+  if (!company || !name.trim()) return null;
+  return { fullName: name.trim(), company };
 }
 
-/** As fresh as a contact's own web profile (`work-history-research.ts`). */
-const FRESH_MS = 30 * 86_400_000;
+/** A confident brief, as the prep card and the chat tool show it. `key` opens it on /find. */
+export type GuestBrief = {
+  key: string;
+  title: string | null;
+  company: string | null;
+  headline: string | null;
+  summary: string | null;
+  /** Recent, specific things worth mentioning, each with the page it came from. */
+  talkingPoints: { text: string; url: string | null }[];
+};
+
+function briefOf(key: string, d: PersonDossier): GuestBrief | null {
+  if (d.match !== "confident") return null;
+  return {
+    key,
+    title: d.current?.title ?? null,
+    company: d.current?.organization ?? d.subject.company,
+    headline: d.headline,
+    summary: d.summary,
+    talkingPoints: d.talkingPoints.slice(0, 3),
+  };
+}
+
+/** Briefs already researched for these guests, by lower-cased email, in one read. */
+export async function loadGuestBriefs(
+  userId: string,
+  guests: Array<{ name: string; email: string }>
+): Promise<Map<string, GuestBrief>> {
+  const byKey = new Map<string, string>();
+  for (const g of guests) {
+    const subject = guestSubject(g.name, g.email);
+    const key = subject ? personResearchKey(subject) : null;
+    if (key) byKey.set(key, g.email.toLowerCase());
+  }
+  const found = await loadResearchedPeople(userId, [...byKey.keys()]);
+  const out = new Map<string, GuestBrief>();
+  for (const [key, dossier] of found) {
+    const brief = briefOf(key, dossier);
+    if (brief) out.set(byKey.get(key)!, brief);
+  }
+  return out;
+}
 
 export type GuestLookup =
-  | { status: "found"; profile: GuestProfile }
-  | { status: "not_sure"; profile: GuestProfile }
+  | { status: "found"; brief: GuestBrief }
+  | { status: "not_sure" }
   | { status: "no_anchor" }
-  | { status: "not_a_guest" };
+  | { status: "not_a_guest" }
+  | { status: "refused"; message: string };
 
 /**
  * Look one guest up. Owner-scoped twice over: the event must be the user's, and the address a
- * guest on it — so this cannot be pointed at an arbitrary email. Throws only what the AI gate
- * and the rate limiter throw (both user-facing); the caller turns those into copy.
+ * guest on it who is not a contact — so this cannot be pointed at an arbitrary email. A brief
+ * already in the cache is reused without a search (`researchPerson` caches per account).
  */
 export async function lookUpGuestFor(
   userId: string,
   eventId: string,
   email: string,
-  deps: { researcher?: WorkHistoryResearcher; now?: Date } = {}
+  deps: { researcher?: PersonResearcher } = {}
 ): Promise<GuestLookup> {
-  const now = deps.now ?? new Date();
   const db = await getDb();
-  const key = email.trim().toLowerCase();
+  const address = email.trim().toLowerCase();
   const [event] = await db
     .select({ attendees: calendarEvents.attendees })
     .from(calendarEvents)
     .where(and(eq(calendarEvents.userId, userId), eq(calendarEvents.id, eventId)))
     .limit(1);
-  const guest = event?.attendees.find((a) => a.email.toLowerCase() === key && !a.contactId);
+  const guest = event?.attendees.find((a) => a.email.toLowerCase() === address && !a.contactId);
   if (!guest) return { status: "not_a_guest" };
 
-  const cached = (await loadGuestProfiles(userId, [key])).get(key);
-  if (cached && now.getTime() - cached.checkedAt.getTime() < FRESH_MS) {
-    return cached.confident ? { status: "found", profile: cached } : { status: "not_sure", profile: cached };
-  }
-
-  const company = companyFromEmail(key);
-  if (!company || !guest.name.trim()) return { status: "no_anchor" };
-
-  await consumeBucket("work-history", userId, RATE_LIMITS.workHistoryResearch);
-  const answer = await (deps.researcher ?? researchWithWebSearch)(userId, {
-    fullName: guest.name.trim(),
-    title: null,
-    company,
-    location: null,
-    school: null,
-    linkedinUrl: null,
-  });
-  const work = answer.experiences.filter((e) => e.kind === "role");
-  const current = work.find((e) => e.endYear === null) ?? work[0];
-  const linkedin = answer.sources.find((s) => /linkedin\.com\/in\//i.test(s.url))?.url ?? null;
-  const values = {
-    userId,
-    email: key,
-    name: guest.name.trim(),
-    // Only what a confident match says is kept as fact; an unsure one keeps the date it was tried.
-    title: answer.confident ? (current?.title ?? null) : null,
-    company: answer.confident ? (current?.organization ?? company) : null,
-    headline: answer.confident ? answer.headline : null,
-    linkedinUrl: answer.confident ? linkedin : null,
-    sources: answer.confident ? answer.sources.slice(0, 5).map((s) => ({ url: s.url, title: s.title ?? null })) : [],
-    confident: answer.confident,
-    checkedAt: now,
-  };
-  const [profile] = await db
-    .insert(guestProfiles)
-    .values(values)
-    .onConflictDoUpdate({ target: [guestProfiles.userId, guestProfiles.email], set: values })
-    .returning();
-  return answer.confident ? { status: "found", profile } : { status: "not_sure", profile };
+  const subject = guestSubject(guest.name, address);
+  if (!subject) return { status: "no_anchor" };
+  const res = await researchPerson(userId, subject, { researcher: deps.researcher });
+  if (!res.ok) return res.reason === "no_anchor" ? { status: "no_anchor" } : { status: "refused", message: res.message };
+  const brief = briefOf(res.key, res.dossier);
+  return brief ? { status: "found", brief } : { status: "not_sure" };
 }

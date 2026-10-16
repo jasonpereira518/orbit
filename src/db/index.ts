@@ -1014,20 +1014,6 @@ CREATE TABLE IF NOT EXISTS calendar_events (
   organizer_email text,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS guest_profiles (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id text NOT NULL,
-  email text NOT NULL,
-  name text,
-  title text,
-  company text,
-  headline text,
-  linkedin_url text,
-  sources jsonb NOT NULL DEFAULT '[]',
-  confident boolean NOT NULL DEFAULT false,
-  checked_at timestamptz NOT NULL DEFAULT now()
-);
-CREATE UNIQUE INDEX IF NOT EXISTS guest_profiles_user_email_uidx ON guest_profiles(user_id, email);
 CREATE UNIQUE INDEX IF NOT EXISTS calendar_events_source_event_uidx ON calendar_events(source_id, provider_event_id);
 CREATE INDEX IF NOT EXISTS calendar_events_user_start_idx ON calendar_events(user_id, start_at);
 CREATE TABLE IF NOT EXISTS usage_events (
@@ -2729,7 +2715,12 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 169 = guest_profiles (new table): what an on-demand "Look up" found about a meeting guest who
 // is not a contact. Built as 158 on Oct 13, renumbered to 163 on Oct 14 and to 169 on Oct 15,
 // above 168, since main reached 164. Rescanned Oct 15 2026: 168 (this stack) was the highest claimed.
-export const SCHEMA_VERSION = 169;
+//
+// 170 = guest_profiles dropped: guest "Look up" runs on Find people's research (researchPerson)
+// and its briefs live in ai_result_cache, read back by key. The table was a day old (v169) and
+// held only cached web lookups. Rescanned every ref and worktree on Oct 15 2026: 169 was the
+// highest claimed anywhere.
+export const SCHEMA_VERSION = 170;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -4717,6 +4708,10 @@ const alters = [
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS acted_at timestamptz`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS outcome_at timestamptz`,
   `DROP INDEX IF EXISTS recommendations_live_uidx`,
+  // Schema v170: guest "Look up" now files its briefs in ai_result_cache with Find people's
+  // research, so the table v169 created holds nothing anything reads — only short-lived
+  // copies of web lookups, re-runnable on demand. Dropped rather than left behind unpurged.
+  `DROP TABLE IF EXISTS guest_profiles`,
   // Schema v136: what autopilot scheduled for a card, so its Undo reverses exactly that.
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS autopilot jsonb`,
   // Schema v143: user_settings.radar_apollo_cursor, the cursor for a Radar-owned Apollo

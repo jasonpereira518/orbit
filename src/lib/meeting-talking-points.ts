@@ -30,7 +30,9 @@ export type TalkingFactKind =
   | "goal"
   | "next_step"
   | "note"
-  | "agenda";
+  | "agenda"
+  /** A guest who is not a contact, from a "Look up" brief: recent public things worth raising. */
+  | "web";
 
 export type TalkingFact = { key: string; kind: TalkingFactKind; person: string | null; text: string };
 export type TalkingPoint = { text: string; basis: string };
@@ -43,7 +45,7 @@ const firstName = (name: string) => name.trim().split(/\s+/)[0] || name;
 
 /** Everything worth raising, as numbered facts. Pure over its inputs, for the smoke. */
 export function talkingFacts(
-  ctx: Pick<MeetingCtx, "people" | "lastTime"> & { agenda: string | null },
+  ctx: Pick<MeetingCtx, "people" | "lastTime"> & { agenda: string | null; notInOrbit?: MeetingCtx["notInOrbit"] },
   extra: {
     moves: Map<string, string>;
     digests: Map<string, { workingOn: string | null; openThreads: { text: string; owedBy: "me" | "them" | null }[] }>;
@@ -64,6 +66,10 @@ export function talkingFacts(
     for (const g of extra.goalFit.get(p.contactId) ?? []) facts.push({ kind: "goal", person: p.name, text: g });
     if (p.nextStep) facts.push({ kind: "next_step", person: p.name, text: p.nextStep });
     if (p.fromNotes[0]) facts.push({ kind: "note", person: p.name, text: p.fromNotes[0].snippet });
+  }
+  // A looked-up guest: only a confident brief has a profile, and only its sourced points count.
+  for (const g of ctx.notInOrbit ?? []) {
+    for (const p of g.profile?.talkingPoints ?? []) facts.push({ kind: "web", person: g.name || null, text: p.text });
   }
   for (const t of ctx.lastTime?.actionItems ?? []) facts.push({ kind: "last_time", person: null, text: t });
   const agendaLines = (ctx.agenda ?? "")
@@ -88,13 +94,14 @@ export function factLine(f: TalkingFact): string {
     next_step: "suggested next step",
     note: "from your notes",
     agenda: "on the agenda",
+    web: "found when you looked them up",
   };
   return `${f.person ? `${f.person} — ` : ""}${label[f.kind]}: ${f.text}`;
 }
 
 /** No model: the facts that most want saying, in that order, as plain points. */
 export function heuristicTalkingPoints(facts: TalkingFact[], limit = MAX_POINTS): TalkingPoint[] {
-  const order: TalkingFactKind[] = ["due", "owe_me", "move", "last_time", "owe_them", "working_on", "goal", "next_step"];
+  const order: TalkingFactKind[] = ["due", "owe_me", "move", "last_time", "owe_them", "working_on", "web", "goal", "next_step"];
   const phrase = (f: TalkingFact): string => {
     const who = f.person ? firstName(f.person) : "them";
     switch (f.kind) {
@@ -112,6 +119,8 @@ export function heuristicTalkingPoints(facts: TalkingFact[], limit = MAX_POINTS)
         return `Ask ${who} how ${f.text} is going`;
       case "goal":
         return `Bring up what you’re working towards: ${f.text}`;
+      case "web":
+        return `Ask ${who} about this: ${f.text}`;
       default:
         return f.text;
     }
@@ -205,7 +214,10 @@ export async function generateTalkingPoints(
   deps: { complete?: typeof cachedCompleteJson; canUseAi?: (userId: string) => Promise<boolean> } = {}
 ): Promise<TalkingPointsResult> {
   const extras = await loadExtras(userId, ctx.people.map((p) => p.contactId));
-  const facts = talkingFacts({ people: ctx.people, lastTime: ctx.lastTime, agenda: ctx.event.agenda }, extras);
+  const facts = talkingFacts(
+    { people: ctx.people, lastTime: ctx.lastTime, agenda: ctx.event.agenda, notInOrbit: ctx.notInOrbit },
+    extras
+  );
   const fallback: TalkingPointsResult = { points: heuristicTalkingPoints(facts), source: "facts" };
   if (!facts.length || !(await (deps.canUseAi ?? userCanUseAi)(userId))) return fallback;
   try {

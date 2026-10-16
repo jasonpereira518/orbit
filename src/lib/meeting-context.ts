@@ -16,7 +16,7 @@ import {
   reminders,
   userSettings,
 } from "@/db/schema";
-import { companyFromEmail, loadGuestProfiles } from "@/lib/guest-profiles";
+import { companyFromEmail, loadGuestBriefs, type GuestBrief } from "@/lib/guest-profiles";
 import { listUpcomingEvents, relinkEvents, type CalendarEventRow } from "@/lib/calendar-events";
 import { resolveTimeZone, ymdInZone } from "@/lib/reminder-due-bucket";
 import { lastSeriesMeeting } from "@/lib/meeting-sessions";
@@ -86,8 +86,8 @@ export type GuestNotInOrbit = {
   email: string;
   /** From the email domain (free); null for gmail.com and friends. */
   company: string | null;
-  /** What a "Look up" found, when one was run and was sure. */
-  profile: { title: string | null; company: string | null; headline: string | null; linkedinUrl: string | null } | null;
+  /** What a "Look up" (Find people's research) found, when one was run and was sure. */
+  profile: GuestBrief | null;
 };
 
 /**
@@ -127,16 +127,13 @@ export async function getMeetingContext(
 
   const ids = [...new Set(event.attendees.map((a) => a.contactId).filter((c): c is string => !!c))].slice(0, 8);
   const strangers = event.attendees.filter((a) => !a.contactId).slice(0, 10);
-  const looked = await loadGuestProfiles(userId, strangers.map((a) => a.email));
-  const notInOrbit: GuestNotInOrbit[] = strangers.map((a) => {
-    const p = looked.get(a.email.toLowerCase());
-    return {
-      name: a.name,
-      email: a.email,
-      company: companyFromEmail(a.email),
-      profile: p?.confident ? { title: p.title, company: p.company, headline: p.headline, linkedinUrl: p.linkedinUrl } : null,
-    };
-  });
+  const looked = await loadGuestBriefs(userId, strangers);
+  const notInOrbit: GuestNotInOrbit[] = strangers.map((a) => ({
+    name: a.name,
+    email: a.email,
+    company: companyFromEmail(a.email),
+    profile: looked.get(a.email.toLowerCase()) ?? null,
+  }));
   const last = event.seriesId ? await lastSeriesMeeting(userId, event.seriesId) : null;
   const lastTime = last
     ? {

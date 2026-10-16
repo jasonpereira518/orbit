@@ -9,7 +9,7 @@ import "./smoke/_env";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { calendarEvents, calendarSources, contacts, guestProfiles, memoryChunks, reminders } from "../src/db/schema";
+import { aiResultCache, calendarEvents, calendarSources, contacts, memoryChunks, rateLimitBuckets, reminders } from "../src/db/schema";
 import { companyFromEmail, lookUpGuestFor } from "../src/lib/guest-profiles";
 import { getMeetingContext } from "../src/lib/meeting-context";
 import { prepReasons } from "../src/lib/calendar-reminders";
@@ -19,7 +19,7 @@ import {
   parseTalkingPoints,
   talkingFacts,
 } from "../src/lib/meeting-talking-points";
-import type { WorkHistoryResearcher } from "../src/lib/work-history-research";
+import type { PersonResearcher } from "../src/lib/web-research";
 
 const USER = "smoke-meeting-prep-user";
 const OTHER = "smoke-meeting-prep-other";
@@ -47,7 +47,8 @@ async function main() {
   for (const u of [USER, OTHER]) {
     await db.delete(calendarSources).where(eq(calendarSources.userId, u));
     await db.delete(contacts).where(eq(contacts.userId, u));
-    await db.delete(guestProfiles).where(eq(guestProfiles.userId, u));
+    await db.delete(aiResultCache).where(eq(aiResultCache.userId, u));
+    await db.delete(rateLimitBuckets).where(eq(rateLimitBuckets.bucket, `web-research:${u}`));
   }
   const now = Date.now();
   const [priya] = await db
@@ -134,44 +135,35 @@ async function main() {
     JSON.stringify(reasons)
   );
 
-  // --- guest lookup ----------------------------------------------------------------------------
+  // --- guest lookup (Find people's research) ----------------------------------------------
   let calls = 0;
-  const researcher: WorkHistoryResearcher = async (_u, subject) => {
+  const researcher: PersonResearcher = async (_u, subject) => {
     calls++;
     check(
-      "the lookup is anchored on the domain company, never an email",
-      subject.company === "Acme" && !JSON.stringify(subject).includes("@")
+      "the lookup is the guest's name and their domain's company — never the address or its domain",
+      subject.fullName === "Sam Guest" && subject.company === "Acme" && subject.domain === null && !JSON.stringify(subject).includes("@")
     );
     return {
-      confident: true,
-      headline: "Head of Partnerships at Acme",
-      experiences: [
-        {
-          kind: "role",
-          organization: "Acme",
-          title: "Head of Partnerships",
-          fieldOfStudy: null,
-          location: null,
-          description: null,
-          startYear: 2024,
-          startMonth: null,
-          endYear: null,
-          endMonth: null,
-        },
-      ] as never,
+      json: JSON.stringify({
+        match: "confident",
+        headline: "Head of Partnerships at Acme",
+        current: { organization: "Acme", title: "Head of Partnerships" },
+        location: null,
+        summary: "Runs partnerships at Acme.",
+        talkingPoints: [{ text: "Spoke at the Payments Summit last week", url: "https://example.com/talk" }],
+        experiences: [],
+      }),
       sources: [{ url: "https://www.linkedin.com/in/sam-guest", title: "Sam Guest" }],
     };
   };
-  const found = await lookUpGuestFor(USER, event.id, "Sam@Acme.io", { researcher, now: new Date(now) });
+  const found = await lookUpGuestFor(USER, event.id, "Sam@Acme.io", { researcher });
   check(
-    "a confident lookup is stored",
-    found.status === "found" &&
-      found.profile.title === "Head of Partnerships" &&
-      found.profile.linkedinUrl?.includes("linkedin.com/in/") === true,
+    "a confident lookup is a brief with a key Find people can open",
+    found.status === "found" && found.brief.title === "Head of Partnerships" && /^[0-9a-f]{64}$/.test(found.brief.key),
     JSON.stringify(found)
   );
-  const again = await lookUpGuestFor(USER, event.id, "sam@acme.io", { researcher, now: new Date(now + 86_400_000) });
-  check("within 30 days the stored answer is reused", again.status === "found" && calls === 1);
+  const again = await lookUpGuestFor(USER, event.id, "sam@acme.io", { researcher });
+  check("a second Look up reads the cached brief, with no new search", again.status === "found" && calls === 1);
   check("a gmail guest is not looked up", (await lookUpGuestFor(USER, event.id, "gp@gmail.com", { researcher })).status === "no_anchor");
   check(
     "an address not on the meeting is refused",
@@ -186,9 +178,22 @@ async function main() {
     (await lookUpGuestFor(OTHER, event.id, "sam@acme.io", { researcher })).status === "not_a_guest"
   );
   const after = await getMeetingContext(USER, { eventId: event.id }, new Date(now));
+  const samAfter = after?.notInOrbit.find((g) => g.email === "sam@acme.io");
   check(
-    "the context shows what the lookup found",
-    after?.notInOrbit.find((g) => g.email === "sam@acme.io")?.profile?.title === "Head of Partnerships"
+    "the context reads the brief back by key, with its talking points",
+    samAfter?.profile?.title === "Head of Partnerships" && samAfter.profile.talkingPoints.length === 1,
+    JSON.stringify(samAfter)
+  );
+
+  // An unsure answer keeps nothing about them.
+  await db.delete(aiResultCache).where(eq(aiResultCache.userId, USER));
+  const unsure = await lookUpGuestFor(USER, event.id, "sam@acme.io", {
+    researcher: async () => ({ json: JSON.stringify({ match: "unsure", headline: "Someone else" }), sources: [] }),
+  });
+  check("an unsure match is not shown as them", unsure.status === "not_sure");
+  check(
+    "…and the context shows no brief for them",
+    (await getMeetingContext(USER, { eventId: event.id }, new Date(now)))?.notInOrbit.find((g) => g.email === "sam@acme.io")?.profile === null
   );
 
   // --- talking points --------------------------------------------------------------------------
@@ -212,6 +217,28 @@ async function main() {
       points.some((x) => x.text.startsWith("Congratulate Priya")) &&
       points.length <= 5,
     JSON.stringify(points)
+  );
+  const withGuest = talkingFacts(
+    {
+      people: [],
+      lastTime: null,
+      agenda: null,
+      notInOrbit: [
+        {
+          name: "Sam Guest",
+          email: "sam@acme.io",
+          company: "Acme",
+          profile: { key: "k", title: null, company: "Acme", headline: null, summary: null, talkingPoints: [{ text: "Spoke at the Payments Summit", url: null }] },
+        },
+        { name: "Unknown", email: "u@acme.io", company: "Acme", profile: null },
+      ],
+    },
+    { moves: new Map(), digests: new Map(), goalFit: new Map() }
+  );
+  check(
+    "a looked-up guest's findings are facts too, and an un-looked-up guest adds none",
+    withGuest.length === 1 && withGuest[0]!.kind === "web" && heuristicTalkingPoints(withGuest)[0]?.text === "Ask Sam about this: Spoke at the Payments Summit",
+    JSON.stringify(withGuest)
   );
   const dueKey = facts.find((f) => f.kind === "due")!.key;
   const parsed = parseTalkingPoints(

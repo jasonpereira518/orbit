@@ -668,7 +668,6 @@ async function seed() {
       calendarId: "primary",
     })
     .returning();
-  await db.insert(schema.guestProfiles).values({ userId: USER, email: "guest@acme.example", name: "Guest" });
   await db.insert(schema.calendarEvents).values({
     userId: USER,
     sourceId: calendarSource.id,

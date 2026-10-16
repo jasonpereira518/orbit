@@ -11,9 +11,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { CalendarClock, Lightbulb, Loader2, Search, UserPlus } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { getMeetingPrep, getTalkingPoints, lookUpGuest, type MeetingPrep } from "@/actions/calendar-prep";
+import { addGuestFromBrief, getMeetingPrep, getTalkingPoints, lookUpGuest, type MeetingPrep } from "@/actions/calendar-prep";
 import type { TalkingPointsResult } from "@/lib/meeting-talking-points";
 import { useAppPulse } from "@/lib/app-pulse-store";
 import { NUDGE_LEAD_MS } from "@/lib/meeting-nudge";
@@ -171,10 +172,14 @@ function PrepBrief({ prep, eventId }: { prep: MeetingPrep; eventId: string }) {
 
 type Guest = MeetingPrep["notInOrbit"][number];
 
-/** A guest who isn't a contact: their company from the email domain, and "Look up" for more. */
+/**
+ * A guest who isn't a contact: their company from the email domain, and "Look up" — Find
+ * people's research — for more. A looked-up guest's "Add" saves the brief, work history and all.
+ */
 function GuestRow({ guest, eventId }: { guest: Guest; eventId: string }) {
+  const router = useRouter();
   const [profile, setProfile] = useState(guest.profile);
-  const [state, setState] = useState<"idle" | "loading" | { message: string }>("idle");
+  const [state, setState] = useState<"idle" | "loading" | "adding" | { message: string }>("idle");
   const company = profile?.company ?? guest.company;
   const role = profile?.title ? `${profile.title}${company ? ` at ${company}` : ""}` : company;
 
@@ -182,14 +187,21 @@ function GuestRow({ guest, eventId }: { guest: Guest; eventId: string }) {
     setState("loading");
     const res = await lookUpGuest(eventId, guest.email);
     if (!res.ok) return setState({ message: res.error });
-    if (!res.found) return setState({ message: "Couldn’t be sure which person this is" });
     setProfile(res.profile);
     setState("idle");
   };
 
-  const add = new URLSearchParams({ name: guest.name, email: guest.email });
-  if (company) add.set("company", company);
-  if (profile?.title) add.set("title", profile.title);
+  const prefill = new URLSearchParams({ name: guest.name, email: guest.email });
+  if (company) prefill.set("company", company);
+  if (profile?.title) prefill.set("title", profile.title);
+  const add = async () => {
+    if (!profile) return router.push(`/contacts/new?${prefill}`);
+    setState("adding");
+    const res = await addGuestFromBrief(profile.key);
+    // An expired brief still has the form to fall back on.
+    if (!res.ok) return router.push(`/contacts/new?${prefill}`);
+    router.push(`/contacts/${res.contactId}`);
+  };
 
   return (
     <div className="space-y-0.5">
@@ -209,15 +221,23 @@ function GuestRow({ guest, eventId }: { guest: Guest; eventId: string }) {
               {state === "loading" ? <Loader2 className="size-3 animate-spin" /> : <Search className="size-3" />} Look up
             </button>
           )}
-          <Link
-            href={`/contacts/new?${add}`}
-            className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline"
+          <button
+            type="button"
+            onClick={add}
+            disabled={state === "adding"}
+            className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline disabled:opacity-60"
           >
-            <UserPlus className="size-3" /> Add
-          </Link>
+            {state === "adding" ? <Loader2 className="size-3 animate-spin" /> : <UserPlus className="size-3" />} Add
+          </button>
         </span>
       </div>
       {profile?.headline && <p className="text-muted-foreground">{profile.headline}</p>}
+      {profile?.summary && <p className="text-muted-foreground">{profile.summary}</p>}
+      {profile && (
+        <Link href="/find" className="text-primary underline-offset-2 hover:underline">
+          Full brief in Find people
+        </Link>
+      )}
       {typeof state === "object" && <p className="text-muted-foreground">{state.message}</p>}
     </div>
   );
