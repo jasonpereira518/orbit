@@ -1,6 +1,6 @@
 /**
- * The four members of a LinkedIn export that describe YOU rather than other people:
- * Profile.csv, Positions.csv, Skills.csv and SavedJobAlerts.csv.
+ * The members of a LinkedIn export that describe YOU rather than other people:
+ * Profile.csv, Positions.csv, Skills.csv, SavedJobAlerts.csv and Education.csv.
  *
  * Pure parsers, no I/O. Everything comes out cleaned (`cleanSingleLine`) and capped, because
  * these strings are later pasted into model prompts and rendered next to other people's data.
@@ -13,6 +13,7 @@ import { cleanSingleLine } from "@/lib/ai-security";
 import { csvGet, LinkedInExportError } from "@/lib/linkedin-connections";
 import {
   looksLikeLinkedInAlerts,
+  looksLikeLinkedInEducation,
   looksLikeLinkedInPositions,
   looksLikeLinkedInProfile,
   looksLikeLinkedInSkills,
@@ -21,6 +22,9 @@ import type { CareerProfile } from "@/db/schema";
 
 export const MAX_SKILLS = 100;
 export const MAX_ROLE_KEYWORDS = 10;
+/** `setSchools` keeps ten, at most 120 characters each. */
+export const MAX_SCHOOLS = 10;
+const SCHOOL_MAX = 120;
 const TERM_MAX = 60;
 const LINE_MAX = 200;
 const SUMMARY_MAX = 600;
@@ -48,6 +52,20 @@ function uniqueTerms(values: (string | null)[], max: number): string[] {
     if (out.length >= max) break;
   }
   return out;
+}
+
+/** The schools on the user's profile, in LinkedIn's order. Degrees, dates and notes are not read. */
+export function parseLinkedInEducationCsv(text: string): string[] {
+  const { fields, rows } = rowsOf(text);
+  if (!looksLikeLinkedInEducation(fields)) {
+    throw new LinkedInExportError("That doesn't look like LinkedIn's Education.csv.");
+  }
+  const schools = uniqueTerms(
+    rows.map((r) => cleanSingleLine(csvGet(r, "School Name"), SCHOOL_MAX)),
+    MAX_SCHOOLS,
+  );
+  if (!schools.length) throw new LinkedInExportError("That Education.csv lists no schools.");
+  return schools;
 }
 
 /** Headline, summary, industry and location. Never the name, address, birth date or zip. */

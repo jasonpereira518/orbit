@@ -1,6 +1,7 @@
 "use server";
 
 import { and, asc, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { listSchools } from "@/lib/events/target-companies";
 import { contactSearchCondition, nameMatchTierSql } from "@/lib/contact-search-rank";
 import { deleteReplacedAvatar } from "@/lib/avatar-blob";
 import { deleteContactForUser } from "@/lib/contact-delete";
@@ -185,6 +186,26 @@ export async function searchContactsForPicker(
  * any more: with pagination the client has only seen the first 50 contacts, so asking it
  * which letters exist would dim every letter the user has not scrolled to yet.
  */
+/**
+ * What the Contacts School filter offers: the user's own schools (for "Same school as me"),
+ * and the schools their network went to, most common first.
+ */
+export async function listContactSchoolOptions(): Promise<{ mine: string[]; network: string[] }> {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const [mine, rows] = await Promise.all([
+    listSchools(userId),
+    db
+      .select({ name: sql<string>`btrim(${contacts.school})` })
+      .from(contacts)
+      .where(and(eq(contacts.userId, userId), sql`btrim(coalesce(${contacts.school}, '')) <> ''`))
+      .groupBy(sql`1`)
+      .orderBy(sql`count(*) desc`, sql`1`)
+      .limit(40),
+  ]);
+  return { mine, network: rows.map((r) => r.name) };
+}
+
 export async function listContactLetters(): Promise<string[]> {
   const userId = await requireUserId();
   const db = await getDb();
