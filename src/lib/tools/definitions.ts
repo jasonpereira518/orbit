@@ -82,6 +82,7 @@ function dayBound(day: string | undefined, end: boolean): Date | null {
  * A search that needs longer is finished on /find, which has a 150s route.
  */
 const RESEARCH_TOOL_TIMEOUT_MS = 20_000;
+const PREP_RESEARCH_TIMEOUT_MS = 15_000;
 const RESEARCH_TIMEOUT_MESSAGE =
   "The web search needs longer than chat allows. Tell the user to run it on Find people (/find), where it can finish.";
 
@@ -740,6 +741,8 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       "spoke, and what is still open with them. Pick the meeting by eventId (from " +
       "upcoming_meetings), by local time (\"15:00\" for \"my 3pm\", optionally with a day), or " +
       "by words in its title; with none of those it is the next meeting with someone you know. " +
+      "It reads who the meeting is with from the title too, and searches the web for up to two " +
+      "of them (their profile: role, summary, talking points with links). " +
       "Use it for \"prep me\", \"what should I know before…\" and \"who is on my next call\".",
     inputSchema: {
       eventId: z.string().uuid().optional(),
@@ -758,10 +761,16 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
     scope: "read",
     resultLabel: "meeting context",
     async run(userId, args: MeetingSelector) {
-      const found = await getMeetingContext(userId, args, new Date());
+      // Prep is worth a web search on who is coming: up to two people, cached per account.
+      const found = await getMeetingContext(userId, args, new Date(), {
+        research: true,
+        // Shorter than research_person's: the research step must end by GATHER_ENDS_BY_MS.
+        signal: AbortSignal.timeout(PREP_RESEARCH_TIMEOUT_MS),
+      });
       if (!found) return toolError("No matching meeting on the calendar in the next two weeks.");
       return {
         event: eventView(found.event, found.tz),
+        // `profile` is what a web search found — cite its talking points' links.
         people: found.people,
         // On the invite but not in Orbit — worth a "who is this?" before the call.
         notInOrbit: found.notInOrbit.map((p) => {
@@ -769,9 +778,12 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
           const role = p.profile?.title ? `${p.profile.title}${at ? ` at ${at}` : ""}` : at;
           // Never the address — this goes to the chat model. A nameless guest is described by
           // their company, which the prep card (not the model) can still look up by address.
-          const who = p.name || "A guest";
-          return role ? `${who} (${role})` : who;
+          const who = p.profile?.name || p.name || "A guest";
+          const about = p.profile?.summary ? ` — ${p.profile.summary}` : "";
+          return `${role ? `${who} (${role})` : who}${about}`;
         }),
+        // Nothing to search on: ask the user for their company or LinkedIn rather than guess.
+        ...(found.unresearched.length ? { noCompanyOrLinkedIn: found.unresearched } : {}),
         // A recurring meeting that was recorded before: what it decided and left open.
         lastTime: found.lastTime,
         // A Luma/Partiful/Eventbrite invite: who hosts, how big the room is, who is worth finding.

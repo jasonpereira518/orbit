@@ -16,16 +16,95 @@ import {
   reminders,
   userSettings,
 } from "@/db/schema";
-import { companyFromEmail, loadGuestBriefs, type GuestBrief } from "@/lib/guest-profiles";
+import { briefOf, companyFromEmail, guestSubject, type GuestBrief } from "@/lib/guest-profiles";
 import { listUpcomingEvents, relinkEvents, type CalendarEventRow } from "@/lib/calendar-events";
 import { resolveTimeZone, ymdInZone } from "@/lib/reminder-due-bucket";
-import { lastSeriesMeeting } from "@/lib/meeting-sessions";
+import { lastSeriesMeeting, loadMeetingSelf } from "@/lib/meeting-sessions";
+import { matchContactsByName } from "@/lib/chat-lanes";
+import { updateContactForUser } from "@/lib/contact-writes";
+import {
+  loadResearchedPeople,
+  personResearchKey,
+  researchPerson,
+  type PersonResearcher,
+} from "@/lib/web-research";
 import { extractEventLinks, platformOf } from "@/lib/events/platforms";
 import { canonicalEventKey } from "@/lib/events/discovery/keys";
 import { combineResolutions, resolveAliases } from "@/lib/events/discovery/aliases";
 import type { AliasKey } from "@/lib/events/discovery/types";
 import { getEventForUser, listRosterForUser } from "@/lib/events/store";
 import { whoToTalkTo, type WhoToTalkToRow } from "@/lib/events/who-to-talk-to";
+
+/** A stored name that is really an address handle: "", "dmcraver" for dmcraver@…, "calvintwong25". */
+export function isHandle(name: string | null | undefined, email?: string | null): boolean {
+  const n = (name ?? "").trim();
+  if (!n) return true;
+  if (email && n.toLowerCase() === email.split("@")[0]?.toLowerCase()) return true;
+  return !/\s/.test(n) && /[\d._@]/.test(n);
+}
+
+/** Capitalised words in an invite title that are not names. */
+const NOT_NAMES = new Set(
+  "chat sync call meeting meet intro catch catchup coffee lunch dinner drinks with and the re fwd fw for about on of weekly quick zoom teams interview check in hangout demo review prep standup x".split(" ")
+);
+
+/** "Chat with David/Jason", for user Jason → ["David"]. */
+export function titleNames(title: string, self: string[]): string[] {
+  const mine = new Set(self.map((n) => n.trim().toLowerCase()).filter(Boolean));
+  const out: string[] = [];
+  for (const w of title.split(/[^\p{L}'’-]+/u)) {
+    const lw = w.toLowerCase();
+    if (w.length < 2 || !/^\p{Lu}/u.test(w) || NOT_NAMES.has(lw) || mine.has(lw)) continue;
+    if (!out.some((o) => o.toLowerCase() === lw)) out.push(w);
+  }
+  return out;
+}
+
+const cap = (w: string) => w[0]!.toUpperCase() + w.slice(1);
+
+/**
+ * How a title name reads an address: "david.craver" and "davidcraver" are David Craver
+ * (`full`); "dmcraver" is only David — a middle initial and a surname cannot be told apart.
+ */
+function readAddress(name: string, email: string): { name: string; full: boolean } | null {
+  const n = name.toLowerCase();
+  const local = (email.split("@")[0] ?? "").toLowerCase();
+  const parts = local.split(/[._-]+/).map((p) => p.replace(/[^a-z]/g, "")).filter(Boolean);
+  if (parts.length >= 2 && parts[0] === n) return { name: `${name} ${cap(parts[parts.length - 1]!)}`, full: true };
+  const letters = local.replace(/[^a-z]/g, "");
+  if (letters.startsWith(n)) {
+    const rest = letters.slice(n.length);
+    return rest.length >= 3 ? { name: `${name} ${cap(rest)}`, full: true } : { name, full: false };
+  }
+  if (letters.length >= 4 && letters[0] === n[0]) return { name, full: false };
+  return null;
+}
+
+/**
+ * Title names on guests whose own name is a handle, by lower-cased email. Only a one-to-one
+ * fit pairs: two guests who could be David, or one guest who could be David or Dana, pair none.
+ */
+export function pairNames(
+  names: string[],
+  attendees: Array<{ name: string; email: string }>
+): Map<string, { name: string; full: boolean }> {
+  const fits = names.map((n) =>
+    attendees
+      .filter((a) => a.email && isHandle(a.name, a.email))
+      .map((a) => ({ email: a.email.toLowerCase(), read: readAddress(n, a.email) }))
+      .filter((f): f is { email: string; read: { name: string; full: boolean } } => f.read !== null)
+  );
+  const out = new Map<string, { name: string; full: boolean }>();
+  fits.forEach((f, i) => {
+    if (f.length !== 1) return;
+    const claimed = fits.some((g, j) => j !== i && g.some((x) => x.email === f[0]!.email));
+    if (!claimed) out.set(f[0]!.email, f[0]!.read);
+  });
+  return out;
+}
+
+/** Live web searches one prep may start; everyone else reads only what was already researched. */
+const MAX_PREP_RESEARCH = 2;
 
 /** The user's own zone, as Settings/Radar last saw it; UTC until then. */
 export async function userTimeZone(userId: string): Promise<string> {
@@ -79,6 +158,12 @@ export type MeetingSelector = { eventId?: string; time?: string; day?: string; q
 export type MeetingPerson = {
   contactId: string;
   name: string;
+  /** A search anchor for research, never fetched by Orbit. */
+  linkedinUrl: string | null;
+  /** Named in the invite title rather than on the guest list. */
+  fromTitle: boolean;
+  /** What a confident web search found about them. */
+  profile: GuestBrief | null;
   company: string | null;
   title: string | null;
   standing: string | null;
@@ -168,7 +253,12 @@ export async function linkedEventFor(
 export async function getMeetingContext(
   userId: string,
   sel: MeetingSelector,
-  now: Date
+  now: Date,
+  /**
+   * `research`: search the web for up to two people with nothing researched yet (chat's
+   * prep). Off, only briefs already in the cache are read — the prep card never spends.
+   */
+  opts: { research?: boolean; researcher?: PersonResearcher; signal?: AbortSignal } = {}
 ): Promise<{
   event: CalendarEventRow;
   tz: string;
@@ -177,6 +267,8 @@ export async function getMeetingContext(
   /** For a recurring meeting that was recorded before: what the last one decided and left open. */
   lastTime: { day: string; decisions: string[]; actionItems: string[] } | null;
   linkedEvent: LinkedEvent | null;
+  /** People on it with nothing to research them by (no company, work address or LinkedIn). */
+  unresearched: string[];
 } | null> {
   const tz = await userTimeZone(userId);
   const all = await listUpcomingEvents(userId, {
@@ -195,19 +287,47 @@ export async function getMeetingContext(
         ? soon.find((e) => words.every((w) => e.title.toLowerCase().includes(w)))
         : soon.find((e) => e.startAt.getTime() > now.getTime() - 3_600_000 && e.attendees.some((a) => a.contactId));
   if (!found) return null;
-  const [event] = await relinkEvents(userId, [found]);
+  const [linked] = await relinkEvents(userId, [found]);
 
-  const ids = [...new Set(event.attendees.map((a) => a.contactId).filter((c): c is string => !!c))].slice(0, 8);
+  // Names: Google leaves a guest with no display name blank, and calendar ingest names such a
+  // contact after their address. The invite title usually says who it is with.
+  const self = await loadMeetingSelf(userId);
+  const names = titleNames(linked.title, [self.firstName ?? "", self.lastName ?? ""]);
+  const paired = pairNames(names, linked.attendees);
+  const pairedFirst = new Set([...paired.values()].map((p) => p.name.split(" ")[0]!.toLowerCase()));
+  const onInvite = new Set(linked.attendees.map((a) => a.contactId).filter(Boolean));
+  // A title name nobody on the invite answers to: the one contact by that first name, if one.
+  const titled = (
+    await Promise.all(
+      names
+        .filter((n) => !pairedFirst.has(n.toLowerCase()))
+        .slice(0, 2)
+        .map(async (n) => {
+          const { strong } = await matchContactsByName(userId, n).catch(() => ({ strong: [] as { id: string; name: string }[] }));
+          const hits = strong.filter((h) => h.name.split(/\s+/)[0]!.toLowerCase() === n.toLowerCase());
+          return hits.length === 1 && !onInvite.has(hits[0]!.id) ? hits[0]!.id : null;
+        })
+    )
+  ).filter((id): id is string => !!id);
+  const event: CalendarEventRow = {
+    ...linked,
+    attendees: linked.attendees.map((a) => {
+      const pair = paired.get(a.email.toLowerCase());
+      return isHandle(a.name, a.email) && pair ? { ...a, name: pair.name } : a;
+    }),
+  };
+
+  const ids = [
+    ...new Set([...event.attendees.map((a) => a.contactId).filter((c): c is string => !!c), ...titled]),
+  ].slice(0, 8);
   const strangers = event.attendees.filter((a) => !a.contactId).slice(0, 10);
-  const [looked, linkedEvent] = await Promise.all([
-    loadGuestBriefs(userId, strangers),
-    linkedEventFor(userId, event),
-  ]);
+  // Read beside everything below; a failure only means no event block on the prep.
+  const linkedEventP = linkedEventFor(userId, event).catch(() => null);
   const notInOrbit: GuestNotInOrbit[] = strangers.map((a) => ({
-    name: a.name,
+    name: isHandle(a.name, a.email) ? "" : a.name,
     email: a.email,
     company: companyFromEmail(a.email),
-    profile: looked.get(a.email.toLowerCase()) ?? null,
+    profile: null,
   }));
   const last = event.seriesId ? await lastSeriesMeeting(userId, event.seriesId) : null;
   const lastTime = last
@@ -217,13 +337,12 @@ export async function getMeetingContext(
         actionItems: last.actionItems.map((a) => (a.owner ? `${a.text} — ${a.owner === "me" ? "you" : a.owner}` : a.text)),
       }
     : null;
-  if (!ids.length) return { event, tz, people: [], notInOrbit, lastTime, linkedEvent };
-
+  // With no contact on it the reads below are `false` queries: cheap, and research still runs.
   const db = await getDb();
   const [people, briefs, todos, items, recent, notes] = await Promise.all([
     db.query.contacts.findMany({
       where: and(eq(contacts.userId, userId), inArray(contacts.id, ids)),
-      columns: { id: true, fullName: true, company: true, title: true },
+      columns: { id: true, fullName: true, preferredName: true, email: true, company: true, title: true, linkedinUrl: true },
     }),
     db.query.contactBriefs.findMany({
       where: and(eq(contactBriefs.userId, userId), inArray(contactBriefs.contactId, ids)),
@@ -286,17 +405,105 @@ export async function getMeetingContext(
     return t.length > 180 ? `${t.slice(0, 177)}…` : t;
   };
   const recentBy = new Map(recent.map((rows, i) => [ids[i], rows]));
+
+  // The best name for each contact: never a handle when anything better is known.
+  const attendeeOf = new Map(event.attendees.filter((a) => a.contactId).map((a) => [a.contactId!, a]));
+  const nameOf = (c: (typeof people)[number]) => {
+    const a = attendeeOf.get(c.id);
+    return (
+      c.preferredName?.trim() ||
+      (isHandle(c.fullName, c.email) ? null : c.fullName) ||
+      (a && !isHandle(a.name, a.email) ? a.name : null) ||
+      c.fullName
+    );
+  };
+
+  // Research. Everyone with something to search by reads what was already found; with
+  // `research`, up to two with nothing yet are searched — strangers first, the least known. A
+  // guest is searched by name and the company their address names (never the address); a
+  // contact by name with their company or LinkedIn.
+  const subjects = [
+    ...notInOrbit.map((g) => ({
+      ref: `e:${g.email.toLowerCase()}`,
+      who: g.name || "A guest",
+      input: guestSubject(g.name, g.email),
+    })),
+    ...people.map((c) => {
+      const name = nameOf(c);
+      return {
+        ref: `c:${c.id}`,
+        who: name,
+        input:
+          c.linkedinUrl || (c.company && !isHandle(name, c.email))
+            ? { fullName: name, company: c.company ?? undefined, linkedinUrl: c.linkedinUrl ?? undefined }
+            : null,
+      };
+    }),
+  ].map((s) => ({ ...s, key: s.input ? personResearchKey(s.input) : null }));
+  const cached = await loadResearchedPeople(userId, subjects.flatMap((s) => (s.key ? [s.key] : [])));
+  const profiles = new Map<string, GuestBrief | null>();
+  for (const s of subjects) {
+    const d = s.key ? cached.get(s.key) : undefined;
+    if (d) profiles.set(s.ref, briefOf(s.key!, d));
+  }
+  if (opts.research) {
+    const todo = subjects.filter((s) => s.key && !profiles.has(s.ref)).slice(0, MAX_PREP_RESEARCH);
+    await Promise.all(
+      todo.map(async (s) => {
+        const res = await researchPerson(userId, s.input!, { researcher: opts.researcher, signal: opts.signal }).catch(
+          () => null
+        );
+        profiles.set(s.ref, res?.ok ? briefOf(res.key, res.dossier) : null);
+      })
+    );
+  }
+  const unresearched = subjects.filter((s) => !s.key).map((s) => s.who);
+  for (const g of notInOrbit) g.profile = profiles.get(`e:${g.email.toLowerCase()}`) ?? null;
+
+  // Full names over handles, kept: a contact saved as "dmcraver" becomes David Craver once the
+  // invite or their own profile says so. Only ever a handle is replaced.
+  for (const c of people) {
+    if (!isHandle(c.fullName, c.email)) continue;
+    const a = attendeeOf.get(c.id);
+    const pair = a ? paired.get(a.email.toLowerCase()) : undefined;
+    const fromWeb = profiles.get(`c:${c.id}`)?.name ?? null;
+    const first = pair?.name.split(" ")[0]!.toLowerCase();
+    const better =
+      (a && !isHandle(a.name, a.email) && a.name.includes(" ") ? a.name : null) ??
+      (pair?.full ? pair.name : null) ??
+      (fromWeb?.includes(" ") && (!first || fromWeb.toLowerCase().startsWith(first)) ? fromWeb : null);
+    if (!better) continue;
+    try {
+      await updateContactForUser(userId, c.id, { fullName: better }, { skipRevalidate: true, skipSummary: true, skipCloseness: true });
+      c.fullName = better;
+    } catch {
+      // Best effort: the prep still shows the better name.
+    }
+  }
+
+  const byId = new Map(people.map((c) => [c.id, c]));
   return {
-    event,
+    // The invite as the contacts' names have it — never "Guest" for someone Orbit knows.
+    event: {
+      ...event,
+      attendees: event.attendees.map((a) => {
+        const c = a.contactId ? byId.get(a.contactId) : undefined;
+        return c ? { ...a, name: nameOf(c) } : a;
+      }),
+    },
     tz,
     notInOrbit,
     lastTime,
-    linkedEvent,
+    linkedEvent: await linkedEventP,
+    unresearched,
     people: people.map((c) => {
       const brief = briefs.find((b) => b.contactId === c.id);
       return {
         contactId: c.id,
-        name: c.fullName,
+        name: nameOf(c),
+        linkedinUrl: c.linkedinUrl,
+        fromTitle: !attendeeOf.has(c.id),
+        profile: profiles.get(`c:${c.id}`) ?? null,
         company: c.company,
         title: c.title,
         standing: brief?.standing ?? null,

@@ -206,6 +206,15 @@ function contactsIn(name: string, result: unknown): Array<{ id: string; name: st
     case "list_reminders":
     case "list_open_commitments":
       return rows.flatMap((r) => (str(r?.contactId) ? [{ id: r.contactId, name: str(r.name ?? r.contactName) }] : []));
+    case "meeting_context": {
+      // The people on the meeting: Orbit's own contacts, by id.
+      const people = (result as { people?: unknown } | null)?.people;
+      return Array.isArray(people)
+        ? people.flatMap((p: { contactId?: unknown; name?: unknown }) =>
+            str(p?.contactId) ? [{ id: p.contactId as string, name: str(p.name) }] : []
+          )
+        : [];
+    }
     case "get_timeline": {
       // Not an array: one person, the one the caller asked for.
       const r = result as { contactId?: unknown; name?: unknown } | null;
@@ -506,6 +515,8 @@ export async function maybeGather(
   notePassages: NotePassage[];
   depth: DepthDecision;
   research: ResearchSummary | null;
+  /** Contacts the research step's lookups named, by id — for a prep answer's follow-up. */
+  named: Array<{ id: string; name: string }>;
 }> {
   // Decided with the rest of the routing (decisions/chat-route.ts) while retrieval ran; a
   // context built without it gets one pass.
@@ -513,11 +524,11 @@ export async function maybeGather(
   // The fact lane's passages (retrieval, every fact or person question) come first; research
   // adds to them, never replaces them.
   const lanePassages = ctx.notePassages ?? [];
-  if (depth.depth !== "research") return { evidence: null, notePassages: lanePassages, depth, research: null };
+  if (depth.depth !== "research") return { evidence: null, notePassages: lanePassages, depth, research: null, named: [] };
 
   const now = Date.now();
   const deadline = Math.min(options.requestStartedAt + GATHER_ENDS_BY_MS, now + GATHER_MAX_MS);
-  if (deadline - now < GATHER_MIN_MS) return { evidence: null, notePassages: lanePassages, depth, research: null };
+  if (deadline - now < GATHER_MIN_MS) return { evidence: null, notePassages: lanePassages, depth, research: null, named: [] };
 
   const gathered = await gatherEvidence(userId, ctx, {
     deadline,
@@ -536,6 +547,7 @@ export async function maybeGather(
     evidence: gathered.evidence,
     notePassages: [...lanePassages, ...gathered.notePassages.filter((p) => !seen.has(p.sourceId))],
     depth,
+    named: gathered.namedContacts,
     research: o
       ? {
           rounds: o.rounds,

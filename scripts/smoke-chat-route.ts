@@ -73,6 +73,11 @@ async function main() {
   check("…and its keyword fallback", route.calendar && route.availability, route);
   route = routeFromParsed(parsed({ shape: "open", intent: { ...NO_INTENT, calendar: true } }), "prep me for my 3pm");
   check("preparing for a meeting still goes to research (meeting_context)", route.calendar && route.depth.depth === "research", route);
+  check("…and is flagged as prep, so the meeting's people lead", route.prep === true, route);
+  check(
+    "a schedule question is not prep",
+    routeFromParsed(parsed({ shape: "open", intent: { ...NO_INTENT, calendar: true } }), "what's on tomorrow?").prep === false
+  );
   route = routeFromParsed(parsed({ shape: "fact", intent: NO_INTENT }), "Any notes about pricing from my calls?");
   check("when the parser says it is not about the calendar, a keyword does not override it", !route.calendar, route);
   route = routeFromParsed(parsed({ shape: "count", intent: NO_INTENT }), "Who did I meet last week?");
