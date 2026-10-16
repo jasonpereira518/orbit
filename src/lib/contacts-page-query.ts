@@ -27,10 +27,12 @@ import {
   encodeContactsCursor,
 } from "@/lib/contacts-page-cursor";
 import { contactsListSelection } from "@/lib/contact-avatar-sql";
-import type { RankedContact } from "@/lib/hybrid-search";
+import { schoolCondition, type RankedContact } from "@/lib/hybrid-search";
+import { listSchools } from "@/lib/events/target-companies";
 import {
   CONTACTS_PAGE_SIZE,
   parseQuietDays,
+  SAME_SCHOOL_AS_ME,
   type ContactSort,
   type ContactsPage,
   type ContactsPageFilters,
@@ -111,6 +113,13 @@ export async function listContactsPage(
         and t.user_id = ${userId}
         and lower(trim(t.name)) = ${tag.toLowerCase()}
     )`);
+  }
+
+  const school = filters?.school?.trim();
+  if (school) {
+    const schools = school === SAME_SCHOOL_AS_ME ? await listSchools(userId) : [school];
+    // No schools of your own means nobody shares one — not "the filter is off".
+    conditions.push(schools.length ? schoolCondition(userId, schools) : sql`false`);
   }
 
   // "Gone quiet": nothing logged for at least this many days. A contact with no interaction

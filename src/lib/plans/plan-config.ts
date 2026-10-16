@@ -71,7 +71,8 @@ export const PLAN_SHORT_LABELS: Record<Plan, string> = {
  * - `hostedEnrichment`: OFF on every plan. Orbit does not sell contact enrichment; a user's own
  *   Apollo key (Settings) is the only path, and `hostedEnrichmentsPerMonth` stays 0 to match.
  * - `outreach`, `hostedSending`: Outreach is NOT shipped (coming-soon gate). The flags stay
- *   so the gated code keeps a plan answer, but no pricing copy may mention them.
+ *   so the gated code keeps a plan answer, but no pricing copy may mention them (the coming-soon
+ *   screen may: `COMING_SOON_UNLOCK_PLAN`).
  * - `extension`: the extension's CORE is free on every plan; its Pro depth is decided by the
  *   extension's own gate (open PR #248), not by this flag.
  * - `sync`: pasted-ICS calendar subscriptions and event sources.

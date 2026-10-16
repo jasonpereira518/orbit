@@ -1033,3 +1033,13 @@ export function RadarPageSkeleton() {
     </div>
   );
 }
+
+/** `/find` below its static header: the mode switch, then the lookup form. */
+export function FindPageSkeleton() {
+  return (
+    <div className="space-y-5">
+      <Skeleton className="h-10 w-72 rounded-lg" />
+      <Skeleton className="h-52 w-full rounded-xl" />
+    </div>
+  );
+}
