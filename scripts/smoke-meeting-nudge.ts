@@ -1,5 +1,5 @@
 /**
- * When the "record this meeting?" offer shows: from two minutes before a meeting starts until
+ * When the "record this meeting?" offer shows: from five minutes before a meeting starts until
  * ten minutes after, never for one already over or dismissed, the closest start first.
  * Pure — a fake clock, no storage, no network.
  * Run: npx tsx scripts/smoke-meeting-nudge.ts
@@ -22,6 +22,9 @@ function meeting(id: string, startMin: number, lengthMin = 30): MeetingCandidate
     startIso: new Date(NOW + min(startMin)).toISOString(),
     endIso: new Date(NOW + min(startMin + lengthMin)).toISOString(),
     attendees: [{ name: "Priya Raman", email: "priya@acme.io" }],
+    call: null,
+    webinar: false,
+    seriesId: null,
   };
 }
 const none = new Set<string>();

@@ -1,13 +1,14 @@
 "use client";
 
 /**
- * "Pilot sync starts in 2 min — record it?" in the bottom-right stack, about two minutes
+ * "Pilot sync starts in 5 min — record it?" in the bottom-right stack, about five minutes
  * before a calendar meeting. The data and timing are `meeting-nudge-store.ts`; this is only
  * how it looks and what its buttons do.
  *
- * "Open recorder" fills the setup form from the event and goes to /capture's Meeting tab.
- * Starting is still a click there — the browser's share picker needs a user gesture — so the
- * nudge cannot (and should not) begin recording on its own.
+ * "Record" fills the setup form from the event and starts sharing right here: the click IS
+ * the user gesture the browser's share picker needs, and the picker is still the person's own
+ * choice of what to share. Nothing starts without that click. Until the recorder chunk has
+ * loaded, the only button is "Open recorder", which fills the form and goes to /capture.
  */
 
 import { useEffect } from "react";
@@ -19,6 +20,7 @@ import { nudgeKey } from "@/lib/meeting-nudge";
 import {
   dismissMeetingNudge,
   setMeetingNudgeOn,
+  skipMeetingSeries,
   useMeetingNudgeOn,
   useMeetingNudgeSnapshot,
   type NudgeSnapshot,
@@ -54,6 +56,14 @@ export function MeetingNudgeCard({ snap }: { snap: NudgeSnapshot }) {
     router.push("/capture?mode=meeting");
   };
 
+  const record = () => {
+    session.applyCalendarMeeting(nudge);
+    dismissMeetingNudge(nudgeKey(nudge));
+    // Synchronous from the click to `getDisplayMedia`. The form state set above lands before
+    // the share resolves, which is when the session is created from it.
+    session.startRecording(null, "display");
+  };
+
   return (
     <div
       className="flex flex-col gap-2 rounded-xl border border-primary/30 bg-card/95 p-3 shadow-lg backdrop-blur-md"
@@ -65,6 +75,7 @@ export function MeetingNudgeCard({ snap }: { snap: NudgeSnapshot }) {
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-ink">{nudge.title}</p>
           <p className="truncate text-xs text-muted-foreground">
+            {nudge.webinar ? "Webinar · " : ""}
             {snap.timing}
             {nudge.attendees.length > 0
               ? ` · with ${nudge.attendees[0].name}${nudge.attendees.length > 1 ? ` +${nudge.attendees.length - 1}` : ""}`
@@ -73,15 +84,40 @@ export function MeetingNudgeCard({ snap }: { snap: NudgeSnapshot }) {
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" size="sm" onClick={open}>
-          Open recorder
-        </Button>
+        {session.ready ? (
+          <>
+            <Button type="button" size="sm" onClick={record}>
+              Record
+            </Button>
+            <Button type="button" size="sm" variant="ghost" onClick={open}>
+              Open recorder
+            </Button>
+          </>
+        ) : (
+          <Button type="button" size="sm" onClick={open}>
+            Open recorder
+          </Button>
+        )}
         <Button type="button" size="sm" variant="ghost" onClick={() => dismissMeetingNudge(nudgeKey(nudge))}>
           Not now
         </Button>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        {nudge.seriesId && (
+          <button
+            type="button"
+            className="underline-offset-2 hover:underline"
+            onClick={() => {
+              skipMeetingSeries(nudge.seriesId!);
+              toast.info("Won’t ask about this series again on this device");
+            }}
+          >
+            Skip this series
+          </button>
+        )}
         <button
           type="button"
-          className="ml-auto text-xs text-muted-foreground underline-offset-2 hover:underline"
+          className="ml-auto underline-offset-2 hover:underline"
           onClick={() => {
             setMeetingNudgeOn(false);
             toast.info("Meeting reminders are off — turn them back on in Settings");

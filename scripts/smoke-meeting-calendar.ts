@@ -87,4 +87,25 @@ function event(id: string, title: string, startMin: number, endMin: number, extr
   check("a guest with no display name is named from their email", c.attendees[0].name === "Dana Whitfield", JSON.stringify(c.attendees));
 }
 
+// ── Webinars: a call link with no guest list, or a crowd ──────────────────────────────
+{
+  const [w] = meetingCandidatesFrom(
+    [event("webinar", "Scaling Postgres live", 3, 63, {
+      attendees: [me],
+      description: "Join: https://us02web.zoom.us/j/123456789?pwd=x",
+    })],
+    NOW
+  );
+  check("a solo event with a Zoom link is offered as a webinar", w?.webinar === true && w.call === "zoom", JSON.stringify(w));
+
+  const [m] = meetingCandidatesFrom([event("meet", "Pilot sync", 3, 33, { hangoutLink: "https://meet.google.com/abc", recurringEventId: "series9" })], NOW);
+  check("a Meet call with guests is a meeting, not a webinar", m?.webinar === false && m.call === "meet" && m.seriesId === "series9", JSON.stringify(m));
+
+  const [h] = meetingCandidatesFrom([event("hiddencall", "All hands", 3, 63, { guestsCanSeeOtherGuests: false, hangoutLink: "https://meet.google.com/xyz" })], NOW);
+  check("a call whose guest list is hidden is a webinar", h?.webinar === true);
+
+  const [plain] = meetingCandidatesFrom([event("plain", "Coffee", 3, 33)], NOW);
+  check("no link: no call, not a webinar", plain?.call === null && plain.webinar === false && plain.seriesId === null);
+}
+
 console.log("\nsmoke-meeting-calendar: all checks passed");
