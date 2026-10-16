@@ -7,7 +7,8 @@ import "./smoke/_env";
 
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { getDb } from "../src/db";
+import { getDb, setAsideAbandonedCalendarEvents, type SchemaFailure } from "../src/db";
+import { PGlite } from "@electric-sql/pglite";
 import {
   calendarEvents,
   calendarSources,
@@ -91,6 +92,23 @@ const TRIP = {
 };
 
 async function main() {
+  // --- a stale calendar_events from #184 is set aside, ours never is --------------------------
+  {
+    const pg = new PGlite();
+    const run = (q: string) => pg.query(q);
+    const failed: SchemaFailure[] = [];
+    const tables = async () =>
+      (await pg.query<{ t: string }>(`SELECT table_name AS t FROM information_schema.tables WHERE table_schema = current_schema()`)).rows.map((r) => r.t);
+    await pg.exec(`CREATE TABLE calendar_events (id uuid, user_id text, provider text, external_id text, starts_at timestamptz)`);
+    await setAsideAbandonedCalendarEvents(run, failed);
+    const names = await tables();
+    check("#184's calendar_events is renamed out of the way", names.includes("calendar_events_abandoned_v56") && !names.includes("calendar_events") && failed.length === 0, JSON.stringify({ names, failed }));
+    await pg.exec(`CREATE TABLE calendar_events (id uuid, source_id uuid, provider_event_id text)`);
+    await setAsideAbandonedCalendarEvents(run, failed);
+    check("…and this table is left alone", (await tables()).includes("calendar_events") && failed.length === 0);
+    await pg.close();
+  }
+
   // --- mapping (pure) ------------------------------------------------------------------
   const one = toStoredEvent(ONE_ON_ONE)!;
   check("keyed on the per-instance id, not the series' iCalUID", one.providerEventId === ONE_ON_ONE.id);

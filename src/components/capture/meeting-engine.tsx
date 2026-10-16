@@ -19,8 +19,10 @@
  *               and sentences land a second or two behind the conversation. Chunks are still
  *               cut throughout as the recovery route.
  *   pausing   → Pause was pressed. The last sentence is flushed and the session marked ended.
- *   paused    → the share and mic are released. Resume re-asks for the share (a browser gate
- *               that needs a click) and carries on the same transcript and timeline.
+ *   paused    → the share and mic are KEPT and the audio graph suspended, so Resume is one
+ *               click with no picker. "Stop sharing" (`pause({ release: true })`) releases
+ *               them; Resume then re-asks for the share. Either way it carries on the same
+ *               transcript and timeline.
  *   finishing → the user CONFIRMED the meeting is done. The queue is drained.
  *   analyzing → the transcript becomes a digest (`analyzeMeetingSession`).
  *
