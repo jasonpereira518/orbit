@@ -167,6 +167,7 @@ async function main() {
     ctx.route = {
       depth: { depth: "research", reason: "needs more than one lookup" },
       shape: "open",
+      prep: false,
       attention: false,
       recruiters: false,
       calendar: false,

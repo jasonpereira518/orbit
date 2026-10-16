@@ -3,8 +3,8 @@
  *
  * `companyFromEmail` is free and always on: a work address names its company. "Look up"
  * (`lookUpGuestFor`) is the paid part — the same person research Find people runs
- * (`researchPerson` in `web-research.ts`), on the account's own AI key, only when the user
- * asks. It is anchored on the guest's name plus the company their address names — never the
+ * (`researchPerson` in `web-research.ts`), on the account's own AI key, when the user asks
+ * or asks chat to prep them for the meeting (`getMeetingContext`). It is anchored on the guest's name plus the company their address names — never the
  * address or its domain (the privacy page promises exactly that), and never a name alone, which finds namesakes: a gmail.com guest
  * has no anchor and is not looked up. The brief lands in the same cache as a /find search, so
  * it shows in Find people's recent list and "Add" can save it with its work history.
@@ -14,8 +14,6 @@ import { getDb } from "@/db";
 import { calendarEvents } from "@/db/schema";
 import { publicEmailDomain } from "@/lib/closeness-evidence";
 import {
-  loadResearchedPeople,
-  personResearchKey,
   researchPerson,
   type PersonDossier,
   type PersonResearcher,
@@ -41,7 +39,7 @@ export function companyFromEmail(email: string | null | undefined): string | nul
 }
 
 /** What the web search is told about a guest: their name and the company their address names. */
-function guestSubject(name: string, email: string): { fullName: string; company: string } | null {
+export function guestSubject(name: string, email: string): { fullName: string; company: string } | null {
   const company = companyFromEmail(email);
   if (!company || !name.trim()) return null;
   return { fullName: name.trim(), company };
@@ -50,6 +48,8 @@ function guestSubject(name: string, email: string): { fullName: string; company:
 /** A confident brief, as the prep card and the chat tool show it. `key` opens it on /find. */
 export type GuestBrief = {
   key: string;
+  /** Their full name as their profile spells it; null on briefs researched before it was asked. */
+  name: string | null;
   title: string | null;
   company: string | null;
   headline: string | null;
@@ -58,36 +58,17 @@ export type GuestBrief = {
   talkingPoints: { text: string; url: string | null }[];
 };
 
-function briefOf(key: string, d: PersonDossier): GuestBrief | null {
+export function briefOf(key: string, d: PersonDossier): GuestBrief | null {
   if (d.match !== "confident") return null;
   return {
     key,
+    name: d.name ?? null,
     title: d.current?.title ?? null,
     company: d.current?.organization ?? d.subject.company,
     headline: d.headline,
     summary: d.summary,
     talkingPoints: d.talkingPoints.slice(0, 3),
   };
-}
-
-/** Briefs already researched for these guests, by lower-cased email, in one read. */
-export async function loadGuestBriefs(
-  userId: string,
-  guests: Array<{ name: string; email: string }>
-): Promise<Map<string, GuestBrief>> {
-  const byKey = new Map<string, string>();
-  for (const g of guests) {
-    const subject = guestSubject(g.name, g.email);
-    const key = subject ? personResearchKey(subject) : null;
-    if (key) byKey.set(key, g.email.toLowerCase());
-  }
-  const found = await loadResearchedPeople(userId, [...byKey.keys()]);
-  const out = new Map<string, GuestBrief>();
-  for (const [key, dossier] of found) {
-    const brief = briefOf(key, dossier);
-    if (brief) out.set(byKey.get(key)!, brief);
-  }
-  return out;
 }
 
 export type GuestLookup =

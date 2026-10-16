@@ -32,6 +32,8 @@ export type ChatRoute = {
   calendar: boolean;
   /** …with the free gaps between them. */
   availability: boolean;
+  /** Preparing for one meeting: its people are the subject, not whoever the search ranks. */
+  prep: boolean;
   engine: "llm" | "default";
 };
 
@@ -65,6 +67,7 @@ export function routeFromParsed(parsed: ParsedQuery | null, question: string): C
       recruiters: isRecruiterIntent(question),
       calendar: keywordCalendar,
       availability: AVAILABILITY_QUESTION.test(question),
+      prep,
       engine: "default",
     };
   }
@@ -85,6 +88,7 @@ export function routeFromParsed(parsed: ParsedQuery | null, question: string): C
     // from my calls" is about notes, not the schedule — eval said-11).
     calendar: intent.calendar === true || availability,
     availability,
+    prep,
     engine: "llm",
   };
 }

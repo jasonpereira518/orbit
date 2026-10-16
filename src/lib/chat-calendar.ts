@@ -6,7 +6,10 @@
 import { addDaysYmd, ymdInZone } from "@/lib/reminder-due-bucket";
 import { fromWallClockInput } from "@/lib/events/wall-clock";
 import { listUpcomingEvents, relinkEvents, type CalendarEventRow } from "@/lib/calendar-events";
-import { hhmmInZone, userTimeZone } from "@/lib/meeting-context";
+import { and, eq, inArray } from "drizzle-orm";
+import { getDb } from "@/db";
+import { contacts } from "@/db/schema";
+import { hhmmInZone, isHandle, userTimeZone } from "@/lib/meeting-context";
 import { freeSlots } from "@/lib/calendar-free";
 import type { ParsedQuery } from "@/lib/chat-retrieval";
 
@@ -65,11 +68,37 @@ export async function loadChatCalendar(
   const rows = await listUpcomingEvents(userId, { from, to, limit: person ? 200 : 60 });
   const linked = await relinkEvents(
     userId,
-    (person ? rows.filter((e) => e.attendees.some((a) => attendeeMatches(a.name, person))) : rows).filter(
+    // Or by the title: a guest with no display name is still the "David" of "Chat with David".
+    (person
+      ? rows.filter((e) => attendeeMatches(e.title, person) || e.attendees.some((a) => attendeeMatches(a.name, person)))
+      : rows
+    ).filter(
       (e) => e.selfResponse !== "declined"
     )
   );
   const shown = linked.slice(0, MAX_EVENTS);
+
+  // A known attendee by their contact's name — an invite often has none, or only the address.
+  const ids = [...new Set(shown.flatMap((e) => e.attendees.flatMap((a) => (a.contactId ? [a.contactId] : []))))];
+  const db = ids.length ? await getDb() : null;
+  const found = db
+    ? await db
+        .select({ id: contacts.id, fullName: contacts.fullName, preferredName: contacts.preferredName, email: contacts.email })
+        .from(contacts)
+        .where(and(eq(contacts.userId, userId), inArray(contacts.id, ids)))
+    : [];
+  const byId = new Map(found.map((c) => [c.id, c]));
+  // Never a handle ("dmcraver") while a real name is known; the handle still beats "a contact".
+  const nameOf = (a: { name: string; email: string; contactId: string | null }) => {
+    const c = a.contactId ? byId.get(a.contactId) : undefined;
+    return (
+      c?.preferredName?.trim() ||
+      (c && !isHandle(c.fullName, c.email) ? c.fullName : null) ||
+      (isHandle(a.name, a.email) ? null : a.name) ||
+      c?.fullName ||
+      "a contact"
+    );
+  };
 
   const dayLabel = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", month: "short", day: "numeric" });
   const lines: string[] = [];
@@ -89,7 +118,7 @@ export async function loadChatCalendar(
     const head = dayLabel.format(fromWallClockInput(`${d}T12:00`, tz) ?? now);
     lines.push(`${head}:${events.length ? "" : " no meetings"}`);
     for (const e of events) {
-      const known = e.attendees.filter((a) => a.contactId).map((a) => a.name || "a contact");
+      const known = e.attendees.filter((a) => a.contactId).map(nameOf);
       const others = e.attendeeCount - known.length;
       const who = [known.join(", "), others > 0 ? `+${others} other${others === 1 ? "" : "s"}` : ""].filter(Boolean).join(", ");
       const when = e.allDay ? "all day" : `${hhmmInZone(e.startAt, tz)}${e.endAt ? `–${hhmmInZone(e.endAt, tz)}` : ""}`;
@@ -105,7 +134,7 @@ export async function loadChatCalendar(
   if (linked.length > shown.length) lines.push(`(${linked.length - shown.length} more not shown)`);
 
   const people = new Map<string, string>();
-  for (const e of shown) for (const a of e.attendees) if (a.contactId) people.set(a.contactId, a.name || "a contact");
+  for (const e of shown) for (const a of e.attendees) if (a.contactId) people.set(a.contactId, nameOf(a));
   const range = firstDay === endDay ? firstDay : `${firstDay} to ${endDay}`;
   const scope = person ? `meetings with "${person}"` : "meetings";
   return {
