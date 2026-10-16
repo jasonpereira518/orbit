@@ -5624,7 +5624,7 @@ export const eventAttendees = pgTable(
     attendeeRole: text("attendee_role").$type<"attendee" | "host" | "speaker">(),
     /** Which acquisition path produced this row. Rendered as a badge, so it must be honest. */
     source: text("source")
-      .$type<"paste" | "csv" | "screenshot" | "page" | "calendar" | "luma" | "eventbrite">()
+      .$type<"paste" | "csv" | "screenshot" | "page" | "calendar" | "extension" | "luma" | "eventbrite">()
       .default("paste")
       .notNull(),
     /** The provider's own guest id, where there is one. */

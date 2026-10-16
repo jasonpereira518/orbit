@@ -20,13 +20,11 @@ import { canonicalizeEventUrl } from "@/lib/events/canonical-url";
 import { enrichEvent } from "@/lib/events/enrich";
 import { IcsFeedGoneError, syncIcsFeed } from "@/lib/events/discovery/from-ics-feed";
 import {
-  combineResolutions,
   dismissEventForUser,
-  resolveAliases,
   restoreEventForUser,
   tombstoneAliasesForEvent,
 } from "@/lib/events/discovery/aliases";
-import { claimEventAliases, keysForEvent } from "@/lib/events/discovery/record";
+import { findOrCreateEventByLink } from "@/lib/events/discovery/record";
 import {
   eventsTogetherForRoster,
   listEventsTogetherForContact,
@@ -49,10 +47,8 @@ import { userCanUseAi } from "@/lib/ai";
 import { getAiAccessStatus } from "@/lib/ai-access";
 import { refusalCopyFor } from "@/lib/ai-access-copy";
 import { diffEventAgainstPage, type EventFieldChange } from "@/lib/events/resync";
-import { resolveThemeColor } from "@/lib/events/theme";
 import { parseRosterCsv, parseRosterText } from "@/lib/events/parse-roster";
 import {
-  createEventForUser,
   deleteEventForUser,
   getEventForUser,
   listEventsForUser,
@@ -197,34 +193,24 @@ export async function createEvent(input: {
     // Already here? Discovery may have added this event days ago, and a user pasting its link
     // means "show me this", not "make me a second one". Taking them to the row they already
     // have is also how they find the roster they have already built on it.
-    const keys = keysForEvent({ url });
-    if (keys.length > 0) {
-      const known = combineResolutions(keys, await resolveAliases(userId, keys));
-      if (known.eventId) {
-        // A pasted link is an explicit statement and outranks a previous "not mine" — the
-        // dismissal was an answer about a suggestion, not about this.
-        if (known.dismissed) await restoreEventForUser(userId, known.eventId);
-        revalidateEvents(known.eventId);
-        return { id: known.eventId, existing: true };
-      }
+    const found = await findOrCreateEventByLink(
+      userId,
+      {
+        title,
+        startsAt: input.startsAt ? new Date(input.startsAt) : null,
+        venue: input.venue ?? null,
+        city: input.city ?? null,
+        url,
+        role: input.role ?? "attended",
+        notes: input.notes ?? null,
+      },
+      "manual"
+    );
+    if (found.existing) {
+      revalidateEvents(found.id);
+      return { id: found.id, existing: true };
     }
-
-    const event = await createEventForUser(userId, {
-      title,
-      startsAt: input.startsAt ? new Date(input.startsAt) : null,
-      venue: input.venue ?? null,
-      city: input.city ?? null,
-      url,
-      role: input.role ?? "attended",
-      notes: input.notes ?? null,
-      // Seeded from the title so the card has an identity immediately; enrichment may improve
-      // it, but nothing renders grey in the meantime.
-      ...seedTheme(url ?? title),
-    });
-
-    // Claimed with `repoint`, which is what makes a paste override a tombstone: if this link
-    // was dismissed as a suggestion last week, asking for it by hand today wins.
-    if (keys.length > 0) await claimEventAliases(userId, event.id, keys, "manual");
+    const event = { id: found.id };
 
     if (input.url) {
       // Off the request path: the user should land on their event, not wait on someone
@@ -234,11 +220,6 @@ export async function createEvent(input: {
     revalidateEvents();
     return { id: event.id };
   });
-}
-
-function seedTheme(seed: string) {
-  const theme = resolveThemeColor({ seed });
-  return { themeColor: theme.color, themeSource: theme.source };
 }
 
 /**

@@ -1,4 +1,5 @@
 import type {
+  EventRosterResponse,
   ExtensionResponse,
   FollowUpRequest,
   FollowUpResponse,
@@ -90,6 +91,9 @@ export function createApi(getToken: TokenGetter) {
 
     parseProfile: (page: PageContext, signal?: AbortSignal) =>
       post<ParseResponse>("/parse", { page }, signal),
+
+    saveEventRoster: (page: PageContext, signal?: AbortSignal) =>
+      post<EventRosterResponse>("/event-roster", { page }, signal),
 
     starters: (body: StartersRequest, signal?: AbortSignal) =>
       post<StartersResponse>("/starters", body, signal),
