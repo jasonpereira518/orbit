@@ -17,7 +17,7 @@ import {
   userSettings,
 } from "@/db/schema";
 import { companyFromEmail, loadGuestProfiles } from "@/lib/guest-profiles";
-import { listUpcomingEvents, type CalendarEventRow } from "@/lib/calendar-events";
+import { listUpcomingEvents, relinkEvents, type CalendarEventRow } from "@/lib/calendar-events";
 import { resolveTimeZone, ymdInZone } from "@/lib/reminder-due-bucket";
 import { lastSeriesMeeting } from "@/lib/meeting-sessions";
 
@@ -113,14 +113,15 @@ export async function getMeetingContext(
   // Started up to an hour ago still counts as "my next meeting" — they may be in it.
   const soon = all.filter((e) => !e.allDay && (e.endAt ?? e.startAt).getTime() > now.getTime() - 3_600_000);
   const words = (sel.query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
-  const event = sel.eventId
+  const found = sel.eventId
     ? all.find((e) => e.id === sel.eventId)
     : sel.time
       ? soon.find((e) => hhmmInZone(e.startAt, tz) === sel.time && (!sel.day || ymdInZone(e.startAt, tz) === sel.day))
       : words.length
         ? soon.find((e) => words.every((w) => e.title.toLowerCase().includes(w)))
         : soon.find((e) => e.startAt.getTime() > now.getTime() - 3_600_000 && e.attendees.some((a) => a.contactId));
-  if (!event) return null;
+  if (!found) return null;
+  const [event] = await relinkEvents(userId, [found]);
 
   const ids = [...new Set(event.attendees.map((a) => a.contactId).filter((c): c is string => !!c))].slice(0, 8);
   const strangers = event.attendees.filter((a) => !a.contactId).slice(0, 10);
@@ -251,7 +252,8 @@ export async function getMeetingContext(
 
 /**
  * The next meeting with someone the user knows, starting within `withinMs` — for the app
- * pulse, which runs every 90 seconds per tab, so one indexed read and nothing else.
+ * pulse, which runs every 90 seconds per tab, so one indexed read, plus the contact re-match
+ * when a meeting is near.
  */
 export async function nextKnownMeeting(
   userId: string,
@@ -278,7 +280,9 @@ export async function nextKnownMeeting(
     )
     .orderBy(asc(calendarEvents.startAt))
     .limit(5);
-  const e = rows.find((r) => r.attendees.some((a) => a.contactId));
+  // Two small reads, only when a meeting is near: someone added since the last sync counts now.
+  const linked = await relinkEvents(userId, rows);
+  const e = linked.find((r) => r.attendees.some((a) => a.contactId));
   if (!e) return null;
   return {
     eventId: e.id,

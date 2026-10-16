@@ -27,6 +27,7 @@ const BUCKET_LABELS: Record<string, string> = {
   captureParts: "capture",
   meetingChunk: "meeting transcription",
   meetingCandidates: "calendar lookup",
+  calendarWindow: "calendar refresh",
   avatarResolve: "photo lookup",
   avatarFill: "photo fill",
   feedback: "feedback",
@@ -140,6 +141,11 @@ export const RATE_LIMITS = {
    * loop cannot burn through the account's Google quota.
    */
   meetingCandidates: { limit: 30, windowSec: 600 },
+  /**
+   * The app pulse re-reading the user's calendar window (`refreshUserCalendarWindows`): one
+   * read per user per ten minutes however many tabs are open. Hitting it means "fresh enough".
+   */
+  calendarWindow: { limit: 1, windowSec: 600 },
   /**
    * On-demand photo resolution in `/api/avatars/[contactId]`.
    *

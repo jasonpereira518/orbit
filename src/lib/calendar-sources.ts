@@ -8,8 +8,9 @@
  */
 import { and, asc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { calendarSources, gmailConnections, outlookConnections } from "@/db/schema";
+import { calendarEvents, calendarSources, gmailConnections, outlookConnections } from "@/db/schema";
 import type { CalendarSyncCursor } from "@/db/schema";
+import { dropCalendarEvents } from "@/lib/calendar-events";
 
 export type CalendarSourceRow = typeof calendarSources.$inferSelect;
 export type CalendarSourceProvider = CalendarSourceRow["provider"];
@@ -126,4 +127,8 @@ export async function setSourceEnabled(
     .update(calendarSources)
     .set({ enabled: enabled ? 1 : 0, updatedAt: new Date() })
     .where(and(eq(calendarSources.userId, userId), eq(calendarSources.id, id)));
+  // A hidden calendar stops syncing, so its mirrored meetings would otherwise keep nudging.
+  if (!enabled) {
+    await dropCalendarEvents(and(eq(calendarEvents.userId, userId), eq(calendarEvents.sourceId, id))!, new Date());
+  }
 }

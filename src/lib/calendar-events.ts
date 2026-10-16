@@ -6,11 +6,22 @@
  * "next week". One windowed read per sync pass (`fetchCalendarWindow`) sidesteps that, and makes
  * deletes free — anything in the window Google no longer returns is gone.
  */
-import { and, asc, eq, gte, inArray, lt, notInArray, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lt, notInArray, sql, type SQL } from "drizzle-orm";
 import { getDb } from "@/db";
-import { calendarEvents, contactIdentities, contacts, type CalendarEventAttendee } from "@/db/schema";
-import { toStoredEvent, type StoredCalendarEvent } from "@/lib/connectors/google-calendar";
+import {
+  calendarEvents,
+  calendarSources,
+  contactIdentities,
+  contacts,
+  gmailConnections,
+  reminders,
+  type CalendarEventAttendee,
+} from "@/db/schema";
+import { fetchCalendarWindow, toStoredEvent, type StoredCalendarEvent } from "@/lib/connectors/google-calendar";
 import { syncCalendarReminders } from "@/lib/calendar-reminders";
+import { getValidAccessToken, hasCalendarScope } from "@/lib/gmail";
+import { ReauthRequiredError } from "@/lib/errors";
+import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 
 export const EVENTS_WINDOW_PAST_MS = 2 * 86_400_000;
 export const EVENTS_WINDOW_FUTURE_MS = 14 * 86_400_000;
@@ -49,6 +60,106 @@ async function contactIdsByEmail(userId: string, emails: string[]): Promise<Map<
   for (const r of byColumn) if (r.email) out.set(r.email.toLowerCase(), r.id);
   for (const r of byIdentity) out.set(r.value, r.contactId);
   return out;
+}
+
+/**
+ * Events with their attendees re-matched to contacts now, in one lookup. A row's links were made
+ * at its last refresh, so someone added a minute ago (the prep card's "Add") would otherwise
+ * still read as a stranger.
+ */
+export async function relinkEvents<T extends { attendees: CalendarEventAttendee[] }>(
+  userId: string,
+  events: T[]
+): Promise<T[]> {
+  const emails = [...new Set(events.flatMap((e) => e.attendees.map((a) => a.email)).filter(Boolean))];
+  if (!emails.length) return events;
+  const byEmail = await contactIdsByEmail(userId, emails);
+  return events.map((e) => ({
+    ...e,
+    attendees: e.attendees.map((a) => ({ ...a, contactId: (a.email && byEmail.get(a.email)) || a.contactId })),
+  }));
+}
+
+/**
+ * Deletes events and dismisses the still-pending reminders made for the ones not yet started —
+ * a prep nudge for a meeting Orbit can no longer see. A follow-up for a meeting that already
+ * happened stays: the meeting took place whatever became of the calendar.
+ */
+export async function dropCalendarEvents(where: SQL, now: Date): Promise<number> {
+  const db = await getDb();
+  const gone = await db.delete(calendarEvents).where(where).returning();
+  const upcoming = new Map<string, string[]>();
+  for (const e of gone) {
+    if (e.startAt.getTime() <= now.getTime()) continue;
+    upcoming.set(e.userId, [...(upcoming.get(e.userId) ?? []), e.providerEventId]);
+  }
+  for (const [userId, keys] of upcoming) {
+    await db
+      .update(reminders)
+      .set({ status: "dismissed" })
+      .where(
+        and(eq(reminders.userId, userId), eq(reminders.status, "pending"), inArray(reminders.calendarEventKey, keys))
+      );
+  }
+  return gone.length;
+}
+
+/** Rows no sync has touched in this long belong to a calendar Orbit can no longer read. */
+export const STALE_EVENT_MS = 24 * 3_600_000;
+
+/**
+ * Drops events from calendars that stopped refreshing — access revoked, scope removed, a
+ * connection failing for a day. A healthy source re-touches every row on each complete read.
+ */
+export function pruneStaleCalendarEvents(now: Date): Promise<number> {
+  return dropCalendarEvents(lt(calendarEvents.updatedAt, new Date(now.getTime() - STALE_EVENT_MS)), now);
+}
+
+const recentWindowTries = new Map<string, number>();
+
+/**
+ * The user's window, re-read now — for the app pulse, so a meeting added or cancelled since the
+ * last scheduled sync (every 30 minutes, often later) reaches the prep card and record nudge.
+ * At most one read per user per ten minutes; a throttled call is "fresh enough" and does nothing.
+ */
+export async function refreshUserCalendarWindows(
+  userId: string,
+  now: Date,
+  deps: { getAccessToken?: typeof getValidAccessToken; fetchWindow?: typeof fetchCalendarWindow } = {}
+): Promise<{ refreshed: number }> {
+  // The pulse calls this every 90 seconds per tab: an instance that tried lately skips even the
+  // bucket write, and the bucket keeps instances (and tabs) from stacking reads.
+  // ponytail: per-instance Map, never pruned — one entry per active user, fine at this size.
+  const last = recentWindowTries.get(userId);
+  if (last !== undefined && now.getTime() - last < RATE_LIMITS.calendarWindow.windowSec * 1000) return { refreshed: 0 };
+  recentWindowTries.set(userId, now.getTime());
+  try {
+    await consumeBucket("calendarWindow", userId, RATE_LIMITS.calendarWindow);
+  } catch (err) {
+    if (isRateLimitedError(err)) return { refreshed: 0 };
+    throw err;
+  }
+  const db = await getDb();
+  const conn = await db.query.gmailConnections.findFirst({ where: eq(gmailConnections.userId, userId) });
+  if (!conn || conn.status !== "active" || !hasCalendarScope(conn.scopes)) return { refreshed: 0 };
+  // Only a source the scheduler already made: creating one is the sync's job.
+  const source = await db.query.calendarSources.findFirst({
+    where: and(eq(calendarSources.connectionId, conn.id), eq(calendarSources.enabled, 1)),
+    orderBy: asc(calendarSources.createdAt),
+  });
+  if (!source) return { refreshed: 0 };
+  let accessToken: string;
+  try {
+    accessToken = await (deps.getAccessToken ?? getValidAccessToken)(userId);
+  } catch (err) {
+    // Needs reconnecting: Settings says so; the pulse has nothing to add.
+    if (err instanceof ReauthRequiredError) return { refreshed: 0 };
+    throw err;
+  }
+  const { from, to } = eventsWindow(now);
+  const read = await (deps.fetchWindow ?? fetchCalendarWindow)({ accessToken, from, to, maxPages: 4, timeoutMs: 10_000 });
+  await refreshCalendarWindow(userId, source.id, read, now);
+  return { refreshed: 1 };
 }
 
 /**

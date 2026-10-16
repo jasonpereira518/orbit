@@ -15,13 +15,22 @@ import {
   contactBriefs,
   contactIdentities,
   contacts,
+  gmailConnections,
   interactions,
+  rateLimitBuckets,
   reminders,
   userSettings,
 } from "../src/db/schema";
 import { conferenceOf, toStoredEvent } from "../src/lib/connectors/google-calendar";
-import { listUpcomingEvents, refreshCalendarWindow } from "../src/lib/calendar-events";
-import { nextKnownMeeting } from "../src/lib/meeting-context";
+import {
+  listUpcomingEvents,
+  pruneStaleCalendarEvents,
+  refreshCalendarWindow,
+  refreshUserCalendarWindows,
+} from "../src/lib/calendar-events";
+import { setSourceEnabled } from "../src/lib/calendar-sources";
+import { GOOGLE_SCOPES } from "../src/lib/google-scopes";
+import { getMeetingContext, nextKnownMeeting } from "../src/lib/meeting-context";
 import { ORBIT_TOOLS } from "../src/lib/tools/definitions";
 import { runTool, toolsFor, type OrbitTool } from "../src/lib/tools/registry";
 import { ensureUserSettings } from "../src/lib/user-settings";
@@ -242,6 +251,82 @@ async function main() {
   await db.delete(calendarSources).where(eq(calendarSources.id, source.id));
   const orphaned = await db.select().from(calendarEvents).where(eq(calendarEvents.userId, USER));
   check("deleting the source deletes its events", orphaned.length === 0);
+
+  // --- fresher, hidden, frozen, re-matched ---------------------------------------------------
+  await db.delete(gmailConnections).where(eq(gmailConnections.userId, USER));
+  await db.delete(rateLimitBuckets).where(eq(rateLimitBuckets.bucket, `calendarWindow:${USER}`));
+  const [conn] = await db
+    .insert(gmailConnections)
+    .values({ userId: USER, emailAddress: OWNER, accessTokenEncrypted: "x", scopes: GOOGLE_SCOPES.calendar })
+    .returning();
+  const [live] = await db
+    .insert(calendarSources)
+    .values({ userId: USER, provider: "google", connectionId: conn.id, calendarId: "primary" })
+    .returning();
+  // Twelve minutes out, with someone not in Orbit yet.
+  const BO_MEET = {
+    id: "bo1",
+    summary: "Intro with Bo",
+    start: { dateTime: at(0.2) },
+    end: { dateTime: at(0.7) },
+    attendees: [{ email: OWNER, self: true }, { email: "bo@new.example", displayName: "Bo Chen" }],
+  };
+  let reads = 0;
+  const pulseDeps = {
+    getAccessToken: async () => "token",
+    fetchWindow: (async () => {
+      reads++;
+      return { items: [ONE_ON_ONE, BO_MEET], complete: true, status: 200 };
+    }) as never,
+  };
+  const first = await refreshUserCalendarWindows(USER, NOW, pulseDeps);
+  check("the pulse refresh reads the window", first.refreshed === 1 && reads === 1);
+  const second = await refreshUserCalendarWindows(USER, new Date(NOW.getTime() + 60_000), pulseDeps);
+  check("a second pulse inside ten minutes makes no read", second.refreshed === 0 && reads === 1);
+  check(
+    "no Google calendar access, no read",
+    (await refreshUserCalendarWindows(OTHER, NOW, pulseDeps)).refreshed === 0 && reads === 1
+  );
+  check("a meeting only with a stranger is not a known one", (await nextKnownMeeting(USER, NOW, 3_600_000)) === null);
+
+  const [bo] = await db.insert(contacts).values({ userId: USER, fullName: "Bo Chen", email: "bo@new.example" }).returning();
+  const soon = await nextKnownMeeting(USER, NOW, 3_600_000);
+  check("someone added since the sync counts as known, with no refresh", soon?.title === "Intro with Bo", JSON.stringify(soon));
+  const boCtx = await getMeetingContext(USER, { eventId: soon?.eventId ?? "" }, NOW);
+  check(
+    "…and the prep context lists them as a person, not a stranger",
+    boCtx?.people.some((p) => p.contactId === bo.id) === true && boCtx.notInOrbit.length === 0,
+    JSON.stringify({ people: boCtx?.people.map((p) => p.name), notInOrbit: boCtx?.notInOrbit })
+  );
+
+  await db.insert(reminders).values([
+    { userId: USER, title: "Prep for Intro with Bo", status: "pending", calendarEventKey: "bo1" },
+    { userId: USER, title: "Already done prep", status: "done", calendarEventKey: ONE_ON_ONE.id },
+  ]);
+  await setSourceEnabled(USER, live.id, false);
+  const hidden = await db.select().from(calendarEvents).where(eq(calendarEvents.sourceId, live.id));
+  check("hiding a calendar drops its meetings", hidden.length === 0, String(hidden.length));
+  const rs = await db.select().from(reminders).where(eq(reminders.userId, USER));
+  check(
+    "…dismisses their pending prep reminder and leaves a done one alone",
+    rs.find((r) => r.title === "Prep for Intro with Bo")?.status === "dismissed" &&
+      rs.find((r) => r.title === "Already done prep")?.status === "done",
+    JSON.stringify(rs.map((r) => [r.title, r.status]))
+  );
+
+  // Frozen: OTHER's source stopped refreshing a day ago; USER's is fresh.
+  await setSourceEnabled(USER, live.id, true);
+  await refreshCalendarWindow(USER, live.id, { items: [ONE_ON_ONE], complete: true }, NOW);
+  await db
+    .update(calendarEvents)
+    .set({ updatedAt: new Date(NOW.getTime() - 25 * 3_600_000) })
+    .where(eq(calendarEvents.userId, OTHER));
+  await pruneStaleCalendarEvents(NOW);
+  check(
+    "a calendar not refreshed in a day is pruned; a fresh one stays",
+    (await db.select().from(calendarEvents).where(eq(calendarEvents.userId, OTHER))).length === 0 &&
+      (await db.select().from(calendarEvents).where(eq(calendarEvents.userId, USER))).length === 1
+  );
 
   if (failures) {
     console.error(`\nsmoke-calendar-events: ${failures} failure(s)`);
