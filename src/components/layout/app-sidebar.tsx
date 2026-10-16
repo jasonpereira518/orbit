@@ -16,6 +16,7 @@ import {
   type AppNavItem,
 } from "@/components/layout/app-nav";
 import {
+  COMING_SOON_UNLOCK_PLAN,
   isHrefComingSoon,
   isHrefHidden,
   orderNavItems,
@@ -23,7 +24,7 @@ import {
   tierTagPlan,
   tierTagTitle,
 } from "@/lib/surfaces";
-import { PLAN_SHORT_LABELS } from "@/lib/plans/plan-config";
+import { PLAN_LABELS, PLAN_SHORT_LABELS } from "@/lib/plans/plan-config";
 import { NavPendingDot } from "@/components/layout/nav-pending-dot";
 import { OrbitLogo } from "@/components/orbit-logo";
 import type { Plan } from "@/lib/plan-limits";
@@ -85,7 +86,7 @@ function SidebarNavLink({
         hiddenFromUsers
           ? `${item.label} — hidden from users`
           : comingSoon
-            ? `${item.label} — coming soon`
+            ? `${item.label} — coming soon · unlocks with ${PLAN_LABELS[COMING_SOON_UNLOCK_PLAN]}`
             : tiers && tierPlan
               ? tierTagTitle(item.label, tiers)
               : item.label

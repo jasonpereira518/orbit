@@ -10,16 +10,25 @@
  * change is needed. That is also why this file is plain ES5-ish JavaScript with no build
  * step — nothing in the Next pipeline touches /public.
  *
- * It does the least possible: copy each render quantum and post it. All resampling,
+ * It does the least possible: copy each render quantum (or a batch of them) and post it. All resampling,
  * framing and metering happens on the main thread in `src/lib/voice-recording.ts`, where
  * it is testable under node.
  */
 class OrbitPcmRecorder extends AudioWorkletProcessor {
-  constructor() {
+  constructor(options) {
     super();
     this.recording = true;
+    // `batchQuanta` render quanta go out as one message. 1 (voice notes, dictation) posts
+    // every 128-sample quantum, about 375 messages a second; a long meeting asks for more so
+    // the main thread, the resampler and the live socket each run ~30 times a second instead.
+    var opts = (options && options.processorOptions) || {};
+    this.batchQuanta = Math.max(1, Math.floor(opts.batchQuanta || 1));
+    this.batch = null;
+    this.filled = 0;
     this.port.onmessage = (event) => {
       if (event.data === "stop") this.recording = false;
+      // A pause: the part-filled batch is audio from before it, never to be sent after.
+      if (event.data === "reset") this.batch = null;
     };
   }
 
@@ -40,10 +49,30 @@ class OrbitPcmRecorder extends AudioWorkletProcessor {
 
     // The engine reuses this buffer for the next quantum, so a reference would be
     // overwritten before the main thread ever reads it. Copy, then transfer the copy —
-    // transferring costs nothing and skips a structured clone of every 128-sample frame.
-    const copy = new Float32Array(channel.length);
-    copy.set(channel);
-    this.port.postMessage(copy, [copy.buffer]);
+    // transferring costs nothing and skips a structured clone of every frame.
+    if (this.batchQuanta === 1) {
+      const copy = new Float32Array(channel.length);
+      copy.set(channel);
+      this.port.postMessage(copy, [copy.buffer]);
+      return true;
+    }
+    // A quantum is 128 frames today, but the spec lets it vary, so fill by length.
+    let i = 0;
+    while (i < channel.length) {
+      if (!this.batch) {
+        this.batch = new Float32Array(128 * this.batchQuanta);
+        this.filled = 0;
+      }
+      const take = Math.min(channel.length - i, this.batch.length - this.filled);
+      this.batch.set(channel.subarray(i, i + take), this.filled);
+      this.filled += take;
+      i += take;
+      if (this.filled === this.batch.length) {
+        const full = this.batch;
+        this.batch = null;
+        this.port.postMessage(full, [full.buffer]);
+      }
+    }
 
     return true;
   }

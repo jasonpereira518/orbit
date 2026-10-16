@@ -12,7 +12,7 @@ import {
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { contactHasNotesSql } from "@/lib/contact-notes-sql";
 import { getConstellationConfig } from "@/lib/constellation-config";
-import { constellationEligibility } from "@/lib/constellation-eligibility";
+import { constellationEligibility, userTagCount } from "@/lib/constellation-eligibility";
 import { ensureUserSettings } from "@/lib/user-settings";
 
 /**
@@ -171,7 +171,7 @@ export async function loadGraphData(
           statedCloseness: c.statedCloseness,
           priorityLevel: c.priorityLevel,
           nextFollowUpAt: c.nextFollowUpAt,
-          tagCount: tags.length,
+          userTagCount: userTagCount(tags),
         },
         constellationConfig.thresholds
       ).eligible,

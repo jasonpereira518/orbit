@@ -24,6 +24,7 @@ const TARGET_WEIGHT: Partial<Record<ImportTarget, number>> = {
   linkedin_positions: 15,
   linkedin_skills: 15,
   linkedin_alerts: 15,
+  linkedin_education: 15,
   calendar_ics: 10,
   calendar_csv: 10,
 };
