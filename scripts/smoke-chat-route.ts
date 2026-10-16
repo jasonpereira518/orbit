@@ -55,6 +55,13 @@ async function main() {
   route = routeFromParsed(parsed({ shape: "person", person: "Ada Park", intent: { ...NO_INTENT, needs_research: true } }), "Ada Park");
   check("a flagged research on a two-word query stays a lookup", route.depth.depth === "single");
 
+  console.log("\nThe calendar lives behind research");
+  for (const q of ["What's on my calendar tomorrow?", "what's on tomorrow", "prep me for my 3pm", "who am I meeting this week?", "when do I next see Priya?"]) {
+    const viaParse = routeFromParsed(parsed({ shape: "open", intent: NO_INTENT }), q);
+    const noParse = routeFromParsed(null, q);
+    check(`"${q}" → research, parsed or not`, viaParse.depth.depth === "research" && noParse.depth.depth === "research", { viaParse, noParse });
+  }
+
   console.log("\nThe one-pass default");
   route = routeFromParsed(null, "What did Priya say about the Series A?");
   check("no parse → one pass, shape open, default engine", route.engine === "default" && route.depth.depth === "single" && route.shape === "open", route);

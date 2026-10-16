@@ -77,7 +77,7 @@ const GATHER_SYSTEM = `You are the research step for Orbit, a personal networkin
 
 The answer-writer already has the contacts listed under "Already found", with their summaries, notes and recent interactions. Do not look those up again unless you need something specific about one of them.
 
-Reach for search_notes first for anything about what was said, discussed, promised or learned, and when — that lives in the user's notes, not on a contact card. When the question is about a call the user recorded — "in my meeting with…", "what came up about pricing on the call" — also try search_meetings, which searches the recorded transcripts and summaries; its passages say when something was said but never who said it. Use after/before to scope a date ("in March" means that month of the most recent year that is not in the future). Use who_do_i_know_at and search_contacts to find people; get_contact to read one person's full record. Use get_timeline for when or how often something happened with one person, find_path_to for who could introduce the user to a company or a person, list_open_commitments for what they owe, and get_goals when the question is open-ended enough that what they are working towards decides the answer. When the question is about someone the user does not know yet — "who is…", "brief me on…", "research…" — and search_contacts finds nobody by that name, use research_person (it needs a company, domain or LinkedIn link besides the name; take them from the question). For a company beyond who the user knows there, use research_company. To find NEW people matching a description ("find me PMs at Stripe", "people outside my network who…"), use find_people. All three search the public web and are slow: at most one of them per turn, and only if they are offered.
+Reach for search_notes first for anything about what was said, discussed, promised or learned, and when — that lives in the user's notes, not on a contact card. When the question is about a call the user recorded — "in my meeting with…", "what came up about pricing on the call" — also try search_meetings, which searches the recorded transcripts and summaries; its passages say when something was said but never who said it. Use after/before to scope a date ("in March" means that month of the most recent year that is not in the future). Use who_do_i_know_at and search_contacts to find people; get_contact to read one person's full record. Use get_timeline for when or how often something happened with one person, find_path_to for who could introduce the user to a company or a person, list_open_commitments for what they owe, upcoming_meetings for anything on their calendar ("what's on tomorrow", "prep me for my 3pm" — then read the attendees with get_contact), and get_goals when the question is open-ended enough that what they are working towards decides the answer. When the question is about someone the user does not know yet — "who is…", "brief me on…", "research…" — and search_contacts finds nobody by that name, use research_person (it needs a company, domain or LinkedIn link besides the name; take them from the question). For a company beyond who the user knows there, use research_company. To find NEW people matching a description ("find me PMs at Stripe", "people outside my network who…"), use find_people. All three search the public web and are slow: at most one of them per turn, and only if they are offered.
 
 Make at most three lookups per turn. When you have what the question needs — or when nothing more would help — reply with the single word DONE and make no lookups.
 
@@ -168,6 +168,8 @@ function describeCall(call: ToolCall, ctx: ChatContext): string {
       return `Looking for a way in to ${text("target")}`;
     case "list_open_commitments":
       return "Checking what you owe people";
+    case "upcoming_meetings":
+      return "Checking your calendar";
     default:
       return "Looking something up";
   }
@@ -213,6 +215,14 @@ function contactsIn(name: string, result: unknown): Array<{ id: string; name: st
       ] as Array<{ contactId?: unknown; name?: unknown }>;
       return people.flatMap((p) => (str(p?.contactId) ? [{ id: p.contactId as string, name: str(p.name) }] : []));
     }
+    case "upcoming_meetings":
+      return rows.flatMap((e) =>
+        Array.isArray(e?.attendees)
+          ? e.attendees.flatMap((a: { contactId?: unknown; name?: unknown }) =>
+              str(a?.contactId) ? [{ id: a.contactId as string, name: str(a.name) }] : []
+            )
+          : []
+      );
     case "search_notes":
       return rows.flatMap((r) =>
         Array.isArray(r?.contactIds) ? r.contactIds.filter(str).map((id: string) => ({ id, name: null })) : []

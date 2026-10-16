@@ -1,0 +1,147 @@
+/**
+ * `calendar_events`: the near calendar, mirrored.
+ *
+ * Why a windowed mirror and not the incremental sync token: Google's `syncToken` returns only
+ * what CHANGED, so a weekly 1:1 created months ago never re-arrives as its instances drift into
+ * "next week". One windowed read per sync pass (`fetchCalendarWindow`) sidesteps that, and makes
+ * deletes free — anything in the window Google no longer returns is gone.
+ */
+import { and, asc, eq, gte, inArray, lt, notInArray, sql } from "drizzle-orm";
+import { getDb } from "@/db";
+import { calendarEvents, contactIdentities, contacts, type CalendarEventAttendee } from "@/db/schema";
+import { toStoredEvent, type StoredCalendarEvent } from "@/lib/connectors/google-calendar";
+
+export const EVENTS_WINDOW_PAST_MS = 2 * 86_400_000;
+export const EVENTS_WINDOW_FUTURE_MS = 14 * 86_400_000;
+
+export function eventsWindow(now: Date): { from: Date; to: Date } {
+  return {
+    from: new Date(now.getTime() - EVENTS_WINDOW_PAST_MS),
+    to: new Date(now.getTime() + EVENTS_WINDOW_FUTURE_MS),
+  };
+}
+
+/**
+ * Attendee email → the user's contact, through `contact_identities` first (a contact's second
+ * address lives only there) and then `contacts.email`.
+ */
+async function contactIdsByEmail(userId: string, emails: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!emails.length) return out;
+  const db = await getDb();
+  const [byIdentity, byColumn] = await Promise.all([
+    db
+      .select({ value: contactIdentities.value, contactId: contactIdentities.contactId })
+      .from(contactIdentities)
+      .where(
+        and(
+          eq(contactIdentities.userId, userId),
+          eq(contactIdentities.kind, "email"),
+          inArray(contactIdentities.value, emails)
+        )
+      ),
+    db
+      .select({ email: contacts.email, id: contacts.id })
+      .from(contacts)
+      .where(and(eq(contacts.userId, userId), inArray(sql`lower(${contacts.email})`, emails))),
+  ]);
+  for (const r of byColumn) if (r.email) out.set(r.email.toLowerCase(), r.id);
+  for (const r of byIdentity) out.set(r.value, r.contactId);
+  return out;
+}
+
+/**
+ * Rewrite one source's window from a fresh read. `complete: false` (a truncated or failed read)
+ * upserts what arrived and deletes nothing, because absence from a partial read proves nothing.
+ */
+export async function refreshCalendarWindow(
+  userId: string,
+  sourceId: string,
+  read: { items: Parameters<typeof toStoredEvent>[0][]; complete: boolean },
+  now: Date
+): Promise<{ stored: number }> {
+  const db = await getDb();
+  const { to } = eventsWindow(now);
+  const events = read.items.map(toStoredEvent).filter((e): e is StoredCalendarEvent => e !== null);
+  const emails = [...new Set(events.flatMap((e) => e.attendees.map((a) => a.email).filter(Boolean)))];
+  const byEmail = await contactIdsByEmail(userId, emails);
+
+  if (read.complete) {
+    // Everything before the window's end that this read did not return: deleted, cancelled, or
+    // aged out past the back edge.
+    const ids = events.map((e) => e.providerEventId);
+    await db
+      .delete(calendarEvents)
+      .where(
+        and(
+          eq(calendarEvents.sourceId, sourceId),
+          lt(calendarEvents.startAt, to),
+          ids.length ? notInArray(calendarEvents.providerEventId, ids) : undefined
+        )
+      );
+  }
+
+  if (events.length) {
+    const rows = events.map((e) => ({
+      userId,
+      sourceId,
+      ...e,
+      attendees: e.attendees.map(
+        (a): CalendarEventAttendee => ({ ...a, contactId: (a.email && byEmail.get(a.email)) || null })
+      ),
+      updatedAt: now,
+    }));
+    await db
+      .insert(calendarEvents)
+      .values(rows)
+      .onConflictDoUpdate({
+        target: [calendarEvents.sourceId, calendarEvents.providerEventId],
+        set: {
+          icalUid: sql`excluded.ical_uid`,
+          seriesId: sql`excluded.series_id`,
+          title: sql`excluded.title`,
+          startAt: sql`excluded.start_at`,
+          endAt: sql`excluded.end_at`,
+          allDay: sql`excluded.all_day`,
+          location: sql`excluded.location`,
+          conferenceUrl: sql`excluded.conference_url`,
+          conferenceKind: sql`excluded.conference_kind`,
+          attendees: sql`excluded.attendees`,
+          attendeeCount: sql`excluded.attendee_count`,
+          guestsHidden: sql`excluded.guests_hidden`,
+          selfResponse: sql`excluded.self_response`,
+          organizerEmail: sql`excluded.organizer_email`,
+          updatedAt: sql`excluded.updated_at`,
+        },
+      });
+  }
+  return { stored: events.length };
+}
+
+export type CalendarEventRow = typeof calendarEvents.$inferSelect;
+
+/**
+ * The user's events overlapping [from, to), soonest first. With `contactId`, only events that
+ * person is on. Bounded: the window is two weeks, and `limit` caps it further.
+ */
+export async function listUpcomingEvents(
+  userId: string,
+  opts: { from: Date; to: Date; contactId?: string; limit?: number }
+): Promise<CalendarEventRow[]> {
+  const db = await getDb();
+  return db
+    .select()
+    .from(calendarEvents)
+    .where(
+      and(
+        eq(calendarEvents.userId, userId),
+        lt(calendarEvents.startAt, opts.to),
+        gte(sql`coalesce(${calendarEvents.endAt}, ${calendarEvents.startAt})`, opts.from),
+        opts.contactId
+          ? sql`${calendarEvents.attendees} @> ${JSON.stringify([{ contactId: opts.contactId }])}::jsonb`
+          : undefined
+      )
+    )
+    .orderBy(asc(calendarEvents.startAt))
+    .limit(opts.limit ?? 50);
+}

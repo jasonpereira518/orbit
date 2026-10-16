@@ -35,11 +35,20 @@ export type PriorTurn = { role: string; content: string };
 
 const ONE_PASS: DepthDecision = { depth: "single", reason: "one retrieval answers it" };
 
+/**
+ * Retrieval reads contacts and notes, not the calendar — only the research step's
+ * `upcoming_meetings` and `meeting_context` tools can. Free, so it holds with or without a parse.
+ */
+const CALENDAR_QUESTION =
+  /\b(my (calendar|schedule|agenda|next meeting|meetings?|calls?)|meeting (with|today|tomorrow)|on my plate|what'?s on (today|tomorrow|this week)|(today|tomorrow)'?s (meetings?|calls?|schedule)|prep(are)? me|next (see|meet|meeting)|am i (meeting|seeing)|my \d{1,2}(:\d{2})? ?(am|pm)?\b)/i;
+const CALENDAR: DepthDecision = { depth: "research", reason: "asks about the calendar" };
+
 export function routeFromParsed(parsed: ParsedQuery | null, question: string): ChatRoute {
   const intent = parsed?.intent;
+  const calendar = CALENDAR_QUESTION.test(question);
   if (!parsed || !intent) {
     return {
-      depth: ONE_PASS,
+      depth: calendar ? CALENDAR : ONE_PASS,
       shape: parsed?.shape ?? "open",
       attention: isAttentionQuestion(question),
       recruiters: isRecruiterIntent(question),
@@ -50,7 +59,11 @@ export function routeFromParsed(parsed: ParsedQuery | null, question: string): C
   // round on "Ada Park" is pure waste.
   const short = question.trim().split(/\s+/).length <= 2;
   return {
-    depth: intent.needsResearch && !short ? { depth: "research", reason: "needs more than one lookup" } : ONE_PASS,
+    depth: calendar
+      ? CALENDAR
+      : intent.needsResearch && !short
+        ? { depth: "research", reason: "needs more than one lookup" }
+        : ONE_PASS,
     shape: parsed.shape,
     attention: intent.attention,
     recruiters: intent.recruiters,

@@ -3439,6 +3439,45 @@ export const calendarSources = pgTable(
   ]
 );
 
+export type CalendarEventAttendee = { name: string; email: string; contactId: string | null };
+
+/**
+ * A mirror of the near calendar — two days back to two weeks ahead — rewritten on every sync
+ * pass (`src/lib/calendar-events.ts`). Not history: `interactions` is that. This is what
+ * "what's on tomorrow" and "prep me for my 3pm" read without a Google round-trip.
+ */
+export const calendarEvents = pgTable(
+  "calendar_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    sourceId: uuid("source_id")
+      .notNull()
+      .references(() => calendarSources.id, { onDelete: "cascade" }),
+    /** The provider's per-INSTANCE id. A recurring series shares one iCalUID across instances. */
+    providerEventId: text("provider_event_id").notNull(),
+    icalUid: text("ical_uid"),
+    seriesId: text("series_id"),
+    title: text("title").notNull().default(""),
+    startAt: timestamp("start_at", { withTimezone: true }).notNull(),
+    endAt: timestamp("end_at", { withTimezone: true }),
+    allDay: boolean("all_day").notNull().default(false),
+    location: text("location"),
+    conferenceUrl: text("conference_url"),
+    conferenceKind: text("conference_kind"),
+    attendees: jsonb("attendees").$type<CalendarEventAttendee[]>().notNull().default([]),
+    attendeeCount: integer("attendee_count").notNull().default(0),
+    guestsHidden: boolean("guests_hidden").notNull().default(false),
+    selfResponse: text("self_response"),
+    organizerEmail: text("organizer_email"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("calendar_events_source_event_uidx").on(t.sourceId, t.providerEventId),
+    index("calendar_events_user_start_idx").on(t.userId, t.startAt),
+  ]
+);
+
 export type ChatRecommendation = {
   contact_id?: string | null;
   recruiter_id?: string | null;

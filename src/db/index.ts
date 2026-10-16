@@ -991,6 +991,29 @@ CREATE TABLE IF NOT EXISTS calendar_sources (
 );
 CREATE INDEX IF NOT EXISTS calendar_sources_user_idx ON calendar_sources(user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS calendar_sources_conn_cal_uidx ON calendar_sources(connection_id, calendar_id);
+CREATE TABLE IF NOT EXISTS calendar_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  source_id uuid NOT NULL REFERENCES calendar_sources(id) ON DELETE CASCADE,
+  provider_event_id text NOT NULL,
+  ical_uid text,
+  series_id text,
+  title text NOT NULL DEFAULT '',
+  start_at timestamptz NOT NULL,
+  end_at timestamptz,
+  all_day boolean NOT NULL DEFAULT false,
+  location text,
+  conference_url text,
+  conference_kind text,
+  attendees jsonb NOT NULL DEFAULT '[]',
+  attendee_count integer NOT NULL DEFAULT 0,
+  guests_hidden boolean NOT NULL DEFAULT false,
+  self_response text,
+  organizer_email text,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS calendar_events_source_event_uidx ON calendar_events(source_id, provider_event_id);
+CREATE INDEX IF NOT EXISTS calendar_events_user_start_idx ON calendar_events(user_id, start_at);
 CREATE TABLE IF NOT EXISTS usage_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -2668,7 +2691,14 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 165 = the raw files of a LinkedIn export: import_files. NOT 160-164: the calendar stack holds
 // 160-163 and claude/cloud-notes-auto-extract-799187 holds 164 (the job-change-alerts-radar
 // worktree also has an uncommitted 164). Rescanned every ref and worktree on Oct 15 2026.
-export const SCHEMA_VERSION = 165;
+//
+// 166 = calendar_events (new table): a mirror of the near calendar (two days back, two weeks
+// ahead) for calendar-aware chat, event-linked reminders and the recorder. Built as 152 on
+// Oct 11, renumbered to 160 on Oct 14, and to 166 on Oct 15 when merging main: main reached
+// 164 (#446), and a database stamped 164 would never run a 160. NOT 165:
+// claude/linkedin-export-upload-cc7326 holds it. Rescanned every local and remote ref and
+// every worktree's working file on Oct 15 2026: 165 was the highest claimed anywhere.
+export const SCHEMA_VERSION = 166;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -4683,7 +4713,31 @@ const alters = [
  * has been silently missing from production since August 2026. Now: columns first, and
  * every real failure is returned rather than only logged.
  */
+/**
+ * #184 (never merged; its schema 56) created a different `calendar_events` — keyed by provider
+ * and `external_id` — on any database a preview of it migrated. `CREATE TABLE IF NOT EXISTS`
+ * would then keep that one, every index on `source_id`/`start_at` would fail, and the build
+ * would refuse to deploy. Set it aside first: renamed, not dropped — nothing reads it, but
+ * deleting someone's rows is not a migration's call. Its indexes keep names ours never use.
+ * Exported for `smoke-calendar-events`.
+ */
+export async function setAsideAbandonedCalendarEvents(run: StatementRunner, failed: SchemaFailure[]): Promise<void> {
+  let legacy = false;
+  try {
+    legacy =
+      rowsOf<unknown>(
+        await run(
+          `SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'calendar_events' AND column_name = 'external_id'`
+        )
+      ).length > 0;
+  } catch {
+    return;
+  }
+  if (legacy) await runStatements(run, ["ALTER TABLE calendar_events RENAME TO calendar_events_abandoned_v56"], "DDL", failed);
+}
+
 async function applySchema(run: StatementRunner, failed: SchemaFailure[]): Promise<void> {
+  await setAsideAbandonedCalendarEvents(run, failed);
   const statements = DDL.split(";")
     .map((s) => s.trim())
     .filter(Boolean);
