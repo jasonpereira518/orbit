@@ -10,6 +10,7 @@
  * click, before the server has a row) and "the resume notice was dismissed". Everything
  * a reload must restore lives on the job; everything else is decoration.
  */
+import type { CaptureParseHints } from "@/lib/ai";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
@@ -86,6 +87,7 @@ export function CaptureFlow({
   history = null,
   canUseSync = false,
   drive = null,
+  initialMeeting = null,
   cloudNotes = null,
   openCloudReview = false,
   onSaved,
@@ -95,6 +97,8 @@ export function CaptureFlow({
   initialJobs?: CaptureJobView[];
   initialContactId?: string | null;
   initialContactName?: string | null;
+  /** A calendar meeting to write up (`/capture?event=`): the box starts with its people seeded. */
+  initialMeeting?: { notes: string; hints: CaptureParseHints } | null;
   defaultMode?: CaptureMode;
   hasApiKey?: boolean;
   /** The AI gate's reason when `hasApiKey` is false — which notice to show. */
@@ -256,7 +260,8 @@ export function CaptureFlow({
     sourceKind: "messy",
     hasApiKey,
     aiReason,
-    initialNotes: prefill && prefill.sourceKind !== "voice" ? prefillText : "",
+    initialNotes: prefill && prefill.sourceKind !== "voice" ? prefillText : (initialMeeting?.notes ?? ""),
+    initialHints: prefill ? null : (initialMeeting?.hints ?? null),
     initialJobId: prefill && prefill.sourceKind !== "voice" ? prefill.id : null,
     onAutoExtract: (text, hints, jobId) => void startExtraction({ text, hints, jobId, sourceKind: "messy" }),
   });

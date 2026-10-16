@@ -37,6 +37,7 @@ import { MeetingCalendarSuggestions } from "@/components/capture/meeting-calenda
 import { MeetingSaveStatus } from "@/components/capture/meeting-save-status";
 import { SideNotes } from "@/components/capture/meeting-side-notes";
 import { cn } from "@/lib/utils";
+import { useNow } from "@/lib/use-now";
 import { AiKeyNotice } from "@/components/ai-key-notice";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 
@@ -110,6 +111,10 @@ function PanelBody({
   micSupported = false,
 }: PanelProps & { session: MeetingSession; flow: MeetingFlow }) {
   const { recorder } = s;
+  // The calendar says the meeting is over and the call has gone quiet: offer to wrap up.
+  const now = useNow(30_000, Boolean(s.calendarEndIso));
+  const callSoundsOver =
+    recorder.callQuiet && s.calendarEndIso !== null && now !== null && now > Date.parse(s.calendarEndIso);
 
   // While this is on screen the widget would only repeat it.
   const { registerInlineView } = flow;
@@ -341,7 +346,18 @@ function PanelBody({
             </button>
           </p>
         )}
-        {recorder.callQuiet && !s.heardNothing && (
+        {callSoundsOver && !s.heardNothing && (
+          <p
+            role="status"
+            className="rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground"
+          >
+            The meeting has ended on your calendar and the call has gone quiet.{" "}
+            <button type="button" onClick={s.finish} className="font-medium underline underline-offset-2">
+              Finish and summarize
+            </button>
+          </p>
+        )}
+        {recorder.callQuiet && !callSoundsOver && !s.heardNothing && (
           <p
             role="status"
             className="rounded-xl border border-warning-border bg-warning-surface px-3 py-2 text-xs text-foreground"

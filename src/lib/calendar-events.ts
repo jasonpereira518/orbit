@@ -199,3 +199,14 @@ export async function matchEventForSession(
   });
   return pickEventForRecording(candidates, recording);
 }
+
+/** One of the user's events by its row id (owner-scoped) — for links like /capture?event=. */
+export async function findEventById(userId: string, id: string): Promise<CalendarEventRow | null> {
+  const db = await getDb();
+  const [row] = await db
+    .select()
+    .from(calendarEvents)
+    .where(and(eq(calendarEvents.userId, userId), eq(calendarEvents.id, id)))
+    .limit(1);
+  return row ?? null;
+}
