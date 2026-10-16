@@ -204,6 +204,38 @@ export function conferenceOf(raw: GoogleEvent): { url: string; kind: ConferenceK
   return url ? { url, kind: conferenceKindOf(url) } : null;
 }
 
+const AGENDA_MAX = 2000;
+
+/**
+ * An invite description as the summarizer should read it: plain text, without the call-joining
+ * boilerplate Meet, Zoom and Teams append ("Join with Google Meet", dial-ins, passcodes), and
+ * capped. Null when nothing is left — most invites have no agenda at all.
+ */
+export function agendaFrom(description: string | undefined): string | null {
+  if (!description) return null;
+  const text = description
+    .replace(/<\s*(br|\/p|\/li|\/div)\s*\/?>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "\n- ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+  const kept = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(
+      (l) =>
+        l &&
+        !CONFERENCE_URL.test(l) &&
+        !/^(-::~[:~]*::-|join (with|zoom|on|the meeting|microsoft teams)|meeting id|passcode|password|dial[- ]in|one tap mobile|find your local number|or call in|phone numbers|pin:|learn more about meet|please do not edit this section|invitation from google calendar|you are receiving this)/i.test(l)
+    );
+  const out = kept.join("\n").trim().slice(0, AGENDA_MAX);
+  return out || null;
+}
+
 export type StoredCalendarEvent = {
   providerEventId: string;
   icalUid: string | null;
@@ -213,6 +245,7 @@ export type StoredCalendarEvent = {
   endAt: Date | null;
   allDay: boolean;
   location: string | null;
+  agenda: string | null;
   conferenceUrl: string | null;
   conferenceKind: ConferenceKind | null;
   /** Everyone but the owner and rooms; empty when the guest list is not ours to keep. */
@@ -251,6 +284,7 @@ export function toStoredEvent(raw: GoogleEvent): StoredCalendarEvent | null {
     endAt: parseWhen(raw.end),
     allDay: !raw.start?.dateTime,
     location: raw.location?.trim().slice(0, 300) || null,
+    agenda: agendaFrom(raw.description),
     conferenceUrl: conference?.url.slice(0, 500) ?? null,
     conferenceKind: conference?.kind ?? null,
     attendees: guestsHidden

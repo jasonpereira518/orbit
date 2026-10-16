@@ -716,6 +716,8 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         people: found.people,
         // On the invite but not in Orbit — worth a "who is this?" before the call.
         notInOrbit: found.notInOrbit.map((p) => p.name || p.email),
+        // A recurring meeting that was recorded before: what it decided and left open.
+        lastTime: found.lastTime,
       };
     },
   },
