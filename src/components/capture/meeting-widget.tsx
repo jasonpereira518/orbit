@@ -10,7 +10,8 @@
  * summary has to be started from /capture (see the header of `meeting-session.tsx`).
  */
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useNow } from "@/lib/use-now";
 import Link from "next/link";
 import { Loader2, Mic, MicOff, Pause, Play, StickyNote } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -148,14 +149,7 @@ export function MeetingWidget() {
  * end — past that, the event is not what this recording is about.
  */
 function EventEnded({ endIso }: { endIso: string | null }) {
-  const [now, setNow] = useState<number | null>(null);
-  useEffect(() => {
-    if (!endIso) return;
-    const tick = () => setNow(Date.now());
-    tick();
-    const id = setInterval(tick, 30_000);
-    return () => clearInterval(id);
-  }, [endIso]);
+  const now = useNow(30_000, Boolean(endIso));
   const end = endIso ? Date.parse(endIso) : NaN;
   const late = now === null ? NaN : now - end;
   if (!(late > 60_000 && late < 3_600_000)) return null;

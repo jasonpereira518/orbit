@@ -6,6 +6,7 @@ import { isAdminUser } from "@/lib/admin";
 import { resolveSurfaceVisibility, isViewingAsUser } from "@/lib/surface-visibility";
 import { CLOUD_NOTES_SURFACE_KEY } from "@/lib/surfaces";
 import type { Plan } from "@/lib/plan-limits";
+import { nextKnownMeeting } from "@/lib/meeting-context";
 
 /**
  * The one periodic read every authenticated tab makes.
@@ -39,7 +40,12 @@ export type AppPulse = {
    * `syncDesktopNotificationsPreference`.
    */
   desktopNotificationsEnabled: boolean | null;
+  /** The next meeting with someone the user knows, starting within 20 minutes — the prep card. */
+  nextMeeting: Awaited<ReturnType<typeof nextKnownMeeting>>;
 };
+
+/** Far enough ahead that the prep card (15 minutes out) never waits a whole pulse for it. */
+const NEXT_MEETING_WITHIN_MS = 20 * 60_000;
 
 const DESKTOP_BATCH = 12;
 
@@ -50,7 +56,7 @@ export async function loadAppPulse(
 ): Promise<AppPulse> {
   const settings = loadedSettings ?? (await ensureUserSettings(userId));
   const entitlements = entitlementsFromSettings(userId, settings);
-  const [rawPanel, canOpenAdmin] = await Promise.all([
+  const [rawPanel, canOpenAdmin, nextMeeting] = await Promise.all([
     // One visibility read for both gated rows (what `isSurfaceLive` checks, per key).
     resolveSurfaceVisibility(userId).then(({ hidden, comingSoon }) => {
       const live = (key: string) => !hidden.has(key) && !comingSoon.has(key);
@@ -63,6 +69,8 @@ export async function loadAppPulse(
       });
     }),
     isAdminUser(userId) ? isViewingAsUser(userId).then((v) => !v) : Promise.resolve(false),
+    // Best-effort: a calendar read must never cost the panel its pulse.
+    nextKnownMeeting(userId, now, NEXT_MEETING_WITHIN_MS).catch(() => null),
   ]);
   const panel = { ...rawPanel, canOpenAdmin };
   const notified = new Set(settings.desktopNotifiedIds ?? []);
@@ -75,5 +83,6 @@ export async function loadAppPulse(
     dueItems,
     plan: entitlements.plan,
     desktopNotificationsEnabled: settings.desktopNotificationsEnabled ?? null,
+    nextMeeting,
   };
 }
