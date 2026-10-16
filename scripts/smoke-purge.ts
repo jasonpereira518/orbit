@@ -385,6 +385,15 @@ async function seed() {
     payload: {} as never,
   });
 
+  await db.insert(schema.importFiles).values({
+    importId: importJob.id,
+    userId: USER,
+    path: "Invitations.csv",
+    byteSize: 1,
+    role: "parsed",
+    gz: "",
+  });
+
   await db.insert(schema.calendarSubscriptions).values({
     userId: USER,
     icsUrl: "https://example.test/feed.ics",

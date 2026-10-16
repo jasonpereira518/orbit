@@ -424,6 +424,7 @@ async function askNetworkInner(
       evidence,
       notePassages,
       ctx.writingInstructions,
+      ctx.openReminders ?? null,
       ctx.calendar?.text ?? null
     );
     const recommendations = ctx.filterRecommendations(
@@ -434,7 +435,12 @@ async function askNetworkInner(
     const validIds = new Set(Object.keys(result.evidence));
     const { text: cleanAnswer } = stripUnresolvedMarkers(result.answer, validIds);
     const citedEvidence = Object.fromEntries(citedIds(cleanAnswer).map((id) => [id, result.evidence[id]]));
-    const proposedActions = validateProposedActions(result.proposedActions, ctx.allowedContacts, ctx.contactNames);
+    const proposedActions = validateProposedActions(
+      result.proposedActions,
+      ctx.allowedContacts,
+      ctx.contactNames,
+      ctx.reminderTitles
+    );
 
     const saved = await persistAssistantTurn(userId, threadId, ctx.thread?.title ?? null, ctx.q, {
       answer: cleanAnswer,

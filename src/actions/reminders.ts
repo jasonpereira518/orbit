@@ -754,10 +754,10 @@ export async function completeFollowUpWithTouch(
     //
     // This used to set it for `linkedin_message` alone, for a reason that turns out to apply
     // only there: NULL means "sender unknown", which pushes a contact onto the legacy volume
-    // fallback in constellation eligibility. But those counts are scoped to
-    // `interaction_type = 'linkedin_message'` (see `constellationSignalAggregates` in
-    // `closeness-cohort.ts`), so a direction on an email or a call row is invisible to them.
-    // The guard was correct and unnecessarily narrow.
+    // fallback in constellation eligibility. Since Oct 2026 those counts cover email and chat
+    // messages too (`constellationSignalAggregates` in `closeness-cohort.ts`), so recording
+    // `out` here is what makes a sent follow-up count as the outbound half of an exchange —
+    // correctly. A call row is a meeting there; its direction is still invisible.
     //
     // Recording it for every channel is what makes "waiting on a reply" possible at all: the
     // job seeker's follow-ups are emails, and an email touch that recorded no direction was

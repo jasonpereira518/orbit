@@ -102,8 +102,20 @@ export type OrbitTool = {
    * unguarded one.
    */
   fields?: Partial<Record<ToolSurface, readonly string[]>>;
+  /**
+   * The surface key this tool belongs to, when it is a door into a page that can ship
+   * closed (`/find`'s research). Chat drops the tool while that surface is coming soon or
+   * hidden for the asker (`releasedTools`), and the tool re-checks inside `run` — so a
+   * coming-soon page can never go live through the chat box first.
+   */
+  releasedSurface?: string;
   run(userId: string, args: never, ctx: ToolContext): Promise<unknown>;
 };
+
+/** `tools` minus any whose `releasedSurface` is not released for this viewer. */
+export function releasedTools(tools: readonly OrbitTool[], isReleased: (surfaceKey: string) => boolean): OrbitTool[] {
+  return tools.filter((t) => !t.releasedSurface || isReleased(t.releasedSurface));
+}
 
 /**
  * Free-text fields an attacker can write to, which must never reach a model over MCP except

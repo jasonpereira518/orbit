@@ -835,6 +835,13 @@ async function main() {
   // deltas rather than exact counts — the same reason the acquisition funnel above does.
   const depthBefore = await engagementDepth("30d");
 
+  // `imports` is shared too: the demo seed's LinkedIn import (21 days old) sits inside the
+  // 30d window whenever another smoke seeded the demo user first. Deltas, not counts.
+  const importsBefore = await importsByProvider("30d");
+  const prior = (provider: string) => {
+    const row = importsBefore.find((r) => r.provider === provider);
+    return { count: row?.count ?? 0, created: row?.created ?? 0, updated: row?.updated ?? 0 };
+  };
   await db.insert(imports).values([
     { userId: "eng_user", importType: "linkedin_connections", status: "completed", contactsCreated: 3, contactsUpdated: 1 },
     { userId: "eng_user", importType: "google_contacts", status: "completed", contactsCreated: 2, contactsUpdated: 0 },
@@ -844,15 +851,15 @@ async function main() {
   const importsOut = await importsByProvider("30d");
   check(
     "counts only completed imports, by provider",
-    importsOut.find((r) => r.provider === "linkedin_connections")?.count === 1 &&
-      importsOut.find((r) => r.provider === "google_contacts")?.count === 1 &&
-      !importsOut.some((r) => r.provider === "outlook_contacts"),
+    importsOut.find((r) => r.provider === "linkedin_connections")?.count === prior("linkedin_connections").count + 1 &&
+      importsOut.find((r) => r.provider === "google_contacts")?.count === prior("google_contacts").count + 1 &&
+      (importsOut.find((r) => r.provider === "outlook_contacts")?.count ?? 0) === prior("outlook_contacts").count,
     JSON.stringify(importsOut)
   );
   check(
     "sums created/updated per provider",
-    importsOut.find((r) => r.provider === "linkedin_connections")?.created === 3 &&
-      importsOut.find((r) => r.provider === "linkedin_connections")?.updated === 1,
+    importsOut.find((r) => r.provider === "linkedin_connections")?.created === prior("linkedin_connections").created + 3 &&
+      importsOut.find((r) => r.provider === "linkedin_connections")?.updated === prior("linkedin_connections").updated + 1,
     JSON.stringify(importsOut)
   );
 

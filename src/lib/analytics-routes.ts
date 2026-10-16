@@ -79,6 +79,7 @@ export const ROUTE_PATTERNS: readonly string[] = [
   "/recruiters/compose",
   "/recruiters/[id]",
   "/reminders",
+  "/find",
   "/radar",
 ] as const;
 

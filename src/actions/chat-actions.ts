@@ -20,7 +20,11 @@ import { getDb } from "@/db";
 import { chatMessages } from "@/db/schema";
 import { requireUserForSurface } from "@/lib/plan-guards";
 import { createReminderForUser, scheduleContactFollowUpForUser } from "@/lib/reminder-writes";
-import { logNoteInteractionForUser } from "@/lib/contact-writes";
+import { createContactForUser, logNoteInteractionForUser, updateContactForUser } from "@/lib/contact-writes";
+import { findConfidentDuplicate } from "@/lib/contact-resolve";
+import { DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
+import { completeReminder, snoozeReminder } from "@/lib/reminders";
+import { UserFacingError } from "@/lib/errors";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
 
@@ -152,10 +156,37 @@ export async function commitProposedAction(messageId: string, actionId: string):
       });
       resultId = row?.id ?? null;
       revalidatePathIfRequestScoped("/reminders");
-    } else {
+    } else if (args.kind === "schedule_follow_up") {
       const result = await scheduleContactFollowUpForUser(userId, args.contactId, args.days);
       resultId = result.reminder?.id ?? null;
       revalidatePathIfRequestScoped(`/contacts/${args.contactId}`);
+    } else if (args.kind === "update_contact") {
+      // Scoped by userId inside; the id was on the allowlist when the answer was written.
+      await updateContactForUser(userId, args.contactId, args.fields, { skipRevalidate: true });
+      resultId = args.contactId;
+      revalidatePathIfRequestScoped(`/contacts/${args.contactId}`);
+    } else if (args.kind === "create_contact") {
+      // The same duplicate line MCP's create_contact draws: a confident identity match is
+      // refused rather than doubled. A bare name match is not confident, so it still creates.
+      const best = await findConfidentDuplicate(userId, { fullName: args.fullName, ...args.fields });
+      if (best && best.confidence >= DUPLICATE_MERGE_CONFIDENCE) {
+        throw new UserFacingError(`${best.contact.fullName} is already in your contacts`);
+      }
+      const created = await createContactForUser(
+        userId,
+        { fullName: args.fullName, ...args.fields, source: "chat_proposed" },
+        { skipRevalidate: true }
+      );
+      resultId = created.id;
+      revalidatePathIfRequestScoped("/contacts");
+    } else {
+      const done =
+        args.kind === "complete_reminder"
+          ? await completeReminder(userId, args.reminderId)
+          : await snoozeReminder(userId, args.reminderId, args.days);
+      if (!done) throw new UserFacingError("That reminder is gone — it may have been deleted");
+      resultId = args.reminderId;
+      revalidatePathIfRequestScoped("/reminders");
     }
 
     await settle(userId, messageId, claimed.actions, claimed.index, { status: "done", resultId });
