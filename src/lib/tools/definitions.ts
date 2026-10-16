@@ -715,7 +715,11 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         event: eventView(found.event, found.tz),
         people: found.people,
         // On the invite but not in Orbit — worth a "who is this?" before the call.
-        notInOrbit: found.notInOrbit.map((p) => p.name || p.email),
+        notInOrbit: found.notInOrbit.map((p) => {
+          const at = p.profile?.company ?? p.company;
+          const role = p.profile?.title ? `${p.profile.title}${at ? ` at ${at}` : ""}` : at;
+          return role ? `${p.name || p.email} (${role})` : p.name || p.email;
+        }),
         // A recurring meeting that was recorded before: what it decided and left open.
         lastTime: found.lastTime,
       };
