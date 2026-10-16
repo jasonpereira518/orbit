@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, Calendar, Check, Loader2, NotebookPen, X } from "lucide-react";
+import { AlarmClock, Bell, Calendar, Check, CircleCheck, Loader2, NotebookPen, UserPen, UserPlus, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { commitProposedAction, dismissProposedAction } from "@/actions/chat-actions";
@@ -14,17 +14,25 @@ const ICON: Record<StoredProposedAction["args"]["kind"], typeof NotebookPen> = {
   log_interaction: NotebookPen,
   create_reminder: Bell,
   schedule_follow_up: Calendar,
+  update_contact: UserPen,
+  create_contact: UserPlus,
+  complete_reminder: CircleCheck,
+  snooze_reminder: AlarmClock,
 };
 
 const RESULT_HREF: Record<StoredProposedAction["args"]["kind"], (resultId: string) => string | null> = {
   log_interaction: () => null,
   create_reminder: () => "/reminders",
   schedule_follow_up: () => "/reminders",
+  update_contact: (id) => `/contacts/${id}`,
+  create_contact: (id) => `/contacts/${id}`,
+  complete_reminder: () => "/reminders",
+  snooze_reminder: () => "/reminders",
 };
 
 /**
  * A card per action a chat answer proposed — log a note, set a reminder, schedule a
- * follow-up — with the exact text that will be written and a due date in plain language.
+ * follow-up, update or add a contact, complete or snooze a reminder — with the exact text that will be written and a due date in plain language.
  * Confirm is the only path to the real write; Dismiss and a reload both leave it untouched.
  *
  * Local `phase` covers the click-to-response gap; what actually persists is the row's own
