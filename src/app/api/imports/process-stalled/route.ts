@@ -100,7 +100,7 @@ const EMBED_SWEEP_BUDGET_MS = 90 * 1000;
 const ERROR_EVENT_RETENTION_DAYS = 30;
 
 /**
- * The hourly backstop, scheduled by `.github/workflows/ops.yml` (the only scheduler):
+ * The hourly backstop, scheduled by `scripts/qstash-schedules.ts` (the only scheduler):
  * resumes server-owned import and capture jobs whose invocation died mid-run. The primary
  * resumption path is still each job's own self-continuation; this is the last resort.
  *

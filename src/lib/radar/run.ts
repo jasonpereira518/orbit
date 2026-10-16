@@ -60,7 +60,7 @@ const HOUR_MS = 3_600_000;
 
 /** How long a claimed account stays claimed if its run dies without releasing it. */
 export const RADAR_LEASE_MS = 10 * 60 * 1000;
-/** The UTC hour the nightly pass aims every account at. `ops.yml` runs it at 04:17. */
+/** The UTC hour the nightly pass aims every account at. QStash runs it at 04:17. */
 export const RADAR_NIGHTLY_HOUR_UTC = 4;
 /** A run never schedules the next one sooner than this, so a 02:00 page view skips 04:00. */
 const MIN_GAP_MS = 6 * HOUR_MS;

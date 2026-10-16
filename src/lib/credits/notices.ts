@@ -15,7 +15,7 @@ import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_CENTS } from "@/lib/stripe-confi
  * notices (`plan.credits_near` / `credits_on_packs` / `credits_out` in account-alerts.ts) say
  * the same thing to someone who is looking; these reach someone who is not.
  *
- *  - Driven by the ten-minute schedule (`/api/credits/notices`, .github/workflows/ops.yml): it
+ *  - Driven by the ten-minute schedule (`/api/credits/notices`, scripts/qstash-schedules.ts): it
  *    looks at allowance grants, never at the AI call path, so no request waits on an email.
  *  - At most once per level per allowance cycle. Each send is CLAIMED first, in one UPDATE
  *    that records the cycle and level, so overlapping runs cannot double-send; a send Resend

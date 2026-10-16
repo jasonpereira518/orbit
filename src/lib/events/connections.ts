@@ -31,7 +31,7 @@ import type {
   EventConnectionProvider,
 } from "@/lib/events/types";
 
-/** Matches the Gmail/Outlook cadence. The GitHub Actions cron runs every 15 minutes anyway. */
+/** Matches the Gmail/Outlook cadence. The QStash schedule runs every 15 minutes anyway. */
 export const EVENT_SYNC_INTERVAL_MS = 30 * 60 * 1000;
 
 export type ClaimedEventConnection = {
