@@ -77,6 +77,7 @@ async function buildOps(): Promise<Op[]> {
   const { GET: EXT_SEARCH } = await import("../src/app/api/extension/contacts/route");
   const { POST: EXT_RESOLVE } = await import("../src/app/api/extension/resolve/route");
   const { generateApiKey } = await import("../src/lib/api/keys");
+  const { findAvatarBackfillCandidates, countAvatarBackfillCandidates } = await import("../src/lib/avatar-backfill");
 
   const key = generateApiKey("api");
   await db.execute(sql`DELETE FROM api_keys WHERE user_id = ${USER} AND name = 'latency-ops'`);
@@ -126,6 +127,9 @@ async function buildOps(): Promise<Op[]> {
     { group: "page", name: "knowledge people", run: () => loadKnowledgePeople(USER) },
     { group: "page", name: "chat threads list", run: () => actionsChat.listChatThreads() },
     { group: "page", name: "chat suggestions", run: () => actionsChat.getChatSuggestions() },
+    // The two reads behind POST /api/contacts/avatar-backfill, which AppShell fires on every
+    // full page load (SRV-16). Read-only: the batch's external lookups are not run.
+    { group: "poll", name: "avatar backfill probe (candidates + count)", run: () => Promise.all([findAvatarBackfillCandidates(db, USER, { limit: 5, skipIds: [] }), countAvatarBackfillCandidates(db, USER, [])]) },
     { group: "poll", name: "notification panel", run: () => loadNotificationPanel(USER, now(), { withAlerts: true }) },
     { group: "poll", name: "app pulse (90s/tab)", run: () => loadAppPulse(USER, now()) },
     { group: "search", name: "contacts search 'hop' (prefix, no embedding)", run: () => listContactsPage(USER, { q: "ho", limit: 50 }) },
