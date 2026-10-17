@@ -225,7 +225,11 @@ export async function claimDueSources(limit: number, now: Date): Promise<Array<{
           WHERE next_scan_at <= ${now}
             AND (lease_until IS NULL OR lease_until < ${now})
           ORDER BY next_scan_at
-          LIMIT ${limit})
+          LIMIT ${limit}
+          FOR UPDATE SKIP LOCKED)
+        -- The predicate again, on the UPDATE itself: what makes the claim exclusive.
+        AND next_scan_at <= ${now}
+        AND (lease_until IS NULL OR lease_until < ${now})
       RETURNING user_id, provider
     `),
   );

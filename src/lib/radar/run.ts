@@ -519,7 +519,10 @@ export async function claimRadarUsers(limit: number, now: Date, opts: { includeU
             AND last_active_at > ${activeSince}
             AND ${opts.includeUnopened ? sql`TRUE` : sql`radar_last_run_at IS NOT NULL`}
           ORDER BY radar_next_at NULLS FIRST, id
-          LIMIT ${limit})
+          LIMIT ${limit}
+          FOR UPDATE SKIP LOCKED)
+        -- The lease again, on the UPDATE itself: what makes the claim exclusive.
+        AND (radar_lease_until IS NULL OR radar_lease_until < ${now})
       RETURNING user_id
     `)
   );

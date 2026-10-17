@@ -3,7 +3,7 @@
   "CONCURRENT": 6,
   "LIMIT": 20,
   "ROUNDS": 150,
-  "totalClaimed": 17660,
-  "roundsWithDoubleClaim": 150,
-  "doubleClaimedRows": 3580
+  "totalClaimed": 6000,
+  "roundsWithDoubleClaim": 0,
+  "doubleClaimedRows": 0
 }

@@ -96,7 +96,13 @@ export async function claimDueConnectorConnections(
             AND (sync_status IS DISTINCT FROM 'syncing' OR sync_started_at < ${leaseCutoff})
           ORDER BY next_sync_at
           LIMIT ${limit}
+          FOR UPDATE SKIP LOCKED
        )
+         -- The predicate again, on the UPDATE itself: what makes the claim exclusive.
+         AND status = 'active'
+         AND next_sync_at IS NOT NULL
+         AND next_sync_at <= ${now}
+         AND (sync_status IS DISTINCT FROM 'syncing' OR sync_started_at < ${leaseCutoff})
       RETURNING id, user_id, connector_id, auth_kind, account_ref, api_key_encrypted,
                 access_token_encrypted, refresh_token_encrypted, scopes, capabilities,
                 sync_cursor, sync_failures

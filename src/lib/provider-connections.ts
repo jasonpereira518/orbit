@@ -116,7 +116,15 @@ export async function claimDueConnections(
           AND (sync_status IS DISTINCT FROM 'syncing' OR sync_started_at < ${leaseCutoff})
         ORDER BY next_sync_at
         LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
      )
+       -- The predicate again, on the UPDATE itself. This is what makes the claim exclusive:
+       -- a concurrent claimer that blocked on a row re-checks it against the winner's new
+       -- version, finds it 'syncing', and updates nothing (see connectors/outbox.ts).
+       AND status = 'active'
+       AND next_sync_at IS NOT NULL
+       AND next_sync_at <= ${now}
+       AND (sync_status IS DISTINCT FROM 'syncing' OR sync_started_at < ${leaseCutoff})
     RETURNING id, user_id, email_address, scopes, sync_cursor, sync_failures
   `);
 

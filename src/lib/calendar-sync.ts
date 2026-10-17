@@ -427,7 +427,11 @@ export async function claimDueCalendarSubscriptions(
           AND (last_synced_at IS NULL OR last_synced_at < ${staleBefore})
         ORDER BY last_synced_at NULLS FIRST
         LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
      )
+       -- The predicate again, on the UPDATE itself: what makes the claim exclusive.
+       AND enabled = 1
+       AND (last_synced_at IS NULL OR last_synced_at < ${staleBefore})
     RETURNING id, user_id
   `);
   return rowsOf<{ id: string; user_id: string }>(claimed).map((r) => ({
