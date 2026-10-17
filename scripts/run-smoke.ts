@@ -146,6 +146,12 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-contract-events-cloud": "pure",
   "smoke-contract-oauth-tokens": "pglite",
   "smoke-contract-llm": "pglite",
+  // Contacts, exports, billing and AI validation.
+  "smoke-merge-coverage": "pglite", // every FK and id column pointing at contacts is handled by merge, or named as a gap
+  "smoke-data-export-isolation": "pglite",
+  "smoke-relationship-malformed": "pglite",
+  "smoke-billing-helpers": "pure",
+  "smoke-credit-ledger-pure": "pure",
   "smoke-draft-follow-up-result": "pglite",
   "smoke-relationship-schema": "pglite",
   "smoke-ai-guardrails": "pglite",
@@ -604,6 +610,14 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-bug-graph-sync-resilience": "bug",
   "smoke-bug-cloud-notes-dead-cursor": "bug",
   "smoke-bug-llm-truncated-json-accepted": "bug",
+  "smoke-bug-merge-drops-children": "bug",
+  "smoke-bug-merge-email-sends": "bug",
+  "smoke-bug-contact-delete-ghost-suggestion": "bug",
+  "smoke-bug-stripe-revocation-regrant": "bug",
+  "smoke-bug-stripe-deleted-account-resurrect": "bug",
+  "smoke-bug-credit-period-overflow": "bug",
+  "smoke-bug-admin-export-formula": "bug",
+  "smoke-bug-relationship-trivial-excerpt": "bug",
 };
 
 const TIMEOUT_MS: Partial<Record<string, number>> = {
