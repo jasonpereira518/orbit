@@ -1,26 +1,13 @@
 /**
- * KNOWN BUG — documented, not fixed.
+ * `linkedinSlug()` agrees with the `linkedin_slug` generated column, including on LinkedIn
+ * URLs that are not a profile.
  *
- * Symptom: two DIFFERENT people whose LinkedIn field holds the same non-profile LinkedIn URL
- * (a company page, a school page, a bare `linkedin.com/in/`) are treated as the same person
- * and merged automatically.
- *
- * Why: `linkedinSlug()` (src/lib/duplicates.ts:83) falls back to the whole normalised URL
- * when there is no `/in/<slug>` to extract. That fallback is non-empty, so
- * `identityKeysFor` emits a `linkedin_slug` identity for it and
- * `findDuplicateCandidatesIndexed` reports "Same LinkedIn URL" at 0.98 — above
- * DUPLICATE_MERGE_CONFIDENCE (0.85), i.e. an automatic merge. The function's own doc comment
- * says it MUST stay equal to the `linkedin_slug` generated column, and that column
- * (LINKEDIN_SLUG_EXPRESSION in src/db/index.ts) returns NULL for these URLs, so the two
- * spellings of the rule disagree.
- *
- * Trigger: a CSV import or a hand-typed contact where someone pastes their employer's
- * company page into the LinkedIn field (`isLinkedInProfileUrl` accepts any linkedin.com
- * path, src/lib/contact-input.ts:66) — then every colleague given the same URL collapses into
- * one contact.
- *
- * When fixed (`linkedinSlug` returns "" whenever the column would be NULL) every check here
- * passes, the script exits 0, and it should move to the pglite tier as an ordinary smoke.
+ * Pins the fix in src/lib/duplicates.ts: the function used to fall back to the whole
+ * normalised URL when there was no `/in/<slug>`, while the column
+ * (LINKEDIN_SLUG_EXPRESSION in src/db/index.ts) stores NULL. That non-empty fallback gave a
+ * company or school page a `linkedin_slug` identity key, so two different people pasted with
+ * their employer's page matched "Same LinkedIn URL" at 0.98 — above
+ * DUPLICATE_MERGE_CONFIDENCE — and were merged automatically. It now returns "".
  *
  * pglite tier: the column expression is evaluated by Postgres itself, so this pins the
  * function and the column against each other rather than against a copy of the rule.
@@ -51,7 +38,7 @@ async function columnSlug(url: string): Promise<string> {
 }
 
 run(async () => {
-  console.log("\nprofile URLs: the function and the column agree (correct today)");
+  console.log("\nprofile URLs: the function and the column agree");
   for (const url of [
     "https://www.linkedin.com/in/ada-lovelace-0",
     "https://uk.linkedin.com/in/Ada-Lovelace-0/",
@@ -74,7 +61,7 @@ run(async () => {
     const fn = linkedinSlug(url);
     const col = await columnSlug(url);
     t.check(`column stores NULL for ${url}`, col === "");
-    t.knownBug(`BUG: linkedinSlug(${url}) disagrees with the generated column`, fn === col, `function "${fn}", column "${col}"`);
+    t.check(`linkedinSlug(${url}) agrees with the generated column`, fn === col, `function "${fn}", column "${col}"`);
   }
 
   console.log("\ntwo different people sharing their employer's company page");
@@ -84,25 +71,25 @@ run(async () => {
   t.check("the fixtures really are different people", ada.fullName !== grace.fullName && ada.email !== grace.email);
 
   const keys = identityKeysFor({ linkedinUrl: companyPage, email: null, phone: null, xHandle: null });
-  t.knownBug(
-    "BUG: a company page yields a linkedin_slug identity key",
+  t.check(
+    "a company page yields no linkedin_slug identity key",
     !keys.some((k) => k.kind === "linkedin_slug"),
     JSON.stringify(keys)
   );
 
   const matches = findDuplicateCandidatesIndexed(buildDuplicateIndex([ada]), grace);
   const autoMerge = matches.find((m) => m.confidence >= DUPLICATE_MERGE_CONFIDENCE);
-  t.knownBug(
-    "BUG: two different people are auto-merged because they share a company page URL",
+  t.check(
+    "two different people sharing a company page URL are not auto-merged",
     !autoMerge,
     autoMerge ? `${autoMerge.reason} @ ${autoMerge.confidence}` : ""
   );
 
-  console.log("\nthe real identifier still matches (must keep working after a fix)");
+  console.log("\nthe real identifier still matches");
   const sameAda = { ...makeContact(0), linkedinUrl: "https://www.linkedin.com/in/ada-lovelace-0/" };
   const adaProfile = { ...ada, linkedinUrl: "https://linkedin.com/in/Ada-Lovelace-0" };
   const real = findDuplicateCandidatesIndexed(buildDuplicateIndex([adaProfile]), sameAda);
   t.check("the same profile URL is still a confident match", real.some((m) => m.reason === "Same LinkedIn URL" && m.strong));
 
-  t.done("linkedin slug bug");
+  t.done("linkedin slug");
 });

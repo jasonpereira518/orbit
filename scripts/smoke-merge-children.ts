@@ -1,39 +1,19 @@
 /**
- * KNOWN BUG — documented, not fixed.
+ * A merge moves the loser's opportunities, job-feed matches and assistant send drafts to the
+ * winner, and unmerge moves them back.
  *
- * Symptom: merging two contacts silently deletes the loser's opportunities
- * (`contact_opportunities`) and job-feed matches (`job_posting_matches`), and unlinks its
- * pending assistant send drafts (`agent_send_requests.contact_id` goes NULL). Unmerge cannot
- * bring any of them back, because none of them was moved or archived.
+ * Pins the fix for a data-loss bug: `mergeContacts` (src/lib/contact-merge.ts) deletes the
+ * loser's `contacts` row last, and three child tables were in neither `REPOINTED_TABLES` nor
+ * a hand-written statement — `contact_opportunities` and `job_posting_matches` (ON DELETE
+ * CASCADE) went with the loser, and `agent_send_requests` (ON DELETE SET NULL) was unlinked.
+ * Unmerge had nothing to give back. The first two and the drafts now repoint; job matches
+ * are unique on (user_id, posting_id, contact_id), so a posting matched to BOTH contacts is
+ * archived-and-dropped like `contact_tags` and restored by unmerge from the archive.
  *
- * Why: `mergeContacts` (src/lib/contact-merge.ts:144) moves child rows by walking
- * `REPOINTED_TABLES` (src/lib/contact-merge.ts:69-93) plus a handful of hand-written
- * statements, then deletes the loser row LAST so the ON DELETE rules only see what is left.
- * Three tables with a foreign key to `contacts(id)` are in neither place:
+ * Reached by any merge, including the automatic duplicate sweep, which has no human in the
+ * loop — so a regression here is silent, irreversible loss of user-entered data.
  *
- *   - contact_opportunities.contact_id  ON DELETE CASCADE  (schema.ts ~1484)
- *   - job_posting_matches.contact_id    ON DELETE CASCADE  (schema.ts ~4328)
- *   - agent_send_requests.contact_id    ON DELETE SET NULL (schema.ts ~3869)
- *
- * so the final `DELETE FROM contacts` takes the first two with it and orphans the third. The
- * module's own header promises the opposite ("every child row that moved is recorded by id,
- * and every row that had to be deleted instead of moved is archived in full").
- *
- * Trigger path: any merge — the Duplicates page (`src/actions/duplicates.ts:55`), the
- * automatic duplicate sweep (`src/lib/duplicate-sweep.ts:252`, which runs with no human in
- * the loop) or capture-time resolution (`src/lib/contact-resolve.ts:296`). An opportunity the
- * user added by hand on the losing record ("intro to Globex's recruiting lead") is gone, and
- * the Undo button does not restore it.
- *
- * Severity: high — silent, irreversible loss of user-entered data, reachable from an
- * automatic path.
- *
- * Fix: repoint `contact_opportunities` and `job_posting_matches` (the latter is unique on
- * (user_id, posting_id, contact_id), so move-what-does-not-collide plus archive-and-drop like
- * `contact_tags`) and `agent_send_requests`, and teach `unmergeContacts` to move them back.
- * This script then exits 0 and should be promoted to the pglite tier.
- *
- * Writes to local PGlite. Run: npx tsx scripts/smoke-bug-merge-drops-children.ts
+ * Writes to local PGlite. Run: npx tsx scripts/smoke-merge-children.ts
  */
 import "./smoke/_env";
 import { run } from "./smoke/_env";
@@ -114,23 +94,23 @@ run(async () => {
     t.check("setup: the merge ran and moved the loser's interaction to the winner", movedNotes.length === 1);
 
     const opps = await db.select().from(contactOpportunities).where(eq(contactOpportunities.id, opportunity.id));
-    t.knownBug(
-      "BUG: merge cascade-deletes the loser's contact_opportunities instead of moving them to the winner",
+    t.check(
+      "merge moves the loser's contact_opportunities to the winner",
       opps.length === 1 && opps[0].contactId === winner.id,
       opps.length === 0 ? "row deleted with the loser" : `contact_id=${opps[0].contactId}`
     );
 
     const matches = await db.select().from(jobPostingMatches).where(eq(jobPostingMatches.id, match.id));
-    t.knownBug(
-      "BUG: merge cascade-deletes the loser's job_posting_matches instead of moving them to the winner",
+    t.check(
+      "merge moves the loser's job_posting_matches to the winner",
       matches.length === 1 && matches[0].contactId === winner.id,
       matches.length === 0 ? "row deleted with the loser" : `contact_id=${matches[0].contactId}`
     );
 
     const drafts = await db.select().from(agentSendRequests).where(eq(agentSendRequests.id, draft.id));
     t.check("the pending assistant draft row itself survives (SET NULL, not cascade)", drafts.length === 1);
-    t.knownBug(
-      "BUG: merge unlinks the loser's pending agent_send_requests (contact_id becomes NULL, not the winner)",
+    t.check(
+      "merge moves the loser's pending agent_send_requests to the winner (not unlinked)",
       drafts[0]?.contactId === winner.id,
       `contact_id=${drafts[0]?.contactId ?? "null"}`
     );
@@ -141,17 +121,38 @@ run(async () => {
     t.check("setup: unmerge restored the loser and gave its interaction back", notesBack.length === 1);
 
     const oppsBack = await db.select().from(contactOpportunities).where(eq(contactOpportunities.id, opportunity.id));
-    t.knownBug(
-      "BUG: unmerge cannot restore the loser's opportunity (it was never archived)",
+    t.check(
+      "unmerge gives the opportunity back to the loser",
       oppsBack.length === 1 && oppsBack[0].contactId === loser.id,
       oppsBack.length === 0 ? "still gone after unmerge" : `contact_id=${oppsBack[0].contactId}`
     );
     const matchesBack = await db.select().from(jobPostingMatches).where(eq(jobPostingMatches.id, match.id));
-    t.knownBug(
-      "BUG: unmerge cannot restore the loser's job_posting_matches (never archived)",
+    t.check(
+      "unmerge gives the job_posting_matches back to the loser",
       matchesBack.length === 1 && matchesBack[0].contactId === loser.id,
       matchesBack.length === 0 ? "still gone after unmerge" : `contact_id=${matchesBack[0].contactId}`
     );
+    const [draftBack] = await db.select().from(agentSendRequests).where(eq(agentSendRequests.id, draft.id));
+    t.check("unmerge gives the pending draft back to the loser", draftBack?.contactId === loser.id, `contact_id=${draftBack?.contactId ?? "null"}`);
+
+    console.log("\nThe same posting matched to both contacts (unique on user, posting, contact)...");
+    const [winnerMatch] = await db
+      .insert(jobPostingMatches)
+      .values({ userId: USER, postingId: posting.id, contactId: winner.id, companyKey: "globex", matchKind: "referral" })
+      .returning();
+    const second = await mergeContacts(USER, winner.id, loser.id, { deferInvalidation: true });
+    const onPosting = await db
+      .select()
+      .from(jobPostingMatches)
+      .where(and(eq(jobPostingMatches.userId, USER), eq(jobPostingMatches.postingId, posting.id)));
+    t.check(
+      "the merge does not fail on the collision and the winner keeps exactly its own match",
+      onPosting.length === 1 && onPosting[0].id === winnerMatch.id && onPosting[0].contactId === winner.id,
+      JSON.stringify(onPosting.map((m) => [m.id === winnerMatch.id ? "winner's" : "loser's", m.contactId]))
+    );
+    await unmergeContacts(USER, second.mergeId);
+    const [loserMatchBack] = await db.select().from(jobPostingMatches).where(eq(jobPostingMatches.id, match.id));
+    t.check("unmerge restores the archived duplicate match to the loser", loserMatchBack?.contactId === loser.id, `contact_id=${loserMatchBack?.contactId ?? "gone"}`);
   } finally {
     await purgeUsers(db, [USER]);
     const postings = await db.select({ id: jobPostings.id }).from(jobPostings).where(eq(jobPostings.sourceId, SOURCE_ID));
@@ -159,5 +160,5 @@ run(async () => {
     await db.delete(jobFeedSources).where(eq(jobFeedSources.id, SOURCE_ID));
   }
 
-  t.done("merge drops children (known bug)");
+  t.done("merge moves children");
 });

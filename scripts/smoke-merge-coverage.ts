@@ -19,8 +19,11 @@
  *      here — which is the point: whoever adds a contact child table decides what a merge
  *      does with it.
  *
- * The known gaps are reproduced in `smoke-bug-merge-drops-children.ts` and
- * `smoke-bug-merge-email-sends.ts`. Then the round trip for the tables that ARE handled:
+ * The tables that used to be gaps — contact_opportunities, job_posting_matches,
+ * agent_send_requests and email_sends.contact_ids — are now REQUIRED to be handled by the
+ * source (their round trips are pinned by `smoke-merge-children.ts` and
+ * `smoke-merge-email-sends.ts`), so they cannot quietly slide back into the gap list.
+ * Then the round trip for the tables that ARE handled:
  * a loser with an interaction and a reminder merges, both survive on the winner, and unmerge
  * hands both back to the restored loser.
  *
@@ -51,12 +54,19 @@ const DELIBERATE: Record<string, string> = {
   "relationship_digests.contact_id": "re-derived after the merge; winner's watermark is cleared",
 };
 
-/** Not handled, and known: reproduced by the smoke-bug-merge-* scripts named here. */
+/**
+ * Former gaps the merge now moves (and unmerge moves back). Each must be found in the merge
+ * source: one dropping out of it is the old silent data loss coming back.
+ */
+const REQUIRED: Record<string, string> = {
+  "contact_opportunities.contact_id": "smoke-merge-children (was cascade-deleted)",
+  "job_posting_matches.contact_id": "smoke-merge-children (was cascade-deleted)",
+  "agent_send_requests.contact_id": "smoke-merge-children (was set null)",
+  "email_sends.contact_ids": "smoke-merge-email-sends (was a stale jsonb id)",
+};
+
+/** Not handled, and known. */
 const KNOWN_GAPS: Record<string, string> = {
-  "contact_opportunities.contact_id": "smoke-bug-merge-drops-children (cascade-deleted)",
-  "job_posting_matches.contact_id": "smoke-bug-merge-drops-children (cascade-deleted)",
-  "agent_send_requests.contact_id": "smoke-bug-merge-drops-children (set null)",
-  "email_sends.contact_ids": "smoke-bug-merge-email-sends (stale jsonb id)",
   // No foreign key and no reader that surfaces it: the job copies it onto the note batch it
   // saves, after the merge, so that batch names the merged-away id. Low; not a bug script.
   "capture_jobs.seed_contact_id": "stale id on a capture job queued before the merge (low, not surfaced)",
@@ -116,8 +126,15 @@ run(async () => {
     unclassified.length ? `unclassified: ${unclassified.join(", ")}` : `${references.size} references`
   );
 
+  const missing = Object.keys(REQUIRED).filter((key) => !handled.has(key) && !handled.has(key.split(".")[0]));
+  t.check(
+    "contact_opportunities, job_posting_matches, agent_send_requests and email_sends are handled by the merge",
+    missing.length === 0,
+    missing.length ? `not handled: ${missing.map((k) => `${k} — ${REQUIRED[k]}`).join("; ")}` : ""
+  );
+
   // The allowlists must not rot into covering something that does not exist.
-  const stale = [...Object.keys(DELIBERATE), ...Object.keys(KNOWN_GAPS)].filter((k) => !references.has(k));
+  const stale = [...Object.keys(DELIBERATE), ...Object.keys(REQUIRED), ...Object.keys(KNOWN_GAPS)].filter((k) => !references.has(k));
   t.check("every allowlisted reference still exists in the schema", stale.length === 0, stale.join(", "));
   for (const [key, why] of Object.entries(KNOWN_GAPS)) {
     console.log(`        known gap: ${key} — ${why}${handled.has(key.split(".")[0]) ? " (now handled? re-check the bug script)" : ""}`);
