@@ -33,6 +33,8 @@ const BASE = flag("base", "http://localhost:3001").replace(/\/$/, "");
 const PROFILE = flag("profile", "both");
 const ROUNDS = Number(flag("rounds", "3"));
 const ONLY = (flag("only", "") || "").split(",").filter(Boolean);
+/** Pages (and "nav") to leave out, e.g. --skip=/contacts,nav when a page is known to hang the tier. */
+const SKIP = (flag("skip", "") || "").split(",").filter(Boolean);
 const OUT = flag("out", `latency/results/pages-${Date.now()}.json`);
 const WARM = flag("warm", "1") !== "0";
 
@@ -148,10 +150,12 @@ async function resources(page) {
 }
 
 async function measureLoad(page, path, selector, interaction) {
-  await page.goto(`${BASE}${path}`, { waitUntil: "commit" });
+  // Generous limits: a page that takes 30 s+ to answer (e.g. /contacts at 5,000 contacts in
+  // next dev) is a measurement, not an error.
+  await page.goto(`${BASE}${path}`, { waitUntil: "commit", timeout: 180_000 });
   await page.evaluate((s) => window.__latReady(s), selector);
   const t0 = Date.now();
-  while (Date.now() - t0 < 60_000) {
+  while (Date.now() - t0 < 120_000) {
     const usable = await page.evaluate(() => window.__lat?.usable ?? null).catch(() => null);
     if (usable != null) break;
     await sleep(50);
@@ -235,7 +239,7 @@ async function clickNav(page, path) {
 async function waitNav(page, path, started) {
   const t0 = Date.now();
   let skeletonAt = null;
-  while (Date.now() - t0 < 30_000) {
+  while (Date.now() - t0 < 90_000) {
     const r = await page.evaluate(({ path, busy }) => {
       const here = location.pathname === path;
       const b = [...document.querySelectorAll(busy)].some((el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
@@ -250,7 +254,7 @@ async function waitNav(page, path, started) {
 }
 
 async function run(profile, browser, contactPath) {
-  const pages = Object.keys(PAGES).filter((p) => !ONLY.length || ONLY.includes(p));
+  const pages = Object.keys(PAGES).filter((p) => (!ONLY.length || ONLY.includes(p)) && !SKIP.includes(p));
   const result = { profile, base: BASE, rounds: ROUNDS, pages: {}, nav: [], history: {} };
 
   for (const key of pages) {
@@ -281,7 +285,7 @@ async function run(profile, browser, contactPath) {
   }
 
   // Client-side navigation tour, then history back/forward, in one warm context.
-  if (!ONLY.length || ONLY.includes("nav")) {
+  if ((!ONLY.length || ONLY.includes("nav")) && !SKIP.includes("nav")) {
     const context = await newContext(browser, profile);
     const page = await context.newPage();
     await throttle(page, profile);

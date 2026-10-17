@@ -71,7 +71,7 @@ for (const f of files(base, "api-")) {
   h(`HTTP routes and documents, ${f.replace("api-", "tier ").replace(".json", "")} (n=${r.n} sequential, then ${r.concurrency} concurrent; next dev)`);
   out.push(table(
     ["target", "status", "KB", "single p50", "p95", "p99", "ttfb p50", "conc p50", "conc p95", "conc p99"],
-    Object.entries(r.results).map(([k, v]) => [k, v.single.status, v.single.kb, v.single.p50, v.single.p95, v.single.p99, v.single.ttfb_p50, v.concurrent.p50, v.concurrent.p95, v.concurrent.p99])
+    Object.entries(r.results).map(([k, v]) => [k, v.single.status, v.single.kb, v.single.p50, v.single.p95, v.single.p99, v.single.ttfb_p50, v.concurrent.skipped ? `skipped (${v.concurrent.skipped})` : v.concurrent.p50, v.concurrent.p95, v.concurrent.p99])
   ));
 }
 

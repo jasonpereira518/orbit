@@ -23,6 +23,8 @@ const BASE = flag("base", "http://localhost:3001").replace(/\/$/, "");
 const N = Number(flag("n", "30"));
 const CONC = Number(flag("concurrency", "5"));
 const ONLY = (flag("only", "") || "").split(",").filter(Boolean);
+/** Targets to leave out by exact name, e.g. --skip="doc /contacts,doc /contacts?q=hopper" when a page hangs the tier. */
+const SKIP = (flag("skip", "") || "").split(",").filter(Boolean);
 const OUT = flag("out", `latency/results/api-${Date.now()}.json`);
 const KEY_FILE = flag("key-file", "");
 /**
@@ -32,6 +34,7 @@ const KEY_FILE = flag("key-file", "");
  * target (--n-limited) and a pause whenever the next target would overflow the window.
  */
 const N_LIMITED = Number(flag("n-limited", "10"));
+const SLOW_MS = Number(flag("slow-ms", "10000"));
 const LIMITS = { mcp: Number(flag("limit-mcp", "120")), v1: Number(flag("limit-v1", "120")), ext: Number(flag("limit-ext", "60")) };
 const groupOf = (name) => (name.includes(" mcp ") ? "mcp" : name.includes(" v1 ") ? "v1" : name.includes(" ext ") ? "ext" : null);
 const windowLog = {};
@@ -132,6 +135,7 @@ const contactId = await firstContactId();
 const results = {};
 for (const [name, [rawPath, rawInit]] of Object.entries(TARGETS)) {
   if (ONLY.length && !ONLY.some((o) => name.includes(o))) continue;
+  if (SKIP.includes(name)) continue;
   if ((name.includes("mcp") || name.includes("v1")) && !API_KEY) continue;
   let path = rawPath;
   let init = rawInit;
@@ -142,14 +146,21 @@ for (const [name, [rawPath, rawInit]] of Object.entries(TARGETS)) {
   const group = groupOf(name);
   const n = group ? Math.min(N, N_LIMITED) : N;
   await budget(group, 1 + n + Math.ceil(n / CONC) * CONC);
-  await timed(path, init); // warm the route (dev compiles on first hit)
+  const warm = await timed(path, init); // warm the route (dev compiles on first hit)
+  // A route that already takes >10 s warm is pathological at this tier (e.g. /contacts at
+  // 5,000 contacts: ~33 s each, minutes under concurrency); 3 samples say so without
+  // spending an hour, and the concurrent pass is skipped and marked.
+  const slow = warm.total > SLOW_MS;
+  const nn = slow ? Math.min(n, 3) : n;
   const single = [];
-  for (let i = 0; i < n; i++) single.push(await timed(path, init));
+  for (let i = 0; i < nn; i++) single.push(await timed(path, init));
   const concurrent = [];
-  for (let round = 0; round < Math.ceil(n / CONC); round++) {
-    concurrent.push(...(await Promise.all(Array.from({ length: CONC }, () => timed(path, init)))));
+  if (!slow) {
+    for (let round = 0; round < Math.ceil(nn / CONC); round++) {
+      concurrent.push(...(await Promise.all(Array.from({ length: CONC }, () => timed(path, init)))));
+    }
   }
-  results[name] = { path, single: stats(single), concurrent: stats(concurrent) };
-  console.log(name.padEnd(32), "single p50/p95", results[name].single.p50, results[name].single.p95, "| conc p50/p95", results[name].concurrent.p50, results[name].concurrent.p95, "| status", results[name].single.status);
+  results[name] = { path, warm_ms: r0(warm.total), single: stats(single), concurrent: concurrent.length ? stats(concurrent) : { n: 0, status: "skipped", skipped: `warm request took ${r0(warm.total / 1000)} s` } };
+  console.log(name.padEnd(32), "single p50/p95", results[name].single.p50, results[name].single.p95, "| conc p50/p95", results[name].concurrent.p50 ?? "skipped", results[name].concurrent.p95 ?? "", "| status", results[name].single.status, slow ? `| SLOW (warm ${r0(warm.total)} ms, ${nn} samples, concurrent skipped)` : "");
 }
 writeJson(OUT, { base: BASE, n: N, concurrency: CONC, at: new Date().toISOString(), results });

@@ -37,6 +37,8 @@ const flag = (name: string, fallback: string) => { const i = args.indexOf(`--${n
 const TIER = flag("tier", "?");
 const OUT = flag("out", `latency/results/server-ops-${TIER}.json`);
 const ONLY = (flag("only", "") || "").split(",").filter(Boolean);
+/** Ops to leave out by name substring, e.g. --skip duplicates (28 s at 5k, O(n²); see LATENCY_PLAN DB-16). */
+const SKIP = (flag("skip", "") || "").split(",").filter(Boolean);
 
 type Op = { name: string; group: string; run: () => Promise<unknown> };
 
@@ -148,7 +150,7 @@ async function buildOps(): Promise<Op[]> {
     { group: "ext", name: "ext resolve", run: ext(EXT_RESOLVE, "POST", "/api/extension/resolve", { page: { schemaVersion: 1, site: "linkedin", adapterVersion: "bench", kind: "person", url, sourceUrl: url, capturedAt: "2026-01-01T00:00:00.000Z", identity: { name: field("Sarah Chen"), headline: null, title: field(sample.title), company: field(sample.company), location: null, school: null, email: null, handle: null, profileUrl: field(url), photoUrl: null }, text: { blob: "Sarah Chen", truncated: false, charCount: 10, fromSelection: false }, warnings: [] } }) },
   ];
   void getDashboardCounts;
-  return ops.filter((op) => !ONLY.length || ONLY.some((o) => op.name.includes(o) || op.group === o));
+  return ops.filter((op) => (!ONLY.length || ONLY.some((o) => op.name.includes(o) || op.group === o)) && !SKIP.some((s) => op.name.includes(s)));
 }
 
 async function measure() {
