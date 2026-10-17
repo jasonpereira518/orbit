@@ -7,8 +7,8 @@
 # vercel.json, and the smoke suite runs against a throwaway PGlite directory — there is no
 # `.env.local` in CI, and scripts/smoke/_env.ts deletes DATABASE_URL regardless.
 #
-# Turn this into a real gate in GitHub → Settings → Branches → main: require the `check`
-# and `smoke` status checks before merging.
+# This is a real gate once GitHub → Settings → Branches → main requires the single status
+# check named `ci gate` (and nothing else — see the `gate` job below for why).
 name: ci
 
 # CI runs where a result can change a decision, and nowhere else:
@@ -19,35 +19,22 @@ name: ci
 #   GitHub scopes a PR's caches to that PR, so without it each PR's first run starts cold.
 # - Draft PRs are skipped. A PR runs CI when it is opened ready, or when a draft is marked
 #   ready for review, and on every push after that. A ready PR gets every job.
-# - `paths-ignore` skips the run for changes no job reads: docs, agent skills, the
-#   extension (extension.yml covers it), and the workflows that do not touch the app.
-#   docs/RUNBOOK.md is re-included because scripts/smoke-schedules.ts parses it. There are
-#   no required status checks on main (Protected Main Branch only blocks deletion and
-#   force-pushes); if `check`/`smoke` are ever made required, drop `paths-ignore`, or a
-#   docs-only PR waits forever on checks that never start.
+# - Changes that no job reads (docs, agent skills, the extension, the workflows that do not
+#   touch the app) skip the heavy jobs. This is decided by the `changes` job below, NOT by
+#   `paths-ignore`: a workflow that never starts leaves a required check pending forever,
+#   while a job that is skipped inside a started workflow counts as passing. docs/RUNBOOK.md
+#   is re-included because scripts/smoke-schedules.ts parses it.
 #
 # The repository is public, so hosted runners are free. This workflow is written to stay
 # safe there: it triggers on `pull_request` (never `pull_request_target` or `workflow_run`),
 # so a fork's PR runs with a read-only token and no secrets, and it uses none. Keep it that
-# way; the two workflows that do use secrets (ops, backup) run only on schedule or manual
-# dispatch from the default branch.
+# way; the workflow that does use secrets (ops) runs only on schedule or manual dispatch from
+# the default branch. (The backup workflow lives in a private repo.)
 on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
-    paths-ignore: &ignore
-      - "**.md"
-      - "docs/**"
-      - "!docs/RUNBOOK.md"
-      - ".agents/**"
-      - ".claude/**"
-      - "extension/**"
-      - ".github/workflows/ops.yml"
-      - ".github/workflows/backup.yml"
-      - ".github/workflows/extension.yml"
-      - "LICENSE"
   push:
     branches: [main]
-    paths-ignore: *ignore
   workflow_dispatch:
 
 concurrency:
@@ -62,9 +49,39 @@ permissions:
 # The root package has no install scripts, so a restored node_modules is exactly what
 # `npm ci` would have produced.
 jobs:
+  # Decides whether the heavy jobs have anything to look at. Cheap (checkout only), always runs,
+  # and fails open: on any doubt (new branch, dispatch, a diff we cannot compute) it says "code".
+  changes:
+    name: changed files
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          code=true
+          if [ "$EVENT" = pull_request ] || [ "$EVENT" = push ]; then
+            if [ -n "$BASE" ] && [ "$BASE" != 0000000000000000000000000000000000000000 ] \
+               && files=$(git diff --name-only "$BASE...$HEAD"); then
+              code=$(printf '%s\n' "$files" | bash scripts/ci-changed.sh | sed 's/^code=//')
+            fi
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "code changes: $code"
+
   check:
     name: typecheck · lint · build
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -86,6 +103,11 @@ jobs:
           npm run typecheck & tsc=$!
           npm run lint & lint=$!
           wait $tsc && wait $lint
+      # Ratchets (plan P0.5): the warning cap lives in the `lint` script, these two live here.
+      - name: circular imports (ratchet)
+        run: npm run check:cycles
+      - name: smoke source-reader manifest is current
+        run: npm run check:sources
       - name: Cache the Next.js compiler output
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -109,7 +131,8 @@ jobs:
   # required status check is ever added, require all three names.
   smoke:
     name: smoke suite (PGlite) ${{ matrix.shard }}/3
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -130,9 +153,33 @@ jobs:
         run: npm ci --no-audit --no-fund
       - run: npm test -- --shard ${{ matrix.shard }}/3
 
+  # node:test unit tests (*.test.ts next to the code). Fast, one process per file; the ones that
+  # touch the database import scripts/smoke/_env first, so each gets a throwaway PGlite and no
+  # provider keys. The smoke suite above keeps running unchanged.
+  unit:
+    name: unit tests (node:test)
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - id: deps
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('.nvmrc', 'package-lock.json') }}
+      - if: steps.deps.outputs.cache-hit != 'true'
+        run: npm ci --no-audit --no-fund
+      - run: npm run test:unit
+
   e2e:
     name: browser flows (Playwright)
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -160,3 +207,23 @@ jobs:
             playwright-report/
             test-results/
           retention-days: 7
+
+  # The ONE check to require in branch protection. Individual jobs may be skipped (nothing but
+  # docs changed, or a draft PR) and a skipped job counts as passing, but a skipped *matrix* job
+  # keeps an unexpanded name that a required check would wait on forever. This job always runs,
+  # fails if anything it depends on failed or was cancelled, and passes otherwise.
+  gate:
+    name: ci gate
+    if: always()
+    needs: [changes, check, smoke, unit, e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: every needed job passed or was legitimately skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          case " $RESULTS " in
+            *" failure "* | *" cancelled "*) echo "a required job did not pass"; exit 1 ;;
+          esac

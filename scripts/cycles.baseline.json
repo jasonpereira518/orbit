@@ -1,0 +1,7 @@
+[
+  "components/capture/meeting-engine.tsx > components/capture/meeting-session.tsx",
+  "components/graph/constellation-modules.ts > components/graph/network-graph.tsx > components/graph/use-sky-renderer.ts",
+  "lib/admin.ts > lib/auth.ts > lib/site-access.ts",
+  "lib/contact-brief.ts > lib/job-changes.ts > lib/contact-writes.ts",
+  "lib/entitlements.ts > lib/user-settings.ts > lib/plan-upgrade-events.ts"
+]

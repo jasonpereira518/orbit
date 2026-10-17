@@ -8,7 +8,7 @@
     "typecheck": "tsc --noEmit",
     "check:env": "tsx scripts/check-env.ts",
     "start": "next start",
-    "lint": "eslint",
+    "lint": "eslint --max-warnings 49",
     "test": "tsx scripts/run-smoke.ts --ci",
     "test:e2e": "playwright test",
     "test:smoke": "tsx scripts/run-smoke.ts",
@@ -27,7 +27,10 @@
     "ext:build": "npm --prefix extension run build",
     "ext:zip": "npm --prefix extension run zip",
     "eval:retrieval": "tsx scripts/eval-retrieval.ts",
-    "test:unit": "node --import tsx --test \"src/**/*.test.ts\" \"scripts/**/*.test.ts\""
+    "test:unit": "node --import tsx --test \"src/**/*.test.ts\" \"scripts/**/*.test.ts\"",
+    "check:cycles": "node scripts/check-cycles.mjs",
+    "check:sources": "node scripts/list-source-readers.mjs",
+    "knip": "npx --yes knip@5.88.1 --no-exit-code"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.3",
