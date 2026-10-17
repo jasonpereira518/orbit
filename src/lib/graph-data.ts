@@ -1,6 +1,6 @@
-import { desc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { contacts, userGoals } from "@/db/schema";
+import { contacts, contactTags, tags as tagsTable, userGoals } from "@/db/schema";
 import type { UserProfile } from "@/lib/auth";
 import { closenessTier } from "@/lib/closeness";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
@@ -65,7 +65,7 @@ export async function loadGraphData(
   // Promise.resolve pins a single execution: a drizzle query builder is a lazy
   // thenable that re-runs on every await, so handing the bare builder to the
   // cohort would quietly issue the same scan twice.
-  const contactRowsPromise = Promise.resolve(
+  const scanPromise = Promise.resolve(
     db.query.contacts.findMany({
       where: eq(contacts.userId, userId),
       columns: {
@@ -107,8 +107,31 @@ export async function loadGraphData(
         // above, and `smoke-page-budgets` asserts it never appears bare in this scan.
         hasNotes: contactHasNotesSql.as("has_notes"),
       },
-      with: { contactTags: { with: { tag: true } } },
     })
+  );
+  // Tag names for every contact as one grouped read beside the scan, merged back into the
+  // `contactTags` shape the scan used to carry (and that the cohort donation below expects).
+  // Joined into the scan through Drizzle's `with`, they were a correlated aggregate per
+  // contact: 100,000 subplan loops and 2.6 s of a 2.7 s statement at 100k contacts.
+  // Ordered by (contact_id, tag_id) — the order the per-contact lookup through
+  // `contact_tags_pair_uidx` returned them in.
+  const tagRowsPromise = db
+    .select({ contactId: contactTags.contactId, name: tagsTable.name })
+    .from(contactTags)
+    .innerJoin(contacts, eq(contacts.id, contactTags.contactId))
+    .innerJoin(tagsTable, eq(tagsTable.id, contactTags.tagId))
+    .where(eq(contacts.userId, userId))
+    .orderBy(asc(contactTags.contactId), asc(contactTags.tagId));
+  const contactRowsPromise = Promise.all([scanPromise, tagRowsPromise]).then(
+    ([scanned, tagRows]) => {
+      const tagsByContact = new Map<string, Array<{ tag: { name: string } }>>();
+      for (const t of tagRows) {
+        const list = tagsByContact.get(t.contactId);
+        if (list) list.push({ tag: { name: t.name } });
+        else tagsByContact.set(t.contactId, [{ tag: { name: t.name } }]);
+      }
+      return scanned.map((c) => ({ ...c, contactTags: tagsByContact.get(c.id) ?? [] }));
+    }
   );
 
   const [rows, goals, settings, closenessCohort, constellationConfig] = await Promise.all([
