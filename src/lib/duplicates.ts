@@ -407,10 +407,15 @@ export function findDuplicateCandidatesIndexed(
   for (const key of fuzzyBucketKeys(incoming.fullName)) {
     for (const contact of index.fuzzyBuckets.get(key) || []) {
       if (matched.has(contact)) continue;
-      const fuzzy = nameSimilarity(incoming.fullName, contact.fullName);
-      if (fuzzy < 0.88) continue;
+      // A similar name only counts alongside a shared company or title, so those two string
+      // comparisons go first and the edit distance runs only when one of them holds. Same
+      // matches, same order; but buckets grow with the network, and computing the distance
+      // for every member was 53% of an import's CPU (20k-row LinkedIn import, --cpu-prof).
       const sameCompany = company && company === normalize(contact.company);
       const sameTitle = title && title === normalize(contact.title);
+      if (!sameCompany && !sameTitle) continue;
+      const fuzzy = nameSimilarity(incoming.fullName, contact.fullName);
+      if (fuzzy < 0.88) continue;
       if (sameCompany) {
         matched.add(contact);
         matches.push({
