@@ -1,3 +1,5 @@
+// The full sheet. The root layout loads none, so marketing pages never pay for it (see site.css).
+import "../globals.css";
 import { AuthProvider } from "@/components/auth-provider";
 
 /**
