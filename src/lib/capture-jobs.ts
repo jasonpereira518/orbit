@@ -35,9 +35,13 @@ export type CaptureJobRow = typeof captureJobs.$inferSelect;
 /**
  * How long a runner may hold a claim before the next reader or the sweep may take it. The
  * two-pass parse is a handful of sequential model calls, each bounded by `aiSignal`; a
- * save is a contact write per person. Four minutes covers both with room.
+ * save is a contact write per person.
+ *
+ * Longer than the runner routes' 300s `maxDuration`, so a claim can only go stale once its
+ * invocation is certainly gone. At four minutes a slow but live run (a save does not
+ * heartbeat) could be taken over and run twice side by side.
  */
-export const CAPTURE_CLAIM_STALE_MS = 4 * 60 * 1000;
+export const CAPTURE_CLAIM_STALE_MS = 5.5 * 60 * 1000;
 /** A queued job nobody picked up in this long lost its kick (preview → prod, a crash). */
 export const CAPTURE_QUEUE_STALE_MS = 30 * 1000;
 /** Backstop resumes before the sweep gives up on a job. */

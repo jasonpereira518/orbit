@@ -16,6 +16,7 @@ import { failImport, truncateStoredError } from "@/lib/import-job-processor";
 import {
   buildRecruiterQuery,
   fetchGmailHeaders,
+  fetchGmailHeadersBatched,
   fetchGmailMessages,
   firmFromEmail,
   getValidAccessToken,
@@ -128,7 +129,7 @@ async function scheduleContinuation(importId: string) {
 const DEFAULT_SCAN_DEPS: ScanDeps = {
   getAccessToken: getValidAccessToken,
   listPage: listGmailMessagePage,
-  fetchHeaders: fetchGmailHeaders,
+  fetchHeaders: fetchGmailHeadersBatched,
   fetchMessages: fetchGmailMessages,
   classify: classifyRecruiterSender,
   submit: submitAiBatch,
