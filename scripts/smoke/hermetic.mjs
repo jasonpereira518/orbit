@@ -13,6 +13,9 @@
  *
  * This answers `dns/promises.lookup` locally instead:
  *   - `localhost` and `*.localhost` → 127.0.0.1 (the guard refuses these by name first anyway)
+ *   - `localtest.me` and its subdomains → 127.0.0.1, as public DNS answers: the SSRF smokes
+ *     use it as "a public name that resolves to loopback" (smoke-webhook-delivery,
+ *     smoke-api-routes), so it must keep resolving there
  *   - `*.invalid` (RFC 6761) → ENOTFOUND, for scripts that want an unresolvable host
  *   - anything else → one fixed PUBLIC address, so the guard lets it through to the
  *     script's stubbed fetch.
@@ -35,6 +38,7 @@ async function hermeticLookup(hostname, options) {
   const all = typeof options === "object" && options !== null && Boolean(options.all);
   const host = String(hostname).toLowerCase().replace(/\.$/, "");
   if (host === "localhost" || host.endsWith(".localhost")) return answer("127.0.0.1", 4, all);
+  if (host === "localtest.me" || host.endsWith(".localtest.me")) return answer("127.0.0.1", 4, all);
   if (host.endsWith(".invalid")) {
     throw Object.assign(new Error(`getaddrinfo ENOTFOUND ${hostname}`), { code: "ENOTFOUND", hostname });
   }
