@@ -100,19 +100,94 @@
         },
         "/contacts": {
           "path": "/contacts",
-          "cold": null,
+          "cold": {
+            "ttfb": 33217,
+            "fcp": 33468,
+            "lcp": 33468,
+            "cls": 0,
+            "tbt": 188,
+            "hydrated": 33850,
+            "usable": 33851,
+            "inp": 536,
+            "js_kb": 1637,
+            "js_decoded_kb": 9785,
+            "css_kb": 86,
+            "total_kb": 1934,
+            "requests": 48,
+            "dcl": 33396,
+            "load": 33745
+          },
           "cold_runs": [
             {
-              "error": "TimeoutError: page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"http://localhost:3101/contacts\", waiting until \"commit\"\u001b[22m\n"
+              "ttfb": 32551,
+              "fcp": 32900,
+              "lcp": 32900,
+              "cls": 0,
+              "tbt": 221,
+              "hydrated": 33222,
+              "usable": 33222,
+              "inp": 488,
+              "js_kb": 1637,
+              "js_decoded_kb": 9785,
+              "css_kb": 86,
+              "total_kb": 1934,
+              "requests": 48,
+              "dcl": 32776,
+              "load": 33085
             },
             {
-              "error": "TimeoutError: page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"http://localhost:3101/contacts\", waiting until \"commit\"\u001b[22m\n"
+              "ttfb": 33217,
+              "fcp": 33468,
+              "lcp": 33468,
+              "cls": 0,
+              "tbt": 151,
+              "hydrated": 33850,
+              "usable": 33851,
+              "inp": 536,
+              "js_kb": 1637,
+              "js_decoded_kb": 9785,
+              "css_kb": 86,
+              "total_kb": 1934,
+              "requests": 48,
+              "dcl": 33396,
+              "load": 33745
             },
             {
-              "error": "TimeoutError: page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"http://localhost:3101/contacts\", waiting until \"commit\"\u001b[22m\n"
+              "ttfb": 33697,
+              "fcp": 33980,
+              "lcp": 33980,
+              "cls": 0,
+              "tbt": 188,
+              "hydrated": 34383,
+              "usable": 34384,
+              "inp": 608,
+              "js_kb": 1637,
+              "js_decoded_kb": 9785,
+              "css_kb": 86,
+              "total_kb": 1934,
+              "requests": 48,
+              "dcl": 33942,
+              "load": 34287
             }
           ],
-          "repeat": null
+          "repeat": {
+            "ttfb": 35406,
+            "fcp": 35656,
+            "lcp": 35656,
+            "cls": 0,
+            "tbt": 113,
+            "hydrated": 35923,
+            "usable": 35924,
+            "inp": null,
+            "js_kb": 11,
+            "js_decoded_kb": 9785,
+            "css_kb": 1,
+            "total_kb": 45,
+            "requests": 48,
+            "dcl": 35571,
+            "load": 35785
+          },
+          "rerun_at": "2026-10-17T10:24:24.189Z"
         },
         "/contacts/[id]": {
           "path": "/contacts/0a9214f3-2cc9-43e3-9858-5661878a8110",
@@ -1455,58 +1530,56 @@
       "nav": [
         {
           "to": "/contacts",
-          "ms": null,
-          "skeleton_ms": null,
-          "timeout": true
-        },
-        {
-          "to": "/reminders",
-          "ms": 3576,
+          "ms": 33717,
           "skeleton_ms": null
         },
         {
+          "to": "/reminders",
+          "ms": 5347,
+          "skeleton_ms": 2670
+        },
+        {
           "to": "/dashboard",
-          "ms": 2282,
+          "ms": 1875,
           "skeleton_ms": null
         },
         {
           "to": "/graph",
-          "ms": 1707,
+          "ms": 1675,
           "skeleton_ms": null
         },
         {
           "to": "/chat",
-          "ms": 652,
+          "ms": 507,
           "skeleton_ms": null
         },
         {
           "to": "/capture",
-          "ms": 707,
-          "skeleton_ms": 379
+          "ms": 824,
+          "skeleton_ms": 420
         },
         {
           "to": "/contacts",
-          "ms": null,
-          "skeleton_ms": null,
-          "timeout": true
+          "ms": 33974,
+          "skeleton_ms": null
         },
         {
           "to": "/dashboard",
-          "ms": 4883,
-          "skeleton_ms": 4068
+          "ms": 33640,
+          "skeleton_ms": null
         }
       ],
       "history": {
         "back": {
-          "ms": null,
-          "skeleton_ms": null,
-          "timeout": true
+          "ms": 500,
+          "skeleton_ms": null
         },
         "forward": {
-          "ms": 1758,
-          "skeleton_ms": 87
+          "ms": 22,
+          "skeleton_ms": null
         }
-      }
+      },
+      "nav_rerun_at": "2026-10-17T10:24:24.189Z"
     },
     "mobile4g": {
       "profile": "mobile4g",
@@ -1605,19 +1678,94 @@
         },
         "/contacts": {
           "path": "/contacts",
-          "cold": null,
+          "cold": {
+            "ttfb": 33140,
+            "fcp": 34888,
+            "lcp": 35268,
+            "cls": 0,
+            "tbt": 757,
+            "hydrated": 43167,
+            "usable": 43168,
+            "inp": 2112,
+            "js_kb": 1637,
+            "js_decoded_kb": 9785,
+            "css_kb": 86,
+            "total_kb": 1935,
+            "requests": 47,
+            "dcl": 34953,
+            "load": 43421
+          },
           "cold_runs": [
             {
-              "error": "TimeoutError: page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"http://localhost:3101/contacts\", waiting until \"commit\"\u001b[22m\n"
+              "ttfb": 63826,
+              "fcp": 65556,
+              "lcp": 65948,
+              "cls": 0,
+              "tbt": 867,
+              "hydrated": 74108,
+              "usable": 74110,
+              "inp": 2112,
+              "js_kb": 1637,
+              "js_decoded_kb": 9785,
+              "css_kb": 86,
+              "total_kb": 1935,
+              "requests": 47,
+              "dcl": 65676,
+              "load": 74124
             },
             {
-              "error": "TimeoutError: page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"http://localhost:3101/contacts\", waiting until \"commit\"\u001b[22m\n"
+              "ttfb": 32459,
+              "fcp": 34240,
+              "lcp": 34580,
+              "cls": 0,
+              "tbt": 757,
+              "hydrated": 42631,
+              "usable": 42632,
+              "inp": 2112,
+              "js_kb": 1637,
+              "js_decoded_kb": 9785,
+              "css_kb": 86,
+              "total_kb": 1935,
+              "requests": 48,
+              "dcl": 34318,
+              "load": 43027
             },
             {
-              "error": "TimeoutError: page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"http://localhost:3101/contacts\", waiting until \"commit\"\u001b[22m\n"
+              "ttfb": 33140,
+              "fcp": 34888,
+              "lcp": 35268,
+              "cls": 0,
+              "tbt": 683,
+              "hydrated": 43167,
+              "usable": 43168,
+              "inp": 1976,
+              "js_kb": 1637,
+              "js_decoded_kb": 9785,
+              "css_kb": 86,
+              "total_kb": 1935,
+              "requests": 47,
+              "dcl": 34953,
+              "load": 43421
             }
           ],
-          "repeat": null
+          "repeat": {
+            "ttfb": 33039,
+            "fcp": 33400,
+            "lcp": 34320,
+            "cls": 0,
+            "tbt": 622,
+            "hydrated": 34984,
+            "usable": 34985,
+            "inp": null,
+            "js_kb": 11,
+            "js_decoded_kb": 9785,
+            "css_kb": 1,
+            "total_kb": 45,
+            "requests": 48,
+            "dcl": 33546,
+            "load": 34545
+          },
+          "rerun_at": "2026-10-17T10:24:24.189Z"
         },
         "/contacts/[id]": {
           "path": "/contacts/0a9214f3-2cc9-43e3-9858-5661878a8110",
@@ -2960,30 +3108,28 @@
       "nav": [
         {
           "to": "/contacts",
-          "ms": null,
-          "skeleton_ms": null,
-          "timeout": true
+          "ms": 41480,
+          "skeleton_ms": null
         },
         {
           "to": "/reminders",
-          "ms": 9498,
-          "skeleton_ms": 6984
-        },
-        {
-          "to": "/dashboard",
-          "ms": null,
-          "skeleton_ms": null,
-          "error": "TimeoutError: locator.click: Timeout 5000ms exceeded."
-        },
-        {
-          "to": "/graph",
           "ms": null,
           "missing_link": true
         },
         {
+          "to": "/dashboard",
+          "ms": 6195,
+          "skeleton_ms": 3719
+        },
+        {
+          "to": "/graph",
+          "ms": 2261,
+          "skeleton_ms": null
+        },
+        {
           "to": "/chat",
-          "ms": 3996,
-          "skeleton_ms": 1571
+          "ms": 5171,
+          "skeleton_ms": 1552
         },
         {
           "to": "/capture",
@@ -2992,29 +3138,26 @@
         },
         {
           "to": "/contacts",
-          "ms": null,
-          "skeleton_ms": null,
-          "timeout": true
+          "ms": 36045,
+          "skeleton_ms": null
         },
         {
           "to": "/dashboard",
-          "ms": null,
-          "skeleton_ms": null,
-          "error": "TimeoutError: locator.click: Timeout 5000ms exceeded."
+          "ms": 36479,
+          "skeleton_ms": 34870
         }
       ],
       "history": {
         "back": {
-          "ms": null,
-          "skeleton_ms": null,
-          "timeout": true
+          "ms": 2545,
+          "skeleton_ms": null
         },
         "forward": {
-          "ms": null,
-          "skeleton_ms": null,
-          "timeout": true
+          "ms": 55,
+          "skeleton_ms": null
         }
-      }
+      },
+      "nav_rerun_at": "2026-10-17T10:24:24.189Z"
     }
   }
 }
