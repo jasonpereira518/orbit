@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Onboarding Mockups</title>
+<!--
+  Static mockups for ONBOARDING_PLAN.md (Phase 1, not product code).
+  Colours, radius and type mirror src/app/theme.css (:root) and src/app/layout.tsx (Fraunces + Outfit),
+  so the frames read in Orbit's existing design language. People are fictional.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --background: #fbfbf9;
+    --foreground: #1a1c1a;
+    --card: #ffffff;
+    --primary: #0f3d3e;
+    --primary-foreground: #e8f3f1;
+    --secondary: #eef1ec;
+    --muted: #f0f2ee;
+    --muted-foreground: #5f6760;
+    --accent: #e7f0ee;
+    --border: #e4e7e1;
+    --radius: 0.625rem;
+    --warn-bg: #fdf6ec;
+    --warn-border: #f1dfc2;
+    --sky: #0b1220;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #eceee9;
+    color: var(--foreground);
+    font: 15px/1.5 "Outfit", system-ui, sans-serif;
+  }
+  header.page { max-width: 1240px; margin: 0 auto; padding: 32px 16px 8px; }
+  header.page h1 { font: 500 28px/1.2 "Fraunces", Georgia, serif; margin: 0 0 6px; color: var(--primary); }
+  header.page p { margin: 0; color: var(--muted-foreground); max-width: 760px; }
+  .frames {
+    max-width: 1240px; margin: 0 auto; padding: 24px 16px 48px;
+    display: grid; gap: 28px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  }
+  figure { margin: 0; }
+  figcaption { font-size: 13px; color: var(--muted-foreground); margin: 10px 4px 0; }
+  figcaption b { color: var(--foreground); font-weight: 600; }
+  .phone {
+    background: var(--background); border: 1px solid var(--border); border-radius: 28px;
+    height: 640px; overflow: hidden; position: relative; box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 12px 32px rgba(15,61,62,.08);
+    display: flex; flex-direction: column;
+  }
+  .bar { display: flex; align-items: center; gap: 8px; padding: 16px 18px 10px; }
+  .logo { width: 22px; height: 22px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #5a7cf0, #2b3fb8); }
+  .brand { font: 500 17px "Fraunces", Georgia, serif; color: var(--primary); }
+  .scroll { flex: 1; overflow: hidden; padding: 6px 18px 18px; }
+  .eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted-foreground); margin: 6px 0 4px; }
+  h2.title { font: 400 27px/1.15 "Fraunces", Georgia, serif; color: var(--primary); margin: 0 0 8px; }
+  p.body { color: var(--muted-foreground); margin: 0 0 14px; font-size: 14.5px; }
+  label.field { display: block; font-size: 13px; font-weight: 500; margin: 0 0 6px; }
+  .textarea {
+    border: 1px solid var(--border); background: var(--card); border-radius: 14px; padding: 12px 13px;
+    min-height: 116px; color: var(--muted-foreground); font-size: 14px;
+  }
+  .input { border: 1px solid var(--border); background: var(--card); border-radius: 12px; padding: 10px 12px; font-size: 14px; color: var(--muted-foreground); margin-bottom: 10px; }
+  .check { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; color: var(--muted-foreground); margin: 12px 0; }
+  .box { width: 18px; height: 18px; border: 1.5px solid #b9c0b7; border-radius: 5px; flex: none; margin-top: 1px; background: var(--card); }
+  .box.on { background: var(--primary); border-color: var(--primary); position: relative; }
+  .box.on::after { content: ""; position: absolute; left: 5px; top: 1px; width: 5px; height: 10px; border: solid var(--primary-foreground); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+  .btn {
+    display: block; width: 100%; text-align: center; border-radius: 12px; padding: 12px 14px; font-weight: 500; font-size: 15px;
+    background: var(--primary); color: var(--primary-foreground); border: 0; font-family: inherit;
+  }
+  .btn.ghost { background: transparent; color: var(--primary); border: 1px solid var(--border); }
+  .micro { font-size: 12px; color: var(--muted-foreground); text-align: center; margin: 7px 0 12px; }
+  .links { display: grid; gap: 8px; font-size: 14px; }
+  .links a { color: var(--primary); text-decoration: none; font-weight: 500; }
+  .notice {
+    background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 14px; padding: 11px 13px; margin: 0 0 14px; font-size: 13.5px;
+  }
+  .notice b { display: block; font-weight: 600; margin-bottom: 2px; }
+  .notice a { color: var(--primary); font-weight: 500; }
+  .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; background: var(--muted); padding: 4px; border-radius: 12px; margin-bottom: 14px; }
+  .seg span { text-align: center; padding: 7px 0; border-radius: 9px; font-size: 13.5px; color: var(--muted-foreground); }
+  .seg span.on { background: var(--card); color: var(--foreground); box-shadow: 0 1px 2px rgba(0,0,0,.06); font-weight: 500; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 13px 14px; margin-bottom: 12px; }
+  .person { display: flex; gap: 11px; align-items: center; }
+  .avatar { width: 38px; height: 38px; border-radius: 50%; background: var(--accent); color: var(--primary); display: grid; place-items: center; font-weight: 600; font-size: 13px; flex: none; }
+  .name { font-weight: 600; }
+  .sub { font-size: 13px; color: var(--muted-foreground); }
+  .due { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 13.5px; display: flex; gap: 8px; align-items: baseline; }
+  .pill { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; background: var(--secondary); color: var(--primary); font-weight: 600; }
+  .sky { height: 132px; border-radius: 16px; background: radial-gradient(ellipse at 50% 60%, #2a2416 0%, var(--sky) 55%); position: relative; margin-bottom: 14px; overflow: hidden; }
+  .sky .sun { position: absolute; left: calc(50% - 13px); top: 58px; width: 26px; height: 26px; border-radius: 50%; background: radial-gradient(circle at 40% 40%, #fff3c4, #f0a93a); box-shadow: 0 0 28px 8px rgba(240,169,58,.35); }
+  .sky .ring { position: absolute; left: calc(50% - 62px); top: 9px; width: 124px; height: 124px; border-radius: 50%; border: 1px dashed rgba(255,255,255,.18); }
+  .sky .star { position: absolute; left: calc(50% + 50px); top: 36px; width: 8px; height: 8px; border-radius: 50%; background: #fff; box-shadow: 0 0 10px 3px rgba(255,255,255,.55); }
+  .sky .lbl { position: absolute; left: calc(50% + 62px); top: 30px; color: #e9eef5; font-size: 11px; }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 9px 0; border-top: 1px solid var(--border); font-size: 14px; }
+  .row:first-of-type { border-top: 0; }
+  .row .acts { display: flex; gap: 6px; }
+  .chip { font-size: 12.5px; border: 1px solid var(--border); border-radius: 999px; padding: 3px 9px; color: var(--primary); background: var(--card); }
+  .opt { display: flex; gap: 10px; padding: 9px 0; border-top: 1px solid var(--border); }
+  .opt:first-of-type { border-top: 0; }
+  .opt .ic { width: 28px; height: 28px; border-radius: 8px; background: var(--accent); flex: none; }
+  .opt b { display: block; font-weight: 500; font-size: 14px; }
+  .opt span { font-size: 12.5px; color: var(--muted-foreground); }
+  h3.ct { font: 500 17px "Fraunces", Georgia, serif; color: var(--primary); margin: 0 0 6px; }
+  nav.bottom {
+    position: absolute; left: 10px; right: 10px; bottom: 10px; height: 58px; border-radius: 22px; background: rgba(255,255,255,.92);
+    border: 1px solid var(--border); display: grid; grid-template-columns: repeat(5, 1fr); align-items: center; font-size: 11px; color: var(--muted-foreground); text-align: center;
+  }
+  nav.bottom .cap { width: 44px; height: 44px; border-radius: 50%; background: var(--primary); margin: -18px auto 0; }
+  .note { max-width: 1240px; margin: 0 auto; padding: 0 16px 40px; color: var(--muted-foreground); font-size: 13px; }
+  @media (max-width: 420px) { .frames { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header class="page">
+  <h1>First session, as proposed</h1>
+  <p>Four phone frames from ONBOARDING_PLAN.md §2: the welcome screen asks for one real person; AI being paused never blocks that; the first win is shown back; the dashboard starts from what’s next. Copy references (C2–C5) point to the plan’s copy deck.</p>
+</header>
+
+<div class="frames">
+
+  <!-- 1. Welcome = first capture -->
+  <figure>
+    <div class="phone">
+      <div class="bar"><span class="logo"></span><span class="brand">Orbit</span></div>
+      <div class="scroll">
+        <div class="eyebrow">Welcome to Orbit, Sam</div>
+        <h2 class="title">Who did you meet recently?</h2>
+        <p class="body">Write a line or two about one person — where you met and what you said you’d do. Orbit turns it into a contact and a follow-up</p>
+        <label class="field">About them</label>
+        <div class="textarea">Met Priya Shah at the career fair. Campus recruiter at Datadog. New grad applications open Nov 1, she said to email her my resume</div>
+        <div class="check"><span class="box on"></span><span>I agree to Orbit’s Terms of Service and Privacy Policy</span></div>
+        <button class="btn">Add them</button>
+        <div class="micro">Free includes 75 AI credits to start. This uses about one</div>
+        <div class="links">
+          <a href="#">Type their details instead</a>
+          <a href="#">Show me around with example people first</a>
+          <a href="#" style="color:var(--muted-foreground);font-weight:400">Skip for now</a>
+        </div>
+      </div>
+    </div>
+    <figcaption><b>1 · Welcome is the first capture</b> (C2, R4). One job, above the fold on a phone. The tour becomes a link.</figcaption>
+  </figure>
+
+  <!-- 2. AI paused: manual fallback -->
+  <figure>
+    <div class="phone">
+      <div class="bar"><span class="logo"></span><span class="brand">Orbit</span></div>
+      <div class="scroll">
+        <div class="eyebrow">Welcome to Orbit</div>
+        <h2 class="title">Who did you meet recently?</h2>
+        <div class="notice"><b>Orbit’s AI is paused right now</b>You can still add people and set follow-ups by hand. Want AI now? <a href="#">Use your own key</a> — it takes about 3 minutes</div>
+        <label class="field">Their name</label>
+        <div class="input">Priya Shah</div>
+        <label class="field">Where you met</label>
+        <div class="input">Career fair</div>
+        <label class="field">What’s next</label>
+        <div class="input">Email my resume</div>
+        <label class="field">Follow up in</label>
+        <div class="seg"><span>3 days</span><span class="on">1 week</span><span>2 weeks</span></div>
+        <button class="btn">Add them</button>
+      </div>
+    </div>
+    <figcaption><b>2 · AI can’t run, the path still works</b> (C3, R1 + R2). No false “comes back on its own”, and a follow-up without any AI.</figcaption>
+  </figure>
+
+  <!-- 3. First win -->
+  <figure>
+    <div class="phone">
+      <div class="bar"><span class="logo"></span><span class="brand">Orbit</span></div>
+      <div class="scroll">
+        <div class="sky"><span class="ring"></span><span class="sun"></span><span class="star"></span><span class="lbl">Priya</span></div>
+        <h2 class="title">Priya is in your network</h2>
+        <div class="card">
+          <div class="person"><span class="avatar">PS</span><div><div class="name">Priya Shah</div><div class="sub">Campus Recruiter at Datadog</div></div></div>
+          <div class="due"><span class="pill">Thu, Oct 31</span><span>Email her your resume</span></div>
+        </div>
+        <p class="body">Orbit will remind you on Thu, Oct 31. When it’s time, open the reminder and Orbit drafts the message</p>
+        <div class="check"><span class="box on"></span><span>Email me on the day a follow-up is due. One email that morning, nothing else</span></div>
+        <button class="btn">Go to my dashboard</button>
+        <div style="height:8px"></div>
+        <button class="btn ghost">Add someone else</button>
+        <div class="micro"><a href="#" style="color:var(--primary);font-weight:500;text-decoration:none">Draft the message now</a></div>
+      </div>
+    </div>
+    <figcaption><b>3 · The first win, shown back</b> (C4, R8). Replaces the feature carousel. The star settling into orbit is the only motion.</figcaption>
+  </figure>
+
+  <!-- 4. Dashboard first-run mode -->
+  <figure>
+    <div class="phone">
+      <div class="bar"><span class="logo"></span><span class="brand">Orbit</span></div>
+      <div class="scroll">
+        <div class="eyebrow">Your network</div>
+        <h2 class="title" style="font-size:24px">Stay in orbit</h2>
+        <div class="card">
+          <h3 class="ct">Up next</h3>
+          <div class="row"><div><div class="name" style="font-weight:500">Email resume</div><div class="sub">Priya Shah · Thu, Oct 31</div></div><div class="acts"><span class="chip">Draft</span><span class="chip">Done</span></div></div>
+        </div>
+        <div class="card">
+          <h3 class="ct">Add more people</h3>
+          <div class="opt"><span class="ic"></span><div><b>Write about someone</b><span>Notes from a coffee chat, a class or an event</span></div></div>
+          <div class="opt"><span class="ic"></span><div><b>Bring in your LinkedIn connections</b><span>Ask LinkedIn for your export now, upload it when it arrives</span></div></div>
+          <div class="opt"><span class="ic"></span><div><b>Connect Google or Outlook</b><span>Pick who to add from your contacts</span></div></div>
+        </div>
+      </div>
+      <nav class="bottom"><span>Dashboard</span><span>Contacts</span><span><span class="cap"></span>Capture</span><span>Chat</span><span>More</span></nav>
+    </div>
+    <figcaption><b>4 · Dashboard, first-run mode</b> (C5, R11). What’s next first, three ways to add people, nothing that waits a day on top.</figcaption>
+  </figure>
+
+</div>
+<p class="note">Mockups only. Final components should reuse the existing shadcn/ui primitives (Card, Button, Checkbox) and the capture review deck unchanged.</p>
+</body>
+</html>
