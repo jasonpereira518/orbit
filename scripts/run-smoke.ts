@@ -60,6 +60,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-toast-actions": "pure",
   "smoke-timeline-cost": "pure",
   "smoke-tap-targets": "pure",
+  "smoke-a11y-patterns": "pure",
   "smoke-action-user-scope": "pure",
   "smoke-consume-bucket-args": "pure",
   "smoke-toast-copy": "pure",
