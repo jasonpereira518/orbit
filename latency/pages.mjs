@@ -113,6 +113,9 @@ async function newContext(browser, profile) {
     hasTouch: p.mobile,
     deviceScaleFactor: p.deviceScaleFactor ?? 1,
     serviceWorkers: "allow",
+    // A saved Playwright storageState (cookies + localStorage) lets the same script run
+    // against a Clerk-protected staging deployment: sign in once, `context.storageState()`.
+    ...(process.env.STORAGE_STATE ? { storageState: process.env.STORAGE_STATE } : {}),
     ignoreHTTPSErrors: true,
   });
   await context.addInitScript(PRELUDE);
