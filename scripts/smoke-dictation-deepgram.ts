@@ -20,7 +20,8 @@
  */
 import { foldResults, type FoldState } from "../src/lib/dictation-fold";
 import { openDeepgramLive, type LiveResult } from "../src/lib/deepgram-live";
-import { dictationReducer, initialMachine } from "../src/lib/dictation";
+import { readFileSync } from "node:fs";
+import { DEEPGRAM_IDLE_STOP_MS, MAX_SESSION_MS, SEGMENT_PAUSE_MS, dictationReducer, initialMachine } from "../src/lib/dictation";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -279,6 +280,19 @@ async function main() {
     first.drop(1007);
     check("a stale first socket's belated drop reaches only its own onClose", firstCloses.length === 1);
     check("...and never the reconnected socket's", secondCloses.length === 0);
+  }
+
+  console.log("\nthe idle stop (Deepgram bills silence)");
+  check("it outlasts a thinking pause by a wide margin", DEEPGRAM_IDLE_STOP_MS >= SEGMENT_PAUSE_MS * 5);
+  check("…and ends long before the 5-minute cap", DEEPGRAM_IDLE_STOP_MS < MAX_SESSION_MS / 10);
+  {
+    // The hook needs a DOM to render, so its wiring is pinned in source, like smoke-speech-quota.
+    const hook = readFileSync("src/lib/use-dictation.ts", "utf8");
+    check("only a result with words re-arms it", /if \(result\.text\.trim\(\)\) armIdleStop\(\);/.test(hook));
+    check("…it is armed once the socket is open", /armSegmentPause\(\);\n\s*armIdleStop\(\);/.test(hook));
+    check("…it stops only a Deepgram session", /if \(engineRef\.current !== "deepgram"\) return;/.test(hook));
+    check("…as a normal stop, not an abort", /endReasonRef\.current = "timeout";\n\s*dispatchRef\.current\(\{ t: "stop" \}\);\n\s*\}, DEEPGRAM_IDLE_STOP_MS\)/.test(hook));
+    check("…and is cleared with the other timers", /if \(idleTimerRef\.current\) clearTimeout\(idleTimerRef\.current\);\n\s*silenceTimerRef\.current = null;/.test(hook));
   }
 
   if (failures) {

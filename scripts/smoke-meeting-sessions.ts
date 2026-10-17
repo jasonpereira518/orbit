@@ -188,6 +188,33 @@ async function main() {
   const transcript = (await getMeetingTranscript(USER, first.id))!;
   check("segments come back in seq order", transcript.segments.map((s) => s.seq).join() === "0,1,2,3,5");
   check("the text skips silence and keeps order", transcript.text === "line 0\n\nline 1\n\nline 2\n\nline 5");
+
+  // ── One chunk, one bill ──────────────────────────────────────────────────────────────
+  // Two uploads of the same seq at once (a retry racing a slow first attempt) used to both
+  // reach the transcriber. The claim makes the second wait for the first.
+  const racing = await createMeetingSessionRow(USER, { includesMic: false, recorderId: "rec-R" });
+  let slowCalls = 0;
+  const slow: Transcriber = async () => {
+    slowCalls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return { text: "once", engine: "deepgram" };
+  };
+  const [ra, rb] = await Promise.all([
+    ingestMeetingChunk(USER, racing.id, meta(0, "rec-R"), WAV, slow),
+    ingestMeetingChunk(USER, racing.id, meta(0, "rec-R"), WAV, slow),
+  ]);
+  check("two concurrent uploads of one chunk transcribe it once", slowCalls === 1, `calls=${slowCalls}`);
+  const loser = [ra, rb].find((r) => !r.ok);
+  check("…the second is told to retry later", loser !== undefined && !loser.ok && loser.status === 429 && "retryAfterSec" in loser && loser.retryAfterSec > 0, JSON.stringify([ra, rb]));
+  const raceRetry = await ingestMeetingChunk(USER, racing.id, meta(0, "rec-R"), WAV, slow);
+  check("…and its retry gets the stored segment back", raceRetry.ok && raceRetry.duplicate && raceRetry.text === "once" && slowCalls === 1);
+
+  const failing: Transcriber = async () => { throw new Error("provider down"); };
+  const failed = await ingestMeetingChunk(USER, racing.id, meta(1, "rec-R"), WAV, failing).then(() => null, (err: Error) => err);
+  check("a failed transcription still throws to the route", failed instanceof Error);
+  const retry = await ingestMeetingChunk(USER, racing.id, meta(1, "rec-R"), WAV, slow);
+  check("…and releases its claim, so the retry runs at once", retry.ok && retry.text === "once" && !retry.duplicate, JSON.stringify(retry));
+  await discardMeetingSessionRow(USER, racing.id);
   check("a seq that never arrived is reported missing", transcript.missingSeqs.join() === "4");
   check("lastSeq tracks the highest stored", transcript.session.lastSeq === 5);
   check("duration tracks the furthest chunk end", transcript.session.durationMs === 360_000);

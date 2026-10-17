@@ -28,7 +28,8 @@ import {
   type NoteBatchMeeting,
 } from "@/db/schema";
 import type { TranscribeOptions, TranscriptionResult } from "@/lib/ai";
-import { deepgramEnabled } from "@/lib/deepgram";
+import { deepgramOpenFor } from "@/lib/speech-credit";
+import { RATE_LIMITS, consumeBucket, isRateLimitedError, releaseBucket } from "@/lib/rate-limit";
 import { recordSpeechSeconds, speechAllowance } from "@/lib/speech-quota";
 
 export type MeetingAttendee = { name: string; email?: string | null };
@@ -413,7 +414,9 @@ export type IngestChunkResult =
       /** True when this seq was already stored and nothing was transcribed. */
       duplicate: boolean;
     }
-  | { ok: false; status: 400 | 402 | 404 | 409 | 410; error: string };
+  | { ok: false; status: 400 | 402 | 404 | 409 | 410; error: string }
+  /** Another upload of this seq is being transcribed right now; retry after it. */
+  | { ok: false; status: 429; error: string; retryAfterSec: number };
 
 /** A chunk this far past the start is not a real recording. Three hours plus slack. */
 const MAX_CHUNK_OFFSET_MS = 4 * 60 * 60_000;
@@ -479,27 +482,55 @@ export async function ingestMeetingChunk(
     // so a spent cap has nothing to protect and refusing would lock a paying account out of
     // its own meeting during exactly the incident the lever was pulled for. The allowance is
     // not even read in that case: it could only produce a refusal we would have to ignore.
-    if (deepgramEnabled()) {
+    // A spent Deepgram credit is the same case for a meeting that has not recorded on
+    // Deepgram yet; one that has keeps going (`deepgramOpenFor`).
+    if (await deepgramOpenFor(userId, "meeting", { sessionId: session.id })) {
       const allowance = await speechAllowance(userId, "meeting");
       if (allowance.exhausted) {
         return { ok: false, status: 402, error: "You’ve used this month’s meeting transcription minutes" };
       }
     }
+    // CLAIM BEFORE PAYING. The duplicate check above runs before the transcription and the
+    // unique insert below only after it, so two concurrent uploads of this seq used to BOTH
+    // pay Deepgram. The claim makes the second one wait: it gets a 429, the recorder retries
+    // after the window, and by then the first one's segment is stored and returned as a
+    // duplicate. See `RATE_LIMITS.meetingChunkClaim`.
+    const claimKey = `${session.id}:${meta.seq}`;
+    try {
+      await consumeBucket("meetingChunkClaim", claimKey, RATE_LIMITS.meetingChunkClaim);
+    } catch (err) {
+      if (isRateLimitedError(err)) {
+        return {
+          ok: false,
+          status: 429,
+          error: "That part of the meeting is already being transcribed",
+          retryAfterSec: err.retryAfterSec,
+        };
+      }
+      throw err;
+    }
     const previous = await findSegment(session.id, meta.seq - 1);
-    const result = await transcribe(
-      userId,
-      {
-        mimeType: "audio/wav",
-        base64: Buffer.from(wav.buffer, wav.byteOffset, wav.byteLength).toString("base64"),
-        filename: `meeting-${meta.seq}.wav`,
-      },
-      {
-        contextText: previous?.text ?? null,
-        allowEmpty: true,
-        operation: "meeting.transcribe",
-        sessionId: session.id,
-      },
-    );
+    let result: Awaited<ReturnType<Transcriber>>;
+    try {
+      result = await transcribe(
+        userId,
+        {
+          mimeType: "audio/wav",
+          base64: Buffer.from(wav.buffer, wav.byteOffset, wav.byteLength).toString("base64"),
+          filename: `meeting-${meta.seq}.wav`,
+        },
+        {
+          contextText: previous?.text ?? null,
+          allowEmpty: true,
+          operation: "meeting.transcribe",
+          sessionId: session.id,
+        },
+      );
+    } catch (err) {
+      // Nothing was stored, so the recorder's retry must not wait out the claim.
+      await releaseBucket("meetingChunkClaim", claimKey).catch(() => {});
+      throw err;
+    }
     text = result.text.trim();
     engine = result.engine;
   }

@@ -104,7 +104,9 @@ const PRICES: Record<string, PriceEntry> = {
   // separate duration column — so the caller reports the audio length in `inputTokens` (one
   // "token" = one second) and this row prices that unit like any other: $0.0043/min ÷ 60 ≈
   // 72 micros/sec, i.e. $72 per 1,000,000 seconds of audio. `output` stays 0; there is no
-  // second leg to a transcription call.
+  // second leg to a transcription call. NOTE: no caller reports those seconds, and this is
+  // the pre-recorded list rate only. What Deepgram actually costs Orbit — streaming, the
+  // add-ons and the opt-out premium — is priced from `speech_usage` in `speech-cost.ts`.
   [DEEPGRAM_MODEL]: { input: 72, output: 0 },
 };
 

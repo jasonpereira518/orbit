@@ -39,7 +39,7 @@ import {
   refusalCopyFor,
 } from "@/lib/ai-access-copy";
 import { JEV_MODEL } from "@/lib/ai-models";
-import { deepgramEnabled } from "@/lib/deepgram";
+import { deepgramOpenFor } from "@/lib/speech-credit";
 import { speechAllowance } from "@/lib/speech-quota";
 import {
   systemOneRequest,
@@ -834,7 +834,7 @@ export async function getAiAccessStatus(userId: string): Promise<AiAccessStatus>
   const monthlyCredits = PLAN_CONFIG[access.plan].monthlyCredits;
   const [balance, speech, paused] = await Promise.all([
     monthlyCredits && access.eligibility === "plan" ? getCreditBalance(userId, access.plan, access.settings, now) : null,
-    deepgramEnabled() ? speechAllowance(userId, "shortform") : null,
+    deepgramOpenFor(userId, "shortform").then((open) => (open ? speechAllowance(userId, "shortform") : null)),
     access.eligibility === "plan" ? managedAiPaused() : Promise.resolve(false),
   ]);
 

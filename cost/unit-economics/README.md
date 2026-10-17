@@ -11,15 +11,23 @@ node cost/unit-economics/model.mjs --inputs mine.json # your own copy of the inp
 ```
 
 It prints a report and writes `output/report.md` plus one CSV per table (`cost_per_user`,
-`margin_subscriptions`, `lifetime`, `free_cost`, `scale`, `spend_by_category`,
-`sensitivity`). The CSVs open in any spreadsheet. No network, database or secrets are read.
+`margin_subscriptions`, `deepgram_credit`, `free_cost`, `scale`, `spend_by_category`,
+`sensitivity`). A scenario run writes beside the default rather than over it
+(`report.mip-1.md`, `scale.managed-ai-on.csv`, ...). The CSVs open in any spreadsheet. No
+network, database or secrets are read.
+
+Plans modelled: Free, Pro and Max. Lifetime is granted by an admin, never sold, and is left out on
+purpose. Speech is costed at full price even though the one-time $15,000 Deepgram credit
+(`rates.deepgram.oneTimeCredit`, and `DEEPGRAM_CREDIT` in `src/lib/speech-cost.ts`) pays for it at
+first. Section 3 of the report shows how long the credit lasts at each scale point. Keep the two
+numbers in step when the credit is topped up.
 
 ## Files
 
 | File | What it is |
 |---|---|
 | `inputs.json` | Every number. Nothing in `model.mjs` is a price. |
-| `model.mjs` | The arithmetic. About 300 lines, top to bottom: per-user cost → revenue net of Stripe → Lifetime → Free → scale points and cliffs → break-even → sensitivity. |
+| `model.mjs` | The arithmetic. About 300 lines, top to bottom: per-user cost → revenue net of Stripe → the Deepgram credit → Free → scale points and cliffs → break-even → sensitivity. |
 | `output/` | Generated. Safe to delete; rerun to recreate. |
 | `../reconcile/` | The monthly check of the admin cost screens against real invoices. |
 
@@ -56,7 +64,7 @@ in order:
 Run against a Neon **read-only role or a fresh branch**, not your app role. Paste only the
 aggregate numbers into `inputs.json`; never commit query output (the repo is public).
 
-**Query 1: accounts per plan** → `mix.planShare`, `mix.lifetimeHolders`, `plans.annualShare`
+**Query 1: accounts per plan** → `mix.planShare`, `plans.annualShare` (leave Lifetime and comped rows out of the shares)
 
 ```sql
 select

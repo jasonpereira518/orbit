@@ -5,7 +5,7 @@ import { getDb } from "@/db";
 import { calendarSources, gmailConnections, meetingSessions, type MeetingDigest } from "@/db/schema";
 import { completeJson, parseAiJson, type CaptureParseHints } from "@/lib/ai";
 import { requireUserId } from "@/lib/auth";
-import { deepgramEnabled } from "@/lib/deepgram";
+import { deepgramOpenFor } from "@/lib/speech-credit";
 import { ReauthRequiredError } from "@/lib/errors";
 import { getValidAccessToken, hasCalendarScope } from "@/lib/gmail";
 import { fetchCalendarWindow } from "@/lib/connectors/google-calendar";
@@ -90,7 +90,10 @@ export async function createMeetingSession(input: {
     // and tell them their hours are gone when their hours are not what is stopping them. The
     // read is skipped entirely rather than taken and ignored, so no stale number can leak
     // into copy from here.
-    if (deepgramEnabled()) {
+    //
+    // The same holds once the Deepgram credit is spent (`deepgramOpenFor`): a NEW meeting then
+    // records on the account's own key, so the cap is not Orbit's to enforce.
+    if (await deepgramOpenFor(userId, "meeting")) {
       const allowance = await speechAllowance(userId, "meeting");
       if (allowance.exhausted) {
         return { ok: false, error: `You’ve used this month’s meeting hours — they reset on ${resetLabel(allowance.resetsAt)}` };

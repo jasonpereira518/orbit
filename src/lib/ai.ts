@@ -26,7 +26,8 @@ import {
   vocabularyToWhisperPrompt,
   WHISPER_PROMPT_MAX_CHARS,
 } from "@/lib/transcription-vocabulary";
-import { deepgramEnabled, transcribeFile } from "@/lib/deepgram";
+import { transcribeFile } from "@/lib/deepgram";
+import { deepgramOpenFor } from "@/lib/speech-credit";
 import { DEEPGRAM_MODEL, meetingTag, shortformTag } from "@/lib/deepgram-params";
 import { speechAllowance, recordSpeechSeconds } from "@/lib/speech-quota";
 import { speechKindForOperation } from "@/lib/speech-limits";
@@ -920,16 +921,18 @@ export async function transcribeAudioWithAI(
   // transcript with misspelled names beats no transcript.
   const vocabulary = await loadNetworkVocabulary(userId);
 
-  // Deepgram first, on Orbit's key, while the account has short-form seconds left. It is the
-  // only engine most accounts can reach: Whisper and Gemini below need a key the user pasted.
-  if (deepgramEnabled()) {
-    // The METER FOLLOWS THE OPERATION, not the call site. `meeting.transcribe` is meeting
-    // chunk recovery — the fallback that carries a whole meeting whenever the live socket
-    // cannot open — and it bills Orbit's key exactly like a live meeting does, so it must
-    // check and spend the `meeting` cap. Before this, it checked and spent `shortform`: a
-    // three-hour meeting behind a firewall cost Orbit three hours, left the 5 h meeting cap
-    // reading zero, and ate the user's voice-note allowance until voice notes stopped.
-    const kind = speechKindForOperation(operation);
+  // The METER FOLLOWS THE OPERATION, not the call site. `meeting.transcribe` is meeting
+  // chunk recovery — the fallback that carries a whole meeting whenever the live socket
+  // cannot open — and it bills Orbit's key exactly like a live meeting does, so it must
+  // check and spend the `meeting` cap. Before this, it checked and spent `shortform`: a
+  // three-hour meeting behind a firewall cost Orbit three hours, left the 5 h meeting cap
+  // reading zero, and ate the user's voice-note allowance until voice notes stopped.
+  const kind = speechKindForOperation(operation);
+
+  // Deepgram first, on Orbit's key, while the account has short-form seconds left and the
+  // Deepgram credit has not reached this plan's rung (`speech-cost.ts`). It is the only
+  // engine most accounts can reach: Whisper and Gemini below need a key the user pasted.
+  if (await deepgramOpenFor(userId, kind, { sessionId: opts.sessionId })) {
     const allowance = await speechAllowance(userId, kind);
     if (kind === "meeting" && allowance.exhausted) {
       // Not a fall-through to the user's own key, unlike short-form below: a meeting's cap is

@@ -31,7 +31,8 @@ const SCENARIO = {
   mip: Number(flag("mip", v(R.deepgram.mipOptOutMultiplier))),
 };
 
-const PLAN_IDS = ["free", "pro", "max", "lifetime"];
+// Lifetime is granted by an admin, never sold, so it is not part of the model.
+const PLAN_IDS = ["free", "pro", "max"];
 const PROFILE_IDS = ["light", "typical", "heavy", "abusive"];
 const money = (n) => (n == null || !Number.isFinite(n) ? "n/a" : `${n < 0 ? "-" : ""}$${Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: Math.abs(n) < 100 ? 2 : 0, maximumFractionDigits: Math.abs(n) < 100 ? 2 : 0 })}`);
 const pct = (n) => (Number.isFinite(n) ? `${(n * 100).toFixed(0)}%` : "n/a");
@@ -115,8 +116,6 @@ function netMonthlyRevenue(planId) {
   const annual = (plan.annual - stripeFee(plan.annual, true)) / 12;
   return (1 - a) * monthly + a * annual;
 }
-
-const lifetimeNet = (price) => price - stripeFee(price, false);
 
 /* ---------------------------------------------------------------- fixed and tiered costs */
 
@@ -204,13 +203,20 @@ function platformCosts(users) {
   return { lines: billed, dbGb: _dbGb, blobGb: _blobGb, notes, total: Object.values(billed).reduce((a, b) => a + b, 0) };
 }
 
-/** Accounts per plan at a scale point. Lifetime is a fixed cohort; the rest split by planShare. */
+/** Accounts per plan at a scale point, split by planShare. */
 function usersByPlan(users) {
-  const lifetime = Math.min(users * v(inputs.mix.lifetimeMaxShare), v(inputs.mix.lifetimeHolders) ?? users * inputs.mix.planShare.lifetime);
-  const rest = users - lifetime;
   const share = inputs.mix.planShare;
   const sum = share.free + share.pro + share.max;
-  return { free: (rest * share.free) / sum, pro: (rest * share.pro) / sum, max: (rest * share.max) / sum, lifetime };
+  return { free: (users * share.free) / sum, pro: (users * share.pro) / sum, max: (users * share.max) / sum };
+}
+
+/** Deepgram spend per month across every account at a scale point. */
+function speechSpendAt(users) {
+  const byPlan = usersByPlan(users);
+  let sum = 0;
+  for (const planId of PLAN_IDS)
+    for (const prof of PROFILE_IDS) sum += byPlan[planId] * inputs.mix.profileShare[prof] * userMonthlyCost(planId, prof).speech;
+  return sum;
 }
 
 function avgProfile(field) {
@@ -270,37 +276,18 @@ line();
   table("margin_subscriptions", ["plan", "profile", "list/month", "net of fees", "cost", "margin", "margin %"], rows);
 }
 
-line(`## 3. Lifetime: one-time revenue vs cumulative cost`);
+line(`## 3. The Deepgram credit`);
 line();
 {
-  const L = inputs.plans.lifetime;
+  const usable = v(R.deepgram.oneTimeCredit) * v(R.deepgram.creditUsableShare);
+  line(`A one-time ${money(v(R.deepgram.oneTimeCredit))} credit, of which the app lets itself spend ${money(usable)} before every speech surface has fallen back (src/lib/speech-cost.ts). While it lasts, speech costs no cash; the margin below shows both sides of it.`);
+  line();
   const rows = [];
-  for (const price of [L.oneTime, L.oneTimeStandard]) {
-    const net = lifetimeNet(price);
-    for (const prof of PROFILE_IDS) {
-      const m = userMonthlyCost("lifetime", prof).total;
-      const cells = inputs.lifetimeYears.map((y) => money(net - m * 12 * y));
-      rows.push([money(price), prof, money(net), money(m), ...cells, m > 0 ? `${(net / m).toFixed(1)} mo` : "never"]);
-    }
+  for (const users of inputs.scalePoints) {
+    const speech = speechSpendAt(users);
+    rows.push([users.toLocaleString(), money(speech), speech > 0 ? `${(usable / speech).toFixed(1)} mo` : "never runs out"]);
   }
-  table("lifetime", ["price", "profile", "net", "cost/mo", ...inputs.lifetimeYears.map((y) => `margin after ${y}y`), "cost overtakes price"], rows);
-
-  const lightM = userMonthlyCost("lifetime", "light").total;
-  const typM = userMonthlyCost("lifetime", "typical").total;
-  const heavyM = userMonthlyCost("lifetime", "heavy").total;
-  for (const price of [L.oneTime, L.oneTimeStandard])
-    for (const years of [3, 5]) {
-      const net = lifetimeNet(price);
-      const light = net - lightM * 12 * years;
-      const heavy = net - heavyM * 12 * years;
-      line(`- $${price}, ${years} years: light ${money(light)}, typical ${money(net - typM * 12 * years)}, heavy ${money(heavy)}. ` +
-        (light > 0 && heavy < 0 ? `**One heavy user erases the margin of ${(Math.abs(heavy) / light).toFixed(1)} light ones.**` : light <= 0 ? `Even light users lose money.` : `No profile loses money.`));
-    }
-  line();
-  // What would make heavy Lifetime break even within 3 years at today's allowances?
-  const heavyMonthly = userMonthlyCost("lifetime", "heavy").total;
-  line(`Price at which a heavy Lifetime user breaks even after 3 years: ${money(heavyMonthly * 36 + v(R.stripe.cardFixed))} (after 5 years: ${money(heavyMonthly * 60)}).`);
-  line();
+  table("deepgram_credit", ["users", "Deepgram / month", "credit lasts"], rows);
 }
 
 line(`## 4. Free users`);
@@ -341,7 +328,7 @@ line();
     notesAt.push([users, plat]);
   }
   table("scale", ["users", "DB size", "platform/fixed", "variable", "total cost", "cost/user", "net revenue (subs)", "monthly margin", "margin %"], rows);
-  line(`Lifetime revenue is one-time, so it is not in the monthly revenue column; Lifetime users' running cost is.`);
+  line(`Speech is counted as a cost here even though the Deepgram credit pays for it at first: section 3 shows how long that lasts, and "while the credit lasts" margin is this one plus the speech column below.`);
   line();
   line(`### Variable spend by category`);
   line();
@@ -374,11 +361,9 @@ line();
   const proMargin = netMonthlyRevenue("pro") - blendedUserCost("pro");
   const freeCost = blendedUserCost("free");
   const ratio = inputs.mix.planShare.free / Math.max(1e-9, inputs.mix.planShare.pro + inputs.mix.planShare.max);
-  // Lifetime holders are a sunk cohort: their running cost is a fixed monthly drag on top.
-  const lifetimeDrag = v(inputs.mix.lifetimeHolders) * blendedUserCost("lifetime");
   const perPaid = proMargin - ratio * freeCost;
-  line(`Fixed platform cost at ~1,000 users: ${money(plat)}/month, plus ${money(lifetimeDrag)}/month running cost of ${v(inputs.mix.lifetimeHolders)} Lifetime accounts. Blended Pro contribution ${money(proMargin)}; with ${ratio.toFixed(1)} Free users per subscriber, each subscriber nets ${money(perPaid)}.`);
-  line(perPaid > 0 ? `**Break-even: ~${Math.ceil((plat + lifetimeDrag) / perPaid)} paying subscribers** at this plan mix (${Math.ceil(plat / perPaid)} without the Lifetime cohort).` : `**No break-even at this mix: each subscriber does not cover the Free users behind them.**`);
+  line(`Fixed platform cost at ~1,000 users: ${money(plat)}/month. Blended Pro contribution ${money(proMargin)}; with ${ratio.toFixed(1)} Free users per subscriber, each subscriber nets ${money(perPaid)}.`);
+  line(perPaid > 0 ? `**Break-even: ~${Math.ceil(plat / perPaid)} paying subscribers** at this plan mix, counting speech at full price (fewer while the Deepgram credit pays for it).` : `**No break-even at this mix: each subscriber does not cover the Free users behind them.**`);
   line();
 }
 
@@ -414,7 +399,6 @@ line();
   add("Free limit 250 contacts", (i) => (i.plans.free.contactLimit = 250));
   add("Free limit 1,000 contacts", (i) => (i.plans.free.contactLimit = 1000));
   add("Free short-form 60 → 15 min", (i) => (i.plans.free.shortformMin = 15));
-  add("Lifetime speech 10h+10h → 3h+3h", (i) => (i.plans.lifetime.meetingMin = 180, i.plans.lifetime.shortformMin = 180));
   add("Pro speech 5h+5h → 3h+3h", (i) => (i.plans.pro.meetingMin = 180, i.plans.pro.shortformMin = 180));
   add("Deepgram at list (no opt-out premium)", () => (SCENARIO.mip = 1));
   SCENARIO.mip = Number(flag("mip", v(R.deepgram.mipOptOutMultiplier)));
@@ -427,8 +411,6 @@ line();
   add("Conversion +1 pt (free 88% → 87%, pro +1)", (i) => (i.mix.planShare.free -= 0.01, i.mix.planShare.pro += 0.01));
   add("Heavy share 13% → 25%", (i) => (i.mix.profileShare.light -= 0.12, i.mix.profileShare.heavy += 0.12));
   add("Embeddings: drop the duplicate jsonb copy", (i) => (i.storage.embeddingJsonbBytes.value = 0));
-  add("Lifetime cohort 100 → 300 accounts", (i) => (i.mix.lifetimeHolders.value = 300));
-  add("No Lifetime cohort", (i) => (i.mix.lifetimeHolders.value = 0));
   table("sensitivity", ["change", "1k margin/mo", "1k vs base", "10k margin/mo", "10k vs base"], rows);
   void base;
 }
@@ -448,11 +430,19 @@ line(`- usage profiles and the plan mix (\`profiles\`, \`mix\`): all guesses`);
 line(`- Neon load: 40 CU-hours per 1,000 MAU above the floor (in model.mjs)`);
 line();
 
+// A scenario run writes beside the default rather than over it: `report.md` is always the
+// default scenario, `report.mip-1.md` the list-price one, and so on.
+const suffix = [
+  SCENARIO.managedAi ? "managed-ai-on" : null,
+  flag("mip", null) !== null ? `mip-${SCENARIO.mip}` : null,
+  flag("inputs", null) !== null ? path.basename(flag("inputs"), ".json") : null,
+].filter(Boolean).join(".");
+const named = (base, ext) => `${base}${suffix ? `.${suffix}` : ""}.${ext}`;
 const outDir = path.join(here, "output");
 fs.mkdirSync(outDir, { recursive: true });
-fs.writeFileSync(path.join(outDir, "report.md"), out.join("\n"));
+fs.writeFileSync(path.join(outDir, named("report", "md")), out.join("\n"));
 for (const [name, rows] of Object.entries(csv)) {
   const strip = (c) => String(c).replace(/\*\*/g, "");
-  fs.writeFileSync(path.join(outDir, `${name}.csv`), rows.map((r) => r.map((c) => `"${strip(c).replace(/"/g, '""')}"`).join(",")).join("\n") + "\n");
+  fs.writeFileSync(path.join(outDir, named(name, "csv")), rows.map((r) => r.map((c) => `"${strip(c).replace(/"/g, '""')}"`).join(",")).join("\n") + "\n");
 }
 console.log(out.join("\n"));

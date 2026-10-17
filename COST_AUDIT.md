@@ -1,8 +1,15 @@
 # Orbit cost audit
 
-Phase 1 (audit only). Date: **2026-10-17**. Commit audited: `bf1b4ae`.
-Nothing in `src/`, the workflows or any vendor configuration was changed. The model and the
-reconciliation check live in `cost/`; the plan is in `COST_PLAN.md`.
+Phase 1 audit: **2026-10-17**, commit `bf1b4ae`. The model and the reconciliation check live in
+`cost/`; the plan is in `COST_PLAN.md`.
+
+**Update, 2026-10-17 (phase 2).** The quick wins are now in code, except Vercel Pro, and each
+finding below says so where it applies. Two facts changed the economics:
+
+- **Deepgram now draws on a one-time $15,000 credit.** It is a prepaid pool
+  (`DEEPGRAM_CREDIT`, `src/lib/speech-cost.ts`) with a degradation ladder.
+- **Lifetime is an admin-granted plan and is no longer modelled.** Its few accounts are not a
+  cost line worth planning around.
 
 **How rates are labelled.** Every vendor rate below has a source URL and the date it was
 checked (2026-10-17).
@@ -130,6 +137,14 @@ Per-user variable cost is almost entirely Deepgram. Per-event costs are Stripe's
 
 Ordered by how much a bad day could cost.
 
+Since phase 2:
+
+- **Capped in total:** U1, U2 and U5 are now bounded by the $15k Deepgram credit and its ladder.
+  At 90% of the credit Free falls back; at 97% everyone's voice notes and the chat mic fall back;
+  at 100% no new meeting starts. Each rung goes to Slack.
+- **Still open individually:** a tampered client can still exceed its own per-account cap
+  (COST_PLAN P1.4).
+
 | ID | What | Why it can run away | Today's protection |
 |---|---|---|---|
 | **U1** | **Deepgram live streams** (meetings, dictation) | The browser holds Orbit's grant token and streams straight to Deepgram. The server checks the allowance only when it issues the 30-second token; the socket outlives the token, and **nothing server-side can close it**. The meeting cut-off (`use-meeting-live.ts:515,630-634`) and the 3-hour meeting cap are client-side. Dictation never receives `remainingSeconds` (`use-dictation.ts:41`); its only stop is a client 5-minute timer. Usage is metered from what the browser reports (segment `endMs`, a `sendBeacon` for dictation). A modified client can stream for as long as it likes, choose the model and add-ons, and drop the reconciliation tag. | Token minting: 30 per 5 min per user. Nightly reconciliation alerts the next day, but **skips untagged requests silently** (`api/ops/speech-usage/route.ts:351`) and stops reading after 50 pages of 1,000 requests. |
@@ -158,22 +173,30 @@ with the README queries.
 | Free | $0 | $0.05 | $0.19 | **$0.84** (all caps used) | $8.74 (modified client) |
 | Pro | $7.99 | $0.21 | $2.21 (list: $1.28) | **$9.63** (list: $5.52) | $21 |
 | Max | $18.03 | $0.40 | $4.38 (list: $2.50) | **$19.08** (list: $10.86) | $31 |
-| Lifetime | $0 recurring | $0.40 | $4.38 | **$19.08** | $31 |
+
+Lifetime is admin-granted and not modelled.
 
 - **Pro and Max lose money on a user who maxes their speech allowance** at the 2× rate (−$1.64
   and −$1.04 a month). At list price they keep 31% and 40%.
-- **Lifetime (legacy cohort):** at the $25 intro price, a typical user costs more than they paid
-  within ~6 months, and a heavy one within ~5 weeks. Over 3 years, one heavy Lifetime user erases
-  the margin of ~71 light ones at $25, or ~11 at $75. A cohort of 100 Lifetime accounts costs about
-  **$460/month** to run: more than all fixed platform costs at 1,000 users.
+- **The $15,000 Deepgram credit** (95% of it usable before the last rung) lasts:
+
+  | Accounts | Deepgram / month (2× rate) | Credit lasts (2× rate) | Credit lasts (list price) |
+  |---|---|---|---|
+  | 1,000 | ~$630 | ~22 months | ~41 months |
+  | 10,000 | ~$6,300 | ~2.3 months | ~4 months |
+
+  While it lasts, speech costs no cash. After it, the margins above apply.
 - **Free:** a Free user who uses every metered feature costs $0.84/month; the blended Free user
-  costs $0.37. Pro needs **6% of signups paying** to carry blended Free users, or 13% if every Free
-  user maxes their voice notes. Resuming included AI for Free raises that to 10% and 23%.
-- **Break-even:** about 31 subscribers covers platform costs at the guessed mix, or **~195 once the
-  100-account Lifetime cohort's running cost is included** (~70 at Deepgram list price).
-- **Scale:** cost per account falls from $1.33 (100) to $0.69 (50,000). Speech is 85–95% of
-  variable spend at every scale point. DB storage is the next biggest line and grows with
-  embeddings.
+  costs $0.37.
+  - Pro needs **6% of signups paying** to carry blended Free users, or 13% if every Free user
+    maxes their voice notes.
+  - Resuming included AI for Free raises that to 10% and 23%.
+  - Free keeps 60 minutes of voice notes a month (your decision), funded by the credit.
+- **Break-even:** about **31 subscribers** covers platform costs at the guessed mix with speech at
+  full price, or ~17 at Deepgram list price. Fewer are needed while the credit pays for speech.
+- **Scale:** cost per account falls from $1.00 (100) to $0.68 (50,000).
+  - Speech is 85–95% of variable spend at every scale point.
+  - DB storage is the next biggest line, and it grows with embeddings.
 
 **Pricing cliffs, in the order you hit them:**
 
@@ -193,18 +216,18 @@ with the README queries.
 ## 4. Efficiency findings, ranked by monthly savings
 
 Savings are from `node cost/unit-economics/model.mjs` (sensitivity table) at 1,000 / 10,000 accounts,
-2× Deepgram rate. Every figure inherits the model's guesses.
+2× Deepgram rate, Lifetime excluded. Every figure inherits the model's guesses. While the $15k
+credit lasts, Deepgram savings stretch the credit rather than saving cash.
 
 | Rank | Finding | Saves /mo @1k | Saves /mo @10k | Risk |
 |---|---|---|---|---|
 | F0 | **Required spend, not savings:** Vercel Pro (+$20); Neon Launch if on Free (+$20–40 @1k); Resend Pro once mail exceeds 100/day (+$20) | −$40 to −$80 | −$60 to −$150 | Reduces risk (ToS, outages) |
-| F1 | **Deepgram opt-out premium.** `mip_opt_out=true` on every request (`deepgram-params.ts:113-117`) may double the per-minute rate. Your invoice settles it: the effective $/min is printed by `cost/reconcile`. | up to $453 | up to $2,993 | ⚠️ **Removing the flag trades away customer privacy (vendor training on private meetings). Not recommended.** Safer levers: a Deepgram Growth commitment (~15–20% off ⚠️), or asking Deepgram for zero-retention at a negotiated rate. |
-| F2 | **Free voice-note allowance** 60 → 15 min/month | $110 | $1,214 | Low (pricing; Free voice notes still work on the user's own OpenAI/Gemini key) |
-| F3 | **Pro speech allowance** 5 h + 5 h → 3 h + 3 h | $78 | $861 | Low–medium (pricing; existing subscribers need notice) |
-| F4 | **Dictation sockets stay open through silence** (`use-dictation.ts:850-859`); live meeting sockets bill silence. Closing dictation after ~10 s of no speech (VAD events are already requested). Assumes 20–30% of streamed short-form minutes are idle 🎲 | ~$70–110 | ~$570–850 | Low (≤1 s reconnect latency on resume) |
-| F5 | **Lifetime speech allowance** 10 h + 10 h → 3 h + 3 h on Orbit's key, with the user's own key beyond | $304 | $304 (cohort of 100) | ⚠️ Terms promise "every Orbit Max feature"; needs a Terms change and notice. See decision D4. |
-| F6 | **Keyterm add-on on every request** (`deepgram-params.ts:110`). Send keyterms only where they change accuracy (names of attendees, not a global vocabulary). The add-on is ~$67 @1k and ~$440 @10k; assume half can go | ~$30 | ~$200 | Low–medium (accuracy; re-run `docs/ai-evals` transcription evals) |
-| F7 | **Duplicate Deepgram billing** (U3): chunk race, retry-after-success, live/chunk overlap. Est. 3–8% of meeting minutes | ~$14–36 | ~$68–181 | Low |
+| F1 | **Deepgram opt-out premium.** `mip_opt_out=true` on every request (`deepgram-params.ts:113-117`) may double the per-minute rate. Your invoice settles it: the effective $/min is printed by `cost/reconcile`. | up to $282 | up to $2,823 | ⚠️ **Removing the flag trades away customer privacy (vendor training on private meetings). Not recommended.** Safer levers: a Deepgram Growth commitment (~15–20% off ⚠️), or asking Deepgram for zero-retention at a negotiated rate. |
+| F2 | **Free voice-note allowance** 60 → 15 min/month | $123 | $1,226 | Low (pricing; Free voice notes still work on the user's own OpenAI/Gemini key). **Decided: kept at 60 min, funded by the credit.** The credit ladder moves Free onto fallbacks first if it runs low. |
+| F3 | **Pro speech allowance** 5 h + 5 h → 3 h + 3 h | $87 | $870 | Low–medium (pricing; existing subscribers need notice) |
+| F4 | **Dictation sockets stay open through silence** (`use-dictation.ts:850-859`); live meeting sockets bill silence. Assumes 20–30% of streamed short-form minutes are idle 🎲 | ~$70–110 | ~$570–850 | Low. **Done:** a Deepgram dictation session now ends after 15 s with no words (`DEEPGRAM_IDLE_STOP_MS`, `src/lib/dictation.ts`). The browser engine is unchanged. |
+| F6 | **Keyterm add-on on every request that has contacts** (`deepgram-params.ts:110`). The add-on is ~$67 @1k and ~$440 @10k | ~$30 | ~$200 | ⚠️ Medium. On reading the code, keyterms *are* the account's contact names, the mechanism that stops "Priya Raman" becoming a duplicate contact. **Done as a switch, not a removal:** `ORBIT_DEEPGRAM_KEYTERMS=off` (default on). Turn it off only after the transcription evals in `docs/ai-evals/` show names survive. |
+| F7 | **Duplicate Deepgram billing** (U3): chunk race, retry-after-success, live/chunk overlap. Est. 3–8% of meeting minutes | ~$14–36 | ~$68–181 | Low. **Done:** each chunk is claimed in Postgres before transcription (`RATE_LIMITS.meetingChunkClaim`); a concurrent duplicate gets a 429 and later the stored segment. The live/chunk overlap (≥ 3 s uncovered) is a deliberate no-word-loss trade and was left as is. |
 | F8 | **Embeddings stored twice.** `contact_embeddings.embedding` and `memory_chunks.embedding` are jsonb arrays (📐 **30.7 KB** each for 1536 floats, uncompressed) kept alongside `vector(1536)` (📐 6.2 KB) and an HNSW index. The jsonb copy is ~2/3 of the database. Gemini embeddings are requested without an output dimension, so they may be 3072 floats in jsonb (~61 KB). | $13 | $106, and growing with every contact; also smaller backups, faster restores, and it pushes back the Neon Free cliff | Medium (migration; jsonb is the PGlite fallback). Do it only after a verified restore drill. |
 | F9 | **Vercel Analytics + Speed Insights on every app page, unsampled.** The app already has its own `PageviewBeacon`. Limit Vercel's to marketing pages, or sample at 10%. | ~$5–15 ⚠️ | ~$50–150 ⚠️ | Low |
 | F10 | **Stripe:** annual billing pays one 30¢ fee a year instead of twelve (−$0.32/subscriber-month). Credit packs pay ~9% in fees. | ~$10 | ~$100 | Low (pricing nudge) |
@@ -285,6 +308,18 @@ Savings are from `node cost/unit-economics/model.mjs` (sensitivity table) at 1,0
 
 ## 6. Admin cost and runway views vs actual invoices
 
+**Fixed since phase 2:**
+
+- **Money → Costs has a "Deepgram this month" tile.** It is priced from `speech_usage` by
+  `src/lib/speech-cost.ts` and shows the credit left and its runway at this week's pace.
+- **The Stripe estimate counts 30¢ per charge plus Billing's 0.7%.**
+- **Contribution per subscriber subtracts** the average Pro subscriber's Deepgram cost over 30 days.
+- **Runway's cash burn deliberately leaves Deepgram out** while the prepaid credit pays for it.
+- **Stale comments:** the one in `.env.example` and the Costs page's are corrected; the rest of
+  P2.10 is still to do.
+
+The table below is the phase-1 state.
+
 | Screen / figure | What it does | Problem |
 |---|---|---|
 | Money → Costs (`src/app/(clerk)/(admin)/admin/billing/costs/page.tsx`) | Hand-entered `infra_costs` + `startup_expenses` + acquisition | Nothing checks them against invoices; a missing provider reads as "not entered" (good) but a wrong one reads as truth |
@@ -343,7 +378,7 @@ its job or free. The only overlap is Vercel Analytics against Orbit's own `page_
    - which keys are set (`MICROLINK_API_KEY`, `BLOB_READ_WRITE_TOKEN`, `DEEPGRAM_PROJECT_ID`, `ORBIT_MANAGED_*`, `TWILIO_*`);
    - Clerk's sign-up mode and bot protection;
    - Vercel's spend-management settings.
-4. **Real usage.** Accounts per plan, the Lifetime holder count, speech minutes, DB size,
+4. **Real usage.** Accounts per plan, speech minutes, DB size,
    monthly actives and email volume. Every profile and mix number in the model is a guess.
    `cost/unit-economics/README.md` has the exact read-only queries; fields stay as guesses
    until you run them.

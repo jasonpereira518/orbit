@@ -117,23 +117,33 @@ export async function monthlyCostSeries(months = 6): Promise<MonthlyCosts[]> {
 }
 
 /**
- * What Stripe takes: 2.9% + 30c per successful charge.
+ * What Stripe takes: 2.9% + 30c per successful charge, plus Stripe Billing's 0.7% on
+ * subscription invoices.
  *
  * Computed rather than recorded, because Stripe's balance transactions are not mirrored
  * anywhere and five lines of arithmetic does not justify a sixth integration. It is an
  * ESTIMATE and is labelled as one on screen — the real figure moves with card type,
  * currency and country, and quoting a computed number as though it were reconciled is the
- * same mistake as `subscribers x $5`.
+ * same mistake as `subscribers x $5`. `cost/reconcile` compares it with the real fee total.
+ *
+ * The 30c is per CHARGE. An earlier version passed one charge for the whole month, which
+ * undercounted the fixed fee by 30c for every renewal after the first.
  */
 export const STRIPE_PERCENT_FEE = 0.029;
 export const STRIPE_FIXED_FEE_CENTS = 30;
+export const STRIPE_BILLING_PERCENT_FEE = 0.007;
 
 export function estimatedStripeFeesCents(
   grossCents: number,
-  chargeCount: number
+  chargeCount: number,
+  recurringCents = 0
 ): number {
   if (grossCents <= 0 || chargeCount <= 0) return 0;
-  return Math.round(grossCents * STRIPE_PERCENT_FEE + chargeCount * STRIPE_FIXED_FEE_CENTS);
+  return Math.round(
+    grossCents * STRIPE_PERCENT_FEE +
+      chargeCount * STRIPE_FIXED_FEE_CENTS +
+      Math.max(0, recurringCents) * STRIPE_BILLING_PERCENT_FEE
+  );
 }
 
 /** Acquisition spend grouped by channel, for CAC. Overlap-based, as above. */

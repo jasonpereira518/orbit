@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { requireMeetingsUser } from "@/lib/plan-guards";
 import { isPaywallError } from "@/lib/entitlements";
 import { friendlyError } from "@/lib/errors";
-import { deepgramEnabled, mintStreamToken } from "@/lib/deepgram";
-import { keytermsFor } from "@/lib/deepgram-params";
+import { deepgramKeyterms, mintStreamToken } from "@/lib/deepgram";
+import { deepgramOpenFor } from "@/lib/speech-credit";
 import { loadNetworkVocabulary } from "@/lib/transcription-vocabulary";
 import { ACCEPTS_CHUNKS, getMeetingSession } from "@/lib/meeting-sessions";
 import { speechAllowance } from "@/lib/speech-quota";
@@ -80,7 +80,9 @@ export async function POST(request: Request, ctx: Params) {
     return NextResponse.json({ error: "Another tab is recording this meeting" }, { status: 409 });
   }
 
-  if (!deepgramEnabled()) {
+  // Off, or the Deepgram credit is spent. A meeting that has already recorded audio keeps its
+  // socket either way (`deepgramOpenFor`), so a reconnect never cuts a call off mid-sentence.
+  if (!(await deepgramOpenFor(userId, "meeting", { sessionId: session.id }))) {
     return NextResponse.json({ error: "Live transcription is unavailable right now" }, { status: 503 });
   }
 
@@ -120,7 +122,7 @@ export async function POST(request: Request, ctx: Params) {
       {
         accessToken,
         expiresIn,
-        keyterms: keytermsFor(vocabulary),
+        keyterms: deepgramKeyterms(vocabulary),
         remainingSeconds: allowance.remaining,
         warn: allowance.warn,
       },

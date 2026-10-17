@@ -1,7 +1,25 @@
 # Orbit cost plan
 
 Companion to `COST_AUDIT.md` (findings U1–U12, F0–F15) and `cost/unit-economics` (the model).
-Date: 2026-10-17. **Nothing here has been implemented. Every code item waits for your approval.**
+Date: 2026-10-17.
+
+## Status (phase 2, 2026-10-17)
+
+You approved the quick wins except Vercel Pro, and added two facts: a **$15,000 one-time
+Deepgram credit** to fund allowances, and **Lifetime is admin-granted, so it is not modelled**.
+
+| Item | Status |
+|---|---|
+| P1.1 dashboards: Neon plan, vendor spend alerts, Clerk bot protection | **Yours to do.** No code; this session cannot reach those dashboards. Vercel Pro is skipped, at your request. |
+| P1.2 Deepgram in dollars | **Done.** `src/lib/speech-cost.ts` prices `speech_usage`. Money → Costs shows it. The Stripe estimate counts per charge plus Billing. |
+| P1.3 Deepgram budget that degrades | **Done, as the $15k credit.** A pool with a 90 / 97 / 100% ladder (`DEEPGRAM_CREDIT`, `deepgramOpenFor` in `src/lib/speech-credit.ts`). |
+| P1.7 Slack alerts + weekly line | **Done.** Alerts: `speech.credit`, `speech.credit_runway`, `speech.spend_spike`, `budget.month` (set `ORBIT_MONTHLY_BUDGET_CENTS`). Every Monday from 08:00 UTC: "Week N: $X estimated spend, $Y per active account". |
+| P2.1 idle dictation sockets | **Done.** 15 s without words ends a Deepgram dictation session. |
+| P2.2 keyterms | **Done as a switch** (`ORBIT_DEEPGRAM_KEYTERMS=off`), default on. Keyterms are contact names; measure before turning them off. |
+| P2.3 meeting double billing | **Done.** The chunk is claimed before transcription. |
+| D3 Free voice notes | **Decided: keep 60 min**, funded by the credit. |
+| D4, D5 Lifetime | **Dropped.** Admin-granted, not modelled. |
+| Everything else | Still waiting for your approval. |
 
 The ordering follows your rules:
 - Stop surprise bills first.
@@ -20,11 +38,10 @@ AI paused). They inherit its guesses and are meant for ranking, not for budgetin
 
 | # | Decision | My recommendation |
 |---|---|---|
-| D1 | Monthly budget numbers for the alerts (overall, and Deepgram) | Start at **$150 total and $75 Deepgram**. Revisit after the first reconciliation. |
-| D2 | What degrades first when the Deepgram budget runs out | Free voice notes first, then dictation for everyone, then new meetings. Paid meetings already in progress always finish. |
-| D3 | Free voice-note allowance (60 min/month today) | **20 min.** The 15-min case saves $110 / $1,214 a month; 20 keeps a real trial. |
-| D4 | Lifetime holders' Orbit-paid speech (10 h + 10 h today; the Terms promise "every Orbit Max feature") | **Keep the promise, cap fair use.** 3 h + 3 h on Orbit's key, then on their own OpenAI/Gemini key (the fallback already exists), with 30 days' notice. Needs a lawyer's read of the Terms. Saves ~$300/month per 100 holders. |
-| D5 | Lifetime as a product | **Keep it off sale.** If you reopen it, see §3: at least $149, 2 h + 2 h of speech, no included AI. |
+| D1 | Monthly budget for `budget.month` | Set `ORBIT_MONTHLY_BUDGET_CENTS=15000` ($150) in Vercel. The Deepgram budget is now the $15k credit itself. |
+| D2 | What degrades first as the credit runs out | **Implemented as recommended:** Free voice notes at 90%, everyone's voice notes and the chat mic at 97%, new meetings at 100%. Meetings already recording always finish. The rungs are constants in `SPEECH_CREDIT_LADDER` if you want them elsewhere. |
+| D3 | Free voice-note allowance | **Decided: 60 min**, funded by the credit. |
+| D10 | When the credit gets low: top up, or tighten allowances? | Decide when `speech.credit_runway` fires (under 45 days left). At ~1,000 accounts that is ~20 months away; at ~10,000, ~2 months. |
 | D6 | Resume included AI (coded on, paused)? | **Not yet.** Fix web-search metering (P2.6) first, then resume for Pro and Max only. Keep Free at 0–10 credits. |
 | D7 | Deepgram privacy flag `mip_opt_out=true` (may double the rate) | **Keep it ⚠️.** Confirm the premium from the invoice, then negotiate (Growth plan or a zero-retention contract) rather than drop it. |
 | D8 | Pro allowance 5 h + 5 h | Keep it for existing subscribers. For new ones, consider 4 h + 4 h, or one shared 8 h pool. |
@@ -60,7 +77,7 @@ AI paused). They inherit its guesses and are meant for ranking, not for budgetin
   - A test alert email arrives from Vercel.
   - Next month, the Neon invoice line matches `infra_costs` (`cost/reconcile`).
 
-### P1.2 Put Deepgram in dollars everywhere
+### P1.2 Put Deepgram in dollars everywhere — DONE (phase 2)
 - **Approach:**
   - **Rate:** replace the $0.0043/min constant with an effective rate per kind: streaming,
     streaming + diarize, file. Take the value from the invoice; the reconciliation prints it.
@@ -87,7 +104,7 @@ AI paused). They inherit its guesses and are meant for ranking, not for budgetin
   - Smoke test: a fake 60 s file transcription records a cost row at the configured rate.
   - The reconciliation's Deepgram line passes within 10% on the next invoice.
 
-### P1.3 Global Deepgram budget that degrades instead of failing
+### P1.3 Global Deepgram budget that degrades instead of failing — DONE as the $15k credit (phase 2)
 - **Approach:**
   - **Budget check:** the ops sweep (every 10 min) sums this month's Deepgram spend from P1.2
     against a budget, `DEEPGRAM_MONTHLY_BUDGET_CENTS` or a `site_settings` value (D1).
@@ -196,7 +213,7 @@ AI paused). They inherit its guesses and are meant for ranking, not for budgetin
 - **Risk:** low. Some photos fill a day later.
 - **Verification:** smoke test that the bucket refuses past the cap with the key set.
 
-### P1.7 Budget alerts to Slack, and the weekly cost-per-active-user number
+### P1.7 Budget alerts to Slack, and the weekly cost-per-active-user number — DONE (phase 2)
 - **Approach:**
   - **Budget alert:** a new ops condition, `budget.month`. The ops sweep compares month-to-date
     estimated spend against D1's budget, at 50, 75, 90 and 100%.
@@ -262,9 +279,9 @@ Ranked by @10k savings. Each one ships separately, with its own smoke test.
 
 | # | Change | Approach and files | Effort | Saves @1k / @10k | Risk | Verification |
 |---|---|---|---|---|---|---|
-| P2.1 | **Close idle dictation sockets** (F4) | Use the `vad_events` / `UtteranceEnd` already requested. Close after 10 s with no speech, reopen on the next voiced frame. `src/lib/use-dictation.ts:850-859`, `src/lib/dictation.ts` | 1 day | ~$70–110 / ~$570–850 | Low (≤1 s latency on resume) | Compare Deepgram-billed seconds for a scripted 2-minute session with 60 s of silence, before and after |
-| P2.2 | **Keyterms only where they help** (F6) | Send `keyterm` only for meetings with known attendees or contacts mentioned, not the global vocabulary on every request. `src/lib/deepgram-params.ts:110`, the callers | Half a day + eval | ~$30 / ~$200 | Low–medium (accuracy) | Re-run the transcription evals in `docs/ai-evals/` (2026-09-23 files); no drop in name accuracy |
-| P2.3 | **Stop Deepgram double billing** (F7, U3) | Claim the chunk `(session, seq)` with an insert before transcribing, not after. On retry, return the stored transcript. Skip chunk upload when live coverage is ≥ 95%. `src/lib/meeting-sessions.ts:452-518`, `src/app/api/capture/meetings/[id]/chunks/route.ts:30-34`, `src/lib/meeting-live-coverage.ts:58-69` | 1 day | ~$14–36 / ~$68–181 | Low | Smoke test: two concurrent uploads of the same seq → one Deepgram call (mocked) |
+| P2.1 | **DONE.** **Close idle dictation sockets** (F4) | Use the `vad_events` / `UtteranceEnd` already requested. Close after 10 s with no speech, reopen on the next voiced frame. `src/lib/use-dictation.ts:850-859`, `src/lib/dictation.ts` | 1 day | ~$70–110 / ~$570–850 | Low (≤1 s latency on resume) | Compare Deepgram-billed seconds for a scripted 2-minute session with 60 s of silence, before and after |
+| P2.2 | **DONE as an off-switch, default on.** **Keyterms only where they help** (F6) | Send `keyterm` only for meetings with known attendees or contacts mentioned, not the global vocabulary on every request. `src/lib/deepgram-params.ts:110`, the callers | Half a day + eval | ~$30 / ~$200 | Low–medium (accuracy) | Re-run the transcription evals in `docs/ai-evals/` (2026-09-23 files); no drop in name accuracy |
+| P2.3 | **DONE.** **Stop Deepgram double billing** (F7, U3) | Claim the chunk `(session, seq)` with an insert before transcribing, not after. On retry, return the stored transcript. Skip chunk upload when live coverage is ≥ 95%. `src/lib/meeting-sessions.ts:452-518`, `src/app/api/capture/meetings/[id]/chunks/route.ts:30-34`, `src/lib/meeting-live-coverage.ts:58-69` | 1 day | ~$14–36 / ~$68–181 | Low | Smoke test: two concurrent uploads of the same seq → one Deepgram call (mocked) |
 | P2.4 | **Drop the duplicate jsonb embedding** (F8) | ⚠️ Only after a successful restore drill (RUNBOOK says "not yet run"). (1) On Neon, write `embedding_vector` directly and stop writing jsonb (keep jsonb on PGlite, which has no pgvector). (2) Null out jsonb in batches of 1k where the vector is present. (3) Pass `outputDimensionality: 1536` to Gemini. `src/lib/embedding-backfill.ts`, `src/lib/memory-chunks.ts`, `src/lib/ai.ts:1796`, `src/app/api/imports/process-stalled/route.ts:333-339`, `src/lib/contact-merge.ts:487-522` | 2 days | ~$13 / ~$106 (and growing). Smaller backups and faster restores. | Medium (data migration; embeddings can be regenerated, but only on the user's own key or credits) | README query 3 before and after; hybrid-search eval (`npm run eval:retrieval`) unchanged |
 | P2.5 | **Vercel Analytics only on marketing pages; Speed Insights at 10%** (F9) | Render `<VercelTelemetry/>` in the marketing layout only, and set `sampleRate`. The app keeps its own `PageviewBeacon`. `src/app/layout.tsx:84`, `src/components/analytics/vercel-telemetry.tsx` | 1 hour | ~$5–15 / ~$50–150 ⚠️ | Low | Vercel → Usage events drop the next day |
 | P2.6 | **Meter web-search fees and cron foreground spend** (U9). Do this before D6. | Add a per-search cost to `usage_events` for hosted web search. Mark cloud-notes auto-extract as background. `src/lib/ai.ts:2731-2762`, `src/lib/ai-operations.ts`, `src/lib/cloud-notes/scan.ts:38-41` | Half a day | $0 now; protects the pools when D6 resumes AI | Low | Smoke test: a mocked search adds its fee to the hold |
@@ -288,54 +305,45 @@ Ranked by @10k savings. Each one ships separately, with its own smoke test.
 All numbers come from `node cost/unit-economics/model.mjs`. The usage mix is a guess until you
 run the README queries.
 
-**Where the money goes today.** Deepgram is 85–95% of variable cost. The plan prices are fine
-for light and typical users; the risk sits in the speech allowances.
+**Where the money goes today.** Deepgram is 85–95% of variable cost. Until the $15k credit runs
+out, it is paid from the credit rather than cash, so the levers below decide how long the credit
+lasts and what the margin looks like afterwards. The plan prices are fine for light and typical
+users; the risk sits in the speech allowances.
 
 | Change | Monthly margin @1k | @10k | Notes |
 |---|---|---|---|
-| Baseline (modelled) | −$102 | $4,199 | The 1k loss comes from the 100-account Lifetime cohort ($513/mo) |
-| Pro $8.99 → $11.99 | +$246 | +$2,711 | About +$900/mo per $1 at 10k, before any conversion effect (unknown) |
-| Pro $8.99 → $6.99 | −$164 | −$1,808 | Not recommended |
-| Max $19.99 → $24.99 | +$82 | +$904 | Max is the plan heavy users choose |
-| Free voice notes 60 → 15 min (**D3**) | +$110 | +$1,214 | The single biggest lever after the Deepgram rate |
-| Pro speech 5 + 5 h → 3 + 3 h (**D8**) | +$78 | +$861 | Apply to new subscribers |
-| Lifetime speech 10 + 10 h → 3 + 3 h (**D4**) | +$304 | +$304 | Needs a Terms change; the fallback to the user's own key keeps the feature |
-| Free contact limit 500 → 250 | +$3 | +$38 | **The contact limit barely moves cost.** Decide it on conversion alone. |
-| Free contact limit 500 → 1,000 | −$6 | −$65 | Same |
-| Resume included AI at today's allowances (**D6**) | −$303 | −$2,848 | Free's 50 credits/mo dominate |
-| … with Free 50 → 10 credits | −$200 | −$1,715 | |
-| … with Free 0, Pro 300 → 150 | −$131 | −$950 | **Recommended shape if you resume** |
-| Deepgram at list (no opt-out premium) | +$453 | +$2,993 | Settled by the invoice (D7) |
-| Conversion +1 point | +$53 | +$584 | |
-| Heavy users 13% → 25% of accounts | −$441 | −$2,806 | The main downside risk; P1.3 bounds it |
+| Baseline (modelled, speech at full 2× price) | $411 | $4,712 | Free, Pro and Max only |
+| Pro $8.99 → $11.99 | +$274 | +$2,739 | About +$900/mo per $1 at 10k, before any conversion effect (unknown) |
+| Pro $8.99 → $6.99 | −$183 | −$1,826 | Not recommended |
+| Max $19.99 → $24.99 | +$91 | +$913 | Max is the plan heavy users choose |
+| Free voice notes 60 → 15 min | +$123 | +$1,226 | You chose to keep 60 while the credit funds it |
+| Pro speech 5 + 5 h → 3 + 3 h (**D8**) | +$87 | +$870 | Apply to new subscribers |
+| Free contact limit 500 → 250 | +$4 | +$38 | **The contact limit barely moves cost.** Decide it on conversion alone. |
+| Free contact limit 500 → 1,000 | −$7 | −$66 | Same |
+| Resume included AI at today's allowances (**D6**) | −$283 | −$2,828 | Free's 50 credits/mo dominate |
+| … with Free 50 → 10 credits | −$168 | −$1,684 | |
+| … with Free 0, Pro 300 → 150 | −$91 | −$910 | **Recommended shape if you resume** |
+| Deepgram at list (no opt-out premium) | +$282 | +$2,823 | Settled by the invoice (D7) |
+| Conversion +1 point | +$59 | +$590 | |
+| Heavy users 13% → 25% of accounts | −$241 | −$2,606 | The main downside risk; the credit ladder bounds it |
 
-### Lifetime (D4, D5)
+### The Deepgram credit (D10)
 
-The step-up constants ($25 → $75 after 100 sales) are dead code: Lifetime is no longer sold.
-For the existing cohort, and for any reopening:
+| Accounts | Deepgram / month | $14,250 usable credit lasts |
+|---|---|---|
+| 1,000 | ~$630 (2×) / ~$350 (list) | ~22 / ~41 months |
+| 10,000 | ~$6,300 (2×) / ~$3,500 (list) | ~2.3 / ~4 months |
 
-| Price | Allowance | Typical, 3 yr | Heavy, 3 yr | Heavy, 5 yr |
-|---|---|---|---|---|
-| $25 (old intro) | 10 h + 10 h, 150 credits | −$134 | −$663 | −$1,121 |
-| $75 (old standard) | 10 h + 10 h | −$85 | −$614 | −$1,072 |
-| $149 | **2 h + 2 h, no included AI** | +$111 | +$1 | −$94 |
-| $199 | **2 h + 2 h, no included AI** | +$159 | +$50 | −$46 |
-
-- At today's allowances, a heavy Lifetime user would have to pay **about $690** to break even
-  over 3 years, or about $390 at Deepgram list price.
-- **Recommendation:** keep Lifetime off sale. If you reopen it as a launch promotion:
-  - charge at least $149;
-  - limit Orbit-paid speech to 2 h + 2 h a month, with the user's own key beyond;
-  - include no AI credits;
-  - make the step-up threshold small (≤ 100 seats), because each seat is a cost you carry forever.
-- For the existing holders, D4 is the lever. It needs legal review.
+The app spends 95% of the credit at most, then every surface falls back as described in D2. The
+ops sweep says when each rung takes effect and when fewer than 45 days remain. When the credit is
+topped up, raise `DEEPGRAM_CREDIT` in `src/lib/speech-cost.ts` (and move `since` if the new
+balance starts fresh), then redeploy.
 
 ### Included AI (D6)
 
 The provider pools already make the worst case finite: about $190/month plus a one-time $950.
 - **Order:** P2.6 first, then resume for Pro and Max.
 - **Free:** keep at 0–10 credits.
-- **Lifetime:** 150 credits ($1.50 a month forever) is promised in the Terms. Leave it.
 
 ### Annual billing (F10)
 
@@ -355,12 +363,13 @@ month in Stripe fixed fees. Defaulting the toggle to annual is a free nudge.
 
 ---
 
-## Suggested order of work once you approve
+## Suggested order of what is left
 
-1. **P1.1** (dashboards, today).
-2. **P1.2 → P1.3 → P1.7** (one PR each; ~4 days together).
-3. **P1.5, P1.6** (half a day).
-4. **P1.4, P1.8** (2–3 days).
-5. **P2.1, P2.3, P2.5, P2.6, P2.7, P2.9, P2.10** (each small).
-6. **P2.2** after its eval; **P2.4** after the restore drill; **P2.8** with Vercel Pro.
-7. **Phase 3:** your decisions D3–D8, then the copy, Terms and `plan-config.ts` changes they imply.
+1. **P1.1** dashboards, today: Neon plan, vendor spend alerts, Clerk bot protection. Also set
+   `ORBIT_MONTHLY_BUDGET_CENTS` in Vercel, and check `DEEPGRAM_PROJECT_ID` is set so the nightly
+   reconciliation runs.
+2. **P1.5, P1.6** (half a day).
+3. **P1.4, P1.8** (2–3 days). These matter more now that Free farming draws on the credit.
+4. **P2.5, P2.6, P2.7, P2.9, P2.10** (each small).
+5. **P2.2** turned off only after its eval; **P2.4** after the restore drill; **P2.8** with Vercel Pro.
+6. **Phase 3:** your decisions D6–D10, then the copy, Terms and `plan-config.ts` changes they imply.

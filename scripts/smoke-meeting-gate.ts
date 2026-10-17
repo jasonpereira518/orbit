@@ -110,7 +110,7 @@ function sourceGuard() {
   // is paying for, and tells them their hours are gone when their hours are not the problem.
   check(
     "…and only enforces the cap while Deepgram is the engine",
-    /\bdeepgramEnabled\s*\(\s*\)/.test(createBody),
+    /\bdeepgramOpenFor\s*\(\s*userId\s*,\s*"meeting"\s*\)/.test(createBody),
     createBody.slice(0, 400)
   );
 

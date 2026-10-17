@@ -23,6 +23,14 @@ export const SEGMENT_PAUSE_MS = 1500;
  * privacy and battery problem; five minutes is far longer than any single dictation.
  */
 export const MAX_SESSION_MS = 300_000;
+/**
+ * On DEEPGRAM only: this long with no words ends the session. Every second the socket is open
+ * is billed on Orbit's key, silence included, so a mic left listening while someone reads the
+ * answer was paying for nothing. Fifteen seconds is far past the pauses `SEGMENT_PAUSE_MS`
+ * exists to survive — nobody stops mid-question for that long — and the browser engine, which
+ * costs nothing, keeps the old behaviour.
+ */
+export const DEEPGRAM_IDLE_STOP_MS = 15_000;
 
 /** Chrome spin-loops end→start→end when the mic device disappears mid-session. */
 export const RESTART_STORM_WINDOW_MS = 1000;
@@ -50,7 +58,10 @@ export type DictationErrorCode =
   | "network"
   | "unknown";
 
-/** Silence is no longer an ending; the 5-minute cap is what "timeout" means. */
+/**
+ * Silence is not an ending on the browser engine; there the 5-minute cap is what "timeout"
+ * means. On Deepgram, `DEEPGRAM_IDLE_STOP_MS` without words also ends as "timeout".
+ */
 export type DictationEndReason = "user" | "timeout" | "error" | "cancel";
 
 // ── Transcript tidying ────────────────────────────────────────────────────────────────

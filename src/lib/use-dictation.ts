@@ -20,6 +20,7 @@ import {
 import { useMotionValue, type MotionValue } from "motion/react";
 import {
   MAX_SESSION_MS,
+  DEEPGRAM_IDLE_STOP_MS,
   SEGMENT_PAUSE_MS,
   dictationReducer,
   initialMachine,
@@ -312,6 +313,8 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
   const rafRef = useRef<number | null>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const maxTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Deepgram only: ends a session that has heard no words for `DEEPGRAM_IDLE_STOP_MS`. */
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const endReasonRef = useRef<DictationEndReason>("user");
 
   const dispatchRef = useRef<(e: DictationEvent) => void>(() => {});
@@ -319,8 +322,26 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
   const clearTimers = useCallback(() => {
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     if (maxTimerRef.current) clearTimeout(maxTimerRef.current);
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     silenceTimerRef.current = null;
     maxTimerRef.current = null;
+    idleTimerRef.current = null;
+  }, []);
+
+  /**
+   * (Re)start the Deepgram idle stop. Armed when the socket opens and on every result that
+   * carries words, so it only ever fires after `DEEPGRAM_IDLE_STOP_MS` of actual silence.
+   * Ends the session the way the 5-minute cap does — a normal stop that flushes the last
+   * words and reports the seconds used — never an abort.
+   */
+  const armIdleStop = useCallback(() => {
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    idleTimerRef.current = setTimeout(() => {
+      idleTimerRef.current = null;
+      if (engineRef.current !== "deepgram") return;
+      endReasonRef.current = "timeout";
+      dispatchRef.current({ t: "stop" });
+    }, DEEPGRAM_IDLE_STOP_MS);
   }, []);
 
   const stopEnergyLoop = useCallback(() => {
@@ -628,13 +649,15 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
       );
 
       armSegmentPause();
+      // Deepgram sends results through silence too, empty ones; only words reset the idle stop.
+      if (result.text.trim()) armIdleStop();
       dispatchRef.current({ t: "result" });
       cb.current.onTranscript(span, {
         hasInterim: next.interim.length > 0,
         interimStart,
       });
     },
-    [armSegmentPause],
+    [armIdleStop, armSegmentPause],
   );
 
   /**
@@ -780,8 +803,9 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
       dispatchRef.current({ t: "audiostart" });
       startEnergyLoop();
       armSegmentPause();
+      armIdleStop();
     },
-    [armSegmentPause, handleDeepgramResult, setEngine, startAbandoned, startEnergyLoop],
+    [armIdleStop, armSegmentPause, handleDeepgramResult, setEngine, startAbandoned, startEnergyLoop],
   );
 
   /** Decide Deepgram vs the browser engine for this session, and start whichever works. */
