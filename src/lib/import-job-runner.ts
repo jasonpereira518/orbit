@@ -7,7 +7,6 @@ import {
   confirmContactsFileImport,
   confirmGoogleContactsImport,
   confirmOutlookContactsImport,
-  getImportJobStatus,
   startLinkedInImport,
   startLinkedInMessagesImport,
   type ImportJobStatus,
@@ -39,6 +38,21 @@ import {
 } from "@/lib/background-jobs";
 
 const POLL_INTERVAL_MS = 1500;
+
+/**
+ * One progress poll, through `/api/imports/[id]/status` rather than the `getImportJobStatus`
+ * Server Action: a tab runs its actions one at a time, and this poll runs every 1.5 s for the
+ * whole import, so as an action every click during an import waited behind it
+ * (LATENCY_PLAN SRV-5). Same function on the server; throws where the action threw.
+ */
+async function fetchImportJobStatus(importId: string): Promise<ImportJobStatus> {
+  const res = await fetch(`/api/imports/${encodeURIComponent(importId)}/status`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+  });
+  if (!res.ok) throw new Error(`Import status poll failed (${res.status})`);
+  return (await res.json()) as ImportJobStatus;
+}
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
@@ -365,7 +379,7 @@ async function pollServerOwnedImportJob(
 
     let status: ImportJobStatus;
     try {
-      status = await getImportJobStatus(importId);
+      status = await fetchImportJobStatus(importId);
     } catch {
       await sleep(POLL_INTERVAL_MS);
       continue;
