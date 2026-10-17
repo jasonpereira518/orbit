@@ -483,38 +483,20 @@
     "closenessById": {
       "__map": [
         [
-          "<contacts:Marcus Webb>",
+          "<contacts:Nina Petrova>",
           {
-            "raw": 0.602105,
-            "strength": 0.6,
-            "recency": 0.681818,
-            "cadence": 0.270238,
-            "goalRelevance": 1,
-            "evidence": 0.708095,
-            "prior": 0.319416,
-            "evidenced": 0.602105,
-            "knownWeightShare": 1,
-            "closeness": 0.659983,
-            "percentile": 0.82,
+            "raw": 0.74794,
+            "closeness": 0.788331,
             "orbitScore": 4,
             "tier": "inner"
           }
         ],
         [
-          "<contacts:Priya Nair>",
+          "<contacts:Sarah Chen>",
           {
-            "raw": 0.679665,
-            "strength": 0.8,
-            "recency": 0.681818,
-            "cadence": 0.540476,
-            "goalRelevance": 0.666667,
-            "evidence": 0.816191,
-            "prior": 0.329019,
-            "evidenced": 0.679665,
-            "knownWeightShare": 1,
-            "closeness": 0.727566,
-            "percentile": 0.86,
-            "orbitScore": 4,
+            "raw": 0.800975,
+            "closeness": 0.848529,
+            "orbitScore": 5,
             "tier": "inner"
           }
         ],
@@ -522,376 +504,25 @@
           "<contacts:Dr. Elena Vasquez>",
           {
             "raw": 0.771154,
-            "strength": 1,
-            "recency": 0.714286,
-            "cadence": 0.627474,
-            "goalRelevance": 0.666667,
-            "evidence": 0.850989,
-            "prior": 0.388027,
-            "evidenced": 0.771154,
-            "knownWeightShare": 1,
             "closeness": 0.816004,
-            "percentile": 0.94,
             "orbitScore": 5,
             "tier": "inner"
           }
         ],
         [
-          "<contacts:Rachel Adeyemi>",
+          "<contacts:Priya Nair>",
           {
-            "raw": 0.350052,
-            "strength": 0.4,
-            "recency": 0.243243,
-            "cadence": 0.428317,
-            "goalRelevance": 0.333333,
-            "evidence": 0.771327,
-            "prior": 0.339137,
-            "evidenced": 0.350052,
-            "knownWeightShare": 1,
-            "closeness": 0.294257,
-            "percentile": 0.14,
-            "orbitScore": 1,
-            "tier": "outer"
-          }
-        ],
-        [
-          "<contacts:Aisha Rahman>",
-          {
-            "raw": 0.526255,
-            "strength": 0.6,
-            "recency": 0.463918,
-            "cadence": 0.428317,
-            "goalRelevance": 0.666667,
-            "evidence": 0.771327,
-            "prior": 0.433562,
-            "evidenced": 0.526255,
-            "knownWeightShare": 1,
-            "closeness": 0.519281,
-            "percentile": 0.5,
-            "orbitScore": 2,
-            "tier": "mid"
-          }
-        ],
-        [
-          "<contacts:Tom Bennett>",
-          {
-            "raw": 0.542824,
-            "strength": 0.8,
-            "recency": 0.319149,
-            "cadence": 0.428317,
-            "goalRelevance": 0.666667,
-            "evidence": 0.771327,
-            "prior": 0.359918,
-            "evidenced": 0.542824,
-            "knownWeightShare": 1,
-            "closeness": 0.552699,
-            "percentile": 0.58,
-            "orbitScore": 3,
-            "tier": "mid"
-          }
-        ],
-        [
-          "<contacts:Nina Petrova>",
-          {
-            "raw": 0.74794,
-            "strength": 1,
-            "recency": 0.803571,
-            "cadence": 0.627474,
-            "goalRelevance": 0.333333,
-            "evidence": 0.850989,
-            "prior": 0.32826,
-            "evidenced": 0.74794,
-            "knownWeightShare": 1,
-            "closeness": 0.788331,
-            "percentile": 0.9,
+            "raw": 0.679665,
+            "closeness": 0.727566,
             "orbitScore": 4,
             "tier": "inner"
           }
         ],
         [
-          "<contacts:David Kim>",
+          "<contacts:Marcus Webb>",
           {
-            "raw": 0.40021,
-            "strength": 0.4,
-            "recency": 0.542169,
-            "cadence": 0.270238,
-            "goalRelevance": 0.333333,
-            "evidence": 0.708095,
-            "prior": 0.323373,
-            "evidenced": 0.40021,
-            "knownWeightShare": 1,
-            "closeness": 0.362967,
-            "percentile": 0.26,
-            "orbitScore": 1,
-            "tier": "outer"
-          }
-        ],
-        [
-          "<contacts:Ben Carter>",
-          {
-            "raw": 0.49756,
-            "strength": 0.6,
-            "recency": 0.5,
-            "cadence": 0.270238,
-            "goalRelevance": 0.666667,
-            "evidence": 0.708095,
-            "prior": 0.347178,
-            "evidenced": 0.49756,
-            "knownWeightShare": 1,
-            "closeness": 0.487583,
-            "percentile": 0.46,
-            "orbitScore": 2,
-            "tier": "mid"
-          }
-        ],
-        [
-          "<contacts:Sofia Marchetti>",
-          {
-            "raw": 0.562079,
-            "strength": 0.6,
-            "recency": 0.416667,
-            "cadence": 0.428317,
-            "goalRelevance": 1,
-            "evidence": 0.771327,
-            "prior": 0.34111,
-            "evidenced": 0.562079,
-            "knownWeightShare": 1,
-            "closeness": 0.598715,
-            "percentile": 0.7,
-            "orbitScore": 3,
-            "tier": "mid"
-          }
-        ],
-        [
-          "<contacts:Andre Silva>",
-          {
-            "raw": 0.324546,
-            "strength": 0.4,
-            "recency": 0.123288,
-            "cadence": 0.270238,
-            "goalRelevance": 0.666667,
-            "evidence": 0.708095,
-            "prior": 0.366822,
-            "evidenced": 0.324546,
-            "knownWeightShare": 1,
-            "closeness": 0.264901,
-            "percentile": 0.1,
-            "orbitScore": 1,
-            "tier": "outer"
-          }
-        ],
-        [
-          "<contacts:Hassan Ali>",
-          {
-            "raw": 0.37256,
-            "strength": 0.4,
-            "recency": 0.45,
-            "cadence": 0.270238,
-            "goalRelevance": 0.333333,
-            "evidence": 0.708095,
-            "prior": 0.325329,
-            "evidenced": 0.37256,
-            "knownWeightShare": 1,
-            "closeness": 0.332036,
-            "percentile": 0.22,
-            "orbitScore": 1,
-            "tier": "outer"
-          }
-        ],
-        [
-          "<contacts:Grace Whitfield>",
-          {
-            "raw": 0.442721,
-            "strength": 0.6,
-            "recency": 0.483871,
-            "cadence": 0.270238,
-            "goalRelevance": 0.333333,
-            "evidence": 0.708095,
-            "prior": 0.316523,
-            "evidenced": 0.442721,
-            "knownWeightShare": 1,
-            "closeness": 0.426061,
-            "percentile": 0.38,
-            "orbitScore": 2,
-            "tier": "outer"
-          }
-        ],
-        [
-          "<contacts:Leo Fernandez>",
-          {
-            "raw": 0.354222,
-            "strength": 0.4,
-            "recency": 0.257143,
-            "cadence": 0.428317,
-            "goalRelevance": 0.333333,
-            "evidence": 0.771327,
-            "prior": 0.334014,
-            "evidenced": 0.354222,
-            "knownWeightShare": 1,
-            "closeness": 0.307944,
-            "percentile": 0.18,
-            "orbitScore": 1,
-            "tier": "outer"
-          }
-        ],
-        [
-          "<contacts:Yuki Tanaka>",
-          {
-            "raw": 0.548583,
-            "strength": 0.8,
-            "recency": 0.338346,
-            "cadence": 0.428317,
-            "goalRelevance": 0.666667,
-            "evidence": 0.771327,
-            "prior": 0.342712,
-            "evidenced": 0.548583,
-            "knownWeightShare": 1,
-            "closeness": 0.567553,
-            "percentile": 0.62,
-            "orbitScore": 3,
-            "tier": "mid"
-          }
-        ],
-        [
-          "<contacts:Olivia Brooks>",
-          {
-            "raw": 0.28665,
-            "strength": 0.4,
-            "recency": 0.163636,
-            "cadence": 0.270238,
-            "goalRelevance": 0.333333,
-            "evidence": 0.708095,
-            "prior": 0.365466,
-            "evidenced": 0.28665,
-            "knownWeightShare": 1,
-            "closeness": 0.226446,
-            "percentile": 0.06,
-            "orbitScore": 1,
-            "tier": "outer"
-          }
-        ],
-        [
-          "<contacts:Chris Nowak>",
-          {
-            "raw": 0.27669,
-            "strength": 0.4,
-            "recency": 0.130435,
-            "cadence": 0.270238,
-            "goalRelevance": 0.333333,
-            "evidence": 0.708095,
-            "prior": 0.361521,
-            "evidenced": 0.27669,
-            "knownWeightShare": 1,
-            "closeness": 0.208507,
-            "percentile": 0.02,
-            "orbitScore": 1,
-            "tier": "outer"
-          }
-        ],
-        [
-          "<contacts:Fatima Nasser>",
-          {
-            "raw": 0.409512,
-            "strength": 0.4,
-            "recency": 0.608108,
-            "cadence": 0.428317,
-            "goalRelevance": 0,
-            "evidence": 0.771327,
-            "prior": 0.327452,
-            "evidenced": 0.409512,
-            "knownWeightShare": 1,
-            "closeness": 0.380423,
-            "percentile": 0.3,
-            "orbitScore": 2,
-            "tier": "outer"
-          }
-        ],
-        [
-          "<contacts:Daniel Osei>",
-          {
-            "raw": 0.418147,
-            "strength": 0.6,
-            "recency": 0.436893,
-            "cadence": 0.428317,
-            "goalRelevance": 0,
-            "evidence": 0.771327,
-            "prior": 0.318932,
-            "evidenced": 0.418147,
-            "knownWeightShare": 1,
-            "closeness": 0.397389,
-            "percentile": 0.34,
-            "orbitScore": 2,
-            "tier": "outer"
-          }
-        ],
-        [
-          "<contacts:Amara Diallo>",
-          {
-            "raw": 0.454951,
-            "strength": 0.4,
-            "recency": 0.391304,
-            "cadence": 0.270238,
-            "goalRelevance": 1,
-            "evidence": 0.708095,
-            "prior": 0.333055,
-            "evidenced": 0.454951,
-            "knownWeightShare": 1,
-            "closeness": 0.445667,
-            "percentile": 0.42,
-            "orbitScore": 2,
-            "tier": "outer"
-          }
-        ],
-        [
-          "<contacts:Victor Reyes>",
-          {
-            "raw": 0.569512,
-            "strength": 0.6,
-            "recency": 0.608108,
-            "cadence": 0.428317,
-            "goalRelevance": 0.666667,
-            "evidence": 0.771327,
-            "prior": 0.341479,
-            "evidenced": 0.569512,
-            "knownWeightShare": 1,
-            "closeness": 0.614798,
-            "percentile": 0.74,
-            "orbitScore": 3,
-            "tier": "mid"
-          }
-        ],
-        [
-          "<contacts:James Okafor>",
-          {
-            "raw": 0.532241,
-            "strength": 0.6,
-            "recency": 0.483871,
-            "cadence": 0.428317,
-            "goalRelevance": 0.666667,
-            "evidence": 0.771327,
-            "prior": 0.33063,
-            "evidenced": 0.532241,
-            "knownWeightShare": 1,
-            "closeness": 0.534302,
-            "percentile": 0.54,
-            "orbitScore": 2,
-            "tier": "mid"
-          }
-        ],
-        [
-          "<contacts:Marcus Lee>",
-          {
-            "raw": 0.586005,
-            "strength": 0.6,
-            "recency": 0.56962,
-            "cadence": 0.540476,
-            "goalRelevance": 0.666667,
-            "evidence": 0.816191,
-            "prior": 0.340356,
-            "evidenced": 0.586005,
-            "knownWeightShare": 1,
-            "closeness": 0.637535,
-            "percentile": 0.78,
+            "raw": 0.602105,
+            "closeness": 0.659983,
             "orbitScore": 4,
             "tier": "inner"
           }
@@ -900,36 +531,180 @@
           "<contacts:Maya Thompson>",
           {
             "raw": 0.552619,
-            "strength": 0.6,
-            "recency": 0.625,
-            "cadence": 0.540476,
-            "goalRelevance": 0.333333,
-            "evidence": 0.816191,
-            "prior": 0.335658,
-            "evidenced": 0.552619,
-            "knownWeightShare": 1,
             "closeness": 0.581142,
-            "percentile": 0.66,
             "orbitScore": 3,
             "tier": "mid"
           }
         ],
         [
-          "<contacts:Sarah Chen>",
+          "<contacts:Victor Reyes>",
           {
-            "raw": 0.800975,
-            "strength": 0.8,
-            "recency": 0.737705,
-            "cadence": 0.758654,
-            "goalRelevance": 1,
-            "evidence": 0.903462,
-            "prior": 0.332019,
-            "evidenced": 0.800975,
-            "knownWeightShare": 1,
-            "closeness": 0.848529,
-            "percentile": 0.98,
-            "orbitScore": 5,
+            "raw": 0.569512,
+            "closeness": 0.614798,
+            "orbitScore": 3,
+            "tier": "mid"
+          }
+        ],
+        [
+          "<contacts:Fatima Nasser>",
+          {
+            "raw": 0.409512,
+            "closeness": 0.380423,
+            "orbitScore": 2,
+            "tier": "outer"
+          }
+        ],
+        [
+          "<contacts:Marcus Lee>",
+          {
+            "raw": 0.586005,
+            "closeness": 0.637535,
+            "orbitScore": 4,
             "tier": "inner"
+          }
+        ],
+        [
+          "<contacts:David Kim>",
+          {
+            "raw": 0.40021,
+            "closeness": 0.362967,
+            "orbitScore": 1,
+            "tier": "outer"
+          }
+        ],
+        [
+          "<contacts:Ben Carter>",
+          {
+            "raw": 0.49756,
+            "closeness": 0.487583,
+            "orbitScore": 2,
+            "tier": "mid"
+          }
+        ],
+        [
+          "<contacts:James Okafor>",
+          {
+            "raw": 0.532241,
+            "closeness": 0.534302,
+            "orbitScore": 2,
+            "tier": "mid"
+          }
+        ],
+        [
+          "<contacts:Grace Whitfield>",
+          {
+            "raw": 0.442721,
+            "closeness": 0.426061,
+            "orbitScore": 2,
+            "tier": "outer"
+          }
+        ],
+        [
+          "<contacts:Aisha Rahman>",
+          {
+            "raw": 0.526255,
+            "closeness": 0.519281,
+            "orbitScore": 2,
+            "tier": "mid"
+          }
+        ],
+        [
+          "<contacts:Hassan Ali>",
+          {
+            "raw": 0.37256,
+            "closeness": 0.332036,
+            "orbitScore": 1,
+            "tier": "outer"
+          }
+        ],
+        [
+          "<contacts:Daniel Osei>",
+          {
+            "raw": 0.418147,
+            "closeness": 0.397389,
+            "orbitScore": 2,
+            "tier": "outer"
+          }
+        ],
+        [
+          "<contacts:Sofia Marchetti>",
+          {
+            "raw": 0.562079,
+            "closeness": 0.598715,
+            "orbitScore": 3,
+            "tier": "mid"
+          }
+        ],
+        [
+          "<contacts:Amara Diallo>",
+          {
+            "raw": 0.454951,
+            "closeness": 0.445667,
+            "orbitScore": 2,
+            "tier": "outer"
+          }
+        ],
+        [
+          "<contacts:Yuki Tanaka>",
+          {
+            "raw": 0.548583,
+            "closeness": 0.567553,
+            "orbitScore": 3,
+            "tier": "mid"
+          }
+        ],
+        [
+          "<contacts:Tom Bennett>",
+          {
+            "raw": 0.542824,
+            "closeness": 0.552699,
+            "orbitScore": 3,
+            "tier": "mid"
+          }
+        ],
+        [
+          "<contacts:Leo Fernandez>",
+          {
+            "raw": 0.354222,
+            "closeness": 0.307944,
+            "orbitScore": 1,
+            "tier": "outer"
+          }
+        ],
+        [
+          "<contacts:Rachel Adeyemi>",
+          {
+            "raw": 0.350052,
+            "closeness": 0.294257,
+            "orbitScore": 1,
+            "tier": "outer"
+          }
+        ],
+        [
+          "<contacts:Olivia Brooks>",
+          {
+            "raw": 0.28665,
+            "closeness": 0.226446,
+            "orbitScore": 1,
+            "tier": "outer"
+          }
+        ],
+        [
+          "<contacts:Chris Nowak>",
+          {
+            "raw": 0.27669,
+            "closeness": 0.208507,
+            "orbitScore": 1,
+            "tier": "outer"
+          }
+        ],
+        [
+          "<contacts:Andre Silva>",
+          {
+            "raw": 0.324546,
+            "closeness": 0.264901,
+            "orbitScore": 1,
+            "tier": "outer"
           }
         ]
       ]
@@ -8014,246 +7789,246 @@
     "closenessById": {
       "__map": [
         [
-          "<contacts:Marcus Webb>",
-          {
-            "raw": 0.602105,
-            "tier": "inner",
-            "closeness": 0.659983,
-            "orbitScore": 4
-          }
-        ],
-        [
-          "<contacts:Priya Nair>",
-          {
-            "raw": 0.679665,
-            "tier": "inner",
-            "closeness": 0.727566,
-            "orbitScore": 4
-          }
-        ],
-        [
-          "<contacts:Dr. Elena Vasquez>",
-          {
-            "raw": 0.771154,
-            "tier": "inner",
-            "closeness": 0.816004,
-            "orbitScore": 5
-          }
-        ],
-        [
-          "<contacts:Fatima Nasser>",
-          {
-            "raw": 0.409512,
-            "tier": "outer",
-            "closeness": 0.380423,
-            "orbitScore": 2
-          }
-        ],
-        [
-          "<contacts:Rachel Adeyemi>",
-          {
-            "raw": 0.350052,
-            "tier": "outer",
-            "closeness": 0.294257,
-            "orbitScore": 1
-          }
-        ],
-        [
-          "<contacts:Aisha Rahman>",
-          {
-            "raw": 0.526255,
-            "tier": "mid",
-            "closeness": 0.519281,
-            "orbitScore": 2
-          }
-        ],
-        [
-          "<contacts:Tom Bennett>",
-          {
-            "raw": 0.542824,
-            "tier": "mid",
-            "closeness": 0.552699,
-            "orbitScore": 3
-          }
-        ],
-        [
-          "<contacts:Nina Petrova>",
-          {
-            "raw": 0.74794,
-            "tier": "inner",
-            "closeness": 0.788331,
-            "orbitScore": 4
-          }
-        ],
-        [
-          "<contacts:David Kim>",
-          {
-            "raw": 0.40021,
-            "tier": "outer",
-            "closeness": 0.362967,
-            "orbitScore": 1
-          }
-        ],
-        [
-          "<contacts:Ben Carter>",
-          {
-            "raw": 0.49756,
-            "tier": "mid",
-            "closeness": 0.487583,
-            "orbitScore": 2
-          }
-        ],
-        [
-          "<contacts:Sofia Marchetti>",
-          {
-            "raw": 0.562079,
-            "tier": "mid",
-            "closeness": 0.598715,
-            "orbitScore": 3
-          }
-        ],
-        [
-          "<contacts:Andre Silva>",
-          {
-            "raw": 0.324546,
-            "tier": "outer",
-            "closeness": 0.264901,
-            "orbitScore": 1
-          }
-        ],
-        [
-          "<contacts:Hassan Ali>",
-          {
-            "raw": 0.37256,
-            "tier": "outer",
-            "closeness": 0.332036,
-            "orbitScore": 1
-          }
-        ],
-        [
-          "<contacts:Grace Whitfield>",
-          {
-            "raw": 0.442721,
-            "tier": "outer",
-            "closeness": 0.426061,
-            "orbitScore": 2
-          }
-        ],
-        [
-          "<contacts:Leo Fernandez>",
-          {
-            "raw": 0.354222,
-            "tier": "outer",
-            "closeness": 0.307944,
-            "orbitScore": 1
-          }
-        ],
-        [
-          "<contacts:Yuki Tanaka>",
-          {
-            "raw": 0.548583,
-            "tier": "mid",
-            "closeness": 0.567553,
-            "orbitScore": 3
-          }
-        ],
-        [
-          "<contacts:Olivia Brooks>",
-          {
-            "raw": 0.28665,
-            "tier": "outer",
-            "closeness": 0.226446,
-            "orbitScore": 1
-          }
-        ],
-        [
-          "<contacts:Chris Nowak>",
-          {
-            "raw": 0.27669,
-            "tier": "outer",
-            "closeness": 0.208507,
-            "orbitScore": 1
-          }
-        ],
-        [
-          "<contacts:Daniel Osei>",
-          {
-            "raw": 0.418147,
-            "tier": "outer",
-            "closeness": 0.397389,
-            "orbitScore": 2
-          }
-        ],
-        [
-          "<contacts:Amara Diallo>",
-          {
-            "raw": 0.454951,
-            "tier": "outer",
-            "closeness": 0.445667,
-            "orbitScore": 2
-          }
-        ],
-        [
-          "<contacts:Victor Reyes>",
-          {
-            "raw": 0.569512,
-            "tier": "mid",
-            "closeness": 0.614798,
-            "orbitScore": 3
-          }
-        ],
-        [
-          "<contacts:Golden Newperson>",
-          {
-            "raw": 0.51086,
-            "tier": "mid",
-            "closeness": 0.502662,
-            "orbitScore": 2
-          }
-        ],
-        [
           "<contacts:Golden Mcpperson>",
           {
             "raw": 0.255,
-            "tier": "outer",
             "closeness": 0.187266,
-            "orbitScore": 1
-          }
-        ],
-        [
-          "<contacts:James Okafor>",
-          {
-            "raw": 0.532241,
-            "tier": "mid",
-            "closeness": 0.534302,
-            "orbitScore": 2
-          }
-        ],
-        [
-          "<contacts:Marcus Lee>",
-          {
-            "raw": 0.586005,
-            "tier": "inner",
-            "closeness": 0.637535,
-            "orbitScore": 4
-          }
-        ],
-        [
-          "<contacts:Maya Thompson>",
-          {
-            "raw": 0.552619,
-            "tier": "mid",
-            "closeness": 0.581142,
-            "orbitScore": 3
+            "orbitScore": 1,
+            "tier": "outer"
           }
         ],
         [
           "<contacts:Sarah Chen>",
           {
             "raw": 0.914428,
-            "tier": "inner",
             "closeness": 0.937158,
-            "orbitScore": 5
+            "orbitScore": 5,
+            "tier": "inner"
+          }
+        ],
+        [
+          "<contacts:Golden Newperson>",
+          {
+            "raw": 0.51086,
+            "closeness": 0.502662,
+            "orbitScore": 2,
+            "tier": "mid"
+          }
+        ],
+        [
+          "<contacts:Nina Petrova>",
+          {
+            "raw": 0.74794,
+            "closeness": 0.788331,
+            "orbitScore": 4,
+            "tier": "inner"
+          }
+        ],
+        [
+          "<contacts:Dr. Elena Vasquez>",
+          {
+            "raw": 0.771154,
+            "closeness": 0.816004,
+            "orbitScore": 5,
+            "tier": "inner"
+          }
+        ],
+        [
+          "<contacts:Priya Nair>",
+          {
+            "raw": 0.679665,
+            "closeness": 0.727566,
+            "orbitScore": 4,
+            "tier": "inner"
+          }
+        ],
+        [
+          "<contacts:Marcus Webb>",
+          {
+            "raw": 0.602105,
+            "closeness": 0.659983,
+            "orbitScore": 4,
+            "tier": "inner"
+          }
+        ],
+        [
+          "<contacts:Maya Thompson>",
+          {
+            "raw": 0.552619,
+            "closeness": 0.581142,
+            "orbitScore": 3,
+            "tier": "mid"
+          }
+        ],
+        [
+          "<contacts:Victor Reyes>",
+          {
+            "raw": 0.569512,
+            "closeness": 0.614798,
+            "orbitScore": 3,
+            "tier": "mid"
+          }
+        ],
+        [
+          "<contacts:Fatima Nasser>",
+          {
+            "raw": 0.409512,
+            "closeness": 0.380423,
+            "orbitScore": 2,
+            "tier": "outer"
+          }
+        ],
+        [
+          "<contacts:Marcus Lee>",
+          {
+            "raw": 0.586005,
+            "closeness": 0.637535,
+            "orbitScore": 4,
+            "tier": "inner"
+          }
+        ],
+        [
+          "<contacts:David Kim>",
+          {
+            "raw": 0.40021,
+            "closeness": 0.362967,
+            "orbitScore": 1,
+            "tier": "outer"
+          }
+        ],
+        [
+          "<contacts:Ben Carter>",
+          {
+            "raw": 0.49756,
+            "closeness": 0.487583,
+            "orbitScore": 2,
+            "tier": "mid"
+          }
+        ],
+        [
+          "<contacts:James Okafor>",
+          {
+            "raw": 0.532241,
+            "closeness": 0.534302,
+            "orbitScore": 2,
+            "tier": "mid"
+          }
+        ],
+        [
+          "<contacts:Grace Whitfield>",
+          {
+            "raw": 0.442721,
+            "closeness": 0.426061,
+            "orbitScore": 2,
+            "tier": "outer"
+          }
+        ],
+        [
+          "<contacts:Aisha Rahman>",
+          {
+            "raw": 0.526255,
+            "closeness": 0.519281,
+            "orbitScore": 2,
+            "tier": "mid"
+          }
+        ],
+        [
+          "<contacts:Hassan Ali>",
+          {
+            "raw": 0.37256,
+            "closeness": 0.332036,
+            "orbitScore": 1,
+            "tier": "outer"
+          }
+        ],
+        [
+          "<contacts:Daniel Osei>",
+          {
+            "raw": 0.418147,
+            "closeness": 0.397389,
+            "orbitScore": 2,
+            "tier": "outer"
+          }
+        ],
+        [
+          "<contacts:Sofia Marchetti>",
+          {
+            "raw": 0.562079,
+            "closeness": 0.598715,
+            "orbitScore": 3,
+            "tier": "mid"
+          }
+        ],
+        [
+          "<contacts:Amara Diallo>",
+          {
+            "raw": 0.454951,
+            "closeness": 0.445667,
+            "orbitScore": 2,
+            "tier": "outer"
+          }
+        ],
+        [
+          "<contacts:Yuki Tanaka>",
+          {
+            "raw": 0.548583,
+            "closeness": 0.567553,
+            "orbitScore": 3,
+            "tier": "mid"
+          }
+        ],
+        [
+          "<contacts:Tom Bennett>",
+          {
+            "raw": 0.542824,
+            "closeness": 0.552699,
+            "orbitScore": 3,
+            "tier": "mid"
+          }
+        ],
+        [
+          "<contacts:Leo Fernandez>",
+          {
+            "raw": 0.354222,
+            "closeness": 0.307944,
+            "orbitScore": 1,
+            "tier": "outer"
+          }
+        ],
+        [
+          "<contacts:Rachel Adeyemi>",
+          {
+            "raw": 0.350052,
+            "closeness": 0.294257,
+            "orbitScore": 1,
+            "tier": "outer"
+          }
+        ],
+        [
+          "<contacts:Olivia Brooks>",
+          {
+            "raw": 0.28665,
+            "closeness": 0.226446,
+            "orbitScore": 1,
+            "tier": "outer"
+          }
+        ],
+        [
+          "<contacts:Chris Nowak>",
+          {
+            "raw": 0.27669,
+            "closeness": 0.208507,
+            "orbitScore": 1,
+            "tier": "outer"
+          }
+        ],
+        [
+          "<contacts:Andre Silva>",
+          {
+            "raw": 0.324546,
+            "closeness": 0.264901,
+            "orbitScore": 1,
+            "tier": "outer"
           }
         ]
       ]

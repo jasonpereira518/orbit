@@ -95,7 +95,7 @@ const EXCHANGE_TYPES = sql.raw(`('linkedin_message', 'email', 'message')`);
  * the LinkedIn adapter writes each message body into `raw_notes`, so a presence test would
  * count every imported message as a note and qualify every messaged contact.
  */
-const constellationSignalAggregates = {
+export const constellationSignalAggregates = {
   noteInteractions: sql<number>`count(*) filter (
     where ${interactions.interactionType} in ('note', 'meeting_note')
   )::int`,
@@ -210,6 +210,33 @@ export async function storedScoresAreCurrent(userId: string): Promise<boolean> {
     listUnscoredContactIds(userId, 1),
   ]);
   return Boolean(cohortRow && isUsableSnapshot(cohortRow.snapshot) && unscored.length === 0);
+}
+
+/**
+ * Bring the stored scores to what `getClosenessCohortSlim` would answer with, without
+ * reading them: the same rescore-a-few, recalibrate-after-the-response or rebuild decision
+ * `resolveCohortResult` makes. For a reader that then asks Postgres about the stored
+ * breakdowns directly (the dashboard) instead of loading every contact's into memory.
+ * Contacts left unscored by a deferred recalibration read as unscored, as they would from
+ * the cohort. True when it changed stored scores, so reads taken alongside it are stale.
+ */
+export async function ensureStoredScoresCurrent(userId: string): Promise<boolean> {
+  const [cohortRow, unscored] = await Promise.all([
+    readCohortRow(userId),
+    listUnscoredContactIds(userId, RESCORE_ON_READ_MAX + 1),
+  ]);
+  if (cohortRow && isUsableSnapshot(cohortRow.snapshot)) {
+    if (unscored.length === 0) return false;
+    if (unscored.length <= RESCORE_ON_READ_MAX) {
+      await Promise.all(unscored.map((id) => rescoreContact(userId, id).catch(() => false)));
+      return true;
+    }
+    deferRecalibration(userId);
+    return false;
+  }
+  // No usable distribution: only the full build can score anyone, and it persists every score.
+  await getClosenessCohortSlim(userId);
+  return true;
 }
 
 /**
