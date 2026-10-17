@@ -510,20 +510,23 @@ export async function claimRadarUsers(limit: number, now: Date, opts: { includeU
   const activeSince = new Date(now.getTime() - RADAR_ACTIVE_WITHIN_DAYS * 24 * HOUR_MS);
   const rows = rowsOf<{ user_id: string }>(
     await db.execute(sql`
-      UPDATE user_settings SET radar_lease_until = ${lease}
-       WHERE id IN (
-         SELECT id FROM user_settings
-          WHERE radar_paused = 0
-            AND (radar_next_at IS NULL OR radar_next_at <= ${now})
-            AND (radar_lease_until IS NULL OR radar_lease_until < ${now})
-            AND last_active_at > ${activeSince}
-            AND ${opts.includeUnopened ? sql`TRUE` : sql`radar_last_run_at IS NOT NULL`}
-          ORDER BY radar_next_at NULLS FIRST, id
-          LIMIT ${limit}
-          FOR UPDATE SKIP LOCKED)
-        -- The lease again, on the UPDATE itself: what makes the claim exclusive.
-        AND (radar_lease_until IS NULL OR radar_lease_until < ${now})
-      RETURNING user_id
+      WITH due AS MATERIALIZED (
+        SELECT id FROM user_settings
+         WHERE radar_paused = 0
+           AND (radar_next_at IS NULL OR radar_next_at <= ${now})
+           AND (radar_lease_until IS NULL OR radar_lease_until < ${now})
+           AND last_active_at > ${activeSince}
+           AND ${opts.includeUnopened ? sql`TRUE` : sql`radar_last_run_at IS NOT NULL`}
+         ORDER BY radar_next_at NULLS FIRST, id
+         LIMIT ${limit}
+         FOR UPDATE SKIP LOCKED
+      )
+      UPDATE user_settings AS t SET radar_lease_until = ${lease}
+        FROM due
+       WHERE t.id = due.id
+         -- The lease again, on the UPDATE itself: what makes the claim exclusive.
+         AND (t.radar_lease_until IS NULL OR t.radar_lease_until < ${now})
+      RETURNING t.user_id
     `)
   );
   return rows.map((r) => r.user_id);

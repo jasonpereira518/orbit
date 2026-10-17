@@ -419,20 +419,22 @@ export async function claimDueCalendarSubscriptions(
   const db = await getDb();
   const staleBefore = new Date(now.getTime() - CALENDAR_SYNC_STALE_MS);
   const claimed = await db.execute(sql`
-    UPDATE calendar_subscriptions
+    WITH due AS MATERIALIZED (
+      SELECT id FROM calendar_subscriptions
+       WHERE enabled = 1
+         AND (last_synced_at IS NULL OR last_synced_at < ${staleBefore})
+       ORDER BY last_synced_at NULLS FIRST
+       LIMIT ${limit}
+       FOR UPDATE SKIP LOCKED
+    )
+    UPDATE calendar_subscriptions AS t
        SET last_synced_at = ${now}, updated_at = ${now}
-     WHERE id IN (
-       SELECT id FROM calendar_subscriptions
-        WHERE enabled = 1
-          AND (last_synced_at IS NULL OR last_synced_at < ${staleBefore})
-        ORDER BY last_synced_at NULLS FIRST
-        LIMIT ${limit}
-        FOR UPDATE SKIP LOCKED
-     )
+      FROM due
+     WHERE t.id = due.id
        -- The predicate again, on the UPDATE itself: what makes the claim exclusive.
-       AND enabled = 1
-       AND (last_synced_at IS NULL OR last_synced_at < ${staleBefore})
-    RETURNING id, user_id
+       AND t.enabled = 1
+       AND (t.last_synced_at IS NULL OR t.last_synced_at < ${staleBefore})
+    RETURNING t.id, t.user_id
   `);
   return rowsOf<{ id: string; user_id: string }>(claimed).map((r) => ({
     id: r.id,

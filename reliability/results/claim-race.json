@@ -5,5 +5,6 @@
   "ROUNDS": 150,
   "totalClaimed": 6000,
   "roundsWithDoubleClaim": 0,
-  "doubleClaimedRows": 0
+  "doubleClaimedRows": 0,
+  "overLimit": 0
 }

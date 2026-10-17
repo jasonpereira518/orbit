@@ -86,26 +86,28 @@ export async function claimDueConnectorConnections(
   const leaseCutoff = new Date(now.getTime() - SYNC_LEASE_MS);
   const rows = rowsOf<ClaimRow>(
     await db.execute(sql`
-      UPDATE connector_connections
+      WITH due AS MATERIALIZED (
+        SELECT id FROM connector_connections
+         WHERE status = 'active'
+           AND next_sync_at IS NOT NULL
+           AND next_sync_at <= ${now}
+           AND (sync_status IS DISTINCT FROM 'syncing' OR sync_started_at < ${leaseCutoff})
+         ORDER BY next_sync_at
+         LIMIT ${limit}
+         FOR UPDATE SKIP LOCKED
+      )
+      UPDATE connector_connections AS t
          SET sync_status = 'syncing', sync_started_at = ${now}, updated_at = ${now}
-       WHERE id IN (
-         SELECT id FROM connector_connections
-          WHERE status = 'active'
-            AND next_sync_at IS NOT NULL
-            AND next_sync_at <= ${now}
-            AND (sync_status IS DISTINCT FROM 'syncing' OR sync_started_at < ${leaseCutoff})
-          ORDER BY next_sync_at
-          LIMIT ${limit}
-          FOR UPDATE SKIP LOCKED
-       )
+        FROM due
+       WHERE t.id = due.id
          -- The predicate again, on the UPDATE itself: what makes the claim exclusive.
-         AND status = 'active'
-         AND next_sync_at IS NOT NULL
-         AND next_sync_at <= ${now}
-         AND (sync_status IS DISTINCT FROM 'syncing' OR sync_started_at < ${leaseCutoff})
-      RETURNING id, user_id, connector_id, auth_kind, account_ref, api_key_encrypted,
-                access_token_encrypted, refresh_token_encrypted, scopes, capabilities,
-                sync_cursor, sync_failures
+         AND t.status = 'active'
+         AND t.next_sync_at IS NOT NULL
+         AND t.next_sync_at <= ${now}
+         AND (t.sync_status IS DISTINCT FROM 'syncing' OR t.sync_started_at < ${leaseCutoff})
+      RETURNING t.id, t.user_id, t.connector_id, t.auth_kind, t.account_ref, t.api_key_encrypted,
+                t.access_token_encrypted, t.refresh_token_encrypted, t.scopes, t.capabilities,
+                t.sync_cursor, t.sync_failures
     `)
   );
   return rows.map((row) => ({

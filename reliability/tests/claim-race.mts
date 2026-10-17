@@ -23,6 +23,7 @@ await db.execute(sql`
 let roundsWithDoubleClaim = 0;
 let doubleClaimedRows = 0;
 let totalClaimed = 0;
+let overLimit = 0;
 for (let round = 0; round < ROUNDS; round++) {
   await db.execute(sql`
     UPDATE gmail_connections SET sync_status = NULL, sync_started_at = NULL, next_sync_at = now() - interval '1 hour'
@@ -34,6 +35,8 @@ for (let round = 0; round < ROUNDS; round++) {
   for (const run of runs) for (const c of run) seen.set(c.id, (seen.get(c.id) ?? 0) + 1);
   const dupes = [...seen.values()].filter((n) => n > 1).length;
   totalClaimed += runs.reduce((n, r) => n + r.length, 0);
+  // One claim must never return more than the limit it asked for.
+  overLimit += runs.filter((r) => r.length > LIMIT).length;
   if (dupes) {
     roundsWithDoubleClaim++;
     doubleClaimedRows += dupes;
@@ -41,8 +44,8 @@ for (let round = 0; round < ROUNDS; round++) {
 }
 
 await db.execute(sql`DELETE FROM gmail_connections WHERE user_id LIKE 'rel-claim-%'`);
-const result = { ROWS, CONCURRENT, LIMIT, ROUNDS, totalClaimed, roundsWithDoubleClaim, doubleClaimedRows };
+const result = { ROWS, CONCURRENT, LIMIT, ROUNDS, totalClaimed, roundsWithDoubleClaim, doubleClaimedRows, overLimit };
 console.log(result);
 fs.writeFileSync("reliability/results/claim-race.json", JSON.stringify(result, null, 2));
 // Exit non-zero on any double claim so CI can gate on it.
-process.exit(roundsWithDoubleClaim === 0 && totalClaimed === ROWS * ROUNDS ? 0 : 1);
+process.exit(roundsWithDoubleClaim === 0 && overLimit === 0 && totalClaimed === ROWS * ROUNDS ? 0 : 1);

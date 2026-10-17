@@ -105,27 +105,32 @@ export async function claimDueConnections(
   const table = sql.raw(PROVIDER_TABLES[provider]);
   const leaseCutoff = new Date(now.getTime() - SYNC_LEASE_MS);
 
+  // MATERIALIZED CTE, not `id IN (SELECT ... LIMIT n FOR UPDATE)`: the planner may re-run an
+  // IN-subquery per outer row, and a LIMIT inside it then stops meaning "n rows" (a claim of
+  // 20 returned 22). The CTE is evaluated once, locks its rows with SKIP LOCKED, and the
+  // predicate is repeated on the UPDATE itself, which is what makes the claim exclusive: a
+  // concurrent claimer that blocked on a row re-checks it against the winner's new version,
+  // finds it 'syncing', and updates nothing (see connectors/outbox.ts).
   const claimed = await db.execute(sql`
-    UPDATE ${table}
+    WITH due AS MATERIALIZED (
+      SELECT id FROM ${table}
+       WHERE status = 'active'
+         AND next_sync_at IS NOT NULL
+         AND next_sync_at <= ${now}
+         AND (sync_status IS DISTINCT FROM 'syncing' OR sync_started_at < ${leaseCutoff})
+       ORDER BY next_sync_at
+       LIMIT ${limit}
+       FOR UPDATE SKIP LOCKED
+    )
+    UPDATE ${table} AS t
        SET sync_status = 'syncing', sync_started_at = ${now}, updated_at = ${now}
-     WHERE id IN (
-       SELECT id FROM ${table}
-        WHERE status = 'active'
-          AND next_sync_at IS NOT NULL
-          AND next_sync_at <= ${now}
-          AND (sync_status IS DISTINCT FROM 'syncing' OR sync_started_at < ${leaseCutoff})
-        ORDER BY next_sync_at
-        LIMIT ${limit}
-        FOR UPDATE SKIP LOCKED
-     )
-       -- The predicate again, on the UPDATE itself. This is what makes the claim exclusive:
-       -- a concurrent claimer that blocked on a row re-checks it against the winner's new
-       -- version, finds it 'syncing', and updates nothing (see connectors/outbox.ts).
-       AND status = 'active'
-       AND next_sync_at IS NOT NULL
-       AND next_sync_at <= ${now}
-       AND (sync_status IS DISTINCT FROM 'syncing' OR sync_started_at < ${leaseCutoff})
-    RETURNING id, user_id, email_address, scopes, sync_cursor, sync_failures
+      FROM due
+     WHERE t.id = due.id
+       AND t.status = 'active'
+       AND t.next_sync_at IS NOT NULL
+       AND t.next_sync_at <= ${now}
+       AND (t.sync_status IS DISTINCT FROM 'syncing' OR t.sync_started_at < ${leaseCutoff})
+    RETURNING t.id, t.user_id, t.email_address, t.scopes, t.sync_cursor, t.sync_failures
   `);
 
   return rowsOf<ClaimRow>(claimed).map((row) => ({

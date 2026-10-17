@@ -219,18 +219,21 @@ export async function claimDueSources(limit: number, now: Date): Promise<Array<{
   const lease = new Date(now.getTime() + LEASE_MS);
   const rows = rowsOf<{ user_id: string; provider: CloudProvider }>(
     await db.execute(sql`
-      UPDATE cloud_note_sources SET lease_until = ${lease}
-       WHERE (user_id, provider) IN (
-         SELECT user_id, provider FROM cloud_note_sources
-          WHERE next_scan_at <= ${now}
-            AND (lease_until IS NULL OR lease_until < ${now})
-          ORDER BY next_scan_at
-          LIMIT ${limit}
-          FOR UPDATE SKIP LOCKED)
-        -- The predicate again, on the UPDATE itself: what makes the claim exclusive.
-        AND next_scan_at <= ${now}
-        AND (lease_until IS NULL OR lease_until < ${now})
-      RETURNING user_id, provider
+      WITH due AS MATERIALIZED (
+        SELECT user_id, provider FROM cloud_note_sources
+         WHERE next_scan_at <= ${now}
+           AND (lease_until IS NULL OR lease_until < ${now})
+         ORDER BY next_scan_at
+         LIMIT ${limit}
+         FOR UPDATE SKIP LOCKED
+      )
+      UPDATE cloud_note_sources AS t SET lease_until = ${lease}
+        FROM due
+       WHERE t.user_id = due.user_id AND t.provider = due.provider
+         -- The predicate again, on the UPDATE itself: what makes the claim exclusive.
+         AND t.next_scan_at <= ${now}
+         AND (t.lease_until IS NULL OR t.lease_until < ${now})
+      RETURNING t.user_id, t.provider
     `),
   );
   return rows.map((r) => ({ userId: r.user_id, provider: r.provider }));
