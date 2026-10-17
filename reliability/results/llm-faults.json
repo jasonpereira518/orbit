@@ -1,0 +1,72 @@
+[
+  {
+    "provider": "anthropic",
+    "mode": "ok",
+    "ms": 31,
+    "attemptsSeenByProvider": 1,
+    "outcome": "ok"
+  },
+  {
+    "provider": "anthropic",
+    "mode": "529",
+    "ms": 1268,
+    "attemptsSeenByProvider": 3,
+    "outcome": "Error: 529 {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"injected\"}}"
+  },
+  {
+    "provider": "anthropic",
+    "mode": "500",
+    "ms": 1227,
+    "attemptsSeenByProvider": 3,
+    "outcome": "Error: 500 {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"injected\"}}"
+  },
+  {
+    "provider": "anthropic",
+    "mode": "slow",
+    "ms": 20004,
+    "attemptsSeenByProvider": 1,
+    "outcome": "ok"
+  },
+  {
+    "provider": "anthropic",
+    "mode": "hang",
+    "ms": 45002,
+    "attemptsSeenByProvider": 1,
+    "outcome": "Error: Request was aborted."
+  },
+  {
+    "provider": "openai",
+    "mode": "ok",
+    "ms": 9,
+    "attemptsSeenByProvider": 1,
+    "outcome": "ok"
+  },
+  {
+    "provider": "openai",
+    "mode": "529",
+    "ms": 1193,
+    "attemptsSeenByProvider": 3,
+    "outcome": "Error: 529 injected"
+  },
+  {
+    "provider": "openai",
+    "mode": "500",
+    "ms": 1158,
+    "attemptsSeenByProvider": 3,
+    "outcome": "Error: 500 injected"
+  },
+  {
+    "provider": "openai",
+    "mode": "slow",
+    "ms": 20004,
+    "attemptsSeenByProvider": 1,
+    "outcome": "ok"
+  },
+  {
+    "provider": "openai",
+    "mode": "hang",
+    "ms": 45003,
+    "attemptsSeenByProvider": 1,
+    "outcome": "Error: Request was aborted."
+  }
+]

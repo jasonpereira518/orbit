@@ -1,0 +1,9 @@
+{
+  "ROWS": 40,
+  "CONCURRENT": 6,
+  "LIMIT": 20,
+  "ROUNDS": 150,
+  "totalClaimed": 17660,
+  "roundsWithDoubleClaim": 150,
+  "doubleClaimedRows": 3580
+}

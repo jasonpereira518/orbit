@@ -1,0 +1,62 @@
+[
+  {
+    "label": "baseline query",
+    "ms": 5,
+    "attempts": 1,
+    "outcome": "ok"
+  },
+  {
+    "label": "baseline health",
+    "ms": 7,
+    "status": "ok",
+    "reason": null
+  },
+  {
+    "label": "DB latency 3s: query",
+    "ms": 3006,
+    "attempts": 1,
+    "outcome": "ok"
+  },
+  {
+    "label": "DB latency 3s: health",
+    "ms": 3006,
+    "status": "ok",
+    "reason": null
+  },
+  {
+    "label": "DB latency 5s: health",
+    "ms": 4003,
+    "status": "down",
+    "reason": null
+  },
+  {
+    "label": "DB answers HTTP 503: query",
+    "ms": 2,
+    "attempts": 1,
+    "outcome": "Failed query: SELECT count(*) FROM user_settings\nparams: "
+  },
+  {
+    "label": "DB answers HTTP 503: health",
+    "ms": 4,
+    "status": "down",
+    "reason": null
+  },
+  {
+    "label": "DB connection dropped: query",
+    "ms": 3,
+    "attempts": 1,
+    "outcome": "Failed query: SELECT count(*) FROM user_settings\nparams: "
+  },
+  {
+    "label": "DB hangs: health",
+    "ms": 4001,
+    "status": "down",
+    "reason": null
+  },
+  {
+    "label": "DB hangs: query (no client timeout)",
+    "ms": 300812,
+    "attempts": 1,
+    "outcome": "Failed query: SELECT count(*) FROM user_settings\nparams: "
+  }
+]

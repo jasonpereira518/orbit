@@ -1,0 +1,4 @@
+◇ injected env (0) from .env.local // tip: ◈ secrets for agents [www.dotenvx.com]
+◇ injected env (0) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+migrate: reconciling schema version 170 on DATABASE_URL…
+migrate: schema version 170 applied; DATABASE_URL matches schema.ts.

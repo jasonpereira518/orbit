@@ -1,0 +1,9 @@
+{
+  "name": "orbit-reliability",
+  "private": true,
+  "description": "Local-only reliability tests for Orbit. Never point these at production. See reliability/README.md.",
+  "type": "module",
+  "dependencies": {
+    "pg": "8.16.3"
+  }
+}

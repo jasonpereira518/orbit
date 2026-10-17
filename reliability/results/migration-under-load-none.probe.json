@@ -1,0 +1,194 @@
+{
+  "database": "orbit_rel",
+  "durationSec": 30,
+  "requests": 2138,
+  "worstLatencyMs": 25700,
+  "worstKind": "search",
+  "worstAtSec": 7,
+  "secondsWithARequestOver1s": 3,
+  "errors": {
+    "search: 42703 column \"search_tsv\" does not exist": 2
+  },
+  "timeline": [
+    {
+      "sec": 0,
+      "n": 92,
+      "maxMs": 41,
+      "errors": 0
+    },
+    {
+      "sec": 1,
+      "n": 89,
+      "maxMs": 17,
+      "errors": 0
+    },
+    {
+      "sec": 2,
+      "n": 91,
+      "maxMs": 16,
+      "errors": 0
+    },
+    {
+      "sec": 3,
+      "n": 92,
+      "maxMs": 13,
+      "errors": 0
+    },
+    {
+      "sec": 4,
+      "n": 89,
+      "maxMs": 19,
+      "errors": 0
+    },
+    {
+      "sec": 5,
+      "n": 90,
+      "maxMs": 15,
+      "errors": 0
+    },
+    {
+      "sec": 6,
+      "n": 90,
+      "maxMs": 19,
+      "errors": 0
+    },
+    {
+      "sec": 7,
+      "n": 28,
+      "maxMs": 25700,
+      "errors": 1
+    },
+    {
+      "sec": 32,
+      "n": 5,
+      "maxMs": 64,
+      "errors": 0
+    },
+    {
+      "sec": 33,
+      "n": 75,
+      "maxMs": 4212,
+      "errors": 0
+    },
+    {
+      "sec": 34,
+      "n": 60,
+      "maxMs": 2,
+      "errors": 0
+    },
+    {
+      "sec": 35,
+      "n": 57,
+      "maxMs": 2,
+      "errors": 0
+    },
+    {
+      "sec": 36,
+      "n": 59,
+      "maxMs": 2,
+      "errors": 0
+    },
+    {
+      "sec": 37,
+      "n": 64,
+      "maxMs": 15,
+      "errors": 0
+    },
+    {
+      "sec": 38,
+      "n": 78,
+      "maxMs": 1896,
+      "errors": 0
+    },
+    {
+      "sec": 39,
+      "n": 53,
+      "maxMs": 13,
+      "errors": 0
+    },
+    {
+      "sec": 40,
+      "n": 61,
+      "maxMs": 177,
+      "errors": 0
+    },
+    {
+      "sec": 41,
+      "n": 77,
+      "maxMs": 166,
+      "errors": 0
+    },
+    {
+      "sec": 42,
+      "n": 76,
+      "maxMs": 140,
+      "errors": 0
+    },
+    {
+      "sec": 43,
+      "n": 79,
+      "maxMs": 167,
+      "errors": 0
+    },
+    {
+      "sec": 44,
+      "n": 77,
+      "maxMs": 170,
+      "errors": 0
+    },
+    {
+      "sec": 45,
+      "n": 78,
+      "maxMs": 156,
+      "errors": 0
+    },
+    {
+      "sec": 46,
+      "n": 77,
+      "maxMs": 150,
+      "errors": 0
+    },
+    {
+      "sec": 47,
+      "n": 67,
+      "maxMs": 255,
+      "errors": 0
+    },
+    {
+      "sec": 48,
+      "n": 78,
+      "maxMs": 147,
+      "errors": 0
+    },
+    {
+      "sec": 49,
+      "n": 78,
+      "maxMs": 154,
+      "errors": 0
+    },
+    {
+      "sec": 50,
+      "n": 79,
+      "maxMs": 147,
+      "errors": 0
+    },
+    {
+      "sec": 51,
+      "n": 77,
+      "maxMs": 198,
+      "errors": 0
+    },
+    {
+      "sec": 52,
+      "n": 77,
+      "maxMs": 171,
+      "errors": 0
+    },
+    {
+      "sec": 53,
+      "n": 45,
+      "maxMs": 195,
+      "errors": 0
+    }
+  ]
+}

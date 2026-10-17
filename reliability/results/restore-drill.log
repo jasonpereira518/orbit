@@ -1,0 +1,14 @@
+NOTICE:  database "orbit_rel_restored" does not exist, skipping
+dump=141.2s encrypt=5.2s decrypt=2.9s restore=363.0s
+db size: 3407 MB, dump size (encrypted): 789M
+pg_restore stderr lines: 0
+row counts: ALL 121 tables match
+match: select count(*) from pg_indexes where schemaname='public' -> 435
+match: select count(*) from pg_constraint c join pg_namespace n on n.oid=c.connamespace where nspname='public' -> 185
+match: select string_agg(extname, ',' order by extname) from pg_extension -> pg_trgm,plpgsql,vector
+match: select version from schema_migrations -> 170
+content match: select md5(string_agg(id::text||full_name||coalesce(email,''…
+content match: select md5(string_agg(id::text||coalesce(embedding_vector::t…
+migrate: reconciling schema version 170 on DATABASE_URL…
+migrate: claimed 2000 contact identities across 2000 contacts (more remain; the next deploy continues)
+migrate: schema version 170 already current; DATABASE_URL matches schema.ts.

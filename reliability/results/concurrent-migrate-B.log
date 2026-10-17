@@ -1,0 +1,4 @@
+◇ injected env (0) from .env.local // tip: ◈ encrypted .env [www.dotenvx.com]
+◇ injected env (0) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+migrate: reconciling schema version 170 on DATABASE_URL…
+migrate: schema version 170 already current; DATABASE_URL matches schema.ts.

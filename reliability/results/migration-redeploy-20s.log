@@ -1,0 +1,5 @@
+migrate: reconciling schema version 170 on DATABASE_URL…
+migrate: 2 DDL statement(s) failed:
+  ✗ ALTER TABLE contacts ADD COLUMN IF NOT EXISTS search_tsv tsvector
+  ✗ CREATE INDEX IF NOT EXISTS contacts_search_gin ON contacts USING gin(search_tsv)
+migrate: refusing to build on a partially migrated schema.

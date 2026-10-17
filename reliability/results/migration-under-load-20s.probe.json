@@ -1,0 +1,116 @@
+{
+  "database": "orbit_rel",
+  "durationSec": 17,
+  "requests": 1135,
+  "worstLatencyMs": 19997,
+  "worstKind": "fuzzy",
+  "worstAtSec": 7,
+  "secondsWithARequestOver1s": 2,
+  "errors": {
+    "search: 42703 column \"search_tsv\" does not exist": 297
+  },
+  "timeline": [
+    {
+      "sec": 0,
+      "n": 78,
+      "maxMs": 159,
+      "errors": 0
+    },
+    {
+      "sec": 1,
+      "n": 77,
+      "maxMs": 146,
+      "errors": 0
+    },
+    {
+      "sec": 2,
+      "n": 78,
+      "maxMs": 147,
+      "errors": 0
+    },
+    {
+      "sec": 3,
+      "n": 77,
+      "maxMs": 174,
+      "errors": 0
+    },
+    {
+      "sec": 4,
+      "n": 77,
+      "maxMs": 184,
+      "errors": 0
+    },
+    {
+      "sec": 5,
+      "n": 74,
+      "maxMs": 144,
+      "errors": 0
+    },
+    {
+      "sec": 6,
+      "n": 72,
+      "maxMs": 149,
+      "errors": 0
+    },
+    {
+      "sec": 7,
+      "n": 42,
+      "maxMs": 19997,
+      "errors": 1
+    },
+    {
+      "sec": 27,
+      "n": 18,
+      "maxMs": 146,
+      "errors": 1
+    },
+    {
+      "sec": 28,
+      "n": 68,
+      "maxMs": 1881,
+      "errors": 1
+    },
+    {
+      "sec": 29,
+      "n": 53,
+      "maxMs": 11,
+      "errors": 1
+    },
+    {
+      "sec": 30,
+      "n": 65,
+      "maxMs": 148,
+      "errors": 1
+    },
+    {
+      "sec": 31,
+      "n": 79,
+      "maxMs": 150,
+      "errors": 1
+    },
+    {
+      "sec": 32,
+      "n": 77,
+      "maxMs": 144,
+      "errors": 1
+    },
+    {
+      "sec": 33,
+      "n": 77,
+      "maxMs": 197,
+      "errors": 1
+    },
+    {
+      "sec": 34,
+      "n": 77,
+      "maxMs": 170,
+      "errors": 1
+    },
+    {
+      "sec": 35,
+      "n": 46,
+      "maxMs": 155,
+      "errors": 1
+    }
+  ]
+}
