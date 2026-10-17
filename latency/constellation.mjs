@@ -38,7 +38,9 @@ try { new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__
 })();`;
 
 const KIT = `(() => {
-  const pane = () => document.querySelector(".react-flow__pane");
+  // Desktop renders React Flow (a pane element); the phone layout renders its own canvas
+  // (graph-canvas-mobile.tsx), so fall back to the stage's canvas, then the stage itself.
+  const pane = () => document.querySelector(".react-flow__pane") ?? document.querySelector(".constellation-stage canvas") ?? document.querySelector(".constellation-stage") ?? document.body;
   const center = () => { const r = pane().getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
   const mouse = (type, target, x, y, extra = {}) => target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0, buttons: type === "mouseup" ? 0 : 1, ...extra }));
   const wheel = (x, y, dy) => pane().dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: x, clientY: y, deltaY: dy, deltaMode: 0, ctrlKey: false }));

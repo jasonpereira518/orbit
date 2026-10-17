@@ -42,7 +42,8 @@ const WARM = flag("warm", "1") !== "0";
 const PAGES = {
   "/dashboard": "main h1, main [data-slot='card']",
   // Contact rows are <li role="link"> with an avatar, not anchors (the only anchor is /contacts/new).
-  "/contacts": "main li[role='link'], main [data-slot='avatar']",
+  // Rows when the account has people; the empty-state heading when it has none (tier `new`).
+  "/contacts": "main li[role='link'], main [data-slot='avatar'], main h2",
   "/contacts/[id]": "main h1",
   // The capture page renders a composer, not a bare textarea: any input or the heading counts.
   "/capture": "main textarea, main form, main [contenteditable], main input, main h1",
