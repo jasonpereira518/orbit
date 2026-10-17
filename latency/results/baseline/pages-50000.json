@@ -1,0 +1,21 @@
+{
+  "base": "http://localhost:3101",
+  "at": "2026-10-17T14:08:42.151Z",
+  "contactPath": "/contacts/4e89872d-8982-416a-9c3a-e4bbeb7bec76",
+  "results": {
+    "desktop": {
+      "profile": "desktop",
+      "error": "Error: browser.newContext: Target page, context or browser has been closed",
+      "pages": {},
+      "nav": [],
+      "history": {}
+    },
+    "mobile4g": {
+      "profile": "mobile4g",
+      "error": "Error: browser.newContext: Target page, context or browser has been closed",
+      "pages": {},
+      "nav": [],
+      "history": {}
+    }
+  }
+}
