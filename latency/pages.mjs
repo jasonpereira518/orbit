@@ -212,8 +212,14 @@ async function clickNav(page, path) {
   // Only a visible link counts: at phone width the sidebar is collapsed and only the bottom
   // bar's few entries can be tapped, so a page with no visible link reports `missing_link`
   // for that profile instead of failing the run.
-  const link = page.locator(`a[href='${path}']`).locator("visible=true").first();
-  if (!(await link.count().catch(() => 0))) return null;
+  // Prefer a link inside a <nav> (sidebar or bottom bar): a visible logo/header link to the
+  // same path may sit under an overlay and never receive the tap.
+  let link = null;
+  for (const sel of [`nav a[href='${path}']`, `a[href='${path}']`]) {
+    const l = page.locator(sel).locator("visible=true");
+    if (await l.count().catch(() => 0)) { link = l.first(); break; }
+  }
+  if (!link) return null;
   const started = await page.evaluate(() => performance.now());
   try {
     await link.click({ noWaitAfter: true, timeout: 5000 });
