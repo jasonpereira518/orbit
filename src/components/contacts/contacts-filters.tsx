@@ -128,8 +128,10 @@ export function ContactsFilters({
     if (importId) params.set("importId", importId);
     const qs = params.toString();
     const href = qs ? `/contacts?${qs}` : "/contacts";
+    // A new query string is a fresh server render already, and a revisited one served from
+    // the router cache is re-read by the page's `FreshOnArrival`. The `router.refresh()` that
+    // used to follow rendered the whole page a second time per search (LATENCY_PLAN CLI-3).
     router.replace(href);
-    router.refresh();
   }
 
   function scheduleSearch(value: string) {

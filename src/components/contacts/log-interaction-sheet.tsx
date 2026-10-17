@@ -138,7 +138,8 @@ export function LogInteractionSheet({
     emitTourEvent("interaction.logged");
     onOpenChange(false);
     reset();
-    router.refresh();
+    // No `router.refresh()`: `logInteraction` revalidates `/contacts/{id}`, the page this sheet
+    // lives on, so the action's own response already carries the fresh render (SRV-1).
     if (from) {
       requestInteractionFlight({
         from,
@@ -255,7 +256,7 @@ export function LogInteractionSheet({
 
         onOpenChange(false);
         reset();
-        router.refresh();
+        // `confirmBulkCapture` revalidates `/contacts/{id}` for this contact: no second render.
         emitTourEvent("interaction.logged");
 
         const batchId = out.batchId;
