@@ -399,6 +399,11 @@ export async function getMeetingContext(
       )
     ),
   ]);
+  // In the invite's order, as `ids` is: research takes the first few, and an unordered read
+  // returned whatever the plan produced (an added index turned it into name order, and the
+  // prep researched Dana before David).
+  const idOrder = new Map(ids.map((id, i) => [id, i]));
+  people.sort((a, b) => (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0));
   const notesBy = new Map(notes.map((rows, i) => [ids[i], rows]));
   const snippet = (text: string) => {
     const t = text.replace(/\s+/g, " ").trim();
