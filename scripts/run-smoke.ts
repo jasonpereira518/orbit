@@ -12,6 +12,12 @@
  *   pure    — no database, no network. Safe anywhere.
  *   pglite  — uses `getDb()` against a throwaway PGlite directory (via the preamble).
  *   manual  — wall-clock budgets or long runs; not part of `--ci`.
+ *   bug     — `smoke-bug-*.ts`: a defect documented but not yet fixed. Each one asserts the
+ *             CORRECT behaviour, so it fails while the bug is there (see
+ *             scripts/smoke/check.ts → knownBug). Not part of `--ci`; `--bugs` runs only
+ *             these and inverts the verdict: exit 3 (still broken, as documented) passes,
+ *             exit 0 means the bug is FIXED and fails the run until the script is promoted
+ *             to an ordinary tier, and any other exit is a real failure.
  *
  * Scripts run SEQUENTIALLY: PGlite is single-writer, and the pglite tier shares one
  * throwaway directory per run so the DDL bootstraps once, not fifty times.
@@ -21,18 +27,21 @@
  * single-writer rule still holds, and the shards together cover every script exactly once.
  * `--list` prints the selection and exits, for checking a partition without running it.
  *
- * Run: npx tsx scripts/run-smoke.ts [--ci] [--check] [--shard i/n] [--list] [--only <name>...]
+ * Run: npx tsx scripts/run-smoke.ts [--ci | --bugs] [--check] [--shard i/n] [--list] [--only <name>...]
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { EXIT_KNOWN_BUG } from "./smoke/check";
 
-type Tier = "pure" | "pglite" | "manual";
+type Tier = "pure" | "pglite" | "manual" | "bug";
 
 /** Every smoke script, by tier. `--check` fails when a script on disk is missing here. */
 const MANIFEST: Record<string, Tier> = {
   // pure ------------------------------------------------------------------------------
+  "smoke-test-harness": "pure", // the fixtures, fetch mock and known-bug exit codes themselves
   "smoke-friendly-error": "pure",
   "smoke-ai-notice-copy": "pure",
   "smoke-interaction-edit": "pure",
@@ -577,6 +586,7 @@ const MANIFEST: Record<string, Tier> = {
   // manual ----------------------------------------------------------------------------
   "smoke-import-perf": "manual", // wall-clock budgets; run by hand or nightly
   "smoke-stripe-testclock": "manual", // Stripe sandbox + test clocks; several minutes
+  // bug: documented defects, expected to fail (see the header) ---------------------------
 };
 
 const TIMEOUT_MS: Partial<Record<string, number>> = {
@@ -621,6 +631,12 @@ function check(): string[] {
     if (tier === "pure" && DB_IMPORT.test(src)) {
       problems.push(`${name}: pure tier imports ../src/db — move it to the pglite tier`);
     }
+    if (tier === "bug" && DB_IMPORT.test(src) && !hasPreamble) {
+      problems.push(`${name}: bug tier touches the database, so it must start with import "./smoke/_env"`);
+    }
+    if ((tier === "bug") !== name.startsWith("smoke-bug-")) {
+      problems.push(`${name}: the bug tier is exactly the smoke-bug-*.ts scripts`);
+    }
   }
   return problems;
 }
@@ -628,6 +644,7 @@ function check(): string[] {
 function main() {
   const args = process.argv.slice(2);
   const ci = args.includes("--ci");
+  const bugs = args.includes("--bugs");
   const checkOnly = args.includes("--check");
   const onlyIdx = args.indexOf("--only");
   const only = onlyIdx >= 0 ? args.slice(onlyIdx + 1).filter((a) => !a.startsWith("--")) : null;
@@ -655,7 +672,9 @@ function main() {
   if (checkOnly) process.exit(0);
 
   const selected = Object.entries(MANIFEST)
-    .filter(([name, tier]) => (only ? only.includes(name) : ci ? tier !== "manual" : true))
+    .filter(([name, tier]) =>
+      only ? only.includes(name) : bugs ? tier === "bug" : ci ? tier !== "manual" && tier !== "bug" : tier !== "bug"
+    )
     .map(([name]) => name)
     // Round-robin over manifest order, so the few long scripts (see TIMEOUT_MS) land in
     // different shards rather than one shard inheriting a whole block of them.
@@ -670,6 +689,12 @@ function main() {
   const pgliteDir = mkdtempSync(join(tmpdir(), "orbit-smoke-run-"));
   const env: NodeJS.ProcessEnv = { ...process.env, ORBIT_PGLITE_DIR: pgliteDir, FORCE_COLOR: "0" };
   delete env.DATABASE_URL; // belt and braces; the preamble does this too
+  // Hermetic DNS (see scripts/smoke/hermetic-dns.mjs): the SSRF guard resolves hosts before
+  // every request, so without this a script with a stubbed fetch still needed a working
+  // public resolver, and failed offline. NODE_OPTIONS rather than an argv flag because tsx
+  // runs the script in a child process of its own.
+  const hermeticDns = pathToFileURL(join(process.cwd(), "scripts", "smoke", "hermetic-dns.mjs")).href;
+  env.NODE_OPTIONS = [env.NODE_OPTIONS, `--import ${hermeticDns}`].filter(Boolean).join(" ");
 
   // The CLI entry point rather than the `.bin` shim.
   //
@@ -708,7 +733,10 @@ function main() {
     if (r.stderr) process.stderr.write(r.stderr);
     const ms = Date.now() - started;
     const timedOut = r.error && (r.error as NodeJS.ErrnoException).code === "ETIMEDOUT";
-    const ok = !timedOut && r.status === 0;
+    // A bug-tier script under --bugs passes by still reproducing its documented bug
+    // (exit 3), and FAILS by passing: the fix has landed and the script needs promoting.
+    const expectBug = bugs && MANIFEST[name] === "bug";
+    const ok = !timedOut && (expectBug ? r.status === EXIT_KNOWN_BUG : r.status === 0);
 
     // A script that degraded rather than fully verified something signals it with a
     // "PENDING: <reason>" line on STDERR — stderr, not stdout, precisely so that stdout can
@@ -726,7 +754,13 @@ function main() {
       pending,
       note: timedOut
         ? `timed out after ${timeout / 1000}s`
-        : r.status !== 0
+        : expectBug
+          ? r.status === EXIT_KNOWN_BUG
+            ? "known bug still reproduces (expected)"
+            : r.status === 0
+              ? "FIXED — every known-bug check now passes; move it out of the bug tier"
+              : `exit ${r.status ?? r.signal} — an ordinary check failed, not just the known bug`
+          : r.status !== 0
           ? `exit ${r.status ?? r.signal}`
           : pending
             ? `PENDING: ${pendingReasons.join("; ")}`
