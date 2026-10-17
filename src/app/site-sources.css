@@ -221,6 +221,7 @@
 @source "../lib/query-counter.ts";
 @source "../lib/rate-limit.ts";
 @source "../lib/recruiters.ts";
+@source "../lib/related-contacts.ts";
 @source "../lib/reminder-lists.ts";
 @source "../lib/report-error.ts";
 @source "../lib/safe-links.ts";

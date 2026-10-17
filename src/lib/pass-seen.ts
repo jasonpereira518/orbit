@@ -12,7 +12,9 @@
  */
 import type { PassStanding } from "./interest-list";
 
-const KEY = "waitlist-pass-seen";
+/** The localStorage key; also read by the inline script in `early-access-pill.tsx`. */
+export const PASS_SEEN_KEY = "waitlist-pass-seen";
+const KEY = PASS_SEEN_KEY;
 
 type Stored = PassStanding & { token: string };
 
