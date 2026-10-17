@@ -82,25 +82,31 @@ So the CI `known-bugs` job is green while the documented bugs stay exactly as do
 goes red the moment one is fixed — which is when the test should be promoted, so it then guards
 against a regression.
 
-The current list, with severity and file references, is in each script's header and is summarised
-in the table below.
+There are no open known bugs. The first fourteen, found when this suite was set up, were all
+fixed and their scripts promoted to ordinary regression smokes (the bug tier is empty, so
+`test:bugs` passes trivially until the next one is filed):
 
-| Script | Severity | Defect |
+| Regression smoke (was `smoke-bug-…`) | Was | Defect fixed |
 |---|---|---|
-| `smoke-bug-merge-drops-children` | high | Merging contacts cascade-deletes the loser's opportunities and job matches and unlinks its pending send drafts; unmerge cannot restore them (`src/lib/contact-merge.ts` REPOINTED_TABLES). Reached by the automatic duplicate sweep too. |
-| `smoke-bug-gmail-401-swallowed` | high | The Gmail recruiter scan treats a revoked token (401) as "no messages": every sender is rejected, the watermark advances, and no reconnect prompt appears (`src/lib/gmail.ts` fetchGmailMessages). |
-| `smoke-bug-linkedin-slug` | medium | Two different people given the same non-profile LinkedIn URL (a company page) auto-merge at 0.98: `linkedinSlug()` disagrees with the `linkedin_slug` column (`src/lib/duplicates.ts:83`). |
-| `smoke-bug-stripe-revocation-regrant` | medium | After a full refund drops an account to Free, a delayed older `subscription.updated` or a newer `subscription.deleted` puts it back on a paid plan (`src/lib/stripe-fulfilment.ts`, no `eventAt` on revocation). |
-| `smoke-bug-admin-export-formula` | medium | The admin CSV export writes user-typed `=`/`@` text (waitlist names, referrer, feedback) as live spreadsheet formulas (`src/app/api/admin/export/route.ts`, no `escapeFormulae`). |
-| `smoke-bug-relationship-trivial-excerpt` | medium | The relationship engine accepts a two-letter excerpt ("ok", matching inside "Looking") as evidence, so an invented fact or commitment is written to the contact (`src/lib/relationship-engine/validate.ts`). |
-| `smoke-bug-llm-truncated-json-accepted` | medium | A truncated model answer is repaired and accepted as success, e.g. a captured person named "Gra" (`src/lib/ai.ts` parseAiJson / completeJson ignore the providers' max-tokens signal). |
-| `smoke-bug-graph-nextlink-token-leak` | medium | Microsoft calendar, contacts and mail follow `nextLink`/`deltaLink`/`skipToken` to any host with the user's Graph bearer token; `cloud-files.ts` already guards this with `assertGraphUrl`. Defence in depth. |
-| `smoke-bug-graph-sync-resilience` | medium | Graph calendar fetches have no timeout, and calendar/contacts sync treat 429/503 as failures (six of them disable the connection) instead of retrying. |
-| `smoke-bug-cloud-notes-dead-cursor` | medium | Cloud notes replays a dead OneDrive (410 resyncRequired) or Drive (invalid page token) cursor forever, so the drive is never scanned again. |
-| `smoke-bug-merge-email-sends` | medium | Merging does not rewrite `email_sends.contact_ids`: a queued or failed send to the loser vanishes from the winner and its interaction is never logged. |
-| `smoke-bug-contact-delete-ghost-suggestion` | medium | The notifications panel keeps AI suggestions about a deleted contact, linking to a 404 (`src/lib/notification-panel.ts`). |
-| `smoke-bug-stripe-deleted-account-resurrect` | low | Deleting an account cancels its subscription, and Stripe's resulting webhook re-creates the deleted user's `user_settings` row (removed by the orphan sweep a week later). |
-| `smoke-bug-credit-period-overflow` | low | With no recorded period start, a credit period ending on the 29th–31st can start after now, so the monthly allowance reads as 0 spendable for up to ~4 days (`src/lib/credits/ledger.ts` minusOneMonth). |
+| `smoke-merge-children` | high | Merge cascade-deleted the loser's opportunities and job matches and unlinked its send drafts; unmerge could not restore them. |
+| `smoke-gmail-401-reauth` | high | The Gmail recruiter scan read a revoked token as "no messages" and advanced its watermark with no reconnect prompt. |
+| `smoke-linkedin-slug` | medium | Two different people sharing a company-page LinkedIn URL auto-merged. |
+| `smoke-stripe-revocation-regrant` | medium | After a full refund, a delayed older update or a newer delete re-granted the paid plan. |
+| `smoke-admin-export-formula` | medium | The admin CSV export wrote user-typed `=`/`@` text as live formulas. |
+| `smoke-relationship-trivial-excerpt` | medium | A two-letter excerpt was accepted as evidence for a fact or commitment. |
+| `smoke-llm-truncated-json` | medium | A provider-truncated answer was repaired and accepted as success. |
+| `smoke-graph-nextlink-guard` | medium | Graph page/delta links were followed to any host with the bearer token. |
+| `smoke-graph-sync-resilience` | medium | Graph calendar had no timeout; calendar/contacts did not retry 429/503. |
+| `smoke-cloud-notes-dead-cursor` | medium | A dead OneDrive/Drive change cursor was replayed forever. |
+| `smoke-merge-email-sends` | medium | Merge left `email_sends.contact_ids` pointing at the loser. |
+| `smoke-contact-delete-ghost-suggestion` | medium | Notifications kept AI suggestions about deleted contacts. |
+| `smoke-stripe-deleted-account-resurrect` | low | Stripe's webhook after account deletion re-created the settings row. |
+| `smoke-credit-period-overflow` | low | A credit period with no recorded start could begin after now. |
+
+Follow-ups the fixes left: Gmail scans that completed under the 401 bug need a manual rescan
+(they cannot be told apart); `contact_identities` rows holding a full LinkedIn URL as a slug are
+inert and drop on the next identity sync; an opportunity re-extracted onto a merged winner can
+duplicate rather than dedupe (its `item_hash` used the loser's id).
 
 ## Coverage
 
