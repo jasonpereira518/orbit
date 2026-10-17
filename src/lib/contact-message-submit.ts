@@ -13,6 +13,7 @@ import { withReference } from "@/lib/errors";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { reportError } from "@/lib/report-error";
 import { ipBucketKey } from "@/lib/client-ip";
+import { withEmailDeadline } from "@/lib/email-deadline";
 
 export type ContactMail = { from: string; to: string; replyTo: string; subject: string; text: string };
 export type ContactSender = (apiKey: string, mail: ContactMail) => Promise<{ error: unknown }>;
@@ -20,7 +21,7 @@ export type ContactSender = (apiKey: string, mail: ContactMail) => Promise<{ err
 const resendSender: ContactSender = async (apiKey, mail) => {
   // Loaded on send: the Resend SDK has no business in a cold start that sends nothing.
   const { Resend } = await import("resend");
-  const { error } = await new Resend(apiKey).emails.send(mail);
+  const { error } = await withEmailDeadline(new Resend(apiKey).emails.send(mail));
   return { error: error ?? null };
 };
 

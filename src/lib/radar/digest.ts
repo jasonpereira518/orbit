@@ -31,6 +31,7 @@ import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { isValidTimeZone } from "@/lib/reminder-due-bucket";
 import { buildRadarDigestEmail, type DigestContent } from "@/lib/radar/digest-email";
 import { leadReason, type RadarReason, type RecommendationKind } from "@/lib/radar/types";
+import { withEmailDeadline } from "@/lib/email-deadline";
 
 /** People shown in the email; the rest are counted. */
 export const RADAR_DIGEST_TOP = 5;
@@ -204,7 +205,7 @@ const resendDeliver: DigestDeliver = async (message) => {
   try {
     // Loaded on send: the SDK stays off every cold start that sends nothing.
     const { Resend } = await import("resend");
-    const { error } = await new Resend(apiKey).emails.send({
+    const { error } = await withEmailDeadline(new Resend(apiKey).emails.send({
       from,
       to: message.to,
       subject: message.subject,
@@ -214,7 +215,7 @@ const resendDeliver: DigestDeliver = async (message) => {
         "List-Unsubscribe": `<${message.unsubscribeUrl}>`,
         "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
       },
-    });
+    }));
     return error ? { ok: false, error: error.message } : { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : "Send threw." };

@@ -9,6 +9,7 @@ import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { escapeHtml } from "@/lib/interest-list-email";
 import { PLAN_CONFIG, PLAN_LABELS, type Plan } from "@/lib/plans/plan-config";
 import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_CENTS } from "@/lib/stripe-config";
+import { withEmailDeadline } from "@/lib/email-deadline";
 
 /**
  * The emails at 80% and 100% of an account's monthly AI credits (pricing v2). The in-app
@@ -185,7 +186,7 @@ const resendDeliver: CreditEmailDeliver = async (message) => {
   if (!apiKey || !from) return { ok: false, error: "Resend is not configured." };
   try {
     const { Resend } = await import("resend");
-    const { error } = await new Resend(apiKey).emails.send({
+    const { error } = await withEmailDeadline(new Resend(apiKey).emails.send({
       from,
       to: message.to,
       subject: message.subject,
@@ -195,7 +196,7 @@ const resendDeliver: CreditEmailDeliver = async (message) => {
         "List-Unsubscribe": `<${message.unsubscribeUrl}>`,
         "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
       },
-    });
+    }));
     return error ? { ok: false, error: error.message } : { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : "Send threw." };

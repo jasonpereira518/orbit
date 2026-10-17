@@ -256,11 +256,40 @@ function decodeXmlEntities(text: string): string {
   });
 }
 
+/**
+ * The most a .docx's document.xml may inflate to. A few MB of real prose is a few hundred
+ * thousand characters (the char cap below is far lower); a zip bomb is a tiny file that
+ * inflates to gigabytes inside a function that other people's requests share.
+ */
+const MAX_DOCX_XML_BYTES = 20 * 1024 * 1024;
+
+/** Inflate a zip entry as a stream, stopping at `maxBytes` instead of materialising it all. */
+async function readEntryCapped(entry: JSZip.JSZipObject, maxBytes: number): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    const stream = entry.nodeStream("nodebuffer");
+    stream.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        stream.pause();
+        stream.removeAllListeners("data");
+        reject(new DriveFileTooLargeError());
+        return;
+      }
+      chunks.push(chunk);
+    });
+    stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    stream.on("error", reject);
+  });
+}
+
 /** A .docx's body as plain text: paragraphs become lines, tabs and breaks survive. */
 export async function docxToText(data: ArrayBuffer | Uint8Array): Promise<string> {
   const zip = await JSZip.loadAsync(data);
-  const xml = await zip.file("word/document.xml")?.async("string");
-  if (xml === undefined) throw new DriveFileUnavailableError();
+  const entry = zip.file("word/document.xml");
+  if (!entry) throw new DriveFileUnavailableError();
+  const xml = await readEntryCapped(entry, MAX_DOCX_XML_BYTES);
   const text = xml
     .replace(/<w:tab\/>/g, "\t")
     .replace(/<w:br\/>|<w:cr\/>/g, "\n")
@@ -288,7 +317,12 @@ export async function readFileText(ctx: CloudCtx, provider: CloudProvider, file:
   if (Number.isFinite(declared) && declared > MAX_ONEDRIVE_BYTES) throw new DriveFileTooLargeError();
   const lower = file.name.toLowerCase();
   let text: string;
-  if (lower.endsWith(".docx")) text = await docxToText(await res.arrayBuffer());
+  if (lower.endsWith(".docx")) {
+    const bytes = await res.arrayBuffer();
+    // The declared length is optional (chunked responses carry none), so check what arrived.
+    if (bytes.byteLength > MAX_ONEDRIVE_BYTES) throw new DriveFileTooLargeError();
+    text = await docxToText(bytes);
+  }
   else if (lower.endsWith(".vtt")) text = vttToText(await res.text());
   else text = await res.text();
   text = text.replace(/^﻿/, "");

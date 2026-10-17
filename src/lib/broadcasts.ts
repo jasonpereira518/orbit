@@ -19,6 +19,7 @@ import {
   waitlistReplyTo,
   waitlistSender,
 } from "@/lib/interest-list-email";
+import { withEmailDeadline } from "@/lib/email-deadline";
 
 /**
  * Operator-composed notes to the waitlist.
@@ -186,7 +187,7 @@ async function deliver(input: {
     // Loaded on send, inside the same try: the SDK stays off cold starts that send nothing.
     const { Resend } = await import("resend");
     const resend = new Resend(apiKey);
-    const { error } = await resend.emails.send({
+    const { error } = await withEmailDeadline(resend.emails.send({
       from,
       to: input.to,
       subject: input.subject,
@@ -197,7 +198,7 @@ async function deliver(input: {
         "List-Unsubscribe": `<${input.unsubscribeUrl}>`,
         "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
       },
-    });
+    }));
     if (error) return { ok: false, error: error.message };
     return { ok: true };
   } catch (err) {

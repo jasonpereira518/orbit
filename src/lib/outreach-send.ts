@@ -16,6 +16,7 @@ import { UserFacingError } from "@/lib/errors";
 import { isPlaceholderAddress, PLACEHOLDER_ADDRESS_SEND_MESSAGE } from "@/lib/outreach-quality";
 import { outreachEmailPayload } from "@/lib/outreach-email";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
+import { withEmailDeadline } from "@/lib/email-deadline";
 
 export async function getOutreachSendConfig(
   userId: string,
@@ -159,7 +160,7 @@ export async function sendOutreachMessage(input: {
     // that can reach an outreach action, and only an actual email send needs the SDK.
     const { Resend } = await import("resend");
     const resend = new Resend(config.resendApiKey);
-    const result = await resend.emails.send(
+    const result = await withEmailDeadline(resend.emails.send(
       outreachEmailPayload({
         from,
         to: input.toEmail,
@@ -168,7 +169,7 @@ export async function sendOutreachMessage(input: {
         replyTo: config.replyTo,
       }),
       input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : undefined
-    );
+    ));
 
     if (result.error) {
       if (config.resendKeyOwner === "orbit") {

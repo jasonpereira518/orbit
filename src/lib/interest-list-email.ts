@@ -18,6 +18,7 @@ export {
   planetForSignupNumber,
   type WelcomePlanet,
 } from "@/lib/welcome-planets";
+import { withEmailDeadline } from "@/lib/email-deadline";
 
 /** The two personal links a signup gets once it has a share token. */
 export type EmailLinks = { ticketUrl: string; shareUrl: string };
@@ -472,7 +473,7 @@ async function deliver(
     // Loaded on send, inside the same try: the SDK stays off cold starts that send nothing.
     const { Resend } = await import("resend");
     const resend = new Resend(apiKey);
-    const { error } = await resend.emails.send({
+    const { error } = await withEmailDeadline(resend.emails.send({
       from,
       to: email,
       subject: message.subject,
@@ -488,7 +489,7 @@ async function deliver(
         "List-Unsubscribe": `<${unsubscribeUrl}>`,
         "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
       },
-    });
+    }));
     if (error) {
       console.error(`[interest-list] Resend rejected the ${kind} email`, error);
       await recordErrorEvent({

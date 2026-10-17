@@ -3,6 +3,7 @@ import { getAppBaseUrl } from "@/lib/app-url";
 import { ACCENT, BG, FAINT, FONT_STACK, MUTED, TEXT, escapeHtml } from "@/lib/interest-list-email";
 import { PLAN_LABELS } from "@/lib/plans/plan-config";
 import type { WelcomePlanet } from "@/lib/welcome-planets";
+import { withEmailDeadline } from "@/lib/email-deadline";
 
 /**
  * The admin invitation, as a boarding pass: the email that turns a waitlist wait into an
@@ -287,7 +288,7 @@ export async function sendSiteInviteEmail(
 
   try {
     const { Resend } = await import("resend");
-    const { error } = await new Resend(apiKey).emails.send({
+    const { error } = await withEmailDeadline(new Resend(apiKey).emails.send({
       from,
       to,
       subject: message.subject,
@@ -295,7 +296,7 @@ export async function sendSiteInviteEmail(
       text: message.text,
       // Signed "— Jason", so a reply should reach him rather than a no-reply box.
       replyTo: process.env.WAITLIST_REPLY_TO?.trim() || undefined,
-    });
+    }));
     if (error) {
       console.error("[site-invites] Resend rejected the invitation email", error);
       await recordErrorEvent({
