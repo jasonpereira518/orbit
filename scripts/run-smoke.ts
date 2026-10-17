@@ -135,6 +135,11 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-commands": "pure",
   "smoke-chat-refine": "pure",
   "smoke-cross-tenant-refs": "pglite",
+  "smoke-tenant-isolation": "pglite", // every id-taking tool and the v1 API, called with another account's ids
+  "smoke-extension-auth": "pglite",
+  "smoke-resend-signature": "pglite",
+  "smoke-cron-gates": "pglite", // every public route has a gate; every cron route answers 401 unauthenticated
+  "smoke-token-routes": "pglite",
   "smoke-draft-follow-up-result": "pglite",
   "smoke-relationship-schema": "pglite",
   "smoke-ai-guardrails": "pglite",
