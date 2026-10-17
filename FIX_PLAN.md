@@ -8,6 +8,8 @@ Effort: **S** = under half a day, **M** = one to two days, **L** = three days or
 
 ## Phase 1 — Critical and high security issues
 
+**Status (2026-10-17): implemented on `claude/trusting-wozniak-ebsks3` with the recommended options** — `options` removed from the contact actions (1.1), aborted managed streams settle at the hold estimate (1.2), recurrence bounded with a 1,000 `INTERVAL` ceiling and a fixed-period jump (1.3), `imports.claim_token`/`lease_until` lease at schema version 171 (1.4), `note_batches` status `saving`/`saved`/`failed` with a resumable save (1.5), scope-less MCP OAuth tokens read-only (1.6), `PRODUCTION_DB_HOST` required in preview with test-key assertions (1.7). Each ships with the regression test named below; the matching `stress-tests/` proofs now print `ok`. Two dashboard steps remain yours: set `PRODUCTION_DB_HOST` on every Vercel environment before the next preview build (it now fails without it), and define the `orbit:read`/`orbit:write` scopes in Clerk before setting `MCP_OAUTH_REQUIRE_SCOPES=1`.
+
 Ship these first, in this order. Each is independent except where noted.
 
 ### 1.1 H-01 Stop accepting `options` from clients on contact actions

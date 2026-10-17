@@ -21,6 +21,8 @@ What this audit found is one layer down from tenancy: **business-rule and integr
 
 Counts: **5 High, 18 Medium, 26 Low** security and integrity findings; **13 edge-case failures** demonstrated by the stress tests, of which 11 overlap with findings above.
 
+**Update 2026-10-17:** Phase 1 of `FIX_PLAN.md` is implemented on this branch — H-01 through H-05, M-06 and M-17 are fixed, each pinned by a smoke test, and the corresponding `stress-tests/` proofs (AZ-OPT-1, REC-3, DI-IMPORT-DOUBLE, DI-CAPTURE-PARTIAL) now print `ok`. The findings below are kept as written so the evidence stays with the report.
+
 ---
 
 ## 1. Method

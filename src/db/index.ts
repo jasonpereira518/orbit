@@ -449,6 +449,8 @@ CREATE TABLE IF NOT EXISTS imports (
   stall_resumes integer NOT NULL DEFAULT 0,
   reverted_at timestamptz,
   revert_stats jsonb,
+  claim_token text,
+  lease_until timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -2720,7 +2722,11 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // and its briefs live in ai_result_cache, read back by key. The table was a day old (v169) and
 // held only cached web lookups. Rescanned every ref and worktree on Oct 15 2026: 169 was the
 // highest claimed anywhere.
-export const SCHEMA_VERSION = 170;
+//
+// 171 = imports.claim_token + imports.lease_until: the import runner's lease, so the stall
+// backstop or an admin retry can never run a second runner beside a live one (audit H-04).
+// Rescanned every local and remote ref on Oct 17 2026: 170 was the highest claimed anywhere.
+export const SCHEMA_VERSION = 171;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -4397,6 +4403,9 @@ const alters = [
   `ALTER TABLE import_job_rows ADD COLUMN IF NOT EXISTS revert_snapshot jsonb`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS reverted_at timestamptz`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS revert_stats jsonb`,
+  // v171: the import runner's lease (audit H-04). See `imports.claimToken` in schema.ts.
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS claim_token text`,
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS lease_until timestamptz`,
   // Partial: the overwhelming majority of interactions and reminders are hand-made and
   // carry NULL here, and the only query that reads the column asks for one import's rows.
   `CREATE INDEX IF NOT EXISTS interactions_import_idx ON interactions(import_id) WHERE import_id IS NOT NULL`,

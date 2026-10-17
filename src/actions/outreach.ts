@@ -11,7 +11,8 @@ import {
   type AudienceFilters,
   type OutreachSequenceStep,
 } from "@/db/schema";
-import { createContact, logInteraction } from "@/actions/contacts";
+import { logInteraction } from "@/actions/contacts";
+import { resolveOrCreateContact } from "@/lib/contact-resolve";
 import { listActiveGoalTexts } from "@/actions/goals";
 import {
   companyMatchesOrganizations,
@@ -1527,7 +1528,11 @@ export async function saveProspectAsContact(input: {
     }
   }
 
-  const contact = await createContact(
+  // The lib resolver, not the `createContact` action: actions no longer take write options
+  // from their caller (audit H-01), and this server-side path legitimately skips the
+  // per-write revalidation because it revalidates the campaign itself below.
+  const { contactId } = await resolveOrCreateContact(
+    userId,
     {
       fullName: prospect.fullName,
       title: prospect.title ?? undefined,
@@ -1541,6 +1546,7 @@ export async function saveProspectAsContact(input: {
     },
     { skipRevalidate: true }
   );
+  const contact = { id: contactId };
 
   await db
     .update(outreachProspects)

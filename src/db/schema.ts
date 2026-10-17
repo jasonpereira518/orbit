@@ -1327,7 +1327,12 @@ export const noteBatches = pgTable(
     /** The date relative phrases were counted from. */
     anchorDate: timestamp("anchor_date", { withTimezone: true }).notNull(),
     anchorBasis: text("anchor_basis").$type<"note" | "hint" | "upload">().default("upload").notNull(),
-    status: text("status").$type<"saved" | "undone">().default("saved").notNull(),
+    /**
+     * `saving` while a runner writes it, `saved` once every step landed, `failed` when an
+     * attempt threw (`result` holds what landed; `saveNoteBatch` can resume it), `undone`
+     * after the person reverted it. Readers that mean "a finished capture" ask for `saved`.
+     */
+    status: text("status").$type<"saving" | "saved" | "failed" | "undone">().default("saved").notNull(),
     result: jsonb("result").$type<NoteBatchResult>().notNull(),
     /**
      * How the notes got in — typed, voice, photos, a calendar invite, an email. Only ever a
@@ -2094,6 +2099,15 @@ export const imports = pgTable("imports", {
   revertedAt: timestamp("reverted_at", { withTimezone: true }),
   /** What the revert actually managed to undo — see `ImportRevertStats`. */
   revertStats: jsonb("revert_stats").$type<ImportRevertStats>(),
+  /**
+   * The runner that currently owns this job, and until when. `runImportJob` claims the row
+   * before it touches a chunk and renews the lease per chunk; a second runner (the stall
+   * backstop, an admin retry, a duplicate continuation kick) finds a live lease and leaves.
+   * Without this, two invocations re-claimed the same `processing` rows and every name-only
+   * row was created twice (audit H-04). Same shape as `capture_jobs.claim_token`.
+   */
+  claimToken: text("claim_token"),
+  leaseUntil: timestamp("lease_until", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });

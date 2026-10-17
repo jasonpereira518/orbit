@@ -175,15 +175,18 @@ run(async () => {
 
   console.log("\nClient-controlled write options...");
   {
-    // `ContactWriteOptions.entitlements` is accepted straight through the server action's
-    // `options` parameter: createContact(input, options) → createContactForUser(userId, input, options)
-    const forged = { plan: "max", contactLimit: null, canUseApi: true, canUseMcp: true } as never;
-    const r = await rejects(() => createContactForUser(USER, { fullName: "Forged Entitlements" }, { entitlements: forged, skipEmbedding: true, skipRevalidate: true, skipSummary: true }));
+    // The lib function accepts `entitlements` by design (server callers resolve it once).
+    // What must NOT exist is a public action that forwards a caller's `options` to it, which
+    // is a static property of src/actions/contacts.ts — checked here the way the smoke
+    // (`scripts/smoke-action-user-scope.ts`) checks every action.
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("src/actions/contacts.ts", "utf8");
+    const forwards = /export async function (createContact|createContactDetailed|updateContact|createContactsBulk)\([^)]*options\??:/.test(src);
     finding(
       "AZ-OPT-1",
-      "createContactForUser does not accept caller-supplied `entitlements` (a client can pass `options` to the createContact server action)",
-      r.threw,
-      r.threw ? errorText(r.error) : "forged entitlements object was used for the headroom check"
+      "no contact server action accepts a caller-supplied `options` (entitlements/headroom) parameter",
+      !forwards,
+      forwards ? "an action still forwards client options to the write layer" : "actions build their options server-side"
     );
   }
 

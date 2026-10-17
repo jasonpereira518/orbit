@@ -43,6 +43,7 @@ import {
   PLAN_LIMIT_ROW_REASON,
 } from "../src/lib/import-job-processor";
 import { runImportJobById } from "../src/lib/import-job-dispatch";
+import { IMPORT_LEASE_MS, claimImportJob, releaseImportClaim } from "../src/lib/import-engine";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { previewUndo } from "../src/lib/imports/import-undo";
 
@@ -1353,6 +1354,53 @@ async function main() {
     (remindersAgain?.value ?? 0) === 1,
     `rows ${remindersAgain?.value}`
   );
+
+  // --- two runners on one job (audit H-04): the lease makes the second a no-op ---
+  // The stall backstop, a duplicate continuation kick and an admin retry all reach
+  // `runImportJob`. Before the lease, each re-claimed the `processing` rows the live runner
+  // was still writing, and every name-only row (nothing for the duplicate index to key on)
+  // was created twice while the counters were written back as absolutes by whichever runner
+  // finished last.
+  await reset();
+  const nameOnly = Array.from({ length: 40 }, (_, i) => ({
+    index: i,
+    firstName: `Only${i}`,
+    lastName: `Name${i}`,
+    email: "",
+    company: "",
+    position: "",
+    connectedOn: "15 Mar 2024",
+    url: "",
+  }));
+  id = await seedJob(nameOnly);
+  await Promise.all([runJob(id), runJob(id)]);
+  out = await outcome(id);
+  const db7 = await getDb();
+  const [nameOnlyRows] = await db7.select({ value: count() }).from(contacts).where(eq(contacts.userId, USER));
+  check("two overlapping runners create each name-only person exactly once", (nameOnlyRows?.value ?? 0) === 40, `rows ${nameOnlyRows?.value}`);
+  check("the counters describe one run, not two", out.status === "completed" && out.created === 40 && out.rowsProcessed === 40, JSON.stringify(out));
+  const leased = await db7.query.imports.findFirst({ where: eq(imports.id, id) });
+  check("a completed job holds no lease", leased?.claimToken === null && leased?.leaseUntil === null);
+
+  // --- the lease itself: live is exclusive, expired is taken over, released is free ---
+  id = await seedJob(fixture(3));
+  const held = await claimImportJob(id);
+  check("a processing job can be claimed", typeof held === "string");
+  check("a second claim against a live lease is refused", (await claimImportJob(id)) === null);
+  check(
+    "an expired lease is taken over",
+    typeof (await claimImportJob(id, { now: new Date(Date.now() + IMPORT_LEASE_MS + 1) })) === "string"
+  );
+  const fresh2 = await claimImportJob(id);
+  check("…and the takeover holds it against the next claim", fresh2 === null);
+  const current = await db7.query.imports.findFirst({ where: eq(imports.id, id) });
+  await releaseImportClaim(id, current!.claimToken!);
+  check("a released job is claimable again", typeof (await claimImportJob(id)) === "string");
+  check("the stale token cannot release the new holder's lease", await (async () => {
+    await releaseImportClaim(id, "not-the-token");
+    const row = await db7.query.imports.findFirst({ where: eq(imports.id, id) });
+    return row?.claimToken !== null;
+  })());
 
   await reset();
   const db = await getDb();

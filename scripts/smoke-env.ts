@@ -143,12 +143,33 @@ function main() {
       r.errors.length === 0 && r.warnings.some((w) => w.startsWith(name)), r.errors.join("; "));
   }
 
-  const preview = validateEnv(
-    { DATABASE_URL: GOOD.DATABASE_URL, NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_x", CLERK_SECRET_KEY: "sk_test_x", ENCRYPTION_SECRET: GOOD.ENCRYPTION_SECRET },
-    { vercelEnv: "preview" }
-  );
-  check("preview needs only DB, Clerk and encryption", preview.errors.length === 0, preview.errors.join("; "));
+  const PREVIEW_GOOD: Record<string, string> = {
+    DATABASE_URL: "postgresql://user:pass@ep-branch-9999.us-east-1.aws.neon.tech/neondb?sslmode=require",
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_x",
+    CLERK_SECRET_KEY: "sk_test_x",
+    ENCRYPTION_SECRET: GOOD.ENCRYPTION_SECRET,
+    PRODUCTION_DB_HOST: "ep-x.us-east-1.aws.neon.tech",
+  };
+  const prev = (over: Record<string, string | undefined>) =>
+    validateEnv({ ...PREVIEW_GOOD, ...over }, { vercelEnv: "preview" });
+  const preview = prev({});
+  check("preview needs only DB, Clerk, encryption and the production host", preview.errors.length === 0, preview.errors.join("; "));
   check("preview accepts test-mode keys", !preview.errors.some((e) => e.includes("pk_test")));
+  check("preview without PRODUCTION_DB_HOST is an error (the migration guard must be armed)",
+    prev({ PRODUCTION_DB_HOST: undefined }).errors.some((e) => e.includes("PRODUCTION_DB_HOST")));
+  check("preview refuses a live Clerk publishable key",
+    prev({ NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_live_x" }).errors.some((e) => e.includes("pk_test_")));
+  check("preview refuses a live Clerk secret key",
+    prev({ CLERK_SECRET_KEY: "sk_live_x" }).errors.some((e) => e.includes("CLERK_SECRET_KEY")));
+  check("preview refuses a live Stripe key",
+    prev({ STRIPE_SECRET_KEY: "sk_live_x" }).errors.some((e) => e.includes("STRIPE_SECRET_KEY")));
+  check("preview accepts a test Stripe key", prev({ STRIPE_SECRET_KEY: "sk_test_x" }).errors.length === 0);
+  check("preview refuses the showcase account when pointed at production",
+    prev({ DEMO_ACCOUNT_USER_ID: "user_demo", DATABASE_URL: GOOD.DATABASE_URL }).errors.some((e) => e.includes("DEMO_ACCOUNT_USER_ID")));
+  check("preview allows the showcase account on its own branch",
+    prev({ DEMO_ACCOUNT_USER_ID: "user_demo" }).errors.length === 0);
+  check("errors never include the preview secret values",
+    !prev({ CLERK_SECRET_KEY: "sk_live_SHOULDNOTAPPEAR" }).errors.join(" ").includes("SHOULDNOTAPPEAR"));
 
   const dev = validateEnv({}, { vercelEnv: undefined });
   check("local dev with nothing set has no errors", dev.errors.length === 0, dev.errors.join("; "));

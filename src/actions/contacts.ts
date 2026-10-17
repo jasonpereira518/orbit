@@ -28,14 +28,11 @@ import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { listActiveGoalTexts } from "@/actions/goals";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { settle, unwrap } from "@/lib/settled";
-import { type CompanyResolver } from "@/lib/companies";
 import {
-  createContactsBulkForUser,
   deleteInteractionForUser,
   logInteractionForUser,
   updateContactForUser,
   type ContactInput,
-  type ContactWriteOptions,
   type LogInteractionInput,
 } from "@/lib/contact-writes";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
@@ -681,12 +678,16 @@ function clientContactInput<T extends Partial<ContactInput>>(input: T): T {
  * Returns the contact that survives, which is not always the one that was inserted: if the
  * record's identifiers already belonged to someone, the data is folded into them and their
  * row comes back instead.
+ *
+ * NO `options` PARAMETER, deliberately. These actions are public POST endpoints, and
+ * `ContactWriteOptions` is a server-side contract: it carries `entitlements` and `headroom`
+ * (the plan cap's inputs) and the `skip*` flags bulk paths use. Accepting it from the caller
+ * let a browser POST `{ entitlements: { contactLimit: null } }` and add contacts past the
+ * free plan's limit (audit H-01). Server callers that need options use the `*ForUser`
+ * functions in `@/lib/contact-writes` directly.
  */
-export async function createContact(
-  input: ContactInput,
-  options?: ContactWriteOptions
-) {
-  const { contact } = await createContactDetailed(input, options);
+export async function createContact(input: ContactInput) {
+  const { contact } = await createContactDetailed(input);
   return contact;
 }
 
@@ -699,18 +700,14 @@ export async function createContact(
  * with the contact count unchanged and no way back. A caller with a human in front of it
  * needs to be able to say which of the two happened.
  *
- * Separate from `createContact` rather than a changed return type, so the importer and
- * outreach paths that only want the row keep working unchanged.
+ * Separate from `createContact` rather than a changed return type, so the outreach path
+ * that only wants the row keeps working unchanged.
  */
-export async function createContactDetailed(
-  input: ContactInput,
-  options?: ContactWriteOptions
-) {
+export async function createContactDetailed(input: ContactInput) {
   const userId = await requireUserId();
   const { contactId, outcome, reason } = await resolveOrCreateContact(
     userId,
-    clientContactInput(input),
-    options
+    clientContactInput(input)
   );
   const db = await getDb();
   const [contact] = await db
@@ -721,31 +718,13 @@ export async function createContactDetailed(
   return { contact, outcome, reason: reason ?? null };
 }
 
-/**
- * Bulk-create contacts in a single insert, using a preloaded `CompanyResolver`
- * (see `createCompanyResolver`) instead of a per-row company lookup, and a
- * single batched embedding pass instead of one embedding call per contact.
- * For bulk imports only — general callers should use `createContact`.
- */
-export async function createContactsBulk(
-  inputs: ContactInput[],
-  companyResolve: CompanyResolver,
-  options?: ContactWriteOptions
-) {
-  return createContactsBulkForUser(
-    await requireUserId(),
-    inputs.map(clientContactInput),
-    companyResolve,
-    options
-  );
-}
+// `createContactsBulk` used to be exported here. Bulk creation is an importer concern and
+// took a `CompanyResolver` (a function, which cannot cross the action boundary) plus the
+// same server-only `options` — so it was never callable from a browser on purpose, yet an
+// action id was still minted for it. Importers call `createContactsBulkForUser` directly.
 
-export async function updateContact(
-  id: string,
-  input: Partial<ContactInput>,
-  options?: ContactWriteOptions
-) {
-  return updateContactForUser(await requireUserId(), id, clientContactInput(input), options);
+export async function updateContact(id: string, input: Partial<ContactInput>) {
+  return updateContactForUser(await requireUserId(), id, clientContactInput(input));
 }
 
 /** Valid range for a user-supplied closeness rating (matches the 1–5 scale used throughout, e.g. contact-form.tsx's "Strength" field). */

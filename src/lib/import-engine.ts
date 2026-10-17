@@ -1,4 +1,5 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { recalibrateCloseness } from "@/lib/closeness-cohort";
 import { getDb, rowsOf } from "@/db";
@@ -497,6 +498,53 @@ function accumulatedStats(
  * every database statement, which is what keeps the round-trip budget a property of the
  * system rather than something each importer has to remember.
  */
+/**
+ * How long one runner owns a job between heartbeats. Renewed on every chunk, so it only has
+ * to outlast the longest single chunk (the per-invocation budget is 4.5 minutes, and a chunk
+ * is a fraction of that); well under the stall backstop's 6-minute threshold, so a runner
+ * that died mid-chunk is re-claimable by the time the backstop kicks.
+ */
+export const IMPORT_LEASE_MS = 5 * 60 * 1000;
+
+/**
+ * Take ownership of a `processing` job, or learn that another runner holds it.
+ *
+ * One statement: the WHERE is the whole decision. A live lease belongs to someone else and
+ * the caller leaves without touching a row; an expired one is a runner that died, and is
+ * taken over. The stall backstop, a duplicate self-continuation kick and an admin retry all
+ * reach `runImportJob`, and before this every one of them re-claimed the `processing` rows
+ * the live runner was still writing (audit H-04).
+ */
+export async function claimImportJob(
+  importId: string,
+  opts: { now?: Date; leaseMs?: number } = {}
+): Promise<string | null> {
+  const now = opts.now ?? new Date();
+  const token = randomUUID();
+  const db = await getDb();
+  const rows = await db
+    .update(imports)
+    .set({ claimToken: token, leaseUntil: new Date(now.getTime() + (opts.leaseMs ?? IMPORT_LEASE_MS)) })
+    .where(
+      and(
+        eq(imports.id, importId),
+        eq(imports.status, "processing"),
+        or(isNull(imports.leaseUntil), lt(imports.leaseUntil, now))
+      )
+    )
+    .returning();
+  return rows.length ? token : null;
+}
+
+/** Hand the job back: the next runner (a continuation, the backstop) may claim it at once. */
+export async function releaseImportClaim(importId: string, token: string): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(imports)
+    .set({ claimToken: null, leaseUntil: null })
+    .where(and(eq(imports.id, importId), eq(imports.claimToken, token)));
+}
+
 export async function runImportJob(importId: string): Promise<void> {
   const db = await getDb();
   const jobStart = Date.now();
@@ -531,6 +579,14 @@ export async function runImportJob(importId: string): Promise<void> {
     // pushed through a loop that has no idea what their payloads mean.
     const adapter = getAdapter(importRow.importType);
     if (!adapter) return;
+
+    // Claimed before any row is read. Null means another runner holds a live lease: this
+    // invocation was a duplicate kick, and the right thing is to do nothing at all.
+    const claimToken = await claimImportJob(importId);
+    if (!claimToken) return;
+    // Everything below writes under this token; a write that finds the token gone has lost
+    // the lease to a takeover (the runner went quiet past IMPORT_LEASE_MS) and must stop.
+    const stillHeld = (rows: unknown[]) => rows.length > 0;
     const createsContacts = adapter.createsContacts !== false;
     // See `ImportAdapter.matchConfidence`'s doc comment for why this floor is not always
     // `DUPLICATE_MERGE_CONFIDENCE`.
@@ -639,14 +695,20 @@ export async function runImportJob(importId: string): Promise<void> {
                 remindersCreated: remindersCreatedTotal,
               }),
               updatedAt: new Date(),
+              // Released in the same write: the continuation this schedules claims afresh.
+              claimToken: null,
+              leaseUntil: null,
             })
-            .where(eq(imports.id, importId));
+            .where(and(eq(imports.id, importId), eq(imports.claimToken, claimToken)));
           await scheduleContinuation(importId);
           return;
         }
 
         const current = await db.query.imports.findFirst({ where: eq(imports.id, importId) });
         if (!current || current.status !== "processing") return;
+        // Lost the lease: a takeover runner owns the rows now. Leave without a word — the
+        // takeover's claim means this runner was already judged dead.
+        if (current.claimToken !== claimToken) return;
         latestStats = current.stats ?? {};
 
         /**
@@ -1296,7 +1358,11 @@ export async function runImportJob(importId: string): Promise<void> {
         // re-claimed (and then counted once) on the next attempt.
         rowsProcessed += pendingRows.length;
 
-        await db
+        // The progress write doubles as the heartbeat: it renews the lease, and it lands only
+        // while this runner still holds the token. Zero rows means a takeover happened
+        // mid-chunk; the rows this chunk wrote are already terminal, so stopping here loses
+        // nothing the takeover will not re-read.
+        const progressed = await db
           .update(imports)
           .set({
             rowsProcessed,
@@ -1313,8 +1379,11 @@ export async function runImportJob(importId: string): Promise<void> {
             },
             errorMessage: null,
             updatedAt: new Date(),
+            leaseUntil: new Date(Date.now() + IMPORT_LEASE_MS),
           })
-          .where(eq(imports.id, importId));
+          .where(and(eq(imports.id, importId), eq(imports.claimToken, claimToken)))
+          .returning();
+        if (!stillHeld(progressed)) return;
       }
     } catch (err) {
       await failImport(
@@ -1335,6 +1404,8 @@ export async function runImportJob(importId: string): Promise<void> {
       .update(imports)
       .set({
         status: "completed",
+        claimToken: null,
+        leaseUntil: null,
         stats: {
           ...accumulatedStats(latestStats, jobStart, {
             skipped: skippedTotal,
@@ -1351,7 +1422,7 @@ export async function runImportJob(importId: string): Promise<void> {
         },
         updatedAt: new Date(),
       })
-      .where(eq(imports.id, importId));
+      .where(and(eq(imports.id, importId), eq(imports.claimToken, claimToken)));
 
     // The per-row confirm actions this engine replaced (Google/Outlook contacts, and before
     // them LinkedIn connections) each refreshed outreach suggestions once the import finished,
@@ -1442,6 +1513,9 @@ export async function failImport(
       status: "failed",
       errorMessage: withReference(truncateStoredError(message), ref),
       updatedAt: new Date(),
+      // A failed job holds no lease: the admin retry that follows must be able to claim it.
+      claimToken: null,
+      leaseUntil: null,
       // A jsonb merge rather than a partial `.set()`: the Gmail and Outlook scan runners share
       // this failure path and call the two-arg form, so `stats` is undefined for them — and
       // the error code still has to land without nulling whatever stats the row already had.

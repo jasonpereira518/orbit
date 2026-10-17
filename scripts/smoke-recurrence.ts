@@ -7,6 +7,7 @@
  * because `cal:<uid>` is already written on every interaction Orbit has ever ingested.
  */
 import {
+  MAX_INTERVAL,
   expandEvent,
   expandIcsEvents,
   isOccurrenceUid,
@@ -452,6 +453,54 @@ async function main() {
     seriesUidOf(occurrenceUid("u1", new Date("2026-03-10T13:00:00Z"))) === "u1"
   );
   check("seriesUidOf on the bare master uid is a no-op", seriesUidOf(every[0]!.uid) === "u1");
+
+  // --- Runaway rules (audit H-03): a feed is user-supplied text, and one hostile line must
+  //     not pin the sync worker. Every case below has a 2-second budget; the real bound is
+  //     MAX_INTERVAL in isSupportedRule plus arithmetic stepMonths, so these finish in ms. ---
+  const runawayMaster: ParsedCalendarEvent = {
+    uid: "runaway",
+    summary: "s",
+    description: "",
+    location: "",
+    start: new Date("2026-01-15T10:00:00Z"),
+    end: new Date("2026-01-15T11:00:00Z"),
+    attendees: [],
+    organizer: null,
+    timezone: "UTC",
+    rrule: null,
+    exDates: null,
+    recurrenceId: null,
+  } as ParsedCalendarEvent;
+  const window2026 = { from: new Date("2026-01-01"), to: new Date("2027-01-01") };
+  for (const rule of [
+    "FREQ=MONTHLY;INTERVAL=1000000000",
+    "FREQ=YEARLY;INTERVAL=999999999999",
+    "FREQ=DAILY;INTERVAL=1e300",
+    "FREQ=WEEKLY;BYDAY=MO;INTERVAL=1000000",
+    "FREQ=MONTHLY;BYMONTHDAY=31;INTERVAL=99999999",
+    "FREQ=MONTHLY;BYDAY=FR;BYSETPOS=-1;INTERVAL=99999999",
+  ]) {
+    const t0 = Date.now();
+    const out = expandEvent(runawayMaster, parseRRule(`RRULE:${rule}`), window2026);
+    const ms = Date.now() - t0;
+    check(`${rule} expands in under 2s (${ms}ms) and emits only the master`, ms < 2000 && out.length === 1 && out[0]!.uid === "runaway");
+  }
+  {
+    const t0 = Date.now();
+    const out = expandEvent(runawayMaster, parseRRule("RRULE:FREQ=MONTHLY;INTERVAL=1000"), window2026);
+    check(`INTERVAL=${MAX_INTERVAL} (the ceiling) still expands (${Date.now() - t0}ms)`, out.length === 1 && Date.now() - t0 < 2000);
+    const over = expandEvent(runawayMaster, parseRRule("RRULE:FREQ=MONTHLY;INTERVAL=1001"), window2026);
+    check("INTERVAL above the ceiling returns the master alone", over.length === 1 && over[0]!.uid === "runaway");
+  }
+  {
+    const t0 = Date.now();
+    const out = expandEvent(
+      { ...runawayMaster, start: new Date("1970-01-01T10:00:00Z"), end: new Date("1970-01-01T11:00:00Z") },
+      parseRRule("RRULE:FREQ=DAILY"),
+      { from: new Date("2100-01-01"), to: new Date("2100-02-01") }
+    );
+    check(`a 1970 DTSTART with a 2100 window gives up quickly (${Date.now() - t0}ms, ${out.length} rows)`, Date.now() - t0 < 2000);
+  }
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

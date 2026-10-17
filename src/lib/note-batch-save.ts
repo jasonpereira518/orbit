@@ -9,7 +9,7 @@
  *   undo          — marks reminders `dismissed`, never deletes, so the hash keeps blocking
  *   delete        — undo first, then the batch row itself; the hashes still block
  */
-import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { actionItems, captureJobs, contactOpportunities, contacts, ignoredPeople, interactionMentions, interactions, meetingSessions, noteBatches, reminders, type CaptureSourceKind, type NoteBatchMeeting, type NoteBatchResult, type ReminderActionKind, type ReminderOrigin } from "@/db/schema";
 import type { ParsedNote } from "@/lib/ai";
@@ -181,12 +181,33 @@ type ReminderDraft = {
   confidenceScore: number | null;
 };
 
-export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): Promise<SaveNoteBatchOutput> {
+export type SaveNoteBatchOptions = {
+  /**
+   * Pick up a batch whose previous attempt threw part-way (`status = "failed"`). The
+   * participants that already landed are skipped — their contacts and interactions exist —
+   * and every later step re-runs on its own idempotency keys. The batch row is reused, so
+   * the history shows one capture, not one per attempt. See `runSave` in
+   * `capture-job-runner.ts`.
+   */
+  resumeBatchId?: string;
+};
+
+export async function saveNoteBatch(
+  userId: string,
+  input: SaveNoteBatchInput,
+  opts: SaveNoteBatchOptions = {}
+): Promise<SaveNoteBatchOutput> {
   if (!input.meeting && !input.participants.length && !input.commitments.length) {
     throw new Error("Nothing to save");
   }
+  // Refused before anything is written. A nameless card that is not a merge used to throw
+  // from the middle of the loop below, leaving the people before it saved and the people
+  // after it lost — and the batch row already said "saved" (audit H-05).
+  for (const p of input.participants) {
+    if (!p.mergeContactId && !p.parsed.name?.trim()) throw new Error("A name is required to create a contact");
+  }
   const db = await getDb();
-  const result = emptyNoteBatchResult();
+  let result = emptyNoteBatchResult();
   // Counts only. The phrase list is review-screen copy that comes back from the client with
   // the save; the batch result has no use for it and should not store client strings.
   result.skipped = {
@@ -197,35 +218,60 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
   };
   if (input.meeting) result.meeting = input.meeting.summary;
   const anchor = isoDayToLocalNoon(input.anchorIso);
-  const [batch] = await db
-    .insert(noteBatches)
-    .values({
-      userId,
-      sourceHash: input.sourceHash,
-      sourceText: input.sourceText,
-      entryPoint: input.entryPoint,
-      seedContactId: input.seedContactId ?? null,
-      anchorDate: anchor,
-      anchorBasis: input.anchorBasis,
-      status: "saved",
-      result,
-      inputSources: input.inputSources ?? [],
-    })
-    .returning();
-  const batchId = batch.id;
 
-  let created = 0;
-  let updated = 0;
+  // The row is born `saving` and becomes `saved` only after the last step below. A reader
+  // that finds `saving` is looking at a runner mid-write; `failed` is an attempt that threw,
+  // with `result` holding exactly what landed.
+  let batchId: string;
+  let skipParticipants = 0;
+  if (opts.resumeBatchId) {
+    const prior = await db.query.noteBatches.findFirst({
+      where: and(eq(noteBatches.id, opts.resumeBatchId), eq(noteBatches.userId, userId)),
+    });
+    if (!prior || prior.status !== "failed") throw new Error("That capture cannot be resumed");
+    batchId = prior.id;
+    result = { ...emptyNoteBatchResult(), ...prior.result, skipped: result.skipped, meeting: result.meeting };
+    // Everything after the participant loop is rebuilt from scratch on its own keys.
+    result.mentions = [];
+    result.unresolvedMentions = [];
+    result.reminders = [];
+    skipParticipants = Math.min(result.participants.length, input.participants.length);
+    await db.update(noteBatches).set({ status: "saving" }).where(eq(noteBatches.id, batchId));
+  } else {
+    const [batch] = await db
+      .insert(noteBatches)
+      .values({
+        userId,
+        sourceHash: input.sourceHash,
+        sourceText: input.sourceText,
+        entryPoint: input.entryPoint,
+        seedContactId: input.seedContactId ?? null,
+        anchorDate: anchor,
+        anchorBasis: input.anchorBasis,
+        status: "saving",
+        result,
+        inputSources: input.inputSources ?? [],
+      })
+      .returning();
+    batchId = batch.id;
+  }
+
+  let created = result.participants.filter((p) => p.created).length;
+  let updated = result.participants.filter((p) => !p.created).length;
   let remindersCreated = 0;
-  const contactIds: string[] = [];
-  const interactionIdByContact = new Map<string, string>();
-  const contactIdByName = new Map<string, string>();
+  const contactIds: string[] = result.participants.map((p) => p.contactId);
+  const interactionIdByContact = new Map<string, string>(
+    result.participants.flatMap((p) => (p.interactionId ? [[p.contactId, p.interactionId] as const] : []))
+  );
+  const contactIdByName = new Map<string, string>(
+    result.participants.filter((p) => p.name && p.name !== "Unnamed").map((p) => [p.name.trim().toLowerCase(), p.contactId])
+  );
 
   const drafts: ReminderDraft[] = [];
 
   try {
     // 1. Participants → contacts + interactions.
-    for (const p of input.participants) {
+    for (const p of input.participants.slice(skipParticipants)) {
       const { parsed } = p;
       let contactId = p.mergeContactId || null;
       // A combined upload has one card per note, so the same new person can arrive twice.
@@ -429,6 +475,32 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
       }
     }
 
+    // 1a (resumed). The skipped participants' action items were written by the previous
+    //     attempt, but their window drafts lived only in that attempt's memory. Rebuilt here
+    //     from the rows, exactly as 1a builds them, so a resume reminds about the same things.
+    if (skipParticipants > 0) {
+      const priorInteractionIds = result.participants
+        .slice(0, skipParticipants)
+        .map((p) => p.interactionId)
+        .filter((id): id is string => Boolean(id));
+      const openItems = priorInteractionIds.length
+        ? await db
+            .select({ id: actionItems.id, text: actionItems.text, interactionId: actionItems.interactionId, contactId: actionItems.contactId })
+            .from(actionItems)
+            .where(and(eq(actionItems.userId, userId), inArray(actionItems.interactionId, priorInteractionIds), isNull(actionItems.reminderId)))
+        : [];
+      for (const item of openItems) {
+        if (!item.contactId) continue;
+        drafts.push({
+          contactId: item.contactId, sourceInteractionId: item.interactionId, title: item.text, description: null,
+          dueDate: windowDueDate(anchor), reminderType: "ai_suggested",
+          actionKind: inferReminderActionKind({ title: item.text, description: null, reminderType: "ai_suggested", contactId: item.contactId }),
+          dateBasis: "window", rawDatePhrase: null, sourceExcerpt: null, actionItemId: item.id,
+          origin: "explicit", confidenceScore: null,
+        });
+      }
+    }
+
     // 1b. Mentions → links on the nearest participant's interaction. A dates-only batch has
     //     no interaction to hang them on, so they stay in the result as unresolved.
     const participantIds = new Set(contactIds);
@@ -613,8 +685,14 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
         .onConflictDoNothing({ target: [reminders.userId, reminders.itemHash] })
         .returning();
       remindersCreated = inserted.length;
+      // A resumed save re-offers the drafts the failed attempt already inserted; the conflict
+      // on itemHash drops them from `inserted`, so the result would forget them. Fold the
+      // batch's existing rows back in so the result lists every reminder this capture made.
+      const landed = opts.resumeBatchId
+        ? await db.select().from(reminders).where(and(eq(reminders.userId, userId), eq(reminders.noteBatchId, batchId)))
+        : inserted;
       const reminderByActionItem = new Map<string, string>();
-      for (const r of inserted) {
+      for (const r of landed) {
         result.reminders.push({
           id: r.id, contactId: r.contactId, title: r.title, dueIso: isoDay(new Date(r.dueDate!)),
           dateBasis: (r.dateBasis ?? "window") as NoteBatchResult["reminders"][number]["dateBasis"],
@@ -642,10 +720,11 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
       }
     }
   } catch (err) {
-    // Persist what was written so the results page and undo can still see it.
+    // Persist what was written so the results page, undo and a resume can all see it — and
+    // say it failed, so nothing downstream mistakes a partial batch for a finished one.
     await db
       .update(noteBatches)
-      .set({ result })
+      .set({ result, status: "failed" })
       .where(eq(noteBatches.id, batchId))
       .catch(reportAndContinue({ where: "job.note-batch.persist-partial", userId, extra: { batchId } }, null));
     throw err;
@@ -664,7 +743,7 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
   if (needStamp.length) {
     await db.update(contacts).set({ embeddingStaleAt: new Date() }).where(and(eq(contacts.userId, userId), inArray(contacts.id, needStamp)));
   }
-  await db.update(noteBatches).set({ result }).where(eq(noteBatches.id, batchId));
+  await db.update(noteBatches).set({ result, status: "saved" }).where(eq(noteBatches.id, batchId));
   return { batchId, created, updated, contactIds, remindersCreated, result };
 }
 
