@@ -10,6 +10,7 @@ import type { PGlite } from "@electric-sql/pglite";
 import * as schema from "./schema";
 import { formatVectorLiteral } from "@/lib/pgvector";
 import { noteQuery } from "@/lib/query-counter";
+import { RELATED_SQL_LOWER } from "@/lib/related-contacts";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
@@ -2723,7 +2724,8 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 //
 // 171 = the performance pass (PERFORMANCE_AUDIT.md): indexes only — contacts_user_name_norm_idx,
 // contacts_unscored_idx, interactions_user_contact_date_idx, contact_career_moves_contact_fk_idx,
-// contacts_user_email_prefix_idx.
+// contacts_user_email_prefix_idx, the related-contacts corpus functions with
+// contacts_unusual_json_idx and contacts_related_corpus_trgm.
 // Rescanned every remote ref on Oct 17 2026: 170 was the highest claimed anywhere.
 export const SCHEMA_VERSION = 171;
 
@@ -2776,6 +2778,37 @@ async function storedLinkedinSlugExpression(run: StatementRunner): Promise<strin
  *
  * Ordering matters: generated columns before the indexes that read them.
  */
+/**
+ * IMMUTABLE wrappers for the related-contacts SQL (`src/actions/contacts.ts`), so it can be
+ * indexed. `orbit_related_corpus` is exactly the corpus `listRelatedContacts` lowers and
+ * LIKEs — pieces joined with a space, lowered with `RELATED_SQL_LOWER`, U+0130 expanded —
+ * and is built from that constant so the two cannot drift. `orbit_unusual_json_array` is
+ * `unusualJsonArraySql`. Immutable is true of both: no table, setting or time is read.
+ *
+ * The nested call is schema-qualified because index builds evaluate expressions with a
+ * restricted `search_path` (Postgres 17+): unqualified, `CREATE INDEX` fails with
+ * "function orbit_json_text(jsonb) does not exist".
+ */
+const RELATED_CORPUS_FUNCTIONS = [
+  `CREATE OR REPLACE FUNCTION orbit_json_text(j jsonb) RETURNS text
+     LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $f$
+     SELECT CASE WHEN jsonb_typeof(j) = 'array'
+       THEN coalesce((SELECT string_agg(t.e, ' ') FROM jsonb_array_elements_text(j) AS t(e)), '')
+       ELSE '' END $f$`,
+  `CREATE OR REPLACE FUNCTION orbit_related_corpus(a text, n text, kf jsonb, si jsonb) RETURNS text
+     LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $f$
+     SELECT replace(translate(
+       coalesce(a, '') || ' ' || coalesce(n, '') || ' ' || public.orbit_json_text(kf) || ' ' || public.orbit_json_text(si),
+       '${RELATED_SQL_LOWER.from}', '${RELATED_SQL_LOWER.to}'), chr(304), chr(105) || chr(775)) $f$`,
+  `CREATE OR REPLACE FUNCTION orbit_unusual_json_array(j jsonb) RETURNS boolean
+     LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $f$
+     SELECT CASE WHEN j IS NULL THEN false
+       WHEN jsonb_typeof(j) = 'null' THEN false
+       WHEN jsonb_typeof(j) <> 'array' THEN true
+       ELSE EXISTS (SELECT 1 FROM jsonb_array_elements(j) AS u(v) WHERE jsonb_typeof(u.v) NOT IN ('string', 'null'))
+     END $f$`,
+];
+
 export const SCALE_DDL: string[] = [
   // --- v62: meeting-notes workflow ---------------------------------------------------
   //
@@ -3258,6 +3291,15 @@ export const SCALE_DDL: string[] = [
   // non-C collation. Postgres 16, 100k contacts: 68 ms seq scan -> 0.06 ms.
   `CREATE INDEX IF NOT EXISTS contacts_user_email_prefix_idx
      ON contacts(user_id, lower(coalesce(email, '')) text_pattern_ops)`,
+  // Related contacts (`listRelatedContacts`) prefilter every contact's text for a mention of
+  // the source with a superset LIKE (see `mentionLikePatterns`). Written inline, that is a
+  // full scan that detoasts every note and summary on every profile view and hover prefetch:
+  // 11 s at 100k contacts on Postgres 16. These are the same expressions as IMMUTABLE
+  // functions, so they can be indexed (`contacts_related_corpus_trgm` in applyScaleSchema,
+  // and the partial index below), and the query's arms become index scans: 167 ms.
+  ...RELATED_CORPUS_FUNCTIONS,
+  `CREATE INDEX IF NOT EXISTS contacts_unusual_json_idx ON contacts(user_id)
+     WHERE orbit_unusual_json_array(key_facts) OR orbit_unusual_json_array(shared_interests)`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */
@@ -3332,6 +3374,22 @@ export async function applyScaleSchema(run: StatementRunner, failed?: SchemaFail
     globalForDb.orbitTrigram = true;
   } catch {
     globalForDb.orbitTrigram = false;
+  }
+
+  // The related-contacts mention prefilter (see RELATED_CORPUS_FUNCTIONS): LIKE '%name%' is
+  // only index-backed through trigrams. Its own guard, so a failure here cannot switch off
+  // trigram matching elsewhere; without it the query is still correct, just a full scan.
+  if (globalForDb.orbitTrigram) {
+    try {
+      await run(
+        `CREATE INDEX IF NOT EXISTS contacts_related_corpus_trgm ON contacts
+         USING gin(orbit_related_corpus(ai_summary, notes, key_facts, shared_interests) gin_trgm_ops)`
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (failed) failed.push({ statement: "CREATE INDEX contacts_related_corpus_trgm", message });
+      else console.error("[db] contacts_related_corpus_trgm failed\n", message);
+    }
   }
 
   // `contact_tags` has a surrogate primary key and no natural uniqueness, so a double write

@@ -78,7 +78,6 @@ import {
 import { reindexInteractionPassages } from "@/lib/memory-backfill";
 import { traced } from "@/lib/perf-trace";
 import {
-  RELATED_SQL_LOWER,
   findRelatedContacts,
   mentionLikePatterns,
   nameAliases,
@@ -1564,36 +1563,16 @@ export async function sendContactFollowUpEmail(
   return { ok: true, sendId: queued.id, sendAt: queued.sendAt.toISOString(), to: queued.to[0]! };
 }
 
-/**
- * A jsonb string-array column as the text of its elements joined by spaces ('' when it is
- * not an array). Null elements drop out, which only removes text the JS corpus renders as
- * "". Non-string elements are never trusted to render the way JS renders them — see
- * {@link unusualJsonArraySql}.
- */
-function jsonArrayTextSql(column: typeof contacts.keyFacts | typeof contacts.sharedInterests) {
-  return sql`(case when jsonb_typeof(${column}) = 'array'
-    then coalesce((select string_agg(t.e, ' ') from jsonb_array_elements_text(${column}) as t(e)), '')
-    else '' end)`;
-}
-
-/**
- * True when a jsonb column is anything but NULL / JSON null / an array of strings (and
- * nulls). JS spreads a string into characters, stringifies numbers its own way and throws
- * on an object, so such a row always gets its wide text fetched and goes through the JS
- * scoring exactly as it used to — including throwing where it used to throw. CASE, not OR,
- * so `jsonb_array_elements` is never evaluated on a scalar (which would raise).
- */
-function unusualJsonArraySql(column: typeof contacts.keyFacts | typeof contacts.sharedInterests) {
-  return sql`(case
-    when ${column} is null then false
-    when jsonb_typeof(${column}) = 'null' then false
-    when jsonb_typeof(${column}) <> 'array' then true
-    else exists (
-      select 1 from jsonb_array_elements(${column}) as u(v)
-       where jsonb_typeof(u.v) not in ('string', 'null')
-    )
-  end)`;
-}
+// The related-contacts SQL lives in two IMMUTABLE functions defined with the schema
+// (`RELATED_CORPUS_FUNCTIONS` in src/db/index.ts) so that it can be indexed:
+//   - orbit_related_corpus(ai_summary, notes, key_facts, shared_interests): the corpus the
+//     mention prefilter LIKEs, lowered with RELATED_SQL_LOWER. A jsonb string array becomes
+//     its elements joined by spaces ('' when it is not an array); null elements drop out,
+//     which only removes text the JS corpus renders as "".
+//   - orbit_unusual_json_array(jsonb): true when the column is anything but NULL / JSON null
+//     / an array of strings (and nulls). JS spreads a string into characters, stringifies
+//     numbers its own way and throws on an object, so such a row always gets its wide text
+//     fetched and goes through the JS scoring exactly as it used to.
 
 /**
  * Contacts related by company, school, howMet, mentions, tags, or interests.
@@ -1756,18 +1735,30 @@ export async function listRelatedContacts(
       : [];
 
   const patterns = mentionLikePatterns(nameAliases(sourceNarrow));
-  // `RELATED_SQL_LOWER` + U+0130 → "i" U+0307: the JS lowering at every position that
-  // matters to an ASCII match. See `mentionLikePatterns` for why this is exact enough.
-  const lowered = (text: ReturnType<typeof sql>) =>
-    sql`replace(translate(${text}, ${RELATED_SQL_LOWER.from}::text, ${RELATED_SQL_LOWER.to}::text), chr(304), chr(105) || chr(775))`;
-  const mayMentionSource = patterns.length
-    ? sql`${lowered(
-        sql`coalesce(${contacts.aiSummary}, '') || ' ' || coalesce(${contacts.notes}, '') || ' ' || ${jsonArrayTextSql(contacts.keyFacts)} || ' ' || ${jsonArrayTextSql(contacts.sharedInterests)}`
-      )} like any (array[${sql.join(
-        patterns.map((p) => sql`${p}::text`),
-        sql`, `
-      )}])`
-    : sql`false`;
+  // Each arm is a separate index scan: reasons by primary key, unusual jsonb through the
+  // partial `contacts_unusual_json_idx`, mentions through the trigram index on the corpus
+  // (`contacts_related_corpus_trgm`). As one OR over the row this was a full scan that
+  // detoasted every note on every profile view: 11 s at 100k contacts on Postgres 16, 167 ms
+  // as arms. Same predicate, so the same rows.
+  const arms = [
+    ...(reasonIds.length > 0
+      ? [sql`select c.id from contacts c where c.user_id = ${userId} and ${inArray(sql`c.id`, reasonIds)}`]
+      : []),
+    sql`select c.id from contacts c
+         where c.user_id = ${userId}
+           and (orbit_unusual_json_array(c.key_facts) or orbit_unusual_json_array(c.shared_interests))`,
+    ...(patterns.length
+      ? [
+          sql`select c.id from contacts c
+               where c.user_id = ${userId}
+                 and orbit_related_corpus(c.ai_summary, c.notes, c.key_facts, c.shared_interests)
+                     like any (array[${sql.join(
+                       patterns.map((p) => sql`${p}::text`),
+                       sql`, `
+                     )}])`,
+        ]
+      : []),
+  ];
 
   const textRows = await db
     .select({
@@ -1781,15 +1772,7 @@ export async function listRelatedContacts(
       and(
         eq(contacts.userId, userId),
         sql`${contacts.id} <> ${contactId}::uuid`,
-        sql`(${sql.join(
-          [
-            ...(reasonIds.length > 0 ? [inArray(contacts.id, reasonIds)] : []),
-            unusualJsonArraySql(contacts.keyFacts),
-            unusualJsonArraySql(contacts.sharedInterests),
-            mayMentionSource,
-          ],
-          sql` or `
-        )})`
+        sql`${contacts.id} in (${sql.join(arms, sql` union `)})`
       )
     );
   const textById = new Map(textRows.map((r) => [r.id, r]));
