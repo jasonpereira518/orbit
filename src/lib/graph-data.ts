@@ -1,4 +1,4 @@
-import { asc, desc, eq } from "drizzle-orm";
+import { asc, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, contactTags, tags as tagsTable, userGoals } from "@/db/schema";
 import type { UserProfile } from "@/lib/auth";
@@ -113,15 +113,17 @@ export async function loadGraphData(
   // `contactTags` shape the scan used to carry (and that the cohort donation below expects).
   // Joined into the scan through Drizzle's `with`, they were a correlated aggregate per
   // contact: 100,000 subplan loops and 2.6 s of a 2.7 s statement at 100k contacts.
-  // Ordered by (contact_id, tag_id) — the order the per-contact lookup through
-  // `contact_tags_pair_uidx` returned them in.
+  // Within a contact, in the order the tags were added: the order the per-contact lookup
+  // returned on small networks (the plan picked there; at 100k it switched to tag_id order).
+  // contact_tags rows are inserted and deleted, never updated, so physical order is
+  // insertion order.
   const tagRowsPromise = db
     .select({ contactId: contactTags.contactId, name: tagsTable.name })
     .from(contactTags)
     .innerJoin(contacts, eq(contacts.id, contactTags.contactId))
     .innerJoin(tagsTable, eq(tagsTable.id, contactTags.tagId))
     .where(eq(contacts.userId, userId))
-    .orderBy(asc(contactTags.contactId), asc(contactTags.tagId));
+    .orderBy(asc(contactTags.contactId), sql`contact_tags.ctid`);
   const contactRowsPromise = Promise.all([scanPromise, tagRowsPromise]).then(
     ([scanned, tagRows]) => {
       const tagsByContact = new Map<string, Array<{ tag: { name: string } }>>();
