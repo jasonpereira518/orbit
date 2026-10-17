@@ -162,3 +162,77 @@ jobs:
             playwright-report/
             test-results/
           retention-days: 7
+
+  # Everything above runs on PGlite (no pgvector, one backend, no lock contention), which is
+  # how a migration that rewrote `contacts` on every deploy, and a claim query that handed one
+  # row to several runs, reached production unnoticed. This job runs the real application code
+  # against real Postgres + pgvector, through reliability/lib/neon-shim.mjs (a local stand-in
+  # for Neon's HTTP endpoint), and fails on a regression:
+  #   - a schema sweep under live traffic, with and without the runbook's statement_timeout,
+  #     must not drop search_tsv or the trigram index, and traffic must see no errors;
+  #   - concurrent sync claims must never hand one row out twice;
+  #   - the Postgres-backed rate limiter must admit exactly its limit under a burst.
+  # See reliability/README.md. No secrets; the database is a throwaway service container.
+  db-real:
+    name: real Postgres (migrations, claims, limiter)
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: orbit
+          POSTGRES_PASSWORD: orbit-local-only
+          POSTGRES_DB: orbit_rel
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U orbit"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PGPASSWORD: orbit-local-only
+      NEON_SHIM_URL: http://127.0.0.1:4444/sql
+      DATABASE_URL: postgresql://orbit:x@shim.local/orbit_rel
+      SHIM_PGPASSWORD: orbit-local-only
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - id: deps
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('.nvmrc', 'package-lock.json') }}
+      - if: steps.deps.outputs.cache-hit != 'true'
+        run: npm ci --no-audit --no-fund
+      - run: npm install --no-audit --no-fund --prefix reliability
+      - name: Start the Neon HTTP stand-in
+        run: |
+          mkdir -p reliability/results
+          (cd reliability && nohup node lib/neon-shim.mjs > results/shim.log 2>&1 &)
+          for i in $(seq 1 20); do curl -fsS http://127.0.0.1:4444/__stats >/dev/null 2>&1 && break; sleep 1; done
+      - name: Migrate an empty database (the production migration script, unmodified)
+        run: npx tsx reliability/lib/with-shim.mts scripts/migrate.ts
+      - name: Seed a modest dataset
+        run: |
+          psql -h 127.0.0.1 -U orbit -d orbit_rel -q -v users=40 -v contacts_per=1500 -v vectors=500 \
+            -v usage_events=20000 -v error_events=5000 -v reminders=5000 -f reliability/seed-bulk.sql
+      - name: A schema sweep under live traffic, no statement_timeout
+        run: reliability/tests/migration-under-load.sh orbit_rel
+      - name: A schema sweep under live traffic, statement_timeout = 20s
+        run: reliability/tests/migration-under-load.sh orbit_rel 20s
+      - name: Concurrent sync claims never double-claim
+        run: npx tsx reliability/lib/with-shim.mts reliability/tests/claim-race.mts
+      - name: The rate limiter admits exactly its limit under a burst
+        run: npx tsx reliability/lib/with-shim.mts reliability/tests/rate-limit-burst.mts
+      - name: Keep the results when something breaks
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: db-real-results
+          path: reliability/results/
+          retention-days: 7

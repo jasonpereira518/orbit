@@ -44,4 +44,5 @@ await db.execute(sql`DELETE FROM gmail_connections WHERE user_id LIKE 'rel-claim
 const result = { ROWS, CONCURRENT, LIMIT, ROUNDS, totalClaimed, roundsWithDoubleClaim, doubleClaimedRows };
 console.log(result);
 fs.writeFileSync("reliability/results/claim-race.json", JSON.stringify(result, null, 2));
-process.exit(0);
+// Exit non-zero on any double claim so CI can gate on it.
+process.exit(roundsWithDoubleClaim === 0 && totalClaimed === ROWS * ROUNDS ? 0 : 1);

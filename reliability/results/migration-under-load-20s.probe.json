@@ -1,137 +1,131 @@
 {
-  "database": "orbit_rel",
-  "durationSec": 21,
-  "requests": 1529,
-  "worstLatencyMs": 216,
-  "worstKind": "fuzzy",
-  "worstAtSec": 5,
+  "database": "orbit_ci",
+  "durationSec": 20,
+  "requests": 1901,
+  "worstLatencyMs": 49,
+  "worstKind": "write",
+  "worstAtSec": 1,
   "secondsWithARequestOver1s": 0,
   "errors": {},
   "timeline": [
     {
       "sec": 0,
-      "n": 74,
-      "maxMs": 173,
+      "n": 95,
+      "maxMs": 23,
       "errors": 0
     },
     {
       "sec": 1,
-      "n": 76,
-      "maxMs": 151,
+      "n": 99,
+      "maxMs": 49,
       "errors": 0
     },
     {
       "sec": 2,
-      "n": 76,
-      "maxMs": 206,
+      "n": 95,
+      "maxMs": 4,
       "errors": 0
     },
     {
       "sec": 3,
-      "n": 78,
-      "maxMs": 138,
+      "n": 95,
+      "maxMs": 4,
       "errors": 0
     },
     {
       "sec": 4,
-      "n": 77,
-      "maxMs": 166,
+      "n": 100,
+      "maxMs": 3,
       "errors": 0
     },
     {
       "sec": 5,
-      "n": 73,
-      "maxMs": 216,
+      "n": 95,
+      "maxMs": 6,
       "errors": 0
     },
     {
       "sec": 6,
-      "n": 73,
-      "maxMs": 160,
+      "n": 95,
+      "maxMs": 4,
       "errors": 0
     },
     {
       "sec": 7,
-      "n": 65,
-      "maxMs": 136,
+      "n": 100,
+      "maxMs": 2,
       "errors": 0
     },
     {
       "sec": 8,
-      "n": 76,
-      "maxMs": 148,
+      "n": 95,
+      "maxMs": 4,
       "errors": 0
     },
     {
       "sec": 9,
-      "n": 77,
-      "maxMs": 137,
+      "n": 100,
+      "maxMs": 3,
       "errors": 0
     },
     {
       "sec": 10,
-      "n": 77,
-      "maxMs": 204,
+      "n": 95,
+      "maxMs": 4,
       "errors": 0
     },
     {
       "sec": 11,
-      "n": 75,
-      "maxMs": 164,
+      "n": 100,
+      "maxMs": 3,
       "errors": 0
     },
     {
       "sec": 12,
-      "n": 77,
-      "maxMs": 154,
+      "n": 97,
+      "maxMs": 3,
       "errors": 0
     },
     {
       "sec": 13,
-      "n": 76,
-      "maxMs": 184,
+      "n": 98,
+      "maxMs": 3,
       "errors": 0
     },
     {
       "sec": 14,
-      "n": 77,
-      "maxMs": 150,
+      "n": 97,
+      "maxMs": 3,
       "errors": 0
     },
     {
       "sec": 15,
-      "n": 77,
-      "maxMs": 177,
+      "n": 97,
+      "maxMs": 7,
       "errors": 0
     },
     {
       "sec": 16,
-      "n": 77,
-      "maxMs": 172,
+      "n": 98,
+      "maxMs": 3,
       "errors": 0
     },
     {
       "sec": 17,
-      "n": 76,
-      "maxMs": 137,
+      "n": 97,
+      "maxMs": 4,
       "errors": 0
     },
     {
       "sec": 18,
-      "n": 78,
-      "maxMs": 160,
+      "n": 98,
+      "maxMs": 2,
       "errors": 0
     },
     {
       "sec": 19,
-      "n": 75,
-      "maxMs": 142,
-      "errors": 0
-    },
-    {
-      "sec": 20,
-      "n": 19,
-      "maxMs": 151,
+      "n": 55,
+      "maxMs": 2,
       "errors": 0
     }
   ]

@@ -20,4 +20,4 @@ const errors = outcomes.filter((o) => o.status === "rejected" && !isRateLimitedE
 const result = { BURST, limit: policy.limit, allowed, limited, errors, ms };
 console.log(result);
 fs.writeFileSync("reliability/results/rate-limit-burst.json", JSON.stringify(result, null, 2));
-process.exit(0);
+process.exit(allowed === policy.limit && errors === 0 ? 0 : 1);

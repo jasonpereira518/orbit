@@ -8,6 +8,9 @@
 \if :{?users} \else \set users 300 \endif
 \if :{?contacts_per} \else \set contacts_per 2000 \endif
 \if :{?vectors} \else \set vectors 60000 \endif
+\if :{?usage_events} \else \set usage_events 1000000 \endif
+\if :{?error_events} \else \set error_events 200000 \endif
+\if :{?reminders} \else \set reminders 200000 \endif
 
 BEGIN;
 INSERT INTO user_settings (user_id, created_at)
@@ -40,16 +43,16 @@ BEGIN;
 INSERT INTO usage_events (user_id, operation, provider, model, kind, created_at)
 SELECT 'rel-' || (1 + g % :users), 'chat', 'anthropic', 'claude-haiku', 'completion',
        now() - ((g % 120) || ' days')::interval
-FROM generate_series(1, 1000000) g;
+FROM generate_series(1, :usage_events) g;
 
 INSERT INTO error_events (source, kind, context, created_at)
 SELECT 'rel.synthetic', 'kind-' || (g % 20), jsonb_build_object('n', g),
        now() - ((g % 60) || ' days')::interval
-FROM generate_series(1, 200000) g;
+FROM generate_series(1, :error_events) g;
 
 INSERT INTO reminders (user_id, title, created_at)
 SELECT 'rel-' || (1 + g % :users), 'Follow up ' || g, now() - ((g % 200) || ' days')::interval
-FROM generate_series(1, 200000) g;
+FROM generate_series(1, :reminders) g;
 COMMIT;
 
 -- Vectors: 1536 dims (OpenAI text-embedding-3-small), stored both as jsonb and vector, the

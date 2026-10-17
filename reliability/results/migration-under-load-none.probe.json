@@ -1,233 +1,131 @@
 {
-  "database": "orbit_rel",
-  "durationSec": 37,
-  "requests": 2020,
-  "worstLatencyMs": 5655,
-  "worstKind": "fuzzy",
-  "worstAtSec": 0,
-  "secondsWithARequestOver1s": 1,
+  "database": "orbit_ci",
+  "durationSec": 20,
+  "requests": 1909,
+  "worstLatencyMs": 71,
+  "worstKind": "write",
+  "worstAtSec": 16,
+  "secondsWithARequestOver1s": 0,
   "errors": {},
   "timeline": [
     {
       "sec": 0,
-      "n": 5,
-      "maxMs": 5655,
+      "n": 95,
+      "maxMs": 31,
+      "errors": 0
+    },
+    {
+      "sec": 1,
+      "n": 95,
+      "maxMs": 4,
+      "errors": 0
+    },
+    {
+      "sec": 2,
+      "n": 100,
+      "maxMs": 3,
       "errors": 0
     },
     {
       "sec": 3,
-      "n": 11,
-      "maxMs": 822,
+      "n": 95,
+      "maxMs": 3,
       "errors": 0
     },
     {
       "sec": 4,
-      "n": 20,
-      "maxMs": 702,
+      "n": 100,
+      "maxMs": 3,
       "errors": 0
     },
     {
       "sec": 5,
-      "n": 20,
-      "maxMs": 685,
+      "n": 95,
+      "maxMs": 4,
       "errors": 0
     },
     {
       "sec": 6,
-      "n": 24,
-      "maxMs": 653,
+      "n": 95,
+      "maxMs": 4,
       "errors": 0
     },
     {
       "sec": 7,
-      "n": 27,
-      "maxMs": 684,
+      "n": 100,
+      "maxMs": 4,
       "errors": 0
     },
     {
       "sec": 8,
-      "n": 36,
-      "maxMs": 448,
+      "n": 95,
+      "maxMs": 2,
       "errors": 0
     },
     {
       "sec": 9,
-      "n": 46,
-      "maxMs": 275,
+      "n": 100,
+      "maxMs": 2,
       "errors": 0
     },
     {
       "sec": 10,
-      "n": 67,
-      "maxMs": 200,
+      "n": 95,
+      "maxMs": 4,
       "errors": 0
     },
     {
       "sec": 11,
-      "n": 50,
-      "maxMs": 375,
+      "n": 100,
+      "maxMs": 3,
       "errors": 0
     },
     {
       "sec": 12,
-      "n": 46,
-      "maxMs": 649,
+      "n": 95,
+      "maxMs": 4,
       "errors": 0
     },
     {
       "sec": 13,
-      "n": 42,
-      "maxMs": 533,
+      "n": 100,
+      "maxMs": 3,
       "errors": 0
     },
     {
       "sec": 14,
-      "n": 60,
-      "maxMs": 141,
+      "n": 95,
+      "maxMs": 3,
       "errors": 0
     },
     {
       "sec": 15,
-      "n": 50,
-      "maxMs": 186,
+      "n": 100,
+      "maxMs": 2,
       "errors": 0
     },
     {
       "sec": 16,
-      "n": 47,
-      "maxMs": 335,
+      "n": 94,
+      "maxMs": 71,
       "errors": 0
     },
     {
       "sec": 17,
-      "n": 56,
-      "maxMs": 153,
+      "n": 100,
+      "maxMs": 3,
       "errors": 0
     },
     {
       "sec": 18,
-      "n": 63,
-      "maxMs": 143,
+      "n": 95,
+      "maxMs": 4,
       "errors": 0
     },
     {
       "sec": 19,
-      "n": 58,
-      "maxMs": 182,
-      "errors": 0
-    },
-    {
-      "sec": 20,
-      "n": 56,
-      "maxMs": 282,
-      "errors": 0
-    },
-    {
-      "sec": 21,
-      "n": 56,
-      "maxMs": 199,
-      "errors": 0
-    },
-    {
-      "sec": 22,
-      "n": 54,
-      "maxMs": 172,
-      "errors": 0
-    },
-    {
-      "sec": 23,
-      "n": 62,
-      "maxMs": 153,
-      "errors": 0
-    },
-    {
-      "sec": 24,
-      "n": 59,
-      "maxMs": 156,
-      "errors": 0
-    },
-    {
-      "sec": 25,
-      "n": 62,
-      "maxMs": 178,
-      "errors": 0
-    },
-    {
-      "sec": 26,
-      "n": 73,
-      "maxMs": 157,
-      "errors": 0
-    },
-    {
-      "sec": 27,
-      "n": 73,
-      "maxMs": 160,
-      "errors": 0
-    },
-    {
-      "sec": 28,
-      "n": 72,
-      "maxMs": 160,
-      "errors": 0
-    },
-    {
-      "sec": 29,
-      "n": 71,
-      "maxMs": 157,
-      "errors": 0
-    },
-    {
-      "sec": 30,
-      "n": 71,
-      "maxMs": 178,
-      "errors": 0
-    },
-    {
-      "sec": 31,
-      "n": 76,
-      "maxMs": 146,
-      "errors": 0
-    },
-    {
-      "sec": 32,
-      "n": 74,
-      "maxMs": 146,
-      "errors": 0
-    },
-    {
-      "sec": 33,
-      "n": 76,
-      "maxMs": 143,
-      "errors": 0
-    },
-    {
-      "sec": 34,
-      "n": 76,
-      "maxMs": 146,
-      "errors": 0
-    },
-    {
-      "sec": 35,
-      "n": 77,
-      "maxMs": 156,
-      "errors": 0
-    },
-    {
-      "sec": 36,
-      "n": 76,
-      "maxMs": 137,
-      "errors": 0
-    },
-    {
-      "sec": 37,
-      "n": 77,
-      "maxMs": 147,
-      "errors": 0
-    },
-    {
-      "sec": 38,
-      "n": 51,
-      "maxMs": 140,
+      "n": 65,
+      "maxMs": 3,
       "errors": 0
     }
   ]

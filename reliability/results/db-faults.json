@@ -1,50 +1,50 @@
 [
   {
     "label": "baseline query",
-    "ms": 5,
+    "ms": 8,
     "attempts": 1,
     "outcome": "ok"
   },
   {
     "label": "baseline health",
-    "ms": 7,
+    "ms": 6,
     "status": "ok",
     "reason": null
   },
   {
     "label": "DB latency 3s: query",
-    "ms": 3006,
+    "ms": 3007,
     "attempts": 1,
     "outcome": "ok"
   },
   {
     "label": "DB latency 3s: health",
-    "ms": 3006,
+    "ms": 3007,
     "status": "ok",
     "reason": null
   },
   {
     "label": "DB latency 5s: health",
-    "ms": 4003,
+    "ms": 4001,
     "status": "down",
     "reason": null
   },
   {
     "label": "DB answers HTTP 503: query",
-    "ms": 2,
-    "attempts": 1,
+    "ms": 490,
+    "attempts": 2,
     "outcome": "Failed query: SELECT count(*) FROM user_settings\nparams: "
   },
   {
     "label": "DB answers HTTP 503: health",
-    "ms": 4,
+    "ms": 403,
     "status": "down",
     "reason": null
   },
   {
     "label": "DB connection dropped: query",
-    "ms": 3,
-    "attempts": 1,
+    "ms": 436,
+    "attempts": 2,
     "outcome": "Failed query: SELECT count(*) FROM user_settings\nparams: "
   },
   {
@@ -55,7 +55,7 @@
   },
   {
     "label": "DB hangs: query (no client timeout)",
-    "ms": 300812,
+    "ms": 8002,
     "attempts": 1,
     "outcome": "Failed query: SELECT count(*) FROM user_settings\nparams: "
   }

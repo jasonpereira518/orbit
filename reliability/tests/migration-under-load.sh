@@ -26,6 +26,9 @@ if [ -n "$ST" ]; then $PSQL -c "ALTER ROLE orbit SET statement_timeout = '${ST}'
 # Make the build believe the previous version is recorded, as after any SCHEMA_VERSION bump.
 $PSQL -c "UPDATE schema_migrations SET version = version - 1, fingerprint = 'previous-build'"
 echo "contacts rows: $($PSQL -c 'select count(*) from contacts')"
+attnum() { $PSQL -c "select attnum from pg_attribute where attrelid='contacts'::regclass and attname='search_tsv' and not attisdropped"; }
+ATT_BEFORE=$(attnum)
+IDX_BEFORE=$($PSQL -c "select 'contacts_name_trgm'::regclass::oid" 2>/dev/null || echo none)
 
 node reliability/lib/traffic-probe.mjs "$DB" "reliability/results/migration-under-load-${tag}.probe.json" &
 probe=$!
@@ -48,3 +51,16 @@ echo "search_tsv present after: $($PSQL -c "select count(*) from information_sch
 echo "contacts_name_trgm present after: $($PSQL -c "select count(*) from pg_indexes where indexname='contacts_name_trgm'")"
 echo "contacts_search_gin present after: $($PSQL -c "select count(*) from pg_indexes where indexname='contacts_search_gin'")"
 echo "recorded version after: $($PSQL -c 'select version from schema_migrations')"
+
+# Assertions (exit non-zero), so CI can use this as a gate.
+fail=0
+ATT_AFTER=$(attnum)
+IDX_AFTER=$($PSQL -c "select 'contacts_name_trgm'::regclass::oid" 2>/dev/null || echo none)
+probe_errors=$(node -e "const r=require('./reliability/results/migration-under-load-${tag}.probe.json');console.log(Object.keys(r.errors).length)")
+[ "$code" = "0" ] || { echo "ASSERT FAILED: migrate exited $code"; fail=1; }
+[ "$probe_errors" = "0" ] || { echo "ASSERT FAILED: live traffic saw errors during the migration"; fail=1; }
+[ -n "$ATT_AFTER" ] || { echo "ASSERT FAILED: contacts.search_tsv is missing afterwards"; fail=1; }
+[ "$ATT_BEFORE" = "$ATT_AFTER" ] || { echo "ASSERT FAILED: search_tsv was dropped and re-added (attnum $ATT_BEFORE -> $ATT_AFTER)"; fail=1; }
+[ "$IDX_BEFORE" = "$IDX_AFTER" ] || { echo "ASSERT FAILED: contacts_name_trgm was rebuilt (oid $IDX_BEFORE -> $IDX_AFTER)"; fail=1; }
+[ "$fail" = "0" ] && echo "all assertions passed"
+exit $fail
