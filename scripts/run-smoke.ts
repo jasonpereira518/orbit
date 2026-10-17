@@ -695,12 +695,12 @@ function main() {
   const pgliteDir = mkdtempSync(join(tmpdir(), "orbit-smoke-run-"));
   const env: NodeJS.ProcessEnv = { ...process.env, ORBIT_PGLITE_DIR: pgliteDir, FORCE_COLOR: "0" };
   delete env.DATABASE_URL; // belt and braces; the preamble does this too
-  // Hermetic DNS (see scripts/smoke/hermetic-dns.mjs): the SSRF guard resolves hosts before
-  // every request, so without this a script with a stubbed fetch still needed a working
-  // public resolver, and failed offline. NODE_OPTIONS rather than an argv flag because tsx
-  // runs the script in a child process of its own.
-  const hermeticDns = pathToFileURL(join(process.cwd(), "scripts", "smoke", "hermetic-dns.mjs")).href;
-  env.NODE_OPTIONS = [env.NODE_OPTIONS, `--import ${hermeticDns}`].filter(Boolean).join(" ");
+  // Hermetic runs (see scripts/smoke/hermetic.mjs): DNS is answered locally, because the SSRF
+  // guard resolves hosts even under a stubbed fetch, and the real fetch refuses anything but
+  // loopback, so a missed stub fails at once instead of reaching a live service. NODE_OPTIONS
+  // rather than an argv flag because tsx runs the script in a child process of its own.
+  const hermetic = pathToFileURL(join(process.cwd(), "scripts", "smoke", "hermetic.mjs")).href;
+  env.NODE_OPTIONS = [env.NODE_OPTIONS, `--import ${hermetic}`].filter(Boolean).join(" ");
 
   // The CLI entry point rather than the `.bin` shim.
   //

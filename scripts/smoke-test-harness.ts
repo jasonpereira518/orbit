@@ -90,15 +90,20 @@ async function main() {
     runChild(`t.check("a", true); await new Promise(() => {}); t.done("x");`) === 1
   );
 
-  console.log("\nhermetic DNS: active under run-smoke, real sockets untouched");
+  console.log("\nhermetic runs: DNS answered locally, real HTTP refused");
   const { lookup } = await import("node:dns/promises");
-  if (!process.env.NODE_OPTIONS?.includes("hermetic-dns")) {
+  if (!process.env.NODE_OPTIONS?.includes("hermetic.mjs")) {
     console.log("  (skipped — run through scripts/run-smoke.ts, which preloads it)");
   } else {
     const pub = await lookup("unavatar.io", { all: true });
     t.check("a public name resolves without a resolver", pub.length === 1 && pub[0].address === "93.184.215.14");
     await t.rejects("*.invalid is unresolvable", () => lookup("nothing.invalid"), (e) => (e as NodeJS.ErrnoException).code === "ENOTFOUND");
     t.check("localhost stays loopback", (await lookup("localhost")).address === "127.0.0.1");
+    await t.rejects(
+      "an unstubbed real request is refused, naming the URL",
+      () => fetch("https://api.example.com/real"),
+      (e) => /smoke runs are offline: a real request to https:\/\/api\.example\.com/.test(String(e))
+    );
   }
 
   t.done("test harness");

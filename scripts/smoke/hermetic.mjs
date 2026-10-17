@@ -1,5 +1,8 @@
 /**
- * Hermetic DNS for smoke runs, preloaded by scripts/run-smoke.ts via NODE_OPTIONS (--import).
+ * Hermetic smoke runs: no real DNS, no real HTTP. Preloaded by scripts/run-smoke.ts via
+ * NODE_OPTIONS (--import), so it is in place before any script or module loads.
+ *
+ * DNS
  *
  * The SSRF guard (`assertDeliverable` in src/lib/net-guard.ts) resolves every host with
  * `dns/promises.lookup` before a request — even in scripts that replace `globalThis.fetch`,
@@ -42,4 +45,32 @@ if (process.env.SMOKE_REAL_DNS !== "1") {
   dns.promises.lookup = hermeticLookup;
   dnsPromises.lookup = hermeticLookup;
   syncBuiltinESMExports();
+}
+
+/*
+ * HTTP
+ *
+ * The real `fetch` refuses any host but loopback. A smoke that meant to stub a provider and
+ * missed one call used to make a live request: on a GitHub runner it passed (or failed) on
+ * whatever that service answered, and offline it hung for the runner's full timeout —
+ * smoke-avatar-storage did exactly that against Vercel's Blob API. Now it fails at once,
+ * naming the URL. Scripts that stub `globalThis.fetch` replace this and restore it, so they
+ * are unaffected; loopback stays open for fixture servers.
+ *
+ * SMOKE_ALLOW_NETWORK=1 turns it off, for the few runs that are meant to be live
+ * (`SMOKE_ALLOW_REMOTE=1` against Neon, the manual tier).
+ */
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
+if (process.env.SMOKE_ALLOW_NETWORK !== "1" && process.env.SMOKE_ALLOW_REMOTE !== "1") {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = function hermeticFetch(input, init) {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    if (!LOOPBACK.has(url.hostname) && url.protocol !== "data:" && url.protocol !== "blob:") {
+      return Promise.reject(
+        new TypeError(`smoke runs are offline: a real request to ${url.origin} was refused — stub it (scripts/smoke/http-mock.ts)`)
+      );
+    }
+    return realFetch(input, init);
+  };
 }
