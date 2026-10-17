@@ -2,6 +2,8 @@ import type { AiOperationId } from "@/lib/ai-operations";
 import {
   finishBatchJob,
   listPendingBatchJobs,
+  MAX_BATCH_APPLY_ATTEMPTS,
+  settleBatchJob,
   pollAiBatch,
   type AiBatchJobRow,
   type BatchOutcome,
@@ -186,6 +188,12 @@ export async function runAiBatchSweep(limit = 25): Promise<BatchSweepStats> {
         extra: { operation: job.operation },
       });
       stats.failed += 1;
+      // Give up rather than re-poll a poisoned job forever: it holds one of the sweep's slots
+      // every hour. Terminal, so the feature's ordinary path picks the work up again.
+      if (result.attempts >= MAX_BATCH_APPLY_ATTEMPTS) {
+        await settleBatchJob(job, "failed", `Write-back failed ${result.attempts} times`).catch(() => null);
+        await APPLIERS[job.operation as AiOperationId]?.release?.(job).catch(() => null);
+      }
     }
   }
 
