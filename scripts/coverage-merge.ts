@@ -83,7 +83,10 @@ for (const name of ["json-summary", "lcovonly", "text-summary"] as const) {
 type Totals = { lines: [number, number]; functions: [number, number]; files: number; untouched: number };
 const byArea = new Map<string, Totals>();
 for (const file of map.files()) {
-  const rel = relative(root, file).split("\\").join("/");
+  // Relative to the repo root; a report written in another checkout (a worktree, a CI
+  // runner's path) is re-rooted at its `src/` so the areas still match.
+  let rel = relative(root, file).split("\\").join("/");
+  if (rel.startsWith("../")) rel = rel.slice(rel.indexOf("/src/") + 1);
   const summary = map.fileCoverageFor(file).toSummary();
   for (const [area, prefix] of AREAS) {
     if (!rel.startsWith(prefix)) continue;

@@ -104,10 +104,14 @@ in the table below.
 
 ## Coverage
 
-CI runs each smoke shard under [c8](https://github.com/bcoe/c8) (config in `.c8rc.json`), merges
-the shards (`scripts/coverage-merge.ts`) and writes a per-area table — auth, billing, connectors,
-AI, contacts, exports, actions, routes — to the run summary, with the merged lcov as an artifact.
+On every push to `main` (and from "Run workflow"), CI runs the smoke suite a second time under
+[c8](https://github.com/bcoe/c8) (config in `.c8rc.json`), merges the shards
+(`scripts/coverage-merge.ts`) and writes a per-area table — auth, billing, connectors, AI,
+contacts, exports, actions, routes — to the run summary, with the merged lcov as an artifact.
 Locally: `npm run test:coverage`, then `npm run coverage:merge -- coverage`.
+
+It is a separate run, never the PR gate: instrumentation slows scripts several-fold, which
+breaks the wall-clock budgets in `smoke-constellation-match` (80s instrumented against ~13s).
 
 It reports and does not gate yet. The intended ratchet, once a few runs on `main` show the numbers
 are stable: fail the `coverage` job when line coverage in **auth & access**, **billing** or
@@ -134,8 +138,8 @@ The policy is "fail, then fix the cause", never "retry until green":
 | Job | What | Gate |
 |---|---|---|
 | `check` | typecheck, lint, `next build` | yes |
-| `smoke` ×3 | the smoke suite, sharded, under coverage | yes |
-| `coverage` | merges shard coverage into the run summary | report only |
+| `smoke` ×3 | the smoke suite, sharded | yes |
+| `coverage-shard` ×3, `coverage` | the suite again under c8, merged into the run summary (`main` and on demand only) | report only |
 | `known-bugs` | `npm run test:bugs` | yes (red = a bug was fixed, promote its test) |
 | `security` | `npm audit` of production deps (critical), dependency review of the PR (high), gitleaks over the new commits | yes |
 | `e2e` | Playwright journeys, failing on flaky tests | yes |

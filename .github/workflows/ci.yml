@@ -1,8 +1,9 @@
-# The PR gate: typecheck, lint, a production build, the smoke suite (with coverage), the
-# known-bug suite, the Playwright browser flows, and a security pass (dependency audit,
+# The PR gate: typecheck, lint, a production build, the smoke suite, the known-bug suite,
+# the Playwright browser flows, and a security pass (dependency audit,
 # dependency review, secret scan). The Chrome extension has its own workflow
-# (extension.yml) that runs only when a PR touches it. docs/TESTING.md describes the
-# layers and the branch-protection settings that make these a real gate.
+# (extension.yml) that runs only when a PR touches it. On `main` and on demand it also
+# measures the smoke suite's coverage (report only). docs/TESTING.md describes the layers
+# and the branch-protection settings that make these a real gate.
 #
 # Nothing here needs a secret. The build runs without Clerk or database keys (the app
 # fails closed at runtime, not at build), `check:env` only gates VERCEL builds via
@@ -131,24 +132,49 @@ jobs:
           key: node-modules-${{ runner.os }}-${{ hashFiles('.nvmrc', 'package-lock.json') }}
       - if: steps.deps.outputs.cache-hit != 'true'
         run: npm ci --no-audit --no-fund
-      # Under c8, which records V8 coverage for every script the runner spawns. Each shard
-      # keeps only its Istanbul JSON (a few MB; the raw V8 dumps are gigabytes) for the
-      # `coverage` job to merge. A failing script still fails this step exactly as before.
+      - run: npm test -- --shard ${{ matrix.shard }}/3
+
+  # The same suite again under c8, for coverage — on `main` and on demand, NOT on PRs, and
+  # never as the gate. Instrumentation slows scripts several-fold, which is harmless for
+  # most but fails the wall-clock budgets in smoke-constellation-match (80s instrumented vs
+  # ~13s plain), so gating on an instrumented run would make the gate flaky. Each shard keeps
+  # only its Istanbul JSON (a few MB; the raw V8 dumps run to gigabytes) for `coverage` to
+  # merge; a script failing here is reported by `smoke`, so it does not fail this job.
+  coverage-shard:
+    name: coverage shard ${{ matrix.shard }}/3
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - id: deps
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('.nvmrc', 'package-lock.json') }}
+      - if: steps.deps.outputs.cache-hit != 'true'
+        run: npm ci --no-audit --no-fund
       - run: npx c8 --report-dir coverage/shard-${{ matrix.shard }} tsx scripts/run-smoke.ts --ci --shard ${{ matrix.shard }}/3
-      - if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        continue-on-error: true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: coverage-shard-${{ matrix.shard }}
           path: coverage/shard-${{ matrix.shard }}/coverage-final.json
           retention-days: 7
-          if-no-files-found: ignore
 
   # Merges the shards' coverage and writes a per-area table to the run summary. Reports, does
   # not gate: there is no threshold yet (see docs/TESTING.md → Coverage for the ratchet).
   coverage:
     name: coverage report
-    needs: smoke
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
+    needs: coverage-shard
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
