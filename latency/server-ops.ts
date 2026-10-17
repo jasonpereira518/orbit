@@ -221,7 +221,7 @@ async function main() {
     const depth = s.sim_ms == null ? 0 : Math.max(0, Math.round(((Number(s.sim_ms) - cpu) / LATENCY_MS) * 10) / 10);
     return { op, ...p, ...s, depth, est_ms_rtt8: Math.round(depth * 8 + cpu), est_ms_rtt40: Math.round(depth * 40 + cpu) };
   });
-  console.table(rows.map(({ sql: _sql, ...r }) => r));
+  console.table(rows.map((r) => { const { sql: _sql, ...rest } = r as Record<string, unknown>; return rest; }));
   mkdirSync(dirname(OUT), { recursive: true });
   writeFileSync(OUT, JSON.stringify({ tier: TIER, latencyMs: LATENCY_MS, at: new Date().toISOString(), rows }, null, 2));
   console.log(`wrote ${OUT}`);

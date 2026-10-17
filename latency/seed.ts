@@ -147,7 +147,7 @@ async function main() {
   });
   const ids: string[] = [];
   await insertChunked(rows, 250, async (chunk) => {
-    const inserted = await db.insert(contacts).values(chunk).returning({ id: contacts.id });
+    const inserted = await db.insert(contacts).values(chunk).returning();
     ids.push(...inserted.map((r) => r.id));
   });
   console.log(`contacts: ${ids.length}`);
@@ -174,7 +174,7 @@ async function main() {
     const inserted = await db
       .insert(interactions)
       .values(chunk)
-      .returning({ id: interactions.id, contactId: interactions.contactId, rawNotes: interactions.rawNotes, interactionDate: interactions.interactionDate });
+      .returning();
     interactionIds.push(...inserted);
   });
   console.log(`interactions: ${interactionIds.length}`);
@@ -198,7 +198,7 @@ async function main() {
   const tagRows = await db
     .insert(tags)
     .values(TAGS.map((name) => ({ userId: USER, name, nameNormalized: name.toLowerCase() })))
-    .returning({ id: tags.id });
+    .returning();
   const links = ids
     .map((contactId, i) => ({ contactId, i }))
     .filter(({ i }) => i % 10 < 3)

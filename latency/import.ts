@@ -62,7 +62,7 @@ async function stage(csv: string) {
   startQueryCount();
   for (let i = 0; i < payloads.length; i += 1000) {
     const slice = payloads.slice(i, i + 1000);
-    await runAtomicWrite(db, (w) => [w.insert(importJobRows).values(slice.map((payload, k) => ({ importId: job.id, userId: USER, rowIndex: i + k, payload })))]);
+    await runAtomicWrite(db, (w) => [w.insert(importJobRows).values(slice.map((payload, k) => ({ importId: job.id, userId: USER, rowIndex: i + k, payload: payload as never })))]);
   }
   const statements = stopQueryCount();
   return { jobId: job.id, rows: payloads.length, parse_ms: Math.round(parseMs), stage_ms: Math.round(performance.now() - started), statements };
