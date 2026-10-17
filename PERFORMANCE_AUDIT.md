@@ -42,25 +42,31 @@ once, with every difference checked (§ "Behavior changes" below).
   order-only differences, checked entry by entry.
 - AI result cache entries written before the fix miss once.
 
-**Not done, and why:**
-- **Graph payload (B3)** is still ~680 B per engaged contact (6.6 MB at 10k). The `/graph`
-  client's instant search reads the text fields in the browser, so slimming the payload means moving
-  search and the inspect panel to server calls. That is a product decision.
-- **Dashboard at 100k (B4)** is still 8.5 s. About 2.5 s is statement execution; the rest is moving
-  three whole-network row sets (contacts, touch counts, scores) into JS for constellation
-  eligibility, clusters and the histogram. Bounding it means precomputing eligibility and cluster
-  keys per contact: a redesign.
-- **Import ceiling (~39,900 connections).** Lifting it needs more than a chunked upload. The preview
-  answer is 15.4 MB at 30k rows (the `people` array, every row with duplicate info, also aliased as
-  `preview`), and the UI renders every row for selection. It needs a staged preview: rows kept
-  server-side, aggregates plus paging returned.
-- **`LazyMotion` (B11).** 27 of the 86 files using motion rely on layout, `layoutId` or drag, which
-  need `domMax`. That shrinks the saving and needs a visual-regression pass first.
-- **Related contacts round 1** still reads every contact's nine narrow columns (most of the
-  remaining 2.9 s at 100k). Bounding it changes which candidates are considered.
-- **Neon `jit`, and dropping redundant indexes:** configuration and `pg_stat_user_indexes` checks
-  on Neon itself.
+**Round 3 (same branch, approved as "do the rest"):**
+
+| Change | Before | After |
+|---|---|---|
+| Duplicates badge count remembered per instance for a minute; every writer forgets it | 458 ms per `/contacts` render at 100k | One count per minute per viewer |
+| Related contacts round 1: SQL keeps only rows that could earn a reason (superset prefilters), JS still decides | 100k: 2.9 s a lookup, 100,000 rows / 22 MB as JSON | 100k: **0.48 s** (PGlite), statement **342 ms** on PG 16 returning 4 rows. 10k: 553 → **180 ms**. 0 differences on 47 sources with adversarial rows; new `smoke-related-contacts-parity` |
+| Dashboard: peer-link analysis remembered by input hash; top-750 sample without a full sort; cluster labels once per spelling | 100k: 4.9–5.8 s; 10k: 1.75–1.81 s | 100k: 4.5–4.7 s; 10k: **1.16–1.25 s** |
+| Dashboard bounded redesign: eligibility, clusters, sample, histogram asked of Postgres (`dashboard-network.ts`); preview fetched by group with early-stop laterals | PG 16, 100k: 5.6 s of statements, **56 MB** moved; result object 18.5 MB | **1.6 s, 1.9 MB**; result object 0.68 MB. Output identical at 0/100/10k/100k and with unscored contacts, pins, thresholds and the filter off; new `smoke-dashboard-parity` |
+| Graph: contact details fetched when a star is opened | 10k: 6.78 MB, 694 B a contact | **4.80 MB, 480 B**. Panel checked in a browser |
+| LinkedIn connections: parsed in the browser, duplicates checked in 5k-row chunks, rows staged in 2k-row chunks | Preview answer 8.9 MB at 30k rows (over the 4.5 MB response limit); hard ceiling ~39,900 rows | No ceiling: 6 checks at 30k, largest request 0.88 MB; 45k-row export staged whole in `smoke-linkedin-connections-chunked`. Review list draws 500 rows at a time |
+| Webhook drain: four endpoints at a time, an endpoint deferred after two failures in a row | One hanging endpoint next to a healthy one: 40.2 s, 8/10 healthy delivered | **10.0 s, 10/10** |
+| Background pack | Recruiter scans killed at the page's 60 s; import poll queued behind Server Actions; `process-stalled` unbounded overall; timeline fallback without a deadline; capture claims stale before `maxDuration`; Gmail headers one GET each | Scans kicked into a 300 s invocation; `GET /api/imports/[id]/status`; stages stop starting past 180 s, with per-stage timings in `cron_runs`; fallback inside the budget; 5.5 min claims; headers 50 to a batch request |
+
+**Measured and not shipped:**
+- **`LazyMotion`.** Converting all 77 files to `m` with `domMax` loaded asynchronously made every
+  route 0–12 KB gz *larger* (median +2 KB). The async features chunk was ~3 KB: `AnimatePresence`,
+  `useAnimate`, `useScroll`/`useTransform` and friends already pull the animation engine into the
+  shared bundle. A saving would mean replacing those hooks, not just the components. Reverted.
+
+**Still open:**
+- **Neon `jit` and unused indexes:** settings on Neon itself. The commands are in
+  `docs/RUNBOOK.md` ("Neon one-time settings", "Database performance checks").
 - **Signed-in INP and LCP** still need a staging build with Clerk test keys, or Speed Insights.
+- The dashboard's eligibility statement still aggregates every touch (~0.7 s on PG 16 at 100k);
+  storing the tallies with the scores would remove it.
 
 ---
 
