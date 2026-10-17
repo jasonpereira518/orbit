@@ -20,6 +20,10 @@ Push to `main`. CI (`typecheck · lint · build`, `smoke suite`) must be green; 
 runs `npm run check:env && npm run db:migrate && next build`. A missing production
 variable or a failing DDL statement fails the build and the previous deployment stays live.
 
+**Previews migrate whatever `DATABASE_URL` they are given, so `PRODUCTION_DB_HOST` must be set on
+every environment** (the production database's hostname; a `-pooler` host counts as the same
+database). A preview build refuses to run without it. Give previews their own Neon branch.
+
 **A `claude/*` branch with no pull request does not build a preview.** Vercel's Ignored Build
 Step (`vercel.json` → `scripts/vercel-ignore-build.sh`) skips it, because every retained
 deployment's function bundles count against Functions Storage. It builds once the branch has a
@@ -28,8 +32,10 @@ from the dashboard. Everything else (main, other branches, production) always bu
 
 ## Roll back
 
-Vercel → Deployments → the last good one → **Promote to Production**. Schema changes are
-additive and idempotent, so old code runs fine on a newer schema. What happens next:
+Vercel → Deployments → the last good one → **Promote to Production**. Most schema changes are
+additive and idempotent, so old code runs fine on a newer schema. **Not all:** a release that
+drops a table or column (v170 dropped `guest_profiles`) is not undone by a rollback, and the old
+code will fail on whatever it dropped. Read the release's DDL before promoting an older deployment. What happens next:
 
 - `/api/health` answers **200 with `status: "degraded"`** and `schema.ahead: true` (the
   database was migrated by the newer build). The uptime monitor stays green and the `ops`
@@ -98,6 +104,9 @@ above. Vercel Pro crons remove the rule entirely.
 | `deploy.drift` | A build is failing. Vercel → Deployments → open the red one → fix → push. |
 | `config.missing` | Vercel → Environment Variables. The alert names the variable. |
 | `config.alerts_undeliverable` | Slack → your app → Incoming Webhooks → copy the URL → Vercel → Environment Variables → `SLACK_OPS_WEBHOOK_URL` (Production) → Redeploy. Until then `/admin/health` is the only place alerts appear. |
+| `db.storage` | The database is at 70% (warning) or 85% (critical) of `DB_STORAGE_LIMIT_GB`. At the limit every write fails. Raise the plan, or see "Storage full" below. |
+| `errors.burst` mentioning `oauth.client_invalid` | Orbit's own Google/Microsoft OAuth client was refused (an expired or rotated client secret), not a user's grant. No connection is flagged. Create a new secret in the Azure portal / Google Cloud console, put it in Vercel, redeploy. Users do not need to reconnect. Azure secrets expire after at most 24 months: note the date. |
+| `ai.managed_outage` events | Orbit's managed provider timed out or returned 5xx/529. Three in three minutes fail it over to the next provider automatically (while another is configured); it returns by itself once the events age out. Nothing to do unless every provider is failing. |
 | `ai.provider_outage:*` | Not ours; it clears when the provider recovers. |
 | `perf.slow_burst` | `/admin/health` → error events → `perf.slow` rows name the call and account. |
 | `ai.managed_failing:*` | Orbit's own key for that provider was refused or throttled — every account on included AI without a key of its own has lost AI. Check the key and its quota (and the prepaid balance) in the provider console; replace `ORBIT_MANAGED_<PROVIDER>_API_KEY` in Vercel and redeploy. |
@@ -256,6 +265,47 @@ The workflow's own steps were exercised on Sep 15 2026 in an `ubuntu:24.04` cont
 against a disposable Postgres 18 (guard, pinned install, pipefail, dump → encrypt → decrypt →
 restore of 250 rows, Slack page). That is not a drill: it never touched production or GitHub's
 runner. The first real drill needs the secrets set.
+
+## Incident procedures
+
+### Contact search is broken after a deploy (`column "search_tsv" does not exist`)
+
+A schema sweep dropped `contacts.search_tsv` and could not re-add it, almost always because the
+role's `statement_timeout` (20 s) killed the rewrite. Since the guard in `applyScaleSchema` the
+sweep only rebuilds it when its expression changed; if you are here, that was such a release.
+
+1. Neon SQL editor: `SELECT 1 FROM information_schema.columns WHERE table_name='contacts' AND column_name='search_tsv';` No row means this is the incident.
+2. `ALTER ROLE <app role> SET statement_timeout = 0;` (temporarily), then restart the compute
+   (Neon → Branches → main → Compute → Restart): pooled sessions keep the old setting until then.
+3. Redeploy `main`. The migration re-adds the column and its GIN index (39 s at 600k contacts
+   locally; longer on a small Neon compute).
+4. `ALTER ROLE <app role> SET statement_timeout = '20s';` and check `/api/health?token=…`.
+5. Write down what changed in the expression, and ship it as expand/contract next time.
+
+### Storage full / nearly full (`db.storage`)
+
+1. Raise the plan limit or upgrade (fastest).
+2. Largest tables: `SELECT relname, pg_size_pretty(pg_total_relation_size(oid)) FROM pg_class WHERE relkind='r' ORDER BY pg_total_relation_size(oid) DESC LIMIT 15;`
+3. Run the housekeeping by hand (`/api/imports/process-stalled`): it prunes `usage_events`,
+   `error_events`, `webhook_deliveries`, `cron_runs` and finished outbound deliveries.
+4. Embeddings are stored twice (jsonb and vector, about 24 KB per contact); that is the usual
+   biggest table. Inline base64 avatars appear when `BLOB_READ_WRITE_TOKEN` is unset.
+
+### The database is unreachable
+
+`/api/health` answers 503 (`db_error` / `db_timeout`) within 4 s. Check status.neon.tech and the
+Neon console (compute state), restart a stuck compute. Queries now fail at 30 s
+(`DB_QUERY_TIMEOUT_MS`) and a plain read is retried once, so pages error rather than hang. When it
+returns, trigger `/api/imports/process-stalled` by hand and check `import.wedged`.
+
+### Restore to a point in time (Neon PITR)
+
+1. Decide the target time (just before the bad event) and write it down.
+2. Neon → Branches → Create branch from `main` **at that time**. Never restore onto `main`.
+3. Check the row counts (query in "Restore drill log") and the specific rows that were lost.
+4. Partial recovery: copy the rows back with a reviewed `INSERT … ON CONFLICT DO NOTHING`.
+5. Full recovery: preview against the branch, then promote it or switch `DATABASE_URL`. Writes
+   between the target time and now are lost; take a fresh dump of `main` first as evidence.
 
 ## Neon one-time settings
 

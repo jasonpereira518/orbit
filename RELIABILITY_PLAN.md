@@ -6,6 +6,39 @@ Each item lists the approach, what changes, effort (**S** ≤ ½ day · **M** 1�
 
 ---
 
+## Implementation status (updated 2026-10-17)
+
+Approved and implemented on branch `claude/youthful-johnson-s3u52r`, one commit per item, each
+verified by the test named. **Not yet deployed or merged**: nothing below protects production until it ships.
+
+| Item | Status | Verified by |
+|---|---|---|
+| **P1.4** `search_tsv` / trigram guards (R-01) | ✅ done | 600k-contact sweep under traffic: 0 errors with and without `statement_timeout=20s` (was 25.7 s stalls, and a failed deploy that left search broken); `smoke-search-tsv-guard` |
+| **P1.6** previews fail closed, pooler-aware host match (R-06) | ✅ done | `smoke-migration-guards` |
+| **P2.4** Orbit's OAuth client refused ≠ user must reconnect (R-10) | ✅ done (expiry-date alert not built) | `smoke-oauth-refresh-rejection` |
+| **P2.5** race-free claims (R-15) | ✅ done for 5 claim sites; `markSyncResult` ownership guard and outbound-webhook drain claim **not** done | `claim-race`: 17,660 → 6,000 claims for 6,000 rows |
+| **P2.1** DB deadline and read retry (R-08) | ✅ done | `db-faults`: hang 300.8 s → 8.0 s (override); `smoke-neon-fetch` |
+| **P2.6 step 1** scheduler workflow; **P3.1 step 4** no CI cancel on `main` | ✅ done | `smoke-schedules`; YAML parsed. Not run on GitHub |
+| **P2.7** email/outreach duplicate sends (R-16a, b) | ✅ done; scheduled-send max lateness (R-16c) **not** done (needs a product decision on expiry UX) | `smoke-email-sends`, `smoke-outreach-guards` |
+| **P2.2** managed AI failover (R-09) | ✅ done | `smoke-ai-access` (failover, safeguard when all providers fail, ageing out) |
+| **P2.8** Resend deadline, `.docx` zip-bomb cap (R-21) | ✅ partly: Resend and `.docx` done; Graph connector retries, Google 5xx retry, `request.signal` on research **not** done | `smoke-resilience-limits` |
+| **P4.1** alert delivery and sweep failure (R-12) | ✅ code done; phone paging (Better Stack on-call) is a dashboard decision (D6) | `smoke-ops-notify`, `smoke-ops-sweep` |
+| **P1.8** retention + `db.storage` alert (R-07) | ✅ partly: pruning of 3 logs and the alert done; embedding double-storage, Blob requirement, other 10 tables **not** done | `smoke-log-retention`, `smoke-ops-alerts` |
+| **P3.4 step 1** real-Postgres CI job (R-05) | ✅ done | Steps replayed locally in 63 s; the gate fails on the pre-fix code. Not yet run on GitHub |
+| **P4.4** runbooks | ✅ partly: search-broken, storage-full, DB-unreachable, PITR written into `docs/RUNBOOK.md`; provider-outage, leaked-credential, scheduler-stopped still only in Appendix A below | — |
+| **P2.3** Clerk | ✅ `CLERK_JWT_KEY` now an expected production variable (warns). Clerk health probe **not** done | `smoke-env` |
+
+**Needs you (dashboards or decisions, cannot be done from code):** P1.1 read the real database state; P1.2 prove a backup exists
+and drill a restore; P1.3 / D1 Neon plan and PITR; D2 Vercel Pro; P3.1 steps 1-3 branch rules requiring CI and promote-after-CI;
+set `PRODUCTION_DB_HOST` and `DB_STORAGE_LIMIT_GB` on Vercel; D6 paging; D12 a second person.
+
+**Deliberately not started, and why:** P1.5 (migration role, `CONCURRENTLY`, data work out of the build) and P1.7 (soft delete)
+change the data and permission model and want their own review; P2.9 (atomic capture save), P2.10 (kill switches), P2.11
+(key rotation) and P2.12 (import counters) are each a contained change but touch the capture, admin and crypto paths and
+should be reviewed separately; P3.2 (post-deploy smoke and rollback) needs a test account and Vercel credentials.
+
+---
+
 ## Do this week (quick wins, in order)
 
 Together these are about 3 days of work, and they remove the scenarios most likely to cause an outage or permanent data loss.

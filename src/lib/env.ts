@@ -47,6 +47,9 @@ export const EXPECTED_IN_PRODUCTION = [
   // Not read by the app at all — it exists so `checkMigrationTarget` below can tell a
   // preview build pointed at its own Neon branch from one pointed at production.
   "PRODUCTION_DB_HOST",
+  // Lets the proxy verify a Clerk session locally, with no call to Clerk. Unset, every
+  // signed-in request depends on Clerk's API being reachable (reliability audit R-14).
+  "CLERK_JWT_KEY",
   // The database plan's storage limit in GB (Neon: Project -> Settings -> Billing). Unset, the
   // ops sweep cannot say how close the database is to the wall where every write fails.
   "DB_STORAGE_LIMIT_GB",
