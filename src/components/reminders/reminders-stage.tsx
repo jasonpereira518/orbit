@@ -78,6 +78,11 @@ const EMPTY_COPY: Record<string, { title: string; body: string }> = {
   list: { title: "This list is empty", body: "Add a reminder, or move some here from another view." },
 };
 
+const NO_REMINDERS_COPY = {
+  title: "No follow-ups yet",
+  body: "When you add someone, Orbit sets a follow-up for them. You can add one by hand with New reminder too.",
+};
+
 type Group = { bucket: DueBucket | null; items: ReminderRowData[] };
 
 /** Grouped by due bucket in time-ordered views; one flat group in Done. */
@@ -607,8 +612,12 @@ export function RemindersStage({
   const filtered =
     Boolean(urlFilters.q) || urlFilters.kinds.length > 0 || urlFilters.sources.length > 0 || Boolean(urlFilters.contact);
   const groups = groupItems(items, today, isDoneView);
-  const empty =
-    EMPTY_COPY[target.kind === "list" ? "list" : target.view] ?? EMPTY_COPY.today;
+  // An account with no reminders anywhere is told how they start, not that "Upcoming has
+  // what's next" — there is nothing in Upcoming either.
+  const noReminders = counts.today + counts.overdue + counts.upcoming + counts.anytime + counts.done === 0;
+  const empty = noReminders
+    ? NO_REMINDERS_COPY
+    : (EMPTY_COPY[target.kind === "list" ? "list" : target.view] ?? EMPTY_COPY.today);
   const defaultDue = target.kind === "view" && target.view === "today" ? today : null;
   const total = page.total ?? items.length;
 

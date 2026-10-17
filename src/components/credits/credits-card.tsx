@@ -40,12 +40,15 @@ function equivalentsLine(items: CreditsOverview["equivalents"]): string | null {
 }
 
 /**
- * The credits card on the AI settings page (Pro and Max; also shown to anyone holding
- * frozen pack credits). Allowance left this cycle, pack credits, the reset date, and what
- * that buys in plain language. Two actions, both explicit: buy a $5 pack, or (on Pro) move to
- * Max. Nothing here — or anywhere — charges automatically.
+ * The credits card on the AI settings page (every plan with included AI; also shown to anyone
+ * holding frozen pack credits). Allowance left this cycle, pack credits, the reset date, and
+ * what that buys in plain language. Two actions, both explicit: buy a $5 pack, or (on Pro)
+ * move to Max. Nothing here — or anywhere — charges automatically.
+ *
+ * `paused`: Orbit's AI is paused or out of budget for everyone, so no credit can be spent. The
+ * balance stays on show (it is kept), but nothing is sold against it.
  */
-export function CreditsCard() {
+export function CreditsCard({ paused = false }: { paused?: boolean } = {}) {
   const [overview, setOverview] = useState<CreditsOverview | null | undefined>(undefined);
   const [nudgeOpen, setNudgeOpen] = useState(false);
   const params = useSearchParams();
@@ -142,7 +145,7 @@ export function CreditsCard() {
         </p>
       )}
 
-      {(packsSold || balance.packsFrozen) && (packLeft > 0 || monthlyCredits > 0) && (
+      {(packsSold || balance.packsFrozen) && (packLeft > 0 || (monthlyCredits > 0 && !paused)) && (
         <p className="text-sm text-muted-foreground">
           {balance.packsFrozen ? (
             <>
@@ -160,7 +163,11 @@ export function CreditsCard() {
         </p>
       )}
 
-      {out ? (
+      {paused ? (
+        <p role="status" className="rounded-lg border border-warning-border bg-warning-surface p-3 text-sm text-foreground">
+          Orbit’s AI is paused right now, so these credits are on hold. They’re still yours when it’s back
+        </p>
+      ) : out ? (
         <p role="status" className="rounded-lg border border-warning-border bg-warning-surface p-3 text-sm text-foreground">
           {packsSold ? (
             <>
@@ -183,14 +190,15 @@ export function CreditsCard() {
         </Link>
       )}
 
-      {monthlyCredits > 0 && packsSold && (
+      {monthlyCredits > 0 && packsSold && !paused && (
         <div className="flex flex-wrap items-center gap-2">
           <BuyPackButton variant={out ? "default" : "outline"} />
           {plan === "orbit" && <UpgradeToMaxButton />}
         </div>
       )}
 
-      {monthlyCredits > 0 && packsSold && <CreditEmailToggle initial={overview.creditEmailEnabled} />}
+      {/* Free never gets the 80% and 100% emails (`credits/notices.ts`), so it is not offered them. */}
+      {monthlyCredits > 0 && packsSold && plan !== "free" && <CreditEmailToggle initial={overview.creditEmailEnabled} />}
 
       <MaxNudgeDialog open={nudgeOpen} onOpenChange={setNudgeOpen} />
     </section>

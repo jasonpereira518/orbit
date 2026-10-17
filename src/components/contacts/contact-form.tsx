@@ -12,6 +12,7 @@ import {
   type ContactInput,
 } from "@/actions/contacts";
 import { queueContactWorkHistory } from "@/actions/contact-profile";
+import { scheduleContactFollowUp } from "@/actions/reminders";
 import { MET_CONTEXTS, MET_CONTEXT_LABELS, type MetContext } from "@/lib/met-context";
 import { SuggestInput } from "@/components/contacts/suggest-input";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
+
+/** The follow-up a by-hand contact can start with; 0 is "not now". */
+const FOLLOW_UP_CHOICES = [
+  { days: 3, label: "3 days" },
+  { days: 7, label: "1 week" },
+  { days: 14, label: "2 weeks" },
+  { days: 0, label: "Not now" },
+] as const;
 
 const EMPTY_SUGGESTIONS: ContactFieldSuggestions = {
   locations: [],
@@ -50,6 +59,8 @@ export function ContactForm({
   onSuccess,
   redirectOnSuccess = true,
   compact = false,
+  followUpChoice = false,
+  submitLabel,
 }: {
   initial?: Partial<ContactInput> & { tags?: string[] };
   contactId?: string;
@@ -62,8 +73,17 @@ export function ContactForm({
    * has to fit one screen. Everything else is on the profile afterwards.
    */
   compact?: boolean;
+  /**
+   * A new contact also gets a follow-up, a week out unless the person picks otherwise. The by-hand
+   * way in when AI cannot read notes: without it, adding someone by hand gave a contact and
+   * nothing to bring them back, which is half of what Orbit is for.
+   */
+  followUpChoice?: boolean;
+  /** The button's words when creating, if not "Create contact". */
+  submitLabel?: string;
 }) {
   const router = useRouter();
+  const [followUpDays, setFollowUpDays] = useState<number>(7);
   const [pending, start] = useTransition();
   const [lookingUp, setLookingUp] = useState(false);
   const lastLookupUrl = useRef<string>("");
@@ -274,6 +294,12 @@ export function ContactForm({
             } else {
               const c = await createContact(payload);
               await queueWorkHistory(c.id, payload.linkedinUrl);
+              if (followUpChoice && followUpDays > 0) {
+                // The contact is saved either way; a failed follow-up says so and moves on.
+                await scheduleContactFollowUp(c.id, followUpDays).catch(() =>
+                  toast.error("Added them, but the follow-up didn’t save — set it on their profile")
+                );
+              }
               toast.success("Added to your orbit");
               onSuccess?.({ id: c.id });
               if (redirectOnSuccess) router.push(`/contacts/${c.id}`);
@@ -335,6 +361,28 @@ export function ContactForm({
               placeholder="Google NYC event, introduced by Alex…"
             />
           </Field>
+          {followUpChoice && !contactId && (
+            <fieldset className="space-y-1.5">
+              <legend className="text-sm font-medium">Follow up in</legend>
+              <div className="flex w-full rounded-lg bg-muted p-[3px]">
+                {FOLLOW_UP_CHOICES.map((choice) => (
+                  <label
+                    key={choice.days}
+                    className="flex min-h-9 flex-1 cursor-pointer items-center justify-center rounded-md px-2 text-center text-sm text-muted-foreground transition-colors has-[:checked]:bg-card has-[:checked]:font-medium has-[:checked]:text-foreground has-[:checked]:shadow-sm has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/50"
+                  >
+                    <input
+                      type="radio"
+                      name="contact-follow-up-days"
+                      className="sr-only"
+                      checked={followUpDays === choice.days}
+                      onChange={() => setFollowUpDays(choice.days)}
+                    />
+                    {choice.label}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
         </>
       ) : (
         <>
@@ -561,7 +609,7 @@ export function ContactForm({
         disabled={pending || lookingUp}
         className="bg-primary text-primary-foreground hover:bg-primary/90"
       >
-        {pending ? "Saving…" : contactId ? "Save changes" : "Create contact"}
+        {pending ? "Saving…" : contactId ? "Save changes" : (submitLabel ?? "Create contact")}
       </Button>
     </form>
   );

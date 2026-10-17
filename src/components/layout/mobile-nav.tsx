@@ -12,6 +12,7 @@ import {
   APP_NAV,
   MOBILE_BOTTOM_NAV,
   MOBILE_MORE_NAV,
+  APP_NAV_SETTINGS,
   fullPrefetch,
   isNavActive,
 } from "@/components/layout/app-nav";
@@ -143,15 +144,13 @@ export function MobileNav({
   );
   const bottomNav = useMemo(
     () =>
-      MOBILE_BOTTOM_NAV.filter((item) =>
-        // "More" is a door to the overflow sheet: with nothing left behind it, it opens
-        // onto an empty sheet.
-        "id" in item ? moreNav.length > 0 : !isHrefHidden(item.href, hidden)
-      ),
-    [hidden, moreNav]
+      // "More" always stays: Settings lives behind it whatever else operators hide.
+      MOBILE_BOTTOM_NAV.filter((item) => "id" in item || !isHrefHidden(item.href, hidden)),
+    [hidden]
   );
 
-  const moreActive = moreNav.some((item) => isNavActive(pathname, item.href));
+  const moreActive =
+    moreNav.some((item) => isNavActive(pathname, item.href)) || isNavActive(pathname, APP_NAV_SETTINGS.href);
 
   // Capture keeps its own permanent circle rather than joining the shared
   // sliding highlight, so it's excluded from the draggable set — the drag
@@ -708,6 +707,22 @@ export function MobileNav({
                 </IntentLink>
               );
             })}
+            {/* Last, like the sidebar's foot: Settings was in no phone menu at all, reachable only
+                through Search, and it is where an AI key, the plan and data controls live. */}
+            <IntentLink
+              href={APP_NAV_SETTINGS.href}
+              onClick={() => setMoreOpen(false)}
+              className={cn(
+                "relative flex items-center gap-3 rounded-xl px-3 py-3 text-sm transition-colors",
+                isNavActive(pathname, APP_NAV_SETTINGS.href)
+                  ? "bg-muted text-foreground"
+                  : "text-muted-foreground hover:bg-muted/70 hover:text-foreground"
+              )}
+            >
+              <APP_NAV_SETTINGS.icon className="h-5 w-5 shrink-0" />
+              {APP_NAV_SETTINGS.label}
+              <NavPendingDot className="top-1/2 right-3 -translate-y-1/2" />
+            </IntentLink>
           </nav>
 
           <div className="mt-4 flex items-center justify-between border-t border-border/70 px-3 py-4">

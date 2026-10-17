@@ -182,6 +182,7 @@ export function ContactsList({
   initialItems,
   initialCursor,
   total,
+  filtered = true,
   filters,
   availableLetters: serverLetters,
   activeLetter: seekLetter,
@@ -189,6 +190,8 @@ export function ContactsList({
   initialItems: ContactListItem[];
   initialCursor: string | null;
   total: number | null;
+  /** A search, filter, letter or import narrows the list; false means this is everyone. */
+  filtered?: boolean;
   filters: ContactsListFilters;
   availableLetters: string[];
   activeLetter: string | null;
@@ -418,6 +421,27 @@ export function ContactsList({
         }
       });
     }, DUR_MS.slow);
+  }
+
+  if (contacts.length === 0 && !filtered) {
+    // Nobody at all yet. The filtered wording below told a brand-new account to clear a search
+    // it never typed.
+    return (
+      <div className="px-6 py-12 text-center">
+        <p className="font-[family-name:var(--font-display)] text-2xl text-ink">No one here yet</p>
+        <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+          Add someone you met recently and they’ll show up here with how you met and what’s next.
+        </p>
+        <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+          <Link href="/capture" className={cn(buttonVariants(), "bg-primary text-primary-foreground")}>
+            Add someone
+          </Link>
+          <Link href="/imports" className={cn(buttonVariants({ variant: "outline" }))}>
+            Import LinkedIn
+          </Link>
+        </div>
+      </div>
+    );
   }
 
   if (contacts.length === 0) {

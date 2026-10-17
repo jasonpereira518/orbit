@@ -2,7 +2,7 @@ import { ArrowUpRight, Infinity as InfinityIcon, Rocket, Sparkles } from "lucide
 import { DeepSpace } from "@/components/dashboard/deep-space";
 import { WarpLink } from "@/components/warp/warp-link";
 import { planCopy } from "@/lib/plan-copy";
-import { FREE_CONTACT_LIMIT, PLAN_LABELS, type Plan } from "@/lib/plans/plan-config";
+import { FREE_CONTACT_LIMIT, PLAN_CONFIG, PLAN_LABELS, type Plan } from "@/lib/plans/plan-config";
 
 /**
  * A porthole onto the destination.
@@ -113,7 +113,7 @@ export function PlanLaunchCard({ plan }: { plan: Plan }) {
           </h2>
           <p className="text-sm leading-relaxed text-[#9aada8]">
             Past that, Orbit Pro keeps every contact, follow-up, and warm intro
-            in one place — with AI included.
+            in one place, with {PLAN_CONFIG.orbit.monthlyCredits} AI credits a month.
           </p>
         </div>
 

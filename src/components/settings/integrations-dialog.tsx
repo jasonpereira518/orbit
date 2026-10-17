@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AiSettings } from "@/components/settings/ai-settings";
+import { Disclosure } from "@/components/settings/disclosure";
 import { DecisionModelSettings } from "@/components/settings/decision-model-settings";
 import { AiUsageCard } from "@/components/settings/ai-usage-card";
 import { SpeechUsageCard, type SpeechAllowances } from "@/components/settings/speech-usage-card";
@@ -664,7 +665,15 @@ function Panel({
       return (
         <div className="space-y-5">
           <AiSettings initialSettings={initialSettings} />
-          <DecisionModelSettings initialSettings={initialSettings} />
+          {/* The decision model is an optional second key most people never need: folded away
+              until one is saved, so a first visit here meets one choice, not two. */}
+          {initialSettings.decisionModel.keySaved ? (
+            <DecisionModelSettings initialSettings={initialSettings} />
+          ) : (
+            <Disclosure label="More AI options">
+              <DecisionModelSettings initialSettings={initialSettings} />
+            </Disclosure>
+          )}
           <AiUsageCard />
           <SpeechUsageCard speech={speechAllowances} />
         </div>

@@ -62,6 +62,7 @@ import {
   isAiAccessError,
   managedKeysConfigured,
   forgetManagedAiPause,
+  managedOutage,
   managedPoolState,
   resolveAiAccess,
   runOnGrant,
@@ -83,6 +84,7 @@ import { PLAN_CONFIG } from "../src/lib/plans/plan-config";
 import {
   MANAGED_AI_ENABLED,
   MANAGED_AI_POOLS,
+  poolWindowEnd,
   poolWindowStart,
   MANAGED_DEFAULT_MODELS,
   MANAGED_MODELS,
@@ -360,6 +362,11 @@ function purePolicy() {
   check("before the 15th it is last month's 15th", at("2026-11-14T23:59:59Z") === "2026-10-15");
   check("…across a year end", at("2027-01-03T00:00:00Z") === "2026-12-15");
   check("never earlier than `since`", poolWindowStart({ ...monthly, since: "2026-10-20T00:00:00Z" }, new Date("2026-11-01T00:00:00Z")).toISOString() === "2026-10-20T00:00:00.000Z");
+  const end = (iso: string) => poolWindowEnd(monthly, new Date(iso))?.toISOString().slice(0, 10);
+  check("a resetting pool's window ends on its next reset day", end("2026-10-17T12:00:00Z") === "2026-11-15");
+  check("…which is this month's before the day comes round", end("2026-10-14T12:00:00Z") === "2026-10-15");
+  check("…and next month's on the reset day itself", end("2026-10-15T00:00:00Z") === "2026-11-15");
+  check("a pool that never resets has no end", poolWindowEnd({ capMicros: 1, since: "2026-10-01T00:00:00Z" }, new Date()) === null);
   check("a prepaid pool's window is just `since`", poolWindowStart({ capMicros: 1, since: "2026-10-11T00:00:00Z" }, new Date("2027-03-01T00:00:00Z")).toISOString() === "2026-10-11T00:00:00.000Z");
   check("fast work on Orbit's OpenAI key runs on gpt-4.1-nano; Anthropic stays on Haiku 5.5",
     managedModel("openai", null, "fast") === "gpt-4.1-nano" && managedModel("anthropic", null, "fast") === "claude-haiku-5-5");
@@ -827,6 +834,7 @@ async function transitions() {
     isAiAccessError(r.err) && (r.err as AiAccessError).reason === "managed_unavailable" && r.count === 0, r.err);
   r = await lastSent(() => json(U.proOwn));
   check("…own keys are untouched", r.req?.key === USER_KEY);
+  check("…and the outage reads as paused, with no date promised", (await managedOutage())?.kind === "paused");
   delete process.env.ORBIT_MANAGED_AI;
   await db.insert(siteSettings).values({ id: 1, managedAiPaused: true }).onConflictDoUpdate({
     target: siteSettings.id,
@@ -836,10 +844,24 @@ async function transitions() {
   r = await lastSent(() => json(U.proNone));
   check("the admin pause stops Orbit-paid AI too", isAiAccessError(r.err) && r.count === 0, r.err);
   check("…and the UI says it is paused", (await getAiAccessStatus(U.proNone)).managedPaused === true);
+  {
+    // The layout's view of the same pause: the settings-level denial counts it once handed the
+    // outage, and an own key still runs, exactly as the gate decides.
+    const outage = await managedOutage();
+    const rowOf = async (u: string) => (await db.query.userSettings.findFirst({ where: eq(userSettings.userId, u) })) ?? null;
+    check("the admin pause reads as a paused outage", outage?.kind === "paused", outage);
+    check("…the layout's denial counts it for an account on Orbit's key",
+      aiDenialFromSettings(U.proNone, await rowOf(U.proNone), outage) === "managed_unavailable");
+    check("…and not for an account with its own key",
+      aiDenialFromSettings(U.proOwn, await rowOf(U.proOwn), outage) === null);
+    check("…while presence alone still cannot see it (the notifications poll)",
+      aiDenialFromSettings(U.proNone, await rowOf(U.proNone)) === null);
+  }
   await db.update(siteSettings).set({ managedAiPaused: false }).where(eq(siteSettings.id, 1));
   forgetManagedAiPause();
   r = await lastSent(() => json(U.proNone));
   check("unpausing brings it straight back", r.req?.key === MANAGED, r.err);
+  check("…and the outage clears", (await managedOutage()) === null);
 
   // The provider pools. Orbit spends Anthropic first, then OpenAI; a spent pool takes its
   // provider out, and with every key-holding provider spent included AI refuses.
@@ -879,12 +901,21 @@ async function transitions() {
     check("a spent Anthropic pool falls through to Orbit's OpenAI key", r.req?.key === OPENAI_MANAGED, r.req?.url ?? r.err);
     check("…at a managed OpenAI model", ["gpt-4o-mini", "gpt-4.1-nano"].includes(fallback.model), fallback.model);
     check("…and the UI is not told included AI is paused", (await getAiAccessStatus(U.proNone)).managedPaused === false);
+    check("…nor is there an outage while one provider still has budget", (await managedOutage()) === null);
 
     await spend("openai", MANAGED_AI_POOLS.openai!.capMicros);
     r = await lastSent(() => json(U.proNone));
     check("every pool spent: Pro refused as managed_unavailable, nothing sent",
       isAiAccessError(r.err) && (r.err as AiAccessError).reason === "managed_unavailable" && r.count === 0, r.err);
     check("…and the UI says included AI is paused", (await getAiAccessStatus(U.proNone)).managedPaused === true);
+    {
+      // OpenAI's prepaid pool never refills; Anthropic's does on the 15th, and that is when
+      // included AI is back — so the notice can promise that date and no other.
+      const outage = await managedOutage();
+      const back = poolWindowEnd(MANAGED_AI_POOLS.anthropic!, new Date())!.toISOString();
+      check("every pool spent reads as a spent outage, back when Anthropic's pool turns over",
+        outage?.kind === "spent" && outage.refillsAt === back, outage);
+    }
     r = await lastSent(() => json(U.proOwn));
     check("…own keys are untouched by the pools", r.req?.key === USER_KEY);
   } finally {

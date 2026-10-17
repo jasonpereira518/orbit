@@ -19,6 +19,7 @@ import { CHAT_IMPORTS_SURFACE_KEY } from "@/lib/surfaces";
 import { isSurfaceLive } from "@/lib/surface-visibility";
 import type { ProviderCalendarInput } from "@/lib/imports/calendar-sources";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { onboardingSeen } from "@/lib/onboarding-steps";
 
 /** Large connections imports process in the background via after(); allow it room to run. */
 export const maxDuration = 300;
@@ -98,7 +99,7 @@ export default async function ImportsPage() {
       {linkedinCardState({
         imported: linkedinImported,
         requestedAt: settings.linkedinExportRequestedAt ?? null,
-        onboardingDone: Boolean(settings.onboardingCompletedAt),
+        onboardingDone: onboardingSeen(settings),
       }).show && <LinkedInExportCard where="imports" requestedAt={settings.linkedinExportRequestedAt?.toISOString() ?? null} />}
 
       <ImportHub

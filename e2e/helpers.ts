@@ -25,26 +25,31 @@ export async function fillUntilEnabled(input: Locator, value: string, button: Lo
 
 /**
  * Past the onboarding gate: a new account is redirected from /dashboard to /onboarding.
- * "Skip setup" only appears once a path is chosen, and choosing needs the consent box that
- * an account without Clerk has never ticked — so tick, pick quick setup, then skip.
+ * The welcome has its own "Skip for now", behind the consent box an account without Clerk has
+ * never ticked; past the welcome, "Skip setup" is in the header, and the first win (where
+ * setup is already done) has "Go to my dashboard".
  */
 export async function ensureOnboarded(page: Page): Promise<void> {
   await page.goto("/dashboard");
   if (new URL(page.url()).pathname.startsWith("/onboarding")) {
     // The stage resumes wherever the account left off (specs share one e2e database), so
-    // this has to work from any step: past the welcome, "Skip setup" is in the header; on
-    // the welcome, pick a path first, and a later pass of the loop finds the Skip button.
+    // this has to work from any step.
     const skip = page.getByRole("button", { name: "Skip setup" });
+    const done = page.getByRole("button", { name: "Go to my dashboard" });
     const consent = page.getByRole("checkbox", { name: /Terms of Service/ });
-    const quick = page.getByRole("button", { name: "Set up quickly" });
+    const skipWelcome = page.getByRole("button", { name: "Skip for now" });
     await untilHydrated(
       async () => {
         if (await skip.isVisible()) {
           await skip.click();
           return;
         }
+        if (await done.isVisible()) {
+          await done.click();
+          return;
+        }
         if (await consent.isVisible()) await consent.check();
-        if (await quick.isVisible()) await quick.click();
+        if (await skipWelcome.isVisible()) await skipWelcome.click();
       },
       () => expect(page).toHaveURL(/\/dashboard$/, { timeout: 5_000 })
     );

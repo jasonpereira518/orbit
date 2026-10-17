@@ -72,10 +72,6 @@ export default async function DashboardPage() {
         <TodayMeetingsSection now={new Date()} />
       </Suspense>
 
-      {/* Renders the LinkedIn export card or the arrival nudge, or nothing once a LinkedIn import exists. */}
-      <Suspense fallback={null}>
-        <LinkedInExportNudgeSection />
-      </Suspense>
       {radarBriefing && (
         <Suspense fallback={<DashboardCardSkeleton className="h-48" />}>
           <MorningBriefingSection briefing={radarBriefing} />
@@ -100,6 +96,14 @@ export default async function DashboardPage() {
           <StatsSection bundle={bundle} />
         </Suspense>
       )}
+
+      {/* Renders the LinkedIn export card or the arrival nudge, or nothing once a LinkedIn import
+          exists. Below the setup card and the stats, not above them: the export takes a day to
+          arrive, so it is never the first thing to do — on a phone it used to fill the whole
+          first screen of a brand-new account, above "add someone". */}
+      <Suspense fallback={null}>
+        <LinkedInExportNudgeSection />
+      </Suspense>
 
       {/* Flex for the same reason as the row below: the Network depth card removes itself
           on an empty network (it can only draw zeros), and the constellation preview

@@ -38,6 +38,7 @@ import {
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { LINKEDIN_IMPORT_TYPE, LINKEDIN_MESSAGES_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-import-types";
+import { onboardingSeen } from "@/lib/onboarding-steps";
 
 /**
  * The server half of account alerts: loads the facts, hands them to the pure predicates in
@@ -360,7 +361,10 @@ export async function loadAccountHealthInput(
     aiProvider: provider,
     // The gate's own policy, presence-only: a Lifetime account on Orbit's key is not missing one.
     hasAiKey: aiReadyFromSettings(userId, settings),
-    onboardingCompletedAt: toDate(settings.onboardingCompletedAt),
+    // Completed, or seen and left (`onboardingSeen`): either way first-run guidance may show.
+    // An account that opened setup and wandered off has a step but never a completion stamp.
+    onboardingCompletedAt:
+      toDate(settings.onboardingCompletedAt) ?? (onboardingSeen(settings) ? toDate(settings.updatedAt) ?? new Date(0) : null),
     tourActive: tourRailVisible(settings),
 
     gmail: connectionFacts(

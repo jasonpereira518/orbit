@@ -1,8 +1,56 @@
 # Onboarding plan: first value in under two minutes
 
-**Date:** 2026-10-17 · **Status:** Phase 1 proposal. Nothing here is built; it waits for your approval.
+**Date:** 2026-10-17 · **Status:** Approved. The first batch is built on this branch; see [Implementation status](#implementation-status-first-batch) for what shipped and what is still open.
 
 **Evidence:** [`ONBOARDING_AUDIT.md`](ONBOARDING_AUDIT.md). Finding IDs (F1–F19) and screenshot IDs (E01–E19) refer to it. Static mockups of the key screens are in [`onboarding/mockups.html`](onboarding/mockups.html).
+
+---
+
+## Implementation status: first batch
+
+Measured the same way as the audit: `next dev`, a fresh PGlite, `ORBIT_DEMO_DATA=off`, `ORBIT_DEMO_MANAGED_AI=off`, and the Gemini stub at 4 s a call. "Paused" means `VERCEL_ENV=production` with a managed key set, which is production's default until `site_settings.managed_ai_paused` is cleared. After-screenshots A01–A15 are in [`onboarding/evidence/after/`](onboarding/evidence/after/).
+
+| # | Status | What shipped | Still open |
+|---|---|---|---|
+| R1 | Done | One `managedOutage()` read in the app layout, built on the 30-second cached pool state, tells paused apart from pools spent (with the refill date when a monthly cap is what ran out). Every notice now uses it: the paused copy no longer promises a return, and each names all four key providers. The checklist, ask bar, Settings and the tour's no-AI stops all read the same status. The Radar fallback names the right reason. The credits card puts credits "on hold" and hides "Buy a pack" while AI is paused. The credit-email toggle is hidden for Free. The Chat composer is disabled with a reason, the same way Capture disables Extract | – |
+| R2 | Done | When AI can't run, the onboarding capture step opens a by-hand form with "Follow up in: 3 days / 1 week / 2 weeks / Not now", which creates the reminder. /capture links to the same form at `/contacts/new?quick=1` | – |
+| R3 | Done | A three-step "Use your own AI key" guide recommending Gemini (D2 default), with a note on free-tier data terms. Every card links to its provider's key page. A key pasted into the wrong card is routed by its prefix. OpenRouter moves under Advanced, and the decision model moves under "More AI options". Saved keys stay visible | – |
+| R4 | Done | Welcome leads with "Add someone you met". The tour is the "Show me around with example people first" link, and "Skip for now" is new. The primary button sits above the fold on a phone (A06). Stages: Welcome → Your first person → All set | On a phone the capture step's notes box starts above the fold, but "Extract people" sits below it |
+| R5 | Done | An account that reached onboarding and left counts as onboarded (`onboardingSeen`) for the checklist, LinkedIn card, imports and account health. Nothing is written on a read path. Checklist dismissal is stored per account | – |
+| R6 | Partial | Settings is in the phone More sheet. On /capture and onboarding, the "ready to review" toast no longer appears over the review it points to | The phone Capture button still opens Voice. The code chose that on purpose ("walking out of the building" in `mobile-capture-button.tsx`), so I left it for you to decide |
+| R7 | Partial | Welcome credit line for Free with hosted AI: "Free includes 50 AI credits a month plus 25 to start. Adding someone uses about one". The plan card's credit claim now quotes the paid plan's monthly credits | The first-win credit line |
+| R8 | Partial | A first-win screen replaces the overview carousel after the first save in onboarding: who was added, their follow-up date, a picker for someone saved without a date, then "Go to my dashboard" or "Add someone else". It has one quiet animation, held still under reduced motion | The /capture hand-off; "Remind me by email" (needs R9); "Draft the message now" |
+| R9 | Not started | – | Waits on D5 (emailing Free users) |
+| R10 | Not started | – | Next batch. It needs a table and a `SCHEMA_VERSION` bump, which I kept out of a UI-only batch |
+| R11 | Partial | "Generate follow-ups" hidden at zero people. Free plan card hidden until 400 contacts (D8 default). LinkedIn nudge moved below the stats. The preview says "Your 2 people are on the full map" when there are no clusters. The tour item is marked optional and drops off at 3 people | The "Up next" card and first-run order, hiding Goals, the stats naming (F9), the ask-bar overlap |
+| R12 | Partial | Contacts zero vs. filtered, Reminders zero, the phone Constellation overlay | Chat zero-contact suggestions, "Re-engage" at zero, Cancel on contacts/new, an in-app 404, the "Pro" tag on Meetings |
+| R13–R24 | Not started | – | – |
+
+**Before and after, on the same setup:**
+
+| Measure | Before (audit) | After |
+|---|---|---|
+| Hosted AI: clicks from welcome to a saved person with a follow-up | 6 for one person (7 for two, as measured), with a path choice and a method choice on the way | 5 for one person, plus the paste. No choices on the way, and a first-win screen instead of the mock-people carousel (A01–A05, A07) |
+| Paused AI: adding a first person during onboarding | "Recommended" led to a disabled Extract. The by-hand form was behind Back, set no follow-up, and ended in the mock-people carousel | The by-hand form opens in place with "Follow up in", then the first win shows the follow-up date (A10, A11) |
+| Paused AI: what Settings says | "Included AI" credits available (E04) | Credits on hold, plus the key guide (A08) |
+| Paused AI: Chat | Accepts a message, then refuses (E06) | Composer disabled: "Chat needs AI, which can’t run right now" (A09) |
+| Abandoned onboarding: dashboard | No checklist, no LinkedIn card, no AI alert, permanently | Checklist with the right AI line, the LinkedIn card below the stats, and the AI alert all return (A12) |
+| Phone: where "Your orbit is empty" starts | y = 855 in a 664 px viewport (E15) | y = 666, at the fold, with the checklist above it |
+
+**Defaults I chose where a decision is still open.** Each is a one-line change.
+
+| Decision | Default | Where to change it |
+|---|---|---|
+| D2 | Gemini is the recommended key | `RECOMMENDED_KEY_PROVIDER` in `src/lib/ai-providers.ts` |
+| D4 | Capture first, tour optional | `PATH_STAGES` in `src/lib/onboarding-steps.ts` |
+| D8 | Free plan card hidden until 400 contacts | `FREE_PLAN_CARD_FROM` in `src/components/dashboard/dashboard-sections.tsx` |
+
+**Checks run:**
+- Typecheck is clean, and ESLint finds no errors in the changed files.
+- 527 of 541 smokes pass. The other 14 fetch over the network (avatars, CalDAV, feeds, URL guards) and fail the same way on the base commit in this sandbox.
+- Playwright: 10 pass, and 2 Stripe checkout specs are skipped without keys. The rewritten onboarding spec caught a race in which the first-win buttons stayed disabled in about 40% of runs. It is fixed: the step keeps its own flag, because AnimatePresence can hold a stale `pending` prop. The spec then passed 10 of 10 runs.
+
+**Not verified:** a real Clerk sign-up, Neon, and production's actual pause flag. As in the audit, the walks ran in demo mode.
 
 ---
 

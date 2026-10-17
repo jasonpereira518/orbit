@@ -19,6 +19,7 @@ export function DashboardGraphPreview({
 }) {
   // Laid out here, on the server: the browser receives dot positions, not contact records.
   const sky = buildPreviewSky(graphPreview.contacts, graphPreview.summary.userName);
+  const total = graphPreview.summary.total;
   return (
     <Card className="flex flex-col border-border/70 shadow-none">
       <CardHeader>
@@ -57,9 +58,14 @@ export function DashboardGraphPreview({
             ) : (
               <Link
                 href="/graph"
-                className="flex h-full items-center justify-center text-sm text-white/50"
+                className="flex h-full items-center justify-center px-6 text-center text-sm text-white/50"
               >
-                Your sky is empty
+                {/* The preview draws constellations only (two or more people at one company or
+                    school, engaged with), so a new network with people in it can still draw
+                    nothing here — and "empty" would read as the save not having worked. */}
+                {total > 0
+                  ? `Your ${total.toLocaleString()} ${total === 1 ? "person is" : "people are"} on the full map. Constellations form here as people share a company or school`
+                  : "Your sky is empty"}
               </Link>
             )}
           </div>

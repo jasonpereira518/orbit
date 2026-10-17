@@ -26,6 +26,8 @@ export default async function NewContactPage({
           ...(one(params.title) ? { title: one(params.title) } : {}),
         }
       : undefined;
+  // `?quick=1`: the short form with a follow-up, the way in from Capture when AI cannot run.
+  const quick = one(params.quick) === "1";
   const { usage } = await getPlanOverview();
   const atLimit = usage.limit !== null && usage.remaining === 0;
 
@@ -46,6 +48,24 @@ export default async function NewContactPage({
             "Your existing notes, reminders, and history are untouched",
           ]}
         />
+      </div>
+    );
+  }
+
+  if (quick) {
+    return (
+      <div className="mx-auto max-w-2xl space-y-6">
+        <RenderStamp />
+        <div>
+          <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
+            Add someone by hand
+          </h1>
+          <p className="mt-1 text-muted-foreground">
+            Who they are, how you met, and when to reach back out. Everything else can go on their profile later.
+          </p>
+        </div>
+        <ContactQuotaNotice used={usage.used} limit={usage.limit} />
+        <ContactForm initial={initial} compact followUpChoice submitLabel="Add them" />
       </div>
     );
   }

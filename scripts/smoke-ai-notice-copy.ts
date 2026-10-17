@@ -16,6 +16,9 @@ import {
   noticeCopyFor,
   refusalCopyFor,
   refusalWithRefill,
+  unavailableCopyFor,
+  AI_NOTICE_COPY,
+  OWN_KEY_PROVIDERS,
 } from "../src/lib/ai-access-copy";
 import { isQuietFailureMessage } from "../src/lib/errors";
 
@@ -73,6 +76,32 @@ check("the plan-neutral fallback offers nothing a plan might lack", !/pack|move 
 check("key_required no longer says 'On the Free Plan'", !/Free Plan/.test(noticeCopyFor("key_required", "lifetime", null).body));
 check("paused reads the same on every plan", noticeCopyFor("managed_unavailable", "free", reset).title("x") === "Orbit’s AI isn’t available right now");
 check("null reason falls back to key_required", noticeCopyFor(null, "lifetime", null).title("chat") === "Add an AI API key to chat");
+
+// Orbit's AI off, worded for why (R1): never "comes back on its own", since the admin pause has
+// no date and a prepaid pool never refills. Paused, out until a date, out for now, or one call
+// turned away while it runs.
+const paused = unavailableCopyFor({ kind: "paused" });
+const spentDated = unavailableCopyFor({ kind: "spent", refillsAt: "2026-11-15T00:00:00.000Z" });
+const spentUndated = unavailableCopyFor({ kind: "spent", refillsAt: null });
+const blip = unavailableCopyFor(null);
+check("paused says paused", paused.title("x") === "Orbit’s AI is paused right now", paused.title("x"));
+check("spent with a date names it", spentDated.title("x") === "Orbit’s AI is out until November 15", spentDated.title("x"));
+check("spent without a date promises none", spentUndated.title("x") === "Orbit’s AI is out for now");
+check("one refused call says try again", blip.title("x") === "Orbit’s AI couldn’t answer just now" && /Try again/.test(blip.body));
+check("paused and spent both point at adding people by hand",
+  [paused, spentDated, spentUndated].every((c) => /add people and set follow-ups by hand/.test(c.body)));
+const offCopies = [paused, spentDated, spentUndated, blip, AI_NOTICE_COPY.managed_unavailable];
+check("no unavailable copy promises AI comes back on its own", offCopies.every((c) => !/comes back on its own/i.test(c.body)));
+for (const [label, c] of [["paused", paused], ["spent", spentDated], ["blip", blip], ["generic", AI_NOTICE_COPY.managed_unavailable]] as const) {
+  check(`${label}: names every provider a key can be for`, c.body.includes(OWN_KEY_PROVIDERS), c.body);
+  check(`${label}: obeys the copy rules`, /\.$/.test(c.body) && (c.body.match(/ — /g) ?? []).length <= 1 && !c.body.includes("'") && !/  /.test(c.body), c.body);
+  check(`${label}: links to the keys and sells nothing`, c.linkToKeys && c.offer === null);
+}
+check("noticeCopyFor picks the outage wording when it is told one", noticeCopyFor("managed_unavailable", "free", reset, { kind: "paused" }).title("x") === paused.title("x"));
+check("…the try-again wording when told Orbit's AI is running", noticeCopyFor("managed_unavailable", "free", reset, null).title("x") === blip.title("x"));
+check("…and the generic wording when it is told nothing", noticeCopyFor("managed_unavailable", "free", reset).title("x") === AI_NOTICE_COPY.managed_unavailable.title("x"));
+check("an outage never changes the out-of-credits wording", noticeCopyFor("managed_limit", "free", reset, { kind: "paused" }).offer === "credits");
+check("key_required names every provider too", AI_NOTICE_COPY.key_required.body.includes(OWN_KEY_PROVIDERS));
 
 // The one-line refusal and the field hint: Free at zero is told its credits are monthly, and offered a pack.
 check("Free at zero: the one-line refusal is the Free message", refusalCopyFor("managed_limit", "free") === FREE_LIMIT_MESSAGE);

@@ -18,6 +18,10 @@ import { linkedinCardState } from "@/lib/linkedin-export-card";
 import { NetworkDepthChart } from "@/components/dashboard/network-depth-chart";
 import { NetworkStatsCard } from "@/components/dashboard/network-stats-card";
 import { PlanLaunchCard } from "@/components/dashboard/plan-launch-card";
+import { FREE_CONTACT_LIMIT } from "@/lib/plans/plan-config";
+
+/** A Free account sees its plan card from 80% of the contact limit. */
+const FREE_PLAN_CARD_FROM = Math.round(FREE_CONTACT_LIMIT * 0.8);
 import { RemindersDashboardCard } from "@/components/dashboard/reminders-dashboard-card";
 import { SuggestedOutreachCard } from "@/components/dashboard/suggested-outreach-card";
 import { formatReplyRate } from "@/lib/outreach-metrics";
@@ -34,10 +38,12 @@ import { getGmailConnectionStatus } from "@/actions/gmail";
 import { getOutlookConnectionStatus } from "@/actions/outlook";
 import { SetupChecklistCard, type SetupChecklistItem } from "@/components/dashboard/setup-checklist-card";
 import { integrationHref } from "@/components/settings/sections";
-import { aiDenialFromSettings } from "@/lib/ai-access";
+import { aiDenialFromSettings, managedOutage } from "@/lib/ai-access";
+import { formatAllowanceReset } from "@/lib/ai-access-copy";
 import { contactUsageForUser } from "@/lib/contact-writes";
 import { countTourExamples, hasOwnInteraction } from "@/lib/onboarding-examples/status";
 import { tourRailVisible, tourResumable } from "@/lib/tour/tour-state";
+import { onboardingSeen } from "@/lib/onboarding-steps";
 import { MorningBriefing } from "@/components/radar/morning-briefing";
 import type { RadarBriefing } from "@/lib/radar/page-data";
 
@@ -114,7 +120,7 @@ export async function LinkedInExportNudgeSection() {
   const state = linkedinCardState({
     imported: await hasLinkedInImport(userId),
     requestedAt: settings.linkedinExportRequestedAt ?? null,
-    onboardingDone: Boolean(settings.onboardingCompletedAt),
+    onboardingDone: onboardingSeen(settings),
   });
   if (!state.show) return null;
   return <LinkedInExportCard where="dashboard" requestedAt={settings.linkedinExportRequestedAt?.toISOString() ?? null} />;
@@ -128,18 +134,21 @@ export async function LinkedInExportNudgeSection() {
 export async function SetupChecklistSection() {
   const userId = await requireUserId();
   const settings = await ensureUserSettings(userId);
-  if (!settings.onboardingCompletedAt || tourRailVisible(settings)) return null;
+  if (!onboardingSeen(settings) || tourRailVisible(settings)) return null;
 
-  const [gmail, outlook, usage, examples, logged] = await Promise.all([
+  const [gmail, outlook, usage, examples, logged, outage] = await Promise.all([
     getGmailConnectionStatus(),
     getOutlookConnectionStatus(),
     contactUsageForUser(userId),
     countTourExamples(userId),
     hasOwnInteraction(userId),
+    // The layout's own cached read: a paused or spent Orbit AI is why most accounts would need
+    // a key, and key presence alone cannot see it.
+    managedOutage().catch(() => null),
   ]);
 
   const items: SetupChecklistItem[] = [];
-  const aiDenial = aiDenialFromSettings(userId, settings);
+  const aiDenial = aiDenialFromSettings(userId, settings, outage);
   if (aiDenial) {
     items.push({
       id: "ai-key",
@@ -147,7 +156,9 @@ export async function SetupChecklistSection() {
       detail:
         aiDenial === "key_required"
           ? "Capture from notes, Chat and profile briefs run on it."
-          : "Orbit’s AI isn’t available right now, so capture, Chat and briefs need a key of your own",
+          : outage?.kind === "spent"
+            ? `Orbit’s AI is out ${outage.refillsAt ? `until ${formatAllowanceReset(outage.refillsAt)}` : "for now"}, so capture, Chat and briefs need a key of your own meanwhile`
+            : "Orbit’s AI is paused right now, so capture, Chat and briefs need a key of your own",
       href: integrationHref("ai"),
     });
   }
@@ -189,11 +200,14 @@ export async function SetupChecklistSection() {
       detail: "Pick up where you left off; the example people come back for it.",
       action: "resume-tour",
     });
-  } else if (!settings.tourStartedAt) {
+  } else if (!settings.tourStartedAt && usage.used < 3) {
+    // Optional, and only while the account is new: once someone has a few real people of their
+    // own the tour has nothing to teach that their own pages don't, and the item used to keep
+    // the card from ever clearing.
     items.push({
       id: "tour",
       label: "Take the guided tour",
-      detail: "Three minutes across every page, with a few example people in place.",
+      detail: "Optional: three minutes across every page, with a few example people in place.",
       action: "start-tour",
     });
   }
@@ -206,7 +220,7 @@ export async function SetupChecklistSection() {
     });
   }
   if (items.length === 0) return null;
-  return <SetupChecklistCard items={items} />;
+  return <SetupChecklistCard items={items} accountId={userId} />;
 }
 
 export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
@@ -223,28 +237,29 @@ export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
           <h2 className="font-[family-name:var(--font-display)] text-2xl text-ink">
             Your orbit is empty
           </h2>
+          {/* One person first: it works today, while a LinkedIn export takes a day to arrive. */}
           <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-            Import LinkedIn connections, capture notes from a meeting, or add
-            someone by hand — then Orbit can remind you who to reach out to.
+            Start with someone you met recently. Write a line or two about them and Orbit
+            sets the follow-up — your LinkedIn connections can come in too.
           </p>
           <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
             <Link
-              href="/imports"
+              href="/capture"
               className={cn(buttonVariants(), "bg-primary text-primary-foreground")}
+            >
+              Add someone you met
+            </Link>
+            <Link
+              href="/imports"
+              className={cn(buttonVariants({ variant: "outline" }))}
             >
               Import LinkedIn
             </Link>
             <Link
-              href="/capture"
-              className={cn(buttonVariants({ variant: "outline" }))}
-            >
-              Capture notes
-            </Link>
-            <Link
-              href="/contacts/new"
+              href="/contacts/new?quick=1"
               className={cn(buttonVariants({ variant: "ghost" }))}
             >
-              Add a contact
+              Add by hand
             </Link>
           </div>
         </div>
@@ -484,8 +499,10 @@ export async function RemindersAndFollowUpsSection({
           <CardContent className="space-y-2">
             {data.dueFollowUps.length === 0 ? (
               <div className="space-y-3">
-                <Empty hint="You're caught up." />
-                <GenerateFollowUpsButton limit={8} label="Generate follow-ups" />
+                <Empty hint={data.stats.totalContacts > 0 ? "You're caught up." : "Add someone and their follow-ups land here."} />
+                {/* On an empty network there is nobody to generate for, and the button's own
+                    "everyone already has one" answer would be wrong. */}
+                {data.stats.totalContacts > 0 && <GenerateFollowUpsButton limit={8} label="Generate follow-ups" />}
               </div>
             ) : (
               data.dueFollowUps.slice(0, DUE_FOLLOW_UPS_PREVIEW).map((c) => (
@@ -661,8 +678,9 @@ export async function TailSection({ bundle }: { bundle: DashboardBundle }) {
 
       {/* Foot of the dashboard on purpose: prominent enough to find, far
           enough down that it isn't the first thing between you and your
-          follow-ups. */}
-      <PlanLaunchCard plan={plan} />
+          follow-ups. On Free it waits until the limit is in sight, so a new
+          account is not sold to before it has anyone in it. */}
+      {(plan !== "free" || data.stats.totalContacts >= FREE_PLAN_CARD_FROM) && <PlanLaunchCard plan={plan} />}
     </div>
   );
 }

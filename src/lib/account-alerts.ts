@@ -267,10 +267,9 @@ export function evaluateAccountHealth(
   const nowMs = now.getTime();
 
   // --- AI key -------------------------------------------------------------------------
-  // Gated on completed onboarding, and on the guided tour not being on screen. A brand-new
-  // account has no key by definition, and setup already asks for one; without this gate
-  // anyone who abandons onboarding is met by a red dot before they have done anything at
-  // all — and someone who skipped the key would see it during the very tour that explains it.
+  // Gated on onboarding being behind the person (finished, skipped, or seen and left — see
+  // `onboardingSeen`), and on the guided tour not being on screen, so nobody is met by a red
+  // dot on their very first screen or in the middle of the tour that explains AI.
   if (!input.hasAiKey && input.onboardingCompletedAt !== null && !input.tourActive) {
     findings.push({
       code: "ai.no_key",

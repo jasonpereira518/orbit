@@ -15,6 +15,8 @@ import {
   resolveAiProvider,
   tieredModels,
   type AiProvider,
+  detectKeyProvider,
+  RECOMMENDED_KEY_PROVIDER,
 } from "../src/lib/ai-providers";
 import { EMBEDDING_MODELS, FAST_MODELS, VISION_MODELS } from "../src/lib/ai-models";
 import { priceFor } from "../src/lib/ai-pricing";
@@ -177,6 +179,18 @@ check(
     Object.values(PROVIDER_MODELS).some((list) => list.some((m) => m.value === target))
   )
 );
+
+// A pasted key is routed to the card it belongs to (Settings → AI), so an Anthropic key in the
+// OpenAI card is saved as Anthropic rather than refused by OpenAI. Most specific prefix first.
+check("an sk-ant- key is Anthropic", detectKeyProvider("sk-ant-api03-abc") === "anthropic");
+check("an sk-or- key is OpenRouter", detectKeyProvider("sk-or-v1-abc") === "openrouter");
+check("an AIza key is Gemini", detectKeyProvider("  AIzaSyABC  ") === "gemini");
+check("an sk-proj- key is OpenAI", detectKeyProvider("sk-proj-abc") === "openai");
+check("a plain sk- key is OpenAI", detectKeyProvider("sk-abc123") === "openai");
+check("an unknown shape is no hint", detectKeyProvider("hello-there") === null);
+check("every detected provider is one a person can pick",
+  ["sk-ant-x", "sk-or-x", "AIzax", "sk-x"].every((k) => isSelectableAiProvider(detectKeyProvider(k)!)));
+check("the recommended provider is selectable and is the default provider", isSelectableAiProvider(RECOMMENDED_KEY_PROVIDER) && RECOMMENDED_KEY_PROVIDER === "gemini");
 
 console.log(failures === 0 ? "\nall ok" : `\n${failures} failed`);
 process.exit(failures === 0 ? 0 : 1);

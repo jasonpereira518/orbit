@@ -516,6 +516,23 @@ export function GraphCanvasMobile(props: GraphChartProps) {
     >
       <canvas ref={canvasRef} aria-hidden className="block h-full w-full" />
 
+      {/* The desktop chart's empty sky, here too: on a phone an account with nobody in it got a
+          dark canvas, the sun, and no word of what goes here or how. */}
+      {!compact && data.summary.total === 0 && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-6">
+          <div className="pointer-events-auto max-w-sm rounded-2xl border border-white/10 bg-[#080b12]/90 px-6 py-5 text-center shadow-xl">
+            <p className="font-[family-name:var(--font-display)] text-lg text-white">Your sky is empty</p>
+            <p className="mt-1 text-sm text-white/55">Add contacts and they will appear as stars in your constellation.</p>
+            <Link
+              href="/contacts/new"
+              className="mt-4 inline-flex h-9 items-center rounded-lg bg-white/10 px-3 text-sm font-medium text-white hover:bg-white/15"
+            >
+              Add a contact
+            </Link>
+          </div>
+        </div>
+      )}
+
       {/*
         A canvas is opaque to a screen reader, so the chart states what it holds and then
         hands over to the list view, which is the same people in a form that can actually

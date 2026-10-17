@@ -580,6 +580,7 @@ export function CaptureFlow({
                 onQueued={refreshQueue}
                 drive={drive}
                 canUseSync={canUseSync}
+                manualHref={onSaved ? null : "/contacts/new?quick=1"}
                 onExtract={() => void startExtraction({ text: messy.notes, hints: messy.hints, jobId: messy.jobId, sourceKind: "messy", mentionPicks: messy.mentionPicks })}
               />
             )}

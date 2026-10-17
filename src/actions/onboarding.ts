@@ -1,13 +1,14 @@
 "use server";
 
-import { eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
-import { userSettings } from "@/db/schema";
+import { contacts, reminders, userSettings } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { TERMS_VERSION } from "@/lib/legal";
 import { persistOnboardingComplete } from "@/lib/onboarding";
 import { removeTourExamples } from "@/lib/onboarding-examples/remove";
+import { notTourExample } from "@/lib/onboarding-examples/sql";
 import { isOnboardingPath, isOnboardingStep, stepAllowedOnPath, type OnboardingPath } from "@/lib/onboarding-steps";
 import { ensureUserSettings, recordTermsAcceptance } from "@/lib/user-settings";
 
@@ -117,4 +118,72 @@ export async function resetOnboarding(opts: { path?: OnboardingPath } = {}) {
 
   revalidateOnboarding();
   return { ok: true as const, redirectTo: "/onboarding" as const };
+}
+
+export type FirstWinPerson = {
+  id: string;
+  name: string;
+  /** What to call them in a headline: their preferred name, or the first word of their name. */
+  firstName: string;
+  /** "Campus Recruiter at Datadog", or whichever half is known. */
+  subtitle: string | null;
+  /** The earliest thing Orbit will bring this person back for, or null when nothing is set. */
+  followUp: { title: string; dueDate: string } | null;
+};
+
+/**
+ * What the first-win screen shows back: the people this account added most recently (at most
+ * three, newest first), each with the follow-up Orbit set, and how many real people it has in
+ * all. Tour examples never count. Read once, when the screen opens.
+ */
+export async function getFirstWinSummary(): Promise<{ people: FirstWinPerson[]; total: number }> {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const own = and(eq(contacts.userId, userId), notTourExample(contacts.source));
+  const [recent, [counted]] = await Promise.all([
+    db
+      .select({
+        id: contacts.id,
+        fullName: contacts.fullName,
+        preferredName: contacts.preferredName,
+        company: contacts.company,
+        title: contacts.title,
+        nextFollowUpAt: contacts.nextFollowUpAt,
+      })
+      .from(contacts)
+      .where(own)
+      .orderBy(desc(contacts.createdAt), desc(contacts.id))
+      .limit(3),
+    db.select({ total: sql<number>`count(*)::int` }).from(contacts).where(own),
+  ]);
+  if (recent.length === 0) return { people: [], total: 0 };
+
+  const due = await db
+    .select({ contactId: reminders.contactId, title: reminders.title, dueDate: reminders.dueDate })
+    .from(reminders)
+    .where(
+      and(
+        eq(reminders.userId, userId),
+        eq(reminders.status, "pending"),
+        inArray(
+          reminders.contactId,
+          recent.map((c) => c.id)
+        )
+      )
+    )
+    .orderBy(asc(reminders.dueDate));
+
+  const people = recent.map((c): FirstWinPerson => {
+    const name = c.preferredName?.trim() || c.fullName;
+    const reminder = due.find((r) => r.contactId === c.id && r.dueDate);
+    const followUp = reminder
+      ? { title: reminder.title, dueDate: reminder.dueDate!.toISOString() }
+      : c.nextFollowUpAt
+        ? { title: `Follow up with ${name}`, dueDate: c.nextFollowUpAt.toISOString() }
+        : null;
+    const subtitle = c.title && c.company ? `${c.title} at ${c.company}` : c.title || c.company || null;
+    const firstName = c.preferredName?.trim() || c.fullName.trim().split(/\s+/)[0] || c.fullName;
+    return { id: c.id, name: c.fullName, firstName, subtitle, followUp };
+  });
+  return { people, total: counted?.total ?? people.length };
 }

@@ -171,7 +171,9 @@ export function RadarView(props: RadarViewProps) {
       {changes.length > 0 && <WhatChanged changes={changes} onJump={jumpTo} />}
       {autopilot.length > 0 && <AutopilotDid items={autopilot} />}
 
-      {!aiAvailable && recommendations.length > 0 && <AiKeyNotice feature="draft" reason={aiReason ?? "key_required"} compact />}
+      {/* The layout's reason counts keys and Orbit's AI being off; the one thing it leaves out
+          is this account's own credits, so a refusal it cannot explain is spent credits. */}
+      {!aiAvailable && recommendations.length > 0 && <AiKeyNotice feature="draft" reason={aiReason ?? "managed_limit"} compact />}
 
       {recommendations.length === 0 ? (
         <EmptyState hasContacts={hasContacts} ranOnce={lastRunAt !== null} nextRunAt={nextRunAt} paused={paused} />

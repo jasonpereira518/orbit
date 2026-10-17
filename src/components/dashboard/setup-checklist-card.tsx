@@ -22,12 +22,13 @@ export type SetupChecklistItem = {
   tag?: "pro";
 };
 
-const DISMISS_KEY = "orbit-setup-checklist-dismissed-v1";
+/** Per account: one browser shared by two accounts used to hide the card for both. */
+const dismissKey = (accountId: string) => `orbit-setup-checklist-dismissed-v1:${accountId}`;
 const listeners = new Set<() => void>();
 
-function readDismissed() {
+function readDismissed(accountId: string) {
   try {
-    return localStorage.getItem(DISMISS_KEY) === "1";
+    return localStorage.getItem(dismissKey(accountId)) === "1";
   } catch {
     return false;
   }
@@ -40,24 +41,25 @@ function subscribe(listener: () => void) {
 
 /**
  * "Finish setting up": whatever onboarding left open, with live status, until it is all done
- * or dismissed on this device. The server section decides the items; this only renders them
+ * or dismissed on this device for this account. The server section decides the items; this only renders them
  * and runs the three actions that are not links.
  *
  * The server snapshot is "dismissed", so nothing renders into the HTML and a dismissed card
  * never flashes before hydration reads localStorage.
  */
-export function SetupChecklistCard({ items }: { items: SetupChecklistItem[] }) {
+export function SetupChecklistCard({ items, accountId }: { items: SetupChecklistItem[]; accountId: string }) {
   const router = useRouter();
   const [pending, start] = useTransition();
-  const dismissed = useSyncExternalStore(subscribe, readDismissed, () => true);
+  const read = useCallback(() => readDismissed(accountId), [accountId]);
+  const dismissed = useSyncExternalStore(subscribe, read, () => true);
   const dismiss = useCallback(() => {
     try {
-      localStorage.setItem(DISMISS_KEY, "1");
+      localStorage.setItem(dismissKey(accountId), "1");
     } catch {
       // Private mode or a full quota: the card just comes back next visit.
     }
     listeners.forEach((l) => l());
-  }, []);
+  }, [accountId]);
 
   if (dismissed || items.length === 0) return null;
 

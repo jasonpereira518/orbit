@@ -1,6 +1,6 @@
 # onboarding/
 
-Phase 1 drafts for the onboarding audit. Nothing here is product code, and nothing in `src/` changed.
+Drafts and evidence for the onboarding audit. Nothing here is product code. Phase 1 changed nothing in `src/`; the first Phase 2 batch is described in the plan's [Implementation status](../ONBOARDING_PLAN.md#implementation-status-first-batch).
 
 | File | What it is |
 |---|---|
@@ -8,6 +8,7 @@ Phase 1 drafts for the onboarding audit. Nothing here is product code, and nothi
 | [`../ONBOARDING_PLAN.md`](../ONBOARDING_PLAN.md) | Proposed first session, changes by impact and effort (R1–R24), copy deck (C1–C12), events, experiments, and decisions (D1–D11) |
 | [`mockups.html`](mockups.html) | Static phone mockups of the four key proposed screens, using the tokens from `src/app/theme.css`. Open it in a browser |
 | [`evidence/`](evidence/) | Screenshots E01–E19 cited by the audit |
+| [`evidence/after/`](evidence/after/) | Screenshots A01–A15 of the first Phase 2 batch, taken the same way (hosted credits A01–A07, AI paused A08–A15) |
 
 ## How the evidence was gathered
 

@@ -1,40 +1,50 @@
 import { expect, test } from "@playwright/test";
-import { skipConnectIfShown, untilHydrated } from "./helpers";
+import { fillUntilEnabled, skipConnectIfShown, untilHydrated } from "./helpers";
+
+// Starts with the name: the Gemini stub returns the first "First Last" pair as the person. A
+// name no other spec uses, so the capture spec's own person stays new there.
+const NOTE =
+  "Katherine Johnson leads flight research at Langley Labs. Met her at the career fair; she said to send my resume.";
 
 /**
- * Quick setup, end to end, on an empty account. The e2e account runs on the Gemini stub key
- * (so the AI key step is skipped) with no Google or Microsoft client configured (so the
- * connect step is skipped too): the walk is welcome → people → overview. The LinkedIn export
- * is a dashboard card now, not a step.
+ * Quick setup, end to end, on an empty account: the welcome's one action, a first person from
+ * notes, and the first win shown back before the dashboard. The e2e account runs on the Gemini
+ * stub key, so capture runs; no Google or Microsoft client is configured, so nothing offers to
+ * connect. The guided tour has its own spec.
  */
-test("an empty account goes through quick setup and lands on the empty dashboard", async ({ page }) => {
+test("an empty account adds its first person and sees the first win", async ({ page }) => {
   await page.goto("/dashboard");
   await expect(page).toHaveURL(/\/onboarding/);
   await expect(page.getByRole("heading", { name: "Welcome to Orbit" })).toBeVisible();
 
-  // No Clerk here, so no recorded consent: the checkbox gates both path buttons.
+  // No Clerk here, so no recorded consent: the checkbox gates every way on.
   const consent = page.getByRole("checkbox", { name: /Terms of Service/ });
-  const quick = page.getByRole("button", { name: "Set up quickly" });
-  await expect(quick).toBeDisabled();
+  const start = page.getByRole("button", { name: "Add someone you met" });
+  await expect(start).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Show me around with example people first" })).toBeDisabled();
   await untilHydrated(
     () => consent.click(),
-    () => expect(quick).toBeEnabled({ timeout: 2_000 })
+    () => expect(start).toBeEnabled({ timeout: 2_000 })
   );
-  await quick.click();
+  await start.click();
 
-  await expect(page.getByRole("heading", { name: "Add your first people" })).toBeVisible();
-  await page.getByRole("button", { name: "I’ll add people later" }).click();
+  await expect(page.getByRole("heading", { name: "Who did you meet recently?" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Type their details instead" })).toBeVisible();
+  const extract = page.getByRole("button", { name: "Extract people" });
+  await fillUntilEnabled(page.getByLabel("Your notes"), NOTE, extract);
+  await extract.click();
 
-  const overview = page.getByRole("heading", { name: "Here’s what Orbit can do" });
-  await skipConnectIfShown(page, overview);
-  await expect(overview).toBeVisible();
-  // The overview lists Capture (which needs a key) and the dashboard; the account has a key
-  // via the stub, so no "Needs AI key" tag anywhere.
-  await expect(page.getByRole("heading", { name: "Capture people in seconds" })).toBeVisible();
-  await expect(page.getByText("Needs AI key")).toHaveCount(0);
-  await page.getByRole("button", { name: "Skip to the dashboard" }).click();
+  await expect(page.getByRole("group", { name: "1 of 1: Katherine Johnson" })).toBeVisible({ timeout: 90_000 });
+  await page.getByRole("button", { name: "Keep this person" }).click();
+  await page.getByRole("button", { name: /^Save 1 contact/ }).click();
+
+  // The first win, not a tour of features: the person, and the way on to the dashboard.
+  await skipConnectIfShown(page, page.getByRole("heading", { name: "Katherine is in your network" }));
+  await expect(page.getByRole("heading", { name: "Katherine is in your network" })).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByText("Katherine Johnson").first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Here’s what Orbit can do" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Go to my dashboard" }).click();
 
   await expect(page).toHaveURL(/\/dashboard$/, { timeout: 10_000 });
-  await expect(page.getByRole("heading", { name: "Your orbit is empty" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Capture notes" })).toBeVisible();
+  await expect(page.getByText("Katherine Johnson").first()).toBeVisible();
 });

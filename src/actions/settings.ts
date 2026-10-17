@@ -125,8 +125,11 @@ export async function getSettings() {
             : p.id === "anthropic"
               ? Boolean(settings?.anthropicApiKeyEncrypted)
               : Boolean(settings?.openrouterApiKeyEncrypted),
-      /** Orbit holds a managed key for this provider AND this account may use it. */
-      managedAvailable: Boolean(ai.eligibility) && managedKeysConfigured()[p.id],
+      /**
+       * Orbit holds a managed key for this provider, this account may use it, and Orbit's AI
+       * is not paused or out of budget — a card must not say "covered" while it is.
+       */
+      managedAvailable: Boolean(ai.eligibility) && managedKeysConfigured()[p.id] && !ai.managedPaused,
       /** Clearing this key moves search to another provider, which drops and rebuilds its index. */
       clearResetsSearch: clearMovesEmbeddings(p.id, settings, ai.eligibility),
     })),

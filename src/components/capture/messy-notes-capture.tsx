@@ -20,6 +20,7 @@
  * is read, and Reading… carries a Stop.
  */
 import { tourAnchor } from "@/lib/tour/tour-anchors";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { findCapturedFiles } from "@/actions/capture-jobs";
@@ -75,6 +76,7 @@ export function MessyNotesCapture({
   onQueued,
   drive = null,
   canUseSync = false,
+  manualHref = null,
 }: {
   ingest: CaptureIngest;
   onExtract: () => void;
@@ -91,6 +93,11 @@ export function MessyNotesCapture({
   /** Google Picker config; the Drive button hides itself when this is incomplete. */
   drive?: DriveCaptureConfig | null;
   canUseSync?: boolean;
+  /**
+   * Where adding someone by hand lives, offered while AI cannot read notes. Null when embedded
+   * (onboarding has its own by-hand step, and a link out would leave setup).
+   */
+  manualHref?: string | null;
 }) {
   const fanout = useCaptureFanout({ onSettled: onQueued });
   const [incoming, setIncoming] = useState<{ file: File; path: string }[]>([]);
@@ -330,6 +337,15 @@ export function MessyNotesCapture({
           <MissingKeyNotice reason={ingest.aiReason} />
           <p className="-mt-2 text-xs text-muted-foreground">
             Pasting a LinkedIn profile URL on its own still works without a key.
+            {manualHref ? (
+              <>
+                {" "}Or{" "}
+                <Link href={manualHref} className="font-medium text-primary underline-offset-2 hover:underline">
+                  add someone by hand
+                </Link>{" "}
+                and set a follow-up.
+              </>
+            ) : null}
           </p>
         </>
       )}

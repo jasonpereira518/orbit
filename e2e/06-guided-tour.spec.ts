@@ -30,7 +30,7 @@ test("the guided tour walks the real pages with example people, then removes the
   );
   await expect(page.getByRole("heading", { name: "Welcome to Orbit" })).toBeVisible();
   const consent = page.getByRole("checkbox", { name: /Terms of Service/ });
-  const start = page.getByRole("button", { name: "Start the tour" });
+  const start = page.getByRole("button", { name: "Show me around with example people first" });
   await untilHydrated(
     async () => {
       if (await consent.isVisible()) await consent.check();

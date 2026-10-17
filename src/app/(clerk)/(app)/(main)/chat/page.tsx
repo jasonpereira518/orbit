@@ -12,8 +12,8 @@ export default async function ChatPage() {
   const gate = await pageVisibilityGate("page.chat");
   if (gate) return gate;
 
-  // AI runs on the user's own key, or on Orbit's for Lifetime: when neither applies, say so
-  // here, before the first question fails, rather than in a toast after it.
+  // AI runs on Orbit's included credits or the account's own key: when neither can run, say so
+  // here and switch the composer off, before a question is typed, rather than refuse it after.
   //
   // The history list is read here too, beside the settings rather than after them, so the
   // rail paints with it instead of fetching once the panel mounts. The same action the panel
@@ -59,7 +59,7 @@ export default async function ChatPage() {
           <AiKeyNotice feature="chat" reason={settings.ai.reason} compact />
         </div>
       )}
-      <ChatPanelLazy initialThreads={initialThreads} />
+      <ChatPanelLazy initialThreads={initialThreads} aiBlocked={!settings.hasApiKey} />
     </div>
   );
 }

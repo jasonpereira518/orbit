@@ -58,6 +58,7 @@ import {
   MANAGED_AI_ENABLED,
   MANAGED_AI_POOLS,
   earliestPoolWindowStart,
+  poolWindowEnd,
   poolWindowStart,
   MANAGED_PROVIDER_ORDER,
   UNPRICED_CALL_MICROS,
@@ -66,6 +67,7 @@ import {
   type AiKeySource,
   type KeyFacts,
   type ManagedEligibility,
+  type ManagedOutage,
 } from "@/lib/managed-ai-policy";
 
 /**
@@ -175,7 +177,12 @@ export function managedAiSwitchedOff(): boolean {
  * for has spent its pool.
  */
 const PAUSE_TTL_MS = 30_000;
-type PoolState = { paused: boolean; spent: ReadonlySet<AiProvider> };
+/**
+ * `spent` is every provider out of the managed set; `capped` the subset that hit its pool's
+ * cap (back when the pool's window turns over), as opposed to one that ran dry mid-window
+ * (back within the 2-hour quota window, on no date anyone can promise).
+ */
+type PoolState = { paused: boolean; spent: ReadonlySet<AiProvider>; capped: ReadonlySet<AiProvider> };
 let pauseCache: (PoolState & { at: number }) | null = null;
 
 export function managedAiPausedDefault(): boolean {
@@ -243,15 +250,37 @@ export async function managedPoolState(now = Date.now()): Promise<PoolState> {
       managedPoolsSpent(new Date(now)),
     ]);
     const [row] = rowsOf<{ paused: boolean | null; dry: string[] | null }>(result);
-    const spent = new Set<AiProvider>([
-      ...(Object.keys(spentMicros) as AiProvider[]).filter((p) => (spentMicros[p] ?? 0) >= MANAGED_AI_POOLS[p]!.capMicros),
-      ...((row?.dry ?? []) as AiProvider[]),
-    ]);
-    pauseCache = { paused: row?.paused ?? managedAiPausedDefault(), spent, at: now };
+    const capped = new Set<AiProvider>(
+      (Object.keys(spentMicros) as AiProvider[]).filter((p) => (spentMicros[p] ?? 0) >= MANAGED_AI_POOLS[p]!.capMicros)
+    );
+    const spent = new Set<AiProvider>([...capped, ...((row?.dry ?? []) as AiProvider[])]);
+    pauseCache = { paused: row?.paused ?? managedAiPausedDefault(), spent, capped, at: now };
     return pauseCache;
   } catch {
-    return pauseCache ?? { paused: true, spent: new Set() };
+    return pauseCache ?? { paused: true, spent: new Set(), capped: new Set() };
   }
+}
+
+/**
+ * Why Orbit's own AI is off for everyone right now (`ManagedOutage`), or null while it runs.
+ * Same cached read as the gate, so the layout can ask on every page; with no managed key held
+ * it answers without touching the database at all.
+ */
+export async function managedOutage(now = new Date()): Promise<ManagedOutage | null> {
+  const held = MANAGED_PROVIDER_ORDER.filter((p) => managedKey(p));
+  if (held.length === 0) return { kind: "paused" };
+  const state = await managedPoolState(now.getTime());
+  if (state.paused) return { kind: "paused" };
+  if (!held.every((p) => state.spent.has(p))) return null;
+  // A provider that only ran dry is back within hours, on no date anyone can promise.
+  if (held.some((p) => !state.capped.has(p))) return { kind: "spent", refillsAt: null };
+  // Otherwise back when the first capped pool turns over; a prepaid pool never does.
+  const ends = held.flatMap((p) => {
+    const pool = MANAGED_AI_POOLS[p];
+    const end = pool ? poolWindowEnd(pool, now) : null;
+    return end ? [end.getTime()] : [];
+  });
+  return { kind: "spent", refillsAt: ends.length ? new Date(Math.min(...ends)).toISOString() : null };
 }
 
 export async function managedAiPaused(now = Date.now()): Promise<boolean> {
@@ -875,17 +904,29 @@ type AiSettingsRow = {
   openrouterApiKeyEncrypted?: string | null;
 } & BillingColumns;
 
+const NO_MANAGED_KEYS: Record<AiProvider, boolean> = { gemini: false, openai: false, anthropic: false, openrouter: false };
+
 /**
- * The settings-level denial: presence only, no credits and no admin pause (like the alert it
- * feeds). Null = AI would run. No decryption, no credit query, no Stripe, and the same policy
- * function as the gate, so the "add your API key" alert and the gate cannot disagree about
- * who needs a key.
+ * The settings-level denial: key presence, no credits. Null = AI would run. No decryption, no
+ * credit query, no Stripe, and the same policy function as the gate, so the "add your API key"
+ * alert and the gate cannot disagree about who needs a key.
+ *
+ * Pass `outage` (from `managedOutage()`) to also count Orbit's AI being paused or out of
+ * budget, as the gate does: an account that would have run on Orbit's key then falls back to
+ * its own, or is refused. Without it the answer is presence alone (the notifications poll).
+ * A dev server's own keys are not Orbit's, so an outage never touches a demo account.
  */
-export function aiDenialFromSettings(userId: string, row: AiSettingsRow | null): AiAccessDenial | null {
+export function aiDenialFromSettings(
+  userId: string,
+  row: AiSettingsRow | null,
+  outage: ManagedOutage | null = null
+): AiAccessDenial | null {
   const selectedProvider = resolveAiProvider(row?.aiProvider);
   const { plan } = resolvePlan(row);
+  const eligibility = managedEligibility(plan, demoCountsAsManaged(userId));
   const facts = {
-    eligibility: managedEligibility(plan, demoCountsAsManaged(userId)),
+    eligibility,
+    preference: (row?.aiKeyPreference ?? null) as AiKeyPreference,
     selectedProvider,
     selectedModel: resolveAiModel(selectedProvider, row?.aiModel),
     personal: {
@@ -894,7 +935,7 @@ export function aiDenialFromSettings(userId: string, row: AiSettingsRow | null):
       anthropic: Boolean(row?.anthropicApiKeyEncrypted),
       openrouter: Boolean(row?.openrouterApiKeyEncrypted),
     },
-    managed: managedKeysConfigured(),
+    managed: outage && eligibility === "plan" ? NO_MANAGED_KEYS : managedKeysConfigured(),
   };
   const choice = chooseCompletionKey(facts);
   return choice.ok ? null : choice.reason;

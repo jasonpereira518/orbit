@@ -9,9 +9,12 @@ import {
   saveWorkHistoryAutoEnabled,
 } from "@/actions/settings";
 import { cn } from "@/lib/utils";
+import { ExternalLink } from "lucide-react";
 import {
   AI_PROVIDERS,
   SELECTABLE_AI_PROVIDERS,
+  RECOMMENDED_KEY_PROVIDER,
+  detectKeyProvider,
   isSelectableAiProvider,
   DEFAULT_MODELS,
   PROVIDER_MODELS,
@@ -26,7 +29,7 @@ import { Disclosure } from "@/components/settings/disclosure";
 import { ClearKeyButton, ProviderCard, SAVE_THREW, TIER_LABELS } from "@/components/settings/provider-card";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
-import { FREE_AI_EXPLAINER, noticeCopyFor } from "@/lib/ai-access-copy";
+import { FREE_AI_EXPLAINER, OWN_KEY_PROVIDERS, noticeCopyFor } from "@/lib/ai-access-copy";
 import { managedModel } from "@/lib/managed-ai-policy";
 import { setAiKeyPreference } from "@/actions/credits";
 import { CreditsCard } from "@/components/credits/credits-card";
@@ -41,9 +44,10 @@ function modelLabel(provider: AiProvider, id: string) {
  * The AI page: one card per provider a person may choose, and everything technical folded
  * into Advanced.
  *
- * SELECTABLE_AI_PROVIDERS, not AI_PROVIDERS: the full table also carries providers whose
- * plumbing exists but which no surface offers (OpenRouter). `providerMeta` below still looks
- * up the full table, so an account already on one keeps its real name in the copy.
+ * SELECTABLE_AI_PROVIDERS, not AI_PROVIDERS: only providers a person may pick get a card.
+ * OpenRouter's card sits in Advanced unless the account is already on it, so someone looking
+ * for their first key meets three choices, one of them recommended. `providerMeta` below still
+ * looks up the full table, so an account on any provider keeps its real name in the copy.
  */
 export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
   const [settings, setSettings] = useState<Settings>(initialSettings);
@@ -77,7 +81,17 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
   const onLocalDevKeys = ai.eligibility === "demo" && ai.managedConfigured;
   // Every plan: AI included on Orbit's keys (unless paused).
   const onIncluded = ai.eligibility === "plan" && ai.managedConfigured && !ai.managedPaused;
+  // Included AI exists on this deployment but is paused or out of budget for everyone.
+  const includedPaused = ai.eligibility === "plan" && ai.managedConfigured && ai.managedPaused;
   const hasAnyPersonalKey = settings.providers.some((p) => p.hasPersonalKey);
+  // Someone who needs a key to use AI at all gets the step-by-step; anyone covered by included
+  // AI (or a dev server's own keys) only gets the "create a key" link on each card.
+  const showKeyGuide = !hasAnyPersonalKey && !onLocalDevKeys && (ai.reason !== null || !onIncluded);
+  // OpenRouter is for people who already use it: in Advanced, unless this account is on it.
+  const openRouterInGrid =
+    provider === "openrouter" || Boolean(settings.providers.find((p) => p.id === "openrouter")?.hasPersonalKey);
+  const gridProviders = SELECTABLE_AI_PROVIDERS.filter((p) => p.id !== "openrouter" || openRouterInGrid);
+  const advancedProviders = SELECTABLE_AI_PROVIDERS.filter((p) => !gridProviders.includes(p));
   // What Orbit's key would run for the provider on screen, when it is the one paying.
   const managedRuns = activeProviderStatus?.managedAvailable
     ? managedModel(provider, model)
@@ -94,25 +108,33 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
     model?: string;
     apiKey?: string;
   }): Promise<string | null | typeof SAVE_THREW> {
+    // A key pasted into the wrong card goes to the provider it belongs to, rather than being
+    // refused by the one it was pasted into. Only a key's prefix decides; the save verifies it.
+    const detected = input.apiKey ? detectKeyProvider(input.apiKey) : null;
+    const target = detected && detected !== input.provider && isSelectableAiProvider(detected) ? detected : input.provider;
+    const moved = target !== input.provider;
     try {
       const res = await saveAiSettings({
-        provider: input.provider,
+        provider: target,
         // Saving a key on a provider that is not the active one moves the account to it, so
         // the stored model has to move too — otherwise it keeps the old provider's id.
         model:
-          input.model ??
-          (input.provider === settings.aiProvider ? undefined : DEFAULT_MODELS[input.provider]),
+          (moved ? undefined : input.model) ??
+          (target === settings.aiProvider ? undefined : DEFAULT_MODELS[target]),
         apiKey: input.apiKey,
       });
       if (!res.ok) return res.error;
       const next = await getSettings();
       setSettings(next);
       setCustomModel(next.aiModel);
+      const targetLabel = AI_PROVIDERS.find((p) => p.id === target)?.label ?? target;
       toast.success(
-        res.keyNote ??
-          (res.embeddingReset
-            ? "Saved — search will re-index for the new provider"
-            : "AI settings saved")
+        moved
+          ? `That looks like ${/^[aeiou]/i.test(targetLabel) ? "an" : "a"} ${targetLabel} key, so Orbit saved it there`
+          : (res.keyNote ??
+              (res.embeddingReset
+                ? "Saved — search will re-index for the new provider"
+                : "AI settings saved"))
       );
       return null;
     } catch (err) {
@@ -144,10 +166,14 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
           ? FREE_AI_EXPLAINER
           : onIncluded
             ? "Orbit uses AI to turn your notes into contacts and answer questions about your network. Your plan includes AI on Orbit’s keys, metered in credits. Orbit picks the model for it (Claude Haiku 5.5, with OpenAI as backup) — or bring your own key to choose, which never uses credits."
-            : "Orbit uses AI to turn your notes into contacts and answer questions about your network. Pick a provider and paste its key — keys are encrypted at rest and only used for your account."
+            : includedPaused
+              ? "Orbit uses AI to turn your notes into contacts and answer questions about your network. Orbit’s included AI is paused right now, so to use AI meanwhile, add a key of your own below. Keys are encrypted at rest and only used for your account."
+              : "Orbit uses AI to turn your notes into contacts and answer questions about your network. Pick a provider and paste its key — keys are encrypted at rest and only used for your account."
       }
     >
-      <CreditsCard />
+      <CreditsCard paused={includedPaused} />
+
+      {showKeyGuide && <OwnKeyGuide />}
 
       {onIncluded && hasAnyPersonalKey && (
         <KeyPreference
@@ -165,13 +191,15 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
       )}
 
       <ul className="grid gap-3 sm:grid-cols-2">
-        {SELECTABLE_AI_PROVIDERS.map((p) => (
+        {gridProviders.map((p) => (
           <ProviderCard
             key={p.id}
             provider={p}
             status={settings.providers.find((s) => s.id === p.id)}
             active={p.id === provider}
             model={p.id === provider ? model : null}
+            includedCovers={onIncluded}
+            recommended={showKeyGuide && p.id === RECOMMENDED_KEY_PROVIDER}
             onSave={save}
             onClear={clearKey}
           />
@@ -249,9 +277,31 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
           {onLocalDevKeys
             ? "This dev server runs AI on the keys in your .env.local — nothing to set up. Save a key above and it is used instead, which is also how you see what a deployed account sees. Keys are encrypted at rest and only used for your account."
             : onIncluded
-              ? "Your plan includes AI on Orbit’s own keys — nothing to set up. You can still bring your own Gemini, OpenAI, or Anthropic key and choose which runs first; calls on your own key never use credits. Keys are encrypted at rest and only used for your account."
-              : `Choose Gemini, OpenAI, or Anthropic above and paste your own API key. Keys are encrypted at rest and only used for your account.${ai.managedConfigured ? " Every plan, Free included, has AI on Orbit’s own keys, so a key is optional; included AI is paused right now." : ""}`}
+              ? `Your plan includes AI on Orbit’s own keys — nothing to set up. You can still bring your own ${OWN_KEY_PROVIDERS} key and choose which runs first; calls on your own key never use credits. Keys are encrypted at rest and only used for your account.`
+              : `Choose a provider above and paste your own API key. Keys are encrypted at rest and only used for your account.${includedPaused ? " Orbit’s included AI is paused right now, so your own key is how to use AI until it’s back." : ""}`}
         </p>
+
+        {advancedProviders.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">
+              Already use OpenRouter? One key there reaches many providers’ models.
+            </p>
+            <ul className="grid gap-3 sm:grid-cols-2">
+              {advancedProviders.map((p) => (
+                <ProviderCard
+                  key={p.id}
+                  provider={p}
+                  status={settings.providers.find((s) => s.id === p.id)}
+                  active={p.id === provider}
+                  model={p.id === provider ? model : null}
+                  includedCovers={onIncluded}
+                  onSave={save}
+                  onClear={clearKey}
+                />
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* No live region below: this sits inside a collapsed panel, and hidden content is
             never announced, so the role would claim an announcement that cannot happen. */}
@@ -377,6 +427,61 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
         </div>
       </Disclosure>
     </SettingsSection>
+  );
+}
+
+/**
+ * Step by step, for someone who needs a key to use AI at all: one provider recommended, three
+ * steps, and the link straight to where the key is made. The other providers' cards each carry
+ * their own link. Nothing here saves anything — the key still goes in a card below.
+ */
+function OwnKeyGuide() {
+  const meta = AI_PROVIDERS.find((p) => p.id === RECOMMENDED_KEY_PROVIDER)!;
+  return (
+    <section aria-labelledby="own-key-guide" className="space-y-3 rounded-xl border border-border/70 bg-card p-4">
+      <div className="space-y-1">
+        <h3 id="own-key-guide" className="font-heading text-base text-ink">
+          Use your own AI key
+        </h3>
+        <p className="text-sm text-muted-foreground">
+          Orbit can run on an AI account of your own. You pay the provider directly, and it never uses your Orbit
+          credits
+        </p>
+      </div>
+      <div className="space-y-2">
+        <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-ink">
+          {meta.label}
+          <span className="rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+            Recommended
+          </span>
+        </p>
+        <ol className="list-decimal space-y-1.5 pl-5 text-sm text-foreground marker:text-muted-foreground">
+          <li>
+            Open Google AI Studio and sign in with your Google account.{" "}
+            <a
+              href={meta.keyPageUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 font-medium text-primary underline-offset-2 hover:underline"
+            >
+              {meta.keyPageLabel}
+              <ExternalLink className="size-3" aria-hidden />
+              <span className="sr-only">(opens in a new tab)</span>
+            </a>
+          </li>
+          <li>Press Create API key, then copy it</li>
+          <li>Paste it into the {meta.label} card below and press Save. Orbit checks it straight away</li>
+        </ol>
+        <p className="text-xs text-muted-foreground">
+          Google’s free tier has usage limits and its own data terms. Check them before you use it for notes about
+          other people
+        </p>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        Prefer OpenAI or Anthropic? Their cards below link to where you make a key, and a key pasted into the wrong
+        card still lands in the right one
+      </p>
+    </section>
   );
 }
 

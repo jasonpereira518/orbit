@@ -2,38 +2,43 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ArrowRight, Check } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Stagger, StaggerItem } from "@/components/onboarding/onboarding-ui";
-import type { OnboardingPath } from "@/lib/onboarding-steps";
-import { cn } from "@/lib/utils";
-
-const TOUR_SETS_UP = [
-  "Your Google or Outlook contacts, brought in with one click",
-  "Every page, with six example people already in place",
-];
+import { FREE_STARTER_CREDITS, PLAN_CONFIG } from "@/lib/plans/plan-config";
 
 /**
- * The first screen: the mark, one sentence, consent when Clerk did not record one, and the
- * choice of path. The guided tour is the primary card on purpose — it is the one that
- * teaches the real pages — and quick setup is the honest short route beside it.
+ * The first screen: the mark, one sentence, consent when Clerk did not record one, and one
+ * thing to do — add someone you met. A real person with a follow-up is what Orbit is for, so
+ * it is the default, a screen away. The guided tour (six example people across every page) is
+ * still one click, for anyone who would rather look first; so is skipping.
+ *
+ * It replaced a choice of two equal cards with the tour recommended, which ended most first
+ * sessions with no real person in them at all.
  */
 export function WelcomeStep({
   needsTerms,
   pending,
-  onChoose,
+  showCredits,
+  onStart,
+  onTour,
+  onSkip,
 }: {
   needsTerms: boolean;
   pending: boolean;
-  onChoose: (path: OnboardingPath) => void;
+  /** A Free account on Orbit's included AI: say what it starts with and what adding someone costs. */
+  showCredits: boolean;
+  onStart: () => void;
+  onTour: () => void;
+  onSkip: () => void;
 }) {
   const [agreed, setAgreed] = useState(false);
   const blocked = pending || (needsTerms && !agreed);
 
   return (
-    <Stagger className="mx-auto flex max-w-3xl flex-col items-center text-center">
+    <Stagger className="mx-auto flex max-w-xl flex-col items-center text-center">
       <StaggerItem className="relative mb-3 flex size-16 items-center justify-center">
         {/* The mark sits inside its own orbit: a ring with one moon, turning slowly. Linear,
             because an orbit that eases reads as a wobble; the global reduced-motion clamp
@@ -56,13 +61,13 @@ export function WelcomeStep({
       </StaggerItem>
       <StaggerItem>
         <p className="mt-2 max-w-md text-base text-muted-foreground text-pretty">
-          Orbit remembers the people you meet and tells you when to reach back out. Choose how
-          you’d like to start.
+          Orbit remembers the people you meet and tells you when to reach back out. Start with one
+          person you met recently — it takes about a minute.
         </p>
       </StaggerItem>
 
       {needsTerms && (
-        <StaggerItem className="mt-4 w-full max-w-lg">
+        <StaggerItem className="mt-4 w-full max-w-md">
           <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-border/70 bg-card/70 px-3 py-2.5 text-left text-sm text-muted-foreground">
             <Checkbox
               checked={agreed}
@@ -85,97 +90,39 @@ export function WelcomeStep({
         </StaggerItem>
       )}
 
-      <Stagger as="ul" className="mt-6 grid w-full gap-3 text-left sm:grid-cols-[1.15fr_1fr]">
-        <StaggerItem as="li">
-          <PathCard
-            primary
-            eyebrow="Recommended"
-            title="Guided tour"
-            time="Connect your accounts, then a three-minute tour of the real pages."
-            action="Start the tour"
-            disabled={blocked}
-            onClick={() => onChoose("tour")}
-          >
-            <ul className="space-y-1.5">
-              {TOUR_SETS_UP.map((line) => (
-                <li key={line} className="flex items-start gap-2 text-sm text-foreground">
-                  <Check className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
-                  <span className="min-w-0">{line}</span>
-                </li>
-              ))}
-            </ul>
-          </PathCard>
-        </StaggerItem>
-        <StaggerItem as="li">
-          <PathCard
-            title="Quick setup"
-            time="About a minute."
-            action="Set up quickly"
-            disabled={blocked}
-            onClick={() => onChoose("quick")}
-          >
-            <p className="text-sm text-muted-foreground">
-              Your people first, then your accounts, then a quick look at what Orbit can do. The
-              tour is always in Settings → Help if you want it later.
-            </p>
-          </PathCard>
-        </StaggerItem>
-      </Stagger>
-    </Stagger>
-  );
-}
-
-function PathCard({
-  primary,
-  eyebrow,
-  title,
-  time,
-  action,
-  disabled,
-  onClick,
-  children,
-}: {
-  primary?: boolean;
-  eyebrow?: string;
-  title: string;
-  time: string;
-  action: string;
-  disabled: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      className={cn(
-        "flex h-full flex-col gap-3 rounded-3xl border p-5",
-        primary
-          ? "border-primary/40 bg-card shadow-[0_18px_50px_-30px] shadow-primary/40"
-          : "border-border/70 bg-card/60",
-      )}
-    >
-      <div className="space-y-1">
-        {eyebrow && (
-          <span className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-primary">
-            {eyebrow}
-          </span>
+      <StaggerItem className="mt-6 w-full max-w-md">
+        <Button
+          type="button"
+          size="lg"
+          className="h-11 w-full text-[15px]"
+          disabled={blocked}
+          onClick={onStart}
+        >
+          Add someone you met
+          <ArrowRight className="size-4" aria-hidden />
+        </Button>
+        {showCredits && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Free includes {PLAN_CONFIG.free.monthlyCredits} AI credits a month plus {FREE_STARTER_CREDITS} to start.
+            Adding someone uses about one
+          </p>
         )}
-        <h2 className="font-[family-name:var(--font-display)] text-2xl tracking-tight text-ink">
-          {title}
-        </h2>
-        <p className="text-sm text-muted-foreground">{time}</p>
-      </div>
-      <div className="flex-1">{children}</div>
-      <Button
-        type="button"
-        size="lg"
-        variant={primary ? "default" : "outline"}
-        className="h-10 w-full text-[15px]"
-        disabled={disabled}
-        onClick={onClick}
-      >
-        {action}
-        <ArrowRight className="size-4" aria-hidden />
-      </Button>
-    </div>
+      </StaggerItem>
+
+      <StaggerItem className="mt-5 flex flex-col items-center gap-1 text-sm">
+        <Button type="button" variant="link" className="h-auto p-1 text-primary" disabled={blocked} onClick={onTour}>
+          Show me around with example people first
+        </Button>
+        <Button
+          type="button"
+          variant="link"
+          className="h-auto p-1 font-normal text-muted-foreground"
+          disabled={blocked}
+          onClick={onSkip}
+        >
+          Skip for now
+        </Button>
+      </StaggerItem>
+    </Stagger>
   );
 }

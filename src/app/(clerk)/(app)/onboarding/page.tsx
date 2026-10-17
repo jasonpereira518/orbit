@@ -64,6 +64,10 @@ export default async function OnboardingPage() {
         google: connectAccountFromGmail(gmail),
         microsoft: connectAccountFromOutlook(outlook),
       }}
+      // A Free account that AI is running for on Orbit's credits: the welcome says what it has.
+      showCredits={
+        aiSettings.ai.ready && aiSettings.ai.source === "managed" && aiSettings.ai.eligibility === "plan" && aiSettings.ai.plan === "free"
+      }
       planFlags={{
         canUseOutreach: entitlements.canUseOutreach,
         canUseHostedSending: entitlements.canUseHostedSending,
