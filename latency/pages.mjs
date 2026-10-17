@@ -209,10 +209,17 @@ async function firstContactPath(context) {
 }
 
 async function clickNav(page, path) {
-  const link = page.locator(`a[href='${path}']`).first();
-  if (!(await link.count())) return null;
+  // Only a visible link counts: at phone width the sidebar is collapsed and only the bottom
+  // bar's few entries can be tapped, so a page with no visible link reports `missing_link`
+  // for that profile instead of failing the run.
+  const link = page.locator(`a[href='${path}']`).locator("visible=true").first();
+  if (!(await link.count().catch(() => 0))) return null;
   const started = await page.evaluate(() => performance.now());
-  await link.click({ noWaitAfter: true, timeout: 5000 });
+  try {
+    await link.click({ noWaitAfter: true, timeout: 5000 });
+  } catch (err) {
+    return { ms: null, skeleton_ms: null, error: String(err).split("\n")[0].slice(0, 120) };
+  }
   return waitNav(page, path, started);
 }
 
@@ -274,7 +281,7 @@ async function run(profile, browser, contactPath) {
       await page.evaluate((s) => window.__latReady(s), PAGES["/dashboard"]);
       await sleep(2000);
       for (const path of NAV_TOUR) {
-        const r = await clickNav(page, path);
+        const r = await clickNav(page, path).catch((err) => ({ ms: null, skeleton_ms: null, error: String(err).slice(0, 120) }));
         result.nav.push({ to: path, ...(r ?? { ms: null, missing_link: true }) });
         console.log(profile, "nav", path, JSON.stringify(r));
         await sleep(800);
@@ -313,8 +320,16 @@ try {
   if (WARM) await warmRoutes(browser, contactPath);
   const profiles = PROFILE === "both" ? ["desktop", "mobile4g"] : [PROFILE];
   const results = {};
-  for (const p of profiles) results[p] = await run(p, browser, contactPath);
-  writeJson(OUT, { base: BASE, at: new Date().toISOString(), contactPath, results });
+  for (const p of profiles) {
+    try {
+      results[p] = await run(p, browser, contactPath);
+    } catch (err) {
+      console.error(`profile ${p} failed:`, err);
+      results[p] = { profile: p, error: String(err).slice(0, 300), pages: {}, nav: [], history: {} };
+    }
+    // Write after every profile so a failure in the second one keeps the first's numbers.
+    writeJson(OUT, { base: BASE, at: new Date().toISOString(), contactPath, results });
+  }
 } finally {
   await browser.close();
 }
