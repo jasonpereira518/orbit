@@ -31,6 +31,12 @@ import { toUserFacingError } from "@/lib/errors";
 
 /** Dotted call-site ids, same convention as `usage_events.operation`. */
 export const ERROR_SOURCES = {
+  /**
+   * The token endpoint rejected Orbit's own OAuth client (expired or rotated secret), not a
+   * user's grant (`isOAuthClientRejection`). `kind` is the provider. Affects every account
+   * at once, so it is recorded (throttled) rather than flagging any connection.
+   */
+  oauthClientInvalid: "oauth.client_invalid",
   oauthGmailCallback: "oauth.gmail.callback",
   oauthOutlookCallback: "oauth.outlook.callback",
   searchPgvector: "search.pgvector",

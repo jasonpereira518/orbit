@@ -127,8 +127,8 @@ async function main() {
       isRefreshRejection(400, '{"error":"invalid_grant"}') === true
     );
     check(
-      "401 unauthorized_client is a rejection",
-      isRefreshRejection(401, '{"error":"unauthorized_client"}') === true
+      "401 unauthorized_client is Orbit's client being refused, not a user rejection",
+      isRefreshRejection(401, '{"error":"unauthorized_client"}') === false
     );
     // These are the important ones. A provider outage must NOT mark every account.
     check(

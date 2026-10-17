@@ -555,9 +555,21 @@ export class ReauthRequiredError extends Error {
  */
 export function isRefreshRejection(status: number, body: string): boolean {
   if (status !== 400 && status !== 401) return false;
-  return /invalid_grant|invalid_client|unauthorized_client|interaction_required|consent_required|login_required|invalid_rapt/i.test(
+  return /invalid_grant|interaction_required|consent_required|login_required|invalid_rapt/i.test(
     body
   );
+}
+
+/**
+ * The token endpoint rejected ORBIT's OAuth client (`invalid_client`, `unauthorized_client`),
+ * not the user's grant: the client secret expired (Azure caps them at 24 months), was rotated
+ * or deleted, or the app was disabled. It hits every account at once and reconnecting cannot
+ * fix it, so it must never mark a connection `needs_reauth`. Callers record an error event
+ * (which the ops sweep's error burst alert picks up) and fail the refresh as transient.
+ */
+export function isOAuthClientRejection(status: number, body: string): boolean {
+  if (status !== 400 && status !== 401) return false;
+  return /invalid_client|unauthorized_client/i.test(body);
 }
 
 /**

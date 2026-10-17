@@ -2,7 +2,9 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { gmailConnections } from "@/db/schema";
 import { decrypt, encrypt } from "@/lib/crypto";
-import { ReauthRequiredError, isRefreshRejection } from "@/lib/errors";
+import { ReauthRequiredError, isOAuthClientRejection, isRefreshRejection } from "@/lib/errors";
+import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
+import { shouldRecordThrottled } from "@/lib/throttle-latch";
 import {
   GOOGLE_SCOPES,
   googleScopesFor,
@@ -221,6 +223,18 @@ async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> 
     const text = await res.text();
     // A dead grant means reconnect; anything else is transient and must NOT mark the
     // connection, or a provider outage would flag every account at once.
+    if (isOAuthClientRejection(res.status, text)) {
+      // Orbit's Google client was refused (expired or rotated secret): every account fails
+      // the same way and a reconnect cannot help, so flag no connection and say so loudly.
+      if (shouldRecordThrottled("oauth.client_invalid:google")) {
+        await recordErrorEvent({
+          source: ERROR_SOURCES.oauthClientInvalid,
+          kind: "google",
+          message: text.slice(0, 200),
+        }).catch(() => {});
+      }
+      throw new Error(`Google OAuth client rejected: ${text.slice(0, 200)}`);
+    }
     if (isRefreshRejection(res.status, text)) {
       throw new ReauthRequiredError(`Token refresh rejected: ${text.slice(0, 200)}`);
     }

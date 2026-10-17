@@ -5,7 +5,7 @@
  *
  * Run: npx tsx scripts/smoke-oauth-refresh-rejection.ts
  */
-import { isRefreshRejection } from "../src/lib/errors";
+import { isOAuthClientRejection, isRefreshRejection } from "../src/lib/errors";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -16,8 +16,6 @@ function check(label: string, ok: boolean, detail = "") {
 console.log("dead grants → reconnect");
 for (const [status, body] of [
   [400, '{"error":"invalid_grant","error_description":"Token has been expired or revoked."}'],
-  [401, '{"error":"invalid_client"}'],
-  [400, '{"error":"unauthorized_client"}'],
   [400, '{"error":"interaction_required","error_description":"AADSTS50076: multi-factor authentication required"}'],
   [400, '{"error":"consent_required","error_description":"AADSTS65001: The user or administrator has not consented"}'],
   [400, '{"error":"login_required"}'],
@@ -26,6 +24,18 @@ for (const [status, body] of [
 ] as const) {
   check(`${status} ${body.slice(0, 48)}`, isRefreshRejection(status, body) === true);
 }
+
+console.log("Orbit's own OAuth client refused → nobody's grant is dead; never flag a connection");
+for (const [status, body] of [
+  [401, '{"error":"invalid_client","error_description":"AADSTS7000222: The provided client secret keys are expired."}'],
+  [401, '{"error":"invalid_client"}'],
+  [400, '{"error":"unauthorized_client"}'],
+] as const) {
+  check(`${status} ${body.slice(0, 48)} is a client rejection`, isOAuthClientRejection(status, body) === true);
+  check(`${status} ${body.slice(0, 48)} is NOT a user rejection`, isRefreshRejection(status, body) === false);
+}
+check("a revoked grant is not a client rejection", isOAuthClientRejection(400, '{"error":"invalid_grant"}') === false);
+check("a 500 is not a client rejection", isOAuthClientRejection(500, '{"error":"invalid_client"}') === false);
 
 console.log("transient or unrelated → retry");
 for (const [status, body] of [
