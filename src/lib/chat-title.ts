@@ -108,6 +108,8 @@ export async function generateChatTitle(
       completeFn(userId, {
         operation: "chat.title",
         temperature: 0.2,
+        // Cancels the request itself when the grace period is over, instead of leaving it to bill on.
+        signal: AbortSignal.timeout(TITLE_TIMEOUT_MS),
         // Headroom for a model that spends a few tokens thinking before it writes six words.
         maxOutputTokens: 160,
         system: TITLE_SYSTEM,

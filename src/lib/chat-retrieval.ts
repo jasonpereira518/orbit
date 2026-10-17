@@ -274,7 +274,9 @@ export async function understandQuery(
     const content = await withTimeout(
       completeFn(userId, {
         operation: "chat.understand",
-            temperature: 0,
+        temperature: 0,
+        // Cancels the request itself when the stage gives up, instead of leaving it to bill on.
+        signal: AbortSignal.timeout(UNDERSTAND_TIMEOUT_MS),
         maxOutputTokens: 512,
         system: UNDERSTAND_SYSTEM,
         user: `${todayBlock}${aboutBlock}${goalsBlock}${historyBlock}Question: ${question}`,

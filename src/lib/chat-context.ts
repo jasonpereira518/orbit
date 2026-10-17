@@ -390,7 +390,7 @@ async function retrieveRankedContacts(
   // model conclude the user knows nobody like that. (The comment lives above the call:
   // smoke-chat-pipeline asserts these two run in one Promise.all by source shape.)
   const [queryEmbedding, parsedQuery, decider] = await Promise.all([
-    getQueryEmbedding(userId, q, createEmbedding, defaultResolveScope, { access }).catch((err) => {
+    getQueryEmbedding(userId, q, createEmbedding, defaultResolveScope, { access, softTimeoutMs: QUERY_EMBED_SOFT_TIMEOUT_MS }).catch((err) => {
       searchNotice = embeddingFailureNotice(err);
       return null;
     }),
@@ -493,6 +493,13 @@ async function retrieveRankedContacts(
 }
 
 /** How long the rewritten query's embedding may hold up the search before the question's own is used. */
+/**
+ * How long the question's own embedding may hold up the whole turn. Past it the turn answers
+ * from keyword search and says so (`embeddingFailureNotice`), rather than waiting out the
+ * provider's 45 s deadline plus rate-limit backoff.
+ */
+const QUERY_EMBED_SOFT_TIMEOUT_MS = 1500;
+
 const SEMANTIC_EMBED_WAIT_MS = 600;
 
 /**
