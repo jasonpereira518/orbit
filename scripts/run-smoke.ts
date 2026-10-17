@@ -459,6 +459,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-avatar-backfill-route": "pglite",
   "smoke-avatar-route-cache": "pglite",
   "smoke-avatar-sql-classify": "pglite",
+  "smoke-related-sql-lower": "pglite",
   "smoke-chat-lookup-tools": "pglite",
   "smoke-calendar-events": "pglite",
   "smoke-chat-calendar": "pglite",
