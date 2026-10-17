@@ -539,6 +539,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-schema-bootstrap": "pglite",
   "smoke-schema-fingerprint": "pglite",
   "smoke-related-contacts-scale": "pglite",
+  "smoke-related-contacts-parity": "pglite",
   "smoke-sender-profile": "pglite",
   "smoke-contact-profile-reads": "pglite",
   "smoke-batched-writes": "pglite",
