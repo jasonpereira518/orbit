@@ -180,7 +180,7 @@ export function ConstellationFigure({ className }: { className?: string }) {
             strokeWidth={1.2}
             strokeLinecap="round"
             strokeLinejoin="round"
-            style={reduced ? undefined : { pathLength: chainProgress[i] }}
+            style={reduced ? { pathLength: 1 } : { pathLength: chainProgress[i] }}
           />
         ))}
 

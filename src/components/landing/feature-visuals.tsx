@@ -18,6 +18,8 @@ function useCardProgress() {
     target: ref,
     offset: ["start 0.92", "center 0.5"],
   });
+  // Learned after the first render, so every `reduced` branch below passes resting values
+  // rather than `undefined`: dropping a Motion style key leaves its last inline value behind.
   const reduced = usePrefersReducedMotion();
   return { ref, p: scrollYProgress, reduced };
 }
@@ -61,7 +63,7 @@ export function ContactsVisual() {
     >
       <motion.div
         className="absolute left-0 top-0 w-[44%] rounded-2xl border border-[#e8f3f1]/10 bg-[#05070f]/70 px-2.5 py-2 md:w-[118px] lg:top-3.5 lg:w-[154px] lg:px-3.5 lg:py-3"
-        style={reduced ? { rotate: -6 } : a}
+        style={reduced ? { rotate: -6, x: 0, y: 0, opacity: 1 } : a}
       >
         <p className="text-3xs uppercase tracking-wide text-[#6d807c] lg:text-2xs">LinkedIn</p>
         <p className="mt-1.5 text-xs text-[#e8f3f1] lg:text-sm">Priya Raman</p>
@@ -69,7 +71,7 @@ export function ContactsVisual() {
       </motion.div>
       <motion.div
         className="absolute left-[6%] top-[98px] w-[48%] rounded-2xl border border-[#e8f3f1]/10 bg-[#05070f]/70 px-1.5 py-2 md:left-7 md:w-[118px] md:px-2.5 lg:left-11 lg:top-[104px] lg:w-[154px] lg:px-3.5 lg:py-3"
-        style={reduced ? { rotate: 3 } : b}
+        style={reduced ? { rotate: 3, x: 0, y: 0, opacity: 1 } : b}
       >
         <p className="text-3xs uppercase tracking-wide text-[#6d807c] lg:text-2xs">Gmail</p>
         {/* text-3xs below md: this address is one unbreakable 18-char
@@ -79,7 +81,7 @@ export function ContactsVisual() {
       </motion.div>
       <motion.div
         className="absolute right-0 top-10 w-[44%] rounded-2xl border border-[#f2c14e]/35 bg-[#f2c14e]/[0.07] p-2.5 shadow-[0_0_40px_rgba(242,193,78,0.14)] md:top-12 md:w-[136px] md:p-3 lg:top-11 lg:w-[190px] lg:p-4"
-        style={reduced ? undefined : merged}
+        style={reduced ? { opacity: 1, y: 0, scale: 1 } : merged}
       >
         <div className="h-[24px] w-[24px] rounded-full bg-[#e8f3f1]/15 lg:h-[30px] lg:w-[30px]" />
         <p className="mt-2 text-xs text-[#e8f3f1] lg:text-sm">Priya Raman</p>
@@ -119,7 +121,7 @@ export function ConstellationVisual({ label }: { label: string }) {
           strokeWidth={1.1}
           strokeLinecap="round"
           strokeLinejoin="round"
-          style={reduced ? undefined : { pathLength: main }}
+          style={reduced ? { pathLength: 1 } : { pathLength: main }}
         />
         <motion.path
           d={MINI_BRANCH_PATH}
@@ -127,9 +129,9 @@ export function ConstellationVisual({ label }: { label: string }) {
           stroke="rgba(89,157,231,0.55)"
           strokeWidth={1.1}
           strokeLinecap="round"
-          style={reduced ? undefined : { pathLength: branch }}
+          style={reduced ? { pathLength: 1 } : { pathLength: branch }}
         />
-        <motion.g style={reduced ? undefined : { opacity: starsOpacity }}>
+        <motion.g style={reduced ? { opacity: 1 } : { opacity: starsOpacity }}>
           {MINI_STARS.map(([x, y, r], i) => (
             <circle key={i} cx={x} cy={y} r={r} fill="#c5d4d1" />
           ))}
@@ -137,7 +139,7 @@ export function ConstellationVisual({ label }: { label: string }) {
       </svg>
       <motion.span
         className="absolute bottom-0 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-[#05070f]/70 px-2 py-1 text-3xs uppercase tracking-[0.08em] text-[#f2c14e] md:px-2.5 md:text-3xs md:tracking-[0.2em]"
-        style={reduced ? undefined : { opacity: labelOpacity }}
+        style={reduced ? { opacity: 1 } : { opacity: labelOpacity }}
       >
         {label}
       </motion.span>
@@ -161,7 +163,7 @@ function ReminderRow({
   const x = useTransform(p, (v) => -18 * (1 - scrub01(v, a, b)));
   const opacity = useTransform(p, (v) => scrub01(v, a, b));
   return (
-    <motion.div className={className} style={reduced ? undefined : { x, opacity }}>
+    <motion.div className={className} style={reduced ? { x: 0, opacity: 1 } : { x, opacity }}>
       {children}
     </motion.div>
   );
@@ -251,14 +253,14 @@ export function AskVisual() {
     <div ref={ref} className="w-full max-w-[340px] space-y-3" aria-hidden>
       <motion.div
         className="flex items-center gap-3 rounded-2xl border border-[#e8f3f1]/[0.14] bg-[#05070f]/60 px-4 py-3"
-        style={reduced ? undefined : q}
+        style={reduced ? { y: 0, opacity: 1 } : q}
       >
         <p className="flex-1 text-sm text-[#e8f3f1]">Who do I know at Stripe?</p>
         <span className="h-6 w-6 shrink-0 rounded-full bg-[#f2c14e]/25" />
       </motion.div>
       <motion.div
         className="ml-3 flex items-center gap-2.5 rounded-2xl bg-[#e8f3f1]/[0.05] px-4 py-3 md:ml-6"
-        style={reduced ? undefined : a}
+        style={reduced ? { y: 0, opacity: 1 } : a}
       >
         <span className="h-5 w-5 rounded-full bg-brand-pro/40" />
         <span className="-ml-4 h-5 w-5 rounded-full bg-[#f2c14e]/40" />
@@ -268,12 +270,12 @@ export function AskVisual() {
       </motion.div>
       <motion.div
         className="ml-3 flex items-center gap-3 rounded-2xl border border-[#e8f3f1]/[0.14] bg-[#05070f]/60 px-4 py-3 md:ml-6"
-        style={reduced ? undefined : s}
+        style={reduced ? { y: 0, opacity: 1, scale: 1 } : s}
       >
         <p className="flex-1 text-xs text-[#e8f3f1]">Draft intro to Elena</p>
         <motion.span
           className="shrink-0 rounded-full bg-[#f2c14e]/15 px-2 py-0.5 text-3xs text-[#f2c14e]"
-          style={reduced ? undefined : { opacity: chipOpacity }}
+          style={reduced ? { opacity: 1 } : { opacity: chipOpacity }}
         >
           Sent
         </motion.span>
@@ -308,7 +310,7 @@ export function ImportsVisual() {
           <motion.span
             key={label}
             className="flex items-center gap-1.5 rounded-full border border-[#e8f3f1]/[0.14] px-3 py-1 text-2xs text-[#9aada8]"
-            style={reduced ? undefined : chipStyles[i]}
+            style={reduced ? { opacity: 1, scale: 1 } : chipStyles[i]}
           >
             <span className="h-1.5 w-1.5 rounded-full bg-[#f2c14e]" />
             {label}
@@ -318,12 +320,12 @@ export function ImportsVisual() {
       <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-[#e8f3f1]/10">
         <motion.div
           className="h-full w-[70%] origin-left rounded-full bg-[#f2c14e]/70"
-          style={reduced ? undefined : { scaleX: barScale }}
+          style={reduced ? { scaleX: 1 } : { scaleX: barScale }}
         />
       </div>
       <motion.p
         className="mt-2 text-xs text-[#9aada8]"
-        style={reduced ? undefined : { opacity: countOpacity }}
+        style={reduced ? { opacity: 1 } : { opacity: countOpacity }}
       >
         <span className="text-[#e8f3f1]">487 contacts</span> imported in one
         pass

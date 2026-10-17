@@ -12,7 +12,7 @@ import { createContact, ensureOnboarded } from "./helpers";
  * Then the flows the audit found broken, held in place:
  *   - every app page has its own title (how a screen reader hears a navigation at all),
  *   - the first Tab reaches "Skip to content",
- *   - a dialog fits a 360x640 phone, with its submit button reachable,
+ *   - a form in a popover (New reminder) fits a 360x640 phone, its submit button reachable,
  *   - Chat still has a usable composer at 200% zoom (1280x900 shown at 640x450).
  *
  * Reduced motion is on throughout: scroll-reveal fades are otherwise caught mid-animation
@@ -73,7 +73,7 @@ async function audit(page: Page, route: string) {
           .join("\n")
     )
     .join("\n");
-  expect(blocking, `serious/critical axe violations on ${route}:\n${report}`).toEqual([]);
+  expect(blocking.map((v) => v.id), `serious/critical axe violations on ${route}:\n${report}`).toEqual([]);
 }
 
 async function horizontalOverflow(page: Page) {
@@ -147,7 +147,7 @@ test("the first Tab reaches the skip link, and it moves focus to the content", a
 test.describe("small phone (360x640)", () => {
   test.use({ viewport: { width: 360, height: 640 }, hasTouch: true, isMobile: true });
 
-  test("a dialog fits the screen and its submit button can be reached", async ({ page }) => {
+  test("the New reminder form fits the screen and its submit button can be reached", async ({ page }) => {
     await page.goto("/reminders");
     await settle(page);
     await page.getByRole("button", { name: /new reminder/i }).first().click();
@@ -169,7 +169,7 @@ test.describe("200% zoom (640x450)", () => {
   test("Chat keeps a usable composer", async ({ page }) => {
     await page.goto("/chat");
     await settle(page);
-    const composer = page.getByRole("textbox", { name: /ask/i }).first();
+    const composer = page.getByRole("combobox", { name: "Message Orbit" });
     await composer.scrollIntoViewIfNeeded();
     await expect(composer).toBeInViewport();
     expect((await composer.boundingBox())!.height).toBeGreaterThan(20);

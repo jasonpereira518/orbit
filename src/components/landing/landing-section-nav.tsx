@@ -83,7 +83,7 @@ function HighlightBox({
   return (
     <motion.span
       layoutId="landing-nav-indicator"
-      style={reduced ? undefined : { x, y }}
+      style={reduced ? { x: 0, y: 0 } : { x, y }}
       className="pointer-events-none absolute inset-0 rounded-lg bg-[#e8f3f1]/[0.06]"
       transition={reduced ? { duration: 0 } : INDICATOR_SPRING}
     />
@@ -129,7 +129,7 @@ function SectionNavLink({
       {highlighted ? <HighlightBox x={x} y={y} reduced={reduced} /> : null}
       <motion.span
         className="relative z-10"
-        style={reduced ? undefined : { x, y }}
+        style={reduced ? { x: 0, y: 0 } : { x, y }}
       >
         {label}
       </motion.span>

@@ -1103,13 +1103,11 @@ function AlphabetScrubber({
           const hasContacts = available.has(letter);
           const isActive = activeLetter === letter;
           return (
-            <button
+            // The rail itself is the control (a slider, with its own pointer and keyboard
+            // handling); its letters are only its face, so not buttons of their own.
+            <span
               key={letter}
-              type="button"
-              // The rail itself is the control (a slider); its letters are only its face.
-              tabIndex={-1}
               aria-hidden
-              disabled={!hasContacts}
               className={cn(
                 "flex h-[1.1%] min-h-0 w-full items-center justify-center text-2xs leading-none",
                 hasContacts
@@ -1123,7 +1121,7 @@ function AlphabetScrubber({
               }}
             >
               {letter}
-            </button>
+            </span>
           );
         })}
 

@@ -242,7 +242,9 @@ export function CompPlanButton(props: {
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="rounded-md transition-opacity duration-fast hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          // `relative` keeps the sr-only suffix inside the table's scroll box; positioned
+          // against an ancestor outside it, it widened the whole page on a phone.
+          className="relative rounded-md transition-opacity duration-fast hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         >
           <PlanBadge
             plan={props.currentPlan}

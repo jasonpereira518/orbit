@@ -118,7 +118,7 @@ for (const root of ROOTS) {
       }
 
       // 5: the only text of a button-like element is hidden below a breakpoint.
-      if (ts.isJsxElement(node) && BUTTONISH.has(tagName(node.openingElement))) {
+      if (ts.isJsxElement(node) && (BUTTONISH.has(tagName(node.openingElement)) || /Trigger$/.test(tagName(node.openingElement)))) {
         const open = node.openingElement;
         const named = attr(open, "aria-label") || attr(open, "aria-labelledby") || attr(open, "title");
         if (!named) {

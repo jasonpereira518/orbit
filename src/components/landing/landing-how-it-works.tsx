@@ -249,7 +249,10 @@ function StepRow({
   return (
     <motion.li
       className="relative flex gap-4"
-      style={reduced ? undefined : { opacity, x }}
+      // Resting values, not `undefined`, under reduced motion: the preference is learned after
+      // the first render, and dropping the style prop left Motion's last inline opacity on the
+      // row, so every step stayed dimmed (3.3:1 captions).
+      style={reduced ? { opacity: 1, x: 0 } : { opacity, x }}
     >
       <span
         data-step-marker

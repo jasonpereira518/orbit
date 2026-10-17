@@ -417,7 +417,7 @@ function SearchPill({
           )}
         >
           <Building2 className="size-3.5" />
-          <span className="hidden max-w-[5rem] truncate sm:inline">
+          <span className="max-w-[5rem] truncate max-sm:sr-only">
             {companyActive ? company : "Company"}
           </span>
           <ChevronDown className="size-3 opacity-60" />

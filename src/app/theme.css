@@ -130,7 +130,9 @@
   --muted-foreground-subtle: #686f69;
   --accent: #e7f0ee;
   --accent-foreground: #0f3d3e;
-  --destructive: oklch(0.577 0.245 27.325);
+  /* 6.0:1 on a card and 5.1:1 on its own 10% tint (the destructive button and error chips);
+     the shadcn default (0.577 0.245) fell to 4.0:1 there. */
+  --destructive: oklch(0.525 0.2 27.325);
   /* ── Status semantics ──
      `--destructive` above already owns error, so this names only the three it
      does not cover. Not new hues: these are the emerald/amber the app already
