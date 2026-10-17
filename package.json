@@ -30,7 +30,8 @@
     "test:unit": "node --import tsx --test \"src/**/*.test.ts\" \"scripts/**/*.test.ts\"",
     "check:cycles": "node scripts/check-cycles.mjs",
     "check:sources": "node scripts/list-source-readers.mjs",
-    "knip": "npx --yes knip@5.88.1 --no-exit-code"
+    "knip": "npx --yes knip@5.88.1 --no-exit-code",
+    "docs:mcp": "tsx scripts/gen-mcp-docs.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.3",

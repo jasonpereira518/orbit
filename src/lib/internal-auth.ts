@@ -5,7 +5,7 @@ import { getAppBaseUrl } from "@/lib/app-url";
  * Shared-secret gate for Orbit's internal job routes.
  *
  * The routes under it — the process-stalled cron, the import continuation target, and the
- * embedding / timeline backfill kickers — are called by Vercel Cron, by the ops scheduler,
+ * embedding / timeline backfill kickers — are called by the ops scheduler (GitHub Actions; vercel.json has no crons),
  * and by the app's own `fetch`. None of those carry a Clerk session, so `proxy.ts` exempts
  * the paths from `auth.protect()` and THIS is the only thing standing between the public
  * internet and a privileged trigger.

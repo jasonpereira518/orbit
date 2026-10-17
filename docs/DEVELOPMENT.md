@@ -12,6 +12,8 @@ How to run Orbit locally. The product overview lives in [README.md](../README.md
 
 ## Quick start
 
+Requires **Node 24 and npm 11** (`.nvmrc` is 24; `package.json` `engines` plus `engine-strict` make `npm ci` refuse other Node majors). Run `nvm use` first.
+
 ```bash
 cp .env.example .env.local
 npm ci             # a fresh git worktree has no node_modules of its own
@@ -21,7 +23,7 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) (or the port Next prints if 3000 is taken).
 
-Add a Gemini, OpenAI, or Anthropic API key in **Settings → Integrations → AI provider** (or the matching env var, honoured locally only) before using Capture / Chat.
+Add a Gemini, OpenAI, or Anthropic API key in **Settings → Integrations → AI provider** (or the matching env var, honoured wherever `VERCEL` is unset: `next dev`, `next start` and tsx scripts) before using Capture / Chat.
 
 ### Three ways to run it locally
 
@@ -47,6 +49,15 @@ npm run db:seed
 
 Restart `npm run dev` afterward if the server was already running, so it reloads the shared PGlite database.
 
+### Tests
+
+| Command | Purpose |
+|---|---|
+| `npm test` | Smoke suite on a throwaway PGlite (`scripts/run-smoke.ts --ci`; add `--shard i/n` or `--only <name>`) |
+| `npm run test:unit` | `node:test` unit tests through tsx: `src/**/*.test.ts` and `scripts/**/*.test.ts` |
+| `npm run test:e2e` | Playwright browser flows against `next dev` with a stub AI server |
+| `npm run test:check` | Verify every smoke script is in the manifest |
+
 ### Database
 
 | Command | Purpose |
@@ -55,7 +66,7 @@ Restart `npm run dev` afterward if the server was already running, so it reloads
 | `npm run db:migrate` | Reconcile the schema to `SCHEMA_VERSION` — what every Vercel build runs before `next build` |
 | `npm run db:check` | Fail when DDL changed without a `SCHEMA_VERSION` bump |
 | `npm run db:push:DANGEROUS` | `drizzle-kit push`. Refused unless `ALLOW_DRIZZLE_PUSH=1` and `DATABASE_URL` is not `PRODUCTION_DB_HOST`; prefer `db:migrate` |
-| `npm run db:generate` | Generate SQL migrations under `drizzle/` (reference only; the app never applies them) |
+| `npm run db:generate` | `drizzle-kit generate`, which would write SQL to `drizzle/`. That folder does not exist in the repo and the app never applies it; the real DDL is hand-written in `src/db/index.ts` |
 | `npm run db:seed` | Insert a sample contact for `demo-user` |
 
 Leave `DATABASE_URL` unset to use on-disk PGlite (`.data/pglite`). Schema changes go in `src/db/index.ts` — read the comment above `SCHEMA_VERSION` first. There is deliberately no plain `db:push`: `drizzle-kit push` would drop columns Orbit manages outside `schema.ts` (`embedding_vector`, the HNSW index, the migration tables).
@@ -68,7 +79,7 @@ Leave `DATABASE_URL` unset to use on-disk PGlite (`.data/pglite`). Schema change
 |---|---|
 | `DATABASE_URL` | Neon/Postgres connection (omit to use local `.data/pglite`) |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` / `CLERK_SECRET_KEY` | Auth (omit locally for demo mode) |
-| `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | Server-side AI, local dev only — on Vercel every user brings a key |
+| `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | Server-side AI wherever `VERCEL` is unset, and unmetered on `next dev`. On Vercel, included AI runs on the `ORBIT_MANAGED_*_API_KEY` keys and an account can add its own key in Settings |
 | `ENCRYPTION_SECRET` | Encrypts BYOK keys and OAuth tokens at rest |
 | `ORBIT_DEMO_DATA=off` | Start local accounts empty, for onboarding work |
 | `ORBIT_DEMO_PERSONA=student` | Seeds a student / new-grad workspace instead of the founder one (localhost only) |
