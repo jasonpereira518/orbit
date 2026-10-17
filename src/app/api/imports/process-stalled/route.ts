@@ -5,7 +5,7 @@ import { getDb } from "@/db";
 import { contacts, errorEvents } from "@/db/schema";
 import { pruneAiResultCache } from "@/lib/ai-result-cache";
 import { pruneRateLimitBuckets } from "@/lib/rate-limit";
-import { pruneOlderThan, pruneUsageEvents } from "@/lib/event-prune";
+import { pruneLogTables, pruneOlderThan, pruneUsageEvents } from "@/lib/event-prune";
 import { runAiBatchSweep } from "@/lib/ai-batch-apply";
 import { resumeStalledImports } from "@/lib/import-stall";
 import { resumeStrandedPurges } from "@/lib/user-data";
@@ -136,6 +136,7 @@ export async function GET(request: Request) {
     /** Uploads sent in parts whose last part never arrived, closed as failed. */
     captureAbandoned: 0,
     usageEventsPruned: 0,
+    logRowsPruned: 0,
     errorEventsPruned: 0,
     /** Unsaved captures' photos past `UNATTACHED_PHOTO_TTL_MS`. */
     capturePhotosPruned: 0,
@@ -206,6 +207,8 @@ export async function GET(request: Request) {
         errorEvents,
         ERROR_EVENT_RETENTION_DAYS
       );
+      // Delivery logs and the scheduler's own ledger, which nothing else ever deleted.
+      stats.logRowsPruned = Object.values(await pruneLogTables()).reduce((a, b) => a + b, 0);
       // Remembered AI answers past the longest TTL any caller reads them with.
       await pruneAiResultCache();
       // Rate-limit buckets whose window ended long ago; only the next hit ever reset one.

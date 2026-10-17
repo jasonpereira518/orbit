@@ -83,6 +83,8 @@ export type OpsSnapshot = {
   missingExpectedEnv: string[];
   /** The app role's statement_timeout ("20s", "0" = none). Production only. */
   statementTimeout: string | null;
+  /** Database size and the plan limit, both in bytes. Null when unprobed (not production) or the limit is unset. */
+  dbStorage: { usedBytes: number; limitBytes: number } | null;
   /** stripe.unattributed rows in the last day: checkout fulfilments vs everything else. */
   stripeUnattributed24h: { fulfilments: number; other: number };
   /** Accounts with an embedding flag older than EMBEDDING_BACKLOG_STALE_HOURS, and the oldest flag. */
@@ -133,6 +135,9 @@ export const REMIND_AFTER_MS: Record<OpsSeverity, number | null> = {
   info: null,
 };
 
+/** `db.storage` opens at this share of the plan's storage limit, and goes critical at the second. */
+export const DB_STORAGE_WARN = 0.7;
+export const DB_STORAGE_CRITICAL = 0.85;
 const WEBHOOK_STREAK = 3;
 export const PARTIAL_STREAK = 3;
 
@@ -657,6 +662,21 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       detail: "SLACK_OPS_WEBHOOK_URL is unset in production, so every alert stays on /admin/health until someone looks.",
       href: "/admin/health",
     });
+  }
+
+  if (s.dbStorage) {
+    const { usedBytes, limitBytes } = s.dbStorage;
+    const used = usedBytes / limitBytes;
+    if (used >= DB_STORAGE_WARN) {
+      const gb = (n: number) => (n / 1024 ** 3).toFixed(2);
+      out.push({
+        id: "db.storage",
+        severity: used >= DB_STORAGE_CRITICAL ? "critical" : "warning",
+        title: `The database is ${Math.round(used * 100)}% full`,
+        detail: `${gb(usedBytes)} GB of the ${gb(limitBytes)} GB plan limit. At the limit every write fails. Raise the plan, or find what is growing: docs/RUNBOOK.md → Disk or storage full.`,
+        href: "/admin/health",
+      });
+    }
   }
 
   if (s.statementTimeout === "0") {

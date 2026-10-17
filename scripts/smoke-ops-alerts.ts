@@ -61,6 +61,7 @@ const HEALTHY: OpsSnapshot = {
   processStalledRecent: ["ok"],
   backfillFailures24h: { accounts: 0, kinds: [] },
   statementTimeout: "20s",
+  dbStorage: null,
   stripeUnattributed24h: { fulfilments: 0, other: 0 },
   embeddingBacklog: { accounts: 0, oldestAt: null },
   syncOldestDueAgeMs: null,
@@ -335,6 +336,14 @@ function main() {
     find({ ...HEALTHY, statementTimeout: "0" }, "config.statement_timeout_unbounded")?.severity === "warning");
   check("a bounded or unknown timeout is quiet",
     !find(HEALTHY, "config.statement_timeout_unbounded") && !find({ ...HEALTHY, statementTimeout: null }, "config.statement_timeout_unbounded"));
+
+  const GB = 1024 ** 3;
+  const storage = (used: number, limit: number) => ({ ...HEALTHY, dbStorage: { usedBytes: used * GB, limitBytes: limit * GB } });
+  check("a database well under its plan limit is quiet", !find(storage(0.2, 0.5 * 4), "db.storage") && !find(HEALTHY, "db.storage"));
+  check("70% of the plan limit → db.storage (warning)", find(storage(0.35, 0.5), "db.storage")?.severity === "warning");
+  check("85% of the plan limit → db.storage (critical)", find(storage(0.43, 0.5), "db.storage")?.severity === "critical");
+  check("the title says how full it is", /9\d%|100%/.test(find(storage(0.47, 0.5), "db.storage")?.title ?? ""));
+  check("an unknown limit is never guessed", !find({ ...HEALTHY, dbStorage: null }, "db.storage"));
 
   check("Slack unset in production → config.alerts_undeliverable (warning)",
     find({ ...HEALTHY, missingExpectedEnv: ["SLACK_OPS_WEBHOOK_URL"] }, "config.alerts_undeliverable")?.severity === "warning");

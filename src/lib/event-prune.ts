@@ -69,3 +69,50 @@ export function pruneUsageEvents(days: number, now: Date = new Date()): Promise<
   const keep = inPoolWindow.length > 0 ? sql`NOT (${usageEvents.keyOwner} = 'orbit' AND (${sql.join(inPoolWindow, sql` OR `)}))` : undefined;
   return pruneOlderThan(usageEvents, days, keep, now);
 }
+
+/**
+ * Append-only logs that grew without bound (reliability audit R-07). Table and column names
+ * are fixed here and interpolated raw, never taken from input. `keep` limits DELETION to
+ * rows that are finished, so a row something is still waiting on is never touched.
+ */
+export const LOG_RETENTION = [
+  // A delivery log; the health page reads the last handful.
+  { table: "webhook_deliveries", column: "created_at", days: 30, deletable: "TRUE" },
+  // The scheduler's ledger; the sweep reads the latest rows per job. A run still `running`
+  // stays so a wedged one can still be told from a finished one.
+  { table: "cron_runs", column: "started_at", days: 90, deletable: "status <> 'running'" },
+  // Customers' outbound webhook attempts that are done, either way.
+  { table: "outbound_webhook_deliveries", column: "created_at", days: 30, deletable: "status IN ('delivered', 'dead', 'failed')" },
+] as const;
+
+/** Delete finished rows past each log's retention, in bounded batches. Each table is its own try. */
+export async function pruneLogTables(now: Date = new Date()): Promise<Record<string, number>> {
+  const db = await getDb();
+  const out: Record<string, number> = {};
+  for (const t of LOG_RETENTION) {
+    const cutoff = new Date(now.getTime() - t.days * 24 * 60 * 60 * 1000).toISOString();
+    const deadline = deadlineAfter(PRUNE_BUDGET_MS);
+    let pruned = 0;
+    try {
+      for (;;) {
+        const res = await db.execute(sql`
+          WITH d AS (
+            DELETE FROM ${sql.raw(t.table)} WHERE id IN (
+              SELECT id FROM ${sql.raw(t.table)}
+               WHERE ${sql.raw(t.column)} < ${cutoff} AND ${sql.raw(t.deletable)} LIMIT ${PRUNE_BATCH}
+            )
+            RETURNING 1
+          )
+          SELECT count(*)::int AS n FROM d
+        `);
+        const n = Number(rowsOf<{ n: number }>(res)[0]?.n ?? 0);
+        pruned += n;
+        if (n < PRUNE_BATCH || deadlineReached(deadline)) break;
+      }
+    } catch {
+      // One table failing must not skip the others; the next run retries it.
+    }
+    out[t.table] = pruned;
+  }
+  return out;
+}

@@ -1,5 +1,5 @@
 import { oldestDueAgeMs } from "@/lib/provider-connections";
-import { probeStatementTimeout } from "@/lib/health";
+import { probeDatabaseSize, probeStatementTimeout } from "@/lib/health";
 import { and, desc, eq, gt, inArray, isNotNull, like, or, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { contacts, cronRuns, errorEvents, imports, opsAlertState, dataPurgeRuns, rateLimitBuckets } from "@/db/schema";
@@ -46,6 +46,12 @@ const DAY_MS = 24 * HOUR_MS;
 
 export type DeployFacts = { mainSha: string; mainCommittedAt: Date } | null;
 
+/** `DB_STORAGE_LIMIT_GB` (the plan's limit) in bytes; null when unset or not a positive number. */
+export function dbStorageLimitBytes(env: NodeJS.ProcessEnv = process.env): number | null {
+  const gb = Number(env.DB_STORAGE_LIMIT_GB);
+  return Number.isFinite(gb) && gb > 0 ? Math.round(gb * 1024 ** 3) : null;
+}
+
 export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<OpsSnapshot> {
   const db = await getDb();
   const hourAgo = new Date(now.getTime() - HOUR_MS);
@@ -77,6 +83,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     statementTimeout,
     syncOldestDueAgeMs,
     [aiSecurityRow],
+    dbSizeBytes,
   ] = await Promise.all([
       db
         .select()
@@ -199,6 +206,10 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         })
         .from(errorEvents)
         .where(and(eq(errorEvents.source, ERROR_SOURCES.aiSecurity), gt(errorEvents.createdAt, hourAgo))),
+      // Production only, and only meaningful with the plan's limit to compare against.
+      process.env.VERCEL_ENV === "production" && dbStorageLimitBytes() !== null
+        ? probeDatabaseSize().catch(() => null)
+        : null,
     ]);
 
   const bySource = new Map(errorsLastHour.map((r) => [r.source, r.n]));
@@ -297,6 +308,10 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     missingRequiredEnv: getEnvReport().missingRequired,
     missingExpectedEnv: getEnvReport().missingExpected,
     statementTimeout,
+    dbStorage:
+      dbSizeBytes !== null && dbStorageLimitBytes() !== null
+        ? { usedBytes: dbSizeBytes, limitBytes: dbStorageLimitBytes()! }
+        : null,
     syncOldestDueAgeMs,
     calendarDisarmed: Number(rowsOf<{ n: number }>(disarmedRes)[0]?.n ?? 0),
     sharedBudgets: {

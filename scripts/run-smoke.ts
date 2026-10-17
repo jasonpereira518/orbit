@@ -229,6 +229,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-linkedin-slug-guard": "pglite",
   "smoke-search-tsv-guard": "pglite",
   "smoke-neon-fetch": "pure",
+  "smoke-log-retention": "pglite",
   "smoke-ops-notify": "pure",
   "smoke-resilience-limits": "pure",
   "smoke-shared-avatars": "pglite",

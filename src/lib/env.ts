@@ -47,6 +47,9 @@ export const EXPECTED_IN_PRODUCTION = [
   // Not read by the app at all — it exists so `checkMigrationTarget` below can tell a
   // preview build pointed at its own Neon branch from one pointed at production.
   "PRODUCTION_DB_HOST",
+  // The database plan's storage limit in GB (Neon: Project -> Settings -> Billing). Unset, the
+  // ops sweep cannot say how close the database is to the wall where every write fails.
+  "DB_STORAGE_LIMIT_GB",
   // Critical alerts also go here (the channel with push on); unset, criticals only reach #orbit-ops.
   "SLACK_OPS_CRITICAL_WEBHOOK_URL",
   // The only detector for a dead scheduler: the sweep pings it, the monitor pages on silence.

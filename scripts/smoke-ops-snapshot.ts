@@ -17,7 +17,7 @@ import { RATE_LIMITS } from "../src/lib/rate-limit";
 import { recordBackfillFailure } from "../src/lib/backfill-failures";
 import { ERROR_SOURCES } from "../src/lib/error-events";
 import { evaluateOpsConditions } from "../src/lib/ops-alerts";
-import { loadOpsSnapshot } from "../src/lib/ops-sweep";
+import { dbStorageLimitBytes, loadOpsSnapshot } from "../src/lib/ops-sweep";
 import { loadManagedAiOpsFacts } from "../src/lib/managed-ai-ops";
 
 let failures = 0;
@@ -85,6 +85,14 @@ run(async () => {
 
   console.log("\nstatement_timeout...");
   check("not probed off production", (await loadOpsSnapshot(new Date(), null)).statementTimeout === null);
+  check("database size is not probed off production", (await loadOpsSnapshot(new Date(), null)).dbStorage === null);
+  check("DB_STORAGE_LIMIT_GB parses to bytes",
+    dbStorageLimitBytes({ DB_STORAGE_LIMIT_GB: "0.5" } as unknown as NodeJS.ProcessEnv) === 536870912 &&
+    dbStorageLimitBytes({ DB_STORAGE_LIMIT_GB: "10" } as unknown as NodeJS.ProcessEnv) === 10737418240);
+  check("an unset, zero or junk limit is null",
+    dbStorageLimitBytes({} as NodeJS.ProcessEnv) === null &&
+    dbStorageLimitBytes({ DB_STORAGE_LIMIT_GB: "0" } as unknown as NodeJS.ProcessEnv) === null &&
+    dbStorageLimitBytes({ DB_STORAGE_LIMIT_GB: "lots" } as unknown as NodeJS.ProcessEnv) === null);
   process.env.VERCEL_ENV = "production";
   try {
     const prodSnap = await loadOpsSnapshot(new Date(), null);

@@ -96,6 +96,18 @@ export async function probeStatementTimeout(): Promise<string | null> {
   return row?.statement_timeout ?? null;
 }
 
+/**
+ * The size of the database in bytes. The plan's storage limit is a wall: past it writes fail
+ * and the whole product stops taking captures, syncs and sign-ups. Nothing watched the
+ * number, so the first sign was the failure.
+ */
+export async function probeDatabaseSize(): Promise<number | null> {
+  const db = await getDb();
+  const res = await db.execute(sql`SELECT pg_database_size(current_database())::bigint AS bytes`);
+  const bytes = Number(rowsOf<{ bytes: string | number }>(res)[0]?.bytes);
+  return Number.isFinite(bytes) ? bytes : null;
+}
+
 /** Best-effort: a failing section reads as null rather than failing the probe. */
 async function section<T>(work: () => Promise<T>, ms: number): Promise<T | null> {
   try {
