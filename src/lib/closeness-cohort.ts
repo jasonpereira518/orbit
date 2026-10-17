@@ -5,6 +5,7 @@ import { getDb, rowsOf } from "@/db";
 import { contacts, interactions, userGoals, userSettings } from "@/db/schema";
 import { countsAsTouch } from "@/lib/interaction-provenance";
 import {
+  ABSOLUTE_TIER_CUTOFFS,
   applyClosenessCohort,
   buildClosenessCohort,
   computeRawCloseness,
@@ -209,6 +210,32 @@ export async function storedScoresAreCurrent(userId: string): Promise<boolean> {
     listUnscoredContactIds(userId, 1),
   ]);
   return Boolean(cohortRow && isUsableSnapshot(cohortRow.snapshot) && unscored.length === 0);
+}
+
+/**
+ * The two whole-network figures `getNetworkStats` takes from the cohort — how many contacts
+ * score inner by ABSOLUTE closeness (`closenessTier(raw)`) and the stored mean raw score —
+ * answered in SQL from stored scores, or null when they are not current (see
+ * `storedScoresAreCurrent`) and the caller must load the cohort as before. One count instead
+ * of every contact's scores crossing the wire.
+ */
+export async function storedCohortSummary(
+  userId: string
+): Promise<{ innerCircle: number; averageRaw: number } | null> {
+  const db = await getDb();
+  const [cohortRow, unscored, inner] = await Promise.all([
+    readCohortRow(userId),
+    listUnscoredContactIds(userId, 1),
+    db.execute(sql`
+      select count(*)::int as n from contacts
+       where user_id = ${userId}
+         and (closeness_breakdown->>'raw')::float8 >= ${ABSOLUTE_TIER_CUTOFFS.inner}`),
+  ]);
+  if (!cohortRow || !isUsableSnapshot(cohortRow.snapshot) || unscored.length > 0) return null;
+  return {
+    innerCircle: Number(rowsOf<{ n: number }>(inner)[0]?.n ?? 0),
+    averageRaw: cohortRow.snapshot.averageRaw ?? 0,
+  };
 }
 
 /** Separate from `cohortStore`, so a slim result can never be handed to a full reader. */
