@@ -283,6 +283,15 @@ export async function dispatchEmailSend(id: string, opts: { worker?: string } = 
   try {
     // Inside the try: a Blob outage is transient, a vanished file permanent — same as a send.
     const files = send.attachments.length ? await loadAttachmentBytes(send.attachments) : undefined;
+    // From here the message may reach the provider at any moment. Record that BEFORE the call:
+    // a function killed between `provider.send` and `settleSent` leaves this row `sending`
+    // with nothing to say what happened, and a reclaim of it must look in Sent and, when Sent
+    // cannot be read (a send-only scope), stop at "may have sent" instead of sending again.
+    // Every definite outcome below (sent, failed, or a retry of a known failure) overwrites it.
+    await db
+      .update(emailSends)
+      .set({ failureKind: "ambiguous", updatedAt: new Date() })
+      .where(and(eq(emailSends.id, send.id), eq(emailSends.claimedBy, worker)));
     result = await provider.send(
       send.userId,
       {

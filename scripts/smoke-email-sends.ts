@@ -28,12 +28,15 @@ type Next = "ok" | "transient" | "permanent" | "auth" | "ambiguous";
 let next: Next[] = [];
 let found: "hit" | "miss" | "unknown" = "unknown";
 const sent: OutboundMessage[] = [];
+/** The row's failureKind as the provider is being called (see the pre-send mark in outbox.ts). */
+let seenAtSend: string | null | undefined;
 const fake: MailProvider = {
   id: "gmail",
   async identity() {
     return { email: "me@x.org" };
   },
-  async send(_u, msg) {
+  async send(_u, msg, ctx) {
+    if (ctx?.sendId) seenAtSend = (await row(ctx.sendId)).failureKind;
     const n = next.shift() ?? "ok";
     if (n !== "ok") throw new MailProviderError(n, `fake ${n}`);
     sent.push(msg);
@@ -191,6 +194,24 @@ async function main() {
       "ambiguous + found in Sent → sent without resending",
       (await dispatchEmailSend(h.id)) === "sent" && (await row(h.id)).providerMessageId === "pm-found" && sent.length === before
     );
+
+    // --- a function killed between provider.send and settle
+    // The row is marked ambiguous BEFORE the provider is called, so a kill leaves a row that a
+    // reclaim will not blindly resend when Sent cannot be read (a send-only scope).
+    next = ["ok"];
+    seenAtSend = undefined;
+    const k = await must(enqueueEmail(USER, base));
+    await dispatchEmailSend(k.id);
+    check("the row is already ambiguous when the provider is called", seenAtSend === "ambiguous", String(seenAtSend));
+    check("and a definite success clears it", (await row(k.id)).failureKind === null);
+    const killed = await must(enqueueEmail(USER, base));
+    await db.execute(
+      sql`UPDATE email_sends SET status = 'sending', claimed_by = gen_random_uuid(), lease_until = now() - interval '1 second', attempts = 1, failure_kind = 'ambiguous' WHERE id = ${killed.id}::uuid`
+    );
+    found = "unknown";
+    const beforeKill = sent.length;
+    check("a reclaimed killed send with unreadable Sent stops at 'may have sent'",
+      (await dispatchEmailSend(killed.id)) === "failed" && sent.length === beforeKill && (await row(killed.id)).failureKind === "ambiguous");
 
     // --- lease lapse
     const l = await must(enqueueEmail(USER, base));
