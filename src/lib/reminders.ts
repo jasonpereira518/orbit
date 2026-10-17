@@ -13,14 +13,10 @@ import {
 } from "@/db/schema";
 import { daysAgo } from "@/lib/duplicates";
 import { isCometContact } from "@/lib/comet";
-import {
-  buildConstellationClusters,
-  toNamedGraphClusters,
-} from "@/lib/constellation-clusters";
+import { buildConstellationClusters } from "@/lib/constellation-clusters";
 import { computeNetworkMetrics, selectMetricsSample } from "@/lib/network-metrics";
 import {
   getDashboardCounts,
-  getDashboardVocabularies,
   getGoalAlignedContactIds,
 } from "@/lib/dashboard-aggregates";
 import { getClosenessCohortSlim } from "@/lib/closeness-cohort";
@@ -911,7 +907,7 @@ export async function getDashboardData(
       // which `getDashboardCounts` now asks Postgres.
       //
       // The `contact_tags` JOIN is gone for the same reason. Eligibility wants a count, not
-      // the names, and the vocabulary that wanted names is `getDashboardVocabularies`.
+      // the names; nothing on the dashboard renders the vocabulary that wanted names.
       columns: {
         id: true,
         company: true,
@@ -958,7 +954,6 @@ export async function getDashboardData(
     closenessCohort,
     constellationConfig,
     counts,
-    vocabularies,
     goalAlignedIds,
     tagCountRows,
   ] = await Promise.all([
@@ -986,7 +981,6 @@ export async function getDashboardData(
     // Aggregates Postgres answers better than a pass over the scan would — and, more to the
     // point, each one lets a column come off that scan. See dashboard-aggregates.ts.
     getDashboardCounts(userId),
-    getDashboardVocabularies(userId),
     getGoalAlignedContactIds(userId, GOAL_ALIGNED_CAP),
     // User-chosen tags per contact, for eligibility: one grouped pass over the join table,
     // scoped by the owner through `contacts`, instead of an aggregate per scanned row. Import
@@ -1050,8 +1044,7 @@ export async function getDashboardData(
   // the link into /graph is where that lives — so this is always the engaged scope.
   const previewFilterActive = constellationConfig.enabled;
   const previewEligibleCount = eligibleIds.size;
-  const { clusters: builtClusters, byContactId: clusterByContactId } =
-    buildConstellationClusters(lightContacts);
+  const { byContactId: clusterByContactId } = buildConstellationClusters(lightContacts);
   const engagedContacts = previewFilterActive
     ? lightContacts.filter((c) => eligibleIds.has(c.id))
     : lightContacts;
@@ -1196,16 +1189,6 @@ export async function getDashboardData(
 
   const userName = (await options?.userName) || "You";
 
-  // Clusters still see the whole network — a cluster's count is "how many people at Acme",
-  // which a capped sample cannot answer — but they only ever needed three columns, and the
-  // light scan has them.
-  const clusters = toNamedGraphClusters(builtClusters);
-
-  // companies, schools and tags come from `getDashboardVocabularies`, not from a pass over
-  // the scan. That is what lets the `contact_tags` join come off it: eligibility needs a tag
-  // COUNT, which is a scalar subquery, where the vocabulary needed the tag NAMES.
-  const { companies, schools, tags } = vocabularies;
-
   const scoreCounts: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
   // The histogram stays in JavaScript on purpose. `orbitScore` here is the cohort's, not the
   // `orbit_score` column — those agree for a scored contact and diverge for an unscored one
@@ -1325,15 +1308,13 @@ export async function getDashboardData(
     contactById,
     // Layout (nodes/edges) is computed client-side in NetworkGraph from contacts.
     graphPreview: {
+      // Only what `DashboardGraphPreview` reads: the drawn contacts and the user's name. The
+      // company/school/tag vocabularies and named clusters (a GROUP BY over every contact,
+      // 524 ms at 100k contacts) were built for a filter UI the preview never had.
       contacts: graphPreviewContacts,
-      companies,
-      schools,
-      tags,
-      clusters,
       userId,
       summary: {
         total: counts.totalContacts,
-        companyCount: companies.length,
         scoreCounts,
         // Absolute-tier count, matching /graph — see the note there on why the
         // quota rings above cannot be used for this.

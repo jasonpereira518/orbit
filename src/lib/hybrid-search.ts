@@ -364,7 +364,11 @@ async function ftsArm(
     where contacts.user_id = ${userId}
       and contacts.search_tsv @@ websearch_to_tsquery('simple', ${tsQuery})
       ${filter ? sql`and ${filter}` : sql``}
-    order by ts_rank_cd(contacts.search_tsv, websearch_to_tsquery('simple', ${tsQuery})) desc
+    order by ts_rank_cd(contacts.search_tsv, websearch_to_tsquery('simple', ${tsQuery})) desc,
+      -- Equal ranks are common (two people at the company searched for). Left to the plan,
+      -- their order followed whichever index scanned the user's rows and flipped when one
+      -- was added; closer first, then id, keeps the fused ranking stable.
+      contacts.closeness desc nulls last, contacts.id
     limit ${armLimit}
   `);
   return rowsOf<{ id: string }>(result).map((r) => r.id);
