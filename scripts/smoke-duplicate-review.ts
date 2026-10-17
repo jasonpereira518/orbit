@@ -27,6 +27,7 @@ import { getDb, rowsOf, closeDb } from "../src/db";
 import { backfillContactIdentities } from "../src/lib/contact-identity";
 import { dismissDuplicatePair, recordDuplicateSuggestion } from "../src/lib/contact-merge";
 import { mergeConfidentDuplicates } from "../src/lib/duplicate-sweep";
+import { forgetDuplicateCount } from "../src/lib/duplicate-count-memo";
 import {
   countDuplicatesAwaitingReview,
   getDuplicateReview,
@@ -193,6 +194,8 @@ async function main() {
   await db.execute(
     sql`UPDATE duplicate_suggestions SET status = 'dismissed' WHERE user_id = ${USER}`
   );
+  // A raw UPDATE bypasses the writers that forget the cached badge count.
+  forgetDuplicateCount(USER);
   check(
     "a dismissed pair leaves the proposed list",
     (await getDuplicateReview(USER)).proposed.length === 0
