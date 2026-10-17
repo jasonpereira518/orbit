@@ -1,6 +1,9 @@
-# The PR gate: typecheck, lint, a production build, the smoke suite, and the Playwright
-# browser flows. The Chrome extension has its own workflow (extension.yml) that runs only
-# when a PR touches it.
+# The PR gate: typecheck, lint, a production build, the smoke suite, the known-bug suite,
+# the Playwright browser flows, and a security pass (dependency audit,
+# dependency review, secret scan). The Chrome extension has its own workflow
+# (extension.yml) that runs only when a PR touches it. On `main` and on demand it also
+# measures the smoke suite's coverage (report only). docs/TESTING.md describes the layers
+# and the branch-protection settings that make these a real gate.
 #
 # Nothing here needs a secret. The build runs without Clerk or database keys (the app
 # fails closed at runtime, not at build), `check:env` only gates VERCEL builds via
@@ -44,6 +47,7 @@ on:
       - ".github/workflows/ops.yml"
       - ".github/workflows/backup.yml"
       - ".github/workflows/extension.yml"
+      - ".github/workflows/post-deploy.yml"
       - "LICENSE"
   push:
     branches: [main]
@@ -129,6 +133,152 @@ jobs:
       - if: steps.deps.outputs.cache-hit != 'true'
         run: npm ci --no-audit --no-fund
       - run: npm test -- --shard ${{ matrix.shard }}/3
+
+  # The same suite again under c8, for coverage — on `main` and on demand, NOT on PRs, and
+  # never as the gate. Instrumentation slows scripts several-fold, which is harmless for
+  # most but fails the wall-clock budgets in smoke-constellation-match (80s instrumented vs
+  # ~13s plain), so gating on an instrumented run would make the gate flaky. Each shard keeps
+  # only its Istanbul JSON (a few MB; the raw V8 dumps run to gigabytes) for `coverage` to
+  # merge; a script failing here is reported by `smoke`, so it does not fail this job.
+  coverage-shard:
+    name: coverage shard ${{ matrix.shard }}/3
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - id: deps
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('.nvmrc', 'package-lock.json') }}
+      - if: steps.deps.outputs.cache-hit != 'true'
+        run: npm ci --no-audit --no-fund
+      - run: npx c8 --report-dir coverage/shard-${{ matrix.shard }} tsx scripts/run-smoke.ts --ci --shard ${{ matrix.shard }}/3
+        continue-on-error: true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-shard-${{ matrix.shard }}
+          path: coverage/shard-${{ matrix.shard }}/coverage-final.json
+          retention-days: 7
+
+  # Merges the shards' coverage and writes a per-area table to the run summary. Reports, does
+  # not gate: there is no threshold yet (see docs/TESTING.md → Coverage for the ratchet).
+  coverage:
+    name: coverage report
+    needs: coverage-shard
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - id: deps
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('.nvmrc', 'package-lock.json') }}
+      - if: steps.deps.outputs.cache-hit != 'true'
+        run: npm ci --no-audit --no-fund
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: coverage-shard-*
+          path: coverage/shards
+      - run: npm run coverage:merge -- coverage/shards
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-merged
+          path: coverage/merged/
+          retention-days: 14
+
+  # Documented-but-unfixed bugs (scripts/smoke-bug-*.ts). Each asserts the correct behaviour,
+  # so it fails while its bug is there; `--bugs` inverts the verdict. This job goes red in
+  # exactly two cases, both worth a look: a bug got FIXED (promote the script to an ordinary
+  # tier), or a bug script broke in some other way.
+  known-bugs:
+    name: known bugs (expected failures)
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - id: deps
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('.nvmrc', 'package-lock.json') }}
+      - if: steps.deps.outputs.cache-hit != 'true'
+        run: npm ci --no-audit --no-fund
+      - run: npm run test:bugs
+
+  # Supply chain and secrets. Three independent checks, each answering a different question:
+  #
+  # - `npm audit` (production dependencies): is anything we ship CRITICALLY vulnerable right
+  #   now? Gated at critical only, because at the time of writing there are 15 high and 11
+  #   moderate advisories, all transitive and all fixable with `npm audit fix`; gating at
+  #   high would turn every PR red until that is done. Tighten to `--audit-level=high` once
+  #   it is (docs/TESTING.md tracks it).
+  # - Dependency review (PRs only): does THIS PR add a dependency with a high advisory? That
+  #   gates new risk without inheriting the backlog above.
+  # - gitleaks: does any commit in this push or PR add a secret? Scans only the new commits
+  #   (the history has pre-existing hits to triage, listed in docs/TESTING.md), so the gate
+  #   is "no new secrets", and a finding names the commit and file without printing the value.
+  security:
+    name: audit · dependency review · secret scan
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: npm audit (production dependencies)
+        run: |
+          npm audit --omit=dev --audit-level=high || true   # the full picture, in the log
+          npm audit --omit=dev --audit-level=critical
+      # Needs Settings → Code security → Dependency graph, which is off on this repository
+      # (the action errors out without it, failing every PR). Turn the graph on, then set the
+      # repository variable DEPENDENCY_REVIEW=true to start enforcing this step.
+      - name: Dependency review
+        if: github.event_name == 'pull_request' && vars.DEPENDENCY_REVIEW == 'true'
+        uses: actions/dependency-review-action@05fe4576374b728f0c523d6a13d64c25081e0803 # v4.8.3
+        with:
+          fail-on-severity: high
+          fail-on-scopes: runtime
+      - name: Install gitleaks (pinned, checksum-verified)
+        run: |
+          curl -sSfL -o /tmp/gitleaks.tgz \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/gitleaks.tgz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
+      - name: Secret scan (new commits only)
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          # A new branch's push has no `before`; fall back to the last commit alone.
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            range="$HEAD~1..$HEAD"
+          else
+            range="$BASE..$HEAD"
+          fi
+          echo "scanning $range"
+          /tmp/gitleaks git --no-banner --redact --log-opts="$range" .
 
   e2e:
     name: browser flows (Playwright)

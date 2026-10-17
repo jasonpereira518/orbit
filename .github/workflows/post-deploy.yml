@@ -1,0 +1,56 @@
+# Post-deploy smoke: after Vercel reports a successful PRODUCTION deployment, check that the
+# live site is up and still refuses anonymous callers (scripts/post-deploy-smoke.ts).
+#
+# A green build cannot see the failures this catches: a page that 500s only with production
+# env vars, a database the deployment cannot reach, or a middleware change that lets an
+# unauthenticated request through to a protected route. Read-only, anonymous, no secrets —
+# safe to run against production on every deploy.
+#
+# Previews are skipped: Vercel's deployment protection answers 401 to everything there,
+# which would make every check pass for the wrong reason. Run it by hand against any URL
+# with "Run workflow" (workflow_dispatch).
+#
+# If this goes red, the deploy is live and broken: roll back in Vercel (Deployments →
+# the previous production deployment → Promote) and then investigate.
+name: post-deploy
+
+on:
+  deployment_status:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: Base URL to check
+        required: true
+        default: https://myorbitnetwork.com
+
+permissions:
+  contents: read
+
+concurrency:
+  group: post-deploy-${{ github.event.inputs.url || 'production' }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: post-deploy smoke (production)
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' &&
+       github.event.deployment.environment == 'Production')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      # The script has no dependencies beyond Node itself; tsx is fetched on its own rather
+      # than restoring the whole node_modules.
+      - name: Smoke the deployment
+        run: npx --yes tsx@4.23.1 scripts/post-deploy-smoke.ts
+        env:
+          # The production DOMAIN, not the deployment's own `*.vercel.app` URL from the event:
+          # Vercel's standard deployment protection covers generated URLs even in production,
+          # so those answer 401 to everything. Set the PRODUCTION_URL repository variable to
+          # move it; a hand run checks whatever URL it is given.
+          BASE_URL: ${{ github.event.inputs.url || vars.PRODUCTION_URL || 'https://myorbitnetwork.com' }}
