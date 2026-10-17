@@ -28,13 +28,19 @@ check("ops.yml queues each schedule in its own concurrency group", /group: ops-\
 check("process-stalled is called from exactly one step",
   (ops.match(/\/api\/imports\/process-stalled/g) ?? []).length === 1);
 check("that step is gated on the hourly schedule",
-  /if: github\.event\.schedule == '7 \* \* \* \*'[\s\S]{0,400}\/api\/imports\/process-stalled/.test(ops));
+  /if: \$\{\{ !cancelled\(\) && \(github\.event\.schedule == '7 \* \* \* \*'\)[\s\S]{0,400}\/api\/imports\/process-stalled/.test(ops));
 // The work-history sweep spends people's own AI keys: exactly one caller, on its own line.
 check("the work-history sweep is called from exactly one step",
   (ops.match(/\/api\/work-history\/sweep/g) ?? []).length === 1);
 check("that step is gated on its own :37 schedule",
   ops.includes(`- cron: "37 * * * *"`) &&
-    /if: github\.event\.schedule == '37 \* \* \* \*'[\s\S]{0,400}\/api\/work-history\/sweep/.test(ops));
+    /if: \$\{\{ !cancelled\(\) && \(github\.event\.schedule == '37 \* \* \* \*'\)[\s\S]{0,400}\/api\/work-history\/sweep/.test(ops));
+// A failing step must not skip the ones after it (GitHub adds an implicit success() to a bare
+// `if:`), or one failed drain silently skips the email drain behind it.
+check("every gated step opts out of the implicit success()",
+  (ops.match(/^        if: \$\{\{ !cancelled\(\)/gm) ?? []).length >= 14);
+check("the health probe retries and prints status only",
+  ops.includes("for delay in 0 5 15") && !/cat \/tmp\/health\.json/.test(ops));
 // A step that curls $APP_URL / $CRON_SECRET with no env block hits an empty host and a
 // blank bearer, so the sweep silently never runs. Every such step declares what it uses.
 for (const chunk of ops.split(/^ {6}- name: /m).slice(1)) {

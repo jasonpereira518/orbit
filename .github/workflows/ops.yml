@@ -127,21 +127,32 @@ jobs:
         id: health
         continue-on-error: true
         run: |
-          code=$(curl -sS -o /tmp/health.json -w '%{http_code}' --max-time 15 "$APP_URL/api/health" || echo "000")
+          # Three attempts, 5s then 15s apart. One slow answer (a Neon compute waking, a
+          # 4s DB blip) used to skip EVERY job in the tick, and for the daily jobs that is
+          # a lost day. Only an outage that outlasts the retries skips the tick.
+          code=000
+          for delay in 0 5 15; do
+            sleep "$delay"
+            code=$(curl -sS -o /tmp/health.json -w '%{http_code}' --max-time 15 "$APP_URL/api/health" || echo "000")
+            [ "$code" = "200" ] && break
+          done
           echo "code=$code" >> "$GITHUB_OUTPUT"
-          echo "health: HTTP $code"; cat /tmp/health.json 2>/dev/null; echo
+          # Status only: the repository, and so these logs, are public.
+          echo "health: HTTP $code"
           # Surfaced as an annotation because `continue-on-error: true` makes this step's own
           # conclusion always `success`. A red probe is otherwise invisible in the run
           # summary, and every gated step below skips with nothing on screen to explain why.
           if [ "$code" != "200" ]; then
-            echo "::error::health probe returned $code - every scheduled step below will skip"
+            echo "::error::health probe returned $code after 3 attempts - every scheduled step below will skip"
           fi
           test "$code" = "200"
         env:
           APP_URL: ${{ secrets.APP_URL }}
 
+      # Ten-minute schedule and manual runs only. Every schedule line probes, and paging from
+      # all of them posted about 17 critical messages an hour through one outage.
       - name: Page on a down probe
-        if: steps.health.outcome == 'failure'
+        if: steps.health.outcome == 'failure' && (github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch')
         run: |
           if [ -z "$SLACK_OPS_CRITICAL_WEBHOOK_URL" ]; then
             echo "SLACK_OPS_CRITICAL_WEBHOOK_URL not set, skipping"
@@ -157,7 +168,7 @@ jobs:
       # from the others: the cadence of the alerting path is a decision, and it must not
       # change as a side effect of somebody adding an unrelated cron line.
       - name: Run the ops sweep
-        if: (github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success'
+        if: ${{ !cancelled() && (github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success' }}
         run: |
           main_sha=$(git rev-parse HEAD)
           main_at=$(git log -1 --format=%cI)
@@ -170,7 +181,7 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
 
       - name: Run the stalled-import backstop (hourly)
-        if: github.event.schedule == '7 * * * *' && steps.health.outcome == 'success'
+        if: ${{ !cancelled() && (github.event.schedule == '7 * * * *') && steps.health.outcome == 'success' }}
         run: |
           curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 \
             -H "Authorization: Bearer $CRON_SECRET" \
@@ -183,7 +194,7 @@ jobs:
       # line of its own: a delivery that failed can wait ten minutes, and the drain has its own
       # route so its latency never delays the sweep above.
       - name: Drain outbound webhooks
-        if: (github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success'
+        if: ${{ !cancelled() && (github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success' }}
         run: |
           curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 55 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
@@ -196,7 +207,7 @@ jobs:
       # drain does: a write that failed can wait, and its own route keeps its latency off the
       # sweep above.
       - name: Drain the connector outbox
-        if: (github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success'
+        if: ${{ !cancelled() && (github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success' }}
         run: |
           curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 55 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
@@ -209,7 +220,7 @@ jobs:
       # this catches the rest: retries, lapsed leases, and anything a recycled function
       # dropped. Same ten-minute schedule and gate as the connector outbox above.
       - name: Drain the email outbox
-        if: (github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success'
+        if: ${{ !cancelled() && (github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success' }}
         run: |
           curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 55 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
@@ -229,7 +240,7 @@ jobs:
       # schedule like the drains above: a notice can wait ten minutes, and its own route keeps
       # its latency off the sweep. Every send is claimed first, so an overlapping run is a no-op.
       - name: Send the credit emails
-        if: (github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success'
+        if: ${{ !cancelled() && (github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success' }}
         run: |
           curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 120 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
@@ -239,7 +250,7 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
 
       - name: Run the connector sync (every 15 minutes)
-        if: github.event.schedule == '*/15 * * * *' && steps.health.outcome == 'success'
+        if: ${{ !cancelled() && (github.event.schedule == '*/15 * * * *') && steps.health.outcome == 'success' }}
         run: |
           curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
@@ -257,7 +268,7 @@ jobs:
       # it; the sweep stops cleanly at a chunk boundary and the next run resumes, so a
       # timeout here costs an hour rather than any data.
       - name: Run the job-feed sweep (hourly)
-        if: github.event.schedule == '23 * * * *' && steps.health.outcome == 'success'
+        if: ${{ !cancelled() && (github.event.schedule == '23 * * * *') && steps.health.outcome == 'success' }}
         run: |
           curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
@@ -271,7 +282,7 @@ jobs:
       # Hourly and on its own line for the same reason as the feed above. 300s to match the
       # route; it stops starting checks at 150s and hands the rest to the next run.
       - name: Run the work-history sweep (hourly)
-        if: github.event.schedule == '37 * * * *' && steps.health.outcome == 'success'
+        if: ${{ !cancelled() && (github.event.schedule == '37 * * * *') && steps.health.outcome == 'success' }}
         run: |
           curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
@@ -285,7 +296,7 @@ jobs:
       # cadence hostage to a provider being slow. 300s to match the route's own ceiling; the
       # route self-continues when more accounts are waiting.
       - name: Run the Radar nightly pass (daily)
-        if: github.event.schedule == '17 4 * * *' && steps.health.outcome == 'success'
+        if: ${{ !cancelled() && (github.event.schedule == '17 4 * * *') && steps.health.outcome == 'success' }}
         run: |
           curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
@@ -298,7 +309,7 @@ jobs:
       # notes and reads their first lines. Its own line: provider calls and, for auto-extract,
       # model calls on people's own AI must never hold up the alerting path.
       - name: Run the cloud notes scan (every 30 minutes)
-        if: github.event.schedule == '29,59 * * * *' && steps.health.outcome == 'success'
+        if: ${{ !cancelled() && (github.event.schedule == '29,59 * * * *') && steps.health.outcome == 'success' }}
         run: |
           curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
@@ -311,7 +322,7 @@ jobs:
       # no account is read here. Its own line for the job feed's reason. 300s matches the
       # route; the sweep stops starting sources at 120s.
       - name: Run the Radar news sweep (hourly)
-        if: github.event.schedule == '53 * * * *' && steps.health.outcome == 'success'
+        if: ${{ !cancelled() && (github.event.schedule == '53 * * * *') && steps.health.outcome == 'success' }}
         run: |
           curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
@@ -324,7 +335,7 @@ jobs:
       # claim makes every other run a no-op for them. 300s matches the route, which stops
       # starting sends at 240s and continues itself once.
       - name: Send Radar's Monday email (Sunday and Monday, hourly)
-        if: github.event.schedule == '13 * * * 0,1' && steps.health.outcome == 'success'
+        if: ${{ !cancelled() && (github.event.schedule == '13 * * * 0,1') && steps.health.outcome == 'success' }}
         run: |
           curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
@@ -337,7 +348,7 @@ jobs:
       # against what the browser self-reported, and alerts on the gap — see
       # src/app/api/ops/speech-usage/route.ts.
       - name: Reconcile Deepgram usage (daily)
-        if: github.event.schedule == '41 5 * * *' && steps.health.outcome == 'success'
+        if: ${{ !cancelled() && (github.event.schedule == '41 5 * * *') && steps.health.outcome == 'success' }}
         run: |
           curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 55 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \

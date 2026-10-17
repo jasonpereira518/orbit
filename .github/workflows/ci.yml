@@ -52,7 +52,9 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel a run on `main`: production deploys every push to it, and a quick follow-up
+  # push used to cancel the earlier commit's run, so that commit shipped with no verdict.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
