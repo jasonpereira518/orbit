@@ -162,6 +162,8 @@ At 2,000 rows the engine ran 510 (creates) / 599 (merges) rows/s, so cost is sup
 | /capture, /imports, /events, /meetings, /outreach, /recruiters, /radar, /settings | 160–460 ms | 590–1,050 ms | 42–72 | flat in network size |
 | / (landing), /pricing | 128–196 ms | 590–764 ms | 44–57 | |
 
+At 50,000 contacts (desktop, dev; `/contacts` and the sidebar tour skipped because of DB-16): dashboard TTFB 13.9 s / usable 14.5 s; profile 21.3 s / 22.0 s; graph 22.9 s / 27.7 s (TBT 2.8 s parsing the 39 MB document); chat usable 20.2 s; knowledge 4.3 s / 4.9 s; and even pages whose own render is 170–700 ms (reminders, imports, events, meetings, outreach, recruiters, radar, settings) showed TTFB 3.6–9.5 s. The dev server log explains the last group: `POST /api/contacts/avatar-backfill` takes **9.4–10.1 s at 50,000** (1.1–1.4 s at 5,000) and fires on every page load, and the single-threaded local database served the next document behind it (SRV-16 in the plan). On the phone profile at 50k: dashboard usable 22 s, profile 37 s, graph 60 s, chat 34 s.
+
 Phone on 4G with 4× CPU (dev build): TTFB 170–940 ms (3.5 s for the profile at 5,000), FCP 1.4–2.7 s, **usable 8.7–16 s on every page** (total blocking time 560–2,135 ms; `/chat` worst at 16 s), repeat visits 2–7 s. The dev bundle is ~4× the production one, so read these as "hydration-bound" rather than as absolute numbers; the production JS floor is still 289 KB gz per page plus 130 KB of framework and clerk-js.
 
 Client-side navigation (sidebar click → URL changed and no skeleton), desktop, 500 contacts: /contacts 1,525 ms (832 ms on revisit), /reminders 2,701 ms (skeleton at 1,448 ms), /dashboard 1,081 ms, /graph 617 ms, /chat 609 ms, /capture 761 ms; back 1,100 ms, forward 483 ms. At 5,000: /reminders 3.6 s, /dashboard 2.3 s, /graph 1.7 s, /contacts 33.7 s. Empty account: 260–650 ms per hop, back 331 ms. Phone profile: 1.8–9 s per hop in dev.
@@ -196,7 +198,7 @@ Under 5-way concurrency every document is 4–5× slower (the dev server and PGl
 | 5,000 | 2.97 MB | 972 ms | 237 ms | 60 / 60 / 52 | 16.7 ms | 22 MB |
 | 50,000 | 29.7 MB | 2,764 ms | 1,355 ms | 59 / 59 / 54 | 16.8 ms | 147 MB (summary view) |
 
-The chart itself is smooth at every size; the cost is the payload (DB-3) and its parse. Phone-profile rows are in `REPORT.md` (the phone layout draws its own canvas; the first run of the bench could not detect it, the rerun could).
+The chart itself is smooth at every size; the cost is the payload (DB-3) and its parse. The static bench page does not render the phone layout (no chart mounts at 390 px), so phone numbers for the Constellation come from `/graph` in the page runs above: usable 10.1 s (500), 14.8 s (5,000) and 60 s (50,000) in dev on the 4G/4× profile, with 0.75 s, 1.55 s and 13.4 s of total blocking time.
 
 **Local plan shapes (`latency/explain.ts`, PGlite, fresh statistics, 5,000-contact copy).** The duplicates self-join: Nested Loop, `Index Scan using contacts_pkey (id > a.id)` with the name match as a filter, 5,025 outer × 2,512 inner rows, 30.3 s; at 500 contacts the same statement is a Hash Join in 43 ms. Dashboard scan 84 ms (seq scan + sort of 5,025 rows), touches `GROUP BY` 39 ms, unscored probe 4.5 ms (seq scan, no index), reminders/suggestions panel < 1 ms at this size, contacts search OR-filter seq scan 26 ms, FTS arm seq scan 33 ms (GIN unused on a single-tenant table), trigram arm 60 ms seq scan. Single-tenant local plans prefer sequential scans; the multi-tenant plans need Neon (commands below).
 
