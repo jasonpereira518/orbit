@@ -14,11 +14,22 @@ const outfit = Outfit({
 const fraunces = Fraunces({
   variable: "--font-display",
   subsets: ["latin"],
-  // Fraunces has a genuine italic cut, and the pricing headline uses it. Without
-  // declaring it here the browser would slant the upright instead, which on a display
-  // serif at 56px reads as a mistake. The italic file is only fetched by pages that
-  // actually set font-style: italic.
-  style: ["normal", "italic"],
+  style: ["normal"],
+});
+
+/**
+ * Fraunces has a genuine italic cut, and the pricing and waitlist headlines use it. Without
+ * it the browser would slant the upright instead, which on a display serif at 56px reads as
+ * a mistake. Declared as its own face with `preload: false`: in the same declaration as the
+ * upright, `next/font` preloaded its 45 KB on every page, app pages included, which never
+ * set a display-serif italic (LATENCY_PLAN NET-3). theme.css points italic text inside a
+ * display-serif element at this family; the browser fetches it only where that happens.
+ */
+const frauncesItalic = Fraunces({
+  variable: "--font-display-italic",
+  subsets: ["latin"],
+  style: ["italic"],
+  preload: false,
 });
 
 export const metadata: Metadata = {
@@ -57,7 +68,7 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${outfit.variable} ${fraunces.variable} h-full`}
+      className={`${outfit.variable} ${fraunces.variable} ${frauncesItalic.variable} h-full`}
     >
       <body className="h-full min-h-full font-sans antialiased">
         <ThemeProvider

@@ -54,6 +54,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-answer-landed": "pure",
   "smoke-render-stamp-pages": "pure",
   "smoke-no-double-render": "pure",
+  "smoke-font-preload": "pure",
   "smoke-oauth-refresh-rejection": "pure",
   "smoke-oauth-return": "pure",
   "smoke-openrouter-oauth": "pure",
