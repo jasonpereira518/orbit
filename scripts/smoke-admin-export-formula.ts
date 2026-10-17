@@ -1,35 +1,20 @@
 /**
- * KNOWN BUG — documented, not fixed.
+ * The admin console's CSV export neutralises formula-leading cells (CSV / formula injection,
+ * CWE-1236).
  *
- * Symptom: the admin console's CSV export writes user-typed text into the file verbatim, so a
- * waitlist signup whose first name is `=HYPERLINK("https://evil.example.com","x")` becomes a
- * live formula in the operator's spreadsheet (CSV / formula injection, CWE-1236). Spreadsheet
- * apps evaluate cells starting with `=`, `+`, `-`, `@`, tab or CR; HYPERLINK / WEBSERVICE /
- * DDE payloads can exfiltrate neighbouring cells (other people's emails) or phish the
- * operator.
- *
- * Why: `GET /api/admin/export` (src/app/api/admin/export/route.ts:91) serialises with
- * `Papa.unparse(rows)` and no `escapeFormulae` option. The interest-list dataset carries
- * strings anyone on the internet controls — `first_name` / `last_name` (validated only for
- * length by `interestNameSchema`, src/lib/interest-list-schema.ts:34), `referrer`, `utm_*`,
- * `landing_path` — and the feedback dataset carries `text` typed by any signed-in user.
- *
- * Trigger path: an anonymous visitor joins the waitlist and, on step two, enters a formula as
- * their first name (`saveInterestListNameCore`); the operator clicks "Export CSV" on the
- * interest list and opens the file in Excel / Sheets / Numbers.
- *
- * Severity: medium — needs the operator to open the file and (in most apps) accept a
- * warning, but the attacker is unauthenticated and the file holds the whole waitlist.
- *
- * Fix: `Papa.unparse(rows, { escapeFormulae: true })` (prefixes such cells with `'`), or the
- * equivalent for every CSV this route emits. This script then exits 0 and should be promoted
- * to the pglite tier.
+ * The interest-list dataset carries strings anyone on the internet controls — `first_name` /
+ * `last_name`, `referrer`, `utm_*`, `landing_path` — and the feedback dataset carries `text`
+ * typed by any signed-in user. A cell starting with `=`, `+`, `-`, `@`, tab or CR is evaluated
+ * by spreadsheet apps (HYPERLINK / WEBSERVICE / DDE payloads can exfiltrate neighbouring
+ * cells). `GET /api/admin/export` (src/app/api/admin/export/route.ts) now serialises with
+ * `Papa.unparse(rows, { escapeFormulae })`, which prefixes such cells with `'`; the text
+ * itself survives, and the JSON export stays exact.
  *
  * Runs the real route handler. The admin gate is satisfied the way a local worktree satisfies
  * it — demo mode (`NODE_ENV=development`, no Clerk publishable key), where `isAdminUser` is
- * true for the local `demo-user` (src/lib/admin.ts:55).
+ * true for the local `demo-user` (src/lib/admin.ts).
  *
- * Writes to local PGlite. Run: npx tsx scripts/smoke-bug-admin-export-formula.ts
+ * Writes to local PGlite. Run: npx tsx scripts/smoke-admin-export-formula.ts
  */
 import "./smoke/_env";
 import { run } from "./smoke/_env";
@@ -82,13 +67,13 @@ run(async () => {
     const row = parsed.data.find((r) => r.email === EMAIL);
     t.check("setup: the seeded signup is in the CSV", Boolean(row));
     t.check("the formula text survives (it is neutralised, not dropped)", Boolean(row?.first_name?.includes("HYPERLINK")));
-    t.knownBug(
-      "BUG: admin CSV export writes a waitlist first_name starting with '=' as a live formula",
+    t.check(
+      "admin CSV export neutralises a waitlist first_name starting with '='",
       Boolean(row) && !FORMULA_START.test(row!.first_name),
       `first_name cell = ${JSON.stringify(row?.first_name)}`
     );
-    t.knownBug(
-      "BUG: admin CSV export writes a waitlist referrer starting with '@' as a live formula",
+    t.check(
+      "admin CSV export neutralises a waitlist referrer starting with '@'",
       Boolean(row) && !FORMULA_START.test(row!.referrer),
       `referrer cell = ${JSON.stringify(row?.referrer)}`
     );
@@ -97,8 +82,8 @@ run(async () => {
     const fbRows = Papa.parse<Record<string, string>>(await fb.text(), { header: true, skipEmptyLines: true }).data;
     const fbRow = fbRows.find((r) => r.text?.includes("import page showed me"));
     t.check("setup: the seeded feedback is in the CSV", Boolean(fbRow));
-    t.knownBug(
-      "BUG: admin CSV export writes feedback text starting with '=' as a live formula",
+    t.check(
+      "admin CSV export neutralises feedback text starting with '='",
       Boolean(fbRow) && !FORMULA_START.test(fbRow!.text),
       `text cell = ${JSON.stringify(fbRow?.text)}`
     );
@@ -112,5 +97,5 @@ run(async () => {
     await db.delete(adminAuditLog).where(eq(adminAuditLog.adminUserId, "demo-user"));
   }
 
-  t.done("admin export formula injection (known bug)");
+  t.done("admin export formula injection");
 });

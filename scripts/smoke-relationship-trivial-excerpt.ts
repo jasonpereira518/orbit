@@ -1,34 +1,14 @@
 /**
- * KNOWN BUG — documented, not fixed.
+ * The relationship engine's hallucination guard needs a meaningful excerpt.
  *
- * Symptom: the relationship engine's hallucination guard accepts a one- or two-character
- * "excerpt". A model answer that invents a fact ("Is going through a divorce") or a
- * commitment and cites the excerpt "ok" is applied as if quoted — because "ok" occurs in
- * almost any thread, including inside "Looking forward to it". The invented fact is written to
- * the contact's key facts with no human review.
+ * `locateExcerpt` (src/lib/relationship-engine/validate.ts) used to accept any non-empty
+ * substring, so a model answer (or a sender's prompt injection) that invented a fact or a
+ * commitment and cited "ok" — found inside "Looking forward to it" — was applied to the
+ * contact's key facts and action items with no review. It now requires at least two words
+ * and ten characters, matched on word boundaries, as a floor shared by every caller
+ * (`validateDigest` → `processDigestAnswer`).
  *
- * Why: `locateExcerpt` (src/lib/relationship-engine/validate.ts:19-27) only requires the
- * normalised excerpt to be a non-empty SUBSTRING of one message. There is no minimum length,
- * no word-boundary check, and no requirement that the excerpt relate to the claim it backs.
- * `validateDigest` keeps every fact / commitment / implied step / closure whose excerpt is
- * located (:34 onward), and `processDigestAnswer` (src/lib/relationship-engine/runner.ts:129)
- * applies the result straight to `contacts.key_facts`, action items and reminders. The guard
- * is the module's whole defence ("validate.ts drops anything whose excerpt is not in the
- * window") and the prompt treats the messages as untrusted, so a prompt-injected or confused
- * model needs only to quote two letters.
- *
- * Trigger path: any relationship pass (`runRelationshipPass` → `extractRelationshipDigest`
- * → `processDigestAnswer`) over an imported LinkedIn / email thread, where the model returns a
- * short excerpt. Sender-controlled message text can also instruct the model to do so.
- *
- * Severity: medium — fabricated facts and to-dos are silently written to a user's contact
- * record; no cross-account reach.
- *
- * Fix: require a meaningful excerpt (e.g. at least a few words / ~12 characters, matched on
- * word boundaries) in `locateExcerpt`, as a floor shared by every caller. This script then
- * exits 0 and should be promoted to the pglite tier.
- *
- * Writes to local PGlite. Run: npx tsx scripts/smoke-bug-relationship-trivial-excerpt.ts
+ * Writes to local PGlite. Run: npx tsx scripts/smoke-relationship-trivial-excerpt.ts
  */
 import "./smoke/_env";
 import { run } from "./smoke/_env";
@@ -104,30 +84,30 @@ run(async () => {
     t.check("a real quote is located in its message", locateExcerpt(window, "catching up about the analytics project")?.interactionId === i1.id);
 
     const located = locateExcerpt(window, "ok");
-    t.knownBug(
-      "BUG: locateExcerpt accepts a 2-character excerpt (\"ok\" matches inside \"Looking\")",
+    t.check(
+      "locateExcerpt rejects a 2-character excerpt (\"ok\" inside \"Looking\" is no match)",
       located === null,
       located ? `matched message: ${JSON.stringify(located.text)}` : ""
     );
     const v = validateDigest(answerWith("ok"), window, new Set());
-    t.knownBug(
-      "BUG: validateDigest keeps a fabricated fact whose excerpt is \"ok\"",
+    t.check(
+      "validateDigest drops a fabricated fact whose excerpt is \"ok\"",
       !v.facts.includes(FABRICATED_FACT),
       `facts=${JSON.stringify(v.facts)}`
     );
 
-    console.log("\n...and what it lets through, end to end (processDigestAnswer)...");
+    console.log("\n...and end to end (processDigestAnswer)...");
     const [runRow] = await db.insert(relationshipRuns).values({ userId: USER, status: "running" }).returning();
     await processDigestAnswer(USER, runRow.id, contact.id, window, answerWith("ok"), new Date("2026-09-02T09:00:00Z"));
     const [after] = await db.select({ keyFacts: contacts.keyFacts }).from(contacts).where(eq(contacts.id, contact.id));
-    t.knownBug(
-      "BUG: a fabricated fact backed only by the excerpt \"ok\" is written to the contact's key facts",
+    t.check(
+      "a fabricated fact backed only by the excerpt \"ok\" is not written to the contact's key facts",
       !(after?.keyFacts ?? []).includes(FABRICATED_FACT),
       `key_facts=${JSON.stringify(after?.keyFacts)}`
     );
     const items = await db.select().from(actionItems).where(and(eq(actionItems.userId, USER), eq(actionItems.contactId, contact.id)));
-    t.knownBug(
-      "BUG: a fabricated commitment backed only by the excerpt \"ok\" becomes an action item",
+    t.check(
+      "a fabricated commitment backed only by the excerpt \"ok\" does not become an action item",
       !items.some((i) => JSON.stringify(i).includes("Wire Ada")),
       `action items: ${JSON.stringify(items.map((i) => (i as { title?: string; text?: string }).title ?? (i as { text?: string }).text))}`
     );
@@ -135,5 +115,5 @@ run(async () => {
     await purgeUsers(db, [USER]);
   }
 
-  t.done("relationship trivial excerpt (known bug)");
+  t.done("relationship trivial excerpt");
 });

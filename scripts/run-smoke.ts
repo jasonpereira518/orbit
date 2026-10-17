@@ -151,6 +151,13 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-graph-nextlink-guard": "pure",
   "smoke-graph-sync-resilience": "pure",
   "smoke-cloud-notes-dead-cursor": "pglite",
+  // Fixed billing, export and AI bugs, promoted from the bug tier.
+  "smoke-stripe-revocation-regrant": "pglite",
+  "smoke-stripe-deleted-account-resurrect": "pglite",
+  "smoke-credit-period-overflow": "pglite",
+  "smoke-admin-export-formula": "pglite",
+  "smoke-relationship-trivial-excerpt": "pglite",
+  "smoke-llm-truncated-json": "pglite",
   // Contacts, exports, billing and AI validation.
   "smoke-merge-coverage": "pglite", // every FK and id column pointing at contacts is handled by merge, or named as a gap
   "smoke-data-export-isolation": "pglite",
@@ -610,15 +617,9 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-stripe-testclock": "manual", // Stripe sandbox + test clocks; several minutes
   // bug: documented defects, expected to fail (see the header) ---------------------------
   "smoke-bug-linkedin-slug": "bug",
-  "smoke-bug-llm-truncated-json-accepted": "bug",
   "smoke-bug-merge-drops-children": "bug",
   "smoke-bug-merge-email-sends": "bug",
   "smoke-bug-contact-delete-ghost-suggestion": "bug",
-  "smoke-bug-stripe-revocation-regrant": "bug",
-  "smoke-bug-stripe-deleted-account-resurrect": "bug",
-  "smoke-bug-credit-period-overflow": "bug",
-  "smoke-bug-admin-export-formula": "bug",
-  "smoke-bug-relationship-trivial-excerpt": "bug",
 };
 
 const TIMEOUT_MS: Partial<Record<string, number>> = {

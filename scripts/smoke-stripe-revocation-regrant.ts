@@ -1,42 +1,27 @@
 /**
- * KNOWN BUG — documented, not fixed.
+ * A full refund (or lost dispute) of a subscription charge stays revoked: no later-arriving
+ * subscription webhook puts the account back on a paid plan.
  *
- * Symptom: a subscriber whose charge was refunded in full (or lost in a dispute) is dropped
- * to Free, and then a later-arriving subscription webhook puts them straight back on Pro.
+ * Two ways back in used to exist, both closed in src/lib/billing-stripe.ts and
+ * src/lib/stripe-fulfilment.ts:
  *
- * Two ways in, one root cause — the revocation writes a mirror that later events do not
- * respect:
- *
- *  1. Watermark. `applyStripeDecision` writes `subscription_revoked` without an `eventAt`
- *     (src/lib/stripe-fulfilment.ts:188-197), so `user_settings.subscription_event_at` stays
- *     at the last subscription event applied BEFORE the refund. `isStaleSubscriptionEvent`
- *     (src/lib/billing-stripe.ts:560) exists precisely because "Stripe does not order
- *     deliveries, and retries a failed one for three days, so an `updated` (active) created
- *     before a `deleted` can arrive after it and re-grant Pro" — but an `updated` created
- *     before the REFUND is not older than that watermark, so it is applied and re-grants.
- *  2. Period end. A `customer.subscription.deleted` that is genuinely newer than the refund
- *     (the operator refunds, then cancels the subscription immediately) mirrors Stripe's
- *     `current_period_end`, which is still in the future (src/lib/billing-stripe.ts:787-791),
- *     and `subscriptionIsLive` (src/lib/entitlements.ts:132) honours a canceled subscription
- *     until that date — paid access for the very period that was refunded.
- *
- * Trigger path: the Stripe webhook (`src/app/api/webhooks/stripe/route.ts` →
- * `processStripeEvent`). Case 1 needs a delayed or retried `customer.subscription.updated`
- * (e.g. the operator set cancel-at-period-end and refunded in the same minute, and the
- * update's first delivery failed); case 2 is the ordinary "refund and cancel" support flow.
- *
- * Severity: medium — paid features for a refunded / charged-back customer until the period
- * end (up to a month, or a year on annual). Revenue already returned; no data exposure.
- *
- * Fix: advance the watermark on revocation (pass the event's `created` as `eventAt`) and
- * remember the revocation so a later terminal event cannot extend `subscription_period_end`
- * past it. This script then exits 0 and should be promoted to the pglite tier.
+ *  1. Watermark. The `subscription_revoked` mirror now carries the refund event's `created` as
+ *     `eventAt`, so `user_settings.subscription_event_at` advances on revocation and a delayed
+ *     `customer.subscription.updated` created BEFORE the refund is ignored as stale by
+ *     `isStaleSubscriptionEvent` instead of re-granting Pro.
+ *  2. Period end. A cancellation (`deleted`, or an `updated` with status canceled) applied to a
+ *     mirror that is already canceled never extends `subscription_period_end`
+ *     (`currentSubscriptionPeriodEnd` in the decide context). A `deleted` genuinely newer than
+ *     the refund — the ordinary "refund, then cancel" support flow — therefore keeps the
+ *     revocation's period end of "now" rather than Stripe's future `current_period_end`.
+ *     A normal, unrefunded cancel still keeps access to the period end: there the mirror's
+ *     period end already equals Stripe's.
  *
  * The refund is decided with `chargePurpose: "subscription"` supplied directly — the only
  * part of `readDecideContext` that would call the Stripe API — and applied with the real
  * `applyStripeDecision`. Every subscription event goes through the real `processStripeEvent`.
  *
- * Writes to local PGlite. Run: npx tsx scripts/smoke-bug-stripe-revocation-regrant.ts
+ * Writes to local PGlite. Run: npx tsx scripts/smoke-stripe-revocation-regrant.ts
  */
 import "./smoke/_env";
 import { run } from "./smoke/_env";
@@ -145,7 +130,7 @@ run(async () => {
   await purgeUsers(db, [A, B, C]);
 
   try {
-    console.log("\n1. A delayed `updated` created before the refund re-grants Pro...");
+    console.log("\n1. A delayed `updated` created before the refund stays stale...");
     await process_(subEvent(A, "customer.subscription.updated", NOW_S - 3 * HOUR, "active"));
     t.check("setup: the subscriber is on Pro", resolvePlan(await settingsOf(A), NOW).plan === "orbit");
     const revoke = await applyRefund(A, NOW_S - 1 * HOUR);
@@ -154,20 +139,20 @@ run(async () => {
     const delayed = await process_(subEvent(A, "customer.subscription.updated", NOW_S - 2 * HOUR, "active"));
     const outcome = delayed.duplicate ? "duplicate" : `${delayed.decision.outcome}/${delayed.decision.reason ?? ""}`;
     const afterA = await settingsOf(A);
-    t.knownBug(
-      "BUG: an `updated` created before a refund but delivered after it re-grants the revoked plan (revocation does not advance subscription_event_at)",
+    t.check(
+      "an `updated` created before a refund but delivered after it is ignored (revocation advances subscription_event_at)",
       resolvePlan(afterA, NOW).plan === "free",
       `plan=${resolvePlan(afterA, NOW).plan}, status=${afterA?.subscriptionStatus}, decision=${outcome}, watermark=${afterA?.subscriptionEventAt?.toISOString()}`
     );
 
-    console.log("\n2. A newer `deleted` after the refund restores access to the refunded period...");
+    console.log("\n2. A newer `deleted` after the refund keeps the account on Free...");
     await process_(subEvent(B, "customer.subscription.updated", NOW_S - 3 * HOUR, "active"));
     await applyRefund(B, NOW_S - 2 * HOUR);
     t.check("setup: the refund drops the account to Free", resolvePlan(await settingsOf(B), NOW).plan === "free");
     await process_(subEvent(B, "customer.subscription.deleted", NOW_S - 1 * HOUR, "canceled"));
     const afterB = await settingsOf(B);
-    t.knownBug(
-      "BUG: a `customer.subscription.deleted` after a full refund re-grants paid access until the refunded period's end",
+    t.check(
+      "a `customer.subscription.deleted` after a full refund does not restore access to the refunded period",
       resolvePlan(afterB, NOW).plan === "free",
       `plan=${resolvePlan(afterB, NOW).plan}, status=${afterB?.subscriptionStatus}, period_end=${afterB?.subscriptionPeriodEnd?.toISOString()}`
     );
@@ -187,5 +172,5 @@ run(async () => {
     for (const id of eventIds) await db.delete(stripeProcessedEvents).where(eq(stripeProcessedEvents.eventId, id));
   }
 
-  t.done("stripe revocation re-grant (known bug)");
+  t.done("stripe revocation re-grant");
 });

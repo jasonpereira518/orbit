@@ -1,32 +1,19 @@
 /**
- * KNOWN BUG — documented, not fixed.
+ * A deleted account stays deleted when Stripe answers the deletion's own cancel.
  *
- * Symptom: deleting your account from Settings removes the `user_settings` row, and the
- * Stripe webhook that the deletion itself causes puts it straight back — with the deleted
- * user's id, their Stripe customer id and a canceled Pro subscription mirrored on it.
+ * `deleteOwnAccount` (src/lib/account-deletion.ts) cancels the live subscription FIRST and
+ * then purges everything, settings row included. Stripe's `customer.subscription.deleted`
+ * arrives asynchronously, after the purge, still naming the user in the subscription's
+ * `orbit_user_id` metadata. Every mirror write begins with `ensureUserSettings`, which INSERTs
+ * a row when none exists — so the webhook used to re-create the deleted user's
+ * `user_settings` row with their Stripe customer id.
  *
- * Why: `deleteOwnAccount` (src/lib/account-deletion.ts:62-98) cancels the live subscription
- * FIRST (`stripe.subscriptions.cancel`, :43) and then purges everything, settings row included.
- * Stripe answers the cancel with `customer.subscription.deleted`, delivered asynchronously —
- * i.e. after the purge. `attributeStripeEvent` (src/lib/stripe-fulfilment.ts:49) takes the
- * user id from the subscription's own `orbit_user_id` metadata, with no check that the account
- * still exists; `setSubscriptionState` (src/lib/user-settings.ts:246) begins with
- * `ensureUserSettings` (:34), which INSERTs a fresh row when none is found.
+ * Pinned fix: `applyStripeDecision` (src/lib/stripe-fulfilment.ts) asks `isDeletedAccount` —
+ * no settings row AND a `keepSettings: false` purge recorded in `data_purge_runs` — and skips
+ * the mirror for such an account (its bookings still land, anonymised). A brand-new account
+ * with no row yet is not affected: it has no such purge.
  *
- * Trigger path: any paying subscriber who deletes their account. The resurrected row has a
- * fresh `last_active_at`, so the Clerk orphan sweep (src/lib/clerk-orphan-sweep.ts, 7 days of
- * inactivity) only removes it a week or more later; until then the deleted user appears in
- * the admin roster and export with their Stripe customer id.
- *
- * Severity: low — no access is granted (Clerk login is gone) and it self-heals after the
- * orphan sweep, but it contradicts "every table, the settings row … included" and keeps a
- * deleted person's billing link around.
- *
- * Fix: make the webhook refuse to create an account it can only attribute by a hint (e.g. use
- * an update-only mirror write for subscription events, or check a deletion tombstone). This
- * script then exits 0 and should be promoted to the pglite tier.
- *
- * Writes to local PGlite. Run: npx tsx scripts/smoke-bug-stripe-deleted-account-resurrect.ts
+ * Writes to local PGlite. Run: npx tsx scripts/smoke-stripe-deleted-account-resurrect.ts
  */
 import "./smoke/_env";
 import { run } from "./smoke/_env";
@@ -104,8 +91,8 @@ run(async () => {
     t.check("the webhook processes without throwing", !result.duplicate);
 
     const resurrected = await db.select().from(userSettings).where(eq(userSettings.userId, USER));
-    t.knownBug(
-      "BUG: customer.subscription.deleted after account deletion re-creates the deleted user's user_settings row",
+    t.check(
+      "customer.subscription.deleted after account deletion does not re-create the deleted user's user_settings row",
       resurrected.length === 0,
       resurrected.length
         ? `row back with stripe_customer_id=${resurrected[0].stripeCustomerId}, status=${resurrected[0].subscriptionStatus}, plan=${resurrected[0].subscriptionPlan}`
@@ -116,5 +103,5 @@ run(async () => {
     await db.delete(stripeProcessedEvents).where(eq(stripeProcessedEvents.eventId, EVENT_ID));
   }
 
-  t.done("deleted account resurrected by Stripe webhook (known bug)");
+  t.done("deleted account not resurrected by Stripe webhook");
 });

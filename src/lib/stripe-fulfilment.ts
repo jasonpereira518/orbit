@@ -1,7 +1,7 @@
 import type Stripe from "stripe";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { stripeProcessedEvents, userSettings } from "@/db/schema";
+import { dataPurgeRuns, stripeProcessedEvents, userSettings } from "@/db/schema";
 import {
   hasPriorRevenue,
   monthlyValueCents,
@@ -54,6 +54,32 @@ export async function attributeStripeEvent(event: Stripe.Event): Promise<string 
 }
 
 /**
+ * Whether this account was deleted: its settings row is gone AND a purge that removes the
+ * settings row (`keepSettings: false` — account deletion, Clerk `user.deleted`, the orphan
+ * sweep, an admin hard delete) was recorded for it.
+ *
+ * Both halves matter. A missing row alone is also a brand-new account the webhook is the
+ * first to see, which must still get one. `data_purge_runs` keeps finished runs for 30
+ * days, well past Stripe's three-day retry window — and deleting an account cancels its
+ * subscription FIRST, so the `customer.subscription.deleted` answering that cancel always
+ * arrives after the purge.
+ */
+export async function isDeletedAccount(userId: string): Promise<boolean> {
+  const db = await getDb();
+  const row = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+    columns: { userId: true },
+  });
+  if (row) return false;
+  const [purge] = await db
+    .select({ id: dataPurgeRuns.id })
+    .from(dataPurgeRuns)
+    .where(and(eq(dataPurgeRuns.targetUserId, userId), eq(dataPurgeRuns.keepSettings, false)))
+    .limit(1);
+  return Boolean(purge);
+}
+
+/**
  * Everything `decideStripeEvent` needs to know about the present, read once and before
  * anything is written — the only moment both sides of a transition are knowable.
  */
@@ -102,6 +128,7 @@ export async function readDecideContext(
     chargePurpose,
     lastSubscriptionEventAt: row?.subscriptionEventAt ?? null,
     currentSubscriptionStatus: row?.subscriptionStatus ?? null,
+    currentSubscriptionPeriodEnd: row?.subscriptionPeriodEnd ?? null,
   };
 }
 
@@ -114,6 +141,8 @@ export type StripeApplyDeps = {
   revokePack: typeof revokePack;
   recordFounding: typeof recordFoundingRedemption;
   setCustomer: typeof setStripeCustomerId;
+  /** Optional so recording deps in pure smoke scripts need no database. */
+  isDeletedAccount?: (userId: string) => Promise<boolean>;
 };
 
 export const defaultStripeApplyDeps: StripeApplyDeps = {
@@ -125,6 +154,7 @@ export const defaultStripeApplyDeps: StripeApplyDeps = {
   revokePack,
   recordFounding: recordFoundingRedemption,
   setCustomer: setStripeCustomerId,
+  isDeletedAccount,
 };
 
 /** Apply a decision: every booking (throwing on failure), then the mirror. */
@@ -132,12 +162,19 @@ export async function applyStripeDecision(
   decision: StripeDecision,
   deps: StripeApplyDeps = defaultStripeApplyDeps
 ): Promise<void> {
+  // A deleted account is never re-created by billing: every mirror write below begins with
+  // `ensureUserSettings`, which would INSERT the purged row back under the deleted user's id
+  // (with their Stripe customer id). The money still books — revenue history must stay
+  // whole — but anonymised, exactly as the purge left that account's earlier rows.
+  const subject = decision.mirror?.userId ?? decision.targetUserId;
+  const deleted = subject && deps.isDeletedAccount ? await deps.isDeletedAccount(subject) : false;
+
   for (const booking of decision.bookings) {
-    await deps.book(booking);
+    await deps.book(deleted && booking.userId === subject ? { ...booking, userId: null } : booking);
   }
 
   const mirror = decision.mirror;
-  if (!mirror) return;
+  if (!mirror || deleted) return;
 
   switch (mirror.type) {
     case "lifetime":
@@ -190,11 +227,13 @@ export async function applyStripeDecision(
       // status canceled with a period end of now is what drops `resolvePlan` to free.
       // `plan: null` would forget which tier it was; the canceled status with a period end of
       // now is what drops `resolvePlan` to free, whatever the tier.
-      await deps.setSubscription(mirror.userId, {
-        plan: null,
-        status: "canceled",
-        periodEnd: mirror.periodEnd,
-      });
+      // `eventAt` advances the ordering watermark: without it, a subscription event created
+      // before the refund but delivered after it is "newer" than the mirror and re-grants.
+      await deps.setSubscription(
+        mirror.userId,
+        { plan: null, status: "canceled", periodEnd: mirror.periodEnd },
+        mirror.eventAt ? { eventAt: mirror.eventAt } : {}
+      );
       return;
     default: {
       const unhandled: never = mirror;

@@ -1,35 +1,21 @@
 /**
- * KNOWN BUG — documented, not fixed.
+ * A truncated model answer is an error, never a success.
  *
- * Symptom: when a model runs out of output tokens mid-answer, `completeJson` returns the
- * truncated JSON — patched shut — as a SUCCESS. A capture whose answer was cut off inside the
- * second person's name comes back as `{"people":[{"fullName":"Ada Lovelace"},{"fullName":"Gra"}]}`:
- * a contact called "Gra", a company called "Glob", a summary that stops mid-word. Nothing tells
- * the caller or the person that the answer was incomplete; schema validation passes because the
- * repaired strings are still strings.
+ * When a model runs out of output tokens mid-answer, `completeJson` (src/lib/ai.ts) used to
+ * return the truncated JSON — patched shut by `repairTruncatedJson` — as a success: a capture
+ * cut off inside the second person's name came back with a contact called "Gra". Pinned now:
  *
- * Defect: `parseAiJson` (src/lib/ai.ts:~494) falls back to `repairTruncatedJson` (~448), which
- * closes any dangling string, array and object; `completeJson` (~537) never looks at the
- * provider's own "I was cut off" signal before parsing — OpenAI `finish_reason: "length"`,
- * Anthropic `stop_reason: "max_tokens"`, Gemini `finishReason: "MAX_TOKENS"` are all ignored.
- * The codebase already met this failure once: the comment on `transcribeNotePage` (~1139)
- * records that "`repairTruncatedJson` then quietly patched the broken JSON into
- * plausible-looking text", and the fix there was to split the request rather than to stop
- * accepting the patch. `AI_INCOMPLETE_MESSAGE` ("The AI’s answer got cut off — try again")
- * exists for exactly this case but is only reached when the repair itself fails.
- *
- * Trigger path: any `completeJson` caller with a bounded `maxOutputTokens` on a long input —
- * capture parsing of dense notes (`capture.parse`), the recruiter classifier (700 tokens),
- * contact briefs — via `completeJson` → `normalizeJsonResponse` → `parseAiJson`.
- *
- * A fix (treat a length/max-tokens finish as `AI_INCOMPLETE_MESSAGE`, and do not let the
- * repair turn a cut-off string value into a complete one) makes each `knownBug` hold; the
- * script then exits 0 and belongs in the pglite tier.
+ *  - the providers' own max-tokens stop (OpenAI `finish_reason: "length"`, Anthropic
+ *    `stop_reason: "max_tokens"`, Gemini `finishReason: "MAX_TOKENS"`) fails the call as
+ *    `AI_INCOMPLETE_MESSAGE` before anything is parsed (`assertNotCutOff`);
+ *  - `parseAiJson` no longer closes a dangling string, so a value cut off mid-string cannot
+ *    be passed off as complete even without that signal. Braces after whole values are
+ *    still closed.
  *
  * Like smoke-contract-llm.ts, this file names no provider host and reads no key variable:
  * smoke-ai-access.ts's source guard scans scripts/ for both.
  *
- * Run: npx tsx scripts/smoke-bug-llm-truncated-json-accepted.ts   (exits 3 while the bug exists)
+ * Run: npx tsx scripts/smoke-llm-truncated-json.ts
  */
 import "./smoke/_env";
 import { run } from "./smoke/_env";
@@ -113,8 +99,8 @@ run(async () => {
         return true;
       }
     })());
-    t.knownBug(
-      "BUG: parseAiJson turns a value cut off mid-string into a complete-looking one",
+    t.check(
+      "parseAiJson refuses to turn a value cut off mid-string into a complete-looking one",
       err !== null,
       `returned ${JSON.stringify(parsed)}`
     );
@@ -134,18 +120,18 @@ run(async () => {
     }
     t.check(`${p}: the provider was called once`, http.calls.length === 1);
     const people = value ? (JSON.parse(value) as { people?: Array<{ fullName?: string }> }).people ?? [] : [];
-    t.knownBug(
-      `BUG: ${p} — a truncated answer is returned as success instead of "${AI_INCOMPLETE_MESSAGE}"`,
+    t.check(
+      `${p} — a max-tokens stop fails as "${AI_INCOMPLETE_MESSAGE}"`,
       err instanceof Error && err.message === AI_INCOMPLETE_MESSAGE,
       `returned ${value}`
     );
-    t.knownBug(
-      `BUG: ${p} — the cut-off name reaches the caller as a person ("${GRACE.fullName.slice(0, 3)}")`,
+    t.check(
+      `${p} — the cut-off name never reaches the caller as a person ("${GRACE.fullName.slice(0, 3)}")`,
       !people.some((person) => person.fullName === GRACE.fullName.slice(0, 3)),
       `people: ${people.map((x) => x.fullName).join(", ")}`
     );
   }
 
   await purgeUsers(db, all);
-  t.done("llm truncated json accepted (known bug)");
+  t.done("llm truncated json rejected");
 });
