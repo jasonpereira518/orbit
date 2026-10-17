@@ -1,7 +1,7 @@
 # Accessibility, Responsive & Cross-Browser Audit
 
 **Scope:** every routed page in `src/app` (42 product and marketing routes, 26 admin routes), with WCAG 2.2 AA as the target.
-**Status:** audit only. No source files have changed. Fixes start after approval (see [Fix plan](#fix-plan)).
+**Status:** fixes implemented after approval. See [§8](#8-scores-before-and-after) for before/after scores and [§9](#9-what-changed) for what changed, what departed from the plan, and what was deferred. §1–§7 are the original audit, unchanged.
 **Date:** 2026-10-17, audited at `eb5d69d` on `main`.
 
 ---
@@ -554,39 +554,143 @@ The systemic IDs above apply wherever listed. Every app page also has **S-3** (t
 
 ---
 
-## 8. Scores: before (after will be filled in once the fixes land)
+## 8. Scores: before and after
 
 **Lighthouse accessibility, mobile emulation, `next dev`, demo data:**
 
 | Page | Before | After |
 |---|---|---|
-| `/` | 96 | — |
-| `/interest` | 100 | — |
-| `/pricing` | 99 | — |
-| `/dashboard` | 96 | — |
-| `/contacts` | **80** | — |
-| `/contacts/[id]` | 92 | — |
-| `/contacts/new` | **89** | — |
-| `/capture` | 96 | — |
-| `/chat` | 90 | — |
-| `/graph` | 90 | — |
-| `/reminders` | 94 | — |
-| `/recruiters/compose` | 92 | — |
-| `/settings` | 92 | — |
-| `/imports` | 96 | — |
-| `/admin` | 100 | — |
-| `/admin/users` | 100 | — |
+| `/` | 96 | 96\* |
+| `/interest` | 100 | 100 |
+| `/pricing` | 99 | 100 |
+| `/dashboard` | 96 | 100 |
+| `/contacts` | **80** | 100 |
+| `/contacts/[id]` | 92 | 100 |
+| `/contacts/new` | **89** | 100 |
+| `/capture` | 96 | 100\*\* |
+| `/chat` | 90 | 99\*\* |
+| `/graph` | 90 | 100 |
+| `/reminders` | 94 | 100 |
+| `/recruiters/compose` | 92 | 100 |
+| `/settings` | 92 | 100 |
+| `/imports` | 96 | 100 |
+| `/admin` | 100 | 100 |
+| `/admin/users` | 100 | 100 |
 
-**axe (WCAG A/AA + best practice), 360px, 42 product and marketing routes:**
-- Before: 19 distinct rules; at least one violation on 38 of 42 routes.
-- Critical-impact rules: 4 (`aria-allowed-attr`, `button-name`, `label`, `select-name`). Serious-impact rules: 8, including `aria-hidden-focus` on 29 routes.
-- After: —
+\* Lighthouse runs without reduced motion. It measures the landing page's scroll-scrubbed "How it works" captions before they have been scrolled into place, while they are still fading in, and reads them as low contrast. At their resting position they are 4.9:1. CI checks this page with reduced motion on, and it passes.
+\*\* Remaining `aria-allowed-role` (minor): the mention composer is a `<textarea role="combobox">`. Strict ARIA-in-HTML allows `combobox` only on `<input>`. I kept it on purpose: dropping the role would also drop `aria-expanded`, the only way a screen reader learns the @-mention list is open.
 
-Lighthouse and axe catch only part of what's above. S-1's placeholder names, S-2, S-3, R-1, R-2, R-4, R-6, S-8 and the cross-browser items don't affect these scores at all. The "after" report will therefore also re-run the layout, zoom and edge-content probes.
+**axe (WCAG 2.0/2.1/2.2 A+AA + best practice), same routes and widths as before:**
+
+| | Before | After |
+|---|---|---|
+| 42 product and marketing routes at 360px: distinct rules | 19 | 2 (`color-contrast`, `aria-allowed-role`) |
+| …routes with any violation | 38 / 42 | 4 / 42 |
+| …serious or critical (route × rule) | 47 | 2: the landing page's scroll-fade (\*), counted twice because `/suspended` redirects to `/` in demo mode |
+| …at 1440px: routes with any violation | 20 / 41 | 2 / 42 (both the minor `aria-allowed-role`, \*\*) |
+| 26 admin routes: serious or critical (route × rule) | 11 | 0 |
+| Routes with horizontal overflow at 360px | 3 (+ every long-named profile) | 0 (long-named profiles included) |
+
+**Layout, zoom and content probes (none of these move a Lighthouse score):**
+
+| Check | Before | After |
+|---|---|---|
+| Profile of a contact with a 120-character name, 360px | scroll column 1,630px too wide | 0px, name wraps |
+| Arabic name and company on the profile | title and company in the wrong order | kept in order (`<bdi>`) |
+| New reminder at 360×640 | Save button 100px below the fold, no scroll | fits, bottom at 635px |
+| Chat at 200% zoom (640×450) | message area 0px tall | composer 40px tall, page scrolls |
+| Reminders / Constellation at 200% zoom | panes collapsed | usable height, page scrolls |
+| Running infinite animations with reduced motion on | 0 | 0 |
+| Contact form: fields with a programmatic label | none (placeholder only) | all |
+| App pages with their own `<title>` | 1 of 27 | 27 of 27 |
+| First Tab on every page | the logo or the sidebar | "Skip to content" |
+| Extra invisible tab stop at phone width | 29 routes | 0 |
+
+**Test suites:**
+- typecheck, lint (0 errors; the same 49 warnings as `main`) and production build all pass.
+- Smoke suite: 528 of 542 pass. The 14 failures are the same 14 that fail on a clean `main` checkout in this environment. All of them need outbound network: avatar lookups, CalDAV, event and job feeds, and the sync scheduler.
+- e2e: the six existing flows pass. The new `07-a11y.spec.ts` (66 tests) passes.
 
 ---
 
-## Fix plan
+## 9. What changed
+
+All of it went through the shared layer first: the primitives, the theme tokens and the app shell. Call sites changed only where a page did something of its own.
+
+| Finding | Status | Fix |
+|---|---|---|
+| S-1 labels | **Fixed** | New `ui/field.tsx`. `Input` and `Textarea` read its context, so every control inside it gets a label, a hint and an error. The four local `Field` copies use it. The placeholder-only inputs listed in S-1 are named. `SettingsRow` can render a real `<label>`. |
+| S-2 errors | **Fixed for the forms listed** | The reminder title shows an inline, announced error and takes focus. The contact form shows a form-level `role=alert` next to Save. Waitlist errors and success are announced. `focusFirstInvalid()` is exported from `ui/field`. Settings and recruiter save errors are still toasts. They are server errors, not about one field, and they now last 10s and are kept in the notification panel. |
+| S-3 titles | **Fixed** | Title template `%s · Orbit`. Every page has metadata, and detail pages show the record's name through the page's own cached data helper. `RouteFocus` moves focus to `#main-content` when a navigation destroyed the focused link. |
+| S-4 skip link, landmarks | **Fixed** | `SkipLink` is the first thing in `<body>`. Every page has one `<main id="main-content">`. On desktop the sidebar is the page `<header>`. The ask bar, the A–Z rail, the profile's pinned summary and the landing pill are each their own landmark. Navs are labelled and the active item has `aria-current`. |
+| S-5 row semantics | **Fixed** | Contact rows are a real `<Link>` stretched over the row. Admin chart rows and the admin confirm-dialog triggers are real `<button>`s; the triggers were spans that couldn't be reached by keyboard. |
+| S-6 hidden tab stop | **Fixed** | `tabIndex={-1}` on the Motion `whileTap` elements, in the Capture button and the chat reminder button. |
+| S-7 focus | **Fixed** | Global unlayered `:focus-visible` outline under `forced-colors`. Search bars and raw inputs use the `ui/input` ring. The constellation's zoom targets show a ring. |
+| S-8 toast timing | **Fixed** | Any toast with an action stays up for at least 10s (`lib/toast.tsx`). |
+| S-9 contrast | **Fixed** | `--muted-foreground-subtle` (5.2:1 on a card) replaces `/70`–`/90` text everywhere. Brand-tinted company names are clamped to 4.5:1 per theme; this departs from the plan, see below. `--destructive` darkened to 5.1:1 on its own 10% tint. Amber chips moved to amber-800. |
+| S-10 hidden names | **Fixed** | `hidden sm:inline` labels became `max-sm:sr-only`. |
+| S-11 ARIA one-offs | **Fixed** | Every row in the S-11 table. Wide tables are a `ScrollRegion` (tabbable only while they overflow). |
+| S-12 states | **Fixed** | Page skeletons announce "Loading…" through `LoadingRegion`. There is a root `error.tsx`, and `ErrorFallback` has `role=alert` and moves focus to its heading. `not-found` has a title and a `<main>`. An empty account sees an `EmptyState` with Capture and Import, not a filters message. |
+| S-13 motion | **Fixed** | One `MotionConfig` for the whole `(clerk)` group. Camera flights respect reduced motion. Glints and shimmers stop after two passes. The coming-soon scene has a pause toggle. The demo tour no longer narrates. Under reduced motion, the landing scroll visuals now pass resting values; dropping the style left Motion's last inline opacity behind, which is why captions stayed at 3.3:1. |
+| S-14 keyboard | **Fixed**, with two exceptions | The A–Z rail is a single slider tab stop with arrow keys. Reminders shortcuts only act inside the queue. Date-picker days have full-date names. The full-screen celebration overlays still don't trap Tab, and the email recipient combobox still lacks `aria-activedescendant`; both are listed under deferred. |
+| R-1 dialogs | **Fixed** | `DialogContent` and `PopoverContent` are capped at the viewport or the measured space, and scroll. On phones dialogs sit near the top. `vh` became `dvh`. |
+| R-2 locked pages | **Fixed** | Below 500px tall the app column scrolls. Chat, the constellation and `data-fill-route` pages keep a usable height. |
+| R-3 tap targets | **Fixed** | `Button` is `relative tap-target`: a 44px hit area on touch screens, with no visual change. Raw buttons under 24px are now at least 24px. Correction to the audit: the 16×16px checkboxes it flagged already had a 40×32px hit area through `::after` in the `Checkbox` primitive; the probe measured only the painted box. |
+| R-4 hover reveal | **Fixed** | `pointer-fine:opacity-0` at every call site. |
+| R-5 focus obscured | **Fixed** | `scroll-padding` on the app column and the admin page. |
+| R-6 long and RTL content | **Fixed** | `overflow-wrap: break-word` on `body`, `wrap-anywhere` and `min-w-0` in the profile, `<bdi>` around names, companies and titles, `dir="auto"` on inputs and textareas, grapheme-safe initials. |
+| R-7 admin overflow | **Fixed** | `min-w-0` on admin panels and grids, wrapping filter bars. The plan badge's sr-only suffix had been escaping the table's scroll box. |
+| R-8 px text | **Fixed** | Rem-based tokens `text-3xs` (10px) and `text-2xs` (11px). The 9px text moved up to 10px. |
+| X-1 iOS zoom | **Fixed** | One coarse-pointer rule sets 16px on every text field and select. |
+| X-2 textarea autosize | **Fixed** | A JS fallback in `ui/textarea.tsx` where `field-sizing` is unsupported. |
+| X-3 viewport | **Fixed** | Root `viewport` export with `viewport-fit=cover`. |
+| X-4 `vh` on iOS | **Fixed** | Every height uses `dvh`. |
+| X-5 date inputs | **Partly fixed** | `min-width: 0` and start-aligned value. I didn't set `appearance: none`, because it can drop the picker icon in desktop Chrome. |
+| X-6 clipboard | **Fixed** | Shared `copyText()`, so a success toast only shows on success. |
+| X-7 / X-8 Safari scrollbars, `<summary>` marker | **Fixed** | |
+| X-9 `background-attachment: fixed` | **Not done** | Purely visual on iOS; listed under deferred. |
+
+**Where the implementation departs from the plan:**
+- **Brand colours.** The plan proposed `color-mix(… 62%, var(--foreground))`. Bright brands (Snapchat yellow) fail at any single mix, so each brand hex is instead clamped to 4.5:1 per theme with the existing `clampForContrast`. Every curated brand and 400 hashed fallbacks pass on all four card surfaces (`smoke-brand-colors`).
+- **Reminders heading order.** The real cause was that the h2 above the queue was `hidden` below lg. It's now `max-lg:sr-only`, so the bucket headings stay h3.
+- **Coming-soon marquee.** It gets a pause toggle, not an iteration limit, because the rings and crane in the same scene loop too.
+- **Root `MotionConfig`.** It sits in the `(clerk)` layout, not the root layout. That keeps Motion out of the marketing pages' bundle; they have their own provider.
+
+**Visible changes worth a look before merging:**
+- The settings card "Integrations" is now "Connections", so it doesn't share a landmark name with the group heading it sits in.
+- Small text is 1px larger where it was 9px.
+- Light-mode destructive red is slightly darker.
+- There is a pause toggle on coming-soon pages.
+- The empty-account copy on `/contacts` has changed.
+- **`scripts/legal-pages.lock.json` was re-recorded.** The only edits to `/privacy` and `/terms` are the page `<title>` (the template now adds "· Orbit") and a `ScrollRegion` around the Google-permissions table. No legal text changed. The lock exists so a person checks this, so please confirm.
+
+**Deferred, not done in this PR:**
+- Tab trapping and `inert` for the full-screen celebration and credits overlays (S-14).
+- `aria-activedescendant` on the email recipient combobox.
+- Listbox semantics for reminder rows.
+- An in-app "Reduce motion" setting.
+- A group label for the bulk-notes "Save as" radios.
+- `background-attachment: fixed` on iOS (X-9).
+- `.constellation-edge-label` at 8px (graph canvas labels).
+
+---
+
+## CI
+
+- **`e2e/07-a11y.spec.ts`** runs in the existing Playwright job, against the same demo server. For every page at 360px and 1280px it runs axe with WCAG 2.0, 2.1 and 2.2 A/AA rules and **fails on any serious or critical violation**. Moderate and minor findings are printed but don't fail the build. It also fails on any horizontal overflow. Four flow tests hold the audit's worst findings in place: unique page titles, the skip link as the first Tab, the New reminder form fitting a 360×640 phone, and Chat at 200% zoom.
+- **`scripts/smoke-a11y-patterns.ts`** (pure tier, so it runs in the smoke job) fails on the source patterns behind the systemic findings:
+  - muted text below 4.5:1
+  - `vh` and `*-screen` heights
+  - `role="link"` on an element that isn't a link
+  - hover-only reveals
+  - button names hidden below a breakpoint
+  - focusable `aria-hidden` Motion elements
+  - px text sizes
+- **`@axe-core/playwright` 4.13.0** is a dev dependency.
+
+---
+
+## Fix plan (as approved)
 
 Proposed order. Each step is one shared change, followed by its call sites.
 
