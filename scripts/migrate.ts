@@ -42,7 +42,7 @@ async function main() {
     console.error(`migrate: refusing to migrate. ${verdict.reason}`);
     process.exit(1);
   }
-  if (verdict.unarmed) console.warn(`migrate: warn  ${verdict.reason}`);
+  if (verdict.allowed && verdict.unarmed) console.warn(`migrate: warn  ${verdict.reason}`);
   console.log(`migrate: reconciling schema version ${SCHEMA_VERSION} on ${target}…`);
 
   const result = await reconcileSchema({ lockWaitMs: BUILD_MIGRATION_LOCK_WAIT_MS, onLockTimeout: "sweep" });

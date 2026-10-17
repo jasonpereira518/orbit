@@ -268,6 +268,18 @@ export function databaseHost(url: string | undefined): string | null {
   }
 }
 
+/**
+ * A host reduced to the Neon endpoint it names: `ep-x-123-pooler.region.aws.neon.tech` and
+ * `ep-x-123.region.aws.neon.tech` are the same database through different doors, so an exact
+ * string comparison would let a preview pointed at the pooled URL slip past a guard armed
+ * with the direct one.
+ */
+export function endpointHost(host: string | null | undefined): string | null {
+  const h = host?.trim().toLowerCase();
+  if (!h) return null;
+  return h.replace(/^([^.]+?)-pooler(?=\.)/, "$1");
+}
+
 export type MigrationTargetVerdict = {
   allowed: boolean;
   /** Why, in a sentence, for the build log. Names variables and hosts, never credentials. */
@@ -291,10 +303,11 @@ export type MigrationTargetVerdict = {
  * credential, so it is safe to set on all environments, which is exactly what makes it
  * readable from a preview build.
  *
- * Deliberately NOT fail-closed when `PRODUCTION_DB_HOST` is unset: refusing every preview
- * build until someone sets a new variable breaks previews to prevent a hypothetical, and a
- * broken preview pipeline is how guards get deleted. It reports `unarmed` instead, and
- * `check-env` warns.
+ * Fail-closed for previews when `PRODUCTION_DB_HOST` is unset: nothing can then tell a
+ * preview pointed at its own branch from one pointed at production, and the cost of guessing
+ * wrong is DDL and data merges against live customers. Production builds are untouched, so a
+ * missing variable can never block a deploy; only a preview build stops, with the fix in the
+ * log.
  */
 export function checkMigrationTarget(
   env: EnvBag,
@@ -307,17 +320,18 @@ export function checkMigrationTarget(
     return { allowed: true, reason: "production build migrating the production database" };
   }
 
-  const target = databaseHost(env.DATABASE_URL);
-  const production = env.PRODUCTION_DB_HOST?.trim().toLowerCase();
+  const target = endpointHost(databaseHost(env.DATABASE_URL));
+  const production = endpointHost(env.PRODUCTION_DB_HOST);
 
   if (!production) {
     return {
-      allowed: true,
+      allowed: false,
       unarmed: true,
       reason:
-        "PRODUCTION_DB_HOST is unset, so a preview build pointed at production cannot be told " +
-        "from one pointed at its own branch. Set it (to the production database hostname) on " +
-        "all environments to arm this check.",
+        `VERCEL_ENV=${options.vercelEnv ?? "unset"} and PRODUCTION_DB_HOST is unset, so a preview ` +
+        "build pointed at production cannot be told from one pointed at its own branch. Set it " +
+        "(to the production database hostname) on all environments, and give previews their own " +
+        "Neon branch.",
     };
   }
   if (target && target === production) {
@@ -356,9 +370,9 @@ export function checkDrizzleCommand(
         "use npm run db:migrate instead.",
     };
   }
-  const target = databaseHost(env.DATABASE_URL);
+  const target = endpointHost(databaseHost(env.DATABASE_URL));
   if (!target) return { allowed: false, reason: `drizzle-kit ${command} needs a postgres:// DATABASE_URL.` };
-  const production = env.PRODUCTION_DB_HOST?.trim().toLowerCase();
+  const production = endpointHost(env.PRODUCTION_DB_HOST);
   if (!production) {
     return {
       allowed: false,

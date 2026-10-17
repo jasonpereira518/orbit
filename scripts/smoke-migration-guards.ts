@@ -14,7 +14,7 @@
  */
 import "./smoke/_env";
 import { sql } from "drizzle-orm";
-import { checkMigrationTarget, databaseHost, validateEnv } from "../src/lib/env";
+import { checkMigrationTarget, databaseHost, endpointHost, validateEnv } from "../src/lib/env";
 import { readFileSync } from "node:fs";
 import { BUILD_MIGRATION_LOCK_WAIT_MS, RUNTIME_MIGRATION_LOCK_WAIT_MS, getDb, reconcileSchema } from "../src/db";
 
@@ -68,12 +68,23 @@ function targetChecks() {
     checkMigrationTarget({ DATABASE_URL: urlFor(PROD), PRODUCTION_DB_HOST: PROD }, { vercelEnv: undefined }).allowed === true
   );
 
-  // The deliberate non-fail-closed case: refusing every preview build until a new variable
-  // exists breaks previews to prevent a hypothetical, and a broken preview pipeline is how
-  // guards get deleted.
+  // Fail-closed for previews: without PRODUCTION_DB_HOST nothing can tell a preview's own
+  // branch from production. Production builds never consult it, so it cannot block a deploy.
   const unarmed = checkMigrationTarget({ VERCEL: "1", DATABASE_URL: urlFor(PROD) }, { vercelEnv: "preview" });
-  check("without PRODUCTION_DB_HOST it allows but reports itself unarmed",
-    unarmed.allowed === true && unarmed.unarmed === true && unarmed.reason.includes("PRODUCTION_DB_HOST"));
+  check("a preview build without PRODUCTION_DB_HOST is refused, naming the variable",
+    unarmed.allowed === false && unarmed.unarmed === true && unarmed.reason.includes("PRODUCTION_DB_HOST"));
+  check("the production build does not need PRODUCTION_DB_HOST",
+    checkMigrationTarget({ VERCEL: "1", DATABASE_URL: urlFor(PROD) }, { vercelEnv: "production" }).allowed === true);
+
+  // Neon serves the same database from a direct and a "-pooler" host.
+  const direct = "ep-cool-123.us-east-2.aws.neon.tech";
+  const pooled = "ep-cool-123-pooler.us-east-2.aws.neon.tech";
+  check("endpointHost folds the pooler host onto the direct one",
+    endpointHost(pooled) === direct && endpointHost(direct) === direct && endpointHost(null) === null);
+  check("a preview on the pooled URL is refused when the direct host is production",
+    checkMigrationTarget({ VERCEL: "1", PRODUCTION_DB_HOST: direct, DATABASE_URL: urlFor(pooled) }, { vercelEnv: "preview" }).allowed === false);
+  check("a preview on the direct URL is refused when the pooled host is production",
+    checkMigrationTarget({ VERCEL: "1", PRODUCTION_DB_HOST: pooled, DATABASE_URL: urlFor(direct) }, { vercelEnv: "preview" }).allowed === false);
 
   check(
     "check-env warns about the unarmed guard in preview",
