@@ -1,0 +1,1399 @@
+{
+  "tools": [
+    {
+      "name": "search_contacts",
+      "title": "Search contacts",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "contacts",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": {
+        "mcp": [
+          "id",
+          "name",
+          "company",
+          "title",
+          "school",
+          "location",
+          "closenessTier",
+          "relevance",
+          "summary"
+        ],
+        "chat": [
+          "id",
+          "name",
+          "company",
+          "title",
+          "school",
+          "location",
+          "closenessTier",
+          "relevance",
+          "summary",
+          "notes"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [
+        "query",
+        "limit"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "What to look for."
+          },
+          "limit": {
+            "default": 10,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 25
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "name": "get_contact",
+      "title": "Get one contact",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "contact",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "contactId"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contactId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "contactId"
+        ]
+      }
+    },
+    {
+      "name": "who_do_i_know_at",
+      "title": "Who do I know at a company",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "rosters",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "company",
+        "limit"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "company": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "limit": {
+            "default": 10,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
+          }
+        },
+        "required": [
+          "company"
+        ]
+      }
+    },
+    {
+      "name": "due_followups",
+      "title": "Who to follow up with",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "followups",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "limit"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "default": 10,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 25
+          }
+        }
+      }
+    },
+    {
+      "name": "list_reminders",
+      "title": "List reminders",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "reminders",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "view",
+        "contactId",
+        "query",
+        "limit"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "view": {
+            "default": "today",
+            "description": "today includes anything overdue.",
+            "type": "string",
+            "enum": [
+              "today",
+              "upcoming",
+              "anytime",
+              "done"
+            ]
+          },
+          "contactId": {
+            "description": "Only this person's reminders.",
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "query": {
+            "description": "Match the title or contact name.",
+            "type": "string",
+            "maxLength": 200
+          },
+          "limit": {
+            "default": 20,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          }
+        }
+      }
+    },
+    {
+      "name": "get_network_overview",
+      "title": "Network overview",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "overview",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [],
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "get_timeline",
+      "title": "One person's history",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "timeline",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "contactId",
+        "since",
+        "until",
+        "limit"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contactId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "since": {
+            "description": "Only entries on or after this day.",
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "until": {
+            "description": "Only entries on or before this day.",
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "limit": {
+            "default": 10,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
+          }
+        },
+        "required": [
+          "contactId"
+        ]
+      }
+    },
+    {
+      "name": "get_goals",
+      "title": "What the user is working towards",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "goals",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [],
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "find_path_to",
+      "title": "Find a way in",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "paths",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "target",
+        "limit"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 200,
+            "description": "A company, a school, or a person's name."
+          },
+          "limit": {
+            "default": 8,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 15
+          }
+        },
+        "required": [
+          "target"
+        ]
+      }
+    },
+    {
+      "name": "search_notes",
+      "title": "Search your notes",
+      "scope": "read",
+      "surfaces": [
+        "chat"
+      ],
+      "resultLabel": "passages",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": {
+        "chat": [
+          "sourceId",
+          "date",
+          "kind",
+          "contactIds",
+          "snippet"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [
+        "query",
+        "contactId",
+        "after",
+        "before",
+        "limit"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "What to look for, in plain words."
+          },
+          "contactId": {
+            "description": "Only passages about this person.",
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "after": {
+            "description": "Only passages on or after this day.",
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "before": {
+            "description": "Only passages on or before this day.",
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "limit": {
+            "default": 6,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "name": "search_meetings",
+      "title": "Search your recorded meetings",
+      "scope": "read",
+      "surfaces": [
+        "chat"
+      ],
+      "resultLabel": "meeting passages",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": {
+        "chat": [
+          "meetingId",
+          "title",
+          "date",
+          "startMs",
+          "kind",
+          "snippet"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [
+        "query",
+        "after",
+        "before",
+        "limit"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Keywords: a topic and/or a name."
+          },
+          "after": {
+            "description": "Only meetings on or after this day.",
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "before": {
+            "description": "Only meetings on or before this day.",
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "limit": {
+            "default": 6,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "name": "upcoming_meetings",
+      "title": "The user's calendar",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "calendar events",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": {
+        "mcp": [
+          "eventId",
+          "title",
+          "day",
+          "start",
+          "end",
+          "timeZone",
+          "call",
+          "response",
+          "attendees",
+          "attendeeCount",
+          "guestListHidden"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [
+        "after",
+        "before",
+        "contactId",
+        "query",
+        "limit"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "after": {
+            "description": "Only events on or after this local day. Default: now.",
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "before": {
+            "description": "Only events on or before this local day. Default: a week ahead.",
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "contactId": {
+            "description": "Only events this person is on.",
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "query": {
+            "description": "Match words in the event title.",
+            "type": "string",
+            "maxLength": 100
+          },
+          "limit": {
+            "default": 20,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          }
+        }
+      }
+    },
+    {
+      "name": "free_time",
+      "title": "When the user is free",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "free time",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "after",
+        "before",
+        "minMinutes"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "after": {
+            "description": "First local day. Default: today.",
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "before": {
+            "description": "Last local day. Default: the same as after.",
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "minMinutes": {
+            "default": 30,
+            "description": "Shortest gap worth reporting.",
+            "type": "integer",
+            "minimum": 15,
+            "maximum": 240
+          }
+        }
+      }
+    },
+    {
+      "name": "meeting_context",
+      "title": "Prepare for a meeting",
+      "scope": "read",
+      "surfaces": [
+        "chat"
+      ],
+      "resultLabel": "meeting context",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "eventId",
+        "time",
+        "day",
+        "query"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "eventId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "time": {
+            "description": "Local start time, 24-hour: \"15:00\" for 3pm.",
+            "type": "string",
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+          },
+          "day": {
+            "description": "Local day for time. Default: the next one at that time.",
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "query": {
+            "description": "Words in the event title.",
+            "type": "string",
+            "maxLength": 100
+          }
+        }
+      }
+    },
+    {
+      "name": "research_person",
+      "title": "Research someone outside the network",
+      "scope": "read",
+      "surfaces": [
+        "chat"
+      ],
+      "resultLabel": "web research",
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true
+      },
+      "fields": {
+        "chat": [
+          "match",
+          "name",
+          "headline",
+          "currentRole",
+          "location",
+          "summary",
+          "talkingPoints",
+          "experience",
+          "sources",
+          "note"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [
+        "name",
+        "company",
+        "domain",
+        "linkedinUrl"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 100,
+            "description": "Their full name."
+          },
+          "company": {
+            "description": "Where they work.",
+            "type": "string",
+            "maxLength": 100
+          },
+          "domain": {
+            "description": "Their company's website domain, e.g. stripe.com.",
+            "type": "string",
+            "maxLength": 253
+          },
+          "linkedinUrl": {
+            "type": "string",
+            "maxLength": 300,
+            "pattern": "^(https?:\\/\\/)?([a-z]{2,3}\\.)?linkedin\\.com\\/in\\/[^\\s]+$"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "research_company",
+      "title": "Research a company on the web",
+      "scope": "read",
+      "surfaces": [
+        "chat"
+      ],
+      "resultLabel": "web research",
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true
+      },
+      "fields": {
+        "chat": [
+          "match",
+          "name",
+          "website",
+          "description",
+          "headquarters",
+          "founded",
+          "size",
+          "news",
+          "people",
+          "sources",
+          "note"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [
+        "name",
+        "domain"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 100,
+            "description": "The company's name."
+          },
+          "domain": {
+            "description": "Their website domain, e.g. stripe.com, if known.",
+            "type": "string",
+            "maxLength": 253
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "find_people",
+      "title": "Find new people on the web",
+      "scope": "read",
+      "surfaces": [
+        "chat"
+      ],
+      "resultLabel": "web research",
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true
+      },
+      "fields": {
+        "chat": [
+          "query",
+          "candidates",
+          "note"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [
+        "query"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 300,
+            "description": "Who to look for, in plain words."
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "name": "list_open_commitments",
+      "title": "What the user owes",
+      "scope": "read",
+      "surfaces": [
+        "chat"
+      ],
+      "resultLabel": "commitments",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": {
+        "chat": [
+          "kind",
+          "id",
+          "contactId",
+          "contactName",
+          "text",
+          "dueDate",
+          "sourceId"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [
+        "contactId",
+        "limit"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contactId": {
+            "description": "Only what is owed to this person.",
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "limit": {
+            "default": 15,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 25
+          }
+        }
+      }
+    },
+    {
+      "name": "log_interaction",
+      "title": "Log an interaction",
+      "scope": "write",
+      "surfaces": [
+        "mcp"
+      ],
+      "resultLabel": null,
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "contactId",
+        "notes",
+        "interactionType",
+        "occurredAt",
+        "externalId"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contactId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "notes": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 5000
+          },
+          "interactionType": {
+            "default": "message",
+            "type": "string",
+            "enum": [
+              "meeting",
+              "email",
+              "message",
+              "call"
+            ]
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+          },
+          "externalId": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "contactId",
+          "notes"
+        ]
+      }
+    },
+    {
+      "name": "request_send",
+      "title": "Write an email for the user to send",
+      "scope": "write",
+      "surfaces": [
+        "mcp"
+      ],
+      "resultLabel": null,
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false
+      },
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "to",
+        "subject",
+        "body",
+        "contactId",
+        "clientName"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "string",
+            "format": "email",
+            "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+            "description": "The recipient's email address."
+          },
+          "subject": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 5000
+          },
+          "contactId": {
+            "description": "The Orbit contact this is for, when there is one.",
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "clientName": {
+            "description": "Your product's name, shown to the user on the approval card.",
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        "required": [
+          "to",
+          "body"
+        ]
+      }
+    },
+    {
+      "name": "get_send_status",
+      "title": "Check a draft",
+      "scope": "write",
+      "surfaces": [
+        "mcp"
+      ],
+      "resultLabel": null,
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "draftId"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "draftId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "draftId"
+        ]
+      }
+    },
+    {
+      "name": "update_contact",
+      "title": "Update a contact",
+      "scope": "write",
+      "surfaces": [
+        "mcp"
+      ],
+      "resultLabel": null,
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "contactId",
+        "fullName",
+        "company",
+        "title",
+        "location",
+        "email",
+        "linkedinUrl",
+        "notes",
+        "howMet"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contactId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "fullName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "company": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "location": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+          },
+          "linkedinUrl": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "notes": {
+            "description": "Replaces the existing notes.",
+            "type": "string",
+            "maxLength": 5000
+          },
+          "howMet": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "contactId"
+        ]
+      }
+    },
+    {
+      "name": "add_note",
+      "title": "Add a note about someone",
+      "scope": "write",
+      "surfaces": [
+        "mcp"
+      ],
+      "resultLabel": null,
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "contactId",
+        "note",
+        "occurredAt",
+        "externalId"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contactId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 5000
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+          },
+          "externalId": {
+            "description": "Pass a stable id to make a retry idempotent.",
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "contactId",
+          "note"
+        ]
+      }
+    },
+    {
+      "name": "create_reminder",
+      "title": "Create a reminder",
+      "scope": "write",
+      "surfaces": [
+        "mcp"
+      ],
+      "resultLabel": null,
+      "annotations": {
+        "destructiveHint": false
+      },
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "title",
+        "description",
+        "contactId",
+        "dueDate"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "contactId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "dueDate": {
+            "description": "ISO timestamp. Omit for no date.",
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+          }
+        },
+        "required": [
+          "title"
+        ]
+      }
+    },
+    {
+      "name": "complete_reminder",
+      "title": "Complete a reminder",
+      "scope": "write",
+      "surfaces": [
+        "mcp"
+      ],
+      "resultLabel": null,
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "reminderId"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "reminderId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "reminderId"
+        ]
+      }
+    },
+    {
+      "name": "snooze_reminder",
+      "title": "Snooze a reminder",
+      "scope": "write",
+      "surfaces": [
+        "mcp"
+      ],
+      "resultLabel": null,
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "reminderId",
+        "days"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "reminderId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "days": {
+            "default": 7,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 90
+          }
+        },
+        "required": [
+          "reminderId"
+        ]
+      }
+    },
+    {
+      "name": "schedule_follow_up",
+      "title": "Schedule a follow-up",
+      "scope": "write",
+      "surfaces": [
+        "mcp"
+      ],
+      "resultLabel": null,
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "contactId",
+        "days"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contactId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "days": {
+            "default": 7,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 90
+          }
+        },
+        "required": [
+          "contactId"
+        ]
+      }
+    },
+    {
+      "name": "create_contact",
+      "title": "Add a contact",
+      "scope": "write",
+      "surfaces": [
+        "mcp"
+      ],
+      "resultLabel": null,
+      "annotations": {
+        "destructiveHint": false
+      },
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "fullName",
+        "email",
+        "company",
+        "title",
+        "linkedinUrl",
+        "notes",
+        "howMet",
+        "force"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fullName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+          },
+          "company": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "linkedinUrl": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 5000
+          },
+          "howMet": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "force": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "fullName"
+        ]
+      }
+    }
+  ],
+  "toolsFor": {
+    "mcp": {
+      "readWrite": [
+        "search_contacts",
+        "get_contact",
+        "who_do_i_know_at",
+        "due_followups",
+        "list_reminders",
+        "get_network_overview",
+        "get_timeline",
+        "get_goals",
+        "find_path_to",
+        "upcoming_meetings",
+        "free_time",
+        "log_interaction",
+        "request_send",
+        "get_send_status",
+        "update_contact",
+        "add_note",
+        "create_reminder",
+        "complete_reminder",
+        "snooze_reminder",
+        "schedule_follow_up",
+        "create_contact"
+      ],
+      "readOnly": [
+        "search_contacts",
+        "get_contact",
+        "who_do_i_know_at",
+        "due_followups",
+        "list_reminders",
+        "get_network_overview",
+        "get_timeline",
+        "get_goals",
+        "find_path_to",
+        "upcoming_meetings",
+        "free_time"
+      ]
+    },
+    "chat": {
+      "readWrite": [
+        "search_contacts",
+        "get_contact",
+        "who_do_i_know_at",
+        "due_followups",
+        "list_reminders",
+        "get_network_overview",
+        "get_timeline",
+        "get_goals",
+        "find_path_to",
+        "search_notes",
+        "search_meetings",
+        "upcoming_meetings",
+        "free_time",
+        "meeting_context",
+        "research_person",
+        "research_company",
+        "find_people",
+        "list_open_commitments"
+      ],
+      "readOnly": [
+        "search_contacts",
+        "get_contact",
+        "who_do_i_know_at",
+        "due_followups",
+        "list_reminders",
+        "get_network_overview",
+        "get_timeline",
+        "get_goals",
+        "find_path_to",
+        "search_notes",
+        "search_meetings",
+        "upcoming_meetings",
+        "free_time",
+        "meeting_context",
+        "research_person",
+        "research_company",
+        "find_people",
+        "list_open_commitments"
+      ]
+    }
+  }
+}
