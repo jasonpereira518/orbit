@@ -1,6 +1,6 @@
 "use server";
 
-import { and, desc, eq, inArray, lte, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, lte, ne, or, sql, type SQL } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb, runAtomicWrite, type AtomicStatement } from "@/db";
 import {
@@ -1269,6 +1269,10 @@ export async function sendOutreachMessageAction(messageId: string) {
   return asActionResult(() => sendOutreachMessageNow(messageId));
 }
 
+/** How long a message may sit in 'sending' before another caller may claim it again. */
+const SENDING_STALE_MS = 10 * 60 * 1000;
+const notInDelivered = sql`${outreachMessages.status} NOT IN ('sent', 'opened')`;
+
 /** The send itself. Throws; `bulkSendOutreach` catches per message. */
 async function sendOutreachMessageNow(messageId: string) {
   const userId = await requireOutreachUser();
@@ -1321,6 +1325,31 @@ async function sendOutreachMessageNow(messageId: string) {
   const channel = message.channel as OutreachChannel;
   const now = new Date();
 
+  // Claim the message before anything is sent. The delivered check above reads, this writes:
+  // a double click, a bulk send overlapping a single send, or a client retrying after the
+  // provider accepted could all pass the read and send twice. Only the caller whose UPDATE
+  // flips an undelivered row to 'sending' proceeds. A row stuck in 'sending' (a function
+  // killed mid-send) becomes claimable again after SENDING_STALE_MS, and the Resend
+  // idempotency key below collapses even that rare repeat into the first email.
+  const claimed = await db
+    .update(outreachMessages)
+    .set({ status: "sending", lastActionAt: now, updatedAt: now })
+    .where(
+      and(
+        eq(outreachMessages.id, messageId),
+        isNull(outreachMessages.sentAt),
+        or(isNull(outreachMessages.outcome), eq(outreachMessages.outcome, "")),
+        or(
+          and(ne(outreachMessages.status, "sending"), notInDelivered),
+          and(eq(outreachMessages.status, "sending"), lt(outreachMessages.lastActionAt, new Date(now.getTime() - SENDING_STALE_MS)))
+        )
+      )
+    )
+    .returning();
+  if (claimed.length === 0) {
+    throw new UserFacingError(ALREADY_SENT_MESSAGE);
+  }
+
   try {
     const result = await sendOutreachMessage({
       userId,
@@ -1329,6 +1358,7 @@ async function sendOutreachMessageNow(messageId: string) {
       toPhone: message.prospect.phone,
       subject: message.subject,
       body: message.body,
+      idempotencyKey: `outreach-message-${message.id}`,
     });
 
     const [updated] = await db

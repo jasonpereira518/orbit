@@ -252,6 +252,39 @@ run(async () => {
     afterResend?.status === "sent" && afterResend.sentAt?.getTime() === sentAt.getTime(),
     `${afterResend?.status} ${afterResend?.sentAt?.toISOString()}`);
 
+  console.log("\nTwo sends of one message: only one claims it");
+  const racy = await seedProspectWithMessage(campaign.id, {
+    externalId: "race-1",
+    fullName: "Rae Racer",
+    email: "rae@racer.example.org",
+    status: "selected",
+    enrichment: {},
+  });
+  // No Resend key in this script, so whoever claims fails on "not configured" and the row is
+  // marked failed. Two simultaneous callers: exactly one may get as far as the provider step
+  // (and record that failure); the other must be refused as "already sent" by the claim.
+  const results = await Promise.all([
+    sendOutreachMessageAction(racy.message.id).catch((err: unknown) => ({ ok: false as const, error: `threw: ${String(err)}` })),
+    sendOutreachMessageAction(racy.message.id).catch((err: unknown) => ({ ok: false as const, error: `threw: ${String(err)}` })),
+  ]);
+  const refused = results.filter((r) => r.ok === false && r.error === ALREADY_SENT_MESSAGE).length;
+  check("one of two concurrent sends is refused by the claim", refused === 1, JSON.stringify(results));
+
+  const inflight = await seedProspectWithMessage(campaign.id, {
+    externalId: "inflight-1",
+    fullName: "Ivy Inflight",
+    email: "ivy@inflight.example.org",
+    status: "selected",
+    enrichment: {},
+  });
+  await db.update(outreachMessages).set({ status: "sending", lastActionAt: new Date() }).where(eq(outreachMessages.id, inflight.message.id));
+  const blocked = await sendOutreachMessageAction(inflight.message.id).catch((err: unknown) => ({ ok: false as const, error: `threw: ${String(err)}` }));
+  check("a message that is mid-send is refused", blocked.ok === false && blocked.error === ALREADY_SENT_MESSAGE, JSON.stringify(blocked));
+  await db.update(outreachMessages).set({ lastActionAt: new Date(Date.now() - 11 * 60 * 1000) }).where(eq(outreachMessages.id, inflight.message.id));
+  const reclaimed = await sendOutreachMessageAction(inflight.message.id).catch((err: unknown) => ({ ok: false as const, error: `threw: ${String(err)}` }));
+  check("…but one stuck in 'sending' for over ten minutes can be claimed again",
+    !(reclaimed.ok === false && reclaimed.error === ALREADY_SENT_MESSAGE), JSON.stringify(reclaimed));
+
   console.log("\nReplies go to the sender");
   await db.update(userSettings).set({ email: "demo.sender@orbit.example.com" }).where(eq(userSettings.userId, USER));
   const config = await getOutreachSendConfig(USER);

@@ -118,6 +118,8 @@ export async function sendOutreachMessage(input: {
   toPhone?: string | null;
   subject?: string | null;
   body: string;
+  /** Stable per message: Resend collapses a repeat of the same key into the first send. */
+  idempotencyKey?: string;
 }) {
   if (input.channel === "linkedin") {
     throw new Error("LinkedIn automated send is not supported.");
@@ -164,7 +166,8 @@ export async function sendOutreachMessage(input: {
         subject: input.subject,
         text: body,
         replyTo: config.replyTo,
-      })
+      }),
+      input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : undefined
     );
 
     if (result.error) {
