@@ -196,6 +196,21 @@ export type ClosenessCohortSlimResult = Omit<ClosenessCohortResult, "byId"> & {
   byId: Map<string, ClosenessScalars>;
 };
 
+/**
+ * True when every contact's stored breakdown is what `getClosenessCohortSlim` would return
+ * for it: a usable distribution exists and nobody is unscored — the same gate
+ * `resolveCohortResult` applies before answering from storage. Lets a reader that needs a
+ * few contacts' tiers read `closeness_breakdown->>'tier'` for just those rows instead of
+ * loading the whole network's scores (two indexed point reads instead of 100k rows).
+ */
+export async function storedScoresAreCurrent(userId: string): Promise<boolean> {
+  const [cohortRow, unscored] = await Promise.all([
+    readCohortRow(userId),
+    listUnscoredContactIds(userId, 1),
+  ]);
+  return Boolean(cohortRow && isUsableSnapshot(cohortRow.snapshot) && unscored.length === 0);
+}
+
 /** Separate from `cohortStore`, so a slim result can never be handed to a full reader. */
 const slimCohortStore = cache(() => new Map<string, Promise<ClosenessCohortSlimResult>>());
 
