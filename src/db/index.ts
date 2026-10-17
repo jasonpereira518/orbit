@@ -2720,7 +2720,11 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // and its briefs live in ai_result_cache, read back by key. The table was a day old (v169) and
 // held only cached web lookups. Rescanned every ref and worktree on Oct 15 2026: 169 was the
 // highest claimed anywhere.
-export const SCHEMA_VERSION = 170;
+//
+// 171 = the performance pass (PERFORMANCE_AUDIT.md): indexes only — contacts_user_name_norm_idx,
+// contacts_unscored_idx, interactions_user_contact_date_idx, contact_career_moves_contact_fk_idx.
+// Rescanned every remote ref on Oct 17 2026: 170 was the highest claimed anywhere.
+export const SCHEMA_VERSION = 171;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3220,6 +3224,34 @@ export const SCALE_DDL: string[] = [
      ON chat_messages(created_at DESC) WHERE feedback IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS page_views_user_created_idx
      ON page_views(user_id, created_at) WHERE user_id IS NOT NULL`,
+
+  // v171, the performance pass (PERFORMANCE_AUDIT.md). Measured on Postgres 16 at 100k
+  // contacts / 300k interactions.
+  //
+  // Same-name duplicate detection (`findNameCollisions`, behind the badge on every /contacts
+  // render) joins contacts to themselves on `lower(btrim(full_name))`. With nothing indexing
+  // that expression the planner nested-looped over the primary key: 82 s at 10k contacts,
+  // cancelled at 240 s at 100k. With this index: 49 ms and 458 ms. `trim(x)` is how Postgres
+  // spells `btrim(x)`, so this matches the query's predicate exactly. Rewriting the query
+  // instead does not hold: Postgres 16 inlined a GROUP BY rewrite back into the same loop.
+  `CREATE INDEX IF NOT EXISTS contacts_user_name_norm_idx
+     ON contacts(user_id, lower(trim(full_name)))`,
+  // Every closeness-cohort read counts the user's unscored contacts first. Near-empty in
+  // steady state; without it the count scanned the whole network (73 ms at 100k).
+  `CREATE INDEX IF NOT EXISTS contacts_unscored_idx
+     ON contacts(user_id) WHERE closeness_computed_at IS NULL`,
+  // Per-contact reads over a user's history: the cohort's touch counts (GROUP BY contact_id
+  // with type/direction/source filters), last touch per contact (DISTINCT ON contact_id
+  // ORDER BY interaction_date DESC, id DESC) and newest-first timelines. The INCLUDEd
+  // columns make the first two index-only: 1,169 -> 186 ms and 298 -> 74 ms at 100k.
+  // `interactions_contact_idx` stays: it is the FK index for the contacts cascade.
+  `CREATE INDEX IF NOT EXISTS interactions_user_contact_date_idx
+     ON interactions(user_id, contact_id, interaction_date DESC, id DESC)
+     INCLUDE (interaction_type, direction, source)`,
+  // The contacts cascade into contact_career_moves had only (user_id, contact_id, ...) to
+  // use, which the per-parent `WHERE contact_id = $1` cannot (see docs/performance.md).
+  `CREATE INDEX IF NOT EXISTS contact_career_moves_contact_fk_idx
+     ON contact_career_moves(contact_id)`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */
