@@ -71,3 +71,4 @@ extension/public/inject/
 /latency/.data/
 /latency/results/*
 !/latency/results/baseline/
+/latency/results/baseline/*.log
