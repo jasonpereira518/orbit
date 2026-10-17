@@ -98,7 +98,8 @@ async function captureOnce(text: string) {
   const statements = stopQueryCount();
   const reviewedAt = performance.now() - started;
   const fresh = row ?? (await getCaptureJobById(job.id));
-  const people = Array.isArray((fresh as { result?: { people?: unknown[] } } | null)?.result?.people) ? (fresh as { result: { people: unknown[] } }).result.people.length : null;
+  // capture_jobs.result is a CaptureParseResult: the reviewed people are `items`.
+  const people = Array.isArray((fresh as { result?: { items?: unknown[] } } | null)?.result?.items) ? (fresh as { result: { items: unknown[] } }).result.items.length : null;
   return { queued_ms: r0(queuedAt), reviewed_ms: r0(reviewedAt), status: fresh?.status ?? null, people, statements };
 }
 
