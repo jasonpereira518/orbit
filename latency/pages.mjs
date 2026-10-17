@@ -79,6 +79,9 @@ const NAV_TOUR = ["/contacts", "/reminders", "/dashboard", "/graph", "/chat", "/
 /** Installed before any page script so buffered entries are captured from navigation start. */
 const PRELUDE = `
 (() => {
+  // next dev mounts its dev-tools indicator (<nextjs-portal>) bottom-left, over the mobile
+  // bottom bar's first tab, so a tap there never reaches the link. Not part of any build.
+  document.addEventListener("DOMContentLoaded", () => { const s = document.createElement("style"); s.textContent = "nextjs-portal{display:none!important}"; document.head.appendChild(s); });
   const m = (window.__lat = { fcp: null, lcp: null, cls: 0, lt: [], inp: 0, events: 0, usable: null, hydrated: null });
   const obs = (type, cb, opts = {}) => { try { new PerformanceObserver((l) => l.getEntries().forEach(cb)).observe({ type, buffered: true, ...opts }); } catch {} };
   obs("paint", (e) => { if (e.name === "first-contentful-paint") m.fcp = e.startTime; });
