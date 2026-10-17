@@ -150,6 +150,32 @@ function FieldError({
 }
 
 /**
+ * A form-level error: a save the server refused, or a problem not tied to one field. Sits by
+ * the submit button so it is where the person is looking, stays until the next attempt (a
+ * toast can time out unread), and is announced. Always mounted, empty while there is none.
+ */
+function FormError({
+  id,
+  className,
+  children,
+}: {
+  id?: string
+  className?: string
+  children?: React.ReactNode
+}) {
+  return (
+    <p
+      id={id}
+      role="alert"
+      data-slot="form-error"
+      className={cn("text-sm font-medium text-destructive empty:hidden", className)}
+    >
+      {children}
+    </p>
+  )
+}
+
+/**
  * Focus the first field a failed submit marked invalid, so the error is where the user is.
  * Call it once the invalid state has rendered, e.g. `requestAnimationFrame(() =>
  * focusFirstInvalid(formRef.current))` after setting the errors.
@@ -160,4 +186,4 @@ function focusFirstInvalid(root: HTMLElement | null | undefined) {
   return el ?? null
 }
 
-export { Field, FieldError, focusFirstInvalid, useFieldControl }
+export { Field, FieldError, FormError, focusFirstInvalid, useFieldControl }

@@ -464,6 +464,16 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+  /* The ambient glow, pinned to the viewport. A fixed layer rather than
+   * `background-attachment: fixed`, which iOS ignores (the glow scrolled away) and macOS
+   * Safari repaints on every scroll frame. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
     background-image:
       radial-gradient(
         ellipse 80% 50% at 100% -20%,
@@ -475,13 +485,12 @@
         rgba(196, 163, 90, 0.05),
         transparent
       );
-    background-attachment: fixed;
   }
   /* A faint neutral lift top-right, gold bottom-left, turned up for a dark
    * ground. This is where Orbit's gold lives in dark mode:
    * as ambient light, never as a control colour, so it can't be mistaken for
    * Lifetime or a warning. */
-  .dark body {
+  .dark body::before {
     background-image:
       radial-gradient(
         ellipse 80% 50% at 100% -20%,
@@ -1296,11 +1305,13 @@
  * above it a layer too — 97 layers mid-zoom at 1,000 contacts, against 17 without it.
  */
 
+/* 10px in rem (was 8px) and 0.6 white (was 0.32, about 3:1 on the night sky), so the label
+ * is text you can read rather than texture. */
 .constellation-edge-label {
-  font-size: 8px;
+  font-size: 0.625rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.32);
+  color: rgba(255, 255, 255, 0.6);
   white-space: nowrap;
   pointer-events: none;
   text-shadow: 0 0 8px rgba(0, 0, 0, 0.85);
@@ -3422,6 +3433,17 @@ input[type="time"] {
 input::-webkit-date-and-time-value {
   text-align: start;
   min-height: 1lh;
+}
+/* iOS only (`-webkit-touch-callout` exists nowhere else): drop the native control styling,
+ * which centred the value and ignored the field's own height and padding. Tapping still opens
+ * the system picker. Not everywhere, because desktop Chrome loses its calendar icon. */
+@supports (-webkit-touch-callout: none) {
+  input[type="date"],
+  input[type="datetime-local"],
+  input[type="time"] {
+    -webkit-appearance: none;
+    appearance: none;
+  }
 }
 
 /* Safari still draws a disclosure triangle on `<summary class="list-none">`. */

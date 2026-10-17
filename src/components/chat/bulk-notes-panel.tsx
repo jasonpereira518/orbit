@@ -1633,8 +1633,13 @@ function PersonReviewCard({
             &apos;s timeline
           </p>
         ) : (
-          <>
-            <p className="text-xs font-medium">Save as</p>
+          // One named group, so each choice is announced as part of "Save as".
+          <div
+            role="radiogroup"
+            aria-labelledby={`save-as-${item.key}`}
+            className="space-y-1.5"
+          >
+            <p id={`save-as-${item.key}`} className="text-xs font-medium">Save as</p>
             <label className="flex items-center gap-2 text-xs">
               <input
                 type="radio"
@@ -1679,7 +1684,7 @@ function PersonReviewCard({
                 </span>
               </label>
             ))}
-          </>
+          </div>
         )}
       </div>
 

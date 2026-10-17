@@ -10,10 +10,11 @@
  * Two short lists close the gap, and they are the highest-signal input event ranking has: at a
  * fair with thirty booths, "three of these are on your list" is the whole answer.
  */
-import { useState, useTransition } from "react";
+import { useId, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Star, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { FormError } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -56,13 +57,22 @@ export function TargetCompaniesSettings({
   const [name, setName] = useState("");
   const [priority, setPriority] = useState<TargetPriority>(2);
   const [school, setSchool] = useState("");
+  // Shown under the row and tied to its field until the next attempt; a toast alone could
+  // time out unread.
+  const [companyError, setCompanyError] = useState<string | null>(null);
+  const [schoolError, setSchoolError] = useState<string | null>(null);
+  const companyRef = useRef<HTMLInputElement>(null);
+  const companyErrorId = useId();
+  const schoolErrorId = useId();
 
   function add() {
     if (!name.trim()) return;
+    setCompanyError(null);
     start(async () => {
       const result = await saveTargetCompany(name, priority);
       if (!result.ok) {
-        toast.error(result.error ?? "Couldn’t add that company");
+        setCompanyError(result.error ?? "Couldn’t add that company");
+        companyRef.current?.focus();
         return;
       }
       setName("");
@@ -85,13 +95,16 @@ export function TargetCompaniesSettings({
 
   function addSchool() {
     if (!school.trim()) return;
+    setSchoolError(null);
     start(async () => {
       try {
         await saveSchools([...initialSchools, school]);
         setSchool("");
         router.refresh();
       } catch (error) {
-        toast.error(friendlyError(error, "Couldn’t save that — try again?"));
+        const message = friendlyError(error, "Couldn’t save that — try again?");
+        toast.error(message);
+        setSchoolError(message);
       }
     });
   }
@@ -112,8 +125,14 @@ export function TargetCompaniesSettings({
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <Input
+            ref={companyRef}
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            aria-invalid={companyError ? true : undefined}
+            aria-describedby={companyError ? companyErrorId : undefined}
+            onChange={(e) => {
+              setName(e.target.value);
+              if (companyError) setCompanyError(null);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter") add();
             }}
@@ -142,6 +161,7 @@ export function TargetCompaniesSettings({
             Add
           </Button>
         </div>
+        <FormError id={companyErrorId}>{companyError}</FormError>
 
         {initialCompanies.length === 0 ? (
           <p className="text-sm text-muted-foreground">No target companies yet.</p>
@@ -187,7 +207,12 @@ export function TargetCompaniesSettings({
         <div className="flex flex-wrap items-center gap-2">
           <Input
             value={school}
-            onChange={(e) => setSchool(e.target.value)}
+            aria-invalid={schoolError ? true : undefined}
+            aria-describedby={schoolError ? schoolErrorId : undefined}
+            onChange={(e) => {
+              setSchool(e.target.value);
+              if (schoolError) setSchoolError(null);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter") addSchool();
             }}
@@ -199,6 +224,7 @@ export function TargetCompaniesSettings({
             Add
           </Button>
         </div>
+        <FormError id={schoolErrorId} className="mt-2">{schoolError}</FormError>
         {initialSchools.length > 0 ? (
           <ul className="flex flex-wrap gap-2 pt-1">
             {initialSchools.map((item) => (
@@ -212,7 +238,7 @@ export function TargetCompaniesSettings({
                   onClick={() => removeSchool(item)}
                   disabled={pending}
                   aria-label={`Remove ${item}`}
-                  className="text-muted-foreground hover:text-foreground"
+                  className="relative -my-0.5 -mr-1 grid size-6 tap-target place-items-center rounded-full text-muted-foreground hover:text-foreground"
                 >
                   ×
                 </button>

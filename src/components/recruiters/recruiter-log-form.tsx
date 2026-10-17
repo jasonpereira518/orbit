@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { logRecruiter } from "@/actions/recruiters";
 import { Button } from "@/components/ui/button";
+import { FormError } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -40,6 +41,8 @@ export function RecruiterLogForm({
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  // A refused save stays by the button until the next attempt.
+  const [formError, setFormError] = useState<string | null>(null);
   const [form, setForm] = useState({
     fullName: initial?.fullName || "",
     firm: initial?.firm || "",
@@ -63,6 +66,7 @@ export function RecruiterLogForm({
       className={cn("space-y-4", className)}
       onSubmit={(e) => {
         e.preventDefault();
+        setFormError(null);
         start(async () => {
           try {
             const specialty = form.specialty
@@ -86,16 +90,16 @@ export function RecruiterLogForm({
               source: "manual",
             });
             if (!result.ok) {
-              toast.error(result.error);
+              setFormError(result.error);
               return;
             }
             toast.success("Recruiter logged");
             router.push(`/recruiters/${result.value.id}`);
             router.refresh();
           } catch (err) {
-            toast.error(
-              friendlyError(err, "Couldn’t log that recruiter — try again?")
-            );
+            const message = friendlyError(err, "Couldn’t log that recruiter — try again?");
+            toast.error(message);
+            setFormError(message);
           }
         });
       }}
@@ -200,6 +204,7 @@ export function RecruiterLogForm({
           />
         </div>
       </div>
+      <FormError>{formError}</FormError>
       <Button type="submit" disabled={pending}>
         {pending ? "Saving…" : recruiterId ? "Log interaction" : "Add recruiter"}
       </Button>

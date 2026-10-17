@@ -8,6 +8,7 @@ import type { CareerProfile } from "@/db/schema";
 import { clearLinkedInYou } from "@/actions/imports";
 import { saveSenderBio, saveSocialLinks } from "@/actions/settings";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { FormError } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SettingsRow, SettingsSection } from "@/components/settings/settings-section";
@@ -79,6 +80,11 @@ export function ProfileSettings({
   const [clearing, startClear] = useTransition();
   const [pending, start] = useTransition();
   const [bioPending, startBio] = useTransition();
+  // A failed save stays next to its button until the next attempt; the toast alone could
+  // time out before it was read.
+  const [bioError, setBioError] = useState<string | null>(null);
+  const [clearError, setClearError] = useState<string | null>(null);
+  const [socialsError, setSocialsError] = useState<string | null>(null);
 
   return (
     <SettingsSection
@@ -158,6 +164,7 @@ export function ProfileSettings({
             disabled={bioPending}
             onClick={() =>
               startBio(async () => {
+                setBioError(null);
                 try {
                   const saved = await saveSenderBio(bio);
                   // Reflect what was actually stored — the action collapses whitespace and
@@ -165,7 +172,9 @@ export function ProfileSettings({
                   setBio(saved.senderBio);
                   toast.success(saved.senderBio ? "Saved" : "Cleared");
                 } catch (err) {
-                  toast.error(friendlyError(err, "Couldn’t save that — try again?"));
+                  const message = friendlyError(err, "Couldn’t save that — try again?");
+                  toast.error(message);
+                  setBioError(message);
                 }
               })
             }
@@ -175,6 +184,7 @@ export function ProfileSettings({
           <p className="text-xs text-muted-foreground">
             {bio.trim().length}/{SENDER_BIO_MAX_LENGTH}
           </p>
+          <FormError className="basis-full">{bioError}</FormError>
         </div>
       </SettingsRow>
 
@@ -203,18 +213,22 @@ export function ProfileSettings({
                 disabled={clearing}
                 onClick={() =>
                   startClear(async () => {
+                    setClearError(null);
                     try {
                       await clearLinkedInYou();
                       setCareer(null);
                       toast.success("Removed what came from LinkedIn");
                     } catch (err) {
-                      toast.error(friendlyError(err, TOAST_COPY.saveFailed));
+                      const message = friendlyError(err, TOAST_COPY.saveFailed);
+                      toast.error(message);
+                      setClearError(message);
                     }
                   })
                 }
               >
                 {clearing ? "Removing…" : "Remove imported details"}
               </Button>
+              <FormError className="basis-full">{clearError}</FormError>
             </div>
           </div>
         ) : (
@@ -261,10 +275,12 @@ export function ProfileSettings({
           disabled={pending}
           onClick={() =>
             start(async () => {
+              setSocialsError(null);
               try {
                 const res = await saveSocialLinks(socials);
                 if (!res.ok) {
-                  toast.error(res.error);
+                  // A link that did not parse: say so by the fields, not in a passing toast.
+                  setSocialsError(res.error);
                   return;
                 }
                 // Show what was stored: `linkedin.com/in/ada` comes back as its https link.
@@ -276,15 +292,16 @@ export function ProfileSettings({
                 });
                 toast.success("Social links saved");
               } catch (err) {
-                toast.error(
-                  friendlyError(err, TOAST_COPY.saveFailed)
-                );
+                const message = friendlyError(err, TOAST_COPY.saveFailed);
+                toast.error(message);
+                setSocialsError(message);
               }
             })
           }
         >
           {pending ? "Saving…" : "Save socials"}
         </Button>
+        <FormError className="mt-2">{socialsError}</FormError>
       </SettingsRow>
     </SettingsSection>
   );

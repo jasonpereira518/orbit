@@ -15,7 +15,7 @@ import { queueContactWorkHistory } from "@/actions/contact-profile";
 import { MET_CONTEXTS, MET_CONTEXT_LABELS, type MetContext } from "@/lib/met-context";
 import { SuggestInput } from "@/components/contacts/suggest-input";
 import { Button } from "@/components/ui/button";
-import { Field, useFieldControl } from "@/components/ui/field";
+import { Field, FormError, useFieldControl } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -582,12 +582,7 @@ export function ContactForm({
         </Field>
         </>
       )}
-      <p
-        role="alert"
-        className="text-sm font-medium text-destructive empty:hidden"
-      >
-        {formError}
-      </p>
+      <FormError>{formError}</FormError>
       <Button
         type="submit"
         disabled={pending || lookingUp}

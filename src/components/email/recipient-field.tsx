@@ -106,6 +106,9 @@ export function RecipientField({
           aria-expanded={open}
           aria-controls={listId}
           aria-autocomplete="list"
+          // Which suggestion the arrow keys are on: focus stays in the field, so without this a
+          // screen reader never heard the highlighted address.
+          aria-activedescendant={open && options[active] ? `${listId}-${active}` : undefined}
           autoComplete="off"
           autoFocus={autoFocus}
           value={text}
@@ -167,6 +170,7 @@ export function RecipientField({
             {options.map((r, i) => (
               <li
                 key={r.email}
+                id={`${listId}-${i}`}
                 role="option"
                 aria-selected={i === active}
                 onMouseDown={(e) => {

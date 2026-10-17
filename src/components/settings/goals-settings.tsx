@@ -6,8 +6,9 @@ import { Trash2 } from "lucide-react";
 import { runToastAction, toast } from "@/lib/toast";
 import { addGoal, deleteGoal, restoreGoal } from "@/actions/goals";
 import { Button } from "@/components/ui/button";
+import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { UserGoal } from "@/db/schema";
 import { friendlyError } from "@/lib/errors";
 import { SettingsSection } from "@/components/settings/settings-section";
@@ -16,6 +17,9 @@ export function GoalsSettings({ initialGoals }: { initialGoals: UserGoal[] }) {
   const router = useRouter();
   const [goals, setGoals] = useState(initialGoals);
   const [text, setText] = useState("");
+  // Shown under the field, and the field is marked invalid, until the next attempt.
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const [pending, start] = useTransition();
 
   return (
@@ -83,16 +87,18 @@ export function GoalsSettings({ initialGoals }: { initialGoals: UserGoal[] }) {
       )}
 
       <form
-        className="flex gap-2"
+        className="flex items-start gap-2"
         onSubmit={(e) => {
           e.preventDefault();
           const trimmed = text.trim();
           if (!trimmed) return;
+          setError(null);
           start(async () => {
             try {
               const res = await addGoal(trimmed);
               if (!res.ok) {
-                toast.error(res.error);
+                setError(res.error);
+                inputRef.current?.focus();
                 return;
               }
               setGoals((prev) => [res.value, ...prev]);
@@ -100,20 +106,26 @@ export function GoalsSettings({ initialGoals }: { initialGoals: UserGoal[] }) {
               toast.success("Goal added");
               router.refresh();
             } catch (err) {
-              toast.error(friendlyError(err, "Couldn’t add that goal — try again?"));
+              const message = friendlyError(err, "Couldn’t add that goal — try again?");
+              toast.error(message);
+              setError(message);
             }
           });
         }}
       >
-        <Input
-          placeholder="e.g. Raise seed round, hire engineers…"
-          aria-label="New goal"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          maxLength={200}
-          disabled={pending}
-          className="flex-1"
-        />
+        <Field label="New goal" hideLabel error={error} className="min-w-0 flex-1">
+          <Input
+            ref={inputRef}
+            placeholder="e.g. Raise seed round, hire engineers…"
+            value={text}
+            onChange={(e) => {
+              setText(e.target.value);
+              if (error) setError(null);
+            }}
+            maxLength={200}
+            disabled={pending}
+          />
+        </Field>
         <Button type="submit" disabled={pending || !text.trim()}>
           Add goal
         </Button>

@@ -620,7 +620,7 @@ All of it went through the shared layer first: the primitives, the theme tokens 
 | Finding | Status | Fix |
 |---|---|---|
 | S-1 labels | **Fixed** | New `ui/field.tsx`. `Input` and `Textarea` read its context, so every control inside it gets a label, a hint and an error. The four local `Field` copies use it. The placeholder-only inputs listed in S-1 are named. `SettingsRow` can render a real `<label>`. |
-| S-2 errors | **Fixed for the forms listed** | The reminder title shows an inline, announced error and takes focus. The contact form shows a form-level `role=alert` next to Save. Waitlist errors and success are announced. `focusFirstInvalid()` is exported from `ui/field`. Settings and recruiter save errors are still toasts. They are server errors, not about one field, and they now last 10s and are kept in the notification panel. |
+| S-2 errors | **Fixed** | The reminder title shows an inline, announced error and takes focus. Waitlist errors and success are announced. Every other form that reported a failed save only as a toast now also shows it next to its button through a shared `FormError` (`role=alert`), and keeps it until the next attempt: contact form, profile (bio, socials, LinkedIn import), goals, target companies and schools, recruiter log, onboarding ratings. Validation errors (a bad social link, a refused goal or company) are inline only, mark the field invalid and focus it. `focusFirstInvalid()` is exported from `ui/field`. |
 | S-3 titles | **Fixed** | Title template `%s · Orbit`. Every page has metadata, and detail pages show the record's name through the page's own cached data helper. `RouteFocus` moves focus to `#main-content` when a navigation destroyed the focused link. |
 | S-4 skip link, landmarks | **Fixed** | `SkipLink` is the first thing in `<body>`. Every page has one `<main id="main-content">`. On desktop the sidebar is the page `<header>`. The ask bar, the A–Z rail, the profile's pinned summary and the landing pill are each their own landmark. Navs are labelled and the active item has `aria-current`. |
 | S-5 row semantics | **Fixed** | Contact rows are a real `<Link>` stretched over the row. Admin chart rows and the admin confirm-dialog triggers are real `<button>`s; the triggers were spans that couldn't be reached by keyboard. |
@@ -632,7 +632,7 @@ All of it went through the shared layer first: the primitives, the theme tokens 
 | S-11 ARIA one-offs | **Fixed** | Every row in the S-11 table. Wide tables are a `ScrollRegion` (tabbable only while they overflow). |
 | S-12 states | **Fixed** | Page skeletons announce "Loading…" through `LoadingRegion`. There is a root `error.tsx`, and `ErrorFallback` has `role=alert` and moves focus to its heading. `not-found` has a title and a `<main>`. An empty account sees an `EmptyState` with Capture and Import, not a filters message. |
 | S-13 motion | **Fixed** | One `MotionConfig` for the whole `(clerk)` group. Camera flights respect reduced motion. Glints and shimmers stop after two passes. The coming-soon scene has a pause toggle. The demo tour no longer narrates. Under reduced motion, the landing scroll visuals now pass resting values; dropping the style left Motion's last inline opacity behind, which is why captions stayed at 3.3:1. |
-| S-14 keyboard | **Fixed**, with two exceptions | The A–Z rail is a single slider tab stop with arrow keys. Reminders shortcuts only act inside the queue. Date-picker days have full-date names. The full-screen celebration overlays still don't trap Tab, and the email recipient combobox still lacks `aria-activedescendant`; both are listed under deferred. |
+| S-14 keyboard | **Fixed**, with one exception | The A–Z rail is a single slider tab stop with arrow keys. Reminders shortcuts only act inside the queue. Date-picker days have full-date names. The email recipient combobox announces the highlighted suggestion (`aria-activedescendant`). The bulk-notes "Save as" choices are one named radio group. The full-screen celebration overlays still don't trap Tab (out of scope, below). |
 | R-1 dialogs | **Fixed** | `DialogContent` and `PopoverContent` are capped at the viewport or the measured space, and scroll. On phones dialogs sit near the top. `vh` became `dvh`. |
 | R-2 locked pages | **Fixed** | Below 500px tall the app column scrolls. Chat, the constellation and `data-fill-route` pages keep a usable height. |
 | R-3 tap targets | **Fixed** | `Button` is `relative tap-target`: a 44px hit area on touch screens, with no visual change. Raw buttons under 24px are now at least 24px. Correction to the audit: the 16×16px checkboxes it flagged already had a 40×32px hit area through `::after` in the `Checkbox` primitive; the probe measured only the painted box. |
@@ -645,10 +645,10 @@ All of it went through the shared layer first: the primitives, the theme tokens 
 | X-2 textarea autosize | **Fixed** | A JS fallback in `ui/textarea.tsx` where `field-sizing` is unsupported. |
 | X-3 viewport | **Fixed** | Root `viewport` export with `viewport-fit=cover`. |
 | X-4 `vh` on iOS | **Fixed** | Every height uses `dvh`. |
-| X-5 date inputs | **Partly fixed** | `min-width: 0` and start-aligned value. I didn't set `appearance: none`, because it can drop the picker icon in desktop Chrome. |
+| X-5 date inputs | **Fixed** | `min-width: 0` and start-aligned value everywhere; `appearance: none` on iOS only (behind `@supports (-webkit-touch-callout: none)`), because elsewhere it can drop desktop Chrome's calendar icon. |
 | X-6 clipboard | **Fixed** | Shared `copyText()`, so a success toast only shows on success. |
 | X-7 / X-8 Safari scrollbars, `<summary>` marker | **Fixed** | |
-| X-9 `background-attachment: fixed` | **Not done** | Purely visual on iOS; listed under deferred. |
+| X-9 `background-attachment: fixed` | **Fixed** | The body's ambient glow is a fixed `body::before` layer. The admin console's optional YC theme still uses the property; admin is a desktop tool, so it was left. |
 
 **Where the implementation departs from the plan:**
 - **Brand colours.** The plan proposed `color-mix(… 62%, var(--foreground))`. Bright brands (Snapchat yellow) fail at any single mix, so each brand hex is instead clamped to 4.5:1 per theme with the existing `clampForContrast`. Every curated brand and 400 hashed fallbacks pass on all four card surfaces (`smoke-brand-colors`).
@@ -664,14 +664,14 @@ All of it went through the shared layer first: the primitives, the theme tokens 
 - The empty-account copy on `/contacts` has changed.
 - **`scripts/legal-pages.lock.json` was re-recorded.** The only edits to `/privacy` and `/terms` are the page `<title>` (the template now adds "· Orbit") and a `ScrollRegion` around the Google-permissions table. No legal text changed. The lock exists so a person checks this, so please confirm.
 
-**Deferred, not done in this PR:**
+**Also fixed:** constellation edge labels are 10px in rem (were 8px) at 0.6 white (were 0.32, about 3:1).
+
+**Out of scope, not done in this PR (as agreed in the plan):**
 - Tab trapping and `inert` for the full-screen celebration and credits overlays (S-14).
-- `aria-activedescendant` on the email recipient combobox.
 - Listbox semantics for reminder rows.
 - An in-app "Reduce motion" setting.
-- A group label for the bulk-notes "Save as" radios.
-- `background-attachment: fixed` on iOS (X-9).
-- `.constellation-edge-label` at 8px (graph canvas labels).
+
+**Found after the audit, still open:** on the landing page, "How it works" steps the dot hasn't reached are dimmed or invisible while on screen, and the fixed "Join the waitlist" pill covers text at the bottom on phones.
 
 ---
 
