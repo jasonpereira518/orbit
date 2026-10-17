@@ -1,35 +1,20 @@
 /**
- * KNOWN BUG — documented, not fixed.
+ * A revoked Gmail grant fails the recruiter scan with needs_reconnect — it is not "no mail".
  *
- * Symptom: when Google stops honouring the access token mid-scan (the person revoked Orbit at
- * myaccount.google.com, changed their password, or a Workspace admin pulled the grant), the
- * Gmail recruiter scan does not stop and does not ask them to reconnect. Every sender is
- * recorded as "not a recruiter", the job ends `completed`, and the mailbox watermark advances
- * past the whole window — so those senders are never read again, even after a reconnect.
+ * Pins: `fetchGmailMessages`, `fetchGmailMessageLinks` and `fetchGmailThread`
+ * (src/lib/gmail.ts) throw `ReauthRequiredError` on a 401, like `fetchGmailHeaders` and
+ * Outlook's `fetchOutlookMessages`; and `runGmailRecruiterScanJob`
+ * (src/lib/gmail-scan-processor.ts) fails the import with errorCode `needs_reconnect`, leaves
+ * the unread senders pending, and does not advance the mailbox watermark.
  *
- * Defect: `fetchGmailMessages` (src/lib/gmail.ts:~964) returns null for ANY non-ok response,
- * 401 included (`if (!res.ok) return null;`), so a dead session is indistinguishable from
- * "these messages were deleted". `fetchGmailMessageLinks` (~923) and `fetchGmailThread`
- * (~1139) have the same shape. Their siblings already get this right: `fetchGmailHeaders`
- * (~810, whose comment describes exactly this failure) and Outlook's twin
- * `fetchOutlookMessages` (src/lib/outlook.ts:~786) throw `ReauthRequiredError` on 401.
+ * Why: the readers used to return null for any non-ok answer, so when Google stopped honouring
+ * the token mid-scan (access revoked, password changed, a Workspace admin pulling the grant)
+ * every sender read as having no messages, was recorded as "not a recruiter", and the scan
+ * completed — stepping the watermark past the whole window with no reconnect prompt, so those
+ * senders were never read again. The fix throws on 401 in the three readers and has the
+ * scan's sender catch stop on `ReauthRequiredError` the way the Outlook scan does.
  *
- * Trigger path: `runGmailRecruiterScanJob` (src/lib/gmail-scan-processor.ts) →
- * `processSender` → `deps.fetchMessages` (= `fetchGmailMessages`) → `[]` →
- * `if (messages.length === 0) return "rejected"` → row `skipped`, `consecutiveFailures`
- * reset to 0 (so the streak guard never fires) → `finalizeRecruiterScanIfDone` →
- * `markScanCompleted` advances the watermark. The access token is the one
- * `getValidAccessToken` read at the start of the invocation; it is not expired by the local
- * clock, so no refresh happens and nothing marks the connection `needs_reauth`. The Outlook
- * scan, by contrast, catches `ReauthRequiredError` (outlook-scan-processor.ts:~447) and fails
- * the import with errorCode `needs_reconnect`, which is what puts "Reconnect" in front of
- * the person.
- *
- * A fix (throw `ReauthRequiredError` on 401 in the three readers, and let the Gmail scan's
- * sender catch handle it the way Outlook's does) makes every `knownBug` below hold; the script
- * then exits 0 and belongs in the pglite tier.
- *
- * Run: npx tsx scripts/smoke-bug-gmail-401-swallowed.ts   (exits 3 while the bug exists)
+ * Run: npx tsx scripts/smoke-gmail-401-reauth.ts
  */
 import "./smoke/_env";
 import { run } from "./smoke/_env";
@@ -107,7 +92,7 @@ run(async () => {
       route("GET", /graph\.microsoft\.com\/v1\.0\/me\/messages\//, () => status(401, GRAPH_401)),
     ]);
     try {
-      // The correct behaviour, already true of Outlook's twin.
+      // Outlook's twin, which always got this right.
       await t.rejects("Outlook: fetchOutlookMessages turns a 401 into ReauthRequiredError", () => fetchOutlookMessages(TOKEN, ["AAMkAD-test"]), (e) =>
         e instanceof ReauthRequiredError
       );
@@ -119,8 +104,8 @@ run(async () => {
       } catch (e) {
         messagesErr = e;
       }
-      t.knownBug(
-        "BUG: fetchGmailMessages returns [] on 401 instead of throwing ReauthRequiredError",
+      t.check(
+        "fetchGmailMessages turns a 401 into ReauthRequiredError",
         messagesErr instanceof ReauthRequiredError,
         `returned ${JSON.stringify(messages)}`
       );
@@ -132,8 +117,8 @@ run(async () => {
       } catch (e) {
         linksErr = e;
       }
-      t.knownBug(
-        "BUG: fetchGmailMessageLinks returns [] on 401 instead of throwing ReauthRequiredError",
+      t.check(
+        "fetchGmailMessageLinks turns a 401 into ReauthRequiredError",
         linksErr instanceof ReauthRequiredError,
         `returned ${JSON.stringify(links)}`
       );
@@ -145,8 +130,8 @@ run(async () => {
       } catch (e) {
         threadErr = e;
       }
-      t.knownBug(
-        "BUG: fetchGmailThread returns null on 401 instead of throwing ReauthRequiredError",
+      t.check(
+        "fetchGmailThread turns a 401 into ReauthRequiredError",
         threadErr instanceof ReauthRequiredError,
         `returned ${JSON.stringify(thread)}`
       );
@@ -190,18 +175,18 @@ run(async () => {
 
     t.check("Gmail was asked for the senders' messages", http.calls.length >= 1, String(http.calls.length));
     t.check("the classifier was never reached", classified === 0, String(classified));
-    t.knownBug(
-      "BUG: a revoked Gmail token completes the recruiter scan instead of failing it with needs_reconnect",
+    t.check(
+      "a revoked Gmail token fails the recruiter scan with needs_reconnect",
       job?.status === "failed" && job?.stats?.errorCode === "needs_reconnect",
       `status=${job?.status} errorCode=${String(job?.stats?.errorCode)}`
     );
-    t.knownBug(
-      "BUG: senders whose mail could not be read are recorded as rejected (skipped)",
+    t.check(
+      "senders whose mail could not be read are not recorded as rejected (skipped)",
       rows.every((r) => r.status !== "skipped"),
       `row statuses: ${rows.map((r) => r.status).join(",")}`
     );
-    t.knownBug(
-      "BUG: the mailbox watermark advances past the unread window",
+    t.check(
+      "the mailbox watermark does not advance past the unread window",
       !mark?.lastScanAt,
       `lastScanAt=${mark?.lastScanAt?.toISOString?.() ?? String(mark?.lastScanAt)}`
     );
@@ -223,5 +208,5 @@ run(async () => {
   }
 
   await purgeUsers(db, [USER]);
-  t.done("gmail 401 swallowed (known bug)");
+  t.done("gmail 401 reauth");
 });

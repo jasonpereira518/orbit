@@ -1,33 +1,20 @@
 /**
- * KNOWN BUG — documented, not fixed.
+ * Cloud notes recovers from a dead change cursor instead of replaying it forever.
  *
- * Symptom: once a watched drive's stored change cursor dies, cloud notes stop finding new
- * meeting notes in that drive forever. Every pass replays the same dead cursor, fails, stamps
- * "Couldn’t check this drive — will try again" and schedules another try an hour later — which
- * fails the same way. Nothing ever drops the cursor or re-runs the 30-day look-back, and the
- * error copy promises a recovery that cannot happen.
+ * Pins: when a watched drive's stored cursor has expired — OneDrive's `410 Gone`
+ * (`resyncRequired`) for a delta token it no longer tracks, or Drive's `400 Invalid Value`
+ * on `pageToken` — `listChanges` (src/lib/cloud-files.ts) throws `CloudCursorExpiredError`,
+ * and `scanSource` (src/lib/cloud-notes/scan.ts) drops the cursor, takes a fresh one and
+ * re-runs the 30-day look-back in the same pass. The dead cursor is sent once, never again,
+ * and the drive is not parked as needing a reconnect.
  *
- * Realistic trigger: OneDrive expires delta tokens it no longer tracks (a drive not scanned for
- * a while — e.g. the person turned the feature off and on, or the cron was paused), answering
- * `410 Gone` with `{"error":{"code":"resyncRequired"}}`; Microsoft's documented contract is
- * "discard the token and start a fresh delta". Google Drive answers a page token it rejects
- * with `400 Invalid Value (location: pageToken)`. Either way `listChanges` throws a plain
- * `Error("OneDrive returned 410")` / `Error("Drive returned 400")` (src/lib/cloud-files.ts:~127
- * `graphResponse`, ~103 `googleJson`), with no typed "start over" error like the calendar
- * connectors' `CalendarSyncTokenExpiredError`.
+ * Why: every non-reauth failure used to be treated as transient — cursor kept, "Couldn’t
+ * check this drive — will try again", retry in an hour with the same dead value — so a drive
+ * whose token expired (the feature toggled off and on, a paused cron) was never scanned
+ * again. Both providers' contract is "discard the token and start a fresh sync". Already-filed
+ * docs are skipped by `cloud_note_files`, so the look-back does not duplicate them.
  *
- * Defect: `scanSource` (src/lib/cloud-notes/scan.ts:~201-212) treats every non-reauth failure as
- * transient: it keeps `cursor` as stored, sets `lastError`, and pushes `nextScanAt` out by
- * RETRY_AFTER_ERROR_MS (1 h). There is no branch that clears `cursor` (or `backfilledAt`) on an
- * expired-cursor answer, so `listChanges(ctx, provider, cursor)` at scan.ts:~88 is retried with
- * the same dead value on every pass, from `runCloudNotesPass` (cron) and
- * `scanStaleCloudNotesForUser` (app open) alike.
- *
- * A fix (a typed expired-cursor error from `listChanges`, and `scanSource` dropping the cursor —
- * and re-running the look-back — when it sees one) makes each `knownBug` below hold; the script
- * then exits 0 and belongs in the pglite tier.
- *
- * Run: npx tsx scripts/smoke-bug-cloud-notes-dead-cursor.ts   (exits 3 while the bug exists)
+ * Run: npx tsx scripts/smoke-cloud-notes-dead-cursor.ts
  */
 import "./smoke/_env";
 import { run } from "./smoke/_env";
@@ -48,7 +35,7 @@ const HOUR = 60 * 60_000;
 type Case = {
   provider: CloudProvider;
   deadCursor: string;
-  /** The provider's answer to the dead cursor, and to a fresh start (which a fix would make). */
+  /** The provider's answer to the dead cursor, and to the fresh start the scan then makes. */
   answer: (url: string) => Response;
 };
 
@@ -127,20 +114,20 @@ run(async () => {
     const deadAsks = calls.filter((call) => call.url.includes(c.provider === "microsoft" ? "expired" : "pageToken=9876543")).length;
 
     t.check("the provider answered the dead cursor as expired/invalid", deadAsks >= 1, `${deadAsks} request(s)`);
-    // True before and after a fix: an expired cursor is the provider's lifecycle, not a dead grant.
+    // An expired cursor is the provider's lifecycle, not a dead grant.
     t.check("the drive is not parked as needing a reconnect", row.lastError === null || !/reconnect/i.test(row.lastError), String(row.lastError));
-    t.knownBug(
-      `BUG: ${c.provider} — the dead change cursor is kept and replayed on every pass`,
+    t.check(
+      `${c.provider} — the dead change cursor is dropped, not replayed on every pass`,
       row.cursor !== c.deadCursor && deadAsks <= 1,
-      `cursor unchanged after 3 passes; dead cursor sent ${deadAsks}×; errors: ${errors.join(" | ")}`
+      `cursor=${row.cursor} after 3 passes; dead cursor sent ${deadAsks}×; errors: ${errors.join(" | ")}`
     );
-    t.knownBug(
-      `BUG: ${c.provider} — the drive never recovers (no fresh cursor, no new look-back)`,
+    t.check(
+      `${c.provider} — the drive recovers (a fresh cursor and a new look-back)`,
       row.lastError === null || errors.length < 3,
       `${errors.length}/3 passes failed; nextScanAt=${row.nextScanAt.toISOString()}`
     );
   }
 
   await purgeUsers(db, users);
-  t.done("cloud notes dead cursor (known bug)");
+  t.done("cloud notes dead cursor");
 });

@@ -1,36 +1,21 @@
 /**
- * KNOWN BUG — documented, not fixed.
+ * Microsoft Graph page and delta links are followed only when they are Graph's own.
  *
- * Symptom: the Microsoft calendar and contacts sync connectors follow whatever URL a page's
- * `@odata.nextLink` / `@odata.deltaLink` names and send the user's Graph bearer token to it,
- * with no check that the host is Graph. A link pointing at `https://evil.example.com/...`
- * receives `Authorization: Bearer <the user's Microsoft access token>` — a token that reads
- * their mail, calendar and contacts for the next hour.
+ * Pins: `fetchCalendarPage` (stored `pageToken` nextLink and `syncToken` deltaLink) and
+ * `fetchCalendarWindow` (a page's `@odata.nextLink`) in src/lib/connectors/microsoft-calendar.ts,
+ * `fetchContactsPage` in src/lib/connectors/microsoft-contacts.ts and `listOutlookMessagePage`'s
+ * `skipToken` in src/lib/outlook.ts send no request — and so no bearer token — to a host other
+ * than `https://graph.microsoft.com/v1.0/`. The cloud-notes reader's existing guard
+ * (`listChanges` refusing a foreign OneDrive cursor) is the comparison case.
  *
- * Defect: `fetchCalendarPage` (src/lib/connectors/microsoft-calendar.ts:~183, the
- * `url = cursor.pageToken` / `url = cursor.syncToken` branches), `fetchCalendarWindow` (~291,
- * `url = body["@odata.nextLink"]`) and `fetchContactsPage` (src/lib/connectors/
- * microsoft-contacts.ts:~145, `url = cursor?.pageToken || ...`); the same shape is in
- * `listOutlookMessagePage` (src/lib/outlook.ts:~597, `opts.skipToken`, persisted in the
- * scan job's stats between invocations). The cloud-notes reader
- * already guards the identical pattern: `assertGraphUrl` in src/lib/cloud-files.ts:~143
- * ("A cursor or page link is only ever one Graph handed back — never follow anything else
- * with the token").
+ * Why: these links are full URLs that the sync scheduler and the Outlook scan persist (the
+ * connection's `sync_cursor`, the scan job's stats) and replay with a fresh token, so a link
+ * naming another host would hand that host the user's Microsoft access token. Graph never
+ * does; this is defence in depth against a tampered response or a written-to cursor. The fix
+ * moved `assertGraphUrl` from src/lib/cloud-files.ts to src/lib/graph-fetch.ts and calls it
+ * before every stored or followed link.
  *
- * Trigger path: the sync scheduler (`syncMicrosoftCalendar` / `syncMicrosoftContacts` in
- * src/lib/sync-scheduler.ts) persists each page's link into the connection's `sync_cursor`
- * jsonb and replays it with a fresh token on the next run. So the link is attacker-reachable
- * by anything that can influence a Graph response in transit or write that jsonb (a SQL
- * injection elsewhere, a compromised admin tool, a restored backup) — and the stored link
- * outlives the original token, turning one write into a standing token-exfiltration hook.
- * Severity is defence-in-depth (Graph itself does not hand out foreign links), which is why
- * the sibling module already carries the check.
- *
- * A fix (reject any link not under `https://graph.microsoft.com/v1.0/` before fetching, as
- * `assertGraphUrl` does) makes each `knownBug` below hold — no request reaches the foreign
- * host — and the script then exits 0 and belongs in the pure tier.
- *
- * Run: npx tsx scripts/smoke-bug-graph-nextlink-token-leak.ts   (exits 3 while the bug exists)
+ * Run: npx tsx scripts/smoke-graph-nextlink-guard.ts
  */
 import { fetchCalendarPage, fetchCalendarWindow } from "../src/lib/connectors/microsoft-calendar";
 import { fetchContactsPage } from "../src/lib/connectors/microsoft-contacts";
@@ -82,7 +67,7 @@ async function main() {
       const before = http.calls.length;
       await attempt(() => fetchCalendarPage({ accessToken: TOKEN, cursor: { pageToken: EVIL }, ownerEmail: OWNER.email }));
       const sent = leaked(http.calls.slice(before));
-      t.knownBug("BUG: fetchCalendarPage sends the bearer token to a non-Graph nextLink host", sent.length === 0, sent.map((c) => c.url).join(", "));
+      t.check("fetchCalendarPage sends no bearer token to a non-Graph nextLink host", sent.length === 0, sent.map((c) => c.url).join(", "));
     }
 
     console.log("calendar delta: a stored deltaLink (cursor.syncToken) on a foreign host");
@@ -90,7 +75,7 @@ async function main() {
       const before = http.calls.length;
       await attempt(() => fetchCalendarPage({ accessToken: TOKEN, cursor: { syncToken: EVIL.replace("skiptoken", "deltatoken") }, ownerEmail: OWNER.email }));
       const sent = leaked(http.calls.slice(before));
-      t.knownBug("BUG: fetchCalendarPage sends the bearer token to a non-Graph deltaLink host", sent.length === 0, sent.map((c) => c.url).join(", "));
+      t.check("fetchCalendarPage sends no bearer token to a non-Graph deltaLink host", sent.length === 0, sent.map((c) => c.url).join(", "));
     }
 
     console.log("calendar window: a page's own @odata.nextLink on a foreign host");
@@ -99,7 +84,7 @@ async function main() {
       await attempt(() => fetchCalendarWindow({ accessToken: TOKEN, from: new Date(), to: new Date(), maxPages: 2 }));
       const sent = leaked(http.calls.slice(before));
       t.check("the first, legitimate request went to Graph", http.calls[before]?.url.startsWith("https://graph.microsoft.com/") === true);
-      t.knownBug("BUG: fetchCalendarWindow follows a non-Graph @odata.nextLink with the bearer token", sent.length === 0, sent.map((c) => c.url).join(", "));
+      t.check("fetchCalendarWindow does not follow a non-Graph @odata.nextLink", sent.length === 0, sent.map((c) => c.url).join(", "));
     }
 
     console.log("contacts: a stored nextLink on a foreign host");
@@ -107,7 +92,7 @@ async function main() {
       const before = http.calls.length;
       await attempt(() => fetchContactsPage({ accessToken: TOKEN, cursor: { pageToken: "https://evil.example.com/v1.0/me/contacts?$skip=200" } }));
       const sent = leaked(http.calls.slice(before));
-      t.knownBug("BUG: fetchContactsPage sends the bearer token to a non-Graph nextLink host", sent.length === 0, sent.map((c) => c.url).join(", "));
+      t.check("fetchContactsPage sends no bearer token to a non-Graph nextLink host", sent.length === 0, sent.map((c) => c.url).join(", "));
     }
 
     console.log("outlook recruiter scan: a stored skipToken (nextLink) on a foreign host");
@@ -115,13 +100,13 @@ async function main() {
       const before = http.calls.length;
       await attempt(() => listOutlookMessagePage(TOKEN, { query: "recruiter", skipToken: "https://evil.example.com/v1.0/me/messages?$skiptoken=x" }));
       const sent = leaked(http.calls.slice(before));
-      t.knownBug("BUG: listOutlookMessagePage sends the bearer token to a non-Graph skipToken host", sent.length === 0, sent.map((c) => c.url).join(", "));
+      t.check("listOutlookMessagePage sends no bearer token to a non-Graph skipToken host", sent.length === 0, sent.map((c) => c.url).join(", "));
     }
   } finally {
     http.restore();
   }
 
-  t.done("graph nextLink token leak (known bug)");
+  t.done("graph nextLink guard");
 }
 
 main().catch((err) => {
