@@ -16,6 +16,14 @@ import { join, dirname } from "node:path";
 const NEXT = ".next";
 const APP = join(NEXT, "server", "app");
 
+// The framework runtime (React DOM, the router, the Turbopack runtime) every page loads
+// before its own entries. It is not in any page's `entryJSFiles`, so without it every
+// first-load figure here read ~132 KB gz low. `polyfillFiles` are left out: they load
+// with `noModule`, which a current browser skips.
+const ROOT_MAIN_FILES = existsSync(join(NEXT, "build-manifest.json"))
+  ? JSON.parse(readFileSync(join(NEXT, "build-manifest.json"), "utf8")).rootMainFiles ?? []
+  : [];
+
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
@@ -42,7 +50,7 @@ for (const manifestPath of walk(APP)) {
   const [[route, manifest]] = Object.entries(sandbox.globalThis.__RSC_MANIFEST);
   if (!route.endsWith("/page")) continue;
 
-  const chunks = new Set();
+  const chunks = new Set(ROOT_MAIN_FILES.map((f) => `/_next/${f}`));
   for (const list of Object.values(manifest.entryJSFiles ?? {})) for (const c of list) chunks.add(c);
   let raw = 0;
   let gz = 0;
