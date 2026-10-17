@@ -498,7 +498,7 @@ export function CommandPaletteDialog({
       <DialogContent
         showCloseButton={false}
         initialFocus={inputRef}
-        className="top-[14vh] translate-y-0 gap-0 overflow-hidden rounded-2xl p-0 shadow-2xl ring-foreground/[0.08] sm:max-w-[34rem]"
+        className="top-[14dvh] translate-y-0 gap-0 overflow-hidden rounded-2xl p-0 shadow-2xl ring-foreground/[0.08] sm:max-w-[34rem]"
       >
         <DialogTitle className="sr-only">Search Orbit</DialogTitle>
         <div className="flex items-center gap-3 px-4">
@@ -528,7 +528,7 @@ export function CommandPaletteDialog({
           id={listboxId}
           role="listbox"
           aria-label="Results"
-          className="max-h-[min(60vh,26rem)] overflow-y-auto overscroll-contain border-t border-border/50 px-2 pb-2"
+          className="max-h-[min(60dvh,26rem)] overflow-y-auto overscroll-contain border-t border-border/50 px-2 pb-2"
         >
           {rows.length === 0 ? (
             <div className="px-4 py-10 text-center">

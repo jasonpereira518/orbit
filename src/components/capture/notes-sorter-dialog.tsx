@@ -337,7 +337,7 @@ export function NotesSorterDialog({
         if (!next) onCancel();
       }}
     >
-      <DialogContent className="max-h-[90vh] w-full max-w-4xl grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-4xl">
+      <DialogContent className="max-h-[90dvh] w-full max-w-4xl grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>
             {hashing
