@@ -5,7 +5,6 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { WarpProvider } from "@/components/warp/warp-provider";
 import { PageviewBeacon } from "@/components/analytics/pageview-beacon";
 import { VercelTelemetry } from "@/components/analytics/vercel-telemetry";
-import "./globals.css";
 
 const outfit = Outfit({
   variable: "--font-sans",
