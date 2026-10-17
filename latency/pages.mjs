@@ -319,6 +319,9 @@ async function warmRoutes(browser, contactPath) {
   const context = await newContext(browser, "desktop");
   const page = await context.newPage();
   for (const key of Object.keys(PAGES)) {
+    // Honour --skip here too: warming a page known to hang the tier (see tier-50k.sh) would
+    // freeze the single-writer database for every page after it.
+    if (SKIP.includes(key) || (ONLY.length && !ONLY.includes(key))) continue;
     const path = key === "/contacts/[id]" ? contactPath : key;
     if (!path) continue;
     await page.goto(`${BASE}${path}`, { waitUntil: "load", timeout: 180_000 }).catch((e) => console.warn("warm", path, String(e).slice(0, 80)));
