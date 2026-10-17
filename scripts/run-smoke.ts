@@ -228,6 +228,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-finish-scene-geometry": "pure",
   "smoke-linkedin-slug-guard": "pglite",
   "smoke-search-tsv-guard": "pglite",
+  "smoke-neon-fetch": "pure",
   "smoke-shared-avatars": "pglite",
   "smoke-shared-avatar-reads": "pglite",
   "smoke-shared-avatar-writes": "pglite",

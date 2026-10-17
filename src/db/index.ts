@@ -1,7 +1,8 @@
 import { drizzle as drizzleNeon } from "drizzle-orm/neon-http";
 import type { BatchItem } from "drizzle-orm/batch";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
-import { neon } from "@neondatabase/serverless";
+import { neon, neonConfig } from "@neondatabase/serverless";
+import { createResilientFetch } from "./neon-fetch";
 // Type-only on purpose. PGlite is the local-development database (no DATABASE_URL); a real
 // import would load it — and make the bundler trace its 21MB of WASM into every serverless
 // function — in production, where it can never run. `ensureReady` imports it lazily instead.
@@ -4906,6 +4907,8 @@ async function ensureReady(): Promise<void> {
 
   if (databaseUrl) {
     if (!globalForDb.orbitNeonSql) {
+      // A deadline on every statement and one retry of a plain read; see ./neon-fetch.ts.
+      neonConfig.fetchFunction = createResilientFetch();
       globalForDb.orbitNeonSql = neon(databaseUrl);
     }
     return;
