@@ -74,10 +74,26 @@ async function run(jobId: string) {
   const started = performance.now();
   let firstChunkAt: number | null = null;
   // Watch the job row the way the client's poll does, to time the first visible progress.
+  // Every change the poll sees is kept (first 40), with the poll's own round-trip time, so a
+  // poll that is starved or queued behind the engine's statements is visible as such.
+  const samples: Array<{ at: number; rows: number | null; poll_ms: number; error?: string }> = [];
+  let lastRows: number | null = null;
+  let polling = false;
   const watcher = setInterval(async () => {
-    if (firstChunkAt != null) return;
-    const row = await db.query.imports.findFirst({ where: eq(imports.id, jobId), columns: { rowsProcessed: true } }).catch(() => null);
-    if (row && Number((row as { rowsProcessed?: number }).rowsProcessed ?? 0) > 0) firstChunkAt = performance.now() - started;
+    if (polling) return;
+    polling = true;
+    const t = performance.now();
+    try {
+      const row = await db.query.imports.findFirst({ where: eq(imports.id, jobId), columns: { rowsProcessed: true } });
+      const rows = Number((row as { rowsProcessed?: number } | undefined)?.rowsProcessed ?? 0);
+      if (rows !== lastRows && samples.length < 40) samples.push({ at: Math.round(performance.now() - started), rows, poll_ms: Math.round(performance.now() - t) });
+      lastRows = rows;
+      if (firstChunkAt == null && rows > 0) firstChunkAt = performance.now() - started;
+    } catch (err) {
+      if (samples.length < 40) samples.push({ at: Math.round(performance.now() - started), rows: null, poll_ms: Math.round(performance.now() - t), error: String(err).slice(0, 120) });
+    } finally {
+      polling = false;
+    }
   }, 250);
   startQueryCount();
   try { await runImportJob(jobId); } catch (err) { const m = String(err); if (!m.includes("static generation store missing")) throw err; }
@@ -86,7 +102,7 @@ async function run(jobId: string) {
   const total = performance.now() - started;
   const finished = await db.query.imports.findFirst({ where: eq(imports.id, jobId) });
   const f = finished as unknown as { status?: string; rowsProcessed?: number; stats?: Record<string, unknown> } | undefined;
-  return { run_ms: Math.round(total), first_progress_ms: firstChunkAt == null ? null : Math.round(firstChunkAt), status: f?.status, processed: f?.rowsProcessed, stats: f?.stats, statements, chunk_size: CHUNK_SIZE, rows_per_s: f?.rowsProcessed ? Math.round((f.rowsProcessed / total) * 1000) : null };
+  return { run_ms: Math.round(total), first_progress_ms: firstChunkAt == null ? null : Math.round(firstChunkAt), progress_samples: samples, status: f?.status, processed: f?.rowsProcessed, stats: f?.stats, statements, chunk_size: CHUNK_SIZE, rows_per_s: f?.rowsProcessed ? Math.round((f.rowsProcessed / total) * 1000) : null };
 }
 
 async function main() {
@@ -97,10 +113,11 @@ async function main() {
   const staged = await stage(csv);
   console.error("stage:", JSON.stringify(staged));
   const create = await run(staged.jobId);
-  console.error("run (creates):", JSON.stringify({ ...create, stats: undefined }));
+  console.error("run (creates):", JSON.stringify({ ...create, stats: undefined, progress_samples: undefined }));
+  console.error("progress samples (creates):", JSON.stringify(create.progress_samples));
   const staged2 = await stage(csv);
   const merge = await run(staged2.jobId);
-  console.error("run (merges):", JSON.stringify({ ...merge, stats: undefined }));
+  console.error("run (merges):", JSON.stringify({ ...merge, stats: undefined, progress_samples: undefined }));
   // Leave the tier as it was found: only the rows this script created carry its URLs.
   const { sql } = await import("drizzle-orm");
   await db.execute(sql`DELETE FROM contacts WHERE user_id = ${USER} AND linkedin_url LIKE 'https://www.linkedin.com/in/lat-import-%'`);
