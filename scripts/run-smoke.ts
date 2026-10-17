@@ -587,6 +587,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-import-perf": "manual", // wall-clock budgets; run by hand or nightly
   "smoke-stripe-testclock": "manual", // Stripe sandbox + test clocks; several minutes
   // bug: documented defects, expected to fail (see the header) ---------------------------
+  "smoke-bug-linkedin-slug": "bug",
 };
 
 const TIMEOUT_MS: Partial<Record<string, number>> = {
