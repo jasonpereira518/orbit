@@ -1,13 +1,5 @@
-◇ injected env (0) from .env.local // tip: ⌘ enable debugging { debug: true }
+◇ injected env (0) from .env.local // tip: ⌘ custom filepath { path: '/custom/path/.env' }
 ◇ injected env (0) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
 migrate: reconciling schema version 170 on DATABASE_URL…
-[db] DDL statement failed: ALTER TABLE contacts ADD COLUMN IF NOT EXISTS search_tsv tsvector
- canceling statement due to statement timeout
-[db] DDL statement failed: CREATE INDEX IF NOT EXISTS contacts_search_gin ON contacts USING gin(search_tsv)
- column "search_tsv" does not exist
-migrate: 2 DDL statement(s) failed:
-  ✗ ALTER TABLE contacts ADD COLUMN IF NOT EXISTS search_tsv tsvector
-      canceling statement due to statement timeout
-  ✗ CREATE INDEX IF NOT EXISTS contacts_search_gin ON contacts USING gin(search_tsv)
-      column "search_tsv" does not exist
-migrate: refusing to build on a partially migrated schema.
+migrate: claimed 2000 contact identities across 2000 contacts (more remain; the next deploy continues)
+migrate: schema version 170 applied; DATABASE_URL matches schema.ts.

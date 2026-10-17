@@ -1,5 +1,5 @@
-◇ injected env (0) from .env.local // tip: ⌘ custom filepath { path: '/custom/path/.env' }
-◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+◇ injected env (0) from .env.local // tip: ◈ secrets for agents [www.dotenvx.com]
+◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
 migrate: reconciling schema version 170 on DATABASE_URL…
 migrate: claimed 2000 contact identities across 2000 contacts (more remain; the next deploy continues)
 migrate: schema version 170 applied; DATABASE_URL matches schema.ts.

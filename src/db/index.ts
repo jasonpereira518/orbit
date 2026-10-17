@@ -3259,6 +3259,63 @@ async function runStatements(
   }
 }
 
+/** The rewrite SCALE_DDL performs when the search_tsv expression changes. Matched by exact text. */
+export const DROP_SEARCH_TSV_STATEMENT = "ALTER TABLE contacts DROP COLUMN IF EXISTS search_tsv";
+
+/** The declared `search_tsv` expression, read out of its ADD statement in SCALE_DDL. */
+export function declaredSearchTsvExpression(): string | null {
+  const add = SCALE_DDL.find((s) => s.startsWith("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS search_tsv"));
+  return add ? (/GENERATED ALWAYS AS \(([\s\S]*)\) STORED/.exec(add)?.[1] ?? null) : null;
+}
+
+/**
+ * Whether two renderings of a generated expression are the same expression. Postgres stores
+ * `'simple'::regconfig`, `''::text`, `(opportunities)::text` and extra parentheses where the
+ * source has none, so casts, whitespace and parentheses are stripped from both sides.
+ */
+export function generatedExpressionsMatch(stored: string, declared: string): boolean {
+  const norm = (e: string) => e.toLowerCase().replace(/::("?[a-z_]+"?)/g, "").replace(/[\s()]/g, "");
+  return norm(stored) === norm(declared);
+}
+
+/** The stored search_tsv expression, null when there is no such column, undefined when unreadable. */
+async function storedSearchTsvExpression(run: StatementRunner): Promise<string | null | undefined> {
+  try {
+    const result = await run(
+      `SELECT pg_get_expr(d.adbin, d.adrelid) AS expr
+         FROM pg_attribute a
+         JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+        WHERE a.attrelid = to_regclass(\'public.contacts\')
+          AND a.attname = \'search_tsv\'
+          AND NOT a.attisdropped`
+    );
+    return rowsOf<{ expr: string | null }>(result)[0]?.expr ?? null;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The stored definition of an index, null when absent or invalid, undefined when unreadable. */
+async function storedValidIndexDef(run: StatementRunner, name: string): Promise<string | null | undefined> {
+  try {
+    const result = await run(
+      `SELECT pg_get_indexdef(i.indexrelid) AS def
+         FROM pg_index i
+        WHERE i.indexrelid = to_regclass(\'public.${name}\') AND i.indisvalid`
+    );
+    return rowsOf<{ def: string | null }>(result)[0]?.def ?? null;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The trigram index the fuzzy-name arm needs; both columns on the lower() expressions. */
+const NAME_TRGM_INDEX_SQL = `CREATE INDEX IF NOT EXISTS contacts_name_trgm
+       ON contacts USING gin(lower(full_name) gin_trgm_ops, lower(coalesce(company, \'\')) gin_trgm_ops)`;
+export function nameTrgmIndexIsCurrent(def: string): boolean {
+  return /using gin/i.test(def) && /lower\(full_name\) gin_trgm_ops/i.test(def) && /lower\(COALESCE\(company/i.test(def);
+}
+
 /**
  * The scale schema, applied identically to Neon and PGlite.
  *
@@ -3272,7 +3329,21 @@ export async function applyScaleSchema(run: StatementRunner, failed?: SchemaFail
   // old unconditional behaviour is the safe default).
   const stored = await storedLinkedinSlugExpression(run);
   const rewriteSlug = stored === undefined || linkedinSlugNeedsRewrite(stored);
-  const statements = rewriteSlug ? SCALE_DDL : SCALE_DDL.filter((s) => s !== DROP_LINKEDIN_SLUG_STATEMENT);
+  // Same for search_tsv: its DROP + ADD rewrites every contacts row under an exclusive lock
+  // and drops contacts_search_gin with it, so live search has no column until the ADD lands
+  // (and with a statement_timeout on the role, the ADD can fail and leave it gone for good).
+  // Only run it when the stored expression really differs; unreadable or absent keeps the
+  // old behaviour, which is the safe default.
+  const storedTsv = await storedSearchTsvExpression(run);
+  const declaredTsv = declaredSearchTsvExpression();
+  const rewriteTsv =
+    storedTsv === undefined || storedTsv === null || declaredTsv === null ||
+    !generatedExpressionsMatch(storedTsv, declaredTsv);
+  const statements = SCALE_DDL.filter(
+    (s) =>
+      (rewriteSlug || s !== DROP_LINKEDIN_SLUG_STATEMENT) &&
+      (rewriteTsv || s !== DROP_SEARCH_TSV_STATEMENT)
+  );
   await runStatements(run, statements, "scale DDL", failed);
 
   // Fuzzy name matching. Available on Neon as an extension and bundled with PGlite (see
@@ -3282,18 +3353,25 @@ export async function applyScaleSchema(run: StatementRunner, failed?: SchemaFail
   // and search still works through `search_tsv`; only typo tolerance is lost.
   try {
     await run(`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
-    // The predicates in searchCondition and the hybrid search arms compare
-    // lower(column), so the index must be on the identical expression or the
-    // planner ignores it. The old contacts_name_trgm on the raw columns was
-    // never usable; drop it on the way through.
-    await run(`DROP INDEX IF EXISTS contacts_name_trgm`);
-    await run(
-      `CREATE INDEX IF NOT EXISTS contacts_name_trgm
-       ON contacts USING gin(lower(full_name) gin_trgm_ops, lower(coalesce(company, '')) gin_trgm_ops)`
-    );
     globalForDb.orbitTrigram = true;
   } catch {
     globalForDb.orbitTrigram = false;
+  }
+  if (globalForDb.orbitTrigram) {
+    // The predicates in searchCondition and the hybrid search arms compare
+    // lower(column), so the index must be on the identical expression or the
+    // planner ignores it (the old one on the raw columns was never usable). Rebuild it
+    // only when it is missing, invalid or the wrong shape, and report a failed rebuild:
+    // swallowing it left production without the index and still recorded the version.
+    const def = await storedValidIndexDef(run, "contacts_name_trgm");
+    if (def == null || !nameTrgmIndexIsCurrent(def)) {
+      await runStatements(
+        run,
+        [`DROP INDEX IF EXISTS contacts_name_trgm`, NAME_TRGM_INDEX_SQL],
+        "trigram index",
+        failed
+      );
+    }
   }
 
   // `contact_tags` has a surrogate primary key and no natural uniqueness, so a double write
