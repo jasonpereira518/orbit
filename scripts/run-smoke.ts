@@ -140,6 +140,12 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-resend-signature": "pglite",
   "smoke-cron-gates": "pglite", // every public route has a gate; every cron route answers 401 unauthenticated
   "smoke-token-routes": "pglite",
+  // Third-party contracts: real response shapes, errors and malformed bodies, fetch mocked.
+  "smoke-contract-gmail": "pure",
+  "smoke-contract-microsoft-sync": "pure",
+  "smoke-contract-events-cloud": "pure",
+  "smoke-contract-oauth-tokens": "pglite",
+  "smoke-contract-llm": "pglite",
   "smoke-draft-follow-up-result": "pglite",
   "smoke-relationship-schema": "pglite",
   "smoke-ai-guardrails": "pglite",
@@ -593,6 +599,11 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-stripe-testclock": "manual", // Stripe sandbox + test clocks; several minutes
   // bug: documented defects, expected to fail (see the header) ---------------------------
   "smoke-bug-linkedin-slug": "bug",
+  "smoke-bug-gmail-401-swallowed": "bug",
+  "smoke-bug-graph-nextlink-token-leak": "bug",
+  "smoke-bug-graph-sync-resilience": "bug",
+  "smoke-bug-cloud-notes-dead-cursor": "bug",
+  "smoke-bug-llm-truncated-json-accepted": "bug",
 };
 
 const TIMEOUT_MS: Partial<Record<string, number>> = {
