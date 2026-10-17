@@ -15,6 +15,7 @@ import { daysAgo } from "@/lib/duplicates";
 import { isCometContact } from "@/lib/comet";
 import { buildConstellationClusters } from "@/lib/constellation-clusters";
 import { computeNetworkMetrics, selectMetricsSample } from "@/lib/network-metrics";
+import { rememberedPeerLinkSummary } from "@/lib/network-metrics-memo";
 import {
   getDashboardCounts,
   getGoalAlignedContactIds,
@@ -1116,31 +1117,33 @@ export async function getDashboardData(
     loadRecentContacts(userId),
   ]);
 
+  const metricsSample = metricsSampleIds.flatMap((id) => {
+    const d = detail.get(id);
+    const light = lightById.get(id);
+    if (!d || !light) return [];
+    return [{
+      id,
+      fullName: d.fullName,
+      preferredName: d.preferredName,
+      company: light.company ?? null,
+      school: light.school ?? null,
+      title: d.title,
+      relationshipScore: light.relationshipScore ?? 2,
+      lastInteractionAt: d.lastInteractionAt,
+      nextFollowUpAt: null,
+      tags: d.tags,
+      notes: null,
+      aiSummary: d.aiSummary,
+      keyFacts: d.keyFacts,
+      howMet: d.howMet,
+      sharedInterests: d.sharedInterests,
+    }];
+  });
   const networkMetrics = computeNetworkMetrics(
-    metricsSampleIds.flatMap((id) => {
-      const d = detail.get(id);
-      const light = lightById.get(id);
-      if (!d || !light) return [];
-      return [{
-        id,
-        fullName: d.fullName,
-        preferredName: d.preferredName,
-        company: light.company ?? null,
-        school: light.school ?? null,
-        title: d.title,
-        relationshipScore: light.relationshipScore ?? 2,
-        lastInteractionAt: d.lastInteractionAt,
-        nextFollowUpAt: null,
-        tags: d.tags,
-        notes: null,
-        aiSummary: d.aiSummary,
-        keyFacts: d.keyFacts,
-        howMet: d.howMet,
-        sharedInterests: d.sharedInterests,
-      }];
-    }),
+    metricsSample,
     closenessCohort.byId,
-    counts.totalContacts
+    counts.totalContacts,
+    rememberedPeerLinkSummary(metricsSample)
   );
 
   // The cohort IS the closeness map. It used to be rebuilt as a joined copy of every

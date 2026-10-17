@@ -90,9 +90,20 @@ export function buildConstellationClusters(
   const industryCounts = new Map<string, number>();
   const industryLabel = new Map<string, string>();
   const industryKey = (raw: string | null | undefined) => trimLabel(raw).toLowerCase().replace(/\s+/g, " ");
+  // Once per distinct spelling, not twice per contact: the canonical-name rules were most of
+  // this function's ~0.25 s at 100k contacts, where a few thousand companies repeat.
+  const companyLabels = new Map<string | null | undefined, string>();
+  const companyLabel = (raw: string | null | undefined) => {
+    let label = companyLabels.get(raw);
+    if (label === undefined) {
+      label = companyClusterLabel(raw);
+      companyLabels.set(raw, label);
+    }
+    return label;
+  };
 
   for (const c of contacts) {
-    const company = companyClusterLabel(c.company);
+    const company = companyLabel(c.company);
     if (company) {
       companyCounts.set(company, (companyCounts.get(company) || 0) + 1);
     }
@@ -108,7 +119,7 @@ export function buildConstellationClusters(
   const byContactId = new Map<string, ClusterRef>();
 
   for (const c of contacts) {
-    const company = companyClusterLabel(c.company);
+    const company = companyLabel(c.company);
     const school = trimLabel(c.school);
 
     let ref: ClusterRef;
