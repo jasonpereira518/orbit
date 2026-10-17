@@ -1807,18 +1807,6 @@
           "Introduced by Sarah Chen",
           "Hiring two senior engineers this quarter"
         ],
-        "howMet": "Introduced by Sarah Chen",
-        "metContext": "Coffee near their office",
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [
-          "developer tooling",
-          "hiring"
-        ],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -1845,18 +1833,6 @@
           "Works on agent workflows",
           "Writing a post on eval harnesses"
         ],
-        "howMet": "AWS Summit — same afterparty as Sarah",
-        "metContext": "AWS Summit 2026",
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [
-          "agents",
-          "evals"
-        ],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -1884,15 +1860,6 @@
           "Runs the distributed systems lab at UNC",
           "Knows the Innovate Carolina staff"
         ],
-        "howMet": "Taught my systems course; kept in touch after graduation",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -1917,15 +1884,6 @@
           "Owns Stripe onboarding",
           "Offered an activation-metrics walkthrough"
         ],
-        "howMet": "Marcus introduced us",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -1949,15 +1907,6 @@
         ],
         "aiSummary": "Rachel Adeyemi is Director of Talent at Figma. How you met: Panel at a design systems meetup. Spoke on the panel about hiring designers who can code. Said she is always happy to refer people even when Figma is not hiring.",
         "keyFacts": [],
-        "howMet": "Panel at a design systems meetup",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -1984,15 +1933,6 @@
           "Former teammate",
           "Now on Google Cloud DevEx"
         ],
-        "howMet": "Former teammate at my first job",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -2018,17 +1958,6 @@
         "keyFacts": [
           "Works on Stripe's API platform"
         ],
-        "howMet": "Open-source contributor on a library I maintain",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [
-          "open source"
-        ],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -2056,15 +1985,6 @@
           "Second-time founder",
           "Sold her last company in 2024"
         ],
-        "howMet": "Y Combinator alumni Slack",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -2090,15 +2010,6 @@
         "keyFacts": [
           "Introduced by Sarah Chen"
         ],
-        "howMet": "Sarah introduced us over email",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -2126,15 +2037,6 @@
           "Graduating May 2027",
           "Built a retrieval demo at HackNC"
         ],
-        "howMet": "Hackathon judging at UNC",
-        "metContext": "HackNC",
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -2160,17 +2062,6 @@
         "keyFacts": [
           "Critiqued the Orbit landing page"
         ],
-        "howMet": "Rachel introduced us",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [
-          "design systems"
-        ],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -2194,15 +2085,6 @@
         ],
         "aiSummary": "Andre Silva is Head of Platform at Google. How you met: Conference talk Q&A. Asked the sharpest question after my talk and we kept talking in the hallway. Time zones make this a slow relationship.",
         "keyFacts": [],
-        "howMet": "Conference talk Q&A",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -2224,17 +2106,6 @@
         "tags": [],
         "aiSummary": "Hassan Ali is Senior Backend Engineer at Notion. How you met: Priya's team offsite, joined a dinner. Works alongside Priya. Quiet, extremely good at Postgres.",
         "keyFacts": [],
-        "howMet": "Priya's team offsite, joined a dinner",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [
-          "Postgres"
-        ],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -2261,15 +2132,6 @@
           "Angel, $25k–$50k checks",
           "Triangle-focused"
         ],
-        "howMet": "Introduced by James Okafor",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -2293,15 +2155,6 @@
         ],
         "aiSummary": "Leo Fernandez is Founder at Tidepool Analytics. How you met: Cold outreach that turned into a real conversation. Building analytics for hardware teams. We trade notes on early sales. Slow to reply but always replies.",
         "keyFacts": [],
-        "howMet": "Cold outreach that turned into a real conversation",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -2325,18 +2178,6 @@
         ],
         "aiSummary": "Yuki Tanaka is Research Scientist at Anthropic. How you met: Paper reading group. Works on interpretability. Explained retrieval evaluation to me twice, patiently. Not a networking relationship — a learning one.",
         "keyFacts": [],
-        "howMet": "Paper reading group",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [
-          "interpretability",
-          "evals"
-        ],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -2360,15 +2201,6 @@
         ],
         "aiSummary": "Olivia Brooks is Alumni Relations Lead at UNC Chapel Hill. How you met: Alumni mixer. Knows which alumni are worth an introduction and offers them unprompted.",
         "keyFacts": [],
-        "howMet": "Alumni mixer",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -2392,15 +2224,6 @@
         ],
         "aiSummary": "Chris Nowak is Engineering Manager at Google. How you met: Former coworker's referral. Manages a search infra team. Aisha vouched for him. We have never met in person.",
         "keyFacts": [],
-        "howMet": "Former coworker's referral",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -2424,15 +2247,6 @@
         ],
         "aiSummary": "Daniel Osei is Founder & CTO at Northlight Robotics. How you met: Both spoke at the same founders panel. Hardware founder, so most of our advice does not transfer — but he is the best person I know on hiring under uncertainty.",
         "keyFacts": [],
-        "howMet": "Both spoke at the same founders panel",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -2459,15 +2273,6 @@
         "keyFacts": [
           "Keeps a portfolio-wide candidate list"
         ],
-        "howMet": "Works with James at Bellwether",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -2495,18 +2300,6 @@
           "UNC alum",
           "On Anthropic's inference team"
         ],
-        "howMet": "UNC alum, found me through the alumni Slack",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [
-          "UNC",
-          "inference"
-        ],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -2535,15 +2328,6 @@
           "Wants to be on the monthly update list",
           "Does not read cold decks"
         ],
-        "howMet": "Introduced by Elena at the UNC founders dinner",
-        "metContext": "UNC founders dinner",
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": "james@bellwether.example",
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -2570,15 +2354,6 @@
           "Hires for Stripe payments infra",
           "Cycles are January and July"
         ],
-        "howMet": "Reached out on LinkedIn about the payments infra team",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": "marcus.lee@example.com",
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -2605,15 +2380,6 @@
           "Runs the Innovate Carolina venture program",
           "Invited me to the fall showcase"
         ],
-        "howMet": "Runs the venture program I applied to",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": "maya.thompson@example.com",
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -2642,18 +2408,6 @@
           "Was previously infra PM at Stripe",
           "Asked for a one-pager on Orbit's retrieval architecture"
         ],
-        "howMet": "AWS Summit — hallway track after the inference keynote",
-        "metContext": "AWS Summit 2026",
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [
-          "AI infrastructure",
-          "developer tools"
-        ],
-        "email": "sarah.chen@example.com",
-        "phone": null,
-        "linkedinUrl": "https://www.linkedin.com/in/sarah-chen-demo",
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9161,18 +8915,6 @@
           "Introduced by Sarah Chen",
           "Hiring two senior engineers this quarter"
         ],
-        "howMet": "Introduced by Sarah Chen",
-        "metContext": "Coffee near their office",
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [
-          "developer tooling",
-          "hiring"
-        ],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9199,18 +8941,6 @@
           "Works on agent workflows",
           "Writing a post on eval harnesses"
         ],
-        "howMet": "AWS Summit — same afterparty as Sarah",
-        "metContext": "AWS Summit 2026",
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [
-          "agents",
-          "evals"
-        ],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9238,15 +8968,6 @@
           "Runs the distributed systems lab at UNC",
           "Knows the Innovate Carolina staff"
         ],
-        "howMet": "Taught my systems course; kept in touch after graduation",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9271,15 +8992,6 @@
           "Owns Stripe onboarding",
           "Offered an activation-metrics walkthrough"
         ],
-        "howMet": "Marcus introduced us",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9303,15 +9015,6 @@
         ],
         "aiSummary": "Rachel Adeyemi is Director of Talent at Figma. How you met: Panel at a design systems meetup. Spoke on the panel about hiring designers who can code. Said she is always happy to refer people even when Figma is not hiring.",
         "keyFacts": [],
-        "howMet": "Panel at a design systems meetup",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9338,15 +9041,6 @@
           "Former teammate",
           "Now on Google Cloud DevEx"
         ],
-        "howMet": "Former teammate at my first job",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9372,17 +9066,6 @@
         "keyFacts": [
           "Works on Stripe's API platform"
         ],
-        "howMet": "Open-source contributor on a library I maintain",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [
-          "open source"
-        ],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9410,15 +9093,6 @@
           "Second-time founder",
           "Sold her last company in 2024"
         ],
-        "howMet": "Y Combinator alumni Slack",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9444,15 +9118,6 @@
         "keyFacts": [
           "Introduced by Sarah Chen"
         ],
-        "howMet": "Sarah introduced us over email",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9480,15 +9145,6 @@
           "Graduating May 2027",
           "Built a retrieval demo at HackNC"
         ],
-        "howMet": "Hackathon judging at UNC",
-        "metContext": "HackNC",
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9514,17 +9170,6 @@
         "keyFacts": [
           "Critiqued the Orbit landing page"
         ],
-        "howMet": "Rachel introduced us",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [
-          "design systems"
-        ],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9548,15 +9193,6 @@
         ],
         "aiSummary": "Andre Silva is Head of Platform at Google. How you met: Conference talk Q&A. Asked the sharpest question after my talk and we kept talking in the hallway. Time zones make this a slow relationship.",
         "keyFacts": [],
-        "howMet": "Conference talk Q&A",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9578,17 +9214,6 @@
         "tags": [],
         "aiSummary": "Hassan Ali is Senior Backend Engineer at Notion. How you met: Priya's team offsite, joined a dinner. Works alongside Priya. Quiet, extremely good at Postgres.",
         "keyFacts": [],
-        "howMet": "Priya's team offsite, joined a dinner",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [
-          "Postgres"
-        ],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9615,15 +9240,6 @@
           "Angel, $25k–$50k checks",
           "Triangle-focused"
         ],
-        "howMet": "Introduced by James Okafor",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9647,15 +9263,6 @@
         ],
         "aiSummary": "Leo Fernandez is Founder at Tidepool Analytics. How you met: Cold outreach that turned into a real conversation. Building analytics for hardware teams. We trade notes on early sales. Slow to reply but always replies.",
         "keyFacts": [],
-        "howMet": "Cold outreach that turned into a real conversation",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9679,18 +9286,6 @@
         ],
         "aiSummary": "Yuki Tanaka is Research Scientist at Anthropic. How you met: Paper reading group. Works on interpretability. Explained retrieval evaluation to me twice, patiently. Not a networking relationship — a learning one.",
         "keyFacts": [],
-        "howMet": "Paper reading group",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [
-          "interpretability",
-          "evals"
-        ],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9714,15 +9309,6 @@
         ],
         "aiSummary": "Olivia Brooks is Alumni Relations Lead at UNC Chapel Hill. How you met: Alumni mixer. Knows which alumni are worth an introduction and offers them unprompted.",
         "keyFacts": [],
-        "howMet": "Alumni mixer",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9746,15 +9332,6 @@
         ],
         "aiSummary": "Chris Nowak is Engineering Manager at Google. How you met: Former coworker's referral. Manages a search infra team. Aisha vouched for him. We have never met in person.",
         "keyFacts": [],
-        "howMet": "Former coworker's referral",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9778,15 +9355,6 @@
         ],
         "aiSummary": "Daniel Osei is Founder & CTO at Northlight Robotics. How you met: Both spoke at the same founders panel. Hardware founder, so most of our advice does not transfer — but he is the best person I know on hiring under uncertainty.",
         "keyFacts": [],
-        "howMet": "Both spoke at the same founders panel",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9813,15 +9381,6 @@
         "keyFacts": [
           "Keeps a portfolio-wide candidate list"
         ],
-        "howMet": "Works with James at Bellwether",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9849,18 +9408,6 @@
           "UNC alum",
           "On Anthropic's inference team"
         ],
-        "howMet": "UNC alum, found me through the alumni Slack",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [
-          "UNC",
-          "inference"
-        ],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9882,15 +9429,6 @@
         "tags": [],
         "aiSummary": "Golden Newperson is Engineer at Acme. Recent conversations covered: Golden: met at the extension test..",
         "keyFacts": [],
-        "howMet": null,
-        "metContext": null,
-        "dateMet": null,
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9919,15 +9457,6 @@
           "Wants to be on the monthly update list",
           "Does not read cold decks"
         ],
-        "howMet": "Introduced by Elena at the UNC founders dinner",
-        "metContext": "UNC founders dinner",
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": "james@bellwether.example",
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9954,15 +9483,6 @@
           "Hires for Stripe payments infra",
           "Cycles are January and July"
         ],
-        "howMet": "Reached out on LinkedIn about the payments infra team",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": "marcus.lee@example.com",
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -9989,15 +9509,6 @@
           "Runs the Innovate Carolina venture program",
           "Invited me to the fall showcase"
         ],
-        "howMet": "Runs the venture program I applied to",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": "maya.thompson@example.com",
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true
@@ -10026,18 +9537,6 @@
           "Was previously infra PM at Stripe",
           "Asked for a one-pager on Orbit's retrieval architecture"
         ],
-        "howMet": "AWS Summit — hallway track after the inference keynote",
-        "metContext": "AWS Summit 2026",
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [
-          "AI infrastructure",
-          "developer tools"
-        ],
-        "email": "sarah.chen@example.com",
-        "phone": null,
-        "linkedinUrl": "https://www.linkedin.com/in/sarah-chen-demo",
-        "website": null,
         "profileImageUrl": null,
         "dormant": false,
         "substantive": true

@@ -42,6 +42,11 @@ export function contactMatchesLocal(d: GraphNodeData, q: string): boolean {
   return tokens.every((t) => hay.includes(t));
 }
 
+/**
+ * What the chart payload carries to match on. How someone was met, their contact details
+ * and interests are not in it (they are fetched for the one star the inspect panel opens),
+ * so a query about those is answered by the server search the graph runs after a pause.
+ */
 function contactSearchHaystack(c: GraphContact): string {
   return [
     c.fullName,
@@ -50,16 +55,8 @@ function contactSearchHaystack(c: GraphContact): string {
     c.school,
     c.title,
     c.aiSummary,
-    c.howMet,
-    c.metContext,
-    c.notes,
-    c.email,
-    c.phone,
-    c.linkedinUrl,
-    c.website,
     ...(c.tags || []),
     ...(c.keyFacts || []),
-    ...(c.sharedInterests || []),
   ]
     .filter(Boolean)
     .join(" ")

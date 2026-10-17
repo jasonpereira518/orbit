@@ -175,17 +175,12 @@ export async function loadGraphData(
       hasLoggedInteraction: closenessCohort.interactedIds.has(c.id),
       nextFollowUpAt: c.nextFollowUpAt,
       tags,
+      // The summary and facts stay: the keyword filter and instant search read them for
+      // everyone. How you met, contact details and interests are only ever shown for the one
+      // star the inspect panel opens, so they are fetched then (`getGraphContactDetail`)
+      // rather than shipped for every contact — ~210 of the ~690 bytes a contact cost.
       aiSummary: c.aiSummary,
       keyFacts: c.keyFacts,
-      howMet: c.howMet,
-      metContext: c.metContext,
-      dateMet: c.dateMet,
-      notes: null as string | null,
-      sharedInterests: c.sharedInterests,
-      email: c.email,
-      phone: c.phone,
-      linkedinUrl: c.linkedinUrl,
-      website: c.website,
       profileImageUrl: c.avatarUrl,
       dormant,
       substantive: constellationEligibility(
