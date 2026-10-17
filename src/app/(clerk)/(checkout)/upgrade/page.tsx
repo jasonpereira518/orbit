@@ -107,7 +107,7 @@ export default async function UpgradePage() {
             positioned z-auto element paints above non-positioned in-flow
             content whatever the DOM order. /pricing's <main> carries the same
             pair for the same reason. */}
-        <main className="relative z-10 mx-auto w-full max-w-4xl px-6 pb-24 md:px-8">
+        <main id="main-content" className="relative z-10 mx-auto w-full max-w-4xl px-6 pb-24 md:px-8">
           {/* Fades rather than flies on the way home: everything else on this
               page is a card or a band, but this is a line of type, and type
               carried off sideways reads as an object being removed. Dissolving

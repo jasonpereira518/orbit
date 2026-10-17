@@ -579,6 +579,9 @@ export function FloatingAskBar() {
       // `inert`, not `aria-hidden`: hidden on scroll, the bar's input and buttons stayed in
       // the tab order while gone from the accessibility tree. Inert takes them out of both.
       inert={!visible}
+      // A landmark of its own, outside <main>, so it is reachable from the landmarks list.
+      role="search"
+      aria-label="Ask your network"
     >
       {/* A slim pill at rest that opens out to full width once it is in use. A spring, not a
           CSS transition: it picks up from wherever it is when a click lands mid-animation. */}

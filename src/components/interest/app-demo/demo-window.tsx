@@ -49,7 +49,7 @@ export function DemoWindow() {
     initialDemoState(window.matchMedia(REDUCED_QUERY).matches ? "explore" : "tour")
   );
   const rootRef = useRef<HTMLDivElement>(null);
-  const paneRef = useRef<HTMLElement>(null);
+  const paneRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef(state);
   const pausedRef = useRef(false);
 
@@ -159,7 +159,7 @@ export function DemoWindow() {
 
         <div className="relative flex h-[calc(100%-2.5rem)]">
           <DemoSidebar state={state} dispatch={dispatch} />
-          <main ref={paneRef} className={cn("relative min-w-0 flex-1 overflow-y-auto pl-3 pt-6", fill ? "pr-4 pb-4" : "pr-16 pb-20")} aria-label="Demo app screen">
+          <div ref={paneRef} className={cn("relative min-w-0 flex-1 overflow-y-auto pl-3 pt-6", fill ? "pr-4 pb-4" : "pr-16 pb-20")} aria-label="Demo app screen">
             <AnimatePresence mode="wait" initial={false}>
               <motion.div
                 key={state.screen === "profile" ? `profile-${state.profileId}` : state.screen}
@@ -172,7 +172,7 @@ export function DemoWindow() {
                 <Screen />
               </motion.div>
             </AnimatePresence>
-          </main>
+          </div>
         </div>
 
         {/* The app's floating controls: notifications at the top right, and the ask

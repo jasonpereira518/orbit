@@ -1062,7 +1062,9 @@ function AlphabetScrubber({
   if (!mounted) return null;
 
   return createPortal(
-    <div
+    // Portalled out of <main>, so it is its own navigation landmark.
+    <nav
+      aria-label="Contacts A to Z"
       className={cn(
         "pointer-events-none fixed top-1/2 right-1.5 z-40 -translate-y-1/2 md:right-4",
         // Gone on short viewports — a landscape phone. Centred at 70% of a ~330pt
@@ -1134,7 +1136,7 @@ function AlphabetScrubber({
           </div>
         )}
       </div>
-    </div>,
+    </nav>,
     document.body
   );
 }

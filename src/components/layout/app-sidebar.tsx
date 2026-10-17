@@ -197,9 +197,11 @@ export function AppSidebar({
   };
 
   return (
-    // A <div>, not <aside>: the sidebar is the app's navigation, not complementary content,
-    // and a second complementary landmark clashed with pages that have their own.
-    <div className="liquid-glass flex h-full w-[4.5rem] flex-col text-sidebar-foreground lg:w-60">
+    // The desktop banner: logo, the main action and the navigation. Not <aside> (it is not
+    // complementary content, and a second complementary landmark clashed with pages that
+    // have their own). Only one banner exists at a time: the phone header is display:none
+    // from md, where this appears.
+    <header className="liquid-glass flex h-full w-[4.5rem] flex-col text-sidebar-foreground lg:w-60">
       {/* Stacked on the icon rail, where logo and search cannot share a row; side by side
           once the panel is wide enough to carry the wordmark. */}
       <div className="flex flex-col items-center gap-3 px-3 py-5 lg:flex-row lg:justify-between lg:gap-2 lg:px-5 lg:py-6">
@@ -333,6 +335,6 @@ export function AppSidebar({
           </p>
         )}
       </div>
-    </div>
+    </header>
   );
 }

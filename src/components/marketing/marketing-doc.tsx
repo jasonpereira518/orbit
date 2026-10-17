@@ -76,7 +76,7 @@ export function MarketingDocShell({
         </div>
       )}
 
-      <main className="relative z-10">{children}</main>
+      <main id="main-content" className="relative z-10">{children}</main>
 
       {/* Lighter on the bottom than the top: there is nothing after this row,
           so symmetric padding just reads as a gap at the end of the page. */}

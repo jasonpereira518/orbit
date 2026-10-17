@@ -175,6 +175,8 @@ function StickyMiniBar({
       }}
       // `inert`, not `aria-hidden`: while slid away its buttons were still in the tab order.
       inert={!visible}
+      role="region"
+      aria-label={`${fullName}, pinned summary`}
     >
       <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-2.5 md:px-10">
         <ContactAvatar

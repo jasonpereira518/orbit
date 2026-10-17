@@ -9,7 +9,7 @@ export const metadata: Metadata = { title: "Page not found" };
 
 export default function NotFound() {
   return (
-    <main className="mx-auto flex min-h-[60dvh] max-w-lg flex-col items-center justify-center gap-4 px-6 py-16 text-center">
+    <main id="main-content" className="mx-auto flex min-h-[60dvh] max-w-lg flex-col items-center justify-center gap-4 px-6 py-16 text-center">
       <p className="text-sm font-medium text-ink">404</p>
       <h1 className="font-[family-name:var(--font-display)] text-3xl tracking-tight text-ink">
         Page not found

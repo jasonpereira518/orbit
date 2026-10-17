@@ -36,7 +36,7 @@ export default async function SuspendedPage() {
   if (!settings?.suspendedAt) redirect("/dashboard");
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center px-6 py-16">
+    <main id="main-content" className="mx-auto flex min-h-dvh max-w-md flex-col justify-center px-6 py-16">
       <h1 className="text-2xl font-semibold tracking-tight">
         Your account is on hold
       </h1>

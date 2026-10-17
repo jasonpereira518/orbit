@@ -85,7 +85,7 @@ export default function PricingPage() {
         <LandingAuthControls {...authProps} variant="header" />
       </header>
 
-      <main className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-24 md:px-10">
+      <main id="main-content" className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-24 md:px-10">
         <section className="pt-10 text-center md:pt-16">
           <Reveal className="reveal-celestial">
             <h1 className={`${HEADING} text-[clamp(32px,5vw,56px)]`}>

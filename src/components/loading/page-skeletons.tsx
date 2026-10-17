@@ -864,7 +864,7 @@ export function PricingPageSkeleton() {
         </div>
       </header>
 
-      <main className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-24 md:px-10">
+      <main id="main-content" className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-24 md:px-10">
         <section className="flex flex-col items-center gap-4 pt-10 text-center md:pt-16">
           <Skeleton className="h-10 w-full max-w-lg bg-white/10 sm:h-12" />
           <div className="w-full max-w-md space-y-2">

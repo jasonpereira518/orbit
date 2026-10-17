@@ -3397,6 +3397,15 @@ body {
   }
 }
 
+/* A page that fills the route (Reminders, Knowledge: `data-fill-route`) sizes its panes to
+ * the viewport. Under 500px tall (a landscape phone, 200% zoom) the app column scrolls
+ * instead (app-shell.tsx), and a viewport-sized pane had no height left at all. */
+@media (max-height: 500px) {
+  [data-fill-route] {
+    min-height: 30rem;
+  }
+}
+
 /* The admin console scrolls the window under a sticky header: keep focused and
  * scrolled-to elements clear of it (WCAG 2.4.11). */
 html:has(.admin-console) {

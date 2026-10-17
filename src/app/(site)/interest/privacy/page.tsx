@@ -73,7 +73,7 @@ export default async function WaitlistPrivacyPage() {
 
   return (
     <div className="landing-root relative min-h-dvh bg-[#03050c] text-[#e8f3f1]">
-      <main className="mx-auto w-full max-w-2xl px-6 pb-20 pt-16 md:pt-24">
+      <main id="main-content" className="mx-auto w-full max-w-2xl px-6 pb-20 pt-16 md:pt-24">
         <p className="text-xs uppercase tracking-[0.16em] text-landing-accent">
           Early access waitlist
         </p>
