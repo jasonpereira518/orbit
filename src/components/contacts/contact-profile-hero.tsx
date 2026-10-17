@@ -17,6 +17,7 @@ import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { ContactChannelIcons } from "@/components/contacts/contact-profile-icons";
 import { ContactEditSheet } from "@/components/contacts/contact-edit-sheet";
 import {
+  avatarRouteUrl,
   isUnusableAvatarUrl,
   resolveContactPhotoUrl,
 } from "@/lib/contact-avatar-url";
@@ -45,7 +46,7 @@ function resolvePreviewSrc(input: {
     Boolean(input.profileImageUrl?.trim()) &&
     !isUnusableAvatarUrl(input.profileImageUrl);
   if (hasStored || input.linkedinUrl?.trim()) {
-    return `/api/avatars/${input.contactId}`;
+    return avatarRouteUrl(input.contactId, hasStored ? input.profileImageUrl : null);
   }
   const resolved = resolveContactPhotoUrl(input.profileImageUrl);
   if (resolved) return resolved;
