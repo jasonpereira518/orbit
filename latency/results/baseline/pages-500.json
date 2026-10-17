@@ -3118,7 +3118,7 @@
       "nav": [
         {
           "to": "/contacts",
-          "ms": 9224,
+          "ms": 7344,
           "skeleton_ms": null
         },
         {
@@ -3128,19 +3128,18 @@
         },
         {
           "to": "/dashboard",
-          "ms": null,
-          "skeleton_ms": null,
-          "error": "TimeoutError: locator.click: Timeout 5000ms exceeded."
+          "ms": 4832,
+          "skeleton_ms": null
         },
         {
           "to": "/graph",
-          "ms": null,
-          "missing_link": true
+          "ms": 1837,
+          "skeleton_ms": null
         },
         {
           "to": "/chat",
-          "ms": 4024,
-          "skeleton_ms": 1746
+          "ms": 4865,
+          "skeleton_ms": 2423
         },
         {
           "to": "/capture",
@@ -3149,28 +3148,26 @@
         },
         {
           "to": "/contacts",
-          "ms": 3082,
-          "skeleton_ms": null
+          "ms": 3008,
+          "skeleton_ms": 1048
         },
         {
           "to": "/dashboard",
-          "ms": null,
-          "skeleton_ms": null,
-          "error": "TimeoutError: locator.click: Timeout 5000ms exceeded."
+          "ms": 3072,
+          "skeleton_ms": null
         }
       ],
       "history": {
         "back": {
-          "ms": null,
-          "skeleton_ms": 497,
-          "timeout": true
+          "ms": 3765,
+          "skeleton_ms": 933
         },
         "forward": {
-          "ms": null,
-          "skeleton_ms": null,
-          "timeout": true
+          "ms": 1947,
+          "skeleton_ms": null
         }
-      }
+      },
+      "nav_rerun_at": "2026-10-17T10:25:54.985Z"
     }
   }
 }
