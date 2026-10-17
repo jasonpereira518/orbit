@@ -117,6 +117,23 @@ It reports and does not gate yet. The intended ratchet, once a few runs on `main
 are stable: fail the `coverage` job when line coverage in **auth & access**, **billing** or
 **connectors & sync** drops below the last `main` value minus one point.
 
+Baseline, measured when this was set up (2026-10-17, smoke suite, V8 coverage via c8):
+
+| Area | Branches before | after | Functions before | after |
+|---|---|---|---|---|
+| auth & access | 70.9% | 74.8% | 79.5% | 82.5% |
+| billing | 84.8% | 87.4% | 89.2% | 89.6% |
+| connectors & sync | 78.0% | 82.4% | 88.3% | 91.9% |
+| AI | 83.1% | 84.0% | 90.3% | 90.7% |
+| contacts | 82.6% | 82.9% | 87.9% | 88.4% |
+| API routes | 68.2% | 69.7% | 71.9% | 75.2% |
+| all of `src/` | 79.6% | 80.0% | 74.4% | 74.7% |
+
+Line coverage of all of `src/` moved only from 52.7% to 52.9%: most of `src/lib` was already
+executed, and what the new tests add is mostly failure paths (401s, malformed bodies, foreign
+ids), which show up as branches. Fourteen cron and token routes went from never loaded to
+exercised, and `src/lib/extension/auth.ts` from 46% to 94% of branches.
+
 Coverage counts the smoke suite only. React components are exercised by the Playwright flows,
 which are not instrumented, so the "UI components" row reads low by construction.
 
@@ -130,6 +147,16 @@ The policy is "fail, then fix the cause", never "retry until green":
 - Every smoke script is offline and gets a fresh database, so the usual sources (network, shared
   state, ordering) are designed out. A script that stalls on a promise that never settles fails
   instead of exiting 0 (`checker()` guards this).
+
+Known flakiness risks, none observed failing on CI in the last 60 runs:
+
+- `smoke-constellation-match` asserts wall-clock frame budgets. It passes on an idle runner and
+  fails under CPU contention or instrumentation (80s under c8). If it ever fails on CI, make its
+  budget relative to a calibration loop rather than absolute.
+- Before the hermetic preload, four scripts depended on the runner's public DNS and one called
+  Vercel's Blob API for real; all five failed offline. Fixed.
+- The Playwright logs carry recurring `ECONNRESET` noise from `next dev` around the plan-colors
+  and tour specs. It fails nothing today, but it is the likeliest source of a future flaky flow.
 
 ## CI
 
