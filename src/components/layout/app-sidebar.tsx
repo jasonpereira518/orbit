@@ -80,6 +80,7 @@ function SidebarNavLink({
   return (
     <NavLink
       href={item.href}
+      aria-current={active ? "page" : undefined}
       onPointerEnter={warm}
       onFocus={warm}
       title={
@@ -109,7 +110,8 @@ function SidebarNavLink({
         />
       )}
       <Icon className="relative z-10 h-4 w-4 shrink-0" />
-      <span className="relative z-10 hidden lg:inline">{item.label}</span>
+      {/* Below lg the rail is icons only; the label stays in the accessibility tree. */}
+      <span className="relative z-10 max-lg:sr-only">{item.label}</span>
       {hiddenFromUsers && (
         <span className="relative z-10 ml-auto hidden rounded-full border border-border/70 px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground lg:inline">
           Hidden
@@ -195,7 +197,9 @@ export function AppSidebar({
   };
 
   return (
-    <aside className="liquid-glass flex h-full w-[4.5rem] flex-col text-sidebar-foreground lg:w-60">
+    // A <div>, not <aside>: the sidebar is the app's navigation, not complementary content,
+    // and a second complementary landmark clashed with pages that have their own.
+    <div className="liquid-glass flex h-full w-[4.5rem] flex-col text-sidebar-foreground lg:w-60">
       {/* Stacked on the icon rail, where logo and search cannot share a row; side by side
           once the panel is wide enough to carry the wordmark. */}
       <div className="flex flex-col items-center gap-3 px-3 py-5 lg:flex-row lg:justify-between lg:gap-2 lg:px-5 lg:py-6">
@@ -260,12 +264,12 @@ export function AppSidebar({
           )}
         >
           <Plus className="h-4 w-4" />
-          <span className="hidden lg:inline">Log interaction</span>
+          <span className="max-lg:sr-only">Log interaction</span>
         </IntentLink>
       </div>
       )}
 
-      <nav className="relative flex flex-1 flex-col gap-0.5 px-1.5 lg:px-2">
+      <nav aria-label="Main" className="relative flex flex-1 flex-col gap-0.5 px-1.5 lg:px-2">
         {core.map((item) => (
           <SidebarNavLink
             soon={comingSoon}
@@ -329,6 +333,6 @@ export function AppSidebar({
           </p>
         )}
       </div>
-    </aside>
+    </div>
   );
 }

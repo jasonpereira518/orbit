@@ -5,33 +5,6 @@ import * as React from "react"
 import { cn } from "@/lib/utils"
 import { useFieldControl } from "@/components/ui/field"
 
-/**
- * Grow the box to fit its text where `field-sizing: content` is missing (Firefox, older
- * Safari): there a `rows={1}` composer stayed one line tall and scrolled inside itself. The
- * CSS max-height still caps the growth. A no-op wherever the CSS property works.
- */
-function useAutosizeFallback(
-  el: React.RefObject<HTMLTextAreaElement | null>,
-  value: unknown
-) {
-  const [unsupported] = React.useState(
-    () => typeof CSS !== "undefined" && !CSS.supports("field-sizing", "content")
-  )
-
-  const fit = React.useCallback(() => {
-    const node = el.current
-    if (!node) return
-    node.style.height = "auto"
-    node.style.height = `${node.scrollHeight + node.offsetHeight - node.clientHeight}px`
-  }, [el])
-
-  React.useLayoutEffect(() => {
-    if (unsupported) fit()
-  }, [unsupported, fit, value])
-
-  return unsupported ? fit : undefined
-}
-
 function Textarea({
   className,
   ref,
@@ -40,7 +13,21 @@ function Textarea({
 }: React.ComponentProps<"textarea">) {
   const props = useFieldControl(rest)
   const innerRef = React.useRef<HTMLTextAreaElement | null>(null)
-  const fit = useAutosizeFallback(innerRef, props.value)
+
+  // Grow the box to fit its text where `field-sizing: content` is missing (Firefox, older
+  // Safari): there a `rows={1}` composer stayed one line tall and scrolled inside itself. The
+  // CSS max-height still caps the growth. A no-op wherever the CSS property works.
+  const [autosize] = React.useState(
+    () => typeof CSS !== "undefined" && !CSS.supports("field-sizing", "content")
+  )
+  const fit = React.useCallback(() => {
+    const node = innerRef.current
+    if (!autosize || !node) return
+    node.style.height = "auto"
+    node.style.height = `${node.scrollHeight + node.offsetHeight - node.clientHeight}px`
+  }, [autosize])
+  React.useLayoutEffect(fit, [fit, props.value])
+
   const setRef = React.useCallback(
     (node: HTMLTextAreaElement | null) => {
       innerRef.current = node
@@ -57,7 +44,7 @@ function Textarea({
       dir="auto"
       ref={setRef}
       onInput={(e) => {
-        fit?.()
+        fit()
         onInput?.(e)
       }}
       className={cn(

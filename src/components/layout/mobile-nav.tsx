@@ -556,6 +556,7 @@ export function MobileNav({
                     href={navItem.href}
                     // Touch-start upgrades it to a full prefetch ~100 ms before the tap's click.
                     prefetch={fullPrefetch(navItem, isNavActive(pathname, navItem.href))}
+                    aria-current={isNavActive(pathname, navItem.href) ? "page" : undefined}
                     ref={(el) => {
                       itemRefs.current[myIndex] = el;
                     }}
@@ -648,7 +649,7 @@ export function MobileNav({
             <SheetTitle>More</SheetTitle>
           </SheetHeader>
 
-          <nav className="flex flex-col gap-1 px-1 py-2">
+          <nav aria-label="More" className="flex flex-col gap-1 px-1 py-2">
             <button
               type="button"
               onClick={() => {
@@ -687,6 +688,7 @@ export function MobileNav({
                   key={item.href}
                   href={item.href}
                   prefetch={fullPrefetch(item, active)}
+                  aria-current={active ? "page" : undefined}
                   onClick={() => setMoreOpen(false)}
                   className={cn(
                     "relative flex items-center gap-3 rounded-xl px-3 py-3 text-sm transition-colors",

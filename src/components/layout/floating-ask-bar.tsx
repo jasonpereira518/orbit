@@ -576,7 +576,9 @@ export function FloatingAskBar() {
         "bottom-[calc(6.875rem+env(safe-area-inset-bottom))] md:bottom-5",
         !visible && "pointer-events-none"
       )}
-      aria-hidden={!visible}
+      // `inert`, not `aria-hidden`: hidden on scroll, the bar's input and buttons stayed in
+      // the tab order while gone from the accessibility tree. Inert takes them out of both.
+      inert={!visible}
     >
       {/* A slim pill at rest that opens out to full width once it is in use. A spring, not a
           CSS transition: it picks up from wherever it is when a click lands mid-animation. */}
@@ -849,7 +851,9 @@ export function FloatingAskBar() {
         <motion.div
           className={cn(
             "flex h-12 items-center gap-2 rounded-full border border-border/70 bg-card/95 pl-4 pr-1.5 shadow-lg backdrop-blur-md",
-            "focus-within:border-primary/40 focus-within:ring-[3px] focus-within:ring-primary/15",
+            // The same focus ring as every other field (ui/input); the old primary/15 wash was
+            // under the 3:1 a focus indicator needs.
+            "focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50",
             personContextActive && "border-primary/25",
             open && "shadow-xl"
           )}
@@ -859,6 +863,7 @@ export function FloatingAskBar() {
             id={inputId}
             ref={inputRef}
             type="text"
+            aria-label="Ask your network"
             value={query}
             placeholder={placeholder}
             disabled={chatPending}

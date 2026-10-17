@@ -3395,6 +3395,12 @@ body {
   }
 }
 
+/* The admin console scrolls the window under a sticky header: keep focused and
+ * scrolled-to elements clear of it (WCAG 2.4.11). */
+html:has(.admin-console) {
+  scroll-padding-top: 4.5rem;
+}
+
 /* Native date and time fields on iOS: centred text, and an intrinsic minimum width that
  * overflows a narrow grid cell. */
 input[type="date"],
