@@ -21,6 +21,9 @@ import { findReminderListForUser, getInboxListId } from "@/lib/reminder-lists";
 import { revalidatePathIfRequestScoped, revalidateReminderPaths } from "@/lib/reminder-paths";
 import { completeReminder, reopenReminder, type CompletionSnapshot } from "@/lib/reminders";
 import { settle, unwrap } from "@/lib/settled";
+import { optionalClientDate } from "@/lib/input/dates";
+import { TEXT_LIMITS, cleanOptionalText, cleanText } from "@/lib/input/text";
+import { UserFacingError } from "@/lib/errors";
 
 export type CreateReminderInput = {
   contactId?: string;
@@ -45,6 +48,16 @@ export async function assertReminderContactOwned(userId: string, contactId: stri
     columns: { id: true },
   });
   if (!owned) throw new Error("Contact not found");
+}
+
+/**
+ * A reminder title, made storable (audit M-05): NUL and control characters stripped, capped,
+ * and never blank. Exported so the edit path in `actions/reminders.ts` applies the same rule.
+ */
+export function requireReminderTitle(title: unknown): string {
+  const clean = typeof title === "string" ? cleanText(title, TEXT_LIMITS.title).trim() : "";
+  if (!clean) throw new UserFacingError("Give the reminder a title first");
+  return clean;
 }
 
 export async function createReminderForUser(userId: string, input: CreateReminderInput) {
@@ -78,9 +91,9 @@ export async function createReminderForUser(userId: string, input: CreateReminde
       userId,
       contactId: input.contactId,
       listId,
-      title: input.title,
-      description: input.description,
-      dueDate: input.dueDate ? new Date(input.dueDate) : null,
+      title: requireReminderTitle(input.title),
+      description: cleanOptionalText(input.description, TEXT_LIMITS.description),
+      dueDate: optionalClientDate(input.dueDate, "due date"),
       reminderType: input.reminderType || "manual",
       actionKind,
       createdBy: "user",

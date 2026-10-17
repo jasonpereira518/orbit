@@ -516,7 +516,54 @@ export function parseAiJson<T = unknown>(raw: string): T {
   }
 }
 
-function normalizeJsonResponse(raw: string) {
+/**
+ * The provider stopped because it ran out of output tokens, not because the answer was done
+ * (audit M-15). Repairing that JSON closes the brackets and keeps whatever fit, so a capture
+ * that lost its last contacts or action items used to save as if it were complete.
+ */
+export class TruncatedOutputError extends Error {
+  constructor() {
+    super(AI_INCOMPLETE_MESSAGE);
+    this.name = "TruncatedOutputError";
+  }
+}
+
+/**
+ * Operations whose truncated output is still worth keeping. Transcription keeps the patched
+ * text on purpose: a page that is mostly read beats no page (see `transcribeNotePage`).
+ */
+const TRUNCATION_REPAIR_OPERATIONS: ReadonlySet<AiOperationId> = new Set<AiOperationId>(["capture.transcribe.page"]);
+
+/** Whether a provider response says it stopped at the output-token ceiling. */
+export function stoppedAtTokenLimit(response: unknown): boolean {
+  const r = response as {
+    choices?: { finish_reason?: unknown }[];
+    stop_reason?: unknown;
+    candidates?: { finishReason?: unknown }[];
+    status?: unknown;
+    incomplete_details?: { reason?: unknown } | null;
+  } | null;
+  if (!r) return false;
+  // OpenAI Responses API.
+  if (r.status === "incomplete" && r.incomplete_details?.reason === "max_output_tokens") return true;
+  if (r.choices?.[0]?.finish_reason === "length") return true;
+  if (r.stop_reason === "max_tokens") return true;
+  return r.candidates?.[0]?.finishReason === "MAX_TOKENS";
+}
+
+/**
+ * Parse a JSON answer. When the provider reports it was cut off, only an answer that is already
+ * complete JSON is accepted; anything that would need repair throws `TruncatedOutputError`.
+ */
+export function normalizeJsonResponse(raw: string, opts: { truncated?: boolean; operation?: AiOperationId } = {}) {
+  if (opts.truncated && !(opts.operation && TRUNCATION_REPAIR_OPERATIONS.has(opts.operation))) {
+    const text = extractJsonText(raw);
+    try {
+      return JSON.stringify(JSON.parse(text));
+    } catch {
+      throw new TruncatedOutputError();
+    }
+  }
   return JSON.stringify(parseAiJson(raw));
 }
 
@@ -605,7 +652,7 @@ export async function completeJson(
           report(tokensFromGemini(response));
           const content = response.text;
           if (!content) throw new Error("Empty AI response");
-          return normalizeJsonResponse(content);
+          return normalizeJsonResponse(content, { truncated: stoppedAtTokenLimit(response), operation });
         }
 
         if (isOpenAiShaped(provider)) {
@@ -623,7 +670,7 @@ export async function completeJson(
           report({ ...tokensFromOpenAi(response), reportedCostMicros: reportedCostMicros(response as OpenAiUsageWithCost) });
           const content = response.choices[0]?.message?.content;
           if (!content) throw new Error("Empty AI response");
-          return normalizeJsonResponse(content);
+          return normalizeJsonResponse(content, { truncated: stoppedAtTokenLimit(response), operation });
         }
 
         const client = await anthropicClient(grant);
@@ -652,8 +699,9 @@ export async function completeJson(
         if (!block || block.type !== "text" || !block.text) {
           throw new Error("Empty AI response");
         }
-        return normalizeJsonResponse(block.text);
+        return normalizeJsonResponse(block.text, { truncated: stoppedAtTokenLimit(response), operation });
       } catch (err) {
+        if (err instanceof TruncatedOutputError) throw err;
         if (err instanceof Error && err.message === "Empty AI response")
           throw err;
         if (
@@ -753,7 +801,7 @@ async function completeMultimodalJsonInner(
       report(tokensFromGemini(response));
       const content = response.text;
       if (!content) throw new Error("Empty AI response");
-      return normalizeJsonResponse(content);
+      return normalizeJsonResponse(content, { truncated: stoppedAtTokenLimit(response), operation: input.operation });
     }
 
     if (isOpenAiShaped(provider)) {
@@ -792,7 +840,7 @@ async function completeMultimodalJsonInner(
       report({ ...tokensFromOpenAi(response), reportedCostMicros: reportedCostMicros(response as OpenAiUsageWithCost) });
       const out = response.choices[0]?.message?.content;
       if (!out) throw new Error("Empty AI response");
-      return normalizeJsonResponse(out);
+      return normalizeJsonResponse(out, { truncated: stoppedAtTokenLimit(response), operation: input.operation });
     }
 
     const client = await anthropicClient(grant);
@@ -847,8 +895,9 @@ async function completeMultimodalJsonInner(
     if (!block || block.type !== "text" || !block.text) {
       throw new Error("Empty AI response");
     }
-    return normalizeJsonResponse(block.text);
+    return normalizeJsonResponse(block.text, { truncated: stoppedAtTokenLimit(response), operation: input.operation });
   } catch (err) {
+    if (err instanceof TruncatedOutputError) throw err;
     if (err instanceof Error && err.message === "Empty AI response") throw err;
     if (
       err instanceof Error &&
@@ -2792,7 +2841,7 @@ export async function webSearchJson(
           const sources = chunks
             .map((c) => (c.web?.uri ? { url: c.web.uri, title: c.web.title ?? null } : null))
             .filter((s): s is WebSource => s !== null);
-          return { json: normalizeJsonResponse(content), sources };
+          return { json: normalizeJsonResponse(content, { truncated: stoppedAtTokenLimit(response), operation }), sources };
         }
 
         if (provider === "openrouter") {
@@ -2821,7 +2870,7 @@ export async function webSearchJson(
           const sources = annotations
             .filter((a) => a.type === "url_citation" && a.url_citation?.url)
             .map((a) => ({ url: a.url_citation!.url, title: a.url_citation!.title ?? null }));
-          return { json: normalizeJsonResponse(message.content), sources };
+          return { json: normalizeJsonResponse(message.content, { truncated: stoppedAtTokenLimit(response), operation }), sources };
         }
 
         if (provider === "openai") {
@@ -2856,7 +2905,7 @@ export async function webSearchJson(
               }
             }
           }
-          return { json: normalizeJsonResponse(content), sources };
+          return { json: normalizeJsonResponse(content, { truncated: stoppedAtTokenLimit(response), operation }), sources };
         }
 
         const client = await anthropicClient(grant);
@@ -2895,8 +2944,9 @@ export async function webSearchJson(
           if (block.type !== "web_search_tool_result" || !Array.isArray(block.content)) continue;
           for (const r of block.content) sources.push({ url: r.url, title: r.title || null });
         }
-        return { json: normalizeJsonResponse(text), sources };
+        return { json: normalizeJsonResponse(text, { truncated: stoppedAtTokenLimit(response), operation }), sources };
       } catch (err) {
+        if (err instanceof TruncatedOutputError) throw err;
         if (err instanceof Error && err.message === "Empty AI response") throw err;
         if (err instanceof Error && err.message.startsWith("Failed to parse AI JSON")) {
           throw new Error(AI_INCOMPLETE_MESSAGE);

@@ -11,6 +11,7 @@ import {
   openaiCompletionOptions,
 } from "../src/lib/ai-request-options";
 import { anthropicAcceptsTemperature } from "../src/lib/ai-providers";
+import { TruncatedOutputError, normalizeJsonResponse, stoppedAtTokenLimit } from "../src/lib/ai";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -98,6 +99,34 @@ check(
   "a Gemini slug still takes sampling parameters",
   "temperature" in slugGemini && "max_tokens" in slugGemini
 );
+
+console.log("\nTruncated output (audit M-15)");
+check("OpenAI chat finish_reason length is truncation", stoppedAtTokenLimit({ choices: [{ finish_reason: "length" }] }));
+check("OpenAI chat finish_reason stop is not", !stoppedAtTokenLimit({ choices: [{ finish_reason: "stop" }] }));
+check("Anthropic stop_reason max_tokens is truncation", stoppedAtTokenLimit({ stop_reason: "max_tokens" }));
+check("Anthropic end_turn is not", !stoppedAtTokenLimit({ stop_reason: "end_turn" }));
+check("Gemini finishReason MAX_TOKENS is truncation", stoppedAtTokenLimit({ candidates: [{ finishReason: "MAX_TOKENS" }] }));
+check(
+  "OpenAI Responses incomplete at max_output_tokens is truncation",
+  stoppedAtTokenLimit({ status: "incomplete", incomplete_details: { reason: "max_output_tokens" } })
+);
+const cut = '{"contacts":[{"name":"Ada"},{"name":"Gra';
+let threw: unknown = null;
+try {
+  normalizeJsonResponse(cut, { truncated: true, operation: "capture.parse" as never });
+} catch (e) {
+  threw = e;
+}
+check("a cut-off answer throws TruncatedOutputError instead of being repaired", threw instanceof TruncatedOutputError, String(threw));
+check(
+  "an answer that happens to be complete at the limit is kept",
+  normalizeJsonResponse('{"a":1}', { truncated: true, operation: "capture.parse" as never }) === '{"a":1}'
+);
+check(
+  "transcription still repairs a cut-off page",
+  normalizeJsonResponse('{"text":"Met Ada at', { truncated: true, operation: "capture.transcribe.page" }) === '{"text":"Met Ada at"}'
+);
+check("an untruncated answer still goes through the lenient parser", normalizeJsonResponse('noise {"a":1} trailing') === '{"a":1}');
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);

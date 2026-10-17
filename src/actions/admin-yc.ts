@@ -13,6 +13,7 @@ import {
   userSettings,
 } from "@/db/schema";
 import { requireAdminUserId } from "@/lib/admin";
+import { requireClientDate } from "@/lib/input/dates";
 
 /**
  * Every write below used to trust its input outright — fine for the forms, which already
@@ -107,7 +108,7 @@ export async function addStartupExpenseAction(input: {
   await db.insert(startupExpenses).values({
     category: requireNonEmpty(input.category, "Category"),
     amountUsd: requirePositiveAmount(input.amountUsd, "Amount"),
-    incurredAt: new Date(input.incurredAt),
+    incurredAt: requireClientDate(input.incurredAt, "date"),
     note: input.note?.trim() || null,
   });
 
@@ -124,7 +125,7 @@ export async function setCashSnapshotAction(input: {
 
   await db.insert(cashSnapshots).values({
     balanceUsd: requireNonNegativeAmount(input.balanceUsd, "Cash balance"),
-    asOf: new Date(input.asOf),
+    asOf: requireClientDate(input.asOf, "as-of date"),
   });
 
   revalidatePath("/admin/yc/runway");
@@ -143,8 +144,8 @@ export async function addAcquisitionSpendAction(input: {
   await db.insert(acquisitionSpend).values({
     channel: requireNonEmpty(input.channel, "Channel"),
     amountUsd: requirePositiveAmount(input.amountUsd, "Amount"),
-    periodStart: new Date(input.periodStart),
-    periodEnd: new Date(input.periodEnd),
+    periodStart: requireClientDate(input.periodStart, "period start"),
+    periodEnd: requireClientDate(input.periodEnd, "period end"),
   });
 
   revalidatePath("/admin/yc/economics");

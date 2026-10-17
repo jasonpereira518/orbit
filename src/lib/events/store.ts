@@ -265,6 +265,16 @@ export type CreateEventInput = {
   notes?: string | null;
 };
 
+/**
+ * The last line before the driver: an Invalid Date reaching `.values()` throws `RangeError`
+ * from inside drizzle as a 500 (audit M-04). Callers validate at the boundary
+ * (`optionalClientDate`); this keeps a caller that forgot — a sync adapter, a script — from
+ * failing a whole write over one unreadable time. Unreadable means "no time stated".
+ */
+function validDateOrNull(value: Date | null | undefined): Date | null {
+  return value instanceof Date && !Number.isNaN(value.getTime()) ? value : null;
+}
+
 export async function createEventForUser(
   userId: string,
   input: CreateEventInput
@@ -275,8 +285,8 @@ export async function createEventForUser(
     .values({
       userId,
       title: input.title.trim(),
-      startsAt: input.startsAt ?? null,
-      endsAt: input.endsAt ?? null,
+      startsAt: validDateOrNull(input.startsAt),
+      endsAt: validDateOrNull(input.endsAt),
       timezone: input.timezone ?? null,
       venue: input.venue ?? null,
       city: input.city ?? null,
@@ -318,7 +328,12 @@ export async function updateEventForUser(
   };
   await db
     .update(events)
-    .set({ ...safe, updatedAt: new Date() })
+    .set({
+      ...safe,
+      ...("startsAt" in safe ? { startsAt: validDateOrNull(safe.startsAt as Date | null | undefined) } : {}),
+      ...("endsAt" in safe ? { endsAt: validDateOrNull(safe.endsAt as Date | null | undefined) } : {}),
+      updatedAt: new Date(),
+    })
     .where(and(eq(events.id, eventId), eq(events.userId, userId)));
 }
 

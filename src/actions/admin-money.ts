@@ -5,6 +5,7 @@ import { getDb } from "@/db";
 import { startupExpenses } from "@/db/schema";
 import { requireAdminUserId } from "@/lib/admin";
 import { setInfraCost } from "@/lib/infra-costs";
+import { requireClientDate } from "@/lib/input/dates";
 
 /**
  * Cost entry for the Money section.
@@ -30,7 +31,7 @@ export async function setInfraCostAction(input: {
   await requireAdminUserId();
   await setInfraCost({
     provider: input.provider,
-    month: new Date(input.month),
+    month: requireClientDate(input.month, "month"),
     // Entered in dollars because that is what the bill says; stored in cents because
     // floats do not survive being summed.
     amountCents: Math.round(input.amountUsd * 100),
@@ -54,7 +55,7 @@ export async function addOneOffCostAction(input: {
   await db.insert(startupExpenses).values({
     category: input.category,
     amountUsd: input.amountUsd,
-    incurredAt: new Date(input.incurredAt),
+    incurredAt: requireClientDate(input.incurredAt, "date"),
     note: input.note?.trim() || null,
   });
 

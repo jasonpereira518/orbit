@@ -63,6 +63,16 @@ Ship these first, in this order. Each is independent except where noted.
 
 ## Phase 2 — Data integrity and resilience
 
+**Status (2026-10-17): 2.1–2.9 implemented on `claude/trusting-wozniak-ebsks3`; 2.10 deferred to decision 12.** Choices made where the plan left one open, each easy to reverse:
+- **Text caps (decision 5):** over-long text is **truncated, never rejected**, on both the strict and lenient paths, so no import row fails for length. Caps live in `src/lib/input/text.ts` and `FREE_TEXT_CAPS` in `contact-input.ts` (notes 100k, AI summary 10k, how-met 2k, reminder title 500, description 10k, list items 500 × 100, tags 60 × 50). NUL and other C0 controls are stripped and text is NFC-normalised.
+- **Truncated model output (decision 6):** **no retry**. `withUsage` records one token count per call, so a retry inside it would bill only the second attempt. A JSON answer the provider reports as cut off (`finish_reason=length`, `stop_reason=max_tokens`, `MAX_TOKENS`, Responses `incomplete`) now throws `TruncatedOutputError` with the existing "got cut off — try again" copy, unless it already parses as complete JSON. Page transcription keeps its repair.
+- **Webhook drain (2.5):** rows are claimed in the database (`claimed_by`/`claimed_until`, schema 172), at most 5 per endpoint per pass, interleaved. The ops workflow is unchanged; overlapping drains are now harmless.
+- **Referral tier (2.9):** at-least with a `referral_tier_mailed` claim (schema 173). A friend who leaves and rejoins no longer re-sends a tier mail.
+- **Not done in 2.9:** keeping the question on an involuntary chat disconnect. Server-side a Stop and a closed tab are the same abort, so it needs a client signal and a product call. Credits for aborted streams were already settled in Phase 1.
+- **2.10:** the graph scan already omits notes and avatars. Capping or paginating the drawn set is decision 12 and is left for you.
+
+Tests added or extended: `smoke-input-helpers`, `smoke-contact-create-race`, `smoke-cloud-files-bomb`, `smoke-contacts-search-paging`, `smoke-webhook-delivery`, `smoke-ai-request-options`, `smoke-import-revert`, `smoke-credits`, `smoke-waitlist-position`, `smoke-import-engine`. Stress proofs DI-DUP-CREATE, DI-PAGE-NULL, DI-WEBHOOK-DOUBLE, RACE-CAP-1, EC-DATE-*, EC-LEN-* and INJ-DOCX-BOMB now print `ok`.
+
 ### 2.1 M-04 + L-11 Validate dates and ids at the edge
 - **Approach:** a shared `parseIsoDate(input): Date | null` (and `requireUuid`) in `src/lib/input/`; every `new Date(input.*)` in `src/actions/**` and `src/lib/*-writes.ts` goes through it and returns a `UserFacingError` on `null`; add uuid regexes to `api/avatars/[contactId]`, `api/feedback/screenshots/[shotId]`, `api/v1/webhook-endpoints/[id]`; zod-validate `files[]` in `api/scan/[token]/pages`; validate cursor fields (`id` uuid, `u`/`lt` parseable) in `contacts-page-cursor.ts` and `reminders-page-query.ts`, returning `null` (first page) on garbage.
 - **Files:** the 12 call sites listed in the audit (M-04, L-11).

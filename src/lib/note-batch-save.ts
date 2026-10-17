@@ -19,7 +19,7 @@ import {
   createContactForUser,
   logNoteInteractionForUser,
   updateContactForUser,
-  withExistingTagNames,
+  addTagsForUser,
 } from "@/lib/contact-writes";
 import {
   DEFAULT_FOLLOW_UP_WINDOW_DAYS,
@@ -370,10 +370,11 @@ export async function saveNoteBatch(
             ...(p.closenessChosen ? { relationshipScore } : {}),
             ...gaps,
             ...(addedFacts.length ? { keyFacts: [...priorFacts, ...addedFacts] } : {}),
-            ...(tagNames?.length ? { tagNames: await withExistingTagNames(userId, contactId, tagNames) } : {}),
           },
           WRITE_OPTS
         );
+        // Added, never replaced, and without reading the current list first (audit M-13).
+        if (tagNames?.length) await addTagsForUser(userId, contactId, tagNames);
         updated += 1;
       } else {
         if (!parsed.name) throw new Error("A name is required to create a contact");

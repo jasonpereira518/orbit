@@ -11,6 +11,7 @@ import {
   recordHandoffTranscript,
 } from "@/lib/scan-handoff";
 import { reportAndContinue, reportedFailure } from "@/lib/report-error";
+import { z } from "zod";
 
 /**
  * Pages photographed on a phone, posted against a scan handoff token.
@@ -27,6 +28,15 @@ export const runtime = "nodejs";
 // OCR of a full note (`MAX_SCAN_PAGES` pages), three at a time, against whichever
 // provider the user configured.
 export const maxDuration = 300;
+
+/** One page as the phone sends it. Bounded: the decoded-size check below is the real cap. */
+const scanFilesSchema = z.array(
+  z.object({
+    filename: z.string().max(255),
+    mimeType: z.string().max(100),
+    base64: z.string(),
+  })
+);
 
 /** 404 for every refusal. A 401 would confirm the route gates by token. */
 function notFound() {
@@ -46,8 +56,14 @@ export async function POST(
   let files: CaptureMediaFile[];
   let remainingPages = 0;
   try {
-    const body = (await request.json()) as { files?: CaptureMediaFile[]; remainingPages?: unknown };
-    files = Array.isArray(body?.files) ? body.files : [];
+    const body = (await request.json()) as { files?: unknown; remainingPages?: unknown };
+    const parsedFiles = scanFilesSchema.safeParse(body?.files ?? []);
+    // Each element is read below (`file.base64.length`) before anything else checks it; a
+    // missing or non-string field used to throw outside this try as a 500.
+    if (!parsedFiles.success) {
+      return NextResponse.json({ error: "Malformed request body" }, { status: 400 });
+    }
+    files = parsedFiles.data;
     // The phone sends a scan in batches under Vercel's 4.5MB request cap. It says how many
     // pages are still to come (this batch included) so pages are numbered within the note.
     remainingPages = Number.isInteger(body?.remainingPages) ? Math.min(Number(body.remainingPages), 10 * MAX_SCAN_PAGES) : 0;

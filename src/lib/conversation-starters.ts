@@ -504,9 +504,14 @@ const startersResponseSchema = z.object({
  */
 const PAGE_DELIMITER_LINE = /^[ \t]*(?:<<<[ \t]*)?PAGE[ \t]*$/gim;
 
+/** Page text sent to the model. The extension's payload is client-supplied, so its size is too. */
+export const MAX_PAGE_BLOB_CHARS = 40_000;
+
 export function untrustedPageBlock(page: PageContext): string {
-  const blob = page.text.blob
-     
+  const blob = Array.from(String(page.text.blob ?? "").slice(0, MAX_PAGE_BLOB_CHARS * 2))
+    .slice(0, MAX_PAGE_BLOB_CHARS)
+    .join("")
+    .replace(/[\uD800-\uDBFF]$/, "")
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, " ")
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")

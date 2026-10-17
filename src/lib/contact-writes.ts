@@ -11,7 +11,7 @@
  * `src/lib/search.ts`, which already take `userId` as their first argument.
  */
 
-import { and, count, eq, inArray, sql, lte } from "drizzle-orm";
+import { and, count, eq, inArray, sql, lte, type AnyColumn, type SQL } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getDb, rowsOf } from "@/db";
@@ -23,7 +23,7 @@ import {
   syncMemoryChunks,
 } from "@/lib/memory-chunks";
 import { interactionTypeLabel } from "@/lib/interaction-types";
-import { mergeFactList } from "@/lib/fact-lists";
+import { FACT_LIST_CAP, mergeFactList } from "@/lib/fact-lists";
 import {
   contactIdentities,
   contactTags,
@@ -50,10 +50,12 @@ import {
   rebuildContactEmbeddingsBatch,
 } from "@/lib/search";
 import {
+  cleanContactFreeText,
   normalizeContactInput,
   parseContactInput,
   parseContactPatch,
 } from "@/lib/contact-input";
+import { TEXT_LIMITS, cleanOptionalText, cleanTextList } from "@/lib/input/text";
 
 export type ContactWriteOptions = {
   /** Skip path revalidation during bulk imports. */
@@ -89,6 +91,13 @@ export type ContactWriteOptions = {
    * to re-derive a number that has not changed since the previous chunk.
    */
   headroom?: number | null;
+  /**
+   * When this contact's identifiers turn out to belong to a contact that already exists (a
+   * concurrent create of the same person won the claim), fold this row into that one and
+   * return the survivor. On by default; `resolveOrCreateContact` turns it off because it
+   * settles the claim itself and reports the merge in its own outcome.
+   */
+  settleClaims?: boolean;
   /**
    * The account's entitlements, for a caller that already resolved them (from the settings
    * row it holds, via `entitlementsFromSettings`). In a Server Action or route handler
@@ -296,6 +305,29 @@ async function attachTags(
 }
 
 /**
+ * Add tags to a contact without touching the ones it has — one statement per batch, no read
+ * of the current list (audit M-13). `withExistingTagNames` + a replacing write lost a tag
+ * whenever two saves onto the same contact interleaved; this cannot lose one. A link that
+ * already exists is skipped by the NOT EXISTS, scoped to the caller's own contact.
+ */
+export async function addTagsForUser(userId: string, contactId: string, adding: readonly string[]): Promise<void> {
+  const names = cleanTagNames([...adding]);
+  if (names.length === 0) return;
+  const db = await getDb();
+  const byLower = await tagsFor(userId, names);
+  for (const name of names) {
+    const tagId = byLower.get(name.toLowerCase())?.id;
+    if (!tagId) continue;
+    await db.execute(sql`
+      INSERT INTO contact_tags (contact_id, tag_id)
+      SELECT ${contactId}::uuid, ${tagId}::uuid
+       WHERE EXISTS (SELECT 1 FROM contacts WHERE id = ${contactId}::uuid AND user_id = ${userId})
+         AND NOT EXISTS (SELECT 1 FROM contact_tags WHERE contact_id = ${contactId}::uuid AND tag_id = ${tagId}::uuid)
+    `);
+  }
+}
+
+/**
  * A contact's current tag names plus `adding` — for writes that ADD tags rather than set
  * the full list. Saving a capture onto an existing contact used to pass only the note's tags
  * into a write that replaces the list, so the contact's other tags were deleted, and a note
@@ -482,6 +514,32 @@ export async function createContactForUser(
     })
     .returning();
 
+  // The headroom check above is read-then-write: thirty concurrent creates at 499 of 500
+  // all saw room for one and all inserted (audit M-13). Settled here, after the insert, by
+  // rank: this row survives only if it is among the first `contactLimit` of the account's
+  // contacts by (created_at, id). Every racer computes the same order, so exactly the rows
+  // that fit survive and the rest are taken back before anything else points at them.
+  if (entitlements.contactLimit !== null) {
+    const [{ rank }] = rowsOf<{ rank: number }>(
+      await db.execute(sql`
+        SELECT count(*)::int AS rank FROM contacts
+         WHERE user_id = ${userId}
+           AND ${notTourExample(contacts.source)}
+           AND (created_at, id) <= (${contact.createdAt.toISOString()}::timestamptz, ${contact.id}::uuid)
+      `)
+    );
+    if (Number(rank) > entitlements.contactLimit) {
+      await db.delete(contacts).where(and(eq(contacts.id, contact.id), eq(contacts.userId, userId)));
+      const { plan, contactLimit } = entitlements;
+      await recordGateHit({ userId, feature: "contacts", plan, context: { contactLimit, raced: true } });
+      throw new PaywallError(
+        "contacts",
+        plan,
+        `You've reached the ${contactLimit}-contact limit on the free plan. Upgrade to add more people to your orbit.`
+      );
+    }
+  }
+
   // Claim this contact's identifiers.
   //
   // Here rather than only in `resolveOrCreateContact` so that no path can produce a contact
@@ -493,7 +551,8 @@ export async function createContactForUser(
   // out of this file). Callers that need to act on a lost claim go through
   // `resolveOrCreateContact`, which re-claims and reads the answer. Claiming is idempotent,
   // so doing it twice costs a statement and changes nothing.
-  await claimIdentities(userId, contact.id, identityKeysFor(input), input.source);
+  const owners = await claimIdentities(userId, contact.id, identityKeysFor(input), input.source);
+  const incumbent = owners.find((o) => o.contactId !== contact.id);
 
   // Just inserted, so there are no tags to clear first — see `attachTags`.
   await attachTags(userId, contact.id, input.tagNames);
@@ -507,6 +566,28 @@ export async function createContactForUser(
     revalidatePath("/");
     revalidatePath("/contacts");
     revalidatePath("/graph");
+  }
+
+  // Lost an identifier to a contact that already holds it: two creates of the same person
+  // raced (two captures, a capture and the extension), or a caller skipped the duplicate
+  // check. Before, the result was ignored and the account kept two contacts, one of them
+  // invisible to duplicate prevention forever (audit M-13). Now the two are merged — older
+  // wins, exactly as `resolveOrCreateContact` does — and the survivor is returned, so the
+  // caller's interaction, reminder or note lands on the one contact that remains. Imported
+  // lazily: `contact-merge` and `contact-resolve` both import this module.
+  if (incumbent && options?.settleClaims !== false) {
+    const [{ mergeContacts }, { pickWinner }] = await Promise.all([
+      import("@/lib/contact-merge"),
+      import("@/lib/contact-resolve"),
+    ]);
+    const [winner, loser] = await pickWinner(userId, contact.id, incumbent.contactId);
+    await mergeContacts(userId, winner, loser, { reason: "Same identifier", confidence: 0.98 });
+    const [survivor] = await db
+      .select()
+      .from(contacts)
+      .where(and(eq(contacts.id, winner), eq(contacts.userId, userId)))
+      .limit(1);
+    if (survivor) return survivor;
   }
 
   return contact;
@@ -858,7 +939,9 @@ export async function bulkMergeContactsForUser(
   companyResolve: CompanyResolver
 ): Promise<Date | null> {
   if (merges.length === 0) return null;
-  merges = foldMergesByContact(merges);
+  // Same cleaning every other write path gets (audit M-05): imported text is the most
+  // likely to carry a NUL or an unbounded field.
+  merges = foldMergesByContact(merges).map((m) => ({ ...m, input: cleanContactFreeText(m.input) }));
   const db = await getDb();
   const now = new Date();
 
@@ -938,30 +1021,48 @@ export async function bulkMergeContactsForUser(
  * interests leaves that column entirely alone rather than rewriting it with itself.
  * Returns null when the patch carries none of the three, so the extra read is skipped.
  */
-async function mergedFactLists(
-  db: Awaited<ReturnType<typeof getDb>>,
-  userId: string,
-  id: string,
+/**
+ * The fact-list union as ONE SQL expression over the row being updated (audit M-13).
+ *
+ * This used to read the current lists, merge in JavaScript and write the result back — so
+ * two captures saving onto the same contact at once each wrote "what I read plus mine", and
+ * the second write deleted the first one's facts. Evaluated inside the UPDATE, the existing
+ * list is whatever the row holds at that moment, and Postgres' row lock serialises the two
+ * writers. Same rule as `mergeFactList`: existing entries first, then new ones, deduplicated
+ * case- and whitespace-insensitively, capped at `FACT_LIST_CAP`. The incoming list is cleaned
+ * and deduplicated in JavaScript first (`mergeFactList(null, incoming)`), so the SQL only has
+ * to union two clean lists.
+ */
+function factListMergeSql(column: SQL | AnyColumn, incoming: unknown): SQL {
+  const clean = mergeFactList(null, incoming);
+  const norm = (v: SQL) => sql`lower(regexp_replace(btrim(${v}), '[[:space:]]+', ' ', 'g'))`;
+  return sql`(
+    SELECT coalesce(jsonb_agg(d.v ORDER BY d.ord), '[]'::jsonb) FROM (
+      SELECT v, ord FROM (
+        SELECT DISTINCT ON (${norm(sql`u.v`)}) u.v, u.ord FROM (
+          SELECT e.value #>> '{}' AS v, e.ord FROM jsonb_array_elements(
+            CASE WHEN jsonb_typeof(${column}) = 'array' THEN ${column} ELSE '[]'::jsonb END
+          ) WITH ORDINALITY AS e(value, ord)
+          UNION ALL
+          SELECT i.x, 1000000 + i.o FROM jsonb_array_elements_text(${JSON.stringify(clean)}::jsonb) WITH ORDINALITY AS i(x, o)
+        ) u
+        WHERE u.v IS NOT NULL AND btrim(u.v) <> ''
+        ORDER BY ${norm(sql`u.v`)}, u.ord
+      ) firsts
+      ORDER BY ord
+      LIMIT ${FACT_LIST_CAP}
+    ) d
+  )`;
+}
+
+function mergedFactListsSql(
   input: Partial<ContactInput>
-): Promise<Partial<Record<"keyFacts" | "sharedInterests" | "opportunities", string[]>> | null> {
-  const wanted = (["keyFacts", "sharedInterests", "opportunities"] as const).filter(
-    (key) => input[key] !== undefined
-  );
-  if (wanted.length === 0) return null;
-
-  const current = await db.query.contacts.findFirst({
-    where: and(eq(contacts.id, id), eq(contacts.userId, userId)),
-    columns: { keyFacts: true, sharedInterests: true, opportunities: true },
-  });
-  // No row means the update below will match nothing either; let it fall through and report
-  // that the ordinary way rather than inventing a patch for a contact that is not there.
-  if (!current) return null;
-
-  const patch: Partial<Record<(typeof wanted)[number], string[]>> = {};
-  for (const key of wanted) {
-    patch[key] = mergeFactList(current[key], input[key]);
-  }
-  return patch;
+): Partial<Record<"keyFacts" | "sharedInterests" | "opportunities", SQL>> | null {
+  const patch: Partial<Record<"keyFacts" | "sharedInterests" | "opportunities", SQL>> = {};
+  if (input.keyFacts !== undefined) patch.keyFacts = factListMergeSql(contacts.keyFacts, input.keyFacts);
+  if (input.sharedInterests !== undefined) patch.sharedInterests = factListMergeSql(contacts.sharedInterests, input.sharedInterests);
+  if (input.opportunities !== undefined) patch.opportunities = factListMergeSql(contacts.opportunities, input.opportunities);
+  return Object.keys(patch).length ? patch : null;
 }
 
 export async function updateContactForUser(
@@ -985,9 +1086,7 @@ export async function updateContactForUser(
   // each call site so the union rule lives with the writer it qualifies — there is one
   // writer for these columns and adding a second place that decides this is how the two
   // drift apart.
-  const factPatch = options?.mergeFactLists
-    ? await mergedFactLists(db, userId, id, input)
-    : null;
+  const factPatch = options?.mergeFactLists ? mergedFactListsSql(input) : null;
 
 
   const [contact] = await db
@@ -1186,10 +1285,12 @@ export async function logInteractionForUser(
     .values({
       userId,
       contactId: input.contactId,
-      rawNotes: input.rawNotes,
-      aiSummary: input.aiSummary,
-      topics: input.topics ?? [],
-      actionItems: input.actionItems ?? [],
+      // Cleaned and capped (audit M-05): a NUL failed the insert, and nothing bounded a
+      // single note — a 2 MB paste was stored and indexed whole.
+      rawNotes: cleanOptionalText(input.rawNotes, TEXT_LIMITS.rawNotes),
+      aiSummary: cleanOptionalText(input.aiSummary, TEXT_LIMITS.summary),
+      topics: cleanTextList(input.topics, TEXT_LIMITS.listItem),
+      actionItems: cleanTextList(input.actionItems, TEXT_LIMITS.listItem),
       interactionType: input.interactionType ?? "note",
       source: input.source,
       interactionDate: when,
@@ -1202,7 +1303,7 @@ export async function logInteractionForUser(
 
   if (input.actionItems?.length) {
     const { syncActionItems } = await import("@/lib/action-items");
-    await syncActionItems(userId, row.id, input.contactId, input.actionItems);
+    await syncActionItems(userId, row.id, input.contactId, row.actionItems ?? []);
   }
 
   if ((input.rawNotes || input.aiSummary) && !options?.skipEmbedding) {

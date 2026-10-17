@@ -4156,6 +4156,9 @@ export const outboundWebhookDeliveries = pgTable(
     lastError: text("last_error"),
     lastAttemptedAt: timestamp("last_attempted_at", { withTimezone: true }),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    /** The drain that owns this row, and until when (audit M-03). See `claimDueDeliveries`. */
+    claimedBy: text("claimed_by"),
+    claimedUntil: timestamp("claimed_until", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -4612,6 +4615,11 @@ export const interestListSignups = pgTable(
      * on insert, never on a rejoin. No FK, like every other cross-row reference here.
      */
     referredById: uuid("referred_by_id"),
+    /**
+     * The highest referral tier (its `at`) this row has been mailed about. Raised with a
+     * conditional update before the mail goes out, so each tier is mailed once (audit L-20).
+     */
+    referralTierMailed: integer("referral_tier_mailed").notNull().default(0),
     /**
      * The name on the pass, collected in the join's second step. Null until then — and for
      * every row from before the step existed, and for anyone who left after step one.

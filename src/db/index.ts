@@ -1154,6 +1154,8 @@ CREATE TABLE IF NOT EXISTS outbound_webhook_deliveries (
   last_error text,
   last_attempted_at timestamptz,
   delivered_at timestamptz,
+  claimed_by text,
+  claimed_until timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS outbound_deliveries_endpoint_event_uidx ON outbound_webhook_deliveries(endpoint_id, event_id);
@@ -1370,6 +1372,7 @@ CREATE TABLE IF NOT EXISTS interest_list_signups (
   pass_check_count integer NOT NULL DEFAULT 0,
   pass_last_checked_at timestamptz,
   signup_event_label text,
+  referral_tier_mailed integer NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_email_uidx ON interest_list_signups(email);
@@ -2726,7 +2729,15 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 171 = imports.claim_token + imports.lease_until: the import runner's lease, so the stall
 // backstop or an admin retry can never run a second runner beside a live one (audit H-04).
 // Rescanned every local and remote ref on Oct 17 2026: 170 was the highest claimed anywhere.
-export const SCHEMA_VERSION = 171;
+//
+// 172 = contacts_user_closeness_nl_idx (closeness sort NULLS LAST, audit M-12) and
+// outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, audit M-03).
+// Rescanned Oct 17 2026: 171 (this branch) was the highest claimed anywhere.
+//
+// 173 = interest_list_signups.referral_tier_mailed: the highest referral tier a referrer has
+// been mailed, claimed with a conditional update so a tier crossed by two concurrent joins is
+// still mailed exactly once (audit L-20). Rescanned Oct 17 2026: 172 (this branch) was the highest.
+export const SCHEMA_VERSION = 173;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2930,6 +2941,14 @@ export const SCALE_DDL: string[] = [
   // descending id. The cursor is a row-value comparison, which needs every element ordered
   // the same way, so the index has to be declared that way to serve it.
   `CREATE INDEX IF NOT EXISTS contacts_user_closeness_idx ON contacts(user_id, closeness DESC, id DESC)`,
+  // v172: the contacts list's closeness sort is NULLS LAST (audit M-12), which the index
+  // above (DESC = NULLS FIRST) cannot serve. Kept alongside it: other readers order that way.
+  `CREATE INDEX IF NOT EXISTS contacts_user_closeness_nl_idx ON contacts(user_id, closeness DESC NULLS LAST, id DESC)`,
+  // v172: the outbound webhook drain's claim (audit M-03). See `claimDueDeliveries`.
+  `ALTER TABLE outbound_webhook_deliveries ADD COLUMN IF NOT EXISTS claimed_by text`,
+  `ALTER TABLE outbound_webhook_deliveries ADD COLUMN IF NOT EXISTS claimed_until timestamptz`,
+  // v173: the referral tier notice's claim (audit L-20). See `notifyIfTierUnlocked`.
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS referral_tier_mailed integer NOT NULL DEFAULT 0`,
   `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
   // Backs BOTH the "Last spoken" sort on /contacts and the composer's pickers, which open
   // on "who have I actually spoken to lately" rather than whoever is alphabetically first

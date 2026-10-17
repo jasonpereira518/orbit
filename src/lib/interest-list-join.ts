@@ -12,7 +12,7 @@
  * probed at ten tries per ten minutes per IP. The
  * address itself is never returned.
  */
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, lt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { interestListSignups } from "@/db/schema";
 import { getWaitlistPageUrl } from "@/lib/app-url";
@@ -343,10 +343,12 @@ export async function saveInterestListNameCore(
 }
 
 /**
- * The referral that takes someone to exactly a tier's threshold (1, 3, 5 or 10 still-waiting
- * friends) is the moment they unlock it, so that is when they hear about it. Exactly, not
- * at-least: the second friend is not news. A friend who leaves and a new one who joins can
- * cross a line twice — rare, and a second "you unlocked it" is harmless.
+ * The referral that takes someone to a tier's threshold (1, 3, 5 or 10 still-waiting friends)
+ * is the moment they unlock it, so that is when they hear about it. At-least, not exactly:
+ * two friends joining at once can both count past a threshold (2 → 4), and an exact match
+ * then mailed nobody (audit L-20). Each tier is mailed once, claimed through
+ * `referral_tier_mailed` before the send, so the second friend is still not news and a
+ * friend who leaves and rejoins does not re-send it.
  *
  * Never throws: the join it rides on has already succeeded.
  */
@@ -369,8 +371,15 @@ async function notifyIfTierUnlocked(
       .where(
         and(eq(interestListSignups.referredById, referrer.id), isNull(interestListSignups.unsubscribedAt))
       );
-    const tier = REFERRAL_TIERS.find((t) => t.at > 0 && t.at === (count?.n ?? 0));
+    const n = count?.n ?? 0;
+    const tier = [...REFERRAL_TIERS].filter((t) => t.at > 0 && t.at <= n).sort((a, b) => b.at - a.at)[0];
     if (!tier) return;
+    const claimed = await db
+      .update(interestListSignups)
+      .set({ referralTierMailed: tier.at })
+      .where(and(eq(interestListSignups.id, referrer.id), lt(interestListSignups.referralTierMailed, tier.at)))
+      .returning();
+    if (claimed.length === 0) return;
     const pageUrl = getWaitlistPageUrl();
     const send = ctx.sendTier ?? sendTierEmail;
     await send(

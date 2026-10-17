@@ -103,7 +103,16 @@ function fixture(n: number, dupEvery = 0) {
  * `writeWithNarrowing`.
  */
 function poisonCompany() {
-  return crypto.randomBytes(1500).toString("hex");
+  // 1,500 random characters from CJK Extension B (U+20000–U+2A6DF): four bytes each in UTF-8,
+  // so ~6 KB that neither TOAST nor PGLZ can shrink. Not ASCII hex any more: the write layer
+  // now caps free text at 2,000 characters (audit M-05), which put a 3,000-character hex
+  // string comfortably under the btree's ~2,704-byte entry limit and made it import cleanly.
+  // The cap counts characters, so multibyte text can still exceed the index's BYTE limit —
+  // exactly the case narrowing exists to isolate.
+  const bytes = crypto.randomBytes(1500 * 2);
+  let out = "";
+  for (let i = 0; i < 1500; i++) out += String.fromCodePoint(0x20000 + (bytes.readUInt16BE(i * 2) % 0xa6e0));
+  return out;
 }
 
 /**
@@ -411,7 +420,7 @@ async function main() {
   // A value that fails only at the actual write, and only for this one row, has to be
   // something Postgres accepts as JSON text but refuses when it lands somewhere indexed.
   // `poisonCompany()` is an incompressible (crypto-random, so PGLZ/TOAST can't shrink it)
-  // ~3000-character string. It does not fail on the `contacts` insert itself — it fails one
+  // ~6 KB string of 1,500 four-byte characters (see its own comment for why not ASCII). It does not fail on the `contacts` insert itself — it fails one
   // step earlier, in `resolveCompany`'s `INSERT INTO companies`, which is keyed by
   // `companies_user_name_uidx` on `(user_id, name_normalized)`; `normalizeCompanyName` only
   // lowercases and collapses whitespace, so the value reaches that unique btree index at

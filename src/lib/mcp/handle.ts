@@ -33,6 +33,7 @@ import { buildOrbitMcpServer } from "@/lib/mcp/server";
 import { resourceMetadataUrl, verifyOAuthCaller } from "@/lib/mcp/oauth";
 import { RATE_LIMITS, RateLimitedError, consumeBucket } from "@/lib/rate-limit";
 import { recordAiSecurityEvent } from "@/lib/ai-security";
+import { readBodyCapped } from "@/lib/net-guard";
 
 /**
  * JSON-RPC messages one HTTP request may carry.
@@ -62,14 +63,33 @@ export function countToolCalls(body: unknown): { messages: number; toolCalls: nu
   return { messages: list.length, toolCalls };
 }
 
-/** Read the body without consuming it for the transport. Null when there is none or it is not JSON. */
-async function peekJson(request: Request): Promise<unknown> {
-  if (request.method !== "POST") return null;
+/**
+ * Read the body once, counting bytes as they arrive: a chunked request has no Content-Length to
+ * check up front, and `request.clone().json()` buffered all of it. Not a clone and a capped read
+ * either: cancelling one branch of a teed stream never settles while the other is still open, so
+ * an oversized request would hang. The transport gets a rebuilt request over the same bytes.
+ * `tooLarge` once it passes MAX_MCP_BODY_BYTES; `json` is null when there is none or it is not JSON.
+ */
+async function readMcpBody(request: Request): Promise<{ tooLarge: boolean; json: unknown; request: Request }> {
+  if (request.method !== "POST" || !request.body) return { tooLarge: false, json: null, request };
+  const raw = await readBodyCapped(new Response(request.body), MAX_MCP_BODY_BYTES);
+  if (!raw) return { tooLarge: true, json: null, request };
+  const headers = new Headers(request.headers);
+  headers.delete("content-length");
+  headers.delete("transfer-encoding");
+  const replay = new Request(request.url, {
+    method: request.method,
+    headers,
+    body: new Uint8Array(raw),
+    signal: request.signal,
+  });
+  let json: unknown = null;
   try {
-    return await request.clone().json();
+    json = JSON.parse(raw.toString("utf8"));
   } catch {
-    return null;
+    // Not JSON: the transport answers that with its own parse error.
   }
+  return { tooLarge: false, json, request: replay };
 }
 
 function jsonRpcError(
@@ -158,7 +178,12 @@ export async function handleMcpRequest(
   if (declaredLength > MAX_MCP_BODY_BYTES) {
     return jsonRpcError(-32600, "Request body too large.", 413);
   }
-  const { messages, toolCalls } = countToolCalls(await peekJson(request));
+  const peeked = await readMcpBody(request);
+  if (peeked.tooLarge) {
+    return jsonRpcError(-32600, "Request body too large.", 413);
+  }
+  request = peeked.request;
+  const { messages, toolCalls } = countToolCalls(peeked.json);
   if (messages > MAX_MCP_BATCH) {
     void recordAiSecurityEvent({
       kind: "batch_rejected",

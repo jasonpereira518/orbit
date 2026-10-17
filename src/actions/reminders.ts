@@ -42,6 +42,7 @@ import {
   scheduleContactFollowUpForUser,
   clearContactFollowUpForUser,
   undoClearContactFollowUpForUser,
+  requireReminderTitle,
   type ClearFollowUpSnapshot,
 } from "@/lib/reminder-writes";
 import { isListColor, isListIcon } from "@/lib/reminder-list-style";
@@ -75,6 +76,8 @@ import {
   type DismissSnapshot,
   type SnoozeSnapshot,
 } from "@/lib/reminders";
+import { optionalClientDate } from "@/lib/input/dates";
+import { TEXT_LIMITS, cleanOptionalText } from "@/lib/input/text";
 
 /*
  * Undo snapshots come back from the client, so they are input like any other. Every
@@ -338,10 +341,10 @@ export async function updateReminder(
 
   const patch: Partial<typeof reminders.$inferInsert> = {};
 
-  if (input.title !== undefined) patch.title = input.title.trim();
-  if (input.description !== undefined) patch.description = input.description;
+  if (input.title !== undefined) patch.title = requireReminderTitle(input.title);
+  if (input.description !== undefined) patch.description = cleanOptionalText(input.description, TEXT_LIMITS.description);
   if (input.dueDate !== undefined) {
-    patch.dueDate = input.dueDate ? new Date(input.dueDate) : null;
+    patch.dueDate = optionalClientDate(input.dueDate, "due date");
   }
   if (input.contactId !== undefined) {
     await assertReminderContactOwned(userId, input.contactId);

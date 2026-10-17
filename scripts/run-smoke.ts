@@ -55,6 +55,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-render-stamp-pages": "pure",
   "smoke-oauth-refresh-rejection": "pure",
   "smoke-credits-abort": "pure",
+  "smoke-input-helpers": "pure",
+  "smoke-cloud-files-bomb": "pure",
   "smoke-oauth-return": "pure",
   "smoke-openrouter-oauth": "pure",
   "smoke-report-error": "pure",
@@ -287,6 +289,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-vocabulary-terms": "pure",
   "smoke-warp-journeys": "pure",
   // pglite ----------------------------------------------------------------------------
+  "smoke-contact-create-race": "pglite",
+  "smoke-mcp-body-cap": "pglite",
   "smoke-account-alerts": "pglite",
   "smoke-import-history": "pglite",
   "smoke-account-deletion": "pglite",

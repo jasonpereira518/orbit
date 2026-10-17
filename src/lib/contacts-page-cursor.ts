@@ -20,10 +20,12 @@
 import { asc, desc, sql, type SQL } from "drizzle-orm";
 import { contacts } from "@/db/schema";
 import type { ContactSort } from "@/lib/contacts-page";
+import { isUuid } from "@/lib/input/ids";
 
 export type ContactsCursor =
   | { s: "name"; k: string; n: string; id: string; t?: number }
-  | { s: "closeness"; c: number; id: string; t?: number }
+  // `c` is null once the walk has reached the unscored tail (see `sortCondition`).
+  | { s: "closeness"; c: number | null; id: string; t?: number }
   | { s: "recent"; u: string; id: string; t?: number }
   // `lt`, not `t`: `t` is already the name-match tier on every variant, and a timestamp
   // stored under that key would be read back as a tier and compared against an integer.
@@ -39,6 +41,8 @@ type CursorRow = {
   nameTier: number;
 };
 
+const validIso = (v: unknown) => typeof v === "string" && v.length <= 40 && !Number.isNaN(new Date(v).getTime());
+
 export function encodeContactsCursor(cursor: ContactsCursor): string {
   return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 }
@@ -51,6 +55,15 @@ export function decodeContactsCursor(raw: string | undefined, sort: ContactSort,
     // way round), describes a position that does not exist in this ordering.
     if (!parsed || parsed.s !== sort) return null;
     if (searching !== (typeof parsed.t === "number")) return null;
+    // Every field reaches SQL: `id` through a `::uuid` cast, `u`/`lt` through `new Date()`
+    // (an Invalid Date throws inside the driver), `c`/`t` as numbers. A tampered or stale
+    // cursor with a bad field was a 500; it now means "start from the top".
+    if (!isUuid(parsed.id)) return null;
+    if (parsed.t !== undefined && !Number.isFinite(parsed.t)) return null;
+    if (parsed.s === "name" && (typeof parsed.k !== "string" || typeof parsed.n !== "string")) return null;
+    if (parsed.s === "closeness" && parsed.c !== null && !Number.isFinite(parsed.c)) return null;
+    if (parsed.s === "recent" && !validIso(parsed.u)) return null;
+    if (parsed.s === "last_touch" && parsed.lt !== null && !validIso(parsed.lt)) return null;
     return parsed as ContactsCursor;
   } catch {
     return null;
@@ -77,7 +90,10 @@ export function contactsOrderBy(sort: ContactSort, tier: SQL<number> | null, ran
   // Rank, then name as the tiebreak — both for genuine ties and for rows the ranking can't
   // place at all.
   if (sort === "relevance") return [...lead, relevanceRank(rankedIds), asc(contacts.sortKey), asc(contacts.fullName), asc(contacts.id)];
-  if (sort === "closeness") return [...lead, desc(contacts.closeness), desc(contacts.id)];
+  // NULLS LAST for the same reason `last_touch` uses it: contacts a bulk import has not scored
+  // yet (closeness stays NULL until the hourly recalibration) belong at the bottom, and a
+  // plain DESC put them first. Matches `contacts_user_closeness_nl_idx` exactly.
+  if (sort === "closeness") return [...lead, sql`${contacts.closeness} desc nulls last`, desc(contacts.id)];
   if (sort === "recent") return [...lead, desc(contacts.updatedAt), desc(contacts.id)];
   // NULLS LAST, so people with no logged interaction sit at the bottom rather than the top:
   // Postgres puts NULLs FIRST under DESC by default, which would open the list with everyone
@@ -91,7 +107,17 @@ export function contactsOrderBy(sort: ContactSort, tier: SQL<number> | null, ran
 
 function sortCondition(cursor: ContactsCursor): SQL {
   if (cursor.s === "closeness") {
-    return sql`(${contacts.closeness}, ${contacts.id}) < (${cursor.c}, ${cursor.id}::uuid)`;
+    // Two phases, exactly as `last_touch` below and for the same reason: a row-value compare
+    // against NULL is NULL, so the old single condition hid every unscored contact, and a
+    // page ending on one emitted `c = 0`, which then excluded every scored contact — after a
+    // bulk import the list stopped at page one (audit M-12).
+    if (cursor.c !== null) {
+      return sql`(
+        (${contacts.closeness}, ${contacts.id}) < (${cursor.c}, ${cursor.id}::uuid)
+        or ${contacts.closeness} is null
+      )`;
+    }
+    return sql`(${contacts.closeness} is null and ${contacts.id} < ${cursor.id}::uuid)`;
   }
   if (cursor.s === "recent") {
     return sql`(${contacts.updatedAt}, ${contacts.id}) < (${new Date(cursor.u)}, ${cursor.id}::uuid)`;
@@ -126,7 +152,7 @@ export function contactsCursorCondition(cursor: ContactsCursor, tier: SQL<number
 
 export function contactsCursorFor(sort: ContactSort, row: CursorRow, searching: boolean): ContactsCursor {
   const t = searching ? { t: Number(row.nameTier) } : {};
-  if (sort === "closeness") return { s: "closeness", c: row.closeness ?? 0, id: row.id, ...t };
+  if (sort === "closeness") return { s: "closeness", c: row.closeness ?? null, id: row.id, ...t };
   if (sort === "recent") return { s: "recent", u: new Date(row.updatedAt).toISOString(), id: row.id, ...t };
   if (sort === "last_touch") {
     return {

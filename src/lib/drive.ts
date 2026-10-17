@@ -12,11 +12,13 @@
  */
 import { ReauthRequiredError } from "@/lib/errors";
 import { CAPTURE_INPUT_MAX_CHARS } from "@/lib/capture/limits";
+import { readBodyCapped } from "@/lib/net-guard";
 
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 
 /** Capture's own ceiling: the doc goes through capture's parse, which would clip it anyway. */
 export const DRIVE_EXPORT_MAX_CHARS = CAPTURE_INPUT_MAX_CHARS;
+export const DRIVE_EXPORT_TIMEOUT_MS = 30_000;
 
 export class DriveFileUnavailableError extends Error {
   constructor() {
@@ -75,6 +77,8 @@ export async function exportDriveFileText(
   const url = `${DRIVE_API}/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent("text/plain")}`;
   const res = await fetchImpl(url, {
     headers: { authorization: `Bearer ${accessToken}` },
+    // A stalled export would otherwise hold the request (and its capture job) until the platform kills it.
+    signal: AbortSignal.timeout(DRIVE_EXPORT_TIMEOUT_MS),
   });
 
   if (res.status === 401) {
@@ -92,7 +96,10 @@ export async function exportDriveFileText(
   if (res.status === 404) throw new DriveFileUnavailableError();
   if (!res.ok) throw new Error(`Drive export returned ${res.status}`);
 
-  const text = (await res.text()).replace(/^\uFEFF/, "");
+  // UTF-8 is at most 4 bytes a character, so anything past this is over the character cap anyway.
+  const body = await readBodyCapped(res, DRIVE_EXPORT_MAX_CHARS * 4 + 3);
+  if (!body) throw new DriveFileTooLargeError();
+  const text = body.toString("utf8").replace(/^\uFEFF/, "");
   if (text.length > DRIVE_EXPORT_MAX_CHARS) throw new DriveFileTooLargeError();
   return text;
 }

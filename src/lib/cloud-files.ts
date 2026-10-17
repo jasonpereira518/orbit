@@ -22,6 +22,7 @@ import { ReauthRequiredError } from "@/lib/errors";
 import { googleFetchWithRetry } from "@/lib/google-fetch";
 import { graphFetchWithRetry } from "@/lib/graph-fetch";
 import { DRIVE_MIME } from "@/lib/imports/drive-triage";
+import { readBodyCapped } from "@/lib/net-guard";
 
 export type CloudProvider = "google" | "microsoft";
 export const CLOUD_PROVIDERS: readonly CloudProvider[] = ["google", "microsoft"];
@@ -256,11 +257,59 @@ function decodeXmlEntities(text: string): string {
   });
 }
 
+/**
+ * Ceiling on the inflated `word/document.xml`. Markup outweighs text many times over, so this is
+ * generous next to capture's character cap, but it stops a small zip that expands to gigabytes.
+ */
+export const MAX_DOCX_XML_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Inflate one zip entry as UTF-8, refusing once it passes `maxBytes`. The declared size in the
+ * zip header is checked first, but it can lie, so the stream is counted as it inflates.
+ */
+async function inflateCapped(entry: JSZip.JSZipObject, maxBytes: number): Promise<string> {
+  const declared = (entry as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize;
+  if (typeof declared === "number" && declared > maxBytes) throw new DriveFileTooLargeError();
+  return new Promise<string>((resolve, reject) => {
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    let settled = false;
+    // Public at runtime (it backs `nodeStream`), missing from the type declarations.
+    const stream = (entry as unknown as { internalStream(type: "uint8array"): JSZip.JSZipStreamHelper<Uint8Array> })
+      .internalStream("uint8array");
+    stream
+      .on("data", (chunk: Uint8Array) => {
+        if (settled) return;
+        total += chunk.byteLength;
+        if (total > maxBytes) {
+          settled = true;
+          stream.pause();
+          chunks.length = 0;
+          reject(new DriveFileTooLargeError());
+          return;
+        }
+        chunks.push(chunk);
+      })
+      .on("error", (err: Error) => {
+        if (settled) return;
+        settled = true;
+        reject(err);
+      })
+      .on("end", () => {
+        if (settled) return;
+        settled = true;
+        resolve(Buffer.concat(chunks).toString("utf8"));
+      })
+      .resume();
+  });
+}
+
 /** A .docx's body as plain text: paragraphs become lines, tabs and breaks survive. */
 export async function docxToText(data: ArrayBuffer | Uint8Array): Promise<string> {
   const zip = await JSZip.loadAsync(data);
-  const xml = await zip.file("word/document.xml")?.async("string");
-  if (xml === undefined) throw new DriveFileUnavailableError();
+  const entry = zip.file("word/document.xml");
+  if (!entry) throw new DriveFileUnavailableError();
+  const xml = await inflateCapped(entry, MAX_DOCX_XML_BYTES);
   const text = xml
     .replace(/<w:tab\/>/g, "\t")
     .replace(/<w:br\/>|<w:cr\/>/g, "\n")
@@ -284,13 +333,14 @@ export async function readFileText(ctx: CloudCtx, provider: CloudProvider, file:
 
   if (!isReadableOneDriveName(file.name)) throw new DriveFileUnavailableError();
   const res = await graphResponse(ctx, `${GRAPH_API}/me/drive/items/${encodeURIComponent(file.id)}/content`);
-  const declared = Number(res.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > MAX_ONEDRIVE_BYTES) throw new DriveFileTooLargeError();
+  // Counted as it streams: a missing or understated Content-Length must not let the whole body buffer.
+  const body = await readBodyCapped(res, MAX_ONEDRIVE_BYTES);
+  if (!body) throw new DriveFileTooLargeError();
   const lower = file.name.toLowerCase();
   let text: string;
-  if (lower.endsWith(".docx")) text = await docxToText(await res.arrayBuffer());
-  else if (lower.endsWith(".vtt")) text = vttToText(await res.text());
-  else text = await res.text();
+  if (lower.endsWith(".docx")) text = await docxToText(body);
+  else if (lower.endsWith(".vtt")) text = vttToText(body.toString("utf8"));
+  else text = body.toString("utf8");
   text = text.replace(/^﻿/, "");
   if (text.length > DRIVE_EXPORT_MAX_CHARS) throw new DriveFileTooLargeError();
   return text;
