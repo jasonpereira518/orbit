@@ -68,8 +68,10 @@ export default function PricingPage() {
           instead of flashing PricingPageSkeleton. No-op on a direct load. */}
       <WarpArrivalBeacon />
 
-      <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-6 py-6 md:px-10">
-        <div className="flex items-center gap-4">
+      {/* Tighter on phones: at 360px Back, the wordmark and both auth buttons ran 5px past
+          the edge. Same rhythm as marketing-doc's header. */}
+      <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 py-6 sm:gap-4 sm:px-6 md:px-10">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-4">
           <BackControl />
           <Link
             href="/"
