@@ -78,6 +78,19 @@ async function buildOps(): Promise<Op[]> {
   const { POST: EXT_RESOLVE } = await import("../src/app/api/extension/resolve/route");
   const { generateApiKey } = await import("../src/lib/api/keys");
   const { findAvatarBackfillCandidates, countAvatarBackfillCandidates } = await import("../src/lib/avatar-backfill");
+  const { bootstrapAuthenticatedUser } = await import("../src/lib/auth");
+  const { getEntitlements } = await import("../src/lib/entitlements");
+  const { resolveSurfaceVisibility } = await import("../src/lib/surface-visibility");
+  const { getLinkedInReminderState } = await import("../src/lib/linkedin-reminder");
+  const { loadOrgBrandColors, forgetOrgBrandColors } = await import("../src/lib/org-brand-learn");
+  const { needsOnboarding } = await import("../src/lib/onboarding");
+  /** The (app) layout's reads before anything streams, in its order (SRV-3). */
+  const appLayout = async (coldBrandMemo: boolean) => {
+    if (coldBrandMemo) forgetOrgBrandColors(USER);
+    const settings = await bootstrapAuthenticatedUser(USER);
+    await needsOnboarding(USER);
+    return Promise.all([getEntitlements(USER), resolveSurfaceVisibility(USER), getLinkedInReminderState(USER, settings), loadOrgBrandColors(USER)]);
+  };
 
   const key = generateApiKey("api");
   await db.execute(sql`DELETE FROM api_keys WHERE user_id = ${USER} AND name = 'latency-ops'`);
@@ -104,6 +117,8 @@ async function buildOps(): Promise<Op[]> {
   const q = fakeEmbedding(42);
 
   const ops: Op[] = [
+    { group: "page", name: "app layout reads (cold instance)", run: () => appLayout(true) },
+    { group: "page", name: "app layout reads (warm instance)", run: () => appLayout(false) },
     { group: "page", name: "dashboard bundle (getDashboardData)", run: () => getDashboardData(USER) },
     { group: "page", name: "dashboard network stats", run: () => (getNetworkStats ? getNetworkStats(USER) : Promise.resolve(null)) },
     { group: "page", name: "graph (default scope)", run: () => loadGraphData(USER, { profile: null }) },
