@@ -1,0 +1,434 @@
+{
+  "afterGenerate": {
+    "messages": [
+      {
+        "body": "Hi 1, a note long enough to pass.",
+        "hasParent": false,
+        "outcome": null,
+        "prospect": "Ann Opened",
+        "scheduledFor": null,
+        "sentAt": "2026-09-15T12:00:00.000Z",
+        "status": "opened",
+        "step": 0,
+        "subject": "Hello"
+      },
+      {
+        "body": "Body for Ann Opened",
+        "hasParent": true,
+        "outcome": null,
+        "prospect": "Ann Opened",
+        "scheduledFor": "2026-09-20T12:00:00.000Z",
+        "sentAt": null,
+        "status": "generated",
+        "step": 1,
+        "subject": "Subject for Ann Opened"
+      },
+      {
+        "body": "Hi 2, a note long enough to pass.",
+        "hasParent": false,
+        "outcome": "positive_reply",
+        "prospect": "Ben Positive",
+        "scheduledFor": null,
+        "sentAt": "2026-09-15T12:00:00.000Z",
+        "status": "opened",
+        "step": 0,
+        "subject": "Hello"
+      },
+      {
+        "body": "",
+        "hasParent": true,
+        "outcome": null,
+        "prospect": "Ben Positive",
+        "scheduledFor": "2026-09-20T12:00:00.000Z",
+        "sentAt": null,
+        "status": "skipped",
+        "step": 1,
+        "subject": null
+      },
+      {
+        "body": "Hi 3, a note long enough to pass.",
+        "hasParent": false,
+        "outcome": "neutral_reply",
+        "prospect": "Cat Replied",
+        "scheduledFor": null,
+        "sentAt": "2026-09-15T12:00:00.000Z",
+        "status": "opened",
+        "step": 0,
+        "subject": "Hello"
+      },
+      {
+        "body": "",
+        "hasParent": true,
+        "outcome": null,
+        "prospect": "Cat Replied",
+        "scheduledFor": "2026-09-20T12:00:00.000Z",
+        "sentAt": null,
+        "status": "skipped",
+        "step": 1,
+        "subject": null
+      },
+      {
+        "body": "Hi 4, a note long enough to pass.",
+        "hasParent": false,
+        "outcome": null,
+        "prospect": "Dan Dup",
+        "scheduledFor": null,
+        "sentAt": "2026-09-15T12:00:00.000Z",
+        "status": "opened",
+        "step": 0,
+        "subject": "Hello"
+      },
+      {
+        "body": "Body for Dan Dup",
+        "hasParent": true,
+        "outcome": null,
+        "prospect": "Dan Dup",
+        "scheduledFor": "2026-09-16T12:00:00.000Z",
+        "sentAt": null,
+        "status": "generated",
+        "step": 1,
+        "subject": "Subject for Dan Dup"
+      }
+    ],
+    "prospects": [
+      {
+        "name": "Ann Opened",
+        "status": "contacted"
+      },
+      {
+        "name": "Ben Positive",
+        "status": "interested"
+      },
+      {
+        "name": "Cat Replied",
+        "status": "replied"
+      },
+      {
+        "name": "Dan Dup",
+        "status": "contacted"
+      }
+    ]
+  },
+  "afterOpen": {
+    "messages": [
+      {
+        "body": "Hi 1, a note long enough to pass.",
+        "hasParent": false,
+        "outcome": null,
+        "prospect": "Ann Opened",
+        "scheduledFor": null,
+        "sentAt": "2026-09-15T12:00:00.000Z",
+        "status": "opened",
+        "step": 0,
+        "subject": "Hello"
+      },
+      {
+        "body": "",
+        "hasParent": true,
+        "outcome": null,
+        "prospect": "Ann Opened",
+        "scheduledFor": "2026-09-20T12:00:00.000Z",
+        "sentAt": null,
+        "status": "scheduled",
+        "step": 1,
+        "subject": null
+      },
+      {
+        "body": "Hi 2, a note long enough to pass.",
+        "hasParent": false,
+        "outcome": null,
+        "prospect": "Ben Positive",
+        "scheduledFor": null,
+        "sentAt": null,
+        "status": "generated",
+        "step": 0,
+        "subject": "Hello"
+      },
+      {
+        "body": "Hi 3, a note long enough to pass.",
+        "hasParent": false,
+        "outcome": null,
+        "prospect": "Cat Replied",
+        "scheduledFor": null,
+        "sentAt": null,
+        "status": "generated",
+        "step": 0,
+        "subject": "Hello"
+      },
+      {
+        "body": "Hi 4, a note long enough to pass.",
+        "hasParent": false,
+        "outcome": null,
+        "prospect": "Dan Dup",
+        "scheduledFor": null,
+        "sentAt": "2026-09-15T12:00:00.000Z",
+        "status": "opened",
+        "step": 0,
+        "subject": "Hello"
+      },
+      {
+        "body": "",
+        "hasParent": true,
+        "outcome": null,
+        "prospect": "Dan Dup",
+        "scheduledFor": "2026-09-16T12:00:00.000Z",
+        "sentAt": null,
+        "status": "scheduled",
+        "step": 1,
+        "subject": null
+      }
+    ],
+    "prospects": [
+      {
+        "name": "Ann Opened",
+        "status": "contacted"
+      },
+      {
+        "name": "Ben Positive",
+        "status": "selected"
+      },
+      {
+        "name": "Cat Replied",
+        "status": "selected"
+      },
+      {
+        "name": "Dan Dup",
+        "status": "contacted"
+      }
+    ]
+  },
+  "afterReplies": {
+    "messages": [
+      {
+        "body": "Hi 1, a note long enough to pass.",
+        "hasParent": false,
+        "outcome": null,
+        "prospect": "Ann Opened",
+        "scheduledFor": null,
+        "sentAt": "2026-09-15T12:00:00.000Z",
+        "status": "opened",
+        "step": 0,
+        "subject": "Hello"
+      },
+      {
+        "body": "",
+        "hasParent": true,
+        "outcome": null,
+        "prospect": "Ann Opened",
+        "scheduledFor": "2026-09-20T12:00:00.000Z",
+        "sentAt": null,
+        "status": "scheduled",
+        "step": 1,
+        "subject": null
+      },
+      {
+        "body": "Hi 2, a note long enough to pass.",
+        "hasParent": false,
+        "outcome": "positive_reply",
+        "prospect": "Ben Positive",
+        "scheduledFor": null,
+        "sentAt": "2026-09-15T12:00:00.000Z",
+        "status": "opened",
+        "step": 0,
+        "subject": "Hello"
+      },
+      {
+        "body": "",
+        "hasParent": true,
+        "outcome": null,
+        "prospect": "Ben Positive",
+        "scheduledFor": "2026-09-20T12:00:00.000Z",
+        "sentAt": null,
+        "status": "skipped",
+        "step": 1,
+        "subject": null
+      },
+      {
+        "body": "Hi 3, a note long enough to pass.",
+        "hasParent": false,
+        "outcome": "neutral_reply",
+        "prospect": "Cat Replied",
+        "scheduledFor": null,
+        "sentAt": "2026-09-15T12:00:00.000Z",
+        "status": "opened",
+        "step": 0,
+        "subject": "Hello"
+      },
+      {
+        "body": "",
+        "hasParent": true,
+        "outcome": null,
+        "prospect": "Cat Replied",
+        "scheduledFor": "2026-09-20T12:00:00.000Z",
+        "sentAt": null,
+        "status": "skipped",
+        "step": 1,
+        "subject": null
+      },
+      {
+        "body": "Hi 4, a note long enough to pass.",
+        "hasParent": false,
+        "outcome": null,
+        "prospect": "Dan Dup",
+        "scheduledFor": null,
+        "sentAt": "2026-09-15T12:00:00.000Z",
+        "status": "opened",
+        "step": 0,
+        "subject": "Hello"
+      },
+      {
+        "body": "",
+        "hasParent": true,
+        "outcome": null,
+        "prospect": "Dan Dup",
+        "scheduledFor": "2026-09-16T12:00:00.000Z",
+        "sentAt": null,
+        "status": "scheduled",
+        "step": 1,
+        "subject": null
+      }
+    ],
+    "prospects": [
+      {
+        "name": "Ann Opened",
+        "status": "contacted"
+      },
+      {
+        "name": "Ben Positive",
+        "status": "interested"
+      },
+      {
+        "name": "Cat Replied",
+        "status": "replied"
+      },
+      {
+        "name": "Dan Dup",
+        "status": "contacted"
+      }
+    ]
+  },
+  "afterSecondStep": {
+    "messages": [
+      {
+        "body": "Hi 1, a note long enough to pass.",
+        "hasParent": false,
+        "outcome": null,
+        "prospect": "Ann Opened",
+        "scheduledFor": null,
+        "sentAt": "2026-09-15T12:00:00.000Z",
+        "status": "opened",
+        "step": 0,
+        "subject": "Hello"
+      },
+      {
+        "body": "Body for Ann Opened",
+        "hasParent": true,
+        "outcome": null,
+        "prospect": "Ann Opened",
+        "scheduledFor": "2026-09-20T12:00:00.000Z",
+        "sentAt": "2026-09-21T12:00:00.000Z",
+        "status": "opened",
+        "step": 1,
+        "subject": "Subject for Ann Opened"
+      },
+      {
+        "body": "",
+        "hasParent": true,
+        "outcome": null,
+        "prospect": "Ann Opened",
+        "scheduledFor": "2026-09-24T12:00:00.000Z",
+        "sentAt": null,
+        "status": "scheduled",
+        "step": 2,
+        "subject": null
+      },
+      {
+        "body": "Hi 2, a note long enough to pass.",
+        "hasParent": false,
+        "outcome": "positive_reply",
+        "prospect": "Ben Positive",
+        "scheduledFor": null,
+        "sentAt": "2026-09-15T12:00:00.000Z",
+        "status": "opened",
+        "step": 0,
+        "subject": "Hello"
+      },
+      {
+        "body": "",
+        "hasParent": true,
+        "outcome": null,
+        "prospect": "Ben Positive",
+        "scheduledFor": "2026-09-20T12:00:00.000Z",
+        "sentAt": null,
+        "status": "skipped",
+        "step": 1,
+        "subject": null
+      },
+      {
+        "body": "Hi 3, a note long enough to pass.",
+        "hasParent": false,
+        "outcome": "neutral_reply",
+        "prospect": "Cat Replied",
+        "scheduledFor": null,
+        "sentAt": "2026-09-15T12:00:00.000Z",
+        "status": "opened",
+        "step": 0,
+        "subject": "Hello"
+      },
+      {
+        "body": "",
+        "hasParent": true,
+        "outcome": null,
+        "prospect": "Cat Replied",
+        "scheduledFor": "2026-09-20T12:00:00.000Z",
+        "sentAt": null,
+        "status": "skipped",
+        "step": 1,
+        "subject": null
+      },
+      {
+        "body": "Hi 4, a note long enough to pass.",
+        "hasParent": false,
+        "outcome": null,
+        "prospect": "Dan Dup",
+        "scheduledFor": null,
+        "sentAt": "2026-09-15T12:00:00.000Z",
+        "status": "opened",
+        "step": 0,
+        "subject": "Hello"
+      },
+      {
+        "body": "Body for Dan Dup",
+        "hasParent": true,
+        "outcome": null,
+        "prospect": "Dan Dup",
+        "scheduledFor": "2026-09-16T12:00:00.000Z",
+        "sentAt": null,
+        "status": "generated",
+        "step": 1,
+        "subject": "Subject for Dan Dup"
+      }
+    ],
+    "prospects": [
+      {
+        "name": "Ann Opened",
+        "status": "contacted"
+      },
+      {
+        "name": "Ben Positive",
+        "status": "interested"
+      },
+      {
+        "name": "Cat Replied",
+        "status": "replied"
+      },
+      {
+        "name": "Dan Dup",
+        "status": "contacted"
+      }
+    ]
+  },
+  "generateResult": null,
+  "modelCalls": 2,
+  "secondOpenReturned": null
+}
