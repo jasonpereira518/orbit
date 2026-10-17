@@ -949,9 +949,52 @@ async function transitions() {
     await runOnGrant(devGrant, dry()).catch(() => null);
     check("on Vercel the same error marks the provider spent", (await managedPoolState()).spent.has("openai"));
     check("…and records the quota event", (await db.select().from(errorEvents).where(openaiQuota)).length === 1);
+
+    console.log("\nA provider that is failing like an outage is failed over");
+    const outageEvents = eq(errorEvents.source, "ai.managed_outage");
+    await db.delete(errorEvents).where(outageEvents);
+    // The block above left OpenAI marked dry; with it gone both providers are healthy again.
+    await db.delete(errorEvents).where(quotaEvents);
+    const outageRow = (provider: string, ageMs = 0) => ({
+      source: "ai.managed_outage", kind: "other", context: { provider }, createdAt: new Date(Date.now() - ageMs),
+    });
+    const anthropicGrant = { provider: "anthropic", model: "x", source: "managed", keyOwner: "orbit", operation: "x" } as const;
+    const overloaded = new Error("529 overloaded_error: Overloaded");
+    const back529 = await runOnGrant(anthropicGrant, Promise.reject(overloaded)).catch((e) => e);
+    check("an outage-shaped failure on a managed grant reaches the caller unchanged", back529 === overloaded);
+    const recorded = await db.select().from(errorEvents).where(outageEvents);
+    check("…and is recorded as an outage event naming the provider",
+      recorded.length === 1 && (recorded[0]!.context as { provider?: string }).provider === "anthropic", JSON.stringify(recorded));
+    await db.delete(errorEvents).where(outageEvents);
+
+    await db.insert(errorEvents).values([outageRow("anthropic"), outageRow("anthropic"), outageRow("anthropic")]);
+    forgetManagedAiPause();
+    check("three outage failures in three minutes take Anthropic out of the managed set", (await managedPoolState()).spent.has("anthropic"));
+    r = await lastSent(() => json(U.proNone));
+    check("…so the next call runs on Orbit's OpenAI key", r.req?.key === OPENAI_MANAGED, r.req?.url ?? r.err);
+
+    await db.delete(errorEvents).where(outageEvents);
+    await db.insert(errorEvents).values([outageRow("anthropic"), outageRow("anthropic")]);
+    forgetManagedAiPause();
+    check("two are not enough", !(await managedPoolState()).spent.has("anthropic"));
+
+    await db.delete(errorEvents).where(outageEvents);
+    await db.insert(errorEvents).values([outageRow("anthropic", 10 * 60_000), outageRow("anthropic", 10 * 60_000), outageRow("anthropic", 10 * 60_000)]);
+    forgetManagedAiPause();
+    check("old failures age out", !(await managedPoolState()).spent.has("anthropic"));
+
+    await db.delete(errorEvents).where(outageEvents);
+    await db.insert(errorEvents).values(
+      ["anthropic", "openai"].flatMap((p) => [outageRow(p), outageRow(p), outageRow(p)]));
+    forgetManagedAiPause();
+    const both = await managedPoolState();
+    check("when every provider is failing, none is dropped (trying beats refusing)",
+      !both.spent.has("anthropic") && !both.spent.has("openai"));
+    await db.delete(errorEvents).where(outageEvents);
   } finally {
     respondWith = "ok";
     await db.delete(errorEvents).where(quotaEvents);
+    await db.delete(errorEvents).where(eq(errorEvents.source, "ai.managed_outage"));
     delete process.env.ORBIT_MANAGED_ANTHROPIC_API_KEY;
     delete process.env.ORBIT_MANAGED_OPENAI_API_KEY;
     process.env.ORBIT_MANAGED_GEMINI_API_KEY = MANAGED;

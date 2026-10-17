@@ -175,6 +175,11 @@ export function managedAiSwitchedOff(): boolean {
  * for has spent its pool.
  */
 const PAUSE_TTL_MS = 30_000;
+/** A provider with this many outage-shaped failures inside the window is failed over. */
+const OUTAGE_FAILURES = 3;
+const OUTAGE_WINDOW_MINUTES = 3;
+/** Per instance, per provider: outage failures are recorded at most this often. */
+const OUTAGE_RECORD_THROTTLE_MS = 15_000;
 type PoolState = { paused: boolean; spent: ReadonlySet<AiProvider> };
 let pauseCache: (PoolState & { at: number }) | null = null;
 
@@ -238,15 +243,27 @@ export async function managedPoolState(now = Date.now()): Promise<PoolState> {
         SELECT (SELECT managed_ai_paused FROM site_settings WHERE id = 1) AS paused,
                (SELECT array_agg(DISTINCT context->>'provider') FROM error_events
                  WHERE source = ${ERROR_SOURCES.managedAi} AND kind = 'quota'
-                   AND created_at > now() - interval '2 hours') AS dry
+                   AND created_at > now() - interval '2 hours') AS dry,
+               (SELECT array_agg(p) FROM (
+                  SELECT context->>'provider' AS p FROM error_events
+                   WHERE source = ${ERROR_SOURCES.managedAiOutage}
+                     AND created_at > now() - interval '${sql.raw(String(OUTAGE_WINDOW_MINUTES))} minutes'
+                   GROUP BY 1 HAVING count(*) >= ${OUTAGE_FAILURES}) d) AS down
       `),
       managedPoolsSpent(new Date(now)),
     ]);
-    const [row] = rowsOf<{ paused: boolean | null; dry: string[] | null }>(result);
+    const [row] = rowsOf<{ paused: boolean | null; dry: string[] | null; down: string[] | null }>(result);
     const spent = new Set<AiProvider>([
       ...(Object.keys(spentMicros) as AiProvider[]).filter((p) => (spentMicros[p] ?? 0) >= MANAGED_AI_POOLS[p]!.capMicros),
       ...((row?.dry ?? []) as AiProvider[]),
     ]);
+    // A provider that is failing like an outage is skipped, but only while another held
+    // provider remains: with none left, trying the failing one beats refusing every call.
+    const down = ((row?.down ?? []) as AiProvider[]).filter((p) => !spent.has(p));
+    if (down.length > 0) {
+      const remaining = MANAGED_PROVIDER_ORDER.filter((p) => managedKey(p) && !spent.has(p) && !down.includes(p));
+      if (remaining.length > 0) for (const p of down) spent.add(p);
+    }
     pauseCache = { paused: row?.paused ?? managedAiPausedDefault(), spent, at: now };
     return pauseCache;
   } catch {
@@ -488,6 +505,19 @@ export async function runOnGrant<T>(grant: AiGrant<AiProvider>, call: Promise<T>
   } catch (err) {
     if (grant.source !== "managed") throw err;
     const kind = classifyAiError(err);
+    // An outage-shaped failure (timeout, 5xx, 529) is recorded so a run of them fails the
+    // provider over (`managedPoolState`), but the caller still sees the original error.
+    if (kind === "timeout" || kind === "other") {
+      if (process.env.VERCEL && shouldRecordThrottled(`ai.managed_outage:${grant.provider}`, OUTAGE_RECORD_THROTTLE_MS)) {
+        await recordErrorEvent({
+          source: ERROR_SOURCES.managedAiOutage,
+          kind,
+          message: err,
+          context: { provider: grant.provider, model: grant.model, operation: grant.operation },
+        }).catch(() => {});
+      }
+      throw err;
+    }
     if (kind !== "auth" && kind !== "rate_limit" && kind !== "quota") throw err;
     // Off Vercel (a localhost demo account) the "managed" key is the developer's own. Its
     // failures keep the managed copy but must not reach the shared DB, where a dry dev key

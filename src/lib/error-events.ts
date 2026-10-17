@@ -37,6 +37,14 @@ export const ERROR_SOURCES = {
    * at once, so it is recorded (throttled) rather than flagging any connection.
    */
   oauthClientInvalid: "oauth.client_invalid",
+  /**
+   * A managed (Orbit-paid) AI call failed the way an outage does: a timeout, a 5xx or a 529.
+   * `kind` is the error kind, `context.provider` the provider. Three in three minutes take
+   * the provider out of the managed set for as long as they keep coming
+   * (`managedPoolState`), so the next provider takes over. Kept apart from `managedAi`, whose
+   * events mean "Orbit's key was refused" and page as such.
+   */
+  managedAiOutage: "ai.managed_outage",
   oauthGmailCallback: "oauth.gmail.callback",
   oauthOutlookCallback: "oauth.outlook.callback",
   searchPgvector: "search.pgvector",
