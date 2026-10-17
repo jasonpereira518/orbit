@@ -1,0 +1,1632 @@
+[
+  {
+    "table": "acquisition_spend",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 6
+  },
+  {
+    "table": "action_items",
+    "userScoped": true,
+    "otherUserRefs": [
+      "owed_by"
+    ],
+    "pii": [],
+    "prose": [
+      "text"
+    ],
+    "exported": true,
+    "parents": [
+      "contact_id->contacts(c)",
+      "interaction_id->interactions(c)",
+      "reminder_id->reminders(n)"
+    ],
+    "columnCount": 12
+  },
+  {
+    "table": "admin_audit_log",
+    "userScoped": false,
+    "otherUserRefs": [
+      "admin_user_id",
+      "target_user_id"
+    ],
+    "pii": [],
+    "prose": [
+      "detail",
+      "reason"
+    ],
+    "exported": false,
+    "parents": [],
+    "columnCount": 9
+  },
+  {
+    "table": "admin_provider_snapshots",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "summary"
+    ],
+    "exported": false,
+    "parents": [],
+    "columnCount": 6
+  },
+  {
+    "table": "agent_send_requests",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "to_email"
+    ],
+    "prose": [
+      "subject",
+      "body",
+      "error_message"
+    ],
+    "exported": true,
+    "parents": [
+      "contact_id->contacts(n)"
+    ],
+    "columnCount": 16
+  },
+  {
+    "table": "ai_batch_jobs",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "payload",
+      "error_message"
+    ],
+    "exported": true,
+    "parents": [],
+    "columnCount": 17
+  },
+  {
+    "table": "ai_result_cache",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "result"
+    ],
+    "exported": true,
+    "parents": [],
+    "columnCount": 6
+  },
+  {
+    "table": "ai_suggestions",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "description"
+    ],
+    "prose": [],
+    "exported": true,
+    "parents": [],
+    "columnCount": 9
+  },
+  {
+    "table": "api_idempotency_keys",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "response_body"
+    ],
+    "exported": true,
+    "parents": [],
+    "columnCount": 6
+  },
+  {
+    "table": "api_keys",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "name"
+    ],
+    "prose": [
+      "revoked_reason"
+    ],
+    "exported": true,
+    "parents": [],
+    "columnCount": 11
+  },
+  {
+    "table": "app_surface_flags",
+    "userScoped": false,
+    "otherUserRefs": [
+      "hidden_by"
+    ],
+    "pii": [],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 3
+  },
+  {
+    "table": "apple_connections",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "email_address",
+      "principal_url"
+    ],
+    "prose": [],
+    "exported": true,
+    "parents": [],
+    "columnCount": 17
+  },
+  {
+    "table": "billing_events",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "detail"
+    ],
+    "exported": true,
+    "parents": [],
+    "columnCount": 10
+  },
+  {
+    "table": "broadcast_recipients",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [
+      "email"
+    ],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 7
+  },
+  {
+    "table": "broadcasts",
+    "userScoped": false,
+    "otherUserRefs": [
+      "created_by"
+    ],
+    "pii": [],
+    "prose": [
+      "subject",
+      "body"
+    ],
+    "exported": false,
+    "parents": [],
+    "columnCount": 10
+  },
+  {
+    "table": "calendar_events",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "location",
+      "organizer_email"
+    ],
+    "prose": [],
+    "exported": true,
+    "parents": [
+      "source_id->calendar_sources(c)"
+    ],
+    "columnCount": 20
+  },
+  {
+    "table": "calendar_sources",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "display_name"
+    ],
+    "prose": [],
+    "exported": true,
+    "parents": [],
+    "columnCount": 13
+  },
+  {
+    "table": "calendar_subscriptions",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "self_email"
+    ],
+    "prose": [],
+    "exported": true,
+    "parents": [],
+    "columnCount": 12
+  },
+  {
+    "table": "capture_handoffs",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "transcript"
+    ],
+    "prose": [],
+    "exported": true,
+    "parents": [],
+    "columnCount": 12
+  },
+  {
+    "table": "capture_jobs",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "photo_ids",
+      "transcription_engine"
+    ],
+    "prose": [
+      "input_text",
+      "source_text",
+      "result"
+    ],
+    "exported": true,
+    "parents": [],
+    "columnCount": 28
+  },
+  {
+    "table": "capture_photos",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "inline_data",
+      "content_type"
+    ],
+    "exported": true,
+    "parents": [
+      "note_batch_id->note_batches(c)"
+    ],
+    "columnCount": 13
+  },
+  {
+    "table": "cash_snapshots",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 4
+  },
+  {
+    "table": "chat_messages",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "content",
+      "feedback_note"
+    ],
+    "exported": true,
+    "parents": [
+      "thread_id->chat_threads(c)"
+    ],
+    "columnCount": 16
+  },
+  {
+    "table": "chat_threads",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "context_note"
+    ],
+    "exported": true,
+    "parents": [],
+    "columnCount": 6
+  },
+  {
+    "table": "closeness_cohorts",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "snapshot"
+    ],
+    "exported": true,
+    "parents": [],
+    "columnCount": 5
+  },
+  {
+    "table": "cloud_note_files",
+    "userScoped": true,
+    "otherUserRefs": [
+      "detected_by"
+    ],
+    "pii": [
+      "name"
+    ],
+    "prose": [
+      "reason"
+    ],
+    "exported": true,
+    "parents": [],
+    "columnCount": 15
+  },
+  {
+    "table": "cloud_note_sources",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 9
+  },
+  {
+    "table": "companies",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "name"
+    ],
+    "prose": [],
+    "exported": true,
+    "parents": [],
+    "columnCount": 6
+  },
+  {
+    "table": "connector_connections",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": true,
+    "parents": [],
+    "columnCount": 22
+  },
+  {
+    "table": "connector_outbox",
+    "userScoped": true,
+    "otherUserRefs": [
+      "claimed_by"
+    ],
+    "pii": [],
+    "prose": [
+      "payload"
+    ],
+    "exported": true,
+    "parents": [],
+    "columnCount": 16
+  },
+  {
+    "table": "constellation_settings",
+    "userScoped": false,
+    "otherUserRefs": [
+      "updated_by"
+    ],
+    "pii": [],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 6
+  },
+  {
+    "table": "contact_briefs",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": true,
+    "parents": [
+      "contact_id->contacts(c)"
+    ],
+    "columnCount": 10
+  },
+  {
+    "table": "contact_career_moves",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": true,
+    "parents": [
+      "contact_id->contacts(c)"
+    ],
+    "columnCount": 13
+  },
+  {
+    "table": "contact_embeddings",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "content",
+      "content_hash"
+    ],
+    "exported": true,
+    "parents": [
+      "contact_id->contacts(c)"
+    ],
+    "columnCount": 9
+  },
+  {
+    "table": "contact_experiences",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "location",
+      "description"
+    ],
+    "prose": [],
+    "exported": true,
+    "parents": [
+      "contact_id->contacts(c)"
+    ],
+    "columnCount": 18
+  },
+  {
+    "table": "contact_identities",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": true,
+    "parents": [
+      "contact_id->contacts(c)"
+    ],
+    "columnCount": 7
+  },
+  {
+    "table": "contact_merges",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "loser_snapshot",
+      "reason"
+    ],
+    "exported": true,
+    "parents": [],
+    "columnCount": 11
+  },
+  {
+    "table": "contact_opportunities",
+    "userScoped": true,
+    "otherUserRefs": [
+      "created_by"
+    ],
+    "pii": [],
+    "prose": [
+      "source_excerpt",
+      "raw_date_phrase"
+    ],
+    "exported": false,
+    "parents": [
+      "contact_id->contacts(c)",
+      "source_interaction_id->interactions(n)"
+    ],
+    "columnCount": 18
+  },
+  {
+    "table": "contact_profiles",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "headline"
+    ],
+    "exported": true,
+    "parents": [
+      "contact_id->contacts(c)"
+    ],
+    "columnCount": 16
+  },
+  {
+    "table": "contact_signals",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "payload"
+    ],
+    "exported": true,
+    "parents": [
+      "contact_id->contacts(c)"
+    ],
+    "columnCount": 10
+  },
+  {
+    "table": "contact_tags",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": true,
+    "parents": [
+      "contact_id->contacts(c)",
+      "tag_id->tags(c)"
+    ],
+    "columnCount": 3
+  },
+  {
+    "table": "contacts",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "full_name",
+      "first_name",
+      "last_name",
+      "location",
+      "email",
+      "phone",
+      "linkedin_url",
+      "x_handle",
+      "bluesky_handle",
+      "profile_image_url",
+      "linkedin_slug"
+    ],
+    "prose": [
+      "met_context",
+      "ai_summary",
+      "notes"
+    ],
+    "exported": true,
+    "parents": [
+      "company_id->companies(n)"
+    ],
+    "columnCount": 58
+  },
+  {
+    "table": "credit_accounts",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 3
+  },
+  {
+    "table": "credit_grants",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "stripe_ref"
+    ],
+    "prose": [
+      "revoked_reason"
+    ],
+    "exported": false,
+    "parents": [],
+    "columnCount": 17
+  },
+  {
+    "table": "credit_holds",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 6
+  },
+  {
+    "table": "cron_runs",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 9
+  },
+  {
+    "table": "data_purge_runs",
+    "userScoped": false,
+    "otherUserRefs": [
+      "target_user_id"
+    ],
+    "pii": [],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 12
+  },
+  {
+    "table": "duplicate_suggestions",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "reason"
+    ],
+    "exported": true,
+    "parents": [
+      "contact_a_id->contacts(c)",
+      "contact_b_id->contacts(c)"
+    ],
+    "columnCount": 9
+  },
+  {
+    "table": "email_sends",
+    "userScoped": true,
+    "otherUserRefs": [
+      "claimed_by"
+    ],
+    "pii": [
+      "from_email",
+      "to_emails"
+    ],
+    "prose": [
+      "subject",
+      "body_text",
+      "body_html",
+      "rfc_message_id",
+      "provider_message_id"
+    ],
+    "exported": true,
+    "parents": [],
+    "columnCount": 32
+  },
+  {
+    "table": "embedding_failures",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 6
+  },
+  {
+    "table": "error_events",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "message",
+      "context"
+    ],
+    "exported": true,
+    "parents": [],
+    "columnCount": 7
+  },
+  {
+    "table": "event_aliases",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": true,
+    "parents": [
+      "event_id->events(n)"
+    ],
+    "columnCount": 9
+  },
+  {
+    "table": "event_attendees",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "full_name",
+      "email",
+      "linkedin_url",
+      "x_handle",
+      "phone"
+    ],
+    "prose": [
+      "ai_note"
+    ],
+    "exported": true,
+    "parents": [
+      "event_id->events(c)",
+      "contact_id->contacts(n)"
+    ],
+    "columnCount": 23
+  },
+  {
+    "table": "event_companies",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": true,
+    "parents": [
+      "event_id->events(c)",
+      "company_id->companies(c)"
+    ],
+    "columnCount": 10
+  },
+  {
+    "table": "event_provider_connections",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": true,
+    "parents": [],
+    "columnCount": 21
+  },
+  {
+    "table": "events",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "city",
+      "description",
+      "cover_image_url"
+    ],
+    "prose": [
+      "notes"
+    ],
+    "exported": true,
+    "parents": [],
+    "columnCount": 35
+  },
+  {
+    "table": "extension_usage",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": true,
+    "parents": [],
+    "columnCount": 6
+  },
+  {
+    "table": "external_item_companies",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": false,
+    "parents": [
+      "item_id->external_items(c)"
+    ],
+    "columnCount": 5
+  },
+  {
+    "table": "external_items",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "summary"
+    ],
+    "exported": false,
+    "parents": [
+      "source_id->external_sources(c)"
+    ],
+    "columnCount": 8
+  },
+  {
+    "table": "external_links",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": true,
+    "parents": [],
+    "columnCount": 8
+  },
+  {
+    "table": "external_sources",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 13
+  },
+  {
+    "table": "feedback",
+    "userScoped": true,
+    "otherUserRefs": [
+      "status_changed_by"
+    ],
+    "pii": [],
+    "prose": [
+      "text",
+      "resolution_note",
+      "context"
+    ],
+    "exported": true,
+    "parents": [],
+    "columnCount": 13
+  },
+  {
+    "table": "feedback_screenshots",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "note",
+      "inline_data",
+      "content_type"
+    ],
+    "exported": true,
+    "parents": [
+      "feedback_id->feedback(c)"
+    ],
+    "columnCount": 13
+  },
+  {
+    "table": "fundraising_investors",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [
+      "name"
+    ],
+    "prose": [
+      "note"
+    ],
+    "exported": false,
+    "parents": [
+      "round_id->fundraising_rounds(a)"
+    ],
+    "columnCount": 7
+  },
+  {
+    "table": "fundraising_rounds",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [
+      "name"
+    ],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 6
+  },
+  {
+    "table": "gate_events",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "context"
+    ],
+    "exported": true,
+    "parents": [],
+    "columnCount": 7
+  },
+  {
+    "table": "gmail_connections",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "email_address"
+    ],
+    "prose": [],
+    "exported": true,
+    "parents": [],
+    "columnCount": 17
+  },
+  {
+    "table": "ignored_people",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "display_name"
+    ],
+    "prose": [
+      "reason",
+      "context"
+    ],
+    "exported": true,
+    "parents": [],
+    "columnCount": 11
+  },
+  {
+    "table": "import_files",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": true,
+    "parents": [
+      "import_id->imports(c)"
+    ],
+    "columnCount": 8
+  },
+  {
+    "table": "import_job_rows",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "payload",
+      "revert_snapshot",
+      "error_message"
+    ],
+    "exported": true,
+    "parents": [
+      "import_id->imports(c)"
+    ],
+    "columnCount": 12
+  },
+  {
+    "table": "imports",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "error_message"
+    ],
+    "exported": true,
+    "parents": [],
+    "columnCount": 17
+  },
+  {
+    "table": "infra_costs",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "note"
+    ],
+    "exported": false,
+    "parents": [],
+    "columnCount": 7
+  },
+  {
+    "table": "interaction_mentions",
+    "userScoped": true,
+    "otherUserRefs": [
+      "matched_by"
+    ],
+    "pii": [],
+    "prose": [
+      "mention_text"
+    ],
+    "exported": true,
+    "parents": [
+      "interaction_id->interactions(c)",
+      "contact_id->contacts(c)"
+    ],
+    "columnCount": 8
+  },
+  {
+    "table": "interactions",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "raw_notes",
+      "ai_summary"
+    ],
+    "exported": true,
+    "parents": [
+      "contact_id->contacts(c)"
+    ],
+    "columnCount": 18
+  },
+  {
+    "table": "interest_list_signups",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [
+      "email",
+      "first_name",
+      "last_name"
+    ],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 20
+  },
+  {
+    "table": "job_feed_sources",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 16
+  },
+  {
+    "table": "job_posting_matches",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": false,
+    "parents": [
+      "posting_id->job_postings(c)",
+      "contact_id->contacts(c)"
+    ],
+    "columnCount": 10
+  },
+  {
+    "table": "job_postings",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [
+      "locations",
+      "sponsorship"
+    ],
+    "prose": [],
+    "exported": false,
+    "parents": [
+      "source_id->job_feed_sources(c)"
+    ],
+    "columnCount": 17
+  },
+  {
+    "table": "linkedin_avatars",
+    "userScoped": false,
+    "otherUserRefs": [
+      "blocked_by"
+    ],
+    "pii": [
+      "image_url"
+    ],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 6
+  },
+  {
+    "table": "meeting_sessions",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": true,
+    "parents": [],
+    "columnCount": 20
+  },
+  {
+    "table": "meeting_transcript_segments",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "text"
+    ],
+    "exported": true,
+    "parents": [
+      "session_id->meeting_sessions(c)"
+    ],
+    "columnCount": 10
+  },
+  {
+    "table": "memory_chunks",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "content",
+      "content_hash"
+    ],
+    "exported": true,
+    "parents": [
+      "contact_id->contacts(c)"
+    ],
+    "columnCount": 15
+  },
+  {
+    "table": "non_dilutive_funding",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "note"
+    ],
+    "exported": false,
+    "parents": [],
+    "columnCount": 12
+  },
+  {
+    "table": "note_batches",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "source_text",
+      "result"
+    ],
+    "exported": true,
+    "parents": [],
+    "columnCount": 13
+  },
+  {
+    "table": "ops_alert_state",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "detail"
+    ],
+    "exported": false,
+    "parents": [],
+    "columnCount": 9
+  },
+  {
+    "table": "org_brand_colors",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [
+      "name"
+    ],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 7
+  },
+  {
+    "table": "outbound_webhook_deliveries",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "payload"
+    ],
+    "exported": true,
+    "parents": [
+      "endpoint_id->webhook_endpoints(c)"
+    ],
+    "columnCount": 14
+  },
+  {
+    "table": "outlook_connections",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "email_address"
+    ],
+    "prose": [],
+    "exported": true,
+    "parents": [],
+    "columnCount": 17
+  },
+  {
+    "table": "outreach_campaigns",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "name"
+    ],
+    "prose": [
+      "message_intent"
+    ],
+    "exported": true,
+    "parents": [],
+    "columnCount": 14
+  },
+  {
+    "table": "outreach_messages",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "subject",
+      "body",
+      "outcome_notes",
+      "error_message"
+    ],
+    "exported": true,
+    "parents": [
+      "prospect_id->outreach_prospects(c)"
+    ],
+    "columnCount": 18
+  },
+  {
+    "table": "outreach_prospects",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [
+      "full_name",
+      "email",
+      "phone",
+      "linkedin_url",
+      "location"
+    ],
+    "prose": [],
+    "exported": true,
+    "parents": [
+      "campaign_id->outreach_campaigns(c)",
+      "contact_id->contacts(n)"
+    ],
+    "columnCount": 15
+  },
+  {
+    "table": "page_views",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "city"
+    ],
+    "prose": [],
+    "exported": true,
+    "parents": [],
+    "columnCount": 19
+  },
+  {
+    "table": "plan_meter_usage",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 6
+  },
+  {
+    "table": "plan_upgrade_events",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": true,
+    "parents": [],
+    "columnCount": 7
+  },
+  {
+    "table": "radar_runs",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": true,
+    "parents": [],
+    "columnCount": 9
+  },
+  {
+    "table": "rate_limit_buckets",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 3
+  },
+  {
+    "table": "recommendation_feedback",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "reason"
+    ],
+    "exported": true,
+    "parents": [
+      "contact_id->contacts(c)"
+    ],
+    "columnCount": 8
+  },
+  {
+    "table": "recommendations",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "reasons",
+      "ai_note"
+    ],
+    "exported": true,
+    "parents": [
+      "contact_id->contacts(c)"
+    ],
+    "columnCount": 27
+  },
+  {
+    "table": "recruiter_messages",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "subject",
+      "body",
+      "gmail_message_id",
+      "error_message"
+    ],
+    "exported": true,
+    "parents": [
+      "recruiter_id->recruiters(c)"
+    ],
+    "columnCount": 13
+  },
+  {
+    "table": "recruiter_scan_state",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": true,
+    "parents": [],
+    "columnCount": 8
+  },
+  {
+    "table": "recruiters",
+    "userScoped": false,
+    "otherUserRefs": [
+      "created_by_user_id"
+    ],
+    "pii": [
+      "full_name",
+      "email",
+      "email_normalized",
+      "linkedin_url",
+      "phone"
+    ],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 16
+  },
+  {
+    "table": "relationship_digests",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "summary"
+    ],
+    "exported": true,
+    "parents": [
+      "contact_id->contacts(c)"
+    ],
+    "columnCount": 18
+  },
+  {
+    "table": "relationship_runs",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": true,
+    "parents": [],
+    "columnCount": 18
+  },
+  {
+    "table": "reminder_lists",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "name"
+    ],
+    "prose": [],
+    "exported": true,
+    "parents": [],
+    "columnCount": 9
+  },
+  {
+    "table": "reminders",
+    "userScoped": true,
+    "otherUserRefs": [
+      "created_by"
+    ],
+    "pii": [
+      "description"
+    ],
+    "prose": [
+      "source_excerpt",
+      "raw_date_phrase"
+    ],
+    "exported": true,
+    "parents": [
+      "contact_id->contacts(c)",
+      "list_id->reminder_lists(n)",
+      "source_interaction_id->interactions(n)"
+    ],
+    "columnCount": 24
+  },
+  {
+    "table": "schema_migration_lock",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 4
+  },
+  {
+    "table": "schema_migrations",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 4
+  },
+  {
+    "table": "site_settings",
+    "userScoped": false,
+    "otherUserRefs": [
+      "updated_by"
+    ],
+    "pii": [],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 7
+  },
+  {
+    "table": "speech_usage",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": true,
+    "parents": [],
+    "columnCount": 8
+  },
+  {
+    "table": "startup_expenses",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "note"
+    ],
+    "exported": false,
+    "parents": [],
+    "columnCount": 6
+  },
+  {
+    "table": "stripe_processed_events",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 3
+  },
+  {
+    "table": "suggested_reminders",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "description"
+    ],
+    "prose": [
+      "raw_date_phrase",
+      "source_excerpt"
+    ],
+    "exported": true,
+    "parents": [
+      "contact_id->contacts(n)",
+      "reminder_id->reminders(n)"
+    ],
+    "columnCount": 18
+  },
+  {
+    "table": "tags",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "name"
+    ],
+    "prose": [],
+    "exported": true,
+    "parents": [],
+    "columnCount": 4
+  },
+  {
+    "table": "target_companies",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "note"
+    ],
+    "exported": true,
+    "parents": [
+      "company_id->companies(c)"
+    ],
+    "columnCount": 6
+  },
+  {
+    "table": "usage_events",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": true,
+    "parents": [],
+    "columnCount": 16
+  },
+  {
+    "table": "user_goals",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [
+      "text"
+    ],
+    "exported": true,
+    "parents": [],
+    "columnCount": 5
+  },
+  {
+    "table": "user_recruiter_links",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "email",
+      "phone",
+      "linkedin_url"
+    ],
+    "prose": [
+      "notes",
+      "ai_summary"
+    ],
+    "exported": true,
+    "parents": [
+      "recruiter_id->recruiters(c)",
+      "contact_id->contacts(n)"
+    ],
+    "columnCount": 21
+  },
+  {
+    "table": "user_settings",
+    "userScoped": true,
+    "otherUserRefs": [
+      "comped_by",
+      "suspended_by"
+    ],
+    "pii": [
+      "email_signature_text",
+      "email_signature_html",
+      "first_name",
+      "last_name",
+      "profile_image_url",
+      "stripe_customer_id",
+      "subscription_plan",
+      "subscription_status",
+      "subscription_interval",
+      "founding_subscription_id",
+      "email"
+    ],
+    "prose": [
+      "sender_bio",
+      "comped_note",
+      "suspended_reason"
+    ],
+    "exported": true,
+    "parents": [],
+    "columnCount": 110
+  },
+  {
+    "table": "waitlist_poll_votes",
+    "userScoped": false,
+    "otherUserRefs": [],
+    "pii": [],
+    "prose": [],
+    "exported": false,
+    "parents": [],
+    "columnCount": 7
+  },
+  {
+    "table": "webhook_deliveries",
+    "userScoped": false,
+    "otherUserRefs": [
+      "target_user_id"
+    ],
+    "pii": [],
+    "prose": [
+      "reason",
+      "detail"
+    ],
+    "exported": false,
+    "parents": [],
+    "columnCount": 12
+  },
+  {
+    "table": "webhook_endpoints",
+    "userScoped": true,
+    "otherUserRefs": [],
+    "pii": [
+      "description"
+    ],
+    "prose": [
+      "disabled_reason"
+    ],
+    "exported": true,
+    "parents": [],
+    "columnCount": 12
+  }
+]

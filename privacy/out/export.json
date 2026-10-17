@@ -1,0 +1,111 @@
+{
+  "E1": {
+    "format": "orbit-export/2",
+    "categoryCount": 16,
+    "categories": [
+      "insights",
+      "notes",
+      "reminders",
+      "imports",
+      "connections",
+      "events",
+      "goals",
+      "chat",
+      "recruiters",
+      "api",
+      "activity",
+      "feedback",
+      "outreach",
+      "contacts",
+      "tags",
+      "preferences"
+    ],
+    "datasets": 81
+  },
+  "E2": {
+    "occurrencesOfOtherUser": 0
+  },
+  "E3": {
+    "tablesHoldingUserDataButNotExported": [
+      {
+        "table": "admin_audit_log",
+        "rows": 1
+      },
+      {
+        "table": "broadcast_recipients",
+        "rows": 1
+      },
+      {
+        "table": "cloud_note_sources",
+        "rows": 1
+      },
+      {
+        "table": "contact_opportunities",
+        "rows": 1
+      },
+      {
+        "table": "credit_accounts",
+        "rows": 1
+      },
+      {
+        "table": "credit_grants",
+        "rows": 1
+      },
+      {
+        "table": "credit_holds",
+        "rows": 1
+      },
+      {
+        "table": "data_purge_runs",
+        "rows": 1
+      },
+      {
+        "table": "embedding_failures",
+        "rows": 1
+      },
+      {
+        "table": "interest_list_signups",
+        "rows": 1
+      },
+      {
+        "table": "job_posting_matches",
+        "rows": 1
+      },
+      {
+        "table": "linkedin_avatars",
+        "rows": 1
+      },
+      {
+        "table": "plan_meter_usage",
+        "rows": 1
+      },
+      {
+        "table": "rate_limit_buckets",
+        "rows": 1
+      },
+      {
+        "table": "recruiters",
+        "rows": 1
+      },
+      {
+        "table": "waitlist_poll_votes",
+        "rows": 1
+      },
+      {
+        "table": "webhook_deliveries",
+        "rows": 1
+      }
+    ]
+  },
+  "E4": {
+    "credentialLikeKeysPresent": []
+  },
+  "E5": {
+    "contacts": 20000,
+    "interactions": 60000,
+    "passages": 60000,
+    "seconds": 42.01,
+    "megabytes": 169.2,
+    "routeMaxDurationSeconds": 300
+  }
+}

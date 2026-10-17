@@ -1,0 +1,309 @@
+{
+  "S1_deleteContact": {
+    "deleted": true,
+    "tablesReferencingIdBefore": 31,
+    "tablesStillReferencingId": {
+      "ai_suggestions": {
+        "rows": 1,
+        "columns": [
+          "related_contact_ids"
+        ]
+      },
+      "capture_jobs": {
+        "rows": 1,
+        "columns": [
+          "seed_contact_id"
+        ]
+      },
+      "email_sends": {
+        "rows": 1,
+        "columns": [
+          "contact_ids"
+        ]
+      },
+      "import_job_rows": {
+        "rows": 1,
+        "columns": [
+          "contact_id"
+        ]
+      },
+      "memory_chunks": {
+        "rows": 1,
+        "columns": [
+          "contact_ids"
+        ]
+      }
+    },
+    "tablesNamingPersonBefore": 43,
+    "tablesStillNamingPerson": {
+      "agent_send_requests": {
+        "rows": 1,
+        "columns": [
+          "subject",
+          "body",
+          "error_message"
+        ]
+      },
+      "ai_batch_jobs": {
+        "rows": 1,
+        "columns": [
+          "error_message"
+        ]
+      },
+      "ai_suggestions": {
+        "rows": 1,
+        "columns": [
+          "description"
+        ]
+      },
+      "api_keys": {
+        "rows": 1,
+        "columns": [
+          "revoked_reason"
+        ]
+      },
+      "capture_handoffs": {
+        "rows": 1,
+        "columns": [
+          "transcript"
+        ]
+      },
+      "capture_jobs": {
+        "rows": 1,
+        "columns": [
+          "input_text",
+          "transcription_engine",
+          "source_text"
+        ]
+      },
+      "capture_photos": {
+        "rows": 1,
+        "columns": [
+          "inline_data",
+          "content_type"
+        ]
+      },
+      "chat_messages": {
+        "rows": 1,
+        "columns": [
+          "content",
+          "feedback_note"
+        ]
+      },
+      "chat_threads": {
+        "rows": 1,
+        "columns": [
+          "context_note"
+        ]
+      },
+      "cloud_note_files": {
+        "rows": 1,
+        "columns": [
+          "reason"
+        ]
+      },
+      "credit_grants": {
+        "rows": 1,
+        "columns": [
+          "revoked_reason"
+        ]
+      },
+      "email_sends": {
+        "rows": 1,
+        "columns": [
+          "subject",
+          "body_text",
+          "body_html",
+          "rfc_message_id",
+          "provider_message_id"
+        ]
+      },
+      "error_events": {
+        "rows": 1,
+        "columns": [
+          "message"
+        ]
+      },
+      "events": {
+        "rows": 1,
+        "columns": [
+          "description",
+          "notes"
+        ]
+      },
+      "feedback": {
+        "rows": 1,
+        "columns": [
+          "text",
+          "resolution_note"
+        ]
+      },
+      "feedback_screenshots": {
+        "rows": 1,
+        "columns": [
+          "note",
+          "inline_data",
+          "content_type"
+        ]
+      },
+      "ignored_people": {
+        "rows": 1,
+        "columns": [
+          "reason",
+          "context"
+        ]
+      },
+      "import_job_rows": {
+        "rows": 1,
+        "columns": [
+          "error_message"
+        ]
+      },
+      "imports": {
+        "rows": 1,
+        "columns": [
+          "error_message"
+        ]
+      },
+      "meeting_transcript_segments": {
+        "rows": 1,
+        "columns": [
+          "text"
+        ]
+      },
+      "memory_chunks": {
+        "rows": 1,
+        "columns": [
+          "content"
+        ]
+      },
+      "note_batches": {
+        "rows": 1,
+        "columns": [
+          "source_text"
+        ]
+      },
+      "outreach_campaigns": {
+        "rows": 1,
+        "columns": [
+          "message_intent"
+        ]
+      },
+      "recruiter_messages": {
+        "rows": 1,
+        "columns": [
+          "subject",
+          "body",
+          "gmail_message_id",
+          "error_message"
+        ]
+      },
+      "target_companies": {
+        "rows": 1,
+        "columns": [
+          "note"
+        ]
+      },
+      "user_goals": {
+        "rows": 1,
+        "columns": [
+          "text"
+        ]
+      },
+      "user_recruiter_links": {
+        "rows": 1,
+        "columns": [
+          "notes",
+          "ai_summary"
+        ]
+      },
+      "user_settings": {
+        "rows": 1,
+        "columns": [
+          "email_signature_text",
+          "sender_bio",
+          "comped_note",
+          "suspended_reason"
+        ]
+      },
+      "webhook_endpoints": {
+        "rows": 1,
+        "columns": [
+          "description",
+          "disabled_reason"
+        ]
+      }
+    }
+  },
+  "S2_deleteInteraction": {
+    "passagesBefore": 1,
+    "passagesAfter": 0,
+    "remainingPassagesByKind": [
+      {
+        "source_kind": "user_privS2bb02|memory_chunks.source_kind",
+        "n": 1
+      }
+    ]
+  },
+  "S3_revertImport": {
+    "result": {
+      "ok": true,
+      "stats": {
+        "contactsDeleted": 1,
+        "contactsKept": 0,
+        "mergesReverted": 0,
+        "mergesKept": 0,
+        "interactionsDeleted": 1,
+        "remindersDeleted": 0,
+        "rowsUnknown": 0
+      }
+    },
+    "createdContactLeft": 0,
+    "importedInteractionLeft": 0,
+    "orphanPassagesLeft": 1,
+    "rawPayloadRowsNamingPersonLeft": 1
+  },
+  "S4_insightsPurgeThenUnmerge": {
+    "cloned": {
+      "contact_embeddings": true,
+      "recommendations": true,
+      "contact_briefs": true,
+      "contact_signals": false,
+      "relationship_digests": true
+    },
+    "merge": {
+      "mergeId": "698ec124-d65f-4e4e-a350-879499b85e69",
+      "winnerId": "acda9ae5-db1c-455a-8e2d-dea0bf16ad06",
+      "loserId": "6d26dc90-fda3-43d7-a11f-d1b6bbb351bb"
+    },
+    "archivedKeys": [
+      "contact_tags",
+      "contact_briefs",
+      "recommendations",
+      "contact_profiles",
+      "contact_embeddings",
+      "contact_career_moves",
+      "interaction_mentions"
+    ],
+    "afterInsightsPurgeRowsForUser": {
+      "contact_embeddings": 0,
+      "recommendations": 0,
+      "contact_briefs": 0,
+      "contact_signals": 0,
+      "relationship_digests": 1
+    },
+    "mergeArchivesHoldingDerivedRows": 2,
+    "unmerge": {
+      "mergeId": "698ec124-d65f-4e4e-a350-879499b85e69",
+      "winnerId": "acda9ae5-db1c-455a-8e2d-dea0bf16ad06",
+      "loserId": "6d26dc90-fda3-43d7-a11f-d1b6bbb351bb"
+    },
+    "loserDerivedRowsAfterUnmerge": {
+      "contact_embeddings": 1,
+      "recommendations": 1,
+      "contact_briefs": 1,
+      "contact_signals": 0,
+      "relationship_digests": 0
+    }
+  }
+}

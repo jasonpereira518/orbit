@@ -1,0 +1,12 @@
+{
+  "before": "Failed query: insert into \"memory_chunks\" (\"user_id\", \"content\") values ($1, $2)\nparams: user_2fakeUserId,Coffee with Priya Raman (priya.raman@example.test, +1 415 555 0134) — she is interviewing at Stripe and asked me not to tell her manager",
+  "after": "Failed query: insert into \"memory_chunks\" (\"user_id\", \"content\") values ($1, $2)\nparams: user_2fakeUserId,Coffee with Priya Raman ([email], +1 415 555 0134) — she is interviewing at Stripe and asked me not to tell her manager",
+  "emailRemoved": true,
+  "phoneRemoved": false,
+  "nameRemoved": false,
+  "noteProseRemoved": false,
+  "nonStringExtraAfter": [
+    "user_2fakeUserId",
+    "Coffee with Priya Raman (priya.raman@example.test, +1 415 555 0134) — she is interviewing at Stripe and asked me not to tell her manager"
+  ]
+}
