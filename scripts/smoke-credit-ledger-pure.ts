@@ -11,9 +11,8 @@
  *  - a monthly subscriber with the period start on file gets exactly that period;
  *  - comped, Free and lapsed accounts get the UTC calendar month containing `now`.
  *
- * (What does not hold is any period whose START is not on file: a monthly one ending on the
- * 29th-31st, and an annual one in its last 31-35 days. Both are reproduced in
- * smoke-bug-credit-period-overflow.)
+ * (Periods whose START is not on file — a monthly one ending on the 29th-31st, an annual one
+ * in its last 31-35 days — are pinned in smoke-credit-period-overflow.)
  *
  * Plus the small pure rules the balance and the notices rest on: which plans may spend packs,
  * credits <-> micros, the 80% / 100% notice thresholds and the "about N captures" equivalents.
@@ -103,7 +102,7 @@ console.log("\ncreditPeriodFor: monthly period with the start on file (property)
 }
 
 // Start on file only. Without it the annual branch is chosen by "more than 35 days to run",
-// which the 31-35 days before renewal fail: see smoke-bug-credit-period-overflow.
+// which used to fail the 31-35 days before renewal: see smoke-credit-period-overflow.
 console.log("\ncreditPeriodFor: annual subscribers get monthly slices (property)");
 {
   let total = 0;

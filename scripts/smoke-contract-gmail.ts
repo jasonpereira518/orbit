@@ -12,8 +12,8 @@
  * deliberately drop a message they cannot read (one deleted message must not sink a page);
  * the list and contacts readers throw, because a page they cannot read is a page they would
  * otherwise step over. A 401 is the one status that must not be treated as "message gone" —
- * where that holds (`fetchGmailHeaders`) it is pinned here; where it does not, see
- * `scripts/smoke-bug-gmail-401-swallowed.ts`.
+ * `fetchGmailHeaders` is pinned here; the message, link and thread reads are pinned in
+ * `scripts/smoke-gmail-401-reauth.ts`.
  *
  * No network: `globalThis.fetch` is the http-mock, and an unmatched request throws.
  *

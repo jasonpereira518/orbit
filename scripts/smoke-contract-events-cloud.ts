@@ -19,14 +19,15 @@
  *     lost, the cursor is not advanced), with the one-call count as the evidence.
  *   - cloud-files: a dead grant (401) is `ReauthRequiredError` for both providers; a cursor that
  *     is not Graph's is refused before any request; an answer with no next cursor throws rather
- *     than storing an empty one. A 410 / 400 on a stored change cursor surfaces as a PLAIN error —
- *     what the scan then does with it is `scripts/smoke-bug-cloud-notes-dead-cursor.ts`.
+ *     than storing an empty one. A 410 / 400 on a stored change cursor is
+ *     `CloudCursorExpiredError`, the signal to start over — what the scan then does with it is
+ *     `scripts/smoke-cloud-notes-dead-cursor.ts`.
  *
  * Retries here use real (short) sleeps: exactly one Eventbrite retry (~0.3–0.55 s) is exercised.
  *
  * Run: npx tsx scripts/smoke-contract-events-cloud.ts
  */
-import { listChanges, listRecentFiles } from "../src/lib/cloud-files";
+import { CloudCursorExpiredError, listChanges, listRecentFiles } from "../src/lib/cloud-files";
 import { ReauthRequiredError } from "../src/lib/errors";
 import {
   EventbriteAuthError,
@@ -211,7 +212,7 @@ async function main() {
       t.check("nextPageToken → not done", a.cursor === "p2" && !a.done);
       const b = await listChanges(ctx, "google", "p2");
       t.check("newStartPageToken → done, with the from-now-on cursor", b.cursor === "p9" && b.done);
-      await t.rejects("an invalid page token (400) is a plain error", () => listChanges(ctx, "google", "bad"), (e) => e instanceof Error && e.message === "Drive returned 400");
+      await t.rejects("an invalid page token (400) is CloudCursorExpiredError, so the scan starts over", () => listChanges(ctx, "google", "bad"), (e) => e instanceof CloudCursorExpiredError);
       await t.rejects("a 401 is ReauthRequiredError", () => listChanges(ctx, "google", "revoked"), (e) => e instanceof ReauthRequiredError);
       await t.rejects("an HTML 200 rejects", () => listChanges(ctx, "google", "html"));
       await t.rejects("no next cursor at all throws rather than storing an empty one", () => listChanges(ctx, "google", "nocursor"), (e) => e instanceof Error && /no next cursor/.test(e.message));
@@ -263,8 +264,8 @@ async function main() {
       t.check("nextLink → not done", a.cursor === page2 && !a.done);
       const b = await listChanges(ctx, "microsoft", page2);
       t.check("deltaLink → done", b.done && b.cursor.endsWith("token=c3"));
-      await t.rejects("a 410 resyncRequired on the stored delta is a plain error (no typed 'start over')", () => listChanges(ctx, "microsoft", dead), (e) =>
-        e instanceof Error && e.message === "OneDrive returned 410"
+      await t.rejects("a 410 resyncRequired on the stored delta is CloudCursorExpiredError, so the scan starts over", () => listChanges(ctx, "microsoft", dead), (e) =>
+        e instanceof CloudCursorExpiredError
       );
       const before = http.calls.length;
       await t.rejects("a cursor that is not Graph's is refused", () => listChanges(ctx, "microsoft", "https://evil.example.com/delta"), (e) => e instanceof Error && e.message === "Bad OneDrive cursor");

@@ -16,7 +16,7 @@
  *    until the period the user already paid for runs out"), it books the churn at once, and
  *    a refund withdraws access through its own `subscription_revoked` path — so it is pinned
  *    here as intended, not filed as a bug. (What a refund followed by a later `deleted` does
- *    is a different question: see smoke-bug-stripe-revocation-regrant.)
+ *    is a different question: see smoke-stripe-revocation-regrant.)
  *  - A credit pack is granted with `stripeRef = paymentIntentId ?? session.id` and revoked by
  *    payment intent. Suspected mismatch; it is not one: whenever the session paid anything it
  *    carries a payment intent, so the grant and a later refund name the same id. The

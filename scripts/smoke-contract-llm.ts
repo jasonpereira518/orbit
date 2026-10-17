@@ -30,8 +30,8 @@
  * logs is caught inside `generateAndStoreContactBrief`, and capture's `after()` hook adds its
  * own `.catch`, so it never breaks the person's capture.
  *
- * What is wrong today — a TRUNCATED answer is repaired into plausible-looking JSON and returned
- * as success — is `scripts/smoke-bug-llm-truncated-json-accepted.ts`.
+ * A provider-truncated answer failing as incomplete, rather than being repaired into
+ * plausible-looking JSON, is pinned in `scripts/smoke-llm-truncated-json.ts`.
  *
  * This file must not name provider hosts or read provider key variables in code: the source
  * guard in smoke-ai-access.ts scans scripts/ for both. Routes match on API paths only.

@@ -15,9 +15,9 @@
  * 410 on the calendar is the typed "start over" signal; a 400 on a filtered contacts read is the
  * typed "drop the watermark" signal.
  *
- * What is NOT pinned here because it is wrong today lives in two bug scripts:
- * `smoke-bug-graph-nextlink-token-leak.ts` (the bearer token follows any `@odata.nextLink`
- * host) and `smoke-bug-graph-sync-resilience.ts` (no timeout on calendar pages; 429 not retried).
+ * Two related guarantees have their own regression smokes:
+ * `smoke-graph-nextlink-guard.ts` (the bearer token only ever goes to Graph's own links) and
+ * `smoke-graph-sync-resilience.ts` (calendar pages time out; 429/503 are retried).
  *
  * Run: npx tsx scripts/smoke-contract-microsoft-sync.ts
  */
