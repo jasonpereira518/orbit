@@ -734,10 +734,8 @@ export async function generateConversationStarters(
   // shared history, so drop it and let a grounded heuristic take the slot.
   const grounded = candidates.filter((s) => s.basis.length > 0 && s.text);
   if (grounded.length === 0) {
-    console.warn(
-      "[starters] no grounded suggestions returned",
-      content.slice(0, 400)
-    );
+    // A length, not the text: this is model output built from a profile and a history.
+    console.warn("[starters] no grounded suggestions returned", { chars: content.length });
     return {
       mode: ctx.mode,
       starters: fallback,
