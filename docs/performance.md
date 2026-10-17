@@ -50,6 +50,7 @@ Set in route segment configs, not `vercel.json`. Hobby's ceiling with Fluid Comp
 
 ## Measuring
 
+- At account sizes from empty to 100k contacts: `scripts/dev/perf/` (see its README) — seeding, per-statement profiles with real-parameter EXPLAINs, import throughput. `PERFORMANCE_AUDIT.md` is the baseline it produced.
 - Statement shape and count: `DEBUG_QUERIES=1 npx tsx scripts/smoke-page-budgets.ts` lists every statement a page issues.
 - Real plans: enable Drizzle's `logger: true` locally, paste the SQL into Neon's SQL editor with `EXPLAIN (ANALYZE, BUFFERS)`, and read `shared read` — that is the cold-storage cost.
 - Bundles: `npm run analyze` (`next experimental-analyze`, Turbopack-native). For numbers per route, `node scripts/dev/bundle-report.mjs` after a build: first-load client JS (raw and gzip), preloaded fonts, and the server JS each route's function traces (what a cold start evaluates), API routes included.
