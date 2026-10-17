@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { after } from "next/server";
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { contacts, interactions, userGoals, userSettings } from "@/db/schema";
@@ -17,10 +18,11 @@ import type { ContactSignalCounts } from "@/lib/constellation-eligibility";
 import {
   buildSnapshot,
   cohortFromSnapshot,
-  countUnscoredContacts,
   isUsableSnapshot,
+  listUnscoredContactIds,
   persistClosenessScores,
   readCohortRow,
+  rescoreContact,
   saveCohortSnapshot,
 } from "@/lib/closeness-materialize";
 
@@ -301,6 +303,36 @@ export async function getContactCloseness(
   };
 }
 
+/** Above this many unscored contacts a read stops scoring them one by one (~5 statements each). */
+const RESCORE_ON_READ_MAX = 5;
+
+/** Users with a recalibration already scheduled by this instance, so a burst of reads queues one. */
+const recalibrating = new Set<string>();
+
+/**
+ * Recalibrate after the response (or on the next macrotask outside a request), at most once
+ * per user at a time on this instance. A failure leaves the rows unscored for the next read or
+ * the hourly sweep in /api/imports/process-stalled.
+ */
+function deferRecalibration(userId: string) {
+  if (recalibrating.has(userId)) return;
+  recalibrating.add(userId);
+  const task = async () => {
+    try {
+      await recalibrateCloseness(userId);
+    } catch {
+      // Left unscored on purpose; see above.
+    } finally {
+      recalibrating.delete(userId);
+    }
+  };
+  try {
+    after(task);
+  } catch {
+    setTimeout(() => void task(), 0);
+  }
+}
+
 /**
  * Read the scores this user already has, or compute them if there are none worth reading.
  *
@@ -320,14 +352,27 @@ async function resolveCohortResult(
   // the checks that decide whether they are wanted. When the checks send us to the rebuild
   // instead — no usable distribution, or unscored contacts, which is rare because contacts
   // are scored as they are written — the speculative reads are simply discarded.
-  const stored = readStoredParts(userId, options.slim ?? false);
+  let stored = readStoredParts(userId, options.slim ?? false);
   stored.catch(() => {});
   const [cohortRow, unscored] = await Promise.all([
     readCohortRow(userId),
-    countUnscoredContacts(userId),
+    listUnscoredContactIds(userId, RESCORE_ON_READ_MAX + 1),
   ]);
 
-  if (cohortRow && isUsableSnapshot(cohortRow.snapshot) && unscored === 0) {
+  if (cohortRow && isUsableSnapshot(cohortRow.snapshot)) {
+    if (unscored.length === 0) return assembleStoredResult(await stored, cohortRow.snapshot);
+    // A usable distribution exists, so a handful of new contacts does not justify rescoring
+    // the whole network inside this read: one unscored contact used to turn a 0.9 s dashboard
+    // into 3.6 s at 10k contacts, and 12 s into 64 s at 100k. Bulk writers (sync, inbound
+    // mail, MCP creates, event ingest) leave rows unscored, so this was not a rare path.
+    if (unscored.length <= RESCORE_ON_READ_MAX) {
+      await Promise.all(unscored.map((id) => rescoreContact(userId, id).catch(() => false)));
+      stored = readStoredParts(userId, options.slim ?? false);
+      return assembleStoredResult(await stored, cohortRow.snapshot);
+    }
+    // Many: answer from what is stored (the new rows read as unscored for a moment) and
+    // recalibrate after the response.
+    deferRecalibration(userId);
     return assembleStoredResult(await stored, cohortRow.snapshot);
   }
 
