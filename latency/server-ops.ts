@@ -80,10 +80,12 @@ async function buildOps(): Promise<Op[]> {
   await db.execute(sql`DELETE FROM api_keys WHERE user_id = ${USER} AND name = 'latency-ops'`);
   await db.execute(sql`INSERT INTO api_keys (user_id, name, kind, prefix, key_hash, scopes) VALUES (${USER}, 'latency-ops', 'api', ${key.prefix}, ${key.keyHash}, '["read","write"]'::jsonb)`);
 
-  const sample = await db.query.contacts.findFirst({ where: and(eq(contacts.userId, USER), eq(contacts.fullName, "Sarah Chen")), columns: { id: true, linkedinUrl: true, title: true, company: true } })
+  const found = await db.query.contacts.findFirst({ where: and(eq(contacts.userId, USER), eq(contacts.fullName, "Sarah Chen")), columns: { id: true, linkedinUrl: true, title: true, company: true } })
     ?? await db.query.contacts.findFirst({ where: eq(contacts.userId, USER), columns: { id: true, linkedinUrl: true, title: true, company: true } });
-  if (!sample) throw new Error("seed the tier first");
-  const tail = await db.query.contacts.findFirst({ where: eq(contacts.userId, USER), orderBy: (c, { desc }) => desc(c.createdAt), columns: { id: true } });
+  // An empty account (tier "new") has no contact to sample: profile, timeline and MCP lookups
+  // then run against a nil uuid, which measures the "not found" path on an empty network.
+  const sample = found ?? { id: "00000000-0000-0000-0000-000000000000", linkedinUrl: null, title: null, company: null };
+  const tail = (await db.query.contacts.findFirst({ where: eq(contacts.userId, USER), orderBy: (c, { desc }) => desc(c.createdAt), columns: { id: true } })) ?? sample;
 
   const tool = (name: string, a: Record<string, unknown>) => async () => {
     const res = await MCP_POST(new Request("https://orbit.test/api/mcp", { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${key.token}` }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: a } }) }));
@@ -114,7 +116,7 @@ async function buildOps(): Promise<Op[]> {
     { group: "page", name: "profile: getContactForProfile", run: () => actionsContacts.getContactForProfile(sample.id) },
     { group: "page", name: "profile: timeline", run: () => actionsContacts.listContactTimelineInteractions(sample.id) },
     { group: "page", name: "profile: related contacts", run: () => actionsContacts.listRelatedContacts(sample.id) },
-    { group: "page", name: "profile: tail contact (no demo data)", run: () => actionsContacts.getContactForProfile(tail!.id) },
+    { group: "page", name: "profile: tail contact (no demo data)", run: () => actionsContacts.getContactForProfile(tail.id) },
     { group: "page", name: "reminders rail counts", run: () => queryReminderRailCounts(db, USER, { tz: "UTC", inboxId: null }) },
     { group: "page", name: "reminders page today", run: () => queryRemindersPage(db, USER, { view: "today", listId: null, limit: 50, tz: "UTC" } as never, { inboxId: null }) },
     { group: "page", name: "reminders page upcoming", run: () => queryRemindersPage(db, USER, { view: "upcoming", listId: null, limit: 50, tz: "UTC" } as never, { inboxId: null }) },
