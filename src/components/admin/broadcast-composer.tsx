@@ -73,7 +73,7 @@ export function BroadcastComposer({ audienceSize }: { audienceSize: number }) {
           value={subject}
           onChange={(e) => setSubject(e.target.value)}
           placeholder="What's new in Orbit"
-          className="w-full rounded-lg border border-border/70 bg-transparent px-3 py-2 text-sm outline-none focus:border-primary/50"
+          className="w-full rounded-lg border border-border/70 bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
         />
       </label>
 
@@ -96,7 +96,7 @@ export function BroadcastComposer({ audienceSize }: { audienceSize: number }) {
           placeholder={
             "Plain text. A blank line starts a new paragraph.\n\nThe first paragraph is set larger, as the opening line."
           }
-          className="w-full resize-y rounded-lg border border-border/70 bg-transparent px-3 py-2 text-sm leading-relaxed outline-none focus:border-primary/50"
+          className="w-full resize-y rounded-lg border border-border/70 bg-transparent px-3 py-2 text-sm leading-relaxed outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
         />
         <span className="block text-xs text-muted-foreground">
           The Orbit header, sign-off and unsubscribe footer are added automatically.
@@ -152,7 +152,7 @@ export function BroadcastComposer({ audienceSize }: { audienceSize: number }) {
           onChange={(e) => setTestTo(e.target.value)}
           placeholder="you@example.com"
           aria-label="Send a test to"
-          className="w-48 rounded-lg border border-border/70 bg-transparent px-2.5 py-1.5 text-xs outline-none focus:border-primary/50"
+          className="w-48 rounded-lg border border-border/70 bg-transparent px-2.5 py-1.5 text-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
         />
         <button
           type="button"

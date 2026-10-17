@@ -145,7 +145,7 @@ export default async function AdminFeedbackPage({
                 defaultValue={q}
                 placeholder="Search what they wrote…"
                 aria-label="Search feedback text"
-                className="w-52 rounded-lg border border-border/70 bg-transparent px-2.5 py-1 text-xs outline-none focus:border-primary/50"
+                className="w-52 rounded-lg border border-border/70 bg-transparent px-2.5 py-1 text-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
               />
               <button
                 type="submit"

@@ -374,7 +374,7 @@ function SearchPill({
     <div
       className={cn(
         "flex h-11 w-full items-center gap-1 rounded-full border border-border/70 bg-card pl-3.5 pr-1.5 shadow-sm",
-        "focus-within:border-primary/40 focus-within:ring-[3px] focus-within:ring-primary/15"
+        "focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
       )}
     >
       <input

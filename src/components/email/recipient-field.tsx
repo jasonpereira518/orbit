@@ -71,7 +71,7 @@ export function RecipientField({
   }
 
   return (
-    <div className="flex items-start gap-2 border-b border-border/60 py-1.5">
+    <div className="flex items-start gap-2 border-b border-border/60 py-1.5 focus-within:border-ring focus-within:shadow-[0_1px_0_var(--ring)]">
       <label htmlFor={id} className="w-10 shrink-0 pt-1 text-xs font-medium text-muted-foreground">
         {label}
       </label>

@@ -404,7 +404,7 @@ export function ContactFollowUpSection({
               onChange={(e) => setIntent(e.target.value)}
               placeholder="Optional intent (e.g. ask for intro)"
               aria-label="Intent (optional)"
-              className="mb-2 w-full max-w-md rounded-lg border border-border/70 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-border"
+              className="mb-2 w-full max-w-md rounded-lg border border-border/70 bg-transparent px-3 py-1.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
             />
           ) : null}
           <div className="flex flex-wrap gap-1.5">
