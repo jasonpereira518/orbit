@@ -153,6 +153,31 @@ async function main() {
   check("a recovery during a Slack outage still closes the row",
     closed?.active === false && closedWhileDown.recovered.includes("cron.missed"), JSON.stringify(closed));
 
+  // The heartbeat says "the alerting path works". A sweep where every delivery failed has not
+  // shown that, so it must stay silent and let the external monitor page.
+  await reset();
+  let beats = 0;
+  const allFailing = { ...failing, heartbeat: async () => { beats += 1; } };
+  await runOpsSweep({ trigger: "manual", deps: allFailing });
+  check("a sweep in which no alert got through does not ping the heartbeat", beats === 0, `beats=${beats}`);
+  await reset();
+  beats = 0;
+  await runOpsSweep({ trigger: "manual", deps: { ...deps, heartbeat: async () => { beats += 1; } } });
+  check("a sweep that delivered does", beats === 1, `beats=${beats}`);
+
+  // A sweep that cannot even read its snapshot tells a human directly, and still throws.
+  const told: string[] = [];
+  const broken = await runOpsSweep({
+    trigger: "manual",
+    deps: { ...deps, notifyFailure: async (t: string) => { told.push(t); } },
+    snapshotOverride: () => { throw new Error("relation \"cron_runs\" does not exist"); },
+  }).then(() => null, (e: Error) => e);
+  check("a failed sweep still throws", broken instanceof Error);
+  check("…and says so on Slack without leaking the SQL error",
+    told.length === 1 && /ops sweep failed/i.test(told[0]!) && !/cron_runs/.test(told[0]!), JSON.stringify(told));
+  await reset();
+  sent.length = 0;
+
   console.log("\nAn alert nobody was told about recovers silently...");
   await reset();
   await runOpsSweep({ trigger: "manual", deps: failing });

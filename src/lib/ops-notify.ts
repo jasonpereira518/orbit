@@ -44,13 +44,23 @@ async function post(url: string, text: string, fetchImpl: typeof fetch) {
 }
 
 export async function deliverToSlack(d: OpsDelivery, fetchImpl: typeof fetch = fetch): Promise<void> {
-  const url = process.env.SLACK_OPS_WEBHOOK_URL?.trim();
-  if (!url) throw new Error("SLACK_OPS_WEBHOOK_URL is not set");
-  const text = formatDelivery(d);
-  await post(url, text, fetchImpl);
+  const main = process.env.SLACK_OPS_WEBHOOK_URL?.trim();
   const critical = process.env.SLACK_OPS_CRITICAL_WEBHOOK_URL?.trim();
-  if (critical && d.condition.severity === "critical" && d.kind !== "recover") {
-    await post(critical, text, fetchImpl);
+  const toCritical = Boolean(critical) && d.condition.severity === "critical" && d.kind !== "recover";
+  if (!main && !toCritical) throw new Error("SLACK_OPS_WEBHOOK_URL is not set");
+  const text = formatDelivery(d);
+
+  // Each channel is attempted on its own. A dead main webhook used to stop the critical post
+  // from ever being tried (the one that buzzes a phone), and a dead critical webhook threw
+  // after the main post had landed, so the sweep re-sent the same message to #orbit-ops every
+  // ten minutes. The delivery counts as made when any channel took it; it fails, and is
+  // retried next tick, only when every channel it was meant for refused it.
+  const attempts: Array<Promise<void>> = [];
+  if (toCritical) attempts.push(post(critical!, text, fetchImpl));
+  if (main) attempts.push(post(main, text, fetchImpl));
+  const results = await Promise.allSettled(attempts);
+  if (results.every((r) => r.status === "rejected")) {
+    throw (results[0] as PromiseRejectedResult).reason;
   }
 }
 
@@ -59,4 +69,16 @@ export async function notifySlack(text: string, fetchImpl: typeof fetch = fetch)
   const url = process.env.SLACK_OPS_WEBHOOK_URL?.trim();
   if (!url) throw new Error("SLACK_OPS_WEBHOOK_URL is not set");
   await post(url, text, fetchImpl);
+}
+
+/**
+ * A message about the alerting path itself failing ("the sweep could not run"), posted to
+ * the main AND the critical channel. It cannot go through the condition state machine,
+ * because that machine is what broke. Never throws: it runs inside a failure handler.
+ */
+export async function notifyOpsFailure(text: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+  const urls = [process.env.SLACK_OPS_CRITICAL_WEBHOOK_URL, process.env.SLACK_OPS_WEBHOOK_URL]
+    .map((u) => u?.trim())
+    .filter((u): u is string => Boolean(u));
+  await Promise.allSettled(urls.map((u) => post(u, text, fetchImpl)));
 }

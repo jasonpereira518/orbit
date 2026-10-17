@@ -23,7 +23,8 @@ import {
   type OpsSnapshot,
 } from "@/lib/ops-alerts";
 import { loadManagedAiOpsFacts } from "@/lib/managed-ai-ops";
-import { deliverToSlack, type OpsDelivery } from "@/lib/ops-notify";
+import { deliverToSlack, notifyOpsFailure, type OpsDelivery } from "@/lib/ops-notify";
+import { shouldRecordThrottled } from "@/lib/throttle-latch";
 import { prunePageViews } from "@/lib/page-views";
 import { reportError } from "@/lib/report-error";
 
@@ -329,6 +330,8 @@ export type OpsSweepDeps = {
   now: () => Date;
   /** Tells the uptime monitor the sweep is alive. Only ever called after a completed sweep. */
   heartbeat: () => Promise<void>;
+  /** Tells a human the sweep itself failed. Throttled, and never throws. */
+  notifyFailure: (text: string) => Promise<void>;
 };
 
 /**
@@ -396,6 +399,7 @@ export async function runOpsSweep(options: {
 }): Promise<OpsSweepResult> {
   const deliver = options.deps?.deliver ?? deliverToSlack;
   const heartbeat = options.deps?.heartbeat ?? pingHeartbeat;
+  const notifyFailure = options.deps?.notifyFailure ?? notifyOpsFailure;
   const now = (options.deps?.now ?? (() => new Date()))();
 
   // Fails loudly (throws) if the database is down — see the module note.
@@ -530,10 +534,23 @@ export async function runOpsSweep(options: {
         prunedPageViews: prunedViews,
       },
     });
-    await heartbeat();
+    // The heartbeat means "the alerting path works". A sweep that finished but could not get a
+    // single alert through to any channel has not shown that, so it stays silent and the
+    // external monitor, which does not depend on Slack, pages instead.
+    const nothingGotThrough =
+      result.deliveryFailures > 0 && result.opened.length + result.reminded.length + result.recovered.length === 0;
+    if (!nothingGotThrough) await heartbeat();
     return result;
   } catch (err) {
     await finishCronRun(run, { status: "failed", error: err });
+    // A failed read used to stop every alert and tell nobody except the missing heartbeat,
+    // half an hour later. Say so now (at most hourly per instance); the error itself, which
+    // can carry SQL, goes to Sentry via the route, not to Slack.
+    if (shouldRecordThrottled("ops.sweep.failed", HOUR_MS)) {
+      await notifyFailure(
+        `:rotating_light: *The ops sweep failed (${err instanceof Error ? err.name : "error"}).* No alert is being evaluated until it runs again. See Sentry (job.ops-sweep) and /admin/health.`
+      );
+    }
     throw err;
   }
 }
