@@ -168,7 +168,7 @@ Known flakiness risks, none observed failing on CI in the last 60 runs:
 | `smoke` ×3 | the smoke suite, sharded | yes |
 | `coverage-shard` ×3, `coverage` | the suite again under c8, merged into the run summary (`main` and on demand only) | report only |
 | `known-bugs` | `npm run test:bugs` | yes (red = a bug was fixed, promote its test) |
-| `security` | `npm audit` of production deps (critical), dependency review of the PR (high), gitleaks over the new commits | yes |
+| `security` | `npm audit` of production deps (critical), dependency review of the PR (high; needs the Dependency graph and `DEPENDENCY_REVIEW=true`), gitleaks over the new commits | yes |
 | `e2e` | Playwright journeys, failing on flaky tests | yes |
 
 `.github/workflows/post-deploy.yml` runs `scripts/post-deploy-smoke.ts` against the production
@@ -190,7 +190,10 @@ above a real gate:
    checks that never start (the comment at the top of `ci.yml` explains).
 4. Keep **block force-pushes and deletion** (already on). Not linear history: PRs merge with
    merge commits here.
-5. Turn on **secret scanning with push protection** and **Dependabot security updates** under
+5. Turn on **Dependency graph**, then set the repository variable `DEPENDENCY_REVIEW=true` so
+   the PR dependency-review step starts enforcing (it is skipped until then: the action fails
+   outright when the graph is off).
+6. Turn on **secret scanning with push protection** and **Dependabot security updates** under
    Settings → Code security; gitleaks in CI is the second line, not the first.
 
 ### Open security backlog

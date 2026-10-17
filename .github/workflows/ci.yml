@@ -251,8 +251,11 @@ jobs:
         run: |
           npm audit --omit=dev --audit-level=high || true   # the full picture, in the log
           npm audit --omit=dev --audit-level=critical
+      # Needs Settings → Code security → Dependency graph, which is off on this repository
+      # (the action errors out without it, failing every PR). Turn the graph on, then set the
+      # repository variable DEPENDENCY_REVIEW=true to start enforcing this step.
       - name: Dependency review
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && vars.DEPENDENCY_REVIEW == 'true'
         uses: actions/dependency-review-action@05fe4576374b728f0c523d6a13d64c25081e0803 # v4.8.3
         with:
           fail-on-severity: high
