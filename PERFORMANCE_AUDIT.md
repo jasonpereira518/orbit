@@ -1,4 +1,4 @@
-# Orbit performance audit — Phase 1 (measurement)
+# Orbit performance audit
 
 Audited at `eb5d69d` (main) on 2026-10-17. Nothing in the application was changed. Every number below was
 measured on local seeded data, never production. Each claim is marked **[measured]**, or
@@ -6,6 +6,61 @@ measured on local seeded data, never production. Each claim is marked **[measure
 
 Read alongside `docs/performance.md`, the existing guards, and `docs/audits/2026-10-13-efficiency-audit.md`,
 whose fixes PRs #425, #427, #428 and #430 have landed. This audit starts from the code as it is after them.
+
+---
+
+## Phase 2 results (2026-10-17)
+
+Fixes are on `claude/serene-cerf-0is3sb`, one commit per bottleneck. Every before/after below is an
+interleaved A/B on copies of the same seeded snapshot (PGlite), or a replay on native Postgres 16
+holding the same 100k rows. The machine ran slower in this session than in Phase 1, so compare the
+two columns of a row, not a row against Phase 1's tables. `smoke-behavior-golden` was re-recorded
+once, with every difference checked (§ "Behavior changes" below).
+
+| # | Change | Before | After |
+|---|---|---|---|
+| B1 | Expression index for the duplicates badge (`contacts_user_name_norm_idx`) | 10k: 82,355 ms. 100k (PG 16): cancelled at 240 s | 10k: **63 ms**. 100k (PG 16): **458 ms** |
+| B5 | No full cohort rebuild inside a read | 10k, 1 unscored contact: 4.0× the all-scored dashboard. 100k: +52 s | 10k: **1.3×** (scores just that row). 20+ unscored: recalibrated after the response |
+| B7 | Contacts search through one indexed arm per branch, plus an email prefix index | 100k: 1,777 ms per keystroke. Count on PG 16: 509 ms | 100k: **333 ms**. Count on PG 16: **41 ms**. Identical id sets for 20 queries |
+| B2 | Related-contacts mention prefilter as indexable functions (trigram GIN plus partial index) | 10k ~2.0 s; 100k 21.0 s (text scan alone 11 s on PG 16) | 10k **275 ms**; 100k **2.9 s** (text scan **167 ms** on PG 16). Identical results for 32 sources, adversarial rows included |
+| B10 | `interactions_user_contact_date_idx` INCLUDE (type, direction, source); `contacts_unscored_idx`; `contacts_goal_relevance_idx`; FK index on `contact_career_moves` | PG 16, 100k: touch counts 1,169 ms; last touch 298 ms; unscored count 73 ms; goal-aligned 60 ms | **186 / 74 / 0.03 / 0.15 ms** |
+| B6 | Due follow-ups rank from the candidates' stored tiers; network stats count the inner circle in SQL | 100k: `due_followups` 3,454 ms; `get_network_overview` 3,624 ms; `getNetworkStats` 3,432 ms | **108–147 / 602 / 502 ms**. Byte-identical output at 10k |
+| B4 | Dashboard stops running the unread vocabulary GROUP BY | 100k: 8.9–9.2 s | 8.5 s. The rest is three whole-network row sets (see below) |
+| B3 | Graph tags in one grouped query instead of a correlated subquery per contact | 100k: scan 2,651 ms; loader 12.4 s | Scan **1,581 ms**; loader 11.4 s. Payload byte-identical |
+| B9 | Waitlist pill rendered in the server HTML | Mobile lab LCP 6,371 ms; score 0.70 | **3,633 ms; ~0.83**. CLS 0 |
+| B8 | Fuzzy dedupe checks company/title before the edit distance; the import counts without keeping SQL text | 10k rows 358 rows/s; 20k rows 240 rows/s; 6.1–24 MB of SQL text retained | **610 / 574 rows/s; 0 MB**. Statements per job unchanged |
+| — | `bundle-report.mjs` counts the framework runtime | `/dashboard` reported as 382 KB gz | Reports 514 KB gz (the true figure) |
+| — | AI result cache keyed on the selected provider and model | A model switch served the old model's answers for up to 90 days | Misses after a switch (new smoke check fails before the fix, passes after) |
+
+**Behavior changes, all deliberate:**
+- `getDashboardData` no longer returns `graphPreview.companies/schools/tags/clusters` or
+  `summary.companyCount`. Nothing rendered them.
+- Hybrid search's full-text arm breaks equal ranks by closeness, then id. They were broken by plan
+  order, which the new indexes changed: an MCP search for "OpenAI" put David Kim above Sarah Chen.
+  The tie-break restores Sarah first. One fused relevance moved 0.4841 → 0.4766, with order unchanged.
+- Map and array order in the dashboard and graph loaders follows the new plans. They are
+  order-only differences, checked entry by entry.
+- AI result cache entries written before the fix miss once.
+
+**Not done, and why:**
+- **Graph payload (B3)** is still ~680 B per engaged contact (6.6 MB at 10k). The `/graph`
+  client's instant search reads the text fields in the browser, so slimming the payload means moving
+  search and the inspect panel to server calls. That is a product decision.
+- **Dashboard at 100k (B4)** is still 8.5 s. About 2.5 s is statement execution; the rest is moving
+  three whole-network row sets (contacts, touch counts, scores) into JS for constellation
+  eligibility, clusters and the histogram. Bounding it means precomputing eligibility and cluster
+  keys per contact: a redesign.
+- **Import ceiling (~39,900 connections).** Lifting it needs more than a chunked upload. The preview
+  answer is 15.4 MB at 30k rows (the `people` array, every row with duplicate info, also aliased as
+  `preview`), and the UI renders every row for selection. It needs a staged preview: rows kept
+  server-side, aggregates plus paging returned.
+- **`LazyMotion` (B11).** 27 of the 86 files using motion rely on layout, `layoutId` or drag, which
+  need `domMax`. That shrinks the saving and needs a visual-regression pass first.
+- **Related contacts round 1** still reads every contact's nine narrow columns (most of the
+  remaining 2.9 s at 100k). Bounding it changes which candidates are considered.
+- **Neon `jit`, and dropping redundant indexes:** configuration and `pg_stat_user_indexes` checks
+  on Neon itself.
+- **Signed-in INP and LCP** still need a staging build with Clerk test keys, or Speed Insights.
 
 ---
 
@@ -353,7 +408,7 @@ A query rewrite alone is **not plan-robust**: it was fast on PGlite and still qu
 - **Hard ceiling:** about **39,900 connections** per `Connections.csv` (~104 B per row against `IMPORT_TEXT_MAX_BYTES` = 4.05 MB). Larger exports are refused before upload. There is no chunked upload (a `ponytail` note says so).
 - **The query counter retains every statement's SQL text during an import, in production.** `runImportJob` calls `startQueryCount()`, and the counter captures SQL for *every* statement in the process until the next start.
   - That is ~24 MB after a 40k import (~14 KB per statement).
-  - A second pass reset the counter: a contended 40k run that self-continued reported 249 statements instead of ~1,700. The import's `stats.statements` is therefore wrong whenever a job spans invocations, or when two jobs share an instance.
+  - **Corrected in Phase 2:** the engine writes its count to `stats` before handing off to a continuation, so `stats.statements` does accumulate across passes. The 249 above was the benchmark reading the process-wide counter, not the job's stats. What stands is the text retention, and that two jobs on one instance share one counter.
 - Staging writes every row in one atomic batch (1,000 rows per INSERT). Neon's HTTP batch-size limit for ~40 MB of jsonb was not verified. **[code review]**
 
 **Projected gain:**

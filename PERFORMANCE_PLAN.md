@@ -1,6 +1,26 @@
 # Orbit performance plan — Phase 2 proposal
 
-Builds on `PERFORMANCE_AUDIT.md`; the B-numbers refer to its bottlenecks. **Nothing here is implemented yet; it waits for approval.**
+Builds on `PERFORMANCE_AUDIT.md`; the B-numbers refer to its bottlenecks. Approved 2026-10-17; results are in the audit's "Phase 2 results".
+
+## Status
+
+| # | Fix | Status |
+|---|---|---|
+| 0 | Harness and `bundle-report` fix | Done (`scripts/dev/perf/`) |
+| 1 | Duplicates badge | Done: the index. The cached count is not done (458 ms at 100k remains) |
+| 2 | No cohort rebuild on read | Done |
+| 3 | Contacts search | Done. Exact totals kept (no "1,000+") |
+| 4 | Related contacts | Done for the text scan. Round 1's whole-network narrow read remains |
+| 5 | Index pack | Done (additions only; drops wait for `idx_scan`) |
+| 6 | Landing LCP pill | Done |
+| 7 | MCP / v1 follow-ups | Done (plus `getNetworkStats`) |
+| 8 | Graph payload | Not done: needs the client-search decision. The per-contact tag subquery was fixed instead |
+| 9 | Dashboard | Partly: the vocabulary scan was dropped. The bounded redesign is open |
+| 10 | Import | Dedupe and query counter done. Chunked upload is blocked on a staged-preview design |
+| 11 | Neon `jit` | Open (configuration on Neon) |
+| 12 | `LazyMotion` | Deferred: 27/86 files need `domMax`; needs a visual-regression pass |
+| 13 | Landing CSS split | Mostly done upstream (#432) |
+| 14 | Background pack | The `ai_result_cache` key is done; the rest is open |
 
 How every fix ships:
 - One bottleneck per PR.
