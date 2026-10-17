@@ -184,6 +184,105 @@ Note: excludes the ~439 KB raw / ~130 KB gz framework root chunks every page als
 | ext search | ext | 3 | 3.4 | 11.2 | 1.5 | 38 | 147 |
 | ext resolve | ext | 5 | 4.1 | 36.7 | 4 | 70 | 201 |
 
+## Server ops, tier 50000 (in-process; depth = sequential round trips at 25 ms/statement)
+
+| op | group | stmts | depth | cpu ms | KB | est ms @8ms RTT | est ms @40ms RTT |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| dashboard bundle (getDashboardData) | page | 15 | 0 | 4706 | 8593.7 | 4706 | 4706 |
+| dashboard network stats | page | 1 | 2 | 52.2 | 0.1 | 68 | 132 |
+| graph (default scope) | page | 9 | 0 | 8807.2 | 34685.6 | 8807 | 8807 |
+| graph action (getGraphData) | page | 10 | 0 | 9082.6 | 34685.6 | 9083 | 9083 |
+| contacts first page | page | 3 | 3.4 | 38.8 | 26.4 | 66 | 175 |
+| contacts page 2 (cursor) | page | 5 | 5.2 | 43.8 | 26.2 | 85 | 252 |
+| contacts sort=recent | page | 3 | 3.2 | 28.3 | 26.7 | 54 | 156 |
+| contacts filter company | page | 3 | 2.5 | 15.6 | 26.1 | 36 | 116 |
+| contacts filter due | page | 3 | 2.6 | 20.6 | 27.3 | 41 | 125 |
+| contacts letters | page | 2 | 3.1 | 61.5 | 0.1 | 86 | 186 |
+| contacts plan overview | page | 4 | 4.4 | 37.6 | 0.4 | 73 | 214 |
+| profile: getContactForProfile | page | 2 | 2.2 | 8.9 | 5.5 | 27 | 97 |
+| profile: timeline | page | 2 | 2.1 | 6.4 | 1.7 | 23 | 90 |
+| profile: related contacts | page | 8 | 0 | 15789.1 | 1.1 | 15789 | 15789 |
+| profile: tail contact (no demo data) | page | 2 | 1.8 | 17.7 | 5.7 | 32 | 90 |
+| reminders rail counts | page | 3 | 1 | 4.7 | 0.2 | 13 | 45 |
+| reminders page today | page | 2 | 1.1 | 12.3 | 28.2 | 21 | 56 |
+| reminders page upcoming | page | 2 | 0.7 | 16.1 | 28.4 | 22 | 44 |
+| knowledge base | page | 5 | 4 | 689.4 | 155.3 | 721 | 849 |
+| knowledge people | page | 2 | 2 | 28.2 | 77.2 | 44 | 108 |
+| chat threads list | page | 3 | 3.2 | 9.1 | 0.4 | 35 | 137 |
+| chat suggestions | page | 12 | 4.5 | 50.5 | 1.7 | 87 | 231 |
+| notification panel | poll | 11 | 4.1 | 32.4 | 63.5 | 65 | 196 |
+| app pulse (90s/tab) | poll | 13 | 5.1 | 35 | 65.9 | 76 | 239 |
+| contacts search 'hop' (prefix, no embedding) | search | 3 | 2.3 | 382.6 | 26.4 | 401 | 475 |
+| contacts search 'hopper' (hybrid) | search | 7 | 14.3 | 927.1 | 26.8 | 1042 | 1499 |
+| contacts search 'engineer at acme' (hybrid) | search | 12 | 3.5 | 2271.7 | 26.1 | 2300 | 2412 |
+| hybrid keyword only | search | 4 | 2.6 | 91.1 | 19 | 112 | 195 |
+| hybrid keyword+semantic | search | 5 | 4.6 | 618.2 | 19 | 655 | 802 |
+| hybrid semantic-heavy (nonsense keyword) | search | 4 | 6.5 | 547.5 | 0 | 600 | 808 |
+| hybrid filtered (recall guard) | search | 9 | 3 | 1394.2 | 16 | 1418 | 1514 |
+| memory search lexical | search | 2 | 1.9 | 691.5 | 4.7 | 707 | 768 |
+| memory search hybrid | search | 3 | 8.6 | 1281.1 | 4.7 | 1350 | 1625 |
+| picker search | search | 2 | 3 | 218.5 | 0 | 243 | 339 |
+| mcp search_contacts | mcp | 8 | 6 | 116.1 | 4.5 | 164 | 356 |
+| mcp get_contact | mcp | 6 | 4.2 | 17.9 | 3.5 | 52 | 186 |
+| mcp who_do_i_know_at | mcp | 7 | 7 | 110.5 | 2.4 | 167 | 391 |
+| mcp due_followups | mcp | 11 | 12 | 1558.9 | 3.9 | 1655 | 2039 |
+| mcp get_network_overview | mcp | 14 | 7.7 | 1769.6 | 1.9 | 1831 | 2078 |
+| mcp get_timeline | mcp | 7 | 3.7 | 29.2 | 1.6 | 59 | 177 |
+| mcp find_path_to | mcp | 12 | 5.9 | 253.4 | 3.5 | 301 | 489 |
+| ext me | ext | 5 | 4 | 38.7 | 0.4 | 71 | 199 |
+| ext search | ext | 3 | 3.5 | 10.1 | 1.5 | 38 | 150 |
+| ext resolve | ext | 5 | 2.9 | 196 | 4 | 219 | 312 |
+
+## Server ops, tier new (in-process; depth = sequential round trips at 25 ms/statement)
+
+| op | group | stmts | depth | cpu ms | KB | est ms @8ms RTT | est ms @40ms RTT |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| dashboard bundle (getDashboardData) | page | 20 | 3.6 | 48.1 | 0.9 | 77 | 192 |
+| dashboard network stats | page | 1 | 1 | 3.4 | 0.1 | 11 | 43 |
+| graph (default scope) | page | 13 | 2.9 | 27.4 | 0.4 | 51 | 143 |
+| graph action (getGraphData) | page | 15 | 5.1 | 33 | 0.4 | 74 | 237 |
+| contacts first page | page | 2 | 2.2 | 5 | 0 | 23 | 93 |
+| contacts page 2 (cursor) | page | 2 | 2.1 | 4.8 | 0 | 22 | 89 |
+| contacts sort=recent | page | 2 | 2.1 | 4.9 | 0 | 22 | 89 |
+| contacts filter company | page | 2 | 2.2 | 5 | 0 | 23 | 93 |
+| contacts filter due | page | 2 | 2.1 | 5.5 | 0 | 22 | 90 |
+| contacts letters | page | 2 | 2.1 | 6.3 | 0 | 23 | 90 |
+| contacts plan overview | page | 4 | 3 | 16.1 | 0.4 | 40 | 136 |
+| contacts duplicates count | page | 3 | 2.1 | 9.2 | 0 | 26 | 93 |
+| profile: getContactForProfile | page | 2 | 2.1 | 9.2 | 0 | 26 | 93 |
+| profile: timeline | page | 2 | 2.1 | 7.5 | 0 | 24 | 92 |
+| profile: related contacts | page | 6 | 2 | 12.1 | 0 | 28 | 92 |
+| profile: tail contact (no demo data) | page | 2 | 2.2 | 9.4 | 0 | 27 | 97 |
+| reminders rail counts | page | 3 | 1 | 3 | 0.1 | 11 | 43 |
+| reminders page today | page | 2 | 1.1 | 3.6 | 0.1 | 12 | 48 |
+| reminders page upcoming | page | 2 | 1 | 3.2 | 0.1 | 11 | 43 |
+| knowledge base | page | 4 | 2 | 7.4 | 0.1 | 23 | 87 |
+| knowledge people | page | 2 | 1 | 3.6 | 0 | 12 | 44 |
+| chat threads list | page | 3 | 3.1 | 9.5 | 0 | 34 | 134 |
+| chat suggestions | page | 11 | 2.7 | 27.3 | 0.3 | 49 | 135 |
+| notification panel | poll | 11 | 3.5 | 37.1 | 0.1 | 65 | 177 |
+| app pulse (90s/tab) | poll | 13 | 5.1 | 29.7 | 0.2 | 71 | 234 |
+| contacts search 'hop' (prefix, no embedding) | search | 2 | 2.1 | 6.7 | 0 | 24 | 91 |
+| contacts search 'hopper' (hybrid) | search | 5 | 3.1 | 14.7 | 0 | 40 | 139 |
+| contacts search 'engineer at acme' (hybrid) | search | 10 | 4.1 | 19.8 | 0 | 53 | 184 |
+| hybrid keyword only | search | 3 | 1.1 | 7 | 0 | 16 | 51 |
+| hybrid keyword+semantic | search | 4 | 1.1 | 8.6 | 0 | 17 | 53 |
+| hybrid semantic-heavy (nonsense keyword) | search | 4 | 1.1 | 10.8 | 0 | 20 | 55 |
+| hybrid filtered (recall guard) | search | 8 | 2.1 | 19.9 | 0 | 37 | 104 |
+| memory search lexical | search | 1 | 1.1 | 2.7 | 0 | 12 | 47 |
+| memory search hybrid | search | 2 | 1 | 5 | 0 | 13 | 45 |
+| picker search | search | 2 | 2.1 | 6.7 | 0 | 24 | 91 |
+| mcp search_contacts | mcp | 7 | 4.2 | 20.8 | 0.3 | 54 | 189 |
+| mcp get_contact | mcp | 6 | 4.3 | 15.1 | 0.1 | 50 | 187 |
+| mcp who_do_i_know_at | mcp | 6 | 4 | 22.9 | 0.3 | 55 | 183 |
+| mcp due_followups | mcp | 16 | 5.6 | 50.2 | 0.3 | 95 | 274 |
+| mcp get_network_overview | mcp | 19 | 6.3 | 37.6 | 0.9 | 88 | 290 |
+| mcp get_timeline | mcp | 7 | 4.2 | 17.2 | 0.1 | 51 | 185 |
+| mcp find_path_to | mcp | 9 | 4.3 | 21.1 | 0.4 | 56 | 193 |
+| ext me | ext | 5 | 3.2 | 15.1 | 0.4 | 41 | 143 |
+| ext search | ext | 3 | 3.3 | 9 | 0 | 35 | 141 |
+| ext resolve | ext | 4 | 3.2 | 10.8 | 0.6 | 36 | 139 |
+
 ## Pages, tier 500, desktop (unthrottled; next dev demo mode, median of 3)
 
 | page | TTFB | FCP | LCP | usable | INP | CLS | TBT | JS gz KB | requests | repeat TTFB | repeat usable | repeat JS KB |
@@ -247,23 +346,23 @@ Client-side navigation (sidebar click → URL changed and no skeleton), mobile4g
 
 | to | ms | skeleton shown at |
 | --- | --- | --- |
-| /contacts | 9224 | – |
+| /contacts | 7344 | – |
 | /reminders | no link | – |
-| /dashboard | timeout | – |
-| /graph | no link | – |
-| /chat | 4024 | 1746 |
+| /dashboard | 4832 | – |
+| /graph | 1837 | – |
+| /chat | 4865 | 2423 |
 | /capture | no link | – |
-| /contacts | 3082 | – |
-| /dashboard | timeout | – |
+| /contacts | 3008 | 1048 |
+| /dashboard | 3072 | – |
 
-History: back – ms, forward – ms.
+History: back 3765 ms, forward 1947 ms.
 
 ## Pages, tier 5000, desktop (unthrottled; next dev demo mode, median of 3)
 
 | page | TTFB | FCP | LCP | usable | INP | CLS | TBT | JS gz KB | requests | repeat TTFB | repeat usable | repeat JS KB |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | /dashboard | 1923 | 2236 | 2452 | 2568 | 48 | 0 | 164 | 1724 | 45 | 2338 | 2828 | 10 |
-| /contacts | – | – | – | – | – | – | – | – | – | – | – | – |
+| /contacts | 33217 | 33468 | 33468 | 33851 | 536 | 0 | 188 | 1637 | 48 | 35406 | 35924 | 11 |
 | /contacts/[id] | 2099 | 2432 | 2688 | 2694 | – | 0 | 216 | 1740 | 47 | 2109 | 2638 | 11 |
 | /capture | 353 | 732 | 732 | 921 | – | 0 | 203 | 1965 | 55 | 260 | 718 | 12 |
 | /chat | 210 | 516 | 4356 | 4323 | 32 | 0 | 210 | 1983 | 71 | 276 | 4108 | 13 |
@@ -284,23 +383,23 @@ Client-side navigation (sidebar click → URL changed and no skeleton), desktop:
 
 | to | ms | skeleton shown at |
 | --- | --- | --- |
-| /contacts | timeout | – |
-| /reminders | 3576 | – |
-| /dashboard | 2282 | – |
-| /graph | 1707 | – |
-| /chat | 652 | – |
-| /capture | 707 | 379 |
-| /contacts | timeout | – |
-| /dashboard | 4883 | 4068 |
+| /contacts | 33717 | – |
+| /reminders | 5347 | 2670 |
+| /dashboard | 1875 | – |
+| /graph | 1675 | – |
+| /chat | 507 | – |
+| /capture | 824 | 420 |
+| /contacts | 33974 | – |
+| /dashboard | 33640 | – |
 
-History: back – ms, forward 1758 ms.
+History: back 500 ms, forward 22 ms.
 
 ## Pages, tier 5000, mobile4g (4G 150 ms RTT, 4x CPU slowdown; next dev demo mode, median of 3)
 
 | page | TTFB | FCP | LCP | usable | INP | CLS | TBT | JS gz KB | requests | repeat TTFB | repeat usable | repeat JS KB |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | /dashboard | 1493 | 3228 | 9608 | 12948 | – | 0 | 904 | 1724 | 45 | 1731 | 4463 | 10 |
-| /contacts | – | – | – | – | – | – | – | – | – | – | – | – |
+| /contacts | 33140 | 34888 | 35268 | 43168 | 2112 | 0 | 757 | 1637 | 47 | 33039 | 34985 | 11 |
 | /contacts/[id] | 3485 | 5228 | 11072 | 14514 | 80 | 0 | 783 | 1740 | 47 | 2797 | 5375 | 11 |
 | /capture | 1171 | 2856 | 3164 | 11923 | 48 | 0 | 630 | 1965 | 55 | 1845 | 3882 | 12 |
 | /chat | 221 | 1952 | 2256 | 16676 | 120 | 0 | 2118 | 2026 | 73 | 218 | 7431 | 14 |
@@ -321,16 +420,98 @@ Client-side navigation (sidebar click → URL changed and no skeleton), mobile4g
 
 | to | ms | skeleton shown at |
 | --- | --- | --- |
-| /contacts | timeout | – |
-| /reminders | 9498 | 6984 |
-| /dashboard | timeout | – |
-| /graph | no link | – |
-| /chat | 3996 | 1571 |
+| /contacts | 41480 | – |
+| /reminders | no link | – |
+| /dashboard | 6195 | 3719 |
+| /graph | 2261 | – |
+| /chat | 5171 | 1552 |
 | /capture | no link | – |
-| /contacts | timeout | – |
-| /dashboard | timeout | – |
+| /contacts | 36045 | – |
+| /dashboard | 36479 | 34870 |
 
-History: back – ms, forward – ms.
+History: back 2545 ms, forward 55 ms.
+
+## Pages, tier 50000, desktop (unthrottled; next dev demo mode, median of undefined)
+
+| page | TTFB | FCP | LCP | usable | INP | CLS | TBT | JS gz KB | requests | repeat TTFB | repeat usable | repeat JS KB |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+
+## Pages, tier 50000, mobile4g (4G 150 ms RTT, 4x CPU slowdown; next dev demo mode, median of undefined)
+
+| page | TTFB | FCP | LCP | usable | INP | CLS | TBT | JS gz KB | requests | repeat TTFB | repeat usable | repeat JS KB |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+
+## Pages, tier new, desktop (unthrottled; next dev demo mode, median of 3)
+
+| page | TTFB | FCP | LCP | usable | INP | CLS | TBT | JS gz KB | requests | repeat TTFB | repeat usable | repeat JS KB |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| /dashboard | 393 | 712 | 912 | 977 | 56 | 0 | 147 | 1841 | 65 | 407 | 972 | 13 |
+| /contacts | 300 | 516 | 516 | – | 16 | 0 | 258 | 1754 | 71 | 324 | – | 13 |
+| /capture | 229 | 528 | 776 | 829 | – | 0 | 152 | 2082 | 72 | 269 | 734 | 15 |
+| /chat | 178 | 468 | 1680 | 1657 | 32 | 0 | 189 | 1983 | 69 | 236 | 1683 | 13 |
+| /graph | 209 | 496 | 504 | 697 | – | 0 | 153 | 1978 | 69 | 299 | 818 | 14 |
+| /knowledge | 177 | 488 | 520 | 730 | – | 0 | 166 | 1612 | 61 | 220 | 641 | 12 |
+| /reminders | 245 | 548 | 548 | 797 | – | 0 | 177 | 1744 | 61 | 352 | 755 | 12 |
+| /imports | 166 | 436 | 520 | 628 | – | 0 | 145 | 1776 | 65 | 226 | 664 | 13 |
+| /events | 214 | 504 | 676 | 700 | – | 0 | 155 | 1627 | 62 | 272 | 644 | 12 |
+| /meetings | 159 | 396 | 456 | 586 | – | 0 | 124 | 1652 | 64 | 268 | 648 | 13 |
+| /outreach | 204 | 500 | 632 | 655 | – | 0 | 106 | 1627 | 62 | 268 | 640 | 12 |
+| /recruiters | 222 | 512 | 512 | 742 | – | 0 | 116 | 1680 | 65 | 295 | 754 | 13 |
+| /radar | 177 | 472 | 604 | 661 | – | 0 | 129 | 1627 | 62 | – | – | – |
+| /settings | 253 | 560 | 676 | 778 | – | 0 | 135 | 1760 | 63 | 303 | 831 | 12 |
+| / | 139 | 416 | 608 | 593 | – | 0 | 109 | 1317 | 57 | 135 | 590 | 9 |
+| /pricing | 175 | 488 | 488 | 700 | – | 0 | 125 | 1385 | 44 | 303 | 782 | 8 |
+
+Client-side navigation (sidebar click → URL changed and no skeleton), desktop:
+
+| to | ms | skeleton shown at |
+| --- | --- | --- |
+| /contacts | 374 | – |
+| /reminders | 550 | 247 |
+| /dashboard | 502 | – |
+| /graph | 306 | – |
+| /chat | 386 | – |
+| /capture | 647 | 357 |
+| /contacts | 261 | – |
+| /dashboard | 440 | – |
+
+History: back 331 ms, forward 176 ms.
+
+## Pages, tier new, mobile4g (4G 150 ms RTT, 4x CPU slowdown; next dev demo mode, median of 3)
+
+| page | TTFB | FCP | LCP | usable | INP | CLS | TBT | JS gz KB | requests | repeat TTFB | repeat usable | repeat JS KB |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| /dashboard | 493 | 2248 | 8412 | 11712 | – | 0 | 855 | 1731 | 47 | 528 | 2943 | 10 |
+| /contacts | 316 | 2104 | 2384 | – | 96 | 0 | 2334 | 1797 | 73 | 287 | – | 14 |
+| /capture | 275 | 2000 | 2312 | 10212 | 80 | 0 | 641 | 1662 | 46 | 287 | 2199 | 13 |
+| /chat | 177 | 1944 | 1988 | 15803 | 120 | 0 | 2176 | 2026 | 73 | 319 | 5925 | 14 |
+| /graph | 250 | 2000 | 2276 | 9745 | – | 0 | 606 | 1528 | 44 | 445 | 2373 | 10 |
+| /knowledge | 250 | 2064 | 2276 | 9914 | 56 | 0 | 678 | 1553 | 43 | 254 | 2198 | 10 |
+| /reminders | 351 | 2068 | 2360 | 10912 | 48 | 0 | 662 | 1691 | 45 | 349 | 2561 | 10 |
+| /imports | 210 | 1964 | 2264 | 9756 | – | 0 | 621 | 1665 | 46 | 575 | 2353 | 11 |
+| /events | 271 | 2044 | 8240 | 10061 | – | 0 | 627 | 1516 | 44 | 741 | 2749 | 10 |
+| /meetings | 176 | 1924 | 2160 | 9588 | – | 0 | 564 | 1541 | 45 | 398 | 2191 | 10 |
+| /outreach | 246 | 2008 | 8148 | 9918 | – | 0 | 578 | 1511 | 43 | 690 | 2707 | 10 |
+| /recruiters | 201 | 1948 | 2228 | 10125 | – | 0 | 654 | 1570 | 47 | – | – | – |
+| /radar | 234 | 2016 | 8172 | 9959 | – | 0 | 611 | 1517 | 43 | – | – | – |
+| /settings | 406 | 2096 | 2428 | 11840 | 56 | 0 | 895 | 1707 | 45 | 744 | 3474 | 10 |
+| / | 138 | 1388 | 7772 | 8590 | – | 0 | 621 | 1282 | 44 | 153 | 2230 | 8 |
+| /pricing | 183 | 2352 | 2352 | 9963 | – | 0 | 834 | 1354 | 43 | 362 | 3354 | 8 |
+
+Client-side navigation (sidebar click → URL changed and no skeleton), mobile4g:
+
+| to | ms | skeleton shown at |
+| --- | --- | --- |
+| /contacts | 2149 | – |
+| /reminders | no link | – |
+| /dashboard | 2137 | – |
+| /graph | 895 | – |
+| /chat | 4907 | 1882 |
+| /capture | no link | – |
+| /contacts | 1817 | – |
+| /dashboard | 2291 | – |
+
+History: back 2713 ms, forward 975 ms.
 
 ## HTTP routes and documents, tier 500 (n=30 sequential, then 5 concurrent; next dev)
 
@@ -360,30 +541,84 @@ History: back – ms, forward – ms.
 | api avatar | 200 | 0 | 70 | 161 | 162 | 70 | 230 | 429 | 450 |
 | api meetings candidates | 200 | 0 | 100 | 152 | 352 | 100 | 301 | 406 | 455 |
 
+## HTTP routes and documents, tier 5000 (n=30 sequential, then 5 concurrent; next dev)
+
+| target | status | KB | single p50 | p95 | p99 | ttfb p50 | conc p50 | conc p95 | conc p99 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| doc /dashboard | 200 | 495 | 1463 | 1915 | 1985 | 1457 | 6954 | 7540 | 7557 |
+| doc /contacts | 200 | 510 | 36849 | 36855 | 36855 | 36831 | skipped (warm request took 35 s) | – | – |
+| doc /contacts?q=hopper | 200 | 514 | 34775 | 34914 | 34914 | 34769 | skipped (warm request took 33 s) | – | – |
+| doc /contacts/[id] | 200 | 299 | 1898 | 2400 | 2932 | 1892 | 9380 | 9861 | 9862 |
+| doc /reminders | 200 | 446 | 409 | 495 | 962 | 402 | 1857 | 2371 | 2372 |
+| doc /capture | 200 | 160 | 213 | 287 | 291 | 209 | 955 | 1065 | 1066 |
+| doc /chat | 200 | 127 | 154 | 224 | 256 | 150 | 714 | 798 | 798 |
+| doc /graph | 200 | 3994 | 1623 | 2323 | 2475 | 1562 | 8108 | 9258 | 9272 |
+| doc /knowledge | 200 | 530 | 248 | 415 | 468 | 241 | 1253 | 2407 | 2407 |
+| doc /imports | 200 | 135 | 183 | 226 | 237 | 180 | 853 | 949 | 954 |
+| doc /settings | 200 | 231 | 287 | 361 | 362 | 282 | 1283 | 1432 | 1432 |
+| api /api/health | 200 | 0 | 40 | 49 | 53 | 39 | 129 | 205 | 233 |
+| api mcp search_contacts | 200 | 4 | 90 | 132 | 132 | 90 | 318 | 552 | 552 |
+| api mcp who_do_i_know_at | 200 | 2 | 114 | 131 | 131 | 113 | 352 | 575 | 575 |
+| api mcp due_followups | 200 | 3 | 252 | 284 | 284 | 252 | 778 | 2992 | 2992 |
+| api mcp get_network_overview | 200 | 2 | 327 | 438 | 438 | 326 | 983 | 1737 | 1737 |
+| api mcp get_contact | 200 | 5 | 61 | 99 | 99 | 61 | 180 | 307 | 307 |
+| api v1 contacts?q= | 200 | 4 | 91 | 113 | 113 | 91 | 256 | 423 | 423 |
+| api v1 followups | 200 | 3 | 285 | 346 | 346 | 284 | 977 | 1650 | 1650 |
+| api ext me | 200 | 0 | 71 | 96 | 96 | 71 | 238 | 379 | 379 |
+| api ext contacts?q= | 200 | 1 | 53 | 76 | 76 | 53 | 170 | 251 | 251 |
+| api avatar | 429 | 0 | 66 | 140 | 178 | 66 | 259 | 387 | 446 |
+| api meetings candidates | 200 | 0 | 65 | 97 | 233 | 65 | 271 | 407 | 447 |
+
+## HTTP routes and documents, tier 50000 (n=30 sequential, then 5 concurrent; next dev)
+
+| target | status | KB | single p50 | p95 | p99 | ttfb p50 | conc p50 | conc p95 | conc p99 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| doc /dashboard | 200 | 495 | 6613 | 7343 | 8697 | 6606 | 33135 | 38124 | 38135 |
+| doc /contacts/[id] | 200 | 287 | 15060 | 16295 | 16295 | 15055 | skipped (warm request took 15 s) | – | – |
+| doc /reminders | 200 | 446 | 357 | 482 | 485 | 352 | 1526 | 2007 | 2007 |
+| doc /capture | 200 | 160 | 296 | 388 | 399 | 292 | 1411 | 1664 | 1664 |
+| doc /chat | 200 | 127 | 138 | 177 | 187 | 135 | 605 | 648 | 649 |
+| doc /graph | 200 | 38761 | 16485 | 16767 | 16767 | 15241 | skipped (warm request took 17 s) | – | – |
+| doc /knowledge | 200 | 531 | 400 | 529 | 564 | 393 | 1704 | 2104 | 2104 |
+| doc /imports | 200 | 135 | 167 | 220 | 226 | 164 | 758 | 883 | 889 |
+| doc /settings | 200 | 231 | 426 | 536 | 585 | 421 | 2266 | 3930 | 3932 |
+| api /api/health | 200 | 0 | 44 | 52 | 55 | 44 | 111 | 182 | 202 |
+| api mcp search_contacts | 200 | 4 | 157 | 230 | 230 | 157 | 469 | 837 | 837 |
+| api mcp who_do_i_know_at | 200 | 2 | 345 | 473 | 473 | 345 | 1129 | 1875 | 1875 |
+| api mcp due_followups | 200 | 3 | 2413 | 2553 | 2553 | 2412 | 7187 | 14118 | 14118 |
+| api mcp get_network_overview | 200 | 2 | 2497 | 2971 | 2971 | 2497 | 7404 | 13122 | 13122 |
+| api mcp get_contact | 200 | 4 | 54 | 62 | 62 | 54 | 166 | 277 | 277 |
+| api v1 contacts?q= | 200 | 4 | 119 | 165 | 165 | 117 | 340 | 610 | 610 |
+| api v1 followups | 200 | 3 | 2123 | 2326 | 2326 | 2123 | 6919 | 13216 | 13216 |
+| api ext me | 200 | 0 | 176 | 204 | 204 | 176 | 658 | 1082 | 1082 |
+| api ext contacts?q= | 200 | 1 | 53 | 126 | 126 | 53 | 161 | 268 | 268 |
+| api avatar | 200 | 0 | 51 | 111 | 129 | 51 | 155 | 262 | 292 |
+| api meetings candidates | 200 | 0 | 57 | 74 | 318 | 57 | 236 | 355 | 368 |
+
 ## HTTP routes and documents, tier new (n=30 sequential, then 5 concurrent; next dev)
 
 | target | status | KB | single p50 | p95 | p99 | ttfb p50 | conc p50 | conc p95 | conc p99 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| doc /dashboard | 200 | 196 | 430 | 584 | 841 | 427 | 2307 | 2678 | 2725 |
-| doc /contacts | 200 | 143 | 213 | 305 | 305 | 210 | 1090 | 1328 | 1329 |
-| doc /contacts?q=hopper | 200 | 144 | 256 | 340 | 343 | 253 | 1182 | 1436 | 1437 |
-| doc /reminders | 200 | 143 | 261 | 339 | 361 | 257 | 1453 | 2703 | 2703 |
-| doc /capture | 200 | 137 | 294 | 406 | 424 | 291 | 1840 | 2045 | 2046 |
-| doc /chat | 200 | 126 | 243 | 388 | 426 | 240 | 1519 | 1813 | 1813 |
-| doc /graph | 200 | 108 | 283 | 519 | 538 | 281 | 1342 | 3176 | 3177 |
-| doc /knowledge | 200 | 111 | 209 | 273 | 277 | 207 | 1094 | 1134 | 1137 |
-| doc /imports | 200 | 134 | 208 | 255 | 255 | 204 | 952 | 1159 | 1165 |
-| doc /settings | 200 | 226 | 287 | 412 | 425 | 281 | 1681 | 3650 | 3650 |
-| api /api/health | 200 | 0 | 46 | 58 | 62 | 46 | 150 | 260 | 262 |
-| api mcp search_contacts | 200 | 0 | 91 | 129 | 130 | 91 | 294 | 494 | 546 |
-| api mcp who_do_i_know_at | 200 | 0 | 77 | 99 | 99 | 77 | 276 | 2017 | 2101 |
-| api mcp due_followups | 429 | 0 | 59 | 84 | 86 | 58 | 208 | 362 | 373 |
-| api mcp get_network_overview | 429 | 0 | 64 | 92 | 93 | 64 | 194 | 333 | 334 |
-| api v1 contacts?q= | 200 | 0 | 79 | 108 | 121 | 79 | 244 | 404 | 441 |
-| api v1 followups | 200 | 0 | 107 | 161 | 1496 | 106 | 306 | 530 | 532 |
-| api ext me | 200 | 0 | 78 | 94 | 96 | 77 | 225 | 384 | 408 |
-| api ext contacts?q= | 429 | 0 | 60 | 74 | 78 | 60 | 192 | 303 | 321 |
-| api meetings candidates | 200 | 0 | 82 | 120 | 370 | 82 | 346 | 1559 | 1576 |
+| doc /dashboard | 200 | 196 | 503 | 815 | 826 | 498 | 2616 | 3202 | 3271 |
+| doc /contacts | 200 | 143 | 264 | 298 | 305 | 259 | 1120 | 1271 | 1271 |
+| doc /contacts?q=hopper | 200 | 144 | 239 | 316 | 332 | 236 | 1275 | 1483 | 1483 |
+| doc /reminders | 200 | 143 | 251 | 340 | 370 | 248 | 1349 | 2715 | 2717 |
+| doc /capture | 200 | 137 | 238 | 296 | 312 | 235 | 1185 | 1257 | 1257 |
+| doc /chat | 200 | 126 | 181 | 228 | 253 | 178 | 852 | 963 | 964 |
+| doc /graph | 200 | 108 | 244 | 318 | 327 | 239 | 1342 | 2719 | 2719 |
+| doc /knowledge | 200 | 111 | 222 | 297 | 328 | 218 | 962 | 1045 | 1046 |
+| doc /imports | 200 | 134 | 202 | 242 | 254 | 199 | 1017 | 1235 | 1245 |
+| doc /settings | 200 | 226 | 302 | 403 | 469 | 297 | 1561 | 3545 | 3546 |
+| api /api/health | 200 | 0 | 47 | 67 | 69 | 46 | 152 | 251 | 269 |
+| api mcp search_contacts | 200 | 0 | 86 | 115 | 115 | 86 | 243 | 391 | 391 |
+| api mcp who_do_i_know_at | 200 | 0 | 73 | 103 | 103 | 72 | 238 | 418 | 418 |
+| api mcp due_followups | 200 | 0 | 99 | 134 | 134 | 98 | 297 | 505 | 505 |
+| api mcp get_network_overview | 200 | 1 | 121 | 142 | 142 | 120 | 381 | 595 | 595 |
+| api v1 contacts?q= | 200 | 0 | 80 | 101 | 101 | 80 | 207 | 336 | 336 |
+| api v1 followups | 200 | 0 | 95 | 123 | 123 | 95 | 298 | 567 | 567 |
+| api ext me | 200 | 0 | 73 | 114 | 114 | 72 | 245 | 1857 | 1857 |
+| api ext contacts?q= | 200 | 0 | 58 | 86 | 86 | 57 | 189 | 311 | 311 |
+| api meetings candidates | 200 | 0 | 80 | 99 | 309 | 79 | 298 | 376 | 412 |
 
 ## AI paths, tier 500 (mock provider: {"ttft":900,"token":12,"tokens":180,"json":900,"jsonLarge":4000,"embed":215,"stt":1500})
 
@@ -409,6 +644,18 @@ Stage timeline of one open question (ms after request): 122 {"id":"understand","
 
 Capture (paste 478 chars → reviewed): p50 12294 ms; runs: 12321, 12294, 12234
 
+## AI paths, tier 50000 (mock provider: {"ttft":900,"token":12,"tokens":180,"json":900,"jsonLarge":4000,"embed":215,"stt":1500})
+
+| chat question | headers p50 | first token p50 | complete p50 | statements |
+| --- | --- | --- | --- | --- |
+| lookup: Who do I know at Acme? | 20 | 3822 | 6046 | 32 |
+| open: Who should I talk to about hiring a staff engineer in Toronto? | 14 | 8101 | 10306 | 40 |
+| person: What did I last discuss with Sarah Chen? | 15 | 2659 | 4866 | 28 |
+
+Stage timeline of one open question (ms after request): 180 {"id":"understand","kind":"understand","label":"Working out what you're asking f; 370 {"id":"roster","kind":"roster","label":"You know 2,942 people at Acme","status":; 1437 {"id":"understand","kind":"understand","label":"Worked out what you're asking fo; 1438 {"id":"search","kind":"search","label":"Searching your network","status":"active; 2225 {"id":"search","kind":"search","label":"Searched your network, found 60 candidat; 2225 {"id":"rank","kind":"rank","label":"Ranking 60 candidates","status":"active"}; 2237 {"id":"search","kind":"search","label":"Searched your network, found 60 candidat; 3148 {"id":"rank","kind":"rank","label":"Kept the 12 closest matches","detail":"In se; 3149 {"id":"rank","kind":"rank","label":"Kept the 12 closest matches","detail":"In se; 3150 {"id":"read","kind":"read","label":"Reading notes on 12 people","status":"active; 3174 {"id":"read","kind":"read","label":"Read notes on 9 people","status":"done","ms"; 3177 {"id":"answer","kind":"answer","label":"Writing the answer","status":"active"}; 6334 {"id":"answer","kind":"answer","label":"Wrote the answer","status":"done","ms":3
+
+Capture (paste 478 chars → reviewed): p50 13585 ms; runs: 13737, 13585, 13421
+
 ## LinkedIn import, tier 500 (20000 rows, 1965 KB CSV, network of 525)
 
 | phase | ms | first progress ms | rows/s | statements |
@@ -426,3 +673,29 @@ Capture (paste 478 chars → reviewed): p50 12294 ms; runs: 12321, 12294, 12234
 | run: all creates | 88945 | 88932 | 225 | 823 |
 | stage again | 1858 | – | – | 20 |
 | run: all merges | 138757 | 138753 | 144 | 567 |
+
+## LinkedIn import, tier 50000 (20000 rows, 1965 KB CSV, network of 50025)
+
+| phase | ms | first progress ms | rows/s | statements |
+| --- | --- | --- | --- | --- |
+| stage (parse + write rows) | 1576 | – | – | 20 |
+| run: all creates | 114448 | 114435 | 175 | 823 |
+| stage again | 1702 | – | – | 20 |
+| run: all merges | 167119 | 167115 | 120 | 567 |
+
+## Constellation (/bench/constellation, static production build)
+
+| n | profile | payload KB | ready ms | long tasks ms | idle fps | pan fps | pan p95 frame | zoom fps | nodes | heap MB |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 500 | desktop | 301 | 518 | 84 | 60.3 | 60.1 | 16.7 | 37 | 177 | 49.4 |
+| 5000 | desktop | 2969 | 972 | 237 | 60.2 | 60.1 | 16.7 | 52.2 | 133 | 22.2 |
+| 50000 | desktop | 29671 | 2764 | 1355 | 59.3 | 59.1 | 16.8 | 54.2 | 100 | 147.4 |
+| 500 | mobile4g | – | – | – | – | – | – | – | – | Error: page.evaluate: TypeError: Cannot read properties of null (reading 'getBoundingClientRect')
+    at center (eval at evaluate (:311:30), <anonymous>:3:42)
+    at eval (eval at evaluate (:311:30),  |
+| 5000 | mobile4g | – | – | – | – | – | – | – | – | Error: page.evaluate: TypeError: Cannot read properties of null (reading 'getBoundingClientRect')
+    at center (eval at evaluate (:311:30), <anonymous>:3:42)
+    at eval (eval at evaluate (:311:30),  |
+| 50000 | mobile4g | – | – | – | – | – | – | – | – | Error: page.evaluate: TypeError: Cannot read properties of null (reading 'getBoundingClientRect')
+    at center (eval at evaluate (:311:30), <anonymous>:3:42)
+    at eval (eval at evaluate (:311:30),  |

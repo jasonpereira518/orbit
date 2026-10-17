@@ -1,0 +1,48 @@
+{
+  "base": "http://localhost:3417",
+  "at": "2026-10-17T14:29:38.766Z",
+  "rows": [
+    {
+      "n": 500,
+      "profile": "mobile4g",
+      "fetch_kb": 301,
+      "ready_ms": null,
+      "long_tasks_ms": 1160,
+      "idle_fps": 60.7,
+      "pan_fps": 60.2,
+      "pan_p95_frame_ms": 16.8,
+      "zoom_fps": 60.2,
+      "nodes": 0,
+      "heap_mb": 6.6,
+      "timeout": true
+    },
+    {
+      "n": 5000,
+      "profile": "mobile4g",
+      "fetch_kb": 2969,
+      "ready_ms": null,
+      "long_tasks_ms": 1737,
+      "idle_fps": 60.5,
+      "pan_fps": 60.1,
+      "pan_p95_frame_ms": 16.7,
+      "zoom_fps": 60.3,
+      "nodes": 0,
+      "heap_mb": 12.6,
+      "timeout": true
+    },
+    {
+      "n": 50000,
+      "profile": "mobile4g",
+      "fetch_kb": 0,
+      "ready_ms": null,
+      "long_tasks_ms": 315,
+      "idle_fps": 60.5,
+      "pan_fps": 60.2,
+      "pan_p95_frame_ms": 16.7,
+      "zoom_fps": 60.2,
+      "nodes": 0,
+      "heap_mb": 4.5,
+      "timeout": true
+    }
+  ]
+}

@@ -33,7 +33,8 @@ window.__lt = []; window.__ready = null;
 try { new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__lt.push(e.duration); }).observe({ type: "longtask", buffered: true }); } catch {}
 (function poll() {
   const el = document.querySelector(".constellation-stage");
-  if (el && el.style.opacity === "1" && document.querySelector(".react-flow__node")) { window.__ready = performance.now(); return; }
+  // Desktop mounts React Flow nodes; the phone layout draws its own canvas inside the stage.
+  if (el && el.style.opacity === "1" && (document.querySelector(".react-flow__node") || el.querySelector("canvas"))) { window.__ready = performance.now(); return; }
   requestAnimationFrame(poll);
 })();`;
 
