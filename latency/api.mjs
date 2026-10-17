@@ -17,7 +17,7 @@
  * EXTENSION_DEV_USER_ID=demo-user for the extension routes to answer.
  */
 import { readFileSync } from "node:fs";
-import { flag, percentile, r0, writeJson } from "./lib/stats.mjs";
+import { flag, percentile, r0, sleep, writeJson } from "./lib/stats.mjs";
 
 const BASE = flag("base", "http://localhost:3001").replace(/\/$/, "");
 const N = Number(flag("n", "30"));
@@ -25,6 +25,29 @@ const CONC = Number(flag("concurrency", "5"));
 const ONLY = (flag("only", "") || "").split(",").filter(Boolean);
 const OUT = flag("out", `latency/results/api-${Date.now()}.json`);
 const KEY_FILE = flag("key-file", "");
+/**
+ * The authenticated routes are rate limited per user (src/lib/rate-limit.ts: `mcp` and
+ * `apiRead` 120/min; src/lib/extension/http.ts has its own per-minute window), and a 429 is
+ * a fast response that would pass for a good p50. Limited groups get fewer samples per
+ * target (--n-limited) and a pause whenever the next target would overflow the window.
+ */
+const N_LIMITED = Number(flag("n-limited", "10"));
+const LIMITS = { mcp: Number(flag("limit-mcp", "120")), v1: Number(flag("limit-v1", "120")), ext: Number(flag("limit-ext", "60")) };
+const groupOf = (name) => (name.includes(" mcp ") ? "mcp" : name.includes(" v1 ") ? "v1" : name.includes(" ext ") ? "ext" : null);
+const windowLog = {};
+async function budget(group, calls) {
+  if (!group) return;
+  const now = Date.now();
+  const log = ((windowLog[group] ??= []).filter((t) => now - t < 61_000));
+  if (log.length + calls > LIMITS[group]) {
+    const wait = Math.max(1000, 61_000 - (now - log[0]));
+    console.log(`pausing ${Math.ceil(wait / 1000)} s for the ${group} rate-limit window (${LIMITS[group]}/min)`);
+    await sleep(wait);
+    log.length = 0;
+  }
+  for (let i = 0; i < calls; i++) log.push(Date.now());
+  windowLog[group] = log;
+}
 const API_KEY = KEY_FILE ? readFileSync(KEY_FILE, "utf8").trim() : "";
 
 const mcp = (name, args) => ({
@@ -116,11 +139,14 @@ for (const [name, [rawPath, rawInit]] of Object.entries(TARGETS)) {
   if (path === "__avatar__") { if (!contactId) continue; path = `/api/avatars/${contactId}`; }
   if (init === "__mcp_get_contact__") { if (!contactId) continue; init = mcp("get_contact", { contactId }); }
 
+  const group = groupOf(name);
+  const n = group ? Math.min(N, N_LIMITED) : N;
+  await budget(group, 1 + n + Math.ceil(n / CONC) * CONC);
   await timed(path, init); // warm the route (dev compiles on first hit)
   const single = [];
-  for (let i = 0; i < N; i++) single.push(await timed(path, init));
+  for (let i = 0; i < n; i++) single.push(await timed(path, init));
   const concurrent = [];
-  for (let round = 0; round < Math.ceil(N / CONC); round++) {
+  for (let round = 0; round < Math.ceil(n / CONC); round++) {
     concurrent.push(...(await Promise.all(Array.from({ length: CONC }, () => timed(path, init)))));
   }
   results[name] = { path, single: stats(single), concurrent: stats(concurrent) };
