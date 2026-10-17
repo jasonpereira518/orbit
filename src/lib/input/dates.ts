@@ -43,13 +43,13 @@ export function parseClientDate(value: unknown): Date | null {
 export function optionalClientDate(value: unknown, field = "date"): Date | null {
   if (value === null || value === undefined || value === "") return null;
   const d = parseClientDate(value);
-  if (!d) throw new UserFacingError(`That ${field} doesn't look right`);
+  if (!d) throw new UserFacingError(`That ${field} doesn’t look right`);
   return d;
 }
 
 /** A required client date: absent or unreadable → a `UserFacingError` naming the field. */
 export function requireClientDate(value: unknown, field = "date"): Date {
   const d = parseClientDate(value);
-  if (!d) throw new UserFacingError(`That ${field} doesn't look right`);
+  if (!d) throw new UserFacingError(`That ${field} doesn’t look right`);
   return d;
 }
