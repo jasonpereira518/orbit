@@ -9,6 +9,8 @@ import { captureSourceKinds } from "@/lib/note-batches";
 import { isoDay } from "@/lib/suggested-reminder-utils";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
+export const metadata = { title: "Capture results" };
+
 export default async function NoteBatchPage({
   params,
 }: {

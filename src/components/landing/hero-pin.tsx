@@ -205,7 +205,7 @@ export const HeroPin = forwardRef<
                   {RING_LABELS.map((label, i) => (
                     <motion.span
                       key={label.text}
-                      className="absolute left-1/2 inline-block -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#05070f]/70 px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] text-[#f2c14e]"
+                      className="absolute left-1/2 inline-block -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#05070f]/70 px-2.5 py-1 text-3xs uppercase tracking-[0.2em] text-[#f2c14e]"
                       style={{
                         top: `${50 - label.side * (label.r / SOLAR_VIEW) * 100}%`,
                         opacity: labelOpacities[i],

@@ -7,6 +7,7 @@ import {
 } from "@/lib/plans/plan-config";
 import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_LABEL } from "@/lib/stripe-config";
 import { cn } from "@/lib/utils";
+import { ScrollRegion } from "@/components/ui/scroll-region";
 
 type Cell = boolean | string;
 type Column = "free" | PurchasablePlan;
@@ -96,8 +97,12 @@ function CellValue({ value, plan }: { value: Cell; plan: Column }) {
 export function PlanComparison() {
   return (
     // Wide content scrolls inside its own container so the page body never scrolls
-    // sideways on a phone.
-    <div className="overflow-x-auto rounded-3xl border border-[#e8f3f1]/[0.10] bg-[#05070f]/50 backdrop-blur-sm">
+    // sideways on a phone — and that container joins the tab order while it overflows, so a
+    // keyboard can reach the columns past the edge.
+    <ScrollRegion
+      label="Plan comparison"
+      className="rounded-3xl border border-[#e8f3f1]/[0.10] bg-[#05070f]/50 backdrop-blur-sm"
+    >
       <table className="w-full min-w-[34rem] border-collapse text-left">
         <caption className="sr-only">Feature comparison across Orbit plans</caption>
         <thead>
@@ -147,6 +152,6 @@ export function PlanComparison() {
           ))}
         </tbody>
       </table>
-    </div>
+    </ScrollRegion>
   );
 }

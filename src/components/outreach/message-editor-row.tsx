@@ -76,6 +76,7 @@ export function MessageEditorRow({
           value={localSubject}
           onChange={(e) => setLocalSubject(e.target.value)}
           placeholder="Subject"
+          aria-label="Subject"
         />
       )}
       <Textarea
@@ -83,6 +84,7 @@ export function MessageEditorRow({
         onChange={(e) => setLocalBody(e.target.value)}
         rows={channel === "sms" ? 3 : 5}
         placeholder="Message draft"
+        aria-label="Message draft"
       />
       <div className="flex gap-2">
         <Button size="sm" variant="outline" onClick={save} disabled={pending}>

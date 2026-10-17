@@ -85,7 +85,7 @@ export default async function AdminAccessPage() {
           ) : invites.length === 0 ? (
             <EmptyState>{clerkOn ? "No invitations yet." : "No Clerk keys on this server."}</EmptyState>
           ) : (
-            <AdminTable
+            <AdminTable label="Invitations"
               head={
                 <>
                   <Th>Email</Th>

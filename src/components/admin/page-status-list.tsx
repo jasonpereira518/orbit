@@ -47,7 +47,8 @@ const OPTIONS: Array<{ value: PageStatus; label: string; hint: string; tone: str
     value: "soon",
     label: "Soon",
     hint: "Shows the coming-soon screen; listed under the sidebar divider",
-    tone: "bg-warning/15 text-warning",
+    // amber-800 in light: --warning (amber-700) on its own 15% tint measured 3.91:1.
+    tone: "bg-warning/15 text-amber-800 dark:text-warning",
   },
   {
     value: "hidden",
@@ -153,10 +154,10 @@ function TierChips({
             }
             onClick={() => onChange(on ? value.filter((p) => p !== plan) : PLANS.filter((p) => p === plan || value.includes(p)))}
             className={cn(
-              "rounded-md border px-2 py-0.5 text-[11px] transition-colors duration-fast",
+              "rounded-md border px-2 py-0.5 text-2xs transition-colors duration-fast",
               on
                 ? "border-tier-border bg-tier-surface font-medium text-tier-accent"
-                : "border-border/60 text-muted-foreground/70 line-through decoration-muted-foreground/40 hover:text-foreground",
+                : "border-border/60 text-muted-foreground-subtle line-through decoration-muted-foreground/40 hover:text-foreground",
               codeBlocked && "opacity-40",
               last && "cursor-not-allowed"
             )}

@@ -73,7 +73,8 @@ export async function generateMetadata({
   const params = await searchParams;
   const origin = getWaitlistOrigin();
   const base: Metadata = {
-    title: TITLE,
+    // Absolute: the waitlist is its own surface and does not carry the app's "· Orbit" suffix.
+    title: { absolute: TITLE },
     description: DESCRIPTION,
     metadataBase: new URL(origin),
     // Replaces the root layout's icon list, which names the product's logo file. The

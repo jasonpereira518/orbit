@@ -213,7 +213,7 @@ export function HighlightsStep({
               aria-label="Previous feature"
             >
               <ArrowLeft className="size-4" aria-hidden />
-              <span className="hidden sm:inline">Previous</span>
+              <span className="max-sm:sr-only">Previous</span>
             </Button>
             <p className="text-xs tabular-nums text-muted-foreground" aria-live="polite">
               {index + 1} / {chapters.length}
@@ -333,7 +333,7 @@ function ChapterRail({
 
 function NeedTag({ chapter, facts }: { chapter: HighlightChapter; facts: OverviewFacts }) {
   const base =
-    "inline-flex items-center rounded-full border border-border/70 bg-muted/40 px-2 py-px text-[11px] font-medium text-muted-foreground";
+    "inline-flex items-center rounded-full border border-border/70 bg-muted/40 px-2 py-px text-2xs font-medium text-muted-foreground";
   if (chapter.needs === "ai") return <span className={base}>Uses AI credits</span>;
   if (chapter.needs === "linkedin" && facts.linkedinPending) {
     return <span className={base}>Upload when your export arrives</span>;

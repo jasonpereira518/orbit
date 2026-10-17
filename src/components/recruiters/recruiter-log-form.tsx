@@ -105,6 +105,7 @@ export function RecruiterLogForm({
           <Label htmlFor="fullName">Name</Label>
           <Input
             id="fullName"
+            autoComplete="off"
             required={!recruiterId}
             value={form.fullName}
             onChange={(e) => set("fullName", e.target.value)}
@@ -116,6 +117,7 @@ export function RecruiterLogForm({
           <Label htmlFor="firm">Firm / agency</Label>
           <Input
             id="firm"
+            autoComplete="off"
             value={form.firm}
             onChange={(e) => set("firm", e.target.value)}
             placeholder="Acme Talent"
@@ -134,6 +136,7 @@ export function RecruiterLogForm({
           <Label htmlFor="email">Email</Label>
           <Input
             id="email"
+            autoComplete="off"
             type="email"
             value={form.email}
             onChange={(e) => set("email", e.target.value)}
@@ -143,6 +146,7 @@ export function RecruiterLogForm({
           <Label htmlFor="phone">Phone</Label>
           <Input
             id="phone"
+            autoComplete="off"
             value={form.phone}
             onChange={(e) => set("phone", e.target.value)}
           />
@@ -151,6 +155,7 @@ export function RecruiterLogForm({
           <Label htmlFor="linkedinUrl">LinkedIn</Label>
           <Input
             id="linkedinUrl"
+            autoComplete="off"
             value={form.linkedinUrl}
             onChange={(e) => set("linkedinUrl", e.target.value)}
             placeholder="https://linkedin.com/in/…"

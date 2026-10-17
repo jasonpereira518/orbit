@@ -1,4 +1,6 @@
 import Link from "next/link";
+import type { Metadata } from "next";
+import { cache } from "react";
 import { notFound } from "next/navigation";
 import { AlertTriangle, ArrowLeft, CircleAlert } from "lucide-react";
 import {
@@ -34,7 +36,24 @@ import { loadAdminTimeline } from "@/lib/admin-timeline";
 import { formatCostMicros } from "@/lib/ai-pricing";
 import { cn } from "@/lib/utils";
 
-export const metadata = { title: "Admin · Account" };
+/** Request-memoized so `generateMetadata` and the page share one read. */
+const loadAdminUserDetail = cache((userId: string) => getAdminUserDetail(userId));
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ userId: string }>;
+}): Promise<Metadata> {
+  const { userId } = await params;
+  try {
+    // The admin gate first, as the page does: an account's name is admin-only data.
+    await requireAdminUserId();
+    const detail = await loadAdminUserDetail(decodeURIComponent(userId));
+    return { title: detail ? `Admin · ${displayName(detail.identity)}` : "Admin · Account" };
+  } catch {
+    return { title: "Admin · Account" };
+  }
+}
 
 const SECTIONS = [
   { id: "identity", label: "Identity" },
@@ -75,7 +94,7 @@ export default async function AdminUserDetailPage({
 
   const adminUserId = await requireAdminUserId();
 
-  const detail = await getAdminUserDetail(decoded);
+  const detail = await loadAdminUserDetail(decoded);
   if (!detail) notFound();
 
   const contactsPage = Math.max(
@@ -810,7 +829,7 @@ export default async function AdminUserDetailPage({
                 </EmptyState>
               ) : (
                 <>
-                  <AdminTable
+                  <AdminTable label={`Contacts (${contactPage.total})`}
                     head={
                       <>
                         <Th>Contact</Th>

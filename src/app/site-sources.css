@@ -103,7 +103,10 @@
 @source "../components/pricing/back-control.tsx";
 @source "../components/theme-provider.tsx";
 @source "../components/ui/button.tsx";
+@source "../components/ui/loading-region.tsx";
+@source "../components/ui/scroll-region.tsx";
 @source "../components/ui/skeleton.tsx";
+@source "../components/ui/skip-link.tsx";
 @source "../components/ui/sonner.tsx";
 @source "../components/warp/chrono-stage.tsx";
 @source "../components/warp/liftoff-stage.tsx";

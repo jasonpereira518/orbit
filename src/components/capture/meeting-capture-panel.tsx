@@ -802,7 +802,7 @@ function TranscriptList({
           by before. The sentence is announced once, when it lands as a real segment above.
         */}
         {interim && (
-          <p aria-hidden className="leading-relaxed text-muted-foreground/70">
+          <p aria-hidden className="leading-relaxed text-muted-foreground-subtle">
             {interim}
           </p>
         )}

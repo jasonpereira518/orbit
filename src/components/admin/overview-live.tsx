@@ -101,7 +101,7 @@ export function LiveAlertsPanel({ totalUsers }: { totalUsers: number }) {
                     aria-hidden
                   />
                 )}
-                <span className="w-56 shrink-0 truncate">
+                <span className="w-32 shrink-0 truncate sm:w-56">
                   {alert.email ?? alert.userId}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-muted-foreground">
@@ -162,12 +162,14 @@ export function LiveRecentSignupsPanel({ totalUsers }: { totalUsers: number }) {
                 <span className="w-10 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
                   <RelativeTime date={row.signupAt} />
                 </span>
-                <span className="flex w-40 shrink-0 justify-start">
+                {/* Fixed widths from `sm` up; on a phone the columns size to their content
+                    (and the email truncates), or the row ran ~100px past the screen. */}
+                <span className="flex shrink-0 justify-start sm:w-40">
                   <PlanBadge plan={row.plan} source={row.planSource} />
                 </span>
                 <span
                   className={cn(
-                    "w-20 shrink-0 text-right text-xs tabular-nums",
+                    "shrink-0 text-right text-xs tabular-nums sm:w-20",
                     row.counts.contacts === 0 && "text-muted-foreground"
                   )}
                 >

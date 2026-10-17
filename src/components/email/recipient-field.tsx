@@ -91,7 +91,8 @@ export function RecipientField({
               <button
                 type="button"
                 aria-label={`Remove ${email}`}
-                className="rounded-full p-0.5 hover:bg-foreground/10"
+                // 24px box (SC 2.5.8) pulled into the chip's padding so the chip keeps its height.
+                className="relative tap-target -my-1 -mr-1.5 grid size-6 shrink-0 place-items-center rounded-full hover:bg-foreground/10"
                 onClick={() => onChange(value.filter((v) => v !== email))}
               >
                 <X className="size-3" />

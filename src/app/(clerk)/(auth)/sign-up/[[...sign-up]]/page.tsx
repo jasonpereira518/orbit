@@ -5,6 +5,8 @@ import { InviteSignedInNotice } from "@/components/auth/invite-signed-in-notice"
 import { clerkAppearance } from "@/lib/clerk-appearance";
 import { OrbitLogo } from "@/components/orbit-logo";
 
+export const metadata = { title: "Sign up" };
+
 /**
  * Destinations a `redirect_url` query param may point at after sign-up. A whitelist, not
  * a same-origin check: the value rides in a URL anyone can craft, so only paths where
@@ -38,7 +40,7 @@ export default async function SignUpPage({
 
   if (!isClerkConfigured()) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background p-6">
+      <div className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-background p-6">
         <OrbitLogo size="lg" />
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
           Orbit
@@ -57,7 +59,7 @@ export default async function SignUpPage({
       : "/onboarding";
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
+    <div className="flex min-h-dvh items-center justify-center bg-background">
       <SignUp
         appearance={clerkAppearance}
         forceRedirectUrl={redirectUrl}

@@ -18,7 +18,7 @@ import { findScanHandoff } from "@/lib/scan-handoff";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Scan notes · Orbit",
+  title: "Scan notes",
   // A handoff link is single-use and short-lived; there is nothing here to index.
   robots: { index: false, follow: false },
 };

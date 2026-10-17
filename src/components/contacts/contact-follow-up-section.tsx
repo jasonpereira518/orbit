@@ -403,6 +403,7 @@ export function ContactFollowUpSection({
               value={intent}
               onChange={(e) => setIntent(e.target.value)}
               placeholder="Optional intent (e.g. ask for intro)"
+              aria-label="Intent (optional)"
               className="mb-2 w-full max-w-md rounded-lg border border-border/70 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-border"
             />
           ) : null}
@@ -454,6 +455,7 @@ export function ContactFollowUpSection({
           <div className="space-y-3">
             <Textarea
               rows={7}
+              aria-label="Follow-up draft"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               className="resize-y text-sm"

@@ -38,6 +38,8 @@ import { after } from "next/server";
 import { captureRadarTimeZone } from "@/lib/radar/digest";
 import { TZ_COOKIE } from "@/lib/reminder-due-bucket";
 
+export const metadata = { title: "Settings" };
+
 /**
  * Anchor for a card that stands alone. Ids and grouping live in `sections.ts`.
  *

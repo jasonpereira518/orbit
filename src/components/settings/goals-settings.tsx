@@ -107,6 +107,7 @@ export function GoalsSettings({ initialGoals }: { initialGoals: UserGoal[] }) {
       >
         <Input
           placeholder="e.g. Raise seed round, hire engineers…"
+          aria-label="New goal"
           value={text}
           onChange={(e) => setText(e.target.value)}
           maxLength={200}

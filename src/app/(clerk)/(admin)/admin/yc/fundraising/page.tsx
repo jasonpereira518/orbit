@@ -198,7 +198,7 @@ export default async function FundingPage() {
                 {round.investors.length === 0 ? (
                   <EmptyState>No commitments yet.</EmptyState>
                 ) : (
-                  <AdminTable
+                  <AdminTable label={`${round.name} · ${round.status}`}
                     head={
                       <>
                         <Th>Investor</Th>
@@ -252,7 +252,7 @@ export default async function FundingPage() {
                 No grants, prizes, credits or loans recorded yet.
               </EmptyState>
             ) : (
-              <AdminTable
+              <AdminTable label="Non-dilutive"
                 head={
                   <>
                     <Th>Source</Th>

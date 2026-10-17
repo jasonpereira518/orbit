@@ -423,10 +423,14 @@ function SearchPill({
           <ChevronDown className="size-3 opacity-60" />
         </PopoverTrigger>
         <PopoverContent align="end" className="w-64 space-y-2 p-3">
-          <p className="text-xs font-medium text-muted-foreground">
+          <label
+            htmlFor="contacts-company-filter"
+            className="block text-xs font-medium text-muted-foreground"
+          >
             Exact company
-          </p>
+          </label>
           <Input
+            id="contacts-company-filter"
             autoFocus
             placeholder="e.g. Acme"
             value={companyDraft}

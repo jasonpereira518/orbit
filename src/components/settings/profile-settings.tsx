@@ -138,10 +138,12 @@ export function ProfileSettings({
 
       <SettingsRow
         title="About you"
+        labelFor="sender-bio"
         description="One or two sentences: what you do, and what you are looking for. Orbit puts this in every message it drafts for you — without it, drafts have a name to sign off with and nothing to introduce."
       >
         <Textarea
           id="sender-bio"
+          aria-describedby="sender-bio-description"
           rows={3}
           value={bio}
           maxLength={SENDER_BIO_MAX_LENGTH}

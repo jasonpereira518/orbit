@@ -64,7 +64,7 @@ export function OnboardingProgress({
           );
         })}
       </ol>
-      <p aria-hidden className="text-[11px] font-medium tracking-wide text-muted-foreground">
+      <p aria-hidden className="text-2xs font-medium tracking-wide text-muted-foreground">
         {STAGE_LABELS[stage]}
       </p>
     </nav>

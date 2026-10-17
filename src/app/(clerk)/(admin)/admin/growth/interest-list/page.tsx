@@ -230,7 +230,7 @@ export default async function AdminInterestListPage({
           {sources.length === 0 ? (
             <EmptyState>No signups yet.</EmptyState>
           ) : (
-            <AdminTable minWidth="none"
+            <AdminTable label="Where they come from" minWidth="none"
               head={
                 <>
                   <Th>Source</Th>

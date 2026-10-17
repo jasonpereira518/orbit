@@ -15,7 +15,8 @@ import { isWaitlistHostHeader } from "@/lib/waitlist-host";
  * waitlist is sent out.
  */
 export const metadata: Metadata = {
-  title: "Privacy — early access waitlist",
+  // Absolute: the waitlist is its own surface and does not carry the app's "· Orbit" suffix.
+  title: { absolute: "Privacy — early access waitlist" },
   description: "What the early access waitlist collects, why, and how to leave.",
   metadataBase: new URL(getWaitlistOrigin()),
   icons: { icon: "/waitlist/icon.png", apple: "/waitlist/icon.png" },

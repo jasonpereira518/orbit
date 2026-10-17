@@ -27,6 +27,13 @@ export function WaitlistForm() {
     readyAt.current = Date.now();
   }, []);
 
+  // The form, and the button that had focus, are gone once this succeeds. Move focus to the
+  // confirmation so it is read out and keyboard users aren't dropped back at the page top.
+  const successRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (status === "success") successRef.current?.focus();
+  }, [status]);
+
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!email) return;
@@ -46,7 +53,12 @@ export function WaitlistForm() {
 
   if (status === "success") {
     return (
-      <p className="text-sm text-[#e8f3f1]">
+      <p
+        ref={successRef}
+        role="status"
+        tabIndex={-1}
+        className="text-sm text-[#e8f3f1] outline-none"
+      >
         You&apos;re in — we&apos;ll email you when there&apos;s news.
       </p>
     );
@@ -61,6 +73,9 @@ export function WaitlistForm() {
         id="waitlist-email"
         type="email"
         required
+        autoComplete="email"
+        aria-invalid={status === "error" || undefined}
+        aria-describedby={status === "error" ? "waitlist-error" : undefined}
         placeholder="you@company.com"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
@@ -76,7 +91,7 @@ export function WaitlistForm() {
         {status === "loading" ? "Signing up…" : "Get updates"}
       </button>
       {status === "error" && (
-        <p className="text-sm text-[#e8a84e]">
+        <p id="waitlist-error" role="alert" className="text-sm text-[#e8a84e]">
           Something went wrong — please try again.
         </p>
       )}

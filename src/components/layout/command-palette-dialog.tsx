@@ -182,7 +182,7 @@ function CommandIcon({ icon: Icon }: { icon: LucideIcon }) {
 
 function Key({ children }: { children: ReactNode }) {
   return (
-    <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded-md border border-border/60 bg-background px-1 font-sans text-[11px] text-muted-foreground">
+    <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded-md border border-border/60 bg-background px-1 font-sans text-2xs text-muted-foreground">
       {children}
     </kbd>
   );
@@ -505,6 +505,7 @@ export function CommandPaletteDialog({
           <Search className="size-[18px] shrink-0 text-muted-foreground" strokeWidth={1.75} aria-hidden />
           <input
             ref={inputRef}
+            aria-label="Search Orbit"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
@@ -518,9 +519,9 @@ export function CommandPaletteDialog({
             aria-autocomplete="list"
             autoComplete="off"
             spellCheck={false}
-            className="h-14 min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-muted-foreground/80"
+            className="h-14 min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-muted-foreground-subtle"
           />
-          {searching && <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground/70" aria-hidden />}
+          {searching && <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground-subtle" aria-hidden />}
         </div>
 
         <div
@@ -582,7 +583,7 @@ export function CommandPaletteDialog({
                     )}
                     {selected && (
                       <CornerDownLeft
-                        className="hidden size-3.5 shrink-0 text-muted-foreground/70 [@media(hover:hover)]:block"
+                        className="hidden size-3.5 shrink-0 text-muted-foreground-subtle [@media(hover:hover)]:block"
                         aria-hidden
                       />
                     )}

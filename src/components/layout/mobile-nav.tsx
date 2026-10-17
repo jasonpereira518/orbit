@@ -65,7 +65,7 @@ function TierTag({ plans }: { plans: readonly Plan[] | undefined }) {
   return (
     <span
       data-plan={plan}
-      className="inline-flex items-center gap-1 rounded-full border border-tier-border px-1.5 py-px text-[10px] uppercase tracking-wide text-tier-accent"
+      className="inline-flex items-center gap-1 rounded-full border border-tier-border px-1.5 py-px text-3xs uppercase tracking-wide text-tier-accent"
     >
       <Lock aria-hidden className="size-2.5" />
       {PLAN_SHORT_LABELS[plan]}
@@ -700,7 +700,7 @@ export function MobileNav({
                   <Icon className="h-5 w-5 shrink-0" />
                   {item.label}
                   {isHrefComingSoon(item.href, comingSoon) ? (
-                    <span className="rounded-full border border-warning/40 px-1.5 py-px text-[10px] uppercase tracking-wide text-warning">
+                    <span className="rounded-full border border-warning/40 px-1.5 py-px text-3xs uppercase tracking-wide text-warning">
                       Soon
                     </span>
                   ) : (

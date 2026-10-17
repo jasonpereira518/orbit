@@ -7,7 +7,7 @@ import { isClerkConfigured } from "@/lib/auth";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Account suspended · Orbit" };
+export const metadata = { title: "Account suspended" };
 
 /**
  * The friendly surface for a suspended account.

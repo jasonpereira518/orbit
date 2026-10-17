@@ -12,6 +12,8 @@ import { FEATURE_DENIAL, getEntitlements } from "@/lib/entitlements";
 import { getResumableMeeting } from "@/lib/meeting-sessions";
 import { listMeetingsFor } from "@/lib/meetings-list";
 
+export const metadata = { title: "Meetings" };
+
 export default async function MeetingsPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
   const gate = await pageVisibilityGate("page.meetings");
   if (gate) return gate;

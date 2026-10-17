@@ -45,7 +45,7 @@ const FILTERS: Array<{ value: FeedbackFilter; label: string }> = [
 const STATUS_CLASS: Record<string, string> = {
   new: "bg-accent/20 text-accent-foreground",
   triaged: "bg-muted text-muted-foreground",
-  resolved: "bg-muted/50 text-muted-foreground/70",
+  resolved: "bg-muted/50 text-muted-foreground-subtle",
 };
 
 /**
@@ -193,6 +193,7 @@ export default async function AdminFeedbackPage({
         ) : (
           <>
             <AdminTable
+              label="Feedback"
               head={
                 <>
                   <Th>When</Th>
@@ -278,6 +279,7 @@ export default async function AdminFeedbackPage({
           ) : (
             <>
               <AdminTable
+                label="Rated chat answers"
                 head={
                   <>
                     <Th>When</Th>
