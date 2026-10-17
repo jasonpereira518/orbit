@@ -38,7 +38,15 @@ cleanup() { jobs -p | xargs -r kill 2>/dev/null || true; }
 trap cleanup EXIT
 
 wait_for() { # url, seconds
-  local i=0; until curl -fsS "$1" >/dev/null 2>&1; do sleep 1; i=$((i+1)); [[ $i -ge $2 ]] && { log "timeout waiting for $1"; return 1; }; done
+  # Explicit returns: an `until` loop's status is that of its body's last command, and a
+  # `[[ ]] && {}` guard that does not fire returns 1, which under `set -e` killed the script
+  # whenever the first probe of the mock ran before node had bound the port.
+  local i=0
+  until curl -fsS "$1" >/dev/null 2>&1; do
+    sleep 1; i=$((i+1))
+    if [[ $i -ge $2 ]]; then log "timeout waiting for $1"; return 1; fi
+  done
+  return 0
 }
 
 # ---- once: build + bundle/cold-start reports ----

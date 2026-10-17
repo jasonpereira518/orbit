@@ -39,9 +39,11 @@ const WARM = flag("warm", "1") !== "0";
 /** Page → the selector that means "the content a person came for is on screen". */
 const PAGES = {
   "/dashboard": "main h1, main [data-slot='card']",
-  "/contacts": "main a[href^='/contacts/'], main [data-testid='contacts-list'], main table, main ul",
+  // Contact rows are <li role="link"> with an avatar, not anchors (the only anchor is /contacts/new).
+  "/contacts": "main li[role='link'], main [data-slot='avatar']",
   "/contacts/[id]": "main h1",
-  "/capture": "main textarea, main form",
+  // The capture page renders a composer, not a bare textarea: any input or the heading counts.
+  "/capture": "main textarea, main form, main [contenteditable], main input, main h1",
   "/chat": "main textarea, main form",
   "/graph": ".react-flow__node, .constellation-stage, main svg, main canvas",
   "/knowledge": "main h1",
@@ -53,7 +55,7 @@ const PAGES = {
   "/recruiters": "main h1",
   "/radar": "main h1",
   "/settings": "main h1, h1",
-  "/onboarding": "main h1, h1",
+  // "/onboarding" is left out: in demo mode it client-redirects to /dashboard, so it is not a page load.
   "/": "main h1, h1",
   "/pricing": "main h1, h1",
 };
@@ -63,7 +65,7 @@ const INTERACTIONS = {
   "/dashboard": "nav a[href='/contacts']",
   "/contacts": "main input[type='search'], main input[placeholder*='earch']",
   "/contacts/[id]": "main button",
-  "/capture": "main textarea",
+  "/capture": "main textarea, main [contenteditable], main input, main button",
   "/chat": "main textarea",
   "/graph": ".react-flow__pane",
   "/reminders": "main button",
@@ -86,7 +88,9 @@ const PRELUDE = `
   obs("event", (e) => { if (e.interactionId) { m.events++; m.inp = Math.max(m.inp, e.duration); } }, { durationThreshold: 16 });
   window.__latReady = (selector) => {
     const busy = () => [...document.querySelectorAll(${JSON.stringify(BUSY)})].some((el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
-    const hydrated = () => { const el = document.querySelector("main") ?? document.body; return Object.keys(el).some((k) => k.startsWith("__reactFiber")); };
+    // React attaches fiber keys to every element it owns; the root may be <main>, or on pages
+    // without one (onboarding) a plain div, so check the first elements under <body>.
+    const hydrated = () => { const els = [document.querySelector("main"), ...document.body.querySelectorAll("*")].filter(Boolean).slice(0, 120); return els.some((el) => Object.keys(el).some((k) => k.startsWith("__reactFiber"))); };
     (function poll() {
       if (m.hydrated == null && hydrated()) m.hydrated = performance.now();
       if (m.usable == null && m.hydrated != null && document.querySelector(selector) && !busy()) { m.usable = performance.now(); return; }
@@ -183,13 +187,22 @@ function medianOf(rows) {
   return out;
 }
 
-/** The first contact in the list: the profile page everyone opens. */
+/**
+ * A contact profile path: the profile page everyone opens. The contacts list renders rows as
+ * <li role="link">, not anchors, so the dashboard's contact links (uuid hrefs) are the source;
+ * an empty account has none and the profile page is skipped.
+ */
 async function firstContactPath(context) {
   const page = await context.newPage();
   try {
-    await page.goto(`${BASE}/contacts`, { waitUntil: "load" });
-    const href = await page.locator("main a[href^='/contacts/']").first().getAttribute("href", { timeout: 20_000 }).catch(() => null);
-    return href && !/\/(new|duplicates)$/.test(href) ? href : null;
+    for (const path of ["/dashboard", "/contacts"]) {
+      await page.goto(`${BASE}${path}`, { waitUntil: "load" });
+      await page.waitForSelector("main", { timeout: 20_000 }).catch(() => null);
+      await sleep(1500);
+      const href = await page.evaluate(() => [...document.querySelectorAll("a[href^='/contacts/']")].map((a) => a.getAttribute("href")).find((h) => /^\/contacts\/[0-9a-f-]{36}$/.test(h)) ?? null).catch(() => null);
+      if (href) return href;
+    }
+    return null;
   } finally {
     await page.close();
   }

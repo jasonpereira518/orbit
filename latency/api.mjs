@@ -63,7 +63,8 @@ const TARGETS = {
   "api ext me": ["/api/extension/me", ext()],
   "api ext contacts?q=": ["/api/extension/contacts?q=hopper", ext()],
   "api avatar": ["__avatar__", {}],
-  "api capture jobs": ["/api/capture/jobs", {}],
+  // No GET polling route exists: /api/capture/jobs is POST-only (media upload) and the client
+  // polls capture jobs through a Server Action, which latency/server-ops.ts measures in-process.
   "api meetings candidates": ["/api/meetings/candidates", {}],
 };
 
@@ -88,7 +89,7 @@ async function firstContactId() {
   const res = await fetch(`${BASE}/api/v1/contacts?limit=1`, v1()).catch(() => null);
   if (!res || !res.ok) return null;
   const body = await res.json().catch(() => null);
-  const row = body?.contacts?.[0] ?? body?.items?.[0] ?? body?.data?.[0] ?? (Array.isArray(body) ? body[0] : null);
+  const row = body?.data?.contacts?.[0] ?? body?.contacts?.[0] ?? body?.items?.[0] ?? body?.data?.[0] ?? (Array.isArray(body) ? body[0] : null);
   return row?.id ?? null;
 }
 
