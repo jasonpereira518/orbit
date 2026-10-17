@@ -84,7 +84,8 @@ function NoteBatchActions({
   onUndone,
 }: {
   batchId: string;
-  status: "saved" | "undone";
+  /** The batch row's status. Only `undone` changes what renders; `saving`/`failed` reach here from a deep link to a batch mid-write or one that threw. */
+  status: "saving" | "saved" | "failed" | "undone";
   /** The view's transition, so an undo or delete in flight also holds the rows' buttons. */
   pending: boolean;
   start: React.TransitionStartFunction;
@@ -199,7 +200,8 @@ export function NoteBatchResultView({
   /** Shown between the heading and the results: the capture's source card. */
   children?: React.ReactNode;
   batchId: string;
-  status: "saved" | "undone";
+  /** The batch row's status. Only `undone` changes what renders; `saving`/`failed` reach here from a deep link to a batch mid-write or one that threw. */
+  status: "saving" | "saved" | "failed" | "undone";
   anchorIso: string;
   anchorBasis: "note" | "hint" | "upload";
   result: NoteBatchResult;

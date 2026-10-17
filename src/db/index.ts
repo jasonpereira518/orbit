@@ -473,6 +473,8 @@ CREATE TABLE IF NOT EXISTS imports (
   stall_resumes integer NOT NULL DEFAULT 0,
   reverted_at timestamptz,
   revert_stats jsonb,
+  claim_token text,
+  lease_until timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -2954,7 +2956,13 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // Nov 7 2026 when main took 197: a database stamped 197 would never run this branch's DDL. NOT
 // 198: claude/duplicates-view-merge-training-7c9a92 claims it. Rescanned every remote ref and
 // worktree on Nov 7 2026: 198 was the highest claimed anywhere.
-export const SCHEMA_VERSION = 199;
+//
+// 201 = imports.claim_token + imports.lease_until: the import runner's lease, so the stall
+// backstop or an admin retry can never run a second runner beside a live one (security audit
+// H-04, ported from #474 where it was 171). NOT 198: #531 claims it, and NOT 200:
+// claude/shared-work-history claims it. Rescanned every remote ref and worktree on Nov 7 2026:
+// 200 was the highest claimed anywhere.
+export const SCHEMA_VERSION = 201;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -4926,6 +4934,9 @@ const alters = [
   `ALTER TABLE import_job_rows ADD COLUMN IF NOT EXISTS revert_snapshot jsonb`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS reverted_at timestamptz`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS revert_stats jsonb`,
+  // v201: the import runner's lease (audit H-04). See `imports.claimToken` in schema.ts.
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS claim_token text`,
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS lease_until timestamptz`,
   // Partial: the overwhelming majority of interactions and reminders are hand-made and
   // carry NULL here, and the only query that reads the column asks for one import's rows.
   `CREATE INDEX IF NOT EXISTS interactions_import_idx ON interactions(import_id) WHERE import_id IS NOT NULL`,
