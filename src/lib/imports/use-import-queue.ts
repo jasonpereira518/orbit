@@ -1,11 +1,11 @@
 "use client";
 
+import { previewConnections } from "@/lib/imports/linkedin-connections-client";
 import { useSyncExternalStore } from "react";
 import {
   applyLinkedInYou,
   previewCalendarImport,
   previewContactsFile,
-  previewLinkedInCsv,
   previewLinkedInMessagesCsv,
   previewLinkedInYou,
 } from "@/actions/imports";
@@ -208,7 +208,8 @@ async function previewOne(d: Detected): Promise<PreviewOutcome> {
       return { ok: true, people: [], ids, text, fileName, fields: res.fields };
     }
     if (d.target === "linkedin_connections") {
-      const res = await previewLinkedInCsv(text);
+      // Parsed here and checked in chunks: no ceiling on the export's size.
+      const res = await previewConnections(text);
       if ("error" in res) throw new UserFacingError(res.error);
       const people = res.people.map(connectionToReviewPerson);
       return { ok: true, people, ids: unrepeated(people), text, fileName };

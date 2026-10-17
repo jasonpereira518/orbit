@@ -58,6 +58,8 @@ import {
   runImportJobById,
 } from "@/lib/import-job-dispatch";
 import {
+  ENCODING_ARTIFACTS_WARNING,
+  hasEncodingArtifacts,
   LinkedInExportError,
   parseLinkedInConnectionsCsv,
 } from "@/lib/linkedin-connections";
@@ -121,23 +123,6 @@ function linkedInMessageExternalId(
   return `li-msg:${conversationId}:${date ? date.toISOString() : "unknown"}:${simpleHash(content.slice(0, 240))}`;
 }
 
-/** Replacement-character artifacts from decoding a non-UTF8 export as UTF-8. */
-function hasEncodingArtifacts(
-  rows: {
-    firstName: string;
-    lastName: string;
-    company: string;
-    position: string;
-  }[],
-) {
-  return rows.some(
-    (r) =>
-      r.firstName.includes("�") ||
-      r.lastName.includes("�") ||
-      r.company.includes("�") ||
-      r.position.includes("�"),
-  );
-}
 
 /**
  * What a LinkedIn preview tells the person when the parser refuses a file. Only a
@@ -238,11 +223,7 @@ export async function previewLinkedInCsv(csvText: string) {
     );
   }
   const { columns, rows, warnings } = parsed;
-  if (hasEncodingArtifacts(rows)) {
-    warnings.push(
-      "Some characters may not have decoded correctly — if names look garbled, re-export the CSV with UTF-8 encoding.",
-    );
-  }
+  if (hasEncodingArtifacts(rows)) warnings.push(ENCODING_ARTIFACTS_WARNING);
   const db = await getDb();
   const existing = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
@@ -295,8 +276,6 @@ export async function previewLinkedInCsv(csvText: string) {
     people,
     duplicateCount: people.filter((p) => p.isRepeat).length,
     warnings,
-    // keep legacy key for any callers
-    preview: people,
   };
 }
 
