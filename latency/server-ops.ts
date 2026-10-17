@@ -9,8 +9,8 @@
  *   statements  SQL statements issued (drizzle logger; raw neon calls are not counted)
  *   kb          size of what the loader returns (what a page/route must then serialise)
  *   cpu_ms      median wall time over 7 warm runs on PGlite (no network: pure CPU + WASM)
- *   depth       sequential round trips: wall time with ORBIT_SIM_DB_LATENCY_MS=25 on every
- *               statement, divided by 25. On neon-http each statement is one HTTPS round
+ *   depth       sequential round trips: (wall time with ORBIT_SIM_DB_LATENCY_MS=25 on every
+ *               statement − cpu_ms) / 25, so CPU-heavy ops are not read as deep ones. On neon-http each statement is one HTTPS round
  *               trip, so production latency ≈ depth × RTT + cpu.
  *   est_ms_rtt8 / est_ms_rtt40   depth × 8 ms (same-region Neon) / depth × 40 ms (cross-region)
  *               + cpu_ms: the production estimate the plan's budgets are checked against.
@@ -164,7 +164,8 @@ async function measure() {
       if (latency) {
         const xs: number[] = [];
         for (let i = 0; i < 3; i++) xs.push((await time(op.run)).ms);
-        results[op.name] = { group: op.group, depth: Math.round((median(xs) / latency) * 10) / 10, sim_ms: Math.round(median(xs)) };
+        // Depth is computed by the parent from sim_ms and the plain pass's cpu_ms.
+        results[op.name] = { group: op.group, sim_ms: Math.round(median(xs)) };
         continue;
       }
       startQueryCount();
@@ -212,8 +213,11 @@ async function main() {
   const slow = pass("latency", LATENCY_MS);
   const rows = Object.keys(plain).map((op) => {
     const p = plain[op]; const s = slow[op] ?? {};
-    const depth = Number(s.depth ?? 0); const cpu = Number(p.cpu_ms ?? 0);
-    return { op, ...p, ...s, est_ms_rtt8: Math.round(depth * 8 + cpu), est_ms_rtt40: Math.round(depth * 40 + cpu) };
+    const cpu = Number(p.cpu_ms ?? 0);
+    // sim_ms = cpu + depth × LATENCY_MS: the op does the same CPU work under simulated
+    // latency, so the sequential round trips are what is left after the CPU time.
+    const depth = s.sim_ms == null ? 0 : Math.max(0, Math.round(((Number(s.sim_ms) - cpu) / LATENCY_MS) * 10) / 10);
+    return { op, ...p, ...s, depth, est_ms_rtt8: Math.round(depth * 8 + cpu), est_ms_rtt40: Math.round(depth * 40 + cpu) };
   });
   console.table(rows.map(({ sql: _sql, ...r }) => r));
   mkdirSync(dirname(OUT), { recursive: true });
