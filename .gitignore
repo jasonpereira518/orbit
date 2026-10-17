@@ -66,3 +66,8 @@ extension/public/inject/
 
 # constellation bench fixtures (scripts/bench/constellation-fixtures.ts)
 /.bench-data/
+
+# latency harness (latency/README.md): per-tier PGlite databases, API keys, and raw runs
+/latency/.data/
+/latency/results/*
+!/latency/results/baseline/
