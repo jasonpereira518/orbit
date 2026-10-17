@@ -37,6 +37,8 @@ const flag = (name: string, fallback: string) => { const i = args.indexOf(`--${n
 const TIER = flag("tier", "?");
 const ROUNDS = Number(flag("rounds", "3"));
 const OUT = flag("out", `latency/results/ai-${TIER}.json`);
+/** `--only chat` or `--only capture` runs one half. */
+const ONLY = flag("only", "");
 
 const QUESTIONS = [
   { kind: "lookup", q: "Who do I know at Acme?" },
@@ -110,7 +112,7 @@ async function main() {
   results.mock = health;
 
   const chat: Record<string, unknown> = {};
-  for (const { kind, q } of QUESTIONS) {
+  for (const { kind, q } of ONLY === "capture" ? [] : QUESTIONS) {
     const runs = [];
     for (let i = 0; i < ROUNDS; i++) {
       await db.execute(sql`DELETE FROM rate_limit_buckets`);
@@ -130,7 +132,7 @@ async function main() {
   results.chat = chat;
 
   const captures = [];
-  for (let i = 0; i < ROUNDS; i++) {
+  for (let i = 0; i < (ONLY === "chat" ? 0 : ROUNDS); i++) {
     await db.execute(sql`DELETE FROM rate_limit_buckets`);
     try { captures.push(await captureOnce(NOTES)); } catch (err) { captures.push({ error: String(err).slice(0, 300) }); }
     console.error(`capture #${i}:`, JSON.stringify(captures[captures.length - 1]));

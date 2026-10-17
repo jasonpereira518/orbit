@@ -1603,8 +1603,17 @@ async function parseMultiPersonTwoPass(
       ? { text: notesPrefix, cacheKey: `capture.details:${createHash("sha256").update(notesPrefix).digest("hex").slice(0, 32)}` }
       : undefined;
 
+  // The batches are independent, so they run concurrently and are merged back in batch
+  // order: the same people, fields and order as one-after-another, in the time of the
+  // slowest batch rather than the sum (LATENCY_PLAN AI-5: a 5-person note spent 8 s of its
+  // 12 s here). The trade: concurrent calls cannot read a prompt cache the first one writes,
+  // so a provider-side cache of `sharedPrefix` saves less input cost than it did serially.
+  const batches: (typeof peopleIds)[] = [];
   for (let i = 0; i < peopleIds.length; i += DETAIL_BATCH_SIZE) {
-    const batch = peopleIds.slice(i, i + DETAIL_BATCH_SIZE);
+    batches.push(peopleIds.slice(i, i + DETAIL_BATCH_SIZE));
+  }
+  const detailedBatches = await Promise.all(batches.map(async (batch) => {
+    const merged: ParsedPersonNote[] = [];
     const batchRaw = await completeJson(userId, {
       operation: "capture.parse.details",
       temperature: 0.2,
@@ -1645,7 +1654,7 @@ ${PERSON_FIELD_RULES}`,
             requested.name.trim().toLowerCase(),
         ) || batchParsed.people[j];
 
-      const merged: ParsedPersonNote = {
+      const person: ParsedPersonNote = {
         name: requested.name,
         presence: requested.presence,
         company: found?.company || requested.company || null,
@@ -1684,9 +1693,11 @@ ${PERSON_FIELD_RULES}`,
         source_excerpt: found?.source_excerpt || "",
       };
 
-      detailed.push(merged);
+      merged.push(person);
     }
-  }
+    return merged;
+  }));
+  for (const batch of detailedBatches) detailed.push(...batch);
 
   // Excerpts that came back empty. The notes are already in hand, so look for the person's
   // own sentence first — free, and exact where the note names them. Only whoever is still
