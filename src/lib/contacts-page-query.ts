@@ -82,8 +82,8 @@ export async function listContactsPage(
     matchReasons = matchReasonsFor(ranked);
     conditions.push(
       semanticIds.length
-        ? or(contactSearchCondition(q), inArray(contacts.id, semanticIds))!
-        : contactSearchCondition(q)
+        ? or(contactSearchCondition(q, userId), inArray(contacts.id, semanticIds))!
+        : contactSearchCondition(q, userId)
     );
   }
   // Name matches first in every sort while searching; see `contacts-page-cursor.ts`.

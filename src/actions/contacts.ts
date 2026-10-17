@@ -144,7 +144,7 @@ export async function searchContactsForPicker(
 
   const conditions = [eq(contacts.userId, userId)];
   const term = q?.trim();
-  if (term) conditions.push(contactSearchCondition(term));
+  if (term) conditions.push(contactSearchCondition(term, userId));
 
   const rows = await db
     .select({
