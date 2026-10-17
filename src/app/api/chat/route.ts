@@ -10,7 +10,14 @@ import { expandLists, peopleIdsIn, stripInvalidDirectives } from "@/lib/chat-dir
 import { answerDeadlineMs, maybeGather } from "@/lib/chat-gather";
 import { isHandle } from "@/lib/meeting-context";
 import { CHAT_QUESTION_TOO_LONG_MESSAGE, isChatQuestionTooLong } from "@/lib/chat-question";
-import { discardEmptyThread, discardUnansweredQuestion, persistAssistantTurn } from "@/lib/chat-persist";
+import {
+  discardEmptyThread,
+  discardUnansweredQuestion,
+  persistAssistantTurn,
+  supersedeDanglingQuestion,
+  wasTurnStopped,
+} from "@/lib/chat-persist";
+import { isUuid } from "@/lib/input/ids";
 import { createStepEmitter, deriveFollowUps, plural } from "@/lib/chat-steps";
 import { generateChatTitle, settleWithin, TITLE_GRACE_MS } from "@/lib/chat-title";
 import { formatSse, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
@@ -78,10 +85,13 @@ export async function POST(request: Request) {
         contactId?: unknown;
         contextContactIds?: unknown;
         versionOf?: unknown;
+        turnId?: unknown;
       }
     | null;
   const threadId = typeof body?.threadId === "string" ? body.threadId : null;
   const contactId = typeof body?.contactId === "string" ? body.contactId : null;
+  // Minted by the client per question, so a Stop can be told apart from a dropped connection.
+  const turnId = isUuid(body?.turnId) ? body.turnId : null;
   // Ids the composer resolved from its `@Name` chips. Bounded and re-checked against the
   // user's own rows in `loadAttachedPeople`, so a forged id reaches nothing.
   const contextContactIds = Array.isArray(body?.contextContactIds)
@@ -176,6 +186,8 @@ export async function POST(request: Request) {
         });
         if (threadId) {
           const db = await getDb();
+          // A re-ask after a dropped connection replaces the copy that was kept unanswered.
+          if (!versionTarget) await supersedeDanglingQuestion(userId, threadId, ctx.q).catch(() => {});
           const [userRow] = await db
             .insert(chatMessages)
             .values({
@@ -187,6 +199,7 @@ export async function POST(request: Request) {
               // `loadAttachedPeople` actually found and put in front of the model, so the mark
               // on a reloaded thread describes what the answer was really given.
               attachedContacts: ctx.attachedPeople.map((p) => ({ id: p.id, name: p.name })),
+              clientTurnId: versionTarget ? null : turnId,
               ...(versionTarget
                 ? { slot: versionTarget.slot, version: versionTarget.nextVersion, isActive: false }
                 : {}),
@@ -386,12 +399,22 @@ export async function POST(request: Request) {
         });
       } catch (err) {
         // The question was written before the model ran (it carries the attached people and,
-        // on a regenerate, the slot). Nothing answered it — a failure or a Stop alike — so it
-        // does not stay. Before the client-gone return: a Stop is exactly when it is gone.
-        await discardUnansweredQuestion(userId, threadId, persistedUserMessageId).catch(() => {});
-        // A first message that never got an answer leaves the thread empty: remove it too
-        // (a no-op when the thread has any message).
-        await discardEmptyThread(userId, threadId).catch(() => {});
+        // on a regenerate, the slot). A failure or a Stop discards it: nothing answered it.
+        // A dropped connection (a closed tab, a network blip) keeps it, so what the person
+        // typed is still in the thread when they come back (audit L-25); the server cannot
+        // tell that from a Stop by the abort alone, so a Stop is marked by the client
+        // (`markTurnStopped`), which also covers a mark that lands after this runs.
+        // A version turn always goes: its row is inactive and means nothing on its own.
+        const keep =
+          request.signal.aborted &&
+          !versionTarget &&
+          !(await wasTurnStopped(userId, threadId, turnId).catch(() => false));
+        if (!keep) {
+          await discardUnansweredQuestion(userId, threadId, persistedUserMessageId).catch(() => {});
+          // A first message that never got an answer leaves the thread empty: remove it too
+          // (a no-op when the thread has any message).
+          await discardEmptyThread(userId, threadId).catch(() => {});
+        }
         // The client is gone: there is nobody to tell, and enqueueing now would throw. Not
         // an error of ours either — the provider call was aborted on purpose.
         if (request.signal.aborted) return;

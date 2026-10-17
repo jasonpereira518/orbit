@@ -84,6 +84,11 @@ export async function streamChat(
      * regenerates the same ask, a `question` edits it. See `@/lib/chat-versions`.
      */
     versionOf?: { assistantMessageId: string; question?: string };
+    /**
+     * A uuid minted per question. Lets a Stop (`stopChatTurn`) be told apart from a dropped
+     * connection, which keeps the question on the server.
+     */
+    turnId?: string;
   },
   handlers: ChatStreamHandlers,
   signal?: AbortSignal

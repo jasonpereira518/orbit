@@ -812,6 +812,7 @@ CREATE TABLE IF NOT EXISTS chat_threads (
   user_id text NOT NULL,
   title text,
   context_note text,
+  stopped_turn_id text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -830,6 +831,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   proposed_actions jsonb DEFAULT '[]',
   feedback text,
   feedback_note text,
+  client_turn_id text,
   slot uuid,
   version integer NOT NULL DEFAULT 1,
   is_active boolean NOT NULL DEFAULT true,
@@ -2737,7 +2739,11 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 173 = interest_list_signups.referral_tier_mailed: the highest referral tier a referrer has
 // been mailed, claimed with a conditional update so a tier crossed by two concurrent joins is
 // still mailed exactly once (audit L-20). Rescanned Oct 17 2026: 172 (this branch) was the highest.
-export const SCHEMA_VERSION = 173;
+//
+// 174 = chat_threads.stopped_turn_id + chat_messages.client_turn_id: a dropped chat connection
+// keeps the person's question; only an explicit Stop discards it (audit L-25). Rescanned
+// Oct 17 2026: 173 (this branch) was the highest claimed anywhere.
+export const SCHEMA_VERSION = 174;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2949,6 +2955,9 @@ export const SCALE_DDL: string[] = [
   `ALTER TABLE outbound_webhook_deliveries ADD COLUMN IF NOT EXISTS claimed_until timestamptz`,
   // v173: the referral tier notice's claim (audit L-20). See `notifyIfTierUnlocked`.
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS referral_tier_mailed integer NOT NULL DEFAULT 0`,
+  // v174: Stop versus a dropped connection (audit L-25). See `markTurnStopped`.
+  `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS stopped_turn_id text`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS client_turn_id text`,
   `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
   // Backs BOTH the "Last spoken" sort on /contacts and the composer's pickers, which open
   // on "who have I actually spoken to lately" rather than whoever is alphabetically first

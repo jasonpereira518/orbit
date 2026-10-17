@@ -23,7 +23,7 @@ Counts: **5 High, 18 Medium, 26 Low** security and integrity findings; **13 edge
 
 **Update 2026-10-17:** Phase 1 of `FIX_PLAN.md` is implemented on this branch — H-01 through H-05, M-06 and M-17 are fixed, each pinned by a smoke test, and the corresponding `stress-tests/` proofs (AZ-OPT-1, REC-3, DI-IMPORT-DOUBLE, DI-CAPTURE-PARTIAL) now print `ok`. The findings below are kept as written so the evidence stays with the report.
 
-**Update 2026-10-17 (Phase 2):** M-02, M-03, M-04, M-05, M-12, M-13, M-14, M-15, L-11, L-15, L-20 and L-26 are fixed on this branch, each pinned by a smoke test. L-25 is fixed only on the credits side (Phase 1); keeping the question after a dropped connection needs a product decision. SCALE-GRAPH waits on decision 12 in `FIX_PLAN.md`. Remaining stress findings (EC-UNI-1, EC-URL-1, INJ-CSV) are Phase 3.
+**Update 2026-10-17 (Phase 2):** M-02, M-03, M-04, M-05, M-12, M-13, M-14, M-15, L-11, L-15, L-20, L-25 and L-26 are fixed on this branch, each pinned by a smoke test. For L-25, a dropped connection now keeps the question and only an explicit Stop discards it; the partial answer is still not saved. SCALE-GRAPH waits on decision 12 in `FIX_PLAN.md`. Remaining stress findings (EC-UNI-1, EC-URL-1, INJ-CSV) are Phase 3.
 
 ---
 

@@ -41,6 +41,7 @@ import {
   deleteChatThread,
   getChatThread,
   listChatThreads,
+  stopChatTurn,
   switchChatVersion,
   updateChatThreadContext,
   type ChatThreadPage,
@@ -367,6 +368,8 @@ export function ChatPanel({
   // Lets the user cut a long answer short. `streamChat` has always accepted a signal and
   // the route already honours `request.signal`; nothing was passing one.
   const abortRef = useRef<AbortController | null>(null);
+  /** The new-question turn streaming now, so Stop can tell the server it was on purpose. */
+  const turnRef = useRef<{ threadId: string; turnId: string } | null>(null);
   // The reveal buffer for the answer being streamed, so an unmount can stop it drawing.
   const smootherRef = useRef<StreamSmoother | null>(null);
   useEffect(() => () => smootherRef.current?.cancel(), []);
@@ -1005,11 +1008,14 @@ export function ChatPanel({
 
         const controller = new AbortController();
         abortRef.current = controller;
+        const turnId = crypto.randomUUID();
+        turnRef.current = { threadId: activeId, turnId };
         await streamChat(
           {
             question: q,
             threadId: activeId,
             contextContactIds,
+            turnId,
           },
           {
             onAnswer: (delta) => smoother.push(delta),
@@ -1093,11 +1099,13 @@ export function ChatPanel({
         if (controller.signal.aborted) {
           // Stopping during retrieval means no answer bubble was ever placed, which used to
           // leave the question sitting alone with nothing to say what happened. The user
-          // message may already be saved server-side by then; the server drops an unanswered
-          // question on a stop, so mark the turn stopped and say it was not saved.
+          // message may already be saved server-side by then; `stopStreaming` tells the server
+          // this was a Stop, which drops the unanswered question, so mark the turn stopped and
+          // say it was not saved.
           if (!placed) ensurePlaceholder();
           patch((m) => ({ ...m, streaming: false, stopped: true }));
         }
+        if (turnRef.current?.turnId === turnId) turnRef.current = null;
         abortRef.current = null;
         setStreaming(false);
       })();
@@ -1222,9 +1230,15 @@ export function ChatPanel({
    *
    * The partial text stays on screen, but the server never reaches `persistAssistantTurn`,
    * so nothing is saved — the bubble says so rather than letting a reload silently lose it.
+   * The abort alone looks like a dropped connection to the server, which keeps the question
+   * (audit L-25), so a Stop also says it was on purpose. A regenerate has no turn here: the
+   * server discards an abandoned version on any abort.
    */
   const stopStreaming = useCallback(() => {
+    const turn = turnRef.current;
+    turnRef.current = null;
     abortRef.current?.abort();
+    if (turn) void stopChatTurn(turn.threadId, turn.turnId).catch(() => {});
   }, []);
 
   function fillMostRecentUserMessage() {

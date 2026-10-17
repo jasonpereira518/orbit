@@ -142,3 +142,57 @@ export async function discardEmptyThread(userId: string, threadId: string | null
     .delete(chatThreads)
     .where(and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)));
 }
+
+/**
+ * A Stop the person pressed (audit L-25). To the server a Stop and a dropped connection are
+ * the same abort, so the client says which it was: this marks the turn stopped and discards
+ * its question if it is already saved. The route saves the question BEFORE it reads the
+ * mark (`wasTurnStopped`), so whichever of the two requests lands first, the stopped
+ * question ends up gone and a merely dropped one stays.
+ */
+export async function markTurnStopped(userId: string, threadId: string, turnId: string) {
+  const db = await getDb();
+  await db
+    .update(chatThreads)
+    .set({ stoppedTurnId: turnId })
+    .where(and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)));
+  const row = await db.query.chatMessages.findFirst({
+    where: and(
+      eq(chatMessages.threadId, threadId),
+      eq(chatMessages.userId, userId),
+      eq(chatMessages.clientTurnId, turnId),
+      eq(chatMessages.role, "user")
+    ),
+    columns: { id: true },
+  });
+  if (row) await discardUnansweredQuestion(userId, threadId, row.id);
+  await discardEmptyThread(userId, threadId);
+}
+
+/** Whether the person stopped this turn on purpose. See `markTurnStopped`. */
+export async function wasTurnStopped(userId: string, threadId: string | null, turnId: string | null): Promise<boolean> {
+  if (!threadId || !turnId) return false;
+  const db = await getDb();
+  const thread = await db.query.chatThreads.findFirst({
+    where: and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)),
+    columns: { stoppedTurnId: true },
+  });
+  return thread?.stoppedTurnId === turnId;
+}
+
+/**
+ * Asking again after a dropped connection: the first copy of the question was kept with no
+ * answer under it, so drop that copy rather than show the question twice. Only the thread's
+ * last row, only a question, and only when the text is the same.
+ */
+export async function supersedeDanglingQuestion(userId: string, threadId: string | null, content: string) {
+  if (!threadId) return;
+  const db = await getDb();
+  const last = await db.query.chatMessages.findFirst({
+    where: and(eq(chatMessages.threadId, threadId), eq(chatMessages.userId, userId)),
+    orderBy: [desc(chatMessages.createdAt)],
+    columns: { id: true, role: true, content: true, isActive: true },
+  });
+  if (!last || last.role !== "user" || !last.isActive || last.content !== content) return;
+  await db.delete(chatMessages).where(and(eq(chatMessages.id, last.id), eq(chatMessages.userId, userId)));
+}
