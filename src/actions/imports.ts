@@ -18,6 +18,7 @@ import {
   type FinishSummary,
 } from "@/lib/imports/import-finish";
 import { importIdsFrom, isImportId } from "@/lib/imports/import-ids";
+import { readImportJobStatus, type ImportJobStatus } from "@/lib/imports/import-job-status";
 import { MAX_FACES } from "@/lib/imports/finish-scene-geometry";
 import {
   performUndo,
@@ -364,39 +365,7 @@ export async function startLinkedInImport(
   return { importId: importRow.id, totalRows: selectedIndexes.length };
 }
 
-export type ImportJobStatus = {
-  id: string;
-  status: string;
-  totalRows: number;
-  rowsProcessed: number;
-  contactsCreated: number;
-  contactsUpdated: number;
-  duplicatesFound: number;
-  errorMessage: string | null;
-  /**
-   * The engine's own counters (`ImportStats.interactionsLogged`/`remindersCreated` —
-   * see `src/db/schema.ts`) for how many interaction/reminder rows this job's bulk inserts
-   * actually wrote. Surfaced here so the poll UI can report the number a calendar or
-   * LinkedIn-messages import's user actually cares about — meetings/messages logged — rather
-   * than only `contactsCreated`/`contactsUpdated`, which for a `createsContacts: false`
-   * import like calendar never move the "created" half at all.
-   */
-  interactionsLogged: number;
-  remindersCreated: number;
-  /**
-   * Rows the engine isolated and marked `failed` rather than failing the whole import
-   * (`ImportStats.failedRows`). Surfaced so a user whose file contained unwritable rows is
-   * actually told — chunk narrowing's entire purpose is to drop those rows instead of the
-   * job, and a "completed" toast that never mentions them hides the loss.
-   */
-  failedRows: number;
-  /** Drive imports: docs actually read (skipped and unchanged ones excluded). */
-  docsRead: number;
-  /** LinkedIn export: files kept, and what its extras added (see `ImportStats.filesSaved`). */
-  filesSaved: number;
-  targetsAdded: number;
-  backgroundAdded: number;
-};
+export type { ImportJobStatus } from "@/lib/imports/import-job-status";
 
 /** One row's worth of trouble, named for the person rather than for the database. */
 export type ImportRowProblem = {
@@ -725,30 +694,9 @@ export async function getImportJobStatus(
   importId: string,
 ): Promise<ImportJobStatus> {
   const userId = await requireUserId();
-  if (!isImportId(importId)) throw new Error("Import session not found");
-  const db = await getDb();
-  const row = await db.query.imports.findFirst({
-    where: and(eq(imports.id, importId), eq(imports.userId, userId)),
-  });
-  if (!row) throw new Error("Import session not found");
-
-  return {
-    id: row.id,
-    status: row.status,
-    totalRows: row.totalRows ?? 0,
-    rowsProcessed: row.rowsProcessed ?? 0,
-    contactsCreated: row.contactsCreated ?? 0,
-    contactsUpdated: row.contactsUpdated ?? 0,
-    duplicatesFound: row.duplicatesFound ?? 0,
-    errorMessage: row.errorMessage,
-    interactionsLogged: row.stats?.interactionsLogged ?? 0,
-    remindersCreated: row.stats?.remindersCreated ?? 0,
-    failedRows: row.stats?.failedRows ?? 0,
-    docsRead: row.stats?.docsRead ?? 0,
-    filesSaved: row.stats?.filesSaved ?? 0,
-    targetsAdded: row.stats?.targetsAdded ?? 0,
-    backgroundAdded: row.stats?.backgroundAdded ?? 0,
-  };
+  const status = await readImportJobStatus(userId, importId);
+  if (!status) throw new Error("Import session not found");
+  return status;
 }
 
 /** Stop a processing import; rows already written are kept. */

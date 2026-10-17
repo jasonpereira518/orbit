@@ -7,7 +7,6 @@ import {
   confirmContactsFileImport,
   confirmGoogleContactsImport,
   confirmOutlookContactsImport,
-  getImportJobStatus,
   startLinkedInImport,
   startLinkedInMessagesImport,
   type ImportJobStatus,
@@ -352,6 +351,13 @@ type ServerOwnedKind =
   | "chat"
   | "linkedin_export";
 
+/** One progress read, from the GET route (see `readImportJobStatus` for why not the action). */
+async function fetchImportJobStatus(importId: string): Promise<ImportJobStatus> {
+  const res = await fetch(`/api/imports/${encodeURIComponent(importId)}/status`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`import status answered ${res.status}`);
+  return (await res.json()) as ImportJobStatus;
+}
+
 /** Polls a server-owned import job's status until it leaves "processing"/"pending". */
 async function pollServerOwnedImportJob(
   jobId: string,
@@ -365,7 +371,7 @@ async function pollServerOwnedImportJob(
 
     let status: ImportJobStatus;
     try {
-      status = await getImportJobStatus(importId);
+      status = await fetchImportJobStatus(importId);
     } catch {
       await sleep(POLL_INTERVAL_MS);
       continue;
