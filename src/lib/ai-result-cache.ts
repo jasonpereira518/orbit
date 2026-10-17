@@ -3,6 +3,7 @@ import { and, eq, gt, like, lt, or } from "drizzle-orm";
 import { getDb } from "@/db";
 import { aiResultCache } from "@/db/schema";
 import { completeJson } from "@/lib/ai";
+import { resolveAiAccess } from "@/lib/ai-access";
 import type { AiOperationId } from "@/lib/ai-operations";
 
 /**
@@ -111,15 +112,26 @@ export async function withAiResultCache<T>(
 
 /**
  * `completeJson`, answered from the cache when the identical prompt was asked before.
- * The key is the operation plus everything that shapes the reply: system, user, model
- * tier, temperature and output cap.
+ * The key is the operation plus everything that shapes the reply: system, user,
+ * temperature, output cap, and the provider and model the account has selected. The last two
+ * were missing, so after switching model in Settings a person kept getting the old model's
+ * answers for the whole TTL. They are the account's selection, not the exact model a grant
+ * routes to (minting a grant to find out would spend it), which is what a switch changes.
+ * The access resolved for the key is handed on, so a miss does not read the account twice.
  */
-export function cachedCompleteJson(
+export async function cachedCompleteJson(
   userId: string,
   input: Parameters<typeof completeJson>[1],
   opts: CacheOptions<string>
 ): Promise<string> {
   const { system, user, temperature, maxOutputTokens, sharedPrefix } = input;
+  let access;
+  try {
+    access = input.access?.forUser(userId) ?? (await resolveAiAccess(userId));
+  } catch {
+    // No usable account: let the call itself fail (or succeed) exactly as it would uncached.
+    return completeJson(userId, input);
+  }
   return withAiResultCache(
     userId,
     input.operation,
@@ -128,8 +140,10 @@ export function cachedCompleteJson(
       user: `${sharedPrefix?.text ?? ""}${user}`,
       temperature: temperature ?? null,
       maxOutputTokens: maxOutputTokens ?? null,
+      provider: access.selectedProvider,
+      model: access.selectedModel,
     },
-    () => completeJson(userId, input),
+    () => completeJson(userId, { ...input, access }),
     opts
   );
 }
