@@ -74,7 +74,7 @@ export const eventSchemas = {
   capture_discarded: z.object({ capture_job_id: uuid, people_proposed: count }),
   import_failed: z.object({ import_id: uuid, provider: z.enum(IMPORT_PROVIDERS), error_kind: z.string().regex(/^[a-z_]{1,32}$/), rows_failed: count }),
   followup_set: z.object({ reminder_id: uuid, origin: z.enum(FOLLOWUP_ORIGINS), has_due_date: z.boolean() }),
-  followup_completed: z.object({ reminder_id: uuid, days_late: z.number().int(), via: z.enum(FOLLOWUP_VIA) }),
+  followup_completed: z.object({ reminder_id: uuid, days_late: z.number().int().optional(), via: z.enum(FOLLOWUP_VIA) }),
   followup_snoozed: z.object({ reminder_id: uuid }),
   followup_dismissed: z.object({ reminder_id: uuid }),
   chat_answer_landed: z.object({ message_id: uuid, duration_ms: ms, tool_rounds: count, evidence_count: count }),
