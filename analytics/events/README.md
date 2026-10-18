@@ -28,14 +28,14 @@ Format per event: **fires when** / **must not fire when** / **read by**. Propert
 - Added: v171.
 
 ## invite_accepted
-- Fires when: `claimSiteInviteGrant` links a new account to its invite.
-- Must not fire when: an account created without an invite.
+- Fires when: `linkInviteToAccount` (the Clerk `user.created` webhook, the existing-account grant, or the onboarding backstop `claimSiteInviteGrant`) first accepts an invite for an account; one per invite (deterministic id). `days_since_sent` is whole days from `site_invites.sent_at`.
+- Must not fire when: an account created without an invite, a second run of the same claim, or an invite someone else already accepted.
 - Read by: Invite to account (F6, F7).
 - Added: v171.
 
 ## first_app_load
-- Fires when: the first signed-in `(app)` render of an account, from `captureAttribution`.
-- Must not fire when: any later render.
+- Fires when: the beacon route (`/api/p/v`) sees the first signed-in page view of an account created in the last two days that has no `signup_session_id`; that view's per-tab session id is written to the account in the same step. One per account (deterministic id).
+- Must not fire when: any later view, a bot, a demo account, or an account older than two days (its signup session is unknowable).
 - Read by: Closes the anonymous-session to account chain.
 - Added: v171.
 
@@ -124,8 +124,8 @@ Format per event: **fires when** / **must not fire when** / **read by**. Propert
 - Added: v171.
 
 ## mcp_connected
-- Fires when: the first request from a (user, client) pair, or an API key is created.
-- Must not fire when: a repeat request.
+- Fires when: the first MCP request from a (user, client, via) triple, where `client` is claude, chatgpt or other (from the OAuth client id, the `initialize` clientInfo name or the User-Agent) and `via` is oauth or api_key. Deterministic id, so a cold server instance or a retry cannot double it. Creating an API key is not wired to it yet (`createApiKey` is outside this workstream); the key's first request emits the same row.
+- Must not fire when: a repeat request, or one that failed authentication.
 - Read by: MCP connected (§2.2).
 - Added: v171.
 
@@ -142,8 +142,8 @@ Format per event: **fires when** / **must not fire when** / **read by**. Propert
 - Added: v171.
 
 ## extension_installed
-- Fires when: the first authenticated `/api/extension/me` after install carries the install marker.
-- Must not fire when: a later session probe.
+- Fires when: the first authenticated extension request after install carries `X-Orbit-Install: 1` (the extension sends it on the first `/me` and clears the marker once answered), with a valid `X-Orbit-Extension-Version`. One per account (deterministic id), so a reinstall or a second browser does not count twice.
+- Must not fire when: a later session probe, or a request with no valid version header.
 - Read by: Extension installs (§2.2).
 - Added: v171.
 

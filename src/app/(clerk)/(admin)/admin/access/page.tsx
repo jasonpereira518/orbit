@@ -73,8 +73,8 @@ export default async function AdminAccessPage() {
           <div className="space-y-2">
             <p className="text-xs text-muted-foreground">
               An invitation lets one address create an account, even in stealth. Clerk sends the
-              email, or leave that off and send the link yourself. A wave (w1, w2…) is optional and
-              groups invitations for the wave report.
+              email, or leave that off and send the link yourself. A wave label (w1, w2…) is optional; it
+              names this batch so waves can be compared later.
             </p>
             <InviteForm clerkOn={clerkOn} />
           </div>

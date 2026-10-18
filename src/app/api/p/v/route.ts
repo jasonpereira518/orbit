@@ -21,6 +21,11 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
+ * THE PATH IS DELIBERATELY NEUTRAL. This was `/api/track`, which EasyPrivacy-style ad-blocker
+ * lists match by pattern, silently removing whole visits with no counter (audit D5). It lives
+ * at `/api/p/v` now; `/api/track` re-exports this handler for one release so a cached client
+ * keeps reporting. Do not rename it back to anything that says "track", "analytics" or "beacon".
+ *
  * Traffic ingest. The client beacon in `src/components/analytics/pageview-beacon.tsx`
  * POSTs one of these per page view, a `load` once its content is on screen, then a `dwell`
  * for it on the way out.
