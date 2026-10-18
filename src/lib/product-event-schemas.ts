@@ -28,7 +28,9 @@ export const CHANNELS = [
   "direct", "referral_link", "search", "social", "newsletter", "product_hunt",
   "extension", "mcp", "waitlist", "other",
 ] as const;
-export const ONBOARDING_PATHS = ["capture", "import", "tour"] as const;
+// "quick" is the shipped quick-setup path (src/lib/onboarding-steps.ts); "capture" and "import" stay for
+// a future capture-first / import-first split.
+export const ONBOARDING_PATHS = ["capture", "import", "tour", "quick"] as const;
 export const AI_PROVIDERS = ["gemini", "openai", "anthropic", "openrouter", "typesafe", "deepgram"] as const;
 export const CAPTURE_SOURCES = ["text", "voice", "photo", "file", "meeting", "paste", "drive"] as const;
 export const IMPORT_PROVIDERS = [
