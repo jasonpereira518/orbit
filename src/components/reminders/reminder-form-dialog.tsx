@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "@/lib/toast";
@@ -28,6 +28,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -84,6 +85,8 @@ export function ReminderFormFields({
   const router = useRouter();
   const [pending, start] = useTransition();
   const [title, setTitle] = useState("");
+  const [titleError, setTitleError] = useState<string | null>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
   const [description, setDescription] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [selectedListId, setSelectedListId] = useState("");
@@ -95,6 +98,7 @@ export function ReminderFormFields({
   useEffect(() => {
     if (!open) return;
     setTitle(initial?.title ?? "");
+    setTitleError(null);
     setDescription(initial?.description?.trim() || "");
     setDueDate(dueToInput(initial?.dueDate));
     setSelectedListId(initial?.listId || defaultListId || lists[0]?.id || "");
@@ -115,7 +119,10 @@ export function ReminderFormFields({
   function submit() {
     const trimmed = title.trim();
     if (!trimmed) {
-      toast.error("Give it a title first");
+      // Inline and focused rather than a toast: the message sits on the field that needs it,
+      // and a screen reader hears it there.
+      setTitleError("Give it a title first");
+      titleRef.current?.focus();
       return;
     }
     start(async () => {
@@ -174,19 +181,29 @@ export function ReminderFormFields({
 
   return (
     <div className="space-y-3">
-      <div className="space-y-2">
-        <Label htmlFor={`${idPrefix}-title`}>Title</Label>
+      <Field
+        label="Title"
+        required
+        htmlFor={`${idPrefix}-title`}
+        error={titleError}
+        className="space-y-2"
+      >
         <Input
+          ref={titleRef}
           id={`${idPrefix}-title`}
+          required
           value={title}
-          onChange={(e) => setTitle(e.target.value)}
+          onChange={(e) => {
+            setTitle(e.target.value);
+            if (titleError) setTitleError(null);
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit();
           }}
           placeholder="Call Alex about intro"
           autoFocus={autoFocusTitle}
         />
-      </div>
+      </Field>
 
       <div className="space-y-2">
         <Label htmlFor={`${idPrefix}-notes`}>Notes</Label>
@@ -204,6 +221,7 @@ export function ReminderFormFields({
           <Label htmlFor={`${idPrefix}-due`}>Due date</Label>
           <div className="flex items-center gap-1.5">
             <DatePickerButton
+              id={`${idPrefix}-due`}
               value={dueDate || null}
               onSelect={setDueDate}
               onClear={() => setDueDate("")}

@@ -1,12 +1,15 @@
 // Outside every route group, so it brings its own sheet: the marketing one (see site.css).
 import "./site.css";
 import Link from "next/link";
+import type { Metadata } from "next";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+export const metadata: Metadata = { title: "Page not found" };
+
 export default function NotFound() {
   return (
-    <div className="mx-auto flex min-h-[60vh] max-w-lg flex-col items-center justify-center gap-4 px-6 py-16 text-center">
+    <main id="main-content" className="mx-auto flex min-h-[60dvh] max-w-lg flex-col items-center justify-center gap-4 px-6 py-16 text-center">
       <p className="text-sm font-medium text-ink">404</p>
       <h1 className="font-[family-name:var(--font-display)] text-3xl tracking-tight text-ink">
         Page not found
@@ -24,6 +27,6 @@ export default function NotFound() {
           Back to home
         </Link>
       </div>
-    </div>
+    </main>
   );
 }

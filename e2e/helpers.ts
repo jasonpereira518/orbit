@@ -54,8 +54,7 @@ export async function ensureOnboarded(page: Page): Promise<void> {
 /** Creates a contact through /contacts/new and waits on its profile. */
 export async function createContact(page: Page, fullName: string): Promise<void> {
   await page.goto("/contacts/new");
-  // The form's labels have no htmlFor; the placeholder is the stable handle.
-  const name = page.getByPlaceholder("Jason Pereira");
+  const name = page.getByLabel("Full name");
   const create = page.getByRole("button", { name: "Create contact" });
   await untilHydrated(
     async () => {

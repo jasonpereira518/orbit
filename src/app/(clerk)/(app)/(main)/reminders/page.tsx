@@ -10,6 +10,8 @@ import { isReminderActionKind } from "@/lib/reminder-action-kind";
 import { isReminderSource, isReminderView } from "@/lib/reminders-page";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
+export const metadata = { title: "Reminders" };
+
 type Params = {
   view?: string;
   list?: string;

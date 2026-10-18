@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { requireUserForSurface } from "@/lib/plan-guards";
 import { isPaywallError } from "@/lib/entitlements";
 import { friendlyError } from "@/lib/errors";
-import { deepgramEnabled, mintStreamToken } from "@/lib/deepgram";
-import { keytermsFor, shortformTag } from "@/lib/deepgram-params";
+import { deepgramKeyterms, mintStreamToken } from "@/lib/deepgram";
+import { deepgramOpenFor } from "@/lib/speech-credit";
+import { shortformTag } from "@/lib/deepgram-params";
 import { speechTagIdFor } from "@/lib/speech-tag-id";
 import { loadNetworkVocabulary } from "@/lib/transcription-vocabulary";
 import { speechAllowance } from "@/lib/speech-quota";
@@ -63,7 +64,9 @@ export async function POST(request: Request) {
     throw err;
   }
 
-  if (!deepgramEnabled()) {
+  // Off, or the Deepgram credit has reached this plan's rung (`speech-cost.ts`). Either way the
+  // chat mic falls back to the browser's own recogniser, which costs Orbit nothing.
+  if (!(await deepgramOpenFor(userId, "shortform"))) {
     return NextResponse.json({ error: "Live transcription is unavailable right now" }, { status: 503 });
   }
 
@@ -85,7 +88,7 @@ export async function POST(request: Request) {
       {
         accessToken,
         expiresIn,
-        keyterms: keytermsFor(vocabulary),
+        keyterms: deepgramKeyterms(vocabulary),
         remainingSeconds: allowance.remaining,
         tag: shortformTag(speechTagId),
       },

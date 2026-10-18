@@ -70,7 +70,7 @@ export function CaptureSaved({
               {[single.decision.edits?.company ?? single.item.parsed.company, single.decision.edits?.role ?? single.item.parsed.role].filter(Boolean).join(" · ")}
             </p>
           </div>
-          <Badge variant="secondary" className="text-[10px]">
+          <Badge variant="secondary" className="text-3xs">
             {single.decision.mergeContactId ? "Updated" : "New"}
           </Badge>
         </div>
@@ -91,7 +91,7 @@ export function CaptureSaved({
                 ) : (
                   <span className="min-w-0 flex-1 truncate font-medium">{name}</span>
                 )}
-                <Badge variant="secondary" className="text-[10px]">
+                <Badge variant="secondary" className="text-3xs">
                   {decision.mergeContactId ? "Updated" : "New"}
                 </Badge>
               </li>

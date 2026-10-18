@@ -88,6 +88,9 @@ export function ComposerHighlights({
     <div
       ref={layerRef}
       aria-hidden
+      // Same direction as the textarea (`dir="auto"` in the primitive) resolves to, or the
+      // marks of a right-to-left question would sit under the wrong words.
+      dir="auto"
       data-slot="composer-highlights"
       className={cn(
         "pointer-events-none absolute inset-0 z-0 overflow-hidden border-0",

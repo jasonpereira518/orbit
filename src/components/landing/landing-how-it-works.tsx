@@ -94,7 +94,7 @@ const W_TERM = (LABEL_W + LABEL_GAP + 16) / OUTER;
 const STAGE_CSS = `max(${STAGE_MIN}px, min(${STAGE_MAX}px, calc(50svh / ${OUTER} - ${Math.round(H_TERM)}px), calc(50vw / ${OUTER} - ${Math.round(W_TERM)}px)))`;
 const CENTRE_CSS = `calc(50% + ${HEADER_CLEARANCE / 2}px)`;
 
-const KICKER_CLASS = "text-[11px] uppercase tracking-[0.16em] text-[#6d807c]";
+const KICKER_CLASS = "text-2xs uppercase tracking-[0.16em] text-[#6d807c]";
 const TITLE_CLASS =
   "mt-1 font-[family-name:var(--font-display)] text-[19px] text-[#e8f3f1]";
 const BODY_CLASS = "mt-1 text-[13px] leading-[1.6] text-[#9aada8]";
@@ -249,7 +249,10 @@ function StepRow({
   return (
     <motion.li
       className="relative flex gap-4"
-      style={reduced ? undefined : { opacity, x }}
+      // Resting values, not `undefined`, under reduced motion: the preference is learned after
+      // the first render, and dropping the style prop left Motion's last inline opacity on the
+      // row, so every step stayed dimmed (3.3:1 captions).
+      style={reduced ? { opacity: 1, x: 0 } : { opacity, x }}
     >
       <span
         data-step-marker

@@ -143,7 +143,7 @@ export function NetworkDepthChart({
               Peer connections
             </p>
             {sampled && (
-              <p className="text-xs text-muted-foreground/80">
+              <p className="text-xs text-muted-foreground-subtle">
                 across your closest {metricsSampleSize.toLocaleString()}
               </p>
             )}
@@ -193,7 +193,7 @@ export function NetworkDepthChart({
 function StatMini({ label, value }: { label: string; value: number }) {
   return (
     <div>
-      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+      <p className="text-3xs uppercase tracking-wide text-muted-foreground">
         {label}
       </p>
       <p className="mt-0.5 font-[family-name:var(--font-display)] text-xl text-ink">

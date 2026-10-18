@@ -83,8 +83,8 @@ export function DashboardScreen() {
         <h2 className={cn(DISPLAY, "mt-1 text-4xl")}>Stay in orbit</h2>
         <p className="mt-2 max-w-xl text-muted-foreground">
           Follow-ups, dormant connections, and people worth reaching out to — in one place. Press{" "}
-          <kbd className="rounded-md border border-border bg-muted/50 px-1.5 text-[11px]">⌘K</kbd> to jump anywhere, or{" "}
-          <kbd className="rounded-md border border-border bg-muted/50 px-1.5 text-[11px]">⌘J</kbd> to ask your network.
+          <kbd className="rounded-md border border-border bg-muted/50 px-1.5 text-2xs">⌘K</kbd> to jump anywhere, or{" "}
+          <kbd className="rounded-md border border-border bg-muted/50 px-1.5 text-2xs">⌘J</kbd> to ask your network.
         </p>
       </header>
 
@@ -131,7 +131,7 @@ export function DashboardScreen() {
                 ["Avg links", ((links * 2) / n).toFixed(1)],
               ].map(([k, v]) => (
                 <div key={String(k)}>
-                  <dt className="text-[11px] uppercase text-muted-foreground">{k}</dt>
+                  <dt className="text-2xs uppercase text-muted-foreground">{k}</dt>
                   <dd className={cn(DISPLAY, "text-2xl tabular-nums")}>{v}</dd>
                 </div>
               ))}

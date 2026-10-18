@@ -180,7 +180,7 @@ export function ConstellationFigure({ className }: { className?: string }) {
             strokeWidth={1.2}
             strokeLinecap="round"
             strokeLinejoin="round"
-            style={reduced ? undefined : { pathLength: chainProgress[i] }}
+            style={reduced ? { pathLength: 1 } : { pathLength: chainProgress[i] }}
           />
         ))}
 
@@ -237,7 +237,7 @@ export function ConstellationFigure({ className }: { className?: string }) {
         )}
         style={FADE}
       >
-        <span className="relative inline-block whitespace-nowrap text-center text-[11px] font-semibold tracking-[0.08em]">
+        <span className="relative inline-block whitespace-nowrap text-center text-2xs font-semibold tracking-[0.08em]">
           <span
             aria-hidden
             className="pointer-events-none absolute inset-0 translate-x-[0.75px] translate-y-[0.75px] select-none"
@@ -247,7 +247,7 @@ export function ConstellationFigure({ className }: { className?: string }) {
           </span>
           <span className="relative text-white">{CLUSTER_NAME}</span>
         </span>
-        <span className="mt-1 block whitespace-nowrap text-[10px] font-normal tracking-[0.06em] text-white">
+        <span className="mt-1 block whitespace-nowrap text-3xs font-normal tracking-[0.06em] text-white">
           The Big Dipper
         </span>
       </div>
@@ -283,7 +283,7 @@ function StarNameLabel({
   return (
     <motion.div
       className={cn(
-        "pointer-events-none absolute whitespace-nowrap text-[10px] font-medium tracking-wide text-white/95 md:text-[11px]",
+        "pointer-events-none absolute whitespace-nowrap text-3xs font-medium tracking-wide text-white/95 md:text-2xs",
         pct < 20 && "translate-x-0 md:-translate-x-1/2",
         pct > 80 && "-translate-x-full md:-translate-x-1/2",
         pct >= 20 && pct <= 80 && "-translate-x-1/2"

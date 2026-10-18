@@ -165,6 +165,7 @@ function JobRow({ job }: { job: BackgroundJob }) {
             <div
               className="h-2 overflow-hidden rounded-full bg-border/80"
               role="progressbar"
+              aria-label={`${job.label} progress`}
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={determinate ? pct! : undefined}

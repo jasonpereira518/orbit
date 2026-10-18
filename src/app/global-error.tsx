@@ -23,10 +23,15 @@ export default function GlobalError({
 
   return (
     <html lang="en">
+      <head>
+        <title>Something went wrong · Orbit</title>
+      </head>
       <body
         style={{
           margin: 0,
-          minHeight: "100vh",
+          // dvh, not vh: on mobile `100vh` is taller than the visible area, so the message sat
+          // below the fold behind the browser toolbar.
+          minHeight: "100dvh",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",

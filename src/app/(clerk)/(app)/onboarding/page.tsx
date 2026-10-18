@@ -14,6 +14,8 @@ import { tourInProgress } from "@/lib/tour/tour-state";
 import { claimSiteInviteGrant } from "@/lib/site-invites";
 import { ensureUserSettings } from "@/lib/user-settings";
 
+export const metadata = { title: "Get started" };
+
 export default async function OnboardingPage() {
   const userId = await requireUserId();
   const settings = await ensureUserSettings(userId);
