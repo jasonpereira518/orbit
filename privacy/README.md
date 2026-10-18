@@ -32,6 +32,15 @@ npx tsx privacy/probe-export.ts
 npx tsx privacy/probe-log-scrub.ts
 ```
 
-These are diagnostic probes, not pass/fail tests. Several print findings that are known gaps
-today. Phase 1 of [`PRIVACY_PLAN.md`](../PRIVACY_PLAN.md) proposes turning each into an
-asserting `scripts/smoke-*.ts` once the matching fix lands.
+These are diagnostic probes, not pass/fail tests. On the audited commit (`bf1b4ae`) they
+printed the gaps recorded in the audit. After Phase 1 (2026-10-18) the deletion probes print
+no undocumented survivors, and their scenarios are now asserted in CI by:
+- `scripts/smoke-account-closure.ts`
+- `scripts/smoke-unmerge-after-purge.ts`
+- `scripts/smoke-contact-delete-references.ts` (this one reuses `lib/seed-everything.ts`)
+- `scripts/smoke-error-redaction.ts`
+
+The export probe's E3 (tables the export omits) is still a known gap, planned for Phase 2.
+
+`out/` holds the latest run. The outputs the audit was written from are in commit `00fbba7`
+(`git show 00fbba7:privacy/out/account-deletion.json`).

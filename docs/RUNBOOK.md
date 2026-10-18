@@ -77,6 +77,7 @@ above. Vercel Pro crons remove the rule entirely.
 | `stripe.unattributed` | Critical: someone paid for a checkout Orbit could not match. error_events (source `stripe.unattributed`) → `context.eventId` → Stripe Dashboard → Events → that id → the customer's email → `/admin/users` → comp the plan, or refund. Warning: an invoice/refund for a customer with no account, usually one created in the Dashboard. |
 | `resend.rejected` | `/admin/health` → error events → `resend.rejected` shows Resend's message. "domain is not verified" = `RESEND_FROM_EMAIL` must be on a domain verified under Resend → Domains; fix it in Vercel and redeploy. Only Orbit's own key is counted — a user's own Resend key failing shows on their message, not here. |
 | `import.wedged` / `import.failed_burst` | `/admin/health` → Failed and stalled imports → Retry. After 3 stalled resumes the job is marked failed with a message; the user re-uploads. |
+| `billing.cancel_stuck` | A deleted account's Stripe subscription would not cancel, three times running. `SELECT stripe_customer_id, attempts, last_error FROM billing_cancellation_queue;` Cancel each subscription in Stripe → Customers → that id (refund the period if it charged after the deletion), then `DELETE FROM billing_cancellation_queue WHERE stripe_customer_id = '<id>';`. The person has no account left to do it from. |
 | `purge.stuck` | `SELECT id, target_user_id, last_error, completed_steps FROM data_purge_runs WHERE status = 'failed';` Fix the cause `last_error` names, then requeue: `UPDATE data_purge_runs SET status = 'running', attempts = 0, last_attempt_at = now() - interval '1 hour' WHERE id = '<id>';` The next nightly run finishes it (or trigger `/api/imports/process-stalled`). |
 | `cron.partial_streak` | `/admin/health` → Nightly job → the run's stats. Each housekeeping step in `src/app/api/imports/process-stalled/route.ts` is its own try/catch; the one whose counter stays at zero is failing. Sentry has the exception. |
 | `drain.failed` | No outbound webhook is being retried. Run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/webhooks/outbound/drain`; a 500 means the drain throws — Sentry has it. |
@@ -203,6 +204,35 @@ When refunding a Pro charge, **also cancel the subscription in Stripe** — othe
 next renewal re-grants Pro, correctly, because the customer is being charged again.
 `/admin/health` → webhook deliveries shows `revoked: refund` / `revoked: dispute_lost` in
 the delivery detail when it happened.
+
+## A privacy request from someone who is not a user
+
+People in users' networks never signed up, but they can ask what Orbit holds about them or
+ask to be removed. Users answer for their own records (Terms: they are the controller), but
+Orbit controls the waitlist, the shared recruiter directory and the shared LinkedIn photo
+cache, and is the only one who can see across accounts.
+
+1. **Log it** (date, who, what they asked) before doing anything. Deadlines vary by law; aim to
+   answer within 30 days.
+2. **Confirm it is them**: reply from the address they gave, or ask them to, before
+   disclosing anything.
+3. **Look them up**, from a machine with production's `DATABASE_URL`:
+   `npx tsx scripts/privacy-lookup.ts --email <address>` and/or `--linkedin <profile url>`.
+   It reports which kinds of record hold them and which accounts, never what the records say.
+   Do not open those accounts' contact records to read them.
+4. **Tell them** which kinds of record exist and how many accounts hold them. Do not name the
+   account holders.
+5. **If they ask to be removed**:
+   - Data Orbit controls: delete their waitlist row from `/admin/interest-list` and their
+     `linkedin_avatars` entry. In the shared directory, clear the pooled contact fields
+     (`UPDATE recruiters SET email = NULL, email_normalized = NULL, phone = NULL,
+     linkedin_url = NULL WHERE id = '<id>';`) — do **not** delete the row: `user_recruiter_links`
+     and `recruiter_messages` cascade from it, and those are users' own records.
+   - Users' own records: tell each account holder (from the lookup) that this person asked to be
+     removed, and ask them to delete the contact. Whether Orbit may or must delete those
+     records itself is an open legal question (PRIVACY_PLAN.md §6, Q3); until it is answered,
+     do not.
+6. **Close the log** with what was done and when.
 
 ## Rotate a secret
 

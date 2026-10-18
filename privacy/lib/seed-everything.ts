@@ -44,6 +44,9 @@ export const OPERATOR_TABLES = new Set([
   "startup_expenses",
   "stripe_processed_events",
   "broadcasts",
+  // Holds only a Stripe customer id, written by the purge itself; seeding it with a user's
+  // marker would report the seed as a survivor.
+  "billing_cancellation_queue",
 ]);
 
 export type SeedReport = {

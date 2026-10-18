@@ -2836,6 +2836,12 @@ export async function webSearchJson(
               // tier — enough to read a profile snippet, which is all a lookup needs.
               tools: [{ type: "web_search", search_context_size: "low" }],
               max_output_tokens: maxOutputTokens,
+              // The Responses API keeps every response (30 days) unless told not to — unlike
+              // Chat Completions, whose `store` defaults to false. The query names a person and
+              // their employer; nothing here chains on `previous_response_id`, so nothing is
+              // lost by not storing it. `scripts/smoke-ai-retention.ts` requires this on every
+              // Responses call.
+              store: false,
             },
             { signal: callSignal() },
           );

@@ -20,6 +20,7 @@ import { sql } from "drizzle-orm";
 import { Webhook } from "standardwebhooks";
 import { getDb, rowsOf } from "../src/db";
 import { deleteOwnAccount } from "../src/lib/account-deletion";
+import { setSubscriptionCancellerForTests } from "../src/lib/billing-cancel";
 import { readCatalog } from "./lib/catalog";
 import { seedEverything, scanFor } from "./lib/seed-everything";
 import { run } from "../scripts/smoke/_env";
@@ -28,8 +29,21 @@ const A = "user_privA7f3e"; // Settings path
 const B = "user_privB91c2"; // bystander
 const C = "user_privC55d0"; // Clerk-webhook path
 
-/** Survivors that are documented, intentional exceptions in user-data.ts / privacy page. */
-const DOCUMENTED = new Set(["admin_audit_log", "webhook_deliveries", "data_purge_runs"]);
+/**
+ * Survivors that are intentional and disclosed on /privacy (as of TERMS_VERSION 2026-10-18),
+ * or that the seeder itself causes. Anything else this probe prints as UNDOCUMENTED.
+ */
+const DOCUMENTED = new Set([
+  "admin_audit_log", // operator's log; email kept for admin deletions (disclosed)
+  "webhook_deliveries", // Clerk's event log, account id only (disclosed)
+  "data_purge_runs", // the deletion's own progress log, 30 days (disclosed)
+  "billing_events", // accounting record, account id removed (disclosed); hits are seeded marker text in `detail`
+  "credit_grants", // same, for credit packs
+  "page_views", // user id removed; daily-rotating visitor hash remains (disclosed as anonymous counts)
+  "rate_limit_buckets", // expire within two days (disclosed)
+  "linkedin_avatars", // shared public-photo pool keyed by profile slug; the seeder put the user id in it
+  "waitlist_poll_votes", // seeder artifact: its signup_id is random, not the person's waitlist row
+]);
 
 type Result = Record<string, unknown>;
 
@@ -97,19 +111,29 @@ run(async () => {
     fetched.push(String(input instanceof Request ? input.url : input));
     return realFetch(input as RequestInfo, init);
   }) as typeof fetch;
+  // Stand in for Stripe where the purge's own `account` step calls it (no real key here).
+  const purgeCancels: string[] = [];
+  setSubscriptionCancellerForTests(async (customerId) => void purgeCancels.push(customerId));
   const res = await POST(req);
+  setSubscriptionCancellerForTests(null);
   globalThis.fetch = realFetch;
   const afterC = await scanFor(cat, C);
   const cusLeft = rowsOf(await db.execute(sql`SELECT count(*)::int AS n FROM user_settings WHERE stripe_customer_id = ${"cus_" + C}`));
   out.webhookPath = {
     status: res.status,
     outboundFetches: fetched,
+    stripeCancelsRequestedByPurge: purgeCancels,
     survivors: Object.fromEntries(afterC),
     stripeCustomerIdStillMapped: (cusLeft[0] as { n: number }).n > 0,
   };
   console.log(`\n[2] Clerk user.deleted webhook: HTTP ${res.status}; outbound fetches: ${fetched.length ? fetched.join(", ") : "none"}`);
+  console.log(`    Stripe cancellations the purge requested: ${purgeCancels.length ? purgeCancels.join(", ") : "NONE"}`);
   console.log(`    stripe_customer_id still mapped to the account after purge: ${(out.webhookPath as Result).stripeCustomerIdStillMapped}`);
-  console.log(`    => an active Stripe subscription is NOT cancelled on this path, and the only link to it is now gone`);
+  console.log(
+    purgeCancels.includes("cus_" + C)
+      ? "    => the subscription was cancelled before the only link to it was deleted"
+      : "    => an active Stripe subscription is NOT cancelled on this path, and the only link to it is now gone"
+  );
   console.log(`    C survives in ${afterC.size} tables:`);
   for (const [t, v] of afterC) console.log(`      ${DOCUMENTED.has(t) ? "(documented) " : "UNDOCUMENTED "}${t}: ${v.rows} row(s) via [${v.columns.join(", ")}]`);
 

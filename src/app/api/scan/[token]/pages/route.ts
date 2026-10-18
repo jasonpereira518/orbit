@@ -20,7 +20,9 @@ import { reportAndContinue, reportedFailure } from "@/lib/report-error";
  * path, the same arrangement as the calendar feed. Transcription runs here, as the minting
  * user, so their configured provider and their key are what read the photos.
  *
- * The images are transcribed and dropped. Nothing about them is written down.
+ * The images are transcribed, and kept as capture photos exactly like a desktop upload's
+ * (re-encoded, so location metadata is gone; deleted after 24 hours unless the capture is
+ * saved) — see `storeCapturePhotos` below.
  */
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";

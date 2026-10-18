@@ -207,6 +207,8 @@ const openaiAdapter: Adapter = {
 
   async cleanup(grant, job) {
     const client = await openaiClient(grant);
+    // A stale batch may still be running; one that already ended refuses the cancel, harmlessly.
+    await client.batches.cancel(job.providerBatchId).catch(() => null);
     const batch = await client.batches.retrieve(job.providerBatchId).catch(() => null);
     for (const id of [job.providerMeta?.inputFileId, batch?.output_file_id, batch?.error_file_id]) {
       if (id) await client.files.delete(id).catch(() => null);
@@ -263,7 +265,12 @@ const anthropicAdapter: Adapter = {
   },
 
   async cleanup(grant, job) {
-    await (await anthropicClient(grant)).messages.batches.delete(job.providerBatchId);
+    const client = await anthropicClient(grant);
+    // Only an ended batch can be deleted; a stale one is cancelled first (a no-op error for
+    // one that already ended). A batch still winding down refuses the delete, which the
+    // caller reports; Anthropic then removes it on its own schedule.
+    await client.messages.batches.cancel(job.providerBatchId).catch(() => null);
+    await client.messages.batches.delete(job.providerBatchId);
   },
 };
 
@@ -410,7 +417,7 @@ export async function pollAiBatch(job: AiBatchJobRow): Promise<PollResult> {
     const message = err instanceof Error ? err.message : String(err);
     const ageHours = (Date.now() - job.createdAt.getTime()) / 3_600_000;
     if (ageHours > BATCH_STALE_HOURS) {
-      await settleBatchJob(job, "failed", message);
+      await failBatchJob(job, grant, message);
       return { state: "failed", reason: message };
     }
     reportError(err, { where: "job.ai-batch.poll", userId: job.userId, level: "warning", extra: { operation: job.operation } });
@@ -420,14 +427,14 @@ export async function pollAiBatch(job: AiBatchJobRow): Promise<PollResult> {
   if (result.state === "pending") {
     const ageHours = (Date.now() - job.createdAt.getTime()) / 3_600_000;
     if (ageHours > BATCH_STALE_HOURS) {
-      await settleBatchJob(job, "failed", `Still unfinished after ${Math.round(ageHours)}h`);
+      await failBatchJob(job, grant, `Still unfinished after ${Math.round(ageHours)}h`);
       return { state: "failed", reason: "expired" };
     }
     return result;
   }
 
   if (result.state === "failed") {
-    await settleBatchJob(job, "failed", result.reason);
+    await failBatchJob(job, grant, result.reason);
     return result;
   }
 
@@ -447,6 +454,23 @@ export async function pollAiBatch(job: AiBatchJobRow): Promise<PollResult> {
     });
   }
   return result;
+}
+
+/**
+ * Settles a batch that failed or went stale, and removes what the provider still holds of it.
+ *
+ * Only the success path used to clean up, so a failed or expired batch left the person's
+ * prompts (recruiter email bodies, LinkedIn timelines, conversation digests) in the
+ * provider's batch storage for its own retention window. The two failures with no usable key
+ * (key gone, provider switched) still cannot reach it; those are left to that window.
+ */
+async function failBatchJob(job: AiBatchJobRow, grant: AiGrant, reason: string): Promise<void> {
+  await settleBatchJob(job, "failed", reason);
+  try {
+    await ADAPTERS[job.provider].cleanup(grant, job);
+  } catch (err) {
+    reportError(err, { where: "job.ai-batch.cleanup", userId: job.userId, level: "warning", extra: { operation: job.operation } });
+  }
 }
 
 /** Marks a batch done once its results have been written back, and tidies up at the provider. */

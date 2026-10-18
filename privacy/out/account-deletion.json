@@ -1,7 +1,7 @@
 {
   "seed": {
     "user_privA7f3e": {
-      "seeded": 120,
+      "seeded": 121,
       "failed": {
         "schema_migrations": "duplicate key value violates unique constraint \"schema_migrations_pkey\""
       }
@@ -11,6 +11,7 @@
       "failed": {
         "admin_provider_snapshots": "duplicate key value violates unique constraint \"admin_provider_snapshots_pkey\"",
         "app_surface_flags": "duplicate key value violates unique constraint \"app_surface_flags_pkey\"",
+        "billing_cancellation_queue": "duplicate key value violates unique constraint \"billing_cancellation_queue_pkey\"",
         "constellation_settings": "duplicate key value violates unique constraint \"constellation_settings_pkey\"",
         "external_sources": "duplicate key value violates unique constraint \"external_sources_pkey\"",
         "external_items": "parent external_sources not seeded",
@@ -31,6 +32,7 @@
       "failed": {
         "admin_provider_snapshots": "duplicate key value violates unique constraint \"admin_provider_snapshots_pkey\"",
         "app_surface_flags": "duplicate key value violates unique constraint \"app_surface_flags_pkey\"",
+        "billing_cancellation_queue": "duplicate key value violates unique constraint \"billing_cancellation_queue_pkey\"",
         "constellation_settings": "duplicate key value violates unique constraint \"constellation_settings_pkey\"",
         "external_sources": "duplicate key value violates unique constraint \"external_sources_pkey\"",
         "external_items": "parent external_sources not seeded",
@@ -74,13 +76,6 @@
           "detail"
         ]
       },
-      "broadcast_recipients": {
-        "rows": 1,
-        "columns": [
-          "email",
-          "error"
-        ]
-      },
       "credit_grants": {
         "rows": 1,
         "columns": [
@@ -99,24 +94,6 @@
           "completed_steps",
           "status",
           "last_error"
-        ]
-      },
-      "interest_list_signups": {
-        "rows": 1,
-        "columns": [
-          "email",
-          "referrer",
-          "utm_source",
-          "utm_medium",
-          "utm_campaign",
-          "landing_path",
-          "unsubscribe_token",
-          "welcome_planet",
-          "share_token",
-          "first_name",
-          "last_name",
-          "referral_slug",
-          "signup_event_label"
         ]
       },
       "linkedin_avatars": {
@@ -174,16 +151,7 @@
         ]
       }
     },
-    "undocumentedSurvivors": [
-      "billing_events",
-      "broadcast_recipients",
-      "credit_grants",
-      "interest_list_signups",
-      "linkedin_avatars",
-      "page_views",
-      "rate_limit_buckets",
-      "waitlist_poll_votes"
-    ],
+    "undocumentedSurvivors": [],
     "bystanderTablesBefore": 96,
     "bystanderTablesAfter": 96,
     "bystanderLost": []
@@ -191,6 +159,9 @@
   "webhookPath": {
     "status": 200,
     "outboundFetches": [],
+    "stripeCancelsRequestedByPurge": [
+      "cus_user_privC55d0"
+    ],
     "survivors": {
       "admin_audit_log": {
         "rows": 1,
@@ -213,13 +184,6 @@
           "detail"
         ]
       },
-      "broadcast_recipients": {
-        "rows": 1,
-        "columns": [
-          "email",
-          "error"
-        ]
-      },
       "credit_grants": {
         "rows": 1,
         "columns": [
@@ -238,24 +202,6 @@
           "completed_steps",
           "status",
           "last_error"
-        ]
-      },
-      "interest_list_signups": {
-        "rows": 1,
-        "columns": [
-          "email",
-          "referrer",
-          "utm_source",
-          "utm_medium",
-          "utm_campaign",
-          "landing_path",
-          "unsubscribe_token",
-          "welcome_planet",
-          "share_token",
-          "first_name",
-          "last_name",
-          "referral_slug",
-          "signup_event_label"
         ]
       },
       "linkedin_avatars": {
@@ -318,7 +264,7 @@
   "survivorSamples": {
     "admin_audit_log": [
       {
-        "id": "7927b360-7989-4874-88c2-bc57c2e28bba",
+        "id": "df5610b4-53df-4883-ba80-390e9d300852",
         "admin_user_id": "user_privA7f3e|admin_audit_log.admin_user_id",
         "action": "user_privA7f3e|admin_audit_log.action",
         "target_user_id": "user_privA7f3e",
@@ -328,60 +274,49 @@
           "m": "user_privA7f3e|admin_audit_log.detail"
         },
         "reason": "user_privA7f3e|admin_audit_log.reason",
-        "created_at": "2026-10-17 06:37:21.091+00"
+        "created_at": "2026-10-18 07:29:05.896+00"
       }
     ],
     "billing_events": [
       {
-        "id": "2c032d56-407a-4c84-9e5f-05a84c25c103",
+        "id": "b576fda7-ca36-4ed5-bef7-b985fd33ee19",
         "source": "user_privA7f3e|billing_events.source",
         "event_id": "user_privA7f3e|billing_events.event_id",
         "kind": "user_privA7f3e|billing_events.kind",
         "user_id": null,
         "amount_cents": 1,
         "mrr_delta_cents": 1,
-        "effective_at": "2026-10-17 06:37:21.111+00",
+        "effective_at": "2026-10-18 07:29:05.915+00",
         "detail": {
           "m": "user_privA7f3e|billing_events.detail"
         },
-        "created_at": "2026-10-17 06:37:21.111+00"
-      }
-    ],
-    "broadcast_recipients": [
-      {
-        "id": "fc6a31d0-07a5-4c19-97a2-a8bd07a10429",
-        "broadcast_id": "5bbe4839-61b8-422b-9382-20d85b681dd9",
-        "signup_id": "9932810b-b103-4a4d-9476-dadd9b9edaa2",
-        "email": "user_privA7f3e@example.test",
-        "sent_at": "2026-10-17 06:37:21.113+00",
-        "error": "user_privA7f3e|broadcast_recipients.error",
-        "created_at": "2026-10-17 06:37:21.113+00"
+        "created_at": "2026-10-18 07:29:05.915+00"
       }
     ],
     "credit_grants": [
       {
-        "id": "3254fc7a-737a-4475-9c51-e25c8c4e4fff",
+        "id": "35492898-d185-49c1-9789-b5886ce8510b",
         "user_id": null,
         "kind": "user_privA7f3e|credit_grants.kind",
         "grant_key": "user_privA7f3e|credit_grants.grant_key",
         "plan": "user_privA7f3e|credit_grants.plan",
         "micros_granted": 1,
         "micros_remaining": 0,
-        "period_start": "2026-10-17 06:37:21.186+00",
-        "period_end": "2026-10-17 06:37:21.186+00",
+        "period_start": "2026-10-18 07:29:05.978+00",
+        "period_end": "2026-10-18 07:29:05.978+00",
         "amount_cents": 1,
         "stripe_ref": "user_privA7f3e|credit_grants.stripe_ref",
         "status": "revoked",
-        "revoked_at": "2026-10-17 06:37:21.186+00",
+        "revoked_at": "2026-10-18 07:29:05.978+00",
         "revoked_reason": "user_privA7f3e|credit_grants.revoked_reason",
         "micros_revoked": 2,
-        "created_at": "2026-10-17 06:37:21.186+00",
-        "updated_at": "2026-10-17 06:37:24.445+00"
+        "created_at": "2026-10-18 07:29:05.978+00",
+        "updated_at": "2026-10-18 07:29:09.406+00"
       }
     ],
     "data_purge_runs": [
       {
-        "id": "c6e0d412-e01e-4fa4-b184-1f5f20ae0b5f",
+        "id": "c85fad87-b3c7-4980-beb0-a55e74fc0706",
         "target_user_id": "user_privA7f3e",
         "categories": {
           "m": "user_privA7f3e|data_purge_runs.categories"
@@ -394,12 +329,12 @@
         "status": "user_privA7f3e|data_purge_runs.status",
         "attempts": 1,
         "last_error": "user_privA7f3e|data_purge_runs.last_error",
-        "requested_at": "2026-10-17 06:37:21.191+00",
-        "last_attempt_at": "2026-10-17 06:37:21.191+00",
-        "finished_at": "2026-10-17 06:37:21.191+00"
+        "requested_at": "2026-10-18 07:29:05.984+00",
+        "last_attempt_at": "2026-10-18 07:29:05.984+00",
+        "finished_at": "2026-10-18 07:29:05.984+00"
       },
       {
-        "id": "1aebf163-d0fd-4679-8c1c-897b893f6653",
+        "id": "e4b93f73-0b6b-4efe-8f54-854679ab8313",
         "target_user_id": "user_privA7f3e",
         "categories": [
           "insights",
@@ -438,38 +373,15 @@
           "contacts",
           "tags",
           "billing",
+          "account",
           "preferences"
         ],
         "status": "done",
         "attempts": 1,
         "last_error": null,
-        "requested_at": "2026-10-17 06:37:24.141+00",
-        "last_attempt_at": "2026-10-17 06:37:24.141+00",
-        "finished_at": "2026-10-17 06:37:24.45+00"
-      }
-    ],
-    "interest_list_signups": [
-      {
-        "id": "d4f3384a-c8b8-4e53-a9a2-edb25275ad3e",
-        "email": "user_privA7f3e@example.test",
-        "referrer": "user_privA7f3e|interest_list_signups.referrer",
-        "utm_source": "user_privA7f3e|interest_list_signups.utm_source",
-        "utm_medium": "user_privA7f3e|interest_list_signups.utm_medium",
-        "utm_campaign": "user_privA7f3e|interest_list_signups.utm_campaign",
-        "landing_path": "user_privA7f3e|interest_list_signups.landing_path",
-        "unsubscribe_token": "user_privA7f3e|interest_list_signups.unsubscribe_token",
-        "unsubscribed_at": "2026-10-17 06:37:21.248+00",
-        "welcome_planet": "user_privA7f3e|interest_list_signups.welcome_planet",
-        "follow_up_sent_at": "2026-10-17 06:37:21.248+00",
-        "share_token": "user_privA7f3e|interest_list_signups.share_token",
-        "referred_by_id": "150ae777-1598-4eec-892d-daf8b91b6e04",
-        "first_name": "user_privA7f3e|interest_list_signups.first_name",
-        "last_name": "user_privA7f3e|interest_list_signups.last_name",
-        "referral_slug": "user_privA7f3e|interest_list_signups.referral_slug",
-        "pass_check_count": 1,
-        "pass_last_checked_at": "2026-10-17 06:37:21.248+00",
-        "signup_event_label": "user_privA7f3e|interest_list_signups.signup_event_label",
-        "created_at": "2026-10-17 06:37:21.248+00"
+        "requested_at": "2026-10-18 07:29:09.008+00",
+        "last_attempt_at": "2026-10-18 07:29:09.008+00",
+        "finished_at": "2026-10-18 07:29:09.418+00"
       }
     ],
     "linkedin_avatars": [
@@ -477,14 +389,14 @@
         "slug": "user_privA7f3e|linkedin_avatars.slug",
         "image_url": "user_privA7f3e|linkedin_avatars.image_url",
         "source": "user_privA7f3e|linkedin_avatars.source",
-        "resolved_at": "2026-10-17 06:37:21.257+00",
-        "blocked_at": "2026-10-17 06:37:21.257+00",
+        "resolved_at": "2026-10-18 07:29:06.059+00",
+        "blocked_at": "2026-10-18 07:29:06.059+00",
         "blocked_by": "user_privA7f3e|linkedin_avatars.blocked_by"
       }
     ],
     "page_views": [
       {
-        "id": "8088eb3e-14b1-4879-a257-f8891e28974b",
+        "id": "217acc47-92db-43c4-95f2-bc4fd0e3d10f",
         "visitor_hash": "user_privA7f3e|page_views.visitor_hash",
         "session_id": "user_privA7f3e|page_views.session_id",
         "user_id": null,
@@ -502,32 +414,32 @@
         "dwell_ms": 1,
         "load_ms": 1,
         "nav_type": "user_privA7f3e|page_views.nav_type",
-        "created_at": "2026-10-17 06:37:21.282+00"
+        "created_at": "2026-10-18 07:29:06.088+00"
       }
     ],
     "rate_limit_buckets": [
       {
         "bucket": "user_privA7f3e|rate_limit_buckets.bucket",
-        "window_started_at": "2026-10-17 06:37:21.29+00",
+        "window_started_at": "2026-10-18 07:29:06.098+00",
         "count": 1
       }
     ],
     "waitlist_poll_votes": [
       {
-        "id": "8dca8516-245f-4371-bf77-7fdb79dc450a",
+        "id": "e09d59c5-cb5e-467d-b6ed-3f91de19796c",
         "option_id": "user_privA7f3e|waitlist_poll_votes.option_id",
         "voter_key": "user_privA7f3e|waitlist_poll_votes.voter_key",
-        "signup_id": "fd46eece-c251-444a-a2bc-3ad7aa14a958",
+        "signup_id": "6df4b66e-f6bd-4310-abee-d1460565bbc8",
         "stars": {
           "m": "user_privA7f3e|waitlist_poll_votes.stars"
         },
-        "created_at": "2026-10-17 06:37:21.332+00",
-        "updated_at": "2026-10-17 06:37:21.332+00"
+        "created_at": "2026-10-18 07:29:06.153+00",
+        "updated_at": "2026-10-18 07:29:06.153+00"
       }
     ],
     "webhook_deliveries": [
       {
-        "id": "17433879-cce3-4cfb-88fa-09faf5c53fab",
+        "id": "6cdc094b-3842-48ac-97e7-05916c47753c",
         "source": "user_privA7f3e|webhook_deliveries.source",
         "event_id": "user_privA7f3e|webhook_deliveries.event_id",
         "event_type": "user_privA7f3e|webhook_deliveries.event_type",
@@ -540,7 +452,7 @@
         },
         "error": "user_privA7f3e|webhook_deliveries.error",
         "duration_ms": 1,
-        "created_at": "2026-10-17 06:37:21.334+00"
+        "created_at": "2026-10-18 07:29:06.154+00"
       }
     ]
   }

@@ -249,8 +249,8 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
           {onLocalDevKeys
             ? "This dev server runs AI on the keys in your .env.local — nothing to set up. Save a key above and it is used instead, which is also how you see what a deployed account sees. Keys are encrypted at rest and only used for your account."
             : onIncluded
-              ? "Your plan includes AI on Orbit’s own keys — nothing to set up. You can still bring your own Gemini, OpenAI, or Anthropic key and choose which runs first; calls on your own key never use credits. Keys are encrypted at rest and only used for your account."
-              : `Choose Gemini, OpenAI, or Anthropic above and paste your own API key. Keys are encrypted at rest and only used for your account.${ai.managedConfigured ? " Every plan, Free included, has AI on Orbit’s own keys, so a key is optional; included AI is paused right now." : ""}`}
+              ? "Your plan includes AI on Orbit’s own keys — nothing to set up. You can still bring your own Gemini, OpenAI, or Anthropic key and choose which runs first; calls on your own key never use credits. Keys are encrypted at rest and only used for your account. On your own key, the notes, contacts and transcripts you use AI with go to that provider under your own agreement with them."
+              : `Choose Gemini, OpenAI, or Anthropic above and paste your own API key. Keys are encrypted at rest and only used for your account. On your own key, the notes, contacts and transcripts you use AI with go to that provider under your own agreement with them.${ai.managedConfigured ? " Every plan, Free included, has AI on Orbit’s own keys, so a key is optional; included AI is paused right now." : ""}`}
         </p>
 
         {/* No live region below: this sits inside a collapsed panel, and hidden content is
@@ -290,6 +290,17 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
           <p className="rounded-xl bg-muted/50 p-3 text-sm text-muted-foreground">
             Anthropic has no embeddings API. Keep an OpenAI or Gemini key available
             so chat search can still embed contacts.
+          </p>
+        )}
+
+        {/* Orbit's privacy policy says your content is not used to train AI models. On your own
+            key that is your agreement with the provider, and Google's free Gemini API tier
+            permits it — so say so where the key is entered. */}
+        {provider === "gemini" && (
+          <p className="rounded-xl bg-muted/50 p-3 text-sm text-muted-foreground">
+            Google may use what is sent on a free-tier Gemini API key to improve its products.
+            Use a key from a Google Cloud project with billing turned on to keep your notes
+            and contacts out of that.
           </p>
         )}
 

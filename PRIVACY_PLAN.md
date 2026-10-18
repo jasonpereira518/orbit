@@ -1,10 +1,25 @@
-# Orbit privacy plan (Phase 1 deliverable: plan only; no application code changed)
+# Orbit privacy plan
 
 | | |
 |---|---|
-| Date | 2026-10-17 |
+| Date | 2026-10-17; Phase 1 implemented 2026-10-18 |
 | Inputs | [`PRIVACY_AUDIT.md`](PRIVACY_AUDIT.md): finding ids F-xx and mismatch ids M-xx |
-| Status | **Proposal awaiting approval.** Not legal advice. ⚖️ marks a decision that needs a lawyer. All policy text in §7 is a **DRAFT for counsel's review**, not final language. |
+| Status | Approved. Phase 1 implemented (see below); Phases 2–4 not started. Not legal advice. ⚖️ marks a decision that needs a lawyer. All policy text in §7 is a **DRAFT for counsel's review**, not final language. |
+
+## Phase 1 status (2026-10-18)
+
+| Item | Status | What shipped | Test |
+|---|---|---|---|
+| 1.1 Cancel billing on every deletion path | **Done** | New purge step `account`, run whenever the account itself closes, so it covers the Clerk webhook, admin hard-delete, orphan sweep and Settings. Failed cancels go to `billing_cancellation_queue` (schema v175), are retried hourly, and raise `billing.cancel_stuck`. | `smoke-account-closure` |
+| 1.2 Global tables on account deletion | **Done**, except the audit-log email | The waitlist row, poll votes and broadcast log are removed by email. The audit-log email is kept and now disclosed (the ⚖️ choice defaulted to "disclose"). | `smoke-account-closure` |
+| 1.3 Undo merge resurrection | **Done** | Derived rows are no longer archived. Unmerge restores the person's own data only. Purges strip archive copies. 30-day undo window, after which the archive's copy is cleared and the id alias kept. | `smoke-unmerge-after-purge` |
+| 1.4 Contact delete references | **Done** | Ids removed from 5 tables. Group-note passages are dropped for rebuild. Hourly orphan-passage prune. Dialog copy updated (it already disclosed that free text stays). | `smoke-contact-delete-references` |
+| 1.5 Import revert/undo leftovers | **Done** | Revert deletes through `deleteContactsForUser` and removes passages. Revert and undo clear removed people's raw rows. | `smoke-contact-delete-references` |
+| 1.6 Error tooling | **Done**; Sentry dashboard settings **U** | `db-error-redact` is applied to the log, Sentry, `error_events` and Slack. The scrubber goes deep and covers spans. The feedback DM carries a link only. | `smoke-error-redaction` |
+| 1.7 Legal pages | **Factual corrections done** (TERMS_VERSION 2026-10-18) | M-1, 2, 4–11, 13–18, 21 and part of 12. **Not done, for counsel:** §7.6/§7.7 new sections, M-19 (Deepgram wording), M-22–24 (transfers, contact address, age). | `smoke-legal-pages` (lock updated) |
+| 1.8 Front door for non-users | **Partly done** | Operator lookup (`scripts/privacy-lookup.ts`, `src/lib/person-lookup.ts`) and runbook procedure. **Needs you:** a monitored privacy email address to publish. **Deferred:** global suppression list (L). | `smoke-person-lookup` |
+| 1.9 No-training enforcement | **Done**, except stored acknowledgement | `store: false` on Responses. Batch cleanup (with cancel) on failed and stale batches. Gemini free-tier warning and BYO-key hand-off sentence in Settings. The plan's stored acknowledgement was not built (no schema change); the notice is shown inline. | `smoke-ai-retention` |
+| 1.10 Extension disclosure | **Done** in code; Chrome Web Store form **U** | Consent copy names the AI provider, plus a privacy-policy link. | extension typecheck and lint |
 
 Effort: **S** ≤ ½ day · **M** 1–3 days · **L** > 3 days. Regression risk: what could break for users.
 

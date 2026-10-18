@@ -2,38 +2,7 @@
   "S1_deleteContact": {
     "deleted": true,
     "tablesReferencingIdBefore": 31,
-    "tablesStillReferencingId": {
-      "ai_suggestions": {
-        "rows": 1,
-        "columns": [
-          "related_contact_ids"
-        ]
-      },
-      "capture_jobs": {
-        "rows": 1,
-        "columns": [
-          "seed_contact_id"
-        ]
-      },
-      "email_sends": {
-        "rows": 1,
-        "columns": [
-          "contact_ids"
-        ]
-      },
-      "import_job_rows": {
-        "rows": 1,
-        "columns": [
-          "contact_id"
-        ]
-      },
-      "memory_chunks": {
-        "rows": 1,
-        "columns": [
-          "contact_ids"
-        ]
-      }
-    },
+    "tablesStillReferencingId": {},
     "tablesNamingPersonBefore": 43,
     "tablesStillNamingPerson": {
       "agent_send_requests": {
@@ -171,12 +140,6 @@
           "text"
         ]
       },
-      "memory_chunks": {
-        "rows": 1,
-        "columns": [
-          "content"
-        ]
-      },
       "note_batches": {
         "rows": 1,
         "columns": [
@@ -260,8 +223,8 @@
     },
     "createdContactLeft": 0,
     "importedInteractionLeft": 0,
-    "orphanPassagesLeft": 1,
-    "rawPayloadRowsNamingPersonLeft": 1
+    "orphanPassagesLeft": 0,
+    "rawPayloadRowsNamingPersonLeft": 0
   },
   "S4_insightsPurgeThenUnmerge": {
     "cloned": {
@@ -272,16 +235,13 @@
       "relationship_digests": true
     },
     "merge": {
-      "mergeId": "698ec124-d65f-4e4e-a350-879499b85e69",
-      "winnerId": "acda9ae5-db1c-455a-8e2d-dea0bf16ad06",
-      "loserId": "6d26dc90-fda3-43d7-a11f-d1b6bbb351bb"
+      "mergeId": "239bfc36-2bf8-49d9-bd23-4ad1813874c1",
+      "winnerId": "a1337e00-73af-46ff-a29a-14b7512bacc1",
+      "loserId": "84865041-344b-405f-9ab3-1798c5e1f1f3"
     },
     "archivedKeys": [
       "contact_tags",
-      "contact_briefs",
-      "recommendations",
       "contact_profiles",
-      "contact_embeddings",
       "contact_career_moves",
       "interaction_mentions"
     ],
@@ -294,14 +254,14 @@
     },
     "mergeArchivesHoldingDerivedRows": 2,
     "unmerge": {
-      "mergeId": "698ec124-d65f-4e4e-a350-879499b85e69",
-      "winnerId": "acda9ae5-db1c-455a-8e2d-dea0bf16ad06",
-      "loserId": "6d26dc90-fda3-43d7-a11f-d1b6bbb351bb"
+      "mergeId": "239bfc36-2bf8-49d9-bd23-4ad1813874c1",
+      "winnerId": "a1337e00-73af-46ff-a29a-14b7512bacc1",
+      "loserId": "84865041-344b-405f-9ab3-1798c5e1f1f3"
     },
     "loserDerivedRowsAfterUnmerge": {
-      "contact_embeddings": 1,
-      "recommendations": 1,
-      "contact_briefs": 1,
+      "contact_embeddings": 0,
+      "recommendations": 0,
+      "contact_briefs": 0,
       "contact_signals": 0,
       "relationship_digests": 0
     }

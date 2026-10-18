@@ -15,6 +15,7 @@ import { useEffect, useState } from "react";
 import { Check, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Button, Meta, MicroLabel } from "../components/ui";
+import { APP_URL } from "@/lib/env";
 import {
   KNOWN_ORIGINS,
   KNOWN_SITES,
@@ -73,10 +74,21 @@ export function GrantAccessView({
       <p className="text-[14px] font-medium leading-snug">
         {site ? `Let Orbit read ${site.label}` : "Let Orbit read your profiles"}
       </p>
+      {/* Where the text goes, completely: it reaches the person's Orbit account, and Orbit's
+          AI provider reads it to make the contact. The old line said "nowhere except your own
+          Orbit account", which left the provider out (PRIVACY_AUDIT.md M-9). */}
       <Meta className="mt-1.5 max-w-[38ch]">
         Orbit only reads the page you&apos;re looking at, only while the panel
-        is open, and never sends the page text anywhere except your own Orbit
-        account.
+        is open. What it reads goes to your Orbit account, where Orbit&apos;s AI
+        provider turns it into a contact. Nothing goes anywhere else.{" "}
+        <a
+          href={`${APP_URL}/privacy#collect`}
+          target="_blank"
+          rel="noreferrer"
+          className="underline hover:text-[var(--foreground)]"
+        >
+          Privacy policy
+        </a>
       </Meta>
 
       <div className="mt-3 space-y-2">

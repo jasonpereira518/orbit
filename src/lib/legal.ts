@@ -15,8 +15,15 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // 2026-10-16: the browser extension saves the Luma/Partiful guest list you have open, on your
 // click; meeting prep shows the event behind an invite; meeting history keeps 500 characters
 // of an invite's description (always true, now said).
-export const TERMS_VERSION = "2026-10-16";
-export const LEGAL_LAST_UPDATED = "October 16, 2026";
+// 2026-10-18: privacy audit corrections (PRIVACY_AUDIT.md §6). Account deletion through Clerk
+// now cancels the subscription and removes the waitlist entry; the export's real coverage; Google
+// disconnect revokes; Connect asks for contacts and calendar together; email activity's use of
+// gmail.readonly; what the extension reads beyond LinkedIn; every cookie; page views from an
+// expired sign-in; included AI's provider order and BYO-key training terms; Resend, Twilio,
+// GitHub, Wikidata and BotID in the processor list; database values kept out of error reports;
+// merge undo window; Microsoft, Drive and iCloud in the Terms integration list.
+export const TERMS_VERSION = "2026-10-18";
+export const LEGAL_LAST_UPDATED = "October 18, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.
@@ -87,8 +94,8 @@ export const GOOGLE_SCOPE_DISCLOSURES: readonly {
   {
     scope: GOOGLE_SCOPES.gmailRead,
     permission: "Read your email (gmail.readonly)",
-    use: "Recruiter scan: finds recruiting conversations and summarizes each with your AI key or Orbit's included AI. Confirmation emails: reads mail from Luma, Partiful, Eventbrite, Meetup and Posh to find events you registered for. Replying in a thread: when you compose an email to a contact, finds your latest message with them so you can reply in that conversation, reading only its Message-ID, subject, date and thread. Sending: checks your Sent folder so a retried send is never delivered twice. Message bodies are never stored.",
-    askedWhen: "Connect Gmail on Recruiters, or turn on Confirmation emails on Events",
+    use: "Recruiter scan: finds recruiting conversations and summarizes each with your AI key or Orbit's included AI. Confirmation emails: reads mail from Luma, Partiful, Eventbrite, Meetup and Posh to find events you registered for. Replying in a thread: when you compose an email to a contact, finds your latest message with them so you can reply in that conversation, reading only its Message-ID, subject, date and thread. Sending: checks your Sent folder so a retried send is never delivered twice. Email activity, only if you turn it on: reads the sender, recipients, subject and date of your mail (never the body) to record when you last exchanged email with people already in your network. Message bodies are never stored.",
+    askedWhen: "Connect Gmail on Recruiters, or turn on Confirmation emails on Events. Email activity uses this permission once granted, and is off until you turn it on",
   },
   {
     scope: GOOGLE_SCOPES.gmailSend,

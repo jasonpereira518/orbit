@@ -275,6 +275,10 @@ const ALLOWLIST: Record<string, string> = {
     "cascade and has no fallthrough default: every other provider, openrouter included, " +
     "simply renders no notice — correctly, since EMBEDDING_MODELS.openrouter is a real " +
     "embedding route (openai/text-embedding-3-small).",
+  "src/components/settings/ai-settings.tsx:299": "the standalone free-tier Gemini notice " +
+    "(Google's free Gemini API tier may use what is sent to improve its products). Same shape " +
+    "as line 289: not a cascade, no fallthrough; every other provider, openrouter included, " +
+    "renders no notice — OpenRouter requests already deny data collection.",
 };
 
 function checkExhaustiveness() {

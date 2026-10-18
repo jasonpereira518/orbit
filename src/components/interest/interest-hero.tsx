@@ -364,7 +364,7 @@ export function InterestHero({
                       Join the waitlist
                     </p>
                     <p className="mt-2 text-lg text-[#e8f3f1]">
-                      We&apos;ll only email you about your place in line.
+                      We&apos;ll email you about your place in line and, now and then, the launch.
                     </p>
 
                     <div ref={rowScope} className="mt-5 flex flex-col gap-3 sm:flex-row">
