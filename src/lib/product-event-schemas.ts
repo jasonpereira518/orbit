@@ -1,5 +1,6 @@
 /**
- * DRAFT: the proposed `product_events` taxonomy as zod schemas. Not imported by the app.
+ * The `product_events` taxonomy as zod schemas: the one list of events Orbit records, and the
+ * only shape their properties may take. Validated by `track()` in `src/lib/product-events.ts`.
  *
  * Rules enforced by construction:
  *   - every property schema admits only ids (uuid / Clerk id), closed enums, integers,
@@ -8,7 +9,8 @@
  *   - `name` is object_action, past tense for completed facts.
  *   - `version` bumps when a property's MEANING changes; adding an optional property does not.
  *
- * See TRACKING_PLAN.md §4 and analytics/events/README.md for ownership and definitions.
+ * See TRACKING_PLAN.md §4 and analytics/events/README.md for ownership and definitions. A smoke
+ * test (scripts/smoke-product-events.ts) asserts every event here has a README section.
  */
 import { z } from "zod";
 
@@ -74,6 +76,7 @@ export const eventSchemas = {
   followup_set: z.object({ reminder_id: uuid, origin: z.enum(FOLLOWUP_ORIGINS), has_due_date: z.boolean() }),
   followup_completed: z.object({ reminder_id: uuid, days_late: z.number().int(), via: z.enum(FOLLOWUP_VIA) }),
   followup_snoozed: z.object({ reminder_id: uuid }),
+  followup_dismissed: z.object({ reminder_id: uuid }),
   chat_answer_landed: z.object({ message_id: uuid, duration_ms: ms, tool_rounds: count, evidence_count: count }),
   chat_answer_failed: z.object({ thread_id: uuid, error_kind: z.string().regex(/^[a-z_]{1,32}$/) }),
 
@@ -93,6 +96,8 @@ export const eventSchemas = {
   error_shown: z.object({ where: z.string().regex(/^[a-z_.]{1,48}$/), error_kind: z.string().regex(/^[a-z_]{1,32}$/) }),
   sync_failed: z.object({ provider: z.enum(["gmail", "outlook", "google_calendar", "microsoft_calendar", "icloud", "caldav", "eventbrite", "luma"]), error_kind: z.string().regex(/^[a-z_]{1,32}$/) }),
   email_send_failed: z.object({ provider: z.enum(["resend", "gmail", "outlook"]), kind: z.enum(["outreach", "followup", "digest", "notice"]) }),
+  survey_shown: z.object({ survey_id: z.enum(SURVEYS) }),
+  survey_dismissed: z.object({ survey_id: z.enum(SURVEYS) }),
   survey_answered: z.object({ survey_id: z.enum(SURVEYS), question_id: z.string().regex(/^[a-z_]{1,32}$/), answer: z.union([z.number().int().min(1).max(5), z.string().regex(/^[a-z_]{1,32}$/)]) }),
   account_deleted: z.object({ tenure_days: days, plan: z.enum(PLANS), reason: z.enum(CANCEL_REASONS).optional() }),
 } as const;

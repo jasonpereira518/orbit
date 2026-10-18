@@ -503,6 +503,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-no-silent-data-loss": "pglite",
   "smoke-ops-sweep": "pglite",
   "smoke-admin-analytics": "pglite",
+  "smoke-product-events": "pglite",
   "smoke-admin-feature-adoption": "pglite",
   "smoke-page-load-timing": "pglite",
   "smoke-contact-closeness": "pglite",
