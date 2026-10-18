@@ -34,12 +34,18 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { after } from "next/server";
 import { TOUR_EXAMPLE_SOURCE } from "@/lib/onboarding-examples/marker";
-import { getDb, runAtomicWrite, type AtomicStatement, type AtomicWriter } from "@/db";
+import { getDb, rowsOf, runAtomicWrite, type AtomicStatement, type AtomicWriter } from "@/db";
 import { contactMerges, contacts, duplicateSuggestions } from "@/db/schema";
 import { deleteAvatarBlobs, isAvatarBlobUrl } from "@/lib/avatar-blob";
 import { recalibrateCloseness } from "@/lib/closeness-cohort";
 import { markCohortDirty, rescoreContact } from "@/lib/closeness-materialize";
 import { scheduleEmbeddingRebuild } from "@/lib/contact-writes";
+import { UserFacingError } from "@/lib/errors";
+import {
+  MERGE_EXPIRED_STATUS,
+  MERGE_UNDO_DAYS,
+  RESTORABLE_ARCHIVE_TABLES,
+} from "@/lib/merge-archive";
 import { rebuildContactEmbeddingsBatch } from "@/lib/search";
 
 /**
@@ -122,6 +128,54 @@ function recordDeleted(writer: AtomicWriter, mergeId: string, label: string, del
            )
      WHERE id = ${mergeId}::uuid
   `);
+}
+
+/** Whether the undo window (`MERGE_UNDO_DAYS`) is still open for this archive row. */
+export function isMergeUndoable(
+  merge: { mergedAt: Date | string; status: string },
+  now: Date = new Date()
+): boolean {
+  if (merge.status === MERGE_EXPIRED_STATUS) return false;
+  return now.getTime() - new Date(merge.mergedAt).getTime() < MERGE_UNDO_DAYS * 86_400_000;
+}
+
+/**
+ * Close the undo window on old merges: clear the loser's snapshot and any archived rows, keep
+ * the row itself (it is what still redirects the merged-away id to the survivor), and delete
+ * the loser's own avatar object unless a live contact still shows it (the merge's COALESCE
+ * can hand it to the winner). Run hourly by `process-stalled`; bounded per call.
+ */
+export async function expireMergeArchives(opts: { now: Date; limit?: number }): Promise<number> {
+  const db = await getDb();
+  const cutoff = new Date(opts.now.getTime() - MERGE_UNDO_DAYS * 86_400_000);
+  const due = rowsOf<{ id: string; user_id: string; url: string | null }>(
+    await db.execute(sql`
+      SELECT id, user_id, loser_snapshot->>'profile_image_url' AS url
+        FROM contact_merges
+       WHERE merged_at < ${cutoff.toISOString()}::timestamptz AND status <> ${MERGE_EXPIRED_STATUS}
+       ORDER BY merged_at
+       LIMIT ${opts.limit ?? 500}
+    `)
+  );
+  if (due.length === 0) return 0;
+  await db.execute(sql`
+    UPDATE contact_merges
+       SET loser_snapshot = '{}'::jsonb, deleted = '{}'::jsonb, status = ${MERGE_EXPIRED_STATUS}
+     WHERE id = ANY(${sql`ARRAY[${sql.join(due.map((d) => sql`${d.id}::uuid`), sql`, `)}]`})
+  `);
+  const candidates = due.filter((d) => d.url && isAvatarBlobUrl(d.url));
+  if (candidates.length > 0) {
+    const stillShown = new Set(
+      rowsOf<{ url: string }>(
+        await db.execute(sql`
+          SELECT DISTINCT profile_image_url AS url FROM contacts
+           WHERE profile_image_url = ANY(${sql`ARRAY[${sql.join(candidates.map((d) => sql`${d.url}`), sql`, `)}]`})
+        `)
+      ).map((r) => r.url)
+    );
+    await deleteAvatarBlobs(candidates.map((d) => d.url!).filter((url) => !stillShown.has(url)));
+  }
+  return due.length;
 }
 
 export type MergeOptions = {
@@ -413,17 +467,15 @@ export async function mergeContacts(
     //
     // contact_briefs is keyed by contact_id (it IS the primary key) and its stored
     // `recentDiscussions` names interactions that just changed owner, so the winner's brief
-    // is stale too — drop both and let it regenerate.
+    // is stale too — drop both and let it regenerate. NOT archived: a brief is rebuilt on
+    // the next view, and an archived copy is one a later "delete AI data" could not reach
+    // (see `merge-archive.ts`).
     statements.push(
-      recordDeleted(
-        tx,
-        mergeId,
-        "contact_briefs",
-        sql`DELETE FROM contact_briefs
-             WHERE user_id = ${userId}
-               AND contact_id IN (${loserId}::uuid, ${winnerId}::uuid)
-         RETURNING to_jsonb(contact_briefs) AS row`
-      )
+      tx.execute(sql`
+        DELETE FROM contact_briefs
+         WHERE user_id = ${userId}
+           AND contact_id IN (${loserId}::uuid, ${winnerId}::uuid)
+      `)
     );
 
     // relationship_digests: the loser's row cascades with the loser. The winner's watermark
@@ -465,18 +517,14 @@ export async function mergeContacts(
     );
 
     // recommendations: at most one LIVE row per (user, contact, kind), so the loser's live
-    // cards could collide with the winner's. They are archived rather than moved, and the
-    // next run raises whatever is still true about the merged person. Unmerge restores them
-    // from the archive like any other deleted row.
+    // cards could collide with the winner's. They are deleted rather than moved, and the
+    // next run raises whatever is still true about the merged person — or, after an undo,
+    // about each of the two. Not archived, for the same reason as the briefs above.
     statements.push(
-      recordDeleted(
-        tx,
-        mergeId,
-        "recommendations",
-        sql`DELETE FROM recommendations
-             WHERE contact_id = ${loserId}::uuid AND user_id = ${userId}
-         RETURNING to_jsonb(recommendations) AS row`
-      )
+      tx.execute(sql`
+        DELETE FROM recommendations
+         WHERE contact_id = ${loserId}::uuid AND user_id = ${userId}
+      `)
     );
 
     // contact_embeddings: the loser's whole-contact vector encodes the loser's text, which
@@ -486,16 +534,15 @@ export async function mergeContacts(
     //
     // Raw SQL, never a drizzle round-trip: `embedding_vector` is runtime-managed and
     // undeclared, and reading these rows through the ORM would drop it.
+    //
+    // Deleted rows are NOT archived: unmerge schedules an embedding rebuild for the loser,
+    // and an archived copy (plaintext `content` included) outlived "delete AI data".
     statements.push(
-      recordDeleted(
-        tx,
-        mergeId,
-        "contact_embeddings",
-        sql`DELETE FROM contact_embeddings
-             WHERE user_id = ${userId} AND contact_id = ${loserId}::uuid
-               AND source_id IS NULL
-         RETURNING to_jsonb(contact_embeddings) - 'embedding_vector' AS row`
-      )
+      tx.execute(sql`
+        DELETE FROM contact_embeddings
+         WHERE user_id = ${userId} AND contact_id = ${loserId}::uuid
+           AND source_id IS NULL
+      `)
     );
     statements.push(
       recordMoved(
@@ -512,15 +559,12 @@ export async function mergeContacts(
          RETURNING id`
       )
     );
+    // What could not move (the winner already holds that source) duplicates a row that stays.
     statements.push(
-      recordDeleted(
-        tx,
-        mergeId,
-        "contact_embeddings",
-        sql`DELETE FROM contact_embeddings
-             WHERE user_id = ${userId} AND contact_id = ${loserId}::uuid
-         RETURNING to_jsonb(contact_embeddings) - 'embedding_vector' AS row`
-      )
+      tx.execute(sql`
+        DELETE FROM contact_embeddings
+         WHERE user_id = ${userId} AND contact_id = ${loserId}::uuid
+      `)
     );
 
     // 4f. Suggestions are left to the cascade. Every pair naming the loser — including the
@@ -699,6 +743,11 @@ export async function unmergeContacts(userId: string, mergeId: string): Promise<
     .where(and(eq(contactMerges.userId, userId), eq(contactMerges.id, mergeId)))
     .limit(1);
   if (!merge) throw new Error(`unmergeContacts: merge ${mergeId} not found`);
+  if (!isMergeUndoable(merge)) {
+    throw new UserFacingError(
+      `This merge is more than ${MERGE_UNDO_DAYS} days old, so it can no longer be undone`
+    );
+  }
 
   const [winner] = await db
     .select({ id: contacts.id })
@@ -850,7 +899,12 @@ export async function unmergeContacts(userId: string, mergeId: string): Promise<
 
     // 3. Restore rows that were deleted rather than moved. ON CONFLICT DO NOTHING because
     //    the winner may legitimately have recreated an equivalent row since.
-    for (const [table, rows] of Object.entries(deleted)) {
+    //
+    //    Only the person's own data comes back. Archives written before derived rows stopped
+    //    being archived still hold AI briefs, Radar cards and embeddings, and replaying those
+    //    brought back data a "delete AI data" had removed (`merge-archive.ts`).
+    for (const table of RESTORABLE_ARCHIVE_TABLES) {
+      const rows = deleted[table];
       if (!rows?.length) continue;
       statements.push(
         tx.execute(sql`

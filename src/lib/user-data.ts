@@ -103,6 +103,7 @@ import {
   waitlistPollVotes,
 } from "@/db/schema";
 import { cancelOrQueue } from "@/lib/billing-cancel";
+import { DERIVED_ARCHIVE_TABLES } from "@/lib/merge-archive";
 import { purgeCapturePhotosForUser } from "@/lib/capture-photos";
 import { recomputeRecruiterRating,
   RECRUITER_DELETED_CREATOR,
@@ -244,6 +245,17 @@ type CategoryStep = {
   run: (db: Db, userId: string) => Promise<void>;
 };
 
+/**
+ * Remove `keys` from every merge archive's `deleted` map for this user. The archive keeps JSON
+ * copies of rows a merge removed, so that an undo can put them back; a category delete must
+ * reach those copies too, or "delete" is undone by "undo merge" (`merge-archive.ts`).
+ */
+async function stripMergeArchives(db: Db, userId: string, keys: readonly string[]) {
+  let expr = sql`deleted`;
+  for (const key of keys) expr = sql`${expr} - ${key}::text`;
+  await db.execute(sql`UPDATE contact_merges SET deleted = ${expr} WHERE user_id = ${userId} AND deleted <> '{}'::jsonb`);
+}
+
 const STEPS: Record<DataCategory, CategoryStep> = {
   insights: {
     exports: [own(aiSuggestions), own(recommendations), own(recommendationFeedback), own(radarRuns), own(contactSignals), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs), own(relationshipRuns)],
@@ -284,6 +296,10 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // What Radar learned from the outside world about these contacts (headlines, posts).
       // Also cascades from contacts; deleted here for the same reason.
       await db.delete(contactSignals).where(eq(contactSignals.userId, userId));
+      // Merges written before derived rows stopped being archived hold JSON copies of
+      // briefs, Radar cards and embeddings (plaintext `content` included). Unmerge no longer
+      // restores them, but the copies themselves are the data being deleted.
+      await stripMergeArchives(db, userId, DERIVED_ARCHIVE_TABLES);
       // The learned model is derived from the data just deleted.
       await db
         .update(userSettings)
@@ -331,6 +347,9 @@ const STEPS: Record<DataCategory, CategoryStep> = {
         .where(eq(meetingTranscriptSegments.userId, userId));
       await db.delete(meetingSessions).where(eq(meetingSessions.userId, userId));
       await db.delete(interactions).where(eq(interactions.userId, userId));
+      // Archived mentions point at the interactions just deleted: restoring one would fail
+      // the whole unmerge on its foreign key, and the copy is note-derived data.
+      await stripMergeArchives(db, userId, ["interaction_mentions"]);
       // Short-lived by construction — claimed on pickup, swept on expiry — but a scan
       // started minutes before the account was deleted would otherwise leave a live grant
       // and a transcript of the user's notes behind it.
@@ -721,6 +740,8 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     counts: [tags],
     run: async (db, userId) => {
       await db.delete(tags).where(eq(tags.userId, userId));
+      // Same as the mentions in `notes`: an archived tagging names a tag that is gone.
+      await stripMergeArchives(db, userId, ["contact_tags"]);
     },
   },
   preferences: {

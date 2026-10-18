@@ -54,6 +54,8 @@ import {
   type ImportRevertStats,
 } from "@/db/schema";
 import { markCohortDirty } from "@/lib/closeness-materialize";
+import { deleteContactsForUser } from "@/lib/contact-delete";
+import { deleteMemoryChunks } from "@/lib/memory-chunks";
 import {
   REVERT_REFUSAL_MESSAGE,
   describeRevert,
@@ -101,6 +103,30 @@ function restoreStatement(contactId: string, userId: string, snap: ImportRevertS
         updated_at           = now()
     WHERE id = ${contactId}::uuid AND user_id = ${userId}
   `;
+}
+
+/** Contacts per `deleteContactsForUser` call: each statement carries the whole id list. */
+const REVERT_DELETE_CHUNK = 100;
+
+/**
+ * Clear the raw source rows (a LinkedIn message thread, a contact row, a chat transcript) of
+ * the people this import no longer has: their contact was removed by the undo, or since. The
+ * row and its status stay, so the import's counts still add up; the copy of what the file said
+ * about a person the user just removed does not. Rows that never produced a contact (failed,
+ * skipped) keep theirs: the import's detail view lists them.
+ *
+ * Shared by `revertImport` and the import undo (`performUndo`).
+ */
+export async function clearRemovedPayloads(userId: string, importId: string): Promise<void> {
+  const db = await getDb();
+  await db.execute(sql`
+    UPDATE import_job_rows r
+       SET payload = '{}'::jsonb, revert_snapshot = NULL
+     WHERE r.import_id = ${importId}::uuid AND r.user_id = ${userId} AND r.status = 'done'
+       AND r.payload <> '{}'::jsonb
+       AND (r.contact_id IS NULL
+            OR NOT EXISTS (SELECT 1 FROM contacts c WHERE c.id = r.contact_id AND c.user_id = ${userId}))
+  `);
 }
 
 /** Two timestamps are the same write if they agree to the millisecond. */
@@ -208,17 +234,13 @@ export async function revertImport(
 
     stats.contactsKept = candidates.length - deletable.length;
 
-    if (deletable.length > 0) {
-      // Interactions, reminders, embeddings, identities, tags and duplicate suggestions all
-      // cascade or null out from the contact — see the REFERENCES clauses in the bootstrap
-      // DDL — so this one delete is the whole removal.
-      const deleted = await db
-        .delete(contacts)
-        .where(and(eq(contacts.userId, userId), inArray(contacts.id, deletable)))
-        // Bare `.returning()`, not a field selector: this project's Drizzle version types
-        // `delete().returning()` as zero-argument. The rows are only counted.
-        .returning();
-      stats.contactsDeleted = deleted.length;
+    // Through `deleteContactsForUser`, the same removal as deleting a person by hand: the
+    // cascades alone left avatar objects, merge archives, chat attachments, search passages
+    // of group notes and id references in plain columns behind. Chunked like the import
+    // undo, because every statement there carries the whole id list.
+    for (let i = 0; i < deletable.length; i += REVERT_DELETE_CHUNK) {
+      const { deletedIds } = await deleteContactsForUser(userId, deletable.slice(i, i + REVERT_DELETE_CHUNK));
+      stats.contactsDeleted = (stats.contactsDeleted ?? 0) + deletedIds.length;
     }
   }
 
@@ -262,12 +284,20 @@ export async function revertImport(
     .where(and(eq(interactions.userId, userId), eq(interactions.importId, importId)))
     .returning();
   stats.interactionsDeleted = deletedInteractions.length;
+  // `memory_chunks.source_id` has no foreign key, so nothing cascades: without this, every
+  // passage of the reverted messages stayed searchable (`privacy/probe-selective-deletion.ts`, S3).
+  await deleteMemoryChunks(userId, {
+    sourceKind: "interaction",
+    sourceIds: deletedInteractions.map((row) => row.id),
+  });
 
   const deletedReminders = await db
     .delete(reminders)
     .where(and(eq(reminders.userId, userId), eq(reminders.importId, importId)))
     .returning();
   stats.remindersDeleted = deletedReminders.length;
+
+  await clearRemovedPayloads(userId, importId);
 
   await db
     .update(imports)

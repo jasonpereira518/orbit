@@ -10,6 +10,7 @@ import { runAiBatchSweep } from "@/lib/ai-batch-apply";
 import { resumeStalledImports } from "@/lib/import-stall";
 import { resumeStrandedPurges } from "@/lib/user-data";
 import { retryQueuedCancellations } from "@/lib/billing-cancel";
+import { expireMergeArchives } from "@/lib/contact-merge";
 import { sweepOrphanedAccounts } from "@/lib/clerk-orphan-sweep";
 import { isClerkConfigured } from "@/lib/demo-account";
 import { sweepAbandonedMeetingSessions } from "@/lib/meeting-sessions";
@@ -29,7 +30,7 @@ import {
 import { recalibrateCloseness } from "@/lib/closeness-cohort";
 import { findStaleCohorts } from "@/lib/closeness-materialize";
 import { accountCanEmbed, kickEmbeddingBackfill, runEmbeddingBackfill } from "@/lib/embedding-backfill";
-import { usersWithPendingMemoryWork } from "@/lib/memory-backfill";
+import { pruneOrphanedMemoryChunksForAll, usersWithPendingMemoryWork } from "@/lib/memory-backfill";
 import {
   kickLinkedInTimelineBackfill,
   usersWithPendingTimelineEvents,
@@ -178,6 +179,10 @@ export async function GET(request: Request) {
     billingCancelsFound: 0,
     billingCancelsDone: 0,
     billingCancelsStillFailing: 0,
+    /** Merges past their undo window whose copy of the merged-away person was cleared. */
+    mergeArchivesExpired: 0,
+    /** Search passages whose interaction no longer exists (a deleted note, still quotable). */
+    orphanPassagesPruned: 0,
     /** Missed user.deleted webhooks: accounts checked against Clerk, and purged. */
     orphansExamined: 0,
     orphansPurged: 0,
@@ -280,6 +285,22 @@ export async function GET(request: Request) {
       if (cancels.stillFailing > 0) status = "partial";
     } catch {
       status = "partial";
+    }
+
+    try {
+      // A merge keeps a full copy of the merged-away person so it can be undone. Past the
+      // undo window that copy is cleared; the row stays as the id alias.
+      stats.mergeArchivesExpired = await expireMergeArchives({ now: new Date() });
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.merge-archives" });
+    }
+
+    try {
+      stats.orphanPassagesPruned = await pruneOrphanedMemoryChunksForAll();
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.orphan-passages" });
     }
 
     try {

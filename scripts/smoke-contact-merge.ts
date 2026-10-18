@@ -428,9 +428,12 @@ async function main() {
       (await scalar<number>(sql`SELECT count(*)::int AS v FROM recommendations WHERE contact_id = ${winner}::uuid`)) === 1
     );
     await unmergeContacts(USER, mergeId);
+    // Radar cards are derived and no longer archived (`merge-archive.ts`): the next Radar run
+    // raises whatever is true about each person again, and nothing a "delete AI data" removed
+    // can come back through an undo.
     check(
-      "unmerge restores the loser's card",
-      (await scalar<number>(sql`SELECT count(*)::int AS v FROM recommendations WHERE contact_id = ${loser}::uuid`)) === 1
+      "unmerge does not resurrect the loser's derived card",
+      (await scalar<number>(sql`SELECT count(*)::int AS v FROM recommendations WHERE contact_id = ${loser}::uuid`)) === 0
     );
     check(
       "and moves the ban back",

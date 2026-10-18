@@ -7,7 +7,8 @@
  * every export in it, and tsc cannot see the problem.
  */
 
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, ne, sql } from "drizzle-orm";
+import { MERGE_EXPIRED_STATUS, MERGE_UNDO_DAYS } from "@/lib/merge-archive";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { contactMerges, contacts } from "@/db/schema";
@@ -91,7 +92,15 @@ export async function listRecentMerges(limit = 20): Promise<RecentMerge[]> {
       loserName: sql<string | null>`case when jsonb_typeof(${contactMerges.loserSnapshot} -> 'full_name') = 'string' then ${contactMerges.loserSnapshot} ->> 'full_name' end`,
     })
     .from(contactMerges)
-    .where(eq(contactMerges.userId, userId))
+    // Only merges that can still be undone: past `MERGE_UNDO_DAYS` the archive's copy of the
+    // merged-away person is cleared (`expireMergeArchives`) and the row is only an alias.
+    .where(
+      and(
+        eq(contactMerges.userId, userId),
+        ne(contactMerges.status, MERGE_EXPIRED_STATUS),
+        gt(contactMerges.mergedAt, new Date(Date.now() - MERGE_UNDO_DAYS * 86_400_000))
+      )
+    )
     .orderBy(desc(contactMerges.mergedAt))
     // Bounded: a server action's arguments come from any client.
     .limit(Math.min(Math.max(Math.trunc(Number(limit) || 20), 1), 100));

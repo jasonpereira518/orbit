@@ -920,8 +920,10 @@ export const contactMerges = pgTable(
      * `in_progress` until every statement has landed. Only relevant if a merge ever has to
      * run outside a single atomic batch; a stuck row means the loser is still alive with
      * some of its children already moved, which is recoverable by re-running the merge.
+     * `expired` once the undo window has passed and the copies were cleared (the row stays as
+     * the id alias) — see `src/lib/merge-archive.ts`.
      */
-    status: text("status").$type<"in_progress" | "done">().default("in_progress").notNull(),
+    status: text("status").$type<"in_progress" | "done" | "expired">().default("in_progress").notNull(),
     /** Why these two were considered the same person, for the undo list. */
     reason: text("reason"),
     confidence: real("confidence"),

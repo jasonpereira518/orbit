@@ -341,6 +341,29 @@ export async function usersWithPendingMemoryWork(
  * quoting a note the user deleted. That is the one kind of staleness here that is a privacy
  * problem rather than a quality one.
  */
+/**
+ * The hourly backstop for every account at once: `pruneOrphanedMemoryChunks` was written but
+ * never scheduled, so any path that removed interactions without `deleteMemoryChunks` (an
+ * import revert did) left passages quoting deleted notes searchable indefinitely. Bounded per
+ * run; what is left is picked up next hour.
+ */
+export async function pruneOrphanedMemoryChunksForAll(limit = 5000): Promise<number> {
+  const db = await getDb();
+  const removed = rowsOf<{ id: string }>(
+    await db.execute(sql`
+      delete from memory_chunks
+       where id in (
+         select m.id from memory_chunks m
+          where m.source_kind = 'interaction'
+            and not exists (select 1 from interactions i where i.id = m.source_id and i.user_id = m.user_id)
+          limit ${limit}
+       )
+      returning id
+    `)
+  );
+  return removed.length;
+}
+
 export async function pruneOrphanedMemoryChunks(userId: string): Promise<number> {
   const db = await getDb();
   // RETURNING so the count is the rows actually removed — a driver's `rowCount` is not

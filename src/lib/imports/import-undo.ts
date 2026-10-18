@@ -2,6 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { imports, type ImportJobRowPayload, type ImportStats } from "@/db/schema";
 import { deleteContactsForUser } from "@/lib/contact-delete";
+import { clearRemovedPayloads } from "@/lib/import-revert";
 import { getAdapter } from "@/lib/import-adapters";
 import { fingerprintContact } from "@/lib/imports/import-provenance";
 import {
@@ -349,6 +350,10 @@ export async function performUndo(
     index += chunk.length;
   }
   const done = index >= targets.length;
+
+  // The removed people's raw rows go once the run is finished (a resumed run still needs to
+  // read nothing of theirs: their contacts are already gone). See `clearRemovedPayloads`.
+  if (done) await clearRemovedPayloads(userId, importId);
 
   const db = await getDb();
   await db
