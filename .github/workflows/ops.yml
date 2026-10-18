@@ -55,6 +55,11 @@ on:
     - cron: "17 4 * * *"
     # Cloud notes: every 30 minutes at :29 and :59, clear of every */10, */15 and hourly line above.
     - cron: "29,59 * * * *"
+    # Once a day: Stripe's live subscriptions against user_settings (the independent check the
+    # revenue ledger cannot make of itself). 06:23 UTC, clear of the :07/:23 hourly jobs' work.
+    - cron: "23 6 * * *"
+    # Mondays: the weekly product digest to Slack. 13:47 UTC is the morning in the Americas.
+    - cron: "47 13 * * 1"
   workflow_dispatch:
 
 # One group PER SCHEDULE, never one for the whole workflow. GitHub keeps at most one
@@ -329,6 +334,19 @@ jobs:
           curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/radar/digest"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      # Stripe vs database reconciliation (daily). Counts only leave the job; a mismatch opens
+      # the billing.stripe_drift alert on the next ops sweep. See
+      # src/app/api/ops/billing-reconcile/route.ts.
+      - name: Reconcile Stripe subscriptions (daily)
+        if: github.event.schedule == '23 6 * * *' && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 110 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/ops/billing-reconcile"
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}

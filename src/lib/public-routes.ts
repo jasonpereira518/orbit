@@ -75,6 +75,7 @@ export const PUBLIC_ROUTES = [
   "/api/relationships/run",
   "/api/ops/sweep",
   "/api/ops/speech-usage",
+  "/api/ops/billing-reconcile",
   "/api/sync/run",
   "/api/jobs/feed/sweep",
   // Radar's nightly pass, hourly news sweep and Monday email — same CRON_SECRET gate, same
