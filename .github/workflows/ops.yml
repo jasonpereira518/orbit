@@ -351,6 +351,18 @@ jobs:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
 
+      # The weekly product digest (Mondays). Counts only, posted to the ops Slack channel. See
+      # src/app/api/ops/weekly-digest/route.ts; add ?dry=1 to read it without posting.
+      - name: Post the weekly digest (Mondays)
+        if: github.event.schedule == '47 13 * * 1' && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 110 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/ops/weekly-digest"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
       # Deepgram usage reconciliation (daily). Compares what Deepgram billed each meeting
       # against what the browser self-reported, and alerts on the gap — see
       # src/app/api/ops/speech-usage/route.ts.
