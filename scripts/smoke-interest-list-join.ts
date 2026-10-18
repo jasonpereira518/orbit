@@ -219,6 +219,7 @@ async function joinPath() {
   check("a bad address is refused with the form's copy", !bad.ok && bad.message === "That address doesn't look right.");
 
   // --- rate limit: the eleventh submit from one IP gets a fake ticket and no row
+  const limitedFrom = Date.now() - 1_000;
   for (let i = 1; i <= 10; i += 1) {
     const r = await joinInterestListCore({ ...base, email: `${PREFIX}rl${i}@example.test` }, ctx("rl"));
     check(`submit ${i} of 10 lands`, r.ok && Boolean(await rowFor(`${PREFIX}rl${i}@example.test`)));
@@ -227,9 +228,11 @@ async function joinPath() {
   check("eleventh submit still answers ok", eleventh.ok);
   check("eleventh submit writes no row", (await rowFor(`${PREFIX}rl11@example.test`)) === undefined);
   // The human the limiter dropped is COUNTED, with nothing about them (audit D6).
+  // (Earlier smokes sharing this database may have left the same event behind.)
+  const limitedSince = new Date(limitedFrom);
   let limited = [] as Array<typeof productEvents.$inferSelect>;
   for (let i = 0; i < 60 && limited.length === 0; i += 1) {
-    limited = await db.select().from(productEvents).where(eq(productEvents.name, "waitlist_join_limited"));
+    limited = (await db.select().from(productEvents).where(eq(productEvents.name, "waitlist_join_limited"))).filter((e) => e.occurredAt >= limitedSince);
     if (limited.length === 0) await new Promise((r) => setTimeout(r, 25));
   }
   check("a rate-limited join is counted as waitlist_join_limited", limited.length === 1 && limited[0]?.properties.reason === "rate_limited");

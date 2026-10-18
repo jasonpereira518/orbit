@@ -20,7 +20,7 @@ import "./smoke/_env";
 
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { eq, like } from "drizzle-orm";
+import { eq, inArray, like } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { interestListSignups, productEvents, rateLimitBuckets, userSettings } from "../src/db/schema";
 import { audienceFor } from "../src/lib/broadcasts";
@@ -55,8 +55,14 @@ async function eventsNamed(name: string, want: number, filter?: (r: typeof produ
   return (await db.select().from(productEvents).where(eq(productEvents.name, name))).filter((r) => (filter ? filter(r) : true));
 }
 
+const WAITLIST_EVENTS = ["waitlist_shared", "waitlist_email_sent", "waitlist_join_limited"];
+
 run(async () => {
   const db = await getDb();
+  // Other smokes in the same database emit these events too (their joins send mocked mail), and
+  // events are written after the call returns: start from none so the counts below are ours.
+  await db.delete(productEvents).where(inArray(productEvents.name, WAITLIST_EVENTS));
+  await db.delete(interestListSignups).where(like(interestListSignups.email, `${PREFIX}%`));
   process.env.ADMIN_USER_IDS = OPERATOR;
   const row = (n: string, extra: Record<string, unknown> = {}) => ({
     email: `${PREFIX}${n}@example.test`,
@@ -159,5 +165,7 @@ run(async () => {
   await db.delete(interestListSignups).where(like(interestListSignups.email, `${PREFIX}%`));
   await db.delete(userSettings).where(eq(userSettings.userId, OPERATOR));
   await db.delete(userSettings).where(eq(userSettings.userId, "user_smoke_wla_emailmatch"));
+  await db.delete(productEvents).where(inArray(productEvents.name, WAITLIST_EVENTS));
+  delete process.env.ADMIN_USER_IDS;
   console.log("\nwaitlist analytics: all checks passed");
 });
