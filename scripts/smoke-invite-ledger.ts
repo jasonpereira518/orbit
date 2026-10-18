@@ -18,10 +18,11 @@
  */
 import "./smoke/_env";
 
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { and, eq, like } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { adminAuditLog, interestListSignups, productEvents, siteInvites, userSettings } from "../src/db/schema";
+import { adminAuditLog, interestListSignups, productEvents, siteInvites, userSettings, webhookDeliveries } from "../src/db/schema";
+import { POST as clerkPost } from "../src/app/api/webhooks/clerk/route";
 import { joinInterestListCore } from "../src/lib/interest-list-join";
 import {
   SiteInviteError,
@@ -36,6 +37,11 @@ import { ensureUserSettings } from "../src/lib/user-settings";
 import { purgeUserData } from "../src/lib/user-data";
 import { run } from "./smoke/_env";
 
+// A real base64 secret, so the HMAC below is a Standard Webhooks signature the route accepts.
+const SECRET_BYTES = Buffer.from("orbit-smoke-ledger-signing-secret");
+process.env.CLERK_WEBHOOK_SIGNING_SECRET = `whsec_${SECRET_BYTES.toString("base64")}`;
+
+const U_WEBHOOK = "user_smoke_ledger_webhook";
 const ADMIN = "user_smoke_ledger_admin";
 const U_MAIN = "user_smoke_ledger_main";
 const U_EMAIL = "user_smoke_ledger_email";
@@ -101,7 +107,8 @@ async function cleanup() {
   const db = await getDb();
   await db.delete(siteInvites).where(like(siteInvites.email, `${PREFIX}%`));
   await db.delete(interestListSignups).where(like(interestListSignups.email, `${PREFIX}%`));
-  for (const u of [U_MAIN, U_EMAIL, U_DIRECT, U_COOKIE, U_EXISTING]) {
+  await db.delete(webhookDeliveries).where(like(webhookDeliveries.eventId, "msg_smoke_ledger_%"));
+  for (const u of [U_MAIN, U_EMAIL, U_DIRECT, U_COOKIE, U_EXISTING, U_WEBHOOK]) {
     await db.delete(userSettings).where(eq(userSettings.userId, u));
     await db.delete(productEvents).where(eq(productEvents.userId, u));
   }
@@ -312,6 +319,57 @@ run(async () => {
     .from(adminAuditLog)
     .where(and(eq(adminAuditLog.adminUserId, ADMIN), eq(adminAuditLog.action, "site.invite.revoke")));
   check("…and the audit row is still written", revokeAudit.length === 1);
+
+  console.log("\nThe real Clerk webhook links the account by id…");
+  // A fresh waitlist person and invite, claimed through the route Clerk calls, signed for real.
+  const hookClerk = fakeClerk();
+  const hookEmail = `${PREFIX}hook@example.test`;
+  await joinInterestListCore(
+    { email: hookEmail, website: "", elapsedMs: 9_000 },
+    { ip: "203.0.113.60", attribution: { referrer: "producthunt.com", utmSource: "producthunt", utmMedium: null, utmCampaign: null, landingPath: "/" }, sendWelcome: async () => true }
+  );
+  await inviteToSite({ adminUserId: ADMIN, email: hookEmail, notify: false, wave: "w3" }, { clerk: hookClerk.clerk });
+  const hookMeta = hookClerk.created[0]!.publicMetadata;
+  const signed = (deliveryId: string) => {
+    const body = JSON.stringify({
+      type: "user.created",
+      object: "event",
+      data: {
+        id: U_WEBHOOK,
+        object: "user",
+        // A different address than the invitation went to: the ids must carry the link.
+        email_addresses: [{ id: "idn_1", email_address: "Signed.Up.Elsewhere@Example.test" }],
+        primary_email_address_id: "idn_1",
+        first_name: "Hook",
+        last_name: "User",
+        image_url: null,
+        legal_accepted_at: null,
+        public_metadata: hookMeta,
+      },
+    });
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const signature = createHmac("sha256", SECRET_BYTES).update(`${deliveryId}.${timestamp}.${body}`).digest("base64");
+    return new Request("http://localhost/api/webhooks/clerk", {
+      method: "POST",
+      headers: { "content-type": "application/json", "svix-id": deliveryId, "svix-timestamp": timestamp, "svix-signature": `v1,${signature}` },
+      body,
+    });
+  };
+  const post = (req: Request) => clerkPost(req as unknown as Parameters<typeof clerkPost>[0]);
+  check("the webhook accepts the signed user.created", (await post(signed("msg_smoke_ledger_1"))).status === 200);
+  const [hookInvite] = await db.select().from(siteInvites).where(eq(siteInvites.email, hookEmail));
+  const [hookAcct] = await db.select().from(userSettings).where(eq(userSettings.userId, U_WEBHOOK));
+  const [hookWait] = await db.select().from(interestListSignups).where(eq(interestListSignups.email, hookEmail));
+  check("the invite is accepted by the account that signed up under another email", hookInvite?.acceptedUserId === U_WEBHOOK && hookInvite.waveId === "w3");
+  check("the account carries the invite and waitlist ids, founding pricing, and the waitlist's channel", hookAcct?.inviteId === hookInvite!.id && hookAcct.interestSignupId === hookWait!.id && hookAcct.foundingEligible === true && hookAcct.signupAttributionSource === "waitlist" && hookAcct.signupUtmSource === "producthunt");
+  check("the waitlist row is converted by id", hookWait?.userId === U_WEBHOOK && hookWait.convertedAt instanceof Date);
+  const hookAccepted = await events("invite_accepted", (p) => p.invite_id === hookInvite!.id);
+  check("invite_accepted is emitted from the webhook surface", hookAccepted.length === 1 && hookAccepted[0]?.surface === "webhook");
+  const convertedAt = hookWait!.convertedAt!.getTime();
+  await new Promise((r) => setTimeout(r, 20));
+  check("a retried delivery of the same event is 200", (await post(signed("msg_smoke_ledger_2"))).status === 200);
+  const [hookWait2] = await db.select().from(interestListSignups).where(eq(interestListSignups.email, hookEmail));
+  check("…and changes nothing", hookWait2?.convertedAt?.getTime() === convertedAt && (await events("invite_accepted", (p) => p.invite_id === hookInvite!.id)).length === 1);
 
   console.log("\nA deleted account takes its waitlist row with it…");
   await purgeUserData(U_MAIN, { keepSettings: false });
