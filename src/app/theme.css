@@ -3375,6 +3375,18 @@ html[data-celebration-handoff] [data-app-logo] {
   --tier-sheen-ink: #242b34;
 }
 
+/*
+ * Fraunces' true italic for italic text set in the display serif (the pricing and waitlist
+ * headlines, the landing finale). It is a separate, non-preloaded face (see layout.tsx), so
+ * it is named here: italic text inside an element whose font is the display serif, whether
+ * via `font-heading` or `font-[family-name:var(--font-display)]`, and such an element that
+ * is itself italic. Zero specificity, so anything more specific still wins.
+ */
+:where(.font-heading, [class*="var(--font-display)"]) :where(em, i, .italic),
+:where(.font-heading, [class*="var(--font-display)"]):where(.italic) {
+  font-family: var(--font-display-italic), var(--font-display), "Fraunces", ui-serif, Georgia, serif;
+}
+
 /* ── Accessibility baseline ──
  * Unlayered on purpose: these must win over any utility class, the way the user agent's own
  * accessibility behaviour would. See A11Y_RESPONSIVE_AUDIT.md for the findings behind each. */

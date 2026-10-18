@@ -15,6 +15,7 @@
     "test:smoke": "tsx scripts/run-smoke.ts",
     "test:check": "tsx scripts/run-smoke.ts --check",
     "perf:pages": "tsx scripts/smoke-page-budgets.ts",
+    "perf:bundle": "node scripts/check-bundle-budget.mjs",
     "analyze": "next experimental-analyze",
     "db:generate": "drizzle-kit generate",
     "db:push:DANGEROUS": "drizzle-kit push",

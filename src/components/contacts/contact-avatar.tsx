@@ -6,6 +6,7 @@ import {
   AvatarImage,
 } from "@/components/ui/avatar";
 import {
+  avatarRouteUrl,
   isUnusableAvatarUrl,
   resolveContactPhotoUrl,
 } from "@/lib/contact-avatar-url";
@@ -45,7 +46,7 @@ export function ContactAvatar({
   // Prefer same-origin avatar route so LinkedIn CDN / data URLs load reliably.
   const photoUrl =
     contactId && (hasStoredPhoto || resolveOnDemand)
-      ? `/api/avatars/${contactId}`
+      ? avatarRouteUrl(contactId, hasStoredPhoto ? profileImageUrl : null)
       : resolveContactPhotoUrl(profileImageUrl);
   const gender = guessGenderFromFirstName(firstName, fullName);
   const fallbackSrc = genderAvatarSrc(gender);
