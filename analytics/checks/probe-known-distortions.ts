@@ -1,6 +1,7 @@
 /**
- * Seeded probe: reproduces, on FAKE data in a throwaway local PGlite database, the places
- * where Orbit's current admin numbers are known or suspected to mislead.
+ * Seeded regression probe: reproduces, on FAKE data in a throwaway local PGlite database, the
+ * places where Orbit's admin numbers used to mislead (ANALYTICS_AUDIT.md), and fails if any
+ * fixed defect comes back. Before the analytics work 10 of its 12 claims reproduced.
  *
  * It never touches production: the smoke preamble deletes DATABASE_URL and points PGlite at
  * a temp directory. Nothing here is a unit test of intended behaviour — each probe states a
@@ -33,10 +34,17 @@ const HOUR = 3_600_000;
 const now = new Date();
 const ago = (ms: number) => new Date(now.getTime() - ms);
 
-const results: Array<{ claim: string; reproduced: boolean; detail: string }> = [];
-function probe(claim: string, reproduced: boolean, detail: string) {
-  results.push({ claim, reproduced, detail });
-  console.log(`${reproduced ? "REPRODUCED " : "not seen   "} ${claim}\n             ${detail}`);
+/**
+ * `bug`: a defect the analytics work fixed; reproducing it again is a REGRESSION and fails the run.
+ * `design`: a property of the cookieless approach that is documented on screen, not a defect.
+ * `control`: a case that must keep behaving as it does.
+ */
+type Kind = "bug" | "design" | "control";
+const results: Array<{ claim: string; reproduced: boolean; detail: string; kind: Kind }> = [];
+function probe(claim: string, reproduced: boolean, detail: string, kind: Kind = "bug") {
+  results.push({ claim, reproduced, detail, kind });
+  const label = kind === "bug" ? (reproduced ? "REGRESSION " : "fixed      ") : kind === "design" ? (reproduced ? "by design  " : "changed?    ") : reproduced ? "holds      " : "BROKEN     ";
+  console.log(`${label} ${claim}\n             ${detail}`);
 }
 
 async function main() {
@@ -78,7 +86,8 @@ async function main() {
     probe(
       "A1: one person on three days is reported as three 'unique' visitor-days",
       delta === 3,
-      `trafficTotals.visitorDays rose by ${delta} for ONE person (hash rotates at UTC midnight; no key joins the days)`
+      `trafficTotals.visitorDays rose by ${delta} for ONE person (hash rotates at UTC midnight; no key joins the days)`,
+      "design"
     );
   }
 
@@ -97,7 +106,8 @@ async function main() {
     probe(
       "A2: a single session across UTC midnight counts as two visitor-days",
       after.visitorDays - before.visitorDays === 2 && after.sessions - before.sessions === 1,
-      `visitorDays +${after.visitorDays - before.visitorDays}, sessions +${after.sessions - before.sessions}`
+      `visitorDays +${after.visitorDays - before.visitorDays}, sessions +${after.sessions - before.sessions}`,
+      "design"
     );
   }
 
@@ -142,7 +152,8 @@ async function main() {
     probe(
       "B3 (control): the same admin is correctly excluded from 'Opened Orbit' (viewersTrend)",
       last(viewersAfter).viewers - last(viewersBefore).viewers === 0,
-      `viewersTrend.viewers +${last(viewersAfter).viewers - last(viewersBefore).viewers}`
+      `viewersTrend.viewers +${last(viewersAfter).viewers - last(viewersBefore).viewers}`,
+      "control"
     );
 
     const rows = await loadAdminUserRows();
@@ -188,9 +199,9 @@ async function main() {
     const activatedDelta =
       funnelAfter.find((s) => s.label === "Activated")!.count - funnelBefore.find((s) => s.label === "Activated")!.count;
     probe(
-      "C2: /admin/analytics/funnel does NOT count that same account as Activated",
-      activatedDelta === 0,
-      `acquisitionFunnel.Activated +${activatedDelta} for an account /admin calls onboarded`
+      "C2: /admin and /admin/analytics/funnel disagree about that same account",
+      !(activatedDelta === 0 && onboarded === 0),
+      `overview Onboarded=${onboarded}, acquisitionFunnel.Activated +${activatedDelta}`
     );
     if (savedAdmins !== undefined) process.env.ADMIN_USER_IDS = savedAdmins;
   }
@@ -239,7 +250,8 @@ async function main() {
     probe(
       "E1: account deletion rewrites PAST 'new accounts' bars; churn never appears anywhere",
       addedBefore - addedAfter === 1 && lastTotalDrop === 1,
-      `'added' across past buckets fell by ${addedBefore - addedAfter}; running total fell by ${lastTotalDrop}; no table records the deletion as churn`
+      `'added' across past buckets fell by ${addedBefore - addedAfter}; running total fell by ${lastTotalDrop}. Past bars shrink by design (a deleted account is gone); churn is recorded in the ledger instead`,
+      "design"
     );
   }
 
@@ -259,8 +271,9 @@ async function main() {
     );
   }
 
-  const reproduced = results.filter((r) => r.reproduced).length;
-  console.log(`\n${reproduced} of ${results.length} claims reproduced on seeded data.`);
+  const regressions = results.filter((r) => (r.kind === "bug" && r.reproduced) || (r.kind === "control" && !r.reproduced));
+  console.log(`\n${results.length} probes, ${regressions.length} regression(s).`);
+  if (regressions.length > 0) process.exitCode = 1;
 }
 
 main()
