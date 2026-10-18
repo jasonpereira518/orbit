@@ -53,10 +53,12 @@ export function isInternalUser(userId: string | null | undefined): boolean {
 export function internalAccountSql(column: SQL): SQL {
   if (isDemoMode()) return sql`false`;
   const ids = internalUserIds();
-  const byKind = sql`EXISTS (
-    SELECT 1 FROM user_settings ak
-    WHERE ak.user_id = ${column} AND ak.account_kind IN ('internal', 'tester')
-  )`;
+  // An uncorrelated IN, NOT a correlated EXISTS: callers pass an UNQUALIFIED column (`user_id`),
+  // and inside `EXISTS (SELECT … FROM user_settings ak WHERE ak.user_id = user_id)` that name
+  // binds to the inner table, making the test true for everyone whenever any account is marked.
+  const byKind = sql`coalesce(${column} IN (
+    SELECT ak.user_id FROM user_settings ak WHERE ak.account_kind IN ('internal', 'tester')
+  ), false)`;
   if (ids.length === 0) return sql`(${byKind})`;
   return sql`(coalesce(${column} IN (${sql.join(
     ids.map((id) => sql`${id}`),

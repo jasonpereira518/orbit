@@ -28,6 +28,7 @@ import {
   outreachMessages,
   outreachProspects,
   pageViews,
+  reminders,
   userSettings,
 } from "../src/db/schema";
 import {
@@ -672,10 +673,28 @@ async function main() {
     // The operator's own account: in no stage at all.
     { userId: "fun_admin", email: "admin@example.com", createdAt: nowIso, onboardingCompletedAt: nowIso },
   ]);
-  await db.insert(contacts).values({
-    userId: "fun_active",
-    fullName: "Someone",
-  });
+  // Activated is "captured and acted within 7 days" (src/lib/activity.ts): a contact of the
+  // account's own AND one deliberate act. The four accounts that should count each get both.
+  const early = new Date(nowIso.getTime() + 3_600_000);
+  for (const userId of ["fun_active", "fun_lifetime", "fun_sub", "fun_refunded"]) {
+    await db.insert(contacts).values({ userId, fullName: "Someone", createdAt: early });
+    await db.insert(reminders).values({ userId, title: "Follow up", createdBy: "user", createdAt: early });
+  }
+  // The three near-misses the old definition scored as activated, and this one must not:
+  await db.insert(userSettings).values([
+    // Finished the tour (the timestamp) but never added anyone.
+    { userId: "fun_tour_flag", email: "tourflag@example.com", createdAt: nowIso, onboardingCompletedAt: nowIso },
+    // Added a person, then nothing.
+    { userId: "fun_contact_only", email: "contactonly@example.com", createdAt: nowIso },
+    // Only the guided tour's eight example people, plus a chat question.
+    { userId: "fun_tour_only", email: "touronly@example.com", createdAt: nowIso },
+  ]);
+  await db.insert(contacts).values({ userId: "fun_contact_only", fullName: "One Person", createdAt: early });
+  await db.insert(contacts).values(
+    Array.from({ length: 8 }, (_, i) => ({ userId: "fun_tour_only", fullName: `Example ${i}`, source: "tour-example", createdAt: early }))
+  );
+  const tourThread = await db.insert(chatThreads).values({ userId: "fun_tour_only" }).returning();
+  await db.insert(chatMessages).values({ threadId: tourThread[0]!.id, userId: "fun_tour_only", role: "user", content: "hi", createdAt: early });
   await db.insert(billingEvents).values({
     source: "stripe",
     eventId: `evt_${randomUUID()}`,
@@ -714,8 +733,8 @@ async function main() {
   const adminCounted = isDemoMode() ? 1 : 0;
   check(
     "accounts counted, Orbit's own left out",
-    delta("Created an account") === 6 + adminCounted,
-    `delta ${delta("Created an account")}; six fixture accounts plus fun_admin only in demo mode`
+    delta("Created an account") === 9 + adminCounted,
+    `delta ${delta("Created an account")}; nine fixture accounts plus fun_admin only in demo mode`
   );
   check(
     "activation is scored on mature accounts only",
@@ -723,9 +742,9 @@ async function main() {
     stage("Activated")?.ofLabel ?? "no label"
   );
   check(
-    "activation mirrors isOnboarded, not the bare column",
+    "activation is captured-and-acted, not the onboarding flag, a lone contact, or tour examples",
     delta("Activated") === 4 + adminCounted,
-    `delta ${delta("Activated")}; fun_active has a contact but no timestamp, fun_fresh is too new`
+    `delta ${delta("Activated")}; four accounts have a contact and a follow-up; the flag-only, contact-only and tour-only accounts must not count, and fun_fresh is too new`
   );
   check(
     "paid counts a Lifetime purchase as well as MRR, and not a full refund",
@@ -734,7 +753,7 @@ async function main() {
   );
   check(
     "an account older than the first recorded view is not counted",
-    delta("Created an account") === 6 + adminCounted,
+    delta("Created an account") === 9 + adminCounted,
     `delta ${delta("Created an account")}; fun_old predates tracking and must not be`
   );
   check(
@@ -1249,7 +1268,9 @@ async function main() {
 
   // Leave the shared database as we found it. 111 other scripts run against this same
   // PGlite directory, and several of them count users.
-  const fixtureUsers = ["fun_idle", "fun_active", "fun_lifetime", "fun_sub", "fun_old", "fun_refunded", "fun_fresh", "fun_admin"];
+  const fixtureUsers = ["fun_idle", "fun_active", "fun_lifetime", "fun_sub", "fun_old", "fun_refunded", "fun_fresh", "fun_admin", "fun_tour_flag", "fun_contact_only", "fun_tour_only"];
+  await db.delete(reminders).where(inArray(reminders.userId, fixtureUsers));
+  await db.delete(chatThreads).where(eq(chatThreads.userId, "fun_tour_only"));
   await db.delete(pageViews);
   await db.delete(contacts).where(inArray(contacts.userId, fixtureUsers));
   await db.delete(billingEvents).where(inArray(billingEvents.userId, fixtureUsers));

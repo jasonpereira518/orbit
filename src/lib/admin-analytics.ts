@@ -1,9 +1,9 @@
 import { sql } from "drizzle-orm";
-import { TOUR_EXAMPLE_SOURCE } from "@/lib/onboarding-examples/marker";
 import { getDb, rowsOf } from "@/db";
-import { series, type Grain } from "@/lib/admin-trends";
+import { bucketOf, series, type Grain } from "@/lib/admin-trends";
 import { num, toDate } from "@/lib/admin-metrics";
 import { internalAccountSql } from "@/lib/analytics-internal";
+import { activatedSql } from "@/lib/activity";
 
 /**
  * Read side of the traffic pipeline, for `/admin/analytics`. Writes live in
@@ -255,8 +255,8 @@ export async function trafficTrend(range: Range = "30d"): Promise<TrafficPoint[]
       ON pv.is_bot = false
      AND NOT ${internalRow()}
      AND pv.created_at >= ${from}
-     AND date_trunc(${grain}, pv.created_at) = spine.bucket_start
-    WHERE spine.bucket_start >= date_trunc(${grain}, coalesce((SELECT at FROM first), now()))
+     AND ${bucketOf(grain, sql`pv.created_at`)} = spine.bucket_start
+    WHERE spine.bucket_start >= ${bucketOf(grain, sql`coalesce((SELECT at FROM first), now())`)}
     GROUP BY spine.bucket_start
     ORDER BY spine.bucket_start
   `);
@@ -620,9 +620,11 @@ export async function acquisitionFunnel(
     now.getTime() - FUNNEL_MATURITY_DAYS * 86_400_000
   ).toISOString();
 
-  // `isOnboarded` in admin-metrics.ts is the JS form of the activation predicate: the column
-  // alone undercounts, because `needsOnboarding` treats any contact or import as onboarded
-  // and backfills the timestamp later. The two must not drift.
+  // ACTIVATED is `activatedSql` (src/lib/activity.ts), the one definition the Growth cohort
+  // table and the overview's Activation stage share: the account captured and acted within
+  // seven days of signing up. It used to be "finished onboarding OR has any contact OR has any
+  // import", which `needsOnboarding` backfills for anyone with data, so it measured having
+  // data, not using the product.
   //
   // The paid test is `mrr_delta_cents > 0` OR a lifetime purchase. The MRR test alone —
   // which is what `paidSignupsByChannel` uses, correctly, for a per-month figure — scores
@@ -639,9 +641,7 @@ export async function acquisitionFunnel(
     ),
     flagged AS (
       SELECT s.mature,
-             (s.onboarding_completed_at IS NOT NULL
-               OR EXISTS (SELECT 1 FROM contacts c WHERE c.user_id = s.user_id AND c.source IS DISTINCT FROM ${TOUR_EXAMPLE_SOURCE})
-               OR EXISTS (SELECT 1 FROM imports i WHERE i.user_id = s.user_id)) AS activated,
+             ${activatedSql(sql`s.user_id`, sql`s.created_at`)} AS activated,
              ((s.lifetime_purchased_at IS NOT NULL OR coalesce(m.bought, false))
                AND NOT (coalesce(m.cash_in, 0) > 0 AND coalesce(m.refunded, 0) >= m.cash_in)) AS paid
       FROM s
@@ -719,7 +719,7 @@ export async function acquisitionFunnel(
       of: mature,
       ofLabel: matureLabel,
       group: "accounts",
-      note: `only accounts at least ${FUNNEL_MATURITY_DAYS} days old, so a new signup is not a miss`,
+      note: `captured and acted within ${FUNNEL_MATURITY_DAYS} days · only accounts at least ${FUNNEL_MATURITY_DAYS} days old, so a new signup is not a miss`,
     },
     {
       label: "Paid",
