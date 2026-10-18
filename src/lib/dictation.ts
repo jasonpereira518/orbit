@@ -26,11 +26,11 @@ export const MAX_SESSION_MS = 300_000;
 /**
  * On DEEPGRAM only: this long with no words ends the session. Every second the socket is open
  * is billed on Orbit's key, silence included, so a mic left listening while someone reads the
- * answer was paying for nothing. Fifteen seconds is far past the pauses `SEGMENT_PAUSE_MS`
- * exists to survive — nobody stops mid-question for that long — and the browser engine, which
- * costs nothing, keeps the old behaviour.
+ * answer was paying for nothing. Thirty seconds is generous on purpose — twenty times the pause
+ * `SEGMENT_PAUSE_MS` closes a sentence on, long enough to stop and think or read something out
+ * — and the browser engine, which costs nothing, keeps the old behaviour.
  */
-export const DEEPGRAM_IDLE_STOP_MS = 15_000;
+export const DEEPGRAM_IDLE_STOP_MS = 30_000;
 
 /** Chrome spin-loops end→start→end when the mic device disappears mid-session. */
 export const RESTART_STORM_WINDOW_MS = 1000;

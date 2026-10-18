@@ -65,7 +65,9 @@ function ladder() {
 async function gate() {
   console.log("\nthe gate");
   const db = await getDb();
-  await db.delete(speechUsage).where(eq(speechUsage.userId, USER));
+  // The whole table: the credit gauge sums every account, this is the throwaway PGlite
+  // (`smoke/_env`), and other scripts' speech rows would otherwise move the rungs under us.
+  await db.delete(speechUsage);
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
   await db.insert(userSettings).values({ userId: USER });
 
@@ -108,7 +110,14 @@ async function gate() {
 run(async () => {
   pricing();
   ladder();
-  await gate();
+  try {
+    await gate();
+  } finally {
+    // Always: a run that failed partway must not leave a spent credit for the next script.
+    const db = await getDb();
+    await db.delete(speechUsage).where(eq(speechUsage.userId, USER));
+    forgetSpeechCredit();
+  }
   if (failures) throw new Error(`smoke-speech-credit: ${failures} failure(s)`);
   console.log("\nsmoke-speech-credit: all checks passed");
 });

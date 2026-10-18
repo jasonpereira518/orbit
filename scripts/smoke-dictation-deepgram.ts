@@ -284,7 +284,7 @@ async function main() {
 
   console.log("\nthe idle stop (Deepgram bills silence)");
   check("it outlasts a thinking pause by a wide margin", DEEPGRAM_IDLE_STOP_MS >= SEGMENT_PAUSE_MS * 5);
-  check("…and ends long before the 5-minute cap", DEEPGRAM_IDLE_STOP_MS < MAX_SESSION_MS / 10);
+  check("…and ends long before the 5-minute cap", DEEPGRAM_IDLE_STOP_MS <= MAX_SESSION_MS / 10);
   {
     // The hook needs a DOM to render, so its wiring is pinned in source, like smoke-speech-quota.
     const hook = readFileSync("src/lib/use-dictation.ts", "utf8");

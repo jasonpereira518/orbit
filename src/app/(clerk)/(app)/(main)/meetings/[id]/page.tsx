@@ -6,7 +6,7 @@ import { RenderStamp } from "@/components/layout/render-stamp";
 import { formatMeetingDuration } from "@/lib/format-meeting-duration";
 import { requireUserId } from "@/lib/auth";
 import { formatElapsed } from "@/lib/format-elapsed";
-import { speakerLabel, speakerNames } from "@/lib/meeting-digest";
+import { speakerDisplayNames, speakerLabel } from "@/lib/meeting-digest";
 import { getMeetingTranscript } from "@/lib/meeting-sessions";
 import { MeetingRecapButton } from "@/components/meetings/meeting-recap-button";
 import { isSurfaceLive } from "@/lib/surface-visibility";
@@ -73,8 +73,9 @@ export default async function MeetingDetailPage({
   const digest = session.digest;
   const title = session.title?.trim() || digest?.title?.trim() || "Untitled meeting";
   const guests = (session.attendees ?? []).map((a) => a.name);
-  // The same 1:1 rule the summary used: one guest and one other voice is that guest.
-  const voices = speakerNames(segments, guests);
+  // The same 1:1 rule the summary used (one guest and one other voice is that guest), and
+  // "Speaker 1, 2, ..." for everyone else, in order of first appearance.
+  const voices = speakerDisplayNames(segments, guests);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">

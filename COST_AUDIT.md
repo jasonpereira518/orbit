@@ -170,20 +170,25 @@ with the README queries.
 
 | Plan | Net revenue/mo after Stripe | Light | Typical | Heavy | Abusive |
 |---|---|---|---|---|---|
-| Free | $0 | $0.05 | $0.19 | **$0.84** (all caps used) | $8.74 (modified client) |
-| Pro | $7.99 | $0.21 | $2.21 (list: $1.28) | **$9.63** (list: $5.52) | $21 |
-| Max | $18.03 | $0.40 | $4.38 (list: $2.50) | **$19.08** (list: $10.86) | $31 |
+| Free | $0 | $0.07 | $0.27 | **$1.23** (all caps used) | $9.14 (modified client) |
+| Pro | $7.99 | $0.33 | $3.51 (list: $2.01) | **$15.30** (list: $8.72) | $27 |
+| Max | $18.03 | $0.60 | $6.54 (list: $3.73) | **$28.52** (list: $16.19) | $40 |
+
+Round 3 (2026-10-18): these use the 1.5× speech allowances (Free 90 min, Pro 8 h + 8 h, Max
+15 h + 15 h) and exclude included AI. Add up to $0.50 (Free), $3 (Pro) or $6.50 (Max) a month
+for included AI, now resumed.
 
 Lifetime is admin-granted and not modelled.
 
-- **Pro and Max lose money on a user who maxes their speech allowance** at the 2× rate (−$1.64
-  and −$1.04 a month). At list price they keep 31% and 40%.
+- **Pro and Max lose money on a user who maxes the 1.5× speech allowance** at the 2× rate
+  (−$7.31 and −$10.49 a month), and roughly break even at list price (−$0.73 and +$1.84). Most
+  users are light or typical; the heavy ones are what the credit is paying for.
 - **The $15,000 Deepgram credit** (95% of it usable before the last rung) lasts:
 
   | Accounts | Deepgram / month (2× rate) | Credit lasts (2× rate) | Credit lasts (list price) |
   |---|---|---|---|
-  | 1,000 | ~$630 | ~22 months | ~41 months |
-  | 10,000 | ~$6,300 | ~2.3 months | ~4 months |
+  | 1,000 | ~$890 | ~16 months | ~29 months |
+  | 10,000 | ~$8,900 | ~1.6 months | ~2.9 months |
 
   While it lasts, speech costs no cash. After it, the margins above apply.
 - **Free:** a Free user who uses every metered feature costs $0.84/month; the blended Free user
@@ -191,7 +196,7 @@ Lifetime is admin-granted and not modelled.
   - Pro needs **6% of signups paying** to carry blended Free users, or 13% if every Free user
     maxes their voice notes.
   - Resuming included AI for Free raises that to 10% and 23%.
-  - Free keeps 60 minutes of voice notes a month (your decision), funded by the credit.
+  - Free now gets 90 minutes of voice notes a month (round 3), funded by the credit.
 - **Break-even:** about **31 subscribers** covers platform costs at the guessed mix with speech at
   full price, or ~17 at Deepgram list price. Fewer are needed while the credit pays for speech.
 - **Scale:** cost per account falls from $1.00 (100) to $0.68 (50,000).

@@ -3,6 +3,7 @@
  * Run: npx tsx scripts/smoke-meeting-gate.ts
  */
 import "./smoke/_env";
+import { SPEECH_LIMITS } from "../src/lib/speech-limits";
 import { setDeepgramEnabledForSmoke } from "./smoke/_env";
 
 import { readFileSync } from "node:fs";
@@ -12,6 +13,9 @@ import { meetingSessions, speechUsage, userSettings } from "../src/db/schema";
 import { entitlementsForPlan, FEATURE_DENIAL, isPaywallError, requireEntitlement } from "../src/lib/entitlements";
 import { createMeetingSession } from "../src/actions/meetings";
 import { monthWindow } from "../src/lib/speech-limits";
+
+/** More meeting seconds than any plan allows in a month, whatever the allowances are set to. */
+const SPENT_MONTH_SECONDS = Math.max(...Object.values(SPEECH_LIMITS.meeting)) + 60;
 
 const USER = "demo-user";
 let failures = 0;
@@ -209,7 +213,7 @@ async function main() {
     await db.delete(speechUsage).where(eq(speechUsage.userId, USER));
     // Above both caps (Pro 18,000 s, Lifetime 36,000 s), so this holds whichever plan demo
     // mode resolves for the synthetic user.
-    await db.insert(speechUsage).values({ userId: USER, kind: "meeting", seconds: 40_000, source: "stream" });
+    await db.insert(speechUsage).values({ userId: USER, kind: "meeting", seconds: SPENT_MONTH_SECONDS, source: "stream" });
 
     // The cap only exists while Orbit is the one paying, so the switch has to be ON for it
     // to bite at all. `_env` strips the key from every smoke, which is the off state.

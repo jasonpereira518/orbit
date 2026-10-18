@@ -28,7 +28,7 @@ import {
   type NoteBatchMeeting,
 } from "@/db/schema";
 import type { TranscribeOptions, TranscriptionResult } from "@/lib/ai";
-import { deepgramOpenFor } from "@/lib/speech-credit";
+import { deepgramOpenFor, meetingHasAudio } from "@/lib/speech-credit";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError, releaseBucket } from "@/lib/rate-limit";
 import { recordSpeechSeconds, speechAllowance } from "@/lib/speech-quota";
 
@@ -486,7 +486,8 @@ export async function ingestMeetingChunk(
     // Deepgram yet; one that has keeps going (`deepgramOpenFor`).
     if (await deepgramOpenFor(userId, "meeting", { sessionId: session.id })) {
       const allowance = await speechAllowance(userId, "meeting");
-      if (allowance.exhausted) {
+      // Lenient: a meeting already recording finishes past the cap (`meetingSecondsAllowed`).
+      if (allowance.exhausted && !(await meetingHasAudio(session.id))) {
         return { ok: false, status: 402, error: "You’ve used this month’s meeting transcription minutes" };
       }
     }
@@ -622,6 +623,20 @@ export async function ingestMeetingChunk(
   return { ok: true, seq: meta.seq, text, engine, duplicate: false };
 }
 
+/** The sentences one connection posted under `claim.label` were the user's all along. */
+async function relabelYou(db: Awaited<ReturnType<typeof getDb>>, sessionId: string, claim: YouClaim): Promise<void> {
+  await db
+    .update(meetingTranscriptSegments)
+    .set({ speaker: "you" })
+    .where(
+      and(
+        eq(meetingTranscriptSegments.sessionId, sessionId),
+        eq(meetingTranscriptSegments.speaker, claim.label),
+        gte(meetingTranscriptSegments.seq, claim.fromSeq),
+      ),
+    );
+}
+
 export type LiveSegmentInput = {
   seq: number;
   startMs: number;
@@ -636,6 +651,24 @@ export type RecordLiveSegmentsResult =
 
 const MAX_LIVE_BATCH = 200;
 const MAX_LIVE_TEXT_LEN = 5_000;
+
+/**
+ * The browser's claim that one stable speaker label is the user (`claimedYou` in
+ * `speaker-map.ts`), and the first seq of the connection that label belongs to. Only that
+ * connection's segments are relabelled: an earlier connection (or the first recording of a
+ * resumed meeting) numbered its own voices, and its `speaker-1` may be someone else.
+ */
+export type YouClaim = { label: string; fromSeq: number };
+
+const STABLE_SPEAKER = /^speaker-\d{1,4}$/;
+
+export function validYouClaim(raw: unknown): YouClaim | null {
+  if (!raw || typeof raw !== "object") return null;
+  const { label, fromSeq } = raw as { label?: unknown; fromSeq?: unknown };
+  if (typeof label !== "string" || !STABLE_SPEAKER.test(label)) return null;
+  if (typeof fromSeq !== "number" || !Number.isInteger(fromSeq) || fromSeq < 0 || fromSeq > MAX_SEQ) return null;
+  return { label, fromSeq };
+}
 
 /**
  * Runtime shape check, not just a static one: `segments` reaches this function through a
@@ -676,7 +709,7 @@ function validateLiveSegments(segments: LiveSegmentInput[]): string | null {
 export async function recordLiveSegments(
   userId: string,
   sessionId: string,
-  input: { recorderId: string; segments: LiveSegmentInput[] },
+  input: { recorderId: string; segments: LiveSegmentInput[]; you?: YouClaim | null },
 ): Promise<RecordLiveSegmentsResult> {
   const invalid = validateLiveSegments(input.segments);
   if (invalid) return { ok: false, status: 400, error: invalid };
@@ -691,15 +724,18 @@ export async function recordLiveSegments(
     return { ok: false, status: 409, error: "Another tab is recording this meeting" };
   }
 
+  const db = await getDb();
+
   // An empty batch (a heartbeat, or a retry that lost its race entirely) is a no-op
   // success, the same shape of event as a batch that lands but conflicts on every seq —
   // not an error. Returning here also keeps the two `Math.max(...)` calls below from ever
-  // running on an empty array, which would evaluate to `-Infinity`.
+  // running on an empty array, which would evaluate to `-Infinity`. A "you" claim can ride
+  // on an empty batch (the last flush at Stop), so it is applied first.
   if (!input.segments.length) {
+    if (input.you) await relabelYou(db, session.id, input.you);
     return { ok: true, written: 0, durationMs: session.durationMs };
   }
 
-  const db = await getDb();
   const inserted = await db
     .insert(meetingTranscriptSegments)
     .values(
@@ -718,6 +754,9 @@ export async function recordLiveSegments(
       target: [meetingTranscriptSegments.sessionId, meetingTranscriptSegments.seq],
     })
     .returning();
+
+  // After the insert, so a claim that rides with the sentences it covers relabels them too.
+  if (input.you) await relabelYou(db, session.id, input.you);
 
   const maxSeq = Math.max(...input.segments.map((s) => s.seq));
   const maxEndMs = Math.max(...input.segments.map((s) => Math.round(s.endMs)));

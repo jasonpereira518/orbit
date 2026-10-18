@@ -7,6 +7,17 @@
  * their speech landed while the microphone was the loud one. One speaker crossing the
  * threshold is "you"; everyone else is numbered.
  *
+ * With NO call audio at all (an in-person meeting, recorded on the laptop's own mic), every
+ * voice comes in through the mic, so mic-versus-call says nothing. Then "you" is the voice that
+ * is clearly the loudest at the mic — the one sitting at the laptop — and nobody when no voice
+ * stands out (a phone in the middle of a table).
+ *
+ * LABELS ARE STABLE. Each Deepgram speaker gets `speaker-N` the first time they are heard, by
+ * order of appearance, and keeps it: a label is never renumbered when "you" is decided, because
+ * sentences already posted carry it. "You" is pinned once decided; `claimedYou` names the
+ * stable label it replaced, so the server can relabel the sentences posted before it was
+ * known. Display numbering (Speaker 1, 2, ... skipping you) is `speakerDisplayNames`'s job.
+ *
  * BOTH HALVES ARE INCREMENTAL, and that is not an optimisation — it is what keeps a long
  * meeting usable. All of this runs synchronously inside the live socket's `onmessage`, on the
  * thread that also downsamples audio and posts batches, and `labelSpeakers` is re-run over the
@@ -38,6 +49,10 @@ const DROP_BATCH = 16_384;
 export class LoudnessTimeline {
   /** Sample times, in push order, which the recorder guarantees is non-decreasing. */
   private at: number[] = [];
+  /** Running sum of the mic level, with the same origin rule as `micCount`. */
+  private micSum: number[] = [0];
+  /** Whether the call side was ever audible: false means a mic-only, in-person recording. */
+  private heardCall = false;
   /**
    * `micCount[i]` is how many of the samples before index `i` were mic-dominant, counted from
    * an arbitrary origin. Only DIFFERENCES are ever read, so dropping the head of both arrays
@@ -47,12 +62,29 @@ export class LoudnessTimeline {
 
   push(sample: LoudnessSample): void {
     const mic = sample.mic > SILENCE && sample.mic > sample.call ? 1 : 0;
+    if (sample.call > SILENCE) this.heardCall = true;
     this.at.push(sample.atMs);
     this.micCount.push(this.micCount[this.micCount.length - 1] + mic);
+    this.micSum.push(this.micSum[this.micSum.length - 1] + Math.max(0, sample.mic));
     if (this.at.length > MAX_SAMPLES) {
       this.at.splice(0, DROP_BATCH);
       this.micCount.splice(0, DROP_BATCH);
+      this.micSum.splice(0, DROP_BATCH);
     }
+  }
+
+  /** False until the call side has been audible at least once. */
+  callHeard(): boolean {
+    return this.heardCall;
+  }
+
+  /** The mean mic level over a span. Null when nothing was recorded. */
+  micLevel(startMs: number, endMs: number): number | null {
+    const lo = lowerBound(this.at, startMs);
+    const hi = upperBound(this.at, endMs);
+    const total = hi - lo;
+    if (total <= 0) return null;
+    return (this.micSum[hi] - this.micSum[lo]) / total;
   }
 
   /** The share of samples in this span where the mic was louder. Null when nothing was recorded. */
@@ -91,7 +123,7 @@ function upperBound(values: readonly number[], value: number): number {
   return lo;
 }
 
-type SpeakerStat = { words: number; micWords: number };
+type SpeakerStat = { words: number; micWords: number; levelSum: number; levelWords: number };
 
 type Tally = {
   /** The timeline these counts were measured against; a different one invalidates them. */
@@ -103,7 +135,21 @@ type Tally = {
   /** Speakers in order of first appearance — what the numbering follows. */
   order: number[];
   stats: Map<number, SpeakerStat>;
+  /** The speaker decided to be "you", pinned for the rest of this word array. */
+  you: number | null;
+  /** The numbering offset this tally was built with. */
+  offset: number;
 };
+
+/** What `labelSpeakers` reads from the recorder's timeline. The last two are optional for old callers. */
+export type SpeakerTimeline = {
+  micDominantShare(startMs: number, endMs: number): number | null;
+  micLevel?(startMs: number, endMs: number): number | null;
+  callHeard?(): boolean;
+};
+
+/** In a mic-only recording, how much louder "you" must be than the next voice. */
+const LOUDEST_MARGIN = 1.25;
 
 /**
  * Per word array, how far it has been folded. Keyed by the array itself and held weakly, so a
@@ -125,20 +171,32 @@ const TALLIES = new WeakMap<readonly LiveWord[], Tally>();
 
 export function labelSpeakers(
   words: readonly LiveWord[],
-  timeline: { micDominantShare(startMs: number, endMs: number): number | null },
-  opts: { minWords?: number; threshold?: number } = {},
+  timeline: SpeakerTimeline,
+  opts: {
+    minWords?: number;
+    threshold?: number;
+    /**
+     * Added to every number. A reconnect starts a new Deepgram connection, which numbers its
+     * speakers from 0 again; offsetting by the speakers already heard keeps a new voice from
+     * inheriting an old one's label. Splitting one person across two labels is the safe error;
+     * merging two people under one label would put words in the wrong mouth.
+     */
+    offset?: number;
+  } = {},
 ): Map<number, string> {
   const minWords = opts.minWords ?? 20;
   const threshold = opts.threshold ?? 0.7;
+  const offset = opts.offset ?? 0;
 
   let tally = TALLIES.get(words);
   const resumable =
     tally !== undefined &&
     tally.timeline === timeline &&
+    tally.offset === offset &&
     tally.processed <= words.length &&
     (tally.processed === 0 || words[tally.processed - 1] === tally.lastWord);
   if (!tally || !resumable) {
-    tally = { timeline, processed: 0, lastWord: undefined, order: [], stats: new Map() };
+    tally = { timeline, processed: 0, lastWord: undefined, order: [], stats: new Map(), you: null, offset };
     TALLIES.set(words, tally);
   }
 
@@ -147,31 +205,72 @@ export function labelSpeakers(
     if (w.speaker === null) continue;
     let stat = tally.stats.get(w.speaker);
     if (!stat) {
-      stat = { words: 0, micWords: 0 };
+      stat = { words: 0, micWords: 0, levelSum: 0, levelWords: 0 };
       tally.stats.set(w.speaker, stat);
       tally.order.push(w.speaker);
     }
     stat.words++;
     const share = timeline.micDominantShare(w.start, w.end);
     if (share !== null && share >= 0.5) stat.micWords++;
+    const level = timeline.micLevel?.(w.start, w.end) ?? null;
+    if (level !== null) {
+      stat.levelSum += level;
+      stat.levelWords++;
+    }
   }
   tally.processed = words.length;
   tally.lastWord = words.length ? words[words.length - 1] : undefined;
 
-  // Decided fresh every call, not accumulated: `minWords`/`threshold` are the caller's and a
-  // speaker who was too quiet to claim ten seconds ago may qualify now.
+  // Pinned once decided: a speaker's sentences are already posted under their label, and the
+  // server relabels them to "you" on the claim (`claimedYou`). Flip-flopping would need every
+  // one of those rewrites undone.
+  if (tally.you === null) tally.you = decideYou(tally.stats, timeline, minWords, threshold);
+
+  const labels = new Map<number, string>();
+  tally.order.forEach((speaker, i) => {
+    labels.set(speaker, speaker === tally.you ? "you" : stableLabel(offset, i));
+  });
+  return labels;
+}
+
+function stableLabel(offset: number, index: number): string {
+  return `speaker-${offset + index + 1}`;
+}
+
+function decideYou(
+  stats: ReadonlyMap<number, SpeakerStat>,
+  timeline: SpeakerTimeline,
+  minWords: number,
+  threshold: number,
+): number | null {
+  const qualified = [...stats].filter(([, stat]) => stat.words >= minWords);
+  // Mic-only: everyone is "mic-dominant", so compare loudness at the mic instead, and only
+  // claim a voice that is clearly the loudest. Two voices are needed to compare at all.
+  if (timeline.callHeard?.() === false) {
+    const levels = qualified
+      .filter(([, stat]) => stat.levelWords > 0)
+      .map(([speaker, stat]) => [speaker, stat.levelSum / stat.levelWords] as const)
+      .sort((a, b) => b[1] - a[1]);
+    if (levels.length < 2) return null;
+    return levels[0][1] >= levels[1][1] * LOUDEST_MARGIN ? levels[0][0] : null;
+  }
   let you: number | null = null;
   let best = 0;
-  for (const [speaker, stat] of tally.stats) {
-    if (stat.words < minWords) continue;
+  for (const [speaker, stat] of qualified) {
     const share = stat.micWords / stat.words;
     if (share >= threshold && share > best) { you = speaker; best = share; }
   }
+  return you;
+}
 
-  const labels = new Map<number, string>();
-  let n = 0;
-  for (const speaker of tally.order) {
-    labels.set(speaker, speaker === you ? "you" : `speaker-${++n}`);
-  }
-  return labels;
+/**
+ * The stable label "you" replaced in this word array — what the server rewrites to "you" in
+ * the sentences already posted — or null while nobody is "you". Reads the tally
+ * `labelSpeakers` left, so call it after that.
+ */
+export function claimedYou(words: readonly LiveWord[]): string | null {
+  const tally = TALLIES.get(words);
+  if (!tally || tally.you === null) return null;
+  const index = tally.order.indexOf(tally.you);
+  return index < 0 ? null : stableLabel(tally.offset, index);
 }

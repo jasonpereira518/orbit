@@ -56,12 +56,12 @@ async function main() {
   let allowance = await speechAllowance(USER, "meeting");
   check("has no meeting seconds", allowance.limit === 0 && allowance.exhausted);
   allowance = await speechAllowance(USER, "shortform");
-  check("has 60 short-form minutes", allowance.limit === 3_600 && allowance.remaining === 3_600);
+  check("has 90 short-form minutes", allowance.limit === 5_400 && allowance.remaining === 5_400);
 
   console.log("\nrecording usage");
   await recordSpeechSeconds({ userId: USER, kind: "shortform", seconds: 90, source: "file" });
   allowance = await speechAllowance(USER, "shortform");
-  check("spends what it recorded", allowance.used === 90 && allowance.remaining === 3_510);
+  check("spends what it recorded", allowance.used === 90 && allowance.remaining === 5_310);
 
   await recordSpeechSeconds({ userId: USER, kind: "shortform", seconds: 30, source: "file" });
   allowance = await speechAllowance(USER, "shortform");

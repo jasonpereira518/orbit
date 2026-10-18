@@ -93,8 +93,11 @@ export function forgetSpeechCredit() {
   creditCache = null;
 }
 
-/** Has this meeting already recorded audio on Deepgram? Then it finishes, whatever the ladder says. */
-async function meetingHasAudio(sessionId: string): Promise<boolean> {
+/**
+ * Has this meeting already recorded audio on Deepgram? Then it finishes, whatever the credit's
+ * ladder or the month's meter says (`meetingSecondsAllowed`).
+ */
+export async function meetingHasAudio(sessionId: string): Promise<boolean> {
   const db = await getDb();
   const [row] = await db
     .select({ seconds: speechUsage.seconds })

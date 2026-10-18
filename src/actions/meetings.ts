@@ -19,7 +19,7 @@ import {
   cleanUserNotes,
   formatTranscriptSegment,
   isSelf,
-  speakerNames,
+  speakerDisplayNames,
 } from "@/lib/meeting-digest";
 import { requireMeetingsUser } from "@/lib/plan-guards";
 import {
@@ -261,7 +261,7 @@ export async function analyzeMeetingSession(
     const invited = event?.guestsHidden ? [] : (event?.attendees ?? []).map((a) => a.name).filter(Boolean);
 
     // A 1:1's other voice is the other person; the transcript then reads "Priya:" not "Speaker 1:".
-    const voices = speakerNames(t.segments, invited.length ? invited : (t.session.attendees ?? []).map((a) => a.name));
+    const voices = speakerDisplayNames(t.segments, invited.length ? invited : (t.session.attendees ?? []).map((a) => a.name));
     const paragraphs = t.segments
       .filter((s) => s.text.trim())
       .map((s) => formatTranscriptSegment(s, voices));

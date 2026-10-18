@@ -532,7 +532,7 @@
       "contactLimit": 500,
       "credits": 50,
       "meetingMin": 0,
-      "shortformMin": 60,
+      "shortformMin": 90,
       "status": "CODE",
       "url": "src/lib/plans/plan-config.ts"
     },
@@ -542,8 +542,8 @@
       "oneTime": null,
       "contactLimit": null,
       "credits": 300,
-      "meetingMin": 300,
-      "shortformMin": 300,
+      "meetingMin": 480,
+      "shortformMin": 480,
       "status": "CODE",
       "url": "src/lib/plans/plan-config.ts"
     },
@@ -553,8 +553,8 @@
       "oneTime": null,
       "contactLimit": null,
       "credits": 650,
-      "meetingMin": 600,
-      "shortformMin": 600,
+      "meetingMin": 900,
+      "shortformMin": 900,
       "status": "CODE",
       "url": "src/lib/plans/plan-config.ts"
     },

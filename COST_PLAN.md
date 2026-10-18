@@ -17,8 +17,10 @@ Deepgram credit** to fund allowances, and **Lifetime is admin-granted, so it is 
 | P2.1 idle dictation sockets | **Done.** 15 s without words ends a Deepgram dictation session. |
 | P2.2 keyterms | **Done as a switch** (`ORBIT_DEEPGRAM_KEYTERMS=off`), default on. Keyterms are contact names; measure before turning them off. |
 | P2.3 meeting double billing | **Done.** The chunk is claimed before transcription. |
-| D3 Free voice notes | **Decided: keep 60 min**, funded by the credit. |
 | D4, D5 Lifetime | **Dropped.** Admin-granted, not modelled. |
+| **Round 3 (2026-10-18):** D6 included AI | **Resumed.** Production now treats a never-set admin switch as running (it was paused). Allowances are unchanged: Free 50 + 25 starter, Pro 300, Max 650. Web-search fees are now metered into credits and pools (P2.6 done). |
+| Round 3: speech allowances (D3, D8) | **Raised 1.5×**, funded by the credit: Free 90 min of voice notes; Pro 8 h meetings + 8 h voice; Max and Lifetime 15 h + 15 h. A meeting that has started is never cut off by the monthly cap, only a new one is refused, and the chat mic now waits 30 s of silence. |
+| Round 3: meeting speakers | **Fixed.** Stable "Speaker N" per voice, "You" pinned once known (earlier lines relabelled), display renumbered 1, 2, ..., and in-person meetings pick "You" as the clearly loudest voice at the mic. |
 | Everything else | Still waiting for your approval. |
 
 The ordering follows your rules:
@@ -40,11 +42,11 @@ AI paused). They inherit its guesses and are meant for ranking, not for budgetin
 |---|---|---|
 | D1 | Monthly budget for `budget.month` | Set `ORBIT_MONTHLY_BUDGET_CENTS=15000` ($150) in Vercel. The Deepgram budget is now the $15k credit itself. |
 | D2 | What degrades first as the credit runs out | **Implemented as recommended:** Free voice notes at 90%, everyone's voice notes and the chat mic at 97%, new meetings at 100%. Meetings already recording always finish. The rungs are constants in `SPEECH_CREDIT_LADDER` if you want them elsewhere. |
-| D3 | Free voice-note allowance | **Decided: 60 min**, funded by the credit. |
-| D10 | When the credit gets low: top up, or tighten allowances? | Decide when `speech.credit_runway` fires (under 45 days left). At ~1,000 accounts that is ~20 months away; at ~10,000, ~2 months. |
-| D6 | Resume included AI (coded on, paused)? | **Not yet.** Fix web-search metering (P2.6) first, then resume for Pro and Max only. Keep Free at 0–10 credits. |
+| D3 | Free voice-note allowance | **Decided: 90 min** (1.5×), funded by the credit. |
+| D10 | When the credit gets low: top up, or tighten allowances? | Decide when `speech.credit_runway` fires (under 45 days left). With the 1.5× hours, at ~1,000 accounts that is ~15 months away; at ~10,000, ~1.5 months. |
+| D6 | Resume included AI? | **Decided: resumed**, current allowances. The pools cap Orbit's AI spend at $190 a month plus the $950 prepaid; at ~1,000 accounts demand is ~$280 a month, so the prepaid OpenAI balance drains in roughly 10 months and then included AI pauses for accounts without their own key. `ai.managed_pool` warns at 75%. |
 | D7 | Deepgram privacy flag `mip_opt_out=true` (may double the rate) | **Keep it ⚠️.** Confirm the premium from the invoice, then negotiate (Growth plan or a zero-retention contract) rather than drop it. |
-| D8 | Pro allowance 5 h + 5 h | Keep it for existing subscribers. For new ones, consider 4 h + 4 h, or one shared 8 h pool. |
+| D8 | Pro speech allowance | **Decided: 8 h + 8 h** (1.5×). |
 | D9 | Repo visibility | If it will go private, move the schedules first (P2.8), or pay about $65–80 a month for Actions. |
 
 ---
@@ -331,8 +333,13 @@ users; the risk sits in the speech allowances.
 
 | Accounts | Deepgram / month | $14,250 usable credit lasts |
 |---|---|---|
-| 1,000 | ~$630 (2×) / ~$350 (list) | ~22 / ~41 months |
-| 10,000 | ~$6,300 (2×) / ~$3,500 (list) | ~2.3 / ~4 months |
+| 1,000 | ~$890 (2×) / ~$490 (list) | ~16 / ~29 months |
+| 10,000 | ~$8,900 (2×) / ~$4,900 (list) | ~1.6 / ~2.9 months |
+
+These are with the round-3 1.5× allowances. **After the credit**, with included AI on and the
+guessed usage mix, monthly margin is about +25% at Deepgram list price but slightly negative
+(−6 to −9%) at the possible 2× opt-out rate. The invoice (D7) decides which world you are in,
+and so whether the allowances can stay at 1.5× once the credit is gone.
 
 The app spends 95% of the credit at most, then every surface falls back as described in D2. The
 ops sweep says when each rung takes effect and when fewer than 45 days remain. When the credit is

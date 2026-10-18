@@ -184,6 +184,7 @@
 @source "../lib/error-events.ts";
 @source "../lib/errors.ts";
 @source "../lib/fact-lists.ts";
+@source "../lib/format-elapsed.ts";
 @source "../lib/gate-events.ts";
 @source "../lib/google-scopes.ts";
 @source "../lib/ics.ts";
@@ -202,6 +203,7 @@
 @source "../lib/log-redaction.ts";
 @source "../lib/managed-ai-policy.ts";
 @source "../lib/mcp/sanitize.ts";
+@source "../lib/meeting-chunking.ts";
 @source "../lib/memory-chunks.ts";
 @source "../lib/met-context.ts";
 @source "../lib/microsoft-scopes.ts";
@@ -254,6 +256,7 @@
 @source "../lib/user-settings.ts";
 @source "../lib/utils.ts";
 @source "../lib/verbatim.ts";
+@source "../lib/voice-recording.ts";
 @source "../lib/waitlist-demo.ts";
 @source "../lib/waitlist-host.ts";
 @source "../lib/waitlist-pass-events.ts";

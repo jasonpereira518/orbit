@@ -3,7 +3,8 @@ import { requireMeetingsUser } from "@/lib/plan-guards";
 import { isPaywallError } from "@/lib/entitlements";
 import { friendlyError } from "@/lib/errors";
 import { deepgramKeyterms, mintStreamToken } from "@/lib/deepgram";
-import { deepgramOpenFor } from "@/lib/speech-credit";
+import { deepgramOpenFor, meetingHasAudio } from "@/lib/speech-credit";
+import { meetingSecondsAllowed } from "@/lib/speech-limits";
 import { loadNetworkVocabulary } from "@/lib/transcription-vocabulary";
 import { ACCEPTS_CHUNKS, getMeetingSession } from "@/lib/meeting-sessions";
 import { speechAllowance } from "@/lib/speech-quota";
@@ -106,12 +107,21 @@ export async function POST(request: Request, ctx: Params) {
       { status: 402 },
     );
   }
-  if (allowance.exhausted) {
+  // Lenient: a meeting already recording is never cut off by the monthly meter — only a new
+  // one is refused (`meetingSecondsAllowed`). The reconnect of a running meeting gets enough
+  // seconds to reach its own three-hour limit.
+  const inProgress = await meetingHasAudio(session.id);
+  if (allowance.exhausted && !inProgress) {
     return NextResponse.json(
       { error: "You’ve used this month’s meeting transcription minutes", code: "quota-spent" },
       { status: 402 },
     );
   }
+  const remainingSeconds = meetingSecondsAllowed({
+    remaining: allowance.remaining,
+    inProgress,
+    elapsedMs: session.durationMs,
+  });
 
   try {
     const [{ accessToken, expiresIn }, vocabulary] = await Promise.all([
@@ -123,7 +133,7 @@ export async function POST(request: Request, ctx: Params) {
         accessToken,
         expiresIn,
         keyterms: deepgramKeyterms(vocabulary),
-        remainingSeconds: allowance.remaining,
+        remainingSeconds,
         warn: allowance.warn,
       },
       { headers: { "Cache-Control": "no-store" } },
