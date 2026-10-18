@@ -4,6 +4,7 @@ import { bucketOf, series, type Grain } from "@/lib/admin-trends";
 import { num, toDate } from "@/lib/admin-metrics";
 import { internalAccountSql } from "@/lib/analytics-internal";
 import { activatedSql } from "@/lib/activity";
+import { paidAccountSql } from "@/lib/billing-events";
 
 /**
  * Read side of the traffic pipeline, for `/admin/analytics`. Writes live in
@@ -642,16 +643,8 @@ export async function acquisitionFunnel(
     flagged AS (
       SELECT s.mature,
              ${activatedSql(sql`s.user_id`, sql`s.created_at`)} AS activated,
-             ((s.lifetime_purchased_at IS NOT NULL OR coalesce(m.bought, false))
-               AND NOT (coalesce(m.cash_in, 0) > 0 AND coalesce(m.refunded, 0) >= m.cash_in)) AS paid
+             ${paidAccountSql(sql`s.user_id`)} AS paid
       FROM s
-      LEFT JOIN LATERAL (
-        SELECT bool_or(b.mrr_delta_cents > 0 OR b.kind = 'lifetime') AS bought,
-               sum(b.amount_cents) FILTER (WHERE b.kind IN ('lifetime', 'payment')) AS cash_in,
-               sum(b.amount_cents) FILTER (WHERE b.kind = 'refund') AS refunded
-        FROM billing_events b
-        WHERE b.user_id = s.user_id
-      ) m ON true
     )
     SELECT
       (SELECT count(*)::int FROM flagged) AS signups,

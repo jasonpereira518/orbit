@@ -309,12 +309,15 @@ run(async () => {
 
   // (b) the same event carrying the checkout's `orbit_user_id` hint, which real subscription
   // events do. The ledger must still be untouched; a hinted event also reaches the mirror
-  // writer, which (outside this file's remit) may re-create a bare settings row — reported in
-  // the handoff, so clean it up here rather than assert on it.
+  // writer, which used to re-create a bare settings row (the apply step now refuses to for a
+  // cancellation), so assert that it does not.
   const hinted = await postStripe(signedStripe(deletedEvent("evt_smoke_deleted_hinted", true)));
   check("a hinted late deleted event is accepted", hinted.status === 200, String(hinted.status));
   check("…and still books nothing", (await ledgerChurns()) === churnCountBefore);
   check("…and does not move the ledger", (await mrrReconciliation()).ledgerCents === baseline.ledgerCents);
+  const ghost = await db.select().from(userSettings).where(eq(userSettings.userId, SUBSCRIBER));
+  check("…and does not bring the deleted account back as a bare settings row", ghost.length === 0, String(ghost.length));
+  check("…so live MRR is unmoved too", (await mrrReconciliation()).liveCents === baseline.liveCents);
   await db.delete(userSettings).where(eq(userSettings.userId, SUBSCRIBER));
 
   console.log("\nA retry, a race, a lapsed plan and a broken ledger");

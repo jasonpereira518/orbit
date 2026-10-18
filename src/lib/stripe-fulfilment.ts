@@ -109,7 +109,7 @@ export type StripeApplyDeps = {
   revokeLifetime: typeof revokeLifetimePurchase;
   book: (booking: Booking) => Promise<unknown>;
   setLifetime: typeof setLifetimePurchase;
-  setSubscription: typeof setSubscriptionState;
+  setSubscription: (...args: Parameters<typeof setSubscriptionState>) => Promise<unknown>;
   grantPack: typeof grantPack;
   revokePack: typeof revokePack;
   recordFounding: typeof recordFoundingRedemption;
@@ -120,7 +120,21 @@ export const defaultStripeApplyDeps: StripeApplyDeps = {
   revokeLifetime: revokeLifetimePurchase,
   book: (booking) => recordBillingEventStrict({ source: "stripe", ...booking }),
   setLifetime: setLifetimePurchase,
-  setSubscription: setSubscriptionState,
+  // A cancellation for an account that no longer exists must not bring it back: the Stripe
+  // `customer.subscription.deleted` that follows a self-deletion carries the checkout's
+  // `orbit_user_id`, and `setSubscriptionState` re-creates a bare `user_settings` row for it
+  // (which, with a future period end, also inflates live MRR with no ledger row to match).
+  setSubscription: async (userId, shape, options) => {
+    if (shape.status === "canceled") {
+      const db = await getDb();
+      const row = await db.query.userSettings.findFirst({
+        where: eq(userSettings.userId, userId),
+        columns: { userId: true },
+      });
+      if (!row) return undefined;
+    }
+    return setSubscriptionState(userId, shape, options);
+  },
   grantPack,
   revokePack,
   recordFounding: recordFoundingRedemption,
