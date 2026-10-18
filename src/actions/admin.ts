@@ -18,6 +18,7 @@ import { resolvePlan } from "@/lib/entitlements";
 import type { Plan } from "@/lib/plans/plan-config";
 import { setCompedPlan } from "@/lib/user-settings";
 import { grantLifetime, previewLifetime, revokeLifetime, type LifetimePreview } from "@/lib/admin-lifetime";
+import { setAccountKindAsAdmin, type AccountKind } from "@/lib/admin-account-kind";
 import { runOpsSweep } from "@/lib/ops-sweep";
 import { notifySlack } from "@/lib/ops-notify";
 import { sendSlackDM } from "@/lib/slack-dm";
@@ -111,6 +112,26 @@ export async function setCompAction(input: {
   // Resolved from the returned row, NOT from getEntitlements(): that helper is a React
   // cache() memo and may still hold the pre-write value within this same request.
   return { ok: true, plan: resolvePlan(row).plan };
+}
+
+/**
+ * Mark an account `internal` (the operator, a teammate, the showcase account), `tester`, or
+ * neither (`null`, a real customer). Takes the account out of, or back into, every product and
+ * revenue aggregate. A reason is required and an audit row is written; the body is
+ * `setAccountKindAsAdmin`.
+ */
+export async function setAccountKindAction(input: {
+  targetUserId: string;
+  kind: AccountKind | null;
+  reason: string;
+}): Promise<{ ok: true; kind: AccountKind | null; changed: boolean }> {
+  const adminUserId = await requireAdminUserId();
+  const result = await setAccountKindAsAdmin(adminUserId, input);
+  revalidatePath("/admin");
+  revalidatePath("/admin/users");
+  revalidatePath("/admin/growth");
+  revalidatePath(`/admin/users/${input.targetUserId}`);
+  return { ok: true, kind: result.to, changed: result.changed };
 }
 
 /* ------------------------------------------------------------- Lifetime (admin) ------- */
