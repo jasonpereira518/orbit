@@ -138,7 +138,7 @@ export async function startSubscriptionCheckout(
       cancel_url: `${baseUrl}/pricing`,
     });
     if (!session.url) return { error: "Stripe did not return a checkout URL." };
-    await trackCheckoutStarted(userId, {
+    trackCheckoutStarted(userId, {
       sessionId: session.id,
       plan,
       interval: period === "annual" ? "year" : "month",
@@ -186,7 +186,7 @@ export async function startCreditPackCheckout(gate?: string | null): Promise<Che
       cancel_url: `${baseUrl}/settings?integration=ai`,
     });
     if (!session.url) return { error: "Stripe did not return a checkout URL." };
-    await trackCheckoutStarted(userId, {
+    trackCheckoutStarted(userId, {
       sessionId: session.id,
       // A pack is bought on top of the plan the account is on.
       plan: entitlements.plan,
@@ -262,9 +262,7 @@ export async function cancelSubscription(reason?: string): Promise<SubscriptionR
   const result = await cancelSubscriptionFor(userId);
   if (result.ok && result.subscription.cancelAtPeriodEnd) {
     // After Stripe accepted it. A telemetry failure must never turn a cancellation into an error.
-    await trackSubscriptionCanceled(userId, { periodEnd: result.subscription.periodEnd, reason }).catch(
-      () => undefined
-    );
+    trackSubscriptionCanceled(userId, { periodEnd: result.subscription.periodEnd, reason });
   }
   return result;
 }

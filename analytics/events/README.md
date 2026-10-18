@@ -28,85 +28,85 @@ Format per event: **fires when** / **must not fire when** / **read by**. Propert
 - Added: v171.
 
 ## onboarding_path_chosen
-- Fires when: `startOnboardingPath` records which path the person picked.
-- Must not fire when: a replayed tour.
+- Fires when: `startOnboardingPath` records which path the person picked (`tour` or `quick`). One per account, ever (the event id hashes the user).
+- Must not fire when: a replayed tour or a second choice after Settings reset onboarding.
 - Read by: Activation by path.
 - Added: v171.
 
 ## onboarding_step_completed
-- Fires when: `saveOnboardingStep` or `saveTourStop` advances a step.
-- Must not fire when: a step the person has already completed.
+- Fires when: `saveOnboardingStep` or `saveTourStop` moves the person PAST a step (the step they leave is the one completed; going back completes nothing). `step` is the step or tour stop id with every non-letter turned into `_` (`ai-key` -> `ai_key`, `reminders.done` -> `reminders_done`). Event id hashes user, path and step.
+- Must not fire when: a step the person has already completed, which includes every step of a replayed tour.
 - Read by: Where onboarding loses people.
 - Added: v171.
 
 ## ai_key_added
-- Fires when: `applyAiKeyChange` turns an absent key into a present one for any provider.
+- Fires when: `applyAiKeyChange` turns an absent key into a present one for a chat provider, or `saveDecisionKey` does for TypeSafe (`provider: typesafe`). One per (account, provider): the event id hashes both, so clearing and re-adding the same provider is not a second event. The account's first key also stamps `user_settings.ai_key_added_at` (never moved or cleared; a legacy account that already had a key stays NULL = unknown). The TypeSafe key does not stamp it, because it does not make chat AI ready.
 - Must not fire when: a replacement, a clear, or an unchanged re-save.
 - Read by: AI-ready rate (F8): the bring-your-own-key cliff.
 - Added: v171.
 
 ## ai_key_check_failed
-- Fires when: the key validation call rejects a key the person entered.
-- Must not fire when: the key was never submitted.
+- Fires when: the key validation rejects a key the person entered in Settings (`error_kind` is `rejected` or `malformed`). Not yet recorded from the OpenRouter OAuth callback.
+- Must not fire when: the key was never submitted, or the provider merely did not answer (the key is then saved with a note).
 - Read by: Why people stall at the key step.
 - Added: v171.
 
 ## capture_saved
-- Fires when: `saveCaptureJob` commits a batch; once per job (deterministic id = job id).
+- Fires when: the capture runner finishes a save (`runCaptureJobById`, after `saveCaptureJob` moved the job to saving); once per job (the event id hashes the event name and the job id, so a resumed save lands on the same row).
 - Must not fire when: the job is discarded or the save is retried.
 - Read by: Activation (F9), capture depth.
 - Added: v171.
 
 ## capture_failed
-- Fires when: a capture job ends `failed` in `runCaptureJobById`, at the stage that failed.
+- Fires when: a capture job ends `failed`: in `runCaptureJobById` (parse, save), when the stall sweep or a stalled poll gives up (`stalled`), when an upload is abandoned part-way (`abandoned`), or `failCaptureJob` is called without a stage (ingest). `error_kind` is a machine code (`eventErrorKind`), never the message.
 - Must not fire when: a user cancel or discard.
 - Read by: Capture failure rate (§2.8).
 - Added: v171.
 
 ## capture_discarded
-- Fires when: the person discards a reviewed batch without saving.
+- Fires when: the person discards a capture (`discardCaptureJob`, `discardCaptureBatch`, including Stop on an upload); `people_proposed` is the cards the parse offered. One per job.
 - Must not fire when: an automatic cleanup of a stale job.
 - Read by: Whether captures are trusted.
 - Added: v171.
 
 ## import_failed
-- Fires when: `failImport` marks an import failed.
+- Fires when: `failImport` marks an import failed (first time only; a second call for an already-failed import records nothing). `error_kind` is the stored `errorCode` (`needs_reconnect`, `contact_limit`, ...), `rows_failed` the stats' failed-row count.
 - Must not fire when: a row-level skip within a completed import.
 - Read by: Import failure rate by provider.
 - Added: v171.
 
 ## followup_set
-- Fires when: a reminder is created by the person (`createReminderForUser`, `scheduleContactFollowUpForUser`, `scheduleFromSuggestion`).
-- Must not fire when: Orbit generates a suggestion nobody accepted, or calendar sync creates one.
+- Fires when: a reminder is created or rescheduled by the person (`createReminderForUser`, `scheduleContactFollowUpForUser` when the caller passes an origin, `scheduleFromSuggestion`, `confirmSuggestedReminder`). Event id is a hash of reminder id and due day.
+- Must not fire when: Orbit generates a suggestion nobody accepted (the Radar autopilot, the nightly follow-up queue), or calendar sync creates one.
 - Read by: Activation half 2 (F10).
 - Added: v171.
 
 ## followup_completed
-- Fires when: `markReminderDone`, `completeFollowUpWithTouch`, or each reminder in `bulkReminderAction`, alongside `reminders.completed_at`.
-- Must not fire when: a dismiss or a delete.
+- Fires when: any path that moves a reminder to done (`completeReminder`: `markReminderDone`, `completeFollowUpWithTouch`, each reminder in `bulkReminderAction`, an assistant or API completion), on the pending-to-done transition only, alongside `reminders.completed_at`. `days_late` is days after the due date rounded to the nearest whole day (negative when early) and is omitted when the reminder has no due date. Event id is a hash of reminder id and `completed_at`, so a retry dedupes.
+- Must not fire when: a dismiss or a delete, a second completion of an already-done reminder, or the relationship engine closing a reminder because a note says it was done (it stamps `completed_at` but is not the person acting).
 - Read by: Value metric (§2.5), F11.
 - Added: v171.
 
 ## followup_snoozed
-- Fires when: `snoozeReminderAction`.
-- Must not fire when: an unsnooze.
+- Fires when: `snoozeReminder` or `snoozeReminderTo` moves a reminder's due date (the snooze button, the date picker, a bulk snooze). Event id is a hash of reminder id and new due day.
+- Must not fire when: an unsnooze (undo).
 - Read by: Nudge timing.
 - Added: v171.
 
 ## followup_dismissed
-- Fires when: `dismissSuggestion` or a reminder dismiss.
-- Must not fire when: a completion.
+- Fires when: a reminder is deleted (`dismissReminder`), or a person dismisses a suggestion (`dismissSuggestion`, `discardSuggestedReminder`; `reminder_id` then holds the suggestion id). One per id.
+- Must not fire when: a completion, or a suggestion resolved by accepting it.
 - Read by: Whether suggestions are trusted.
 - Added: v171.
 
 ## chat_answer_landed
-- Fires when: `persistAssistantTurn` stores a finished answer.
+- Fires when: `persistAssistantTurn` stores a finished answer. `tool_rounds` is the research loop's rounds (0 when one retrieval answered), `evidence_count` the number of cited sources, never their content; keyed by the message id.
 - Must not fire when: a discarded or empty turn.
 - Read by: Chat latency and depth.
 - Added: v171.
 
 ## chat_answer_failed
-- Fires when: the chat stream ends in an error before an answer is stored.
+- Fires when: the chat stream ends in an error before an answer is stored (`trackChatAnswerFailed`, from the route's error branch). `error_kind` is a machine code, or the AI gate's reason (`managed_limit`, `key_required`).
 - Must not fire when: a client abort.
 - Read by: Chat failure rate.
 - Added: v171.
@@ -148,13 +148,13 @@ Format per event: **fires when** / **must not fire when** / **read by**. Propert
 - Added: v171.
 
 ## checkout_started
-- Fires when: a Stripe checkout session is created (`startSubscriptionCheckout`, `startCreditPackCheckout`, Lifetime).
+- Fires when: a Stripe checkout session is created (`startSubscriptionCheckout`, `startCreditPackCheckout`; Lifetime is not sold, so has no start). One per Stripe session. `from_gate` is the `?gate=` the paywall passed to `/upgrade` when it is a known gate key, else the most recent `gate_events` feature for the account in the last 24 hours, else absent. A credit pack's `plan` is the account's own plan and `interval` is `once`.
 - Must not fire when: a gate refusal that never reached Stripe (that is a gate hit).
 - Read by: F15; gate to upgrade; abandonment.
 - Added: v171.
 
 ## subscription_canceled
-- Fires when: `cancelSubscription` succeeds.
+- Fires when: `cancelSubscription` succeeds in setting cancel-at-period-end. `tenure_days` is whole days since the account was created; `reason` is optional and only recorded when it is one of the closed `CANCEL_REASONS` (nothing collects it yet). One per cancellation (the event id hashes the user and the period end).
 - Must not fire when: a resume, or Stripe ending a subscription for non-payment.
 - Read by: Churn reasons.
 - Added: v171.
@@ -166,13 +166,13 @@ Format per event: **fires when** / **must not fire when** / **read by**. Propert
 - Added: v171.
 
 ## sync_failed
-- Fires when: a connector sync run ends in failure after retries.
+- Fires when: a Google, Outlook or iCloud calendar/contacts connection's sync stops for good: a dead grant (disarmed at once), or the failure that spends the last retry (`MAX_SYNC_FAILURES`). Recorded by `runSyncPass`. Not yet recorded for ICS feeds, Luma, Eventbrite or the recruiter inbox scans.
 - Must not fire when: a retried-then-recovered run.
 - Read by: Sync failure rate.
 - Added: v171.
 
 ## email_send_failed
-- Fires when: an outbox send reaches a terminal failed state.
+- Fires when: an outbox send reaches a terminal failed state (`settleFailed`: permanent, auth, exhausted, ambiguous). `kind` is `followup` for the follow-up origin and `outreach` for every other; the demo provider records nothing. One per row.
 - Must not fire when: a retry in progress.
 - Read by: Email failure rate.
 - Added: v171.

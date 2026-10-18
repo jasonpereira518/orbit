@@ -1552,14 +1552,17 @@ export type CompletionSnapshot = {
 };
 
 /**
- * Whole days between completing a follow-up and when it was due: positive when late,
- * negative when early, 0 within the same 24 hours. `null` for a reminder with no due date,
- * where "late" has no meaning (the property is then omitted from the event).
+ * Days between completing a follow-up and when it was due, rounded to the nearest whole day:
+ * positive when late, negative when early, 0 within about half a day either way. Due dates are
+ * date-only (noon UTC), so "completed the next morning" reads as 1 day late and "completed
+ * two days before" as 2 early, where truncating would call both of those a day less.
+ * `null` for a reminder with no due date, where "late" has no meaning (the property is then
+ * omitted from the event).
  */
 export function daysLate(completedAt: Date, dueDate: Date | null): number | null {
   if (!dueDate) return null;
   // `|| 0` turns -0 (a completion a few hours early) into 0.
-  return Math.trunc((completedAt.getTime() - dueDate.getTime()) / 86_400_000) || 0;
+  return Math.round((completedAt.getTime() - dueDate.getTime()) / 86_400_000) || 0;
 }
 
 export type CompleteReminderOptions = {
