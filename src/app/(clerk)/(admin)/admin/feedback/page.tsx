@@ -29,7 +29,6 @@ import {
   loadFeedbackList,
   type FeedbackFilter,
 } from "@/lib/admin-feedback";
-import { FEEDBACK_AREAS, FEEDBACK_CATEGORIES } from "@/lib/feedback-report";
 import {
   CHAT_FEEDBACK_PAGE_SIZE,
   getChatFeedbackSummary,
