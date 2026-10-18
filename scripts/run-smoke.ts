@@ -381,6 +381,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-constellation-admin": "pglite",
   "smoke-site-access": "pglite",
   "smoke-invite-ledger": "pglite",
+  "smoke-attribution-chain": "pglite",
   "smoke-constellation-payload-leak": "pglite",
   "smoke-constellation-pin": "pglite",
   "smoke-constellation-signals": "pglite",

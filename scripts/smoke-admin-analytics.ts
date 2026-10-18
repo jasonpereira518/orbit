@@ -1125,13 +1125,14 @@ async function main() {
   //
   // `referrerHost()` parses a host and nothing more, and the comments used to claim it
   // dropped same-origin. It never did: a full-page load from one Orbit page to another
-  // recorded Orbit as its own referrer. This drives POST /api/track itself.
+  // recorded Orbit as its own referrer. This drives POST /api/p/v itself (the beacon moved off
+  // /api/track, which ad-blocker lists match; /api/track stays as an alias for one release).
 
   console.log("\ningest route");
-  const { POST: track } = await import("../src/app/api/track/route");
+  const { POST: track } = await import("../src/app/api/p/v/route");
   const beacon = (body: Record<string, unknown>, host = "orbit.example") =>
     track(
-      new Request(`https://${host}/api/track`, {
+      new Request(`https://${host}/api/p/v`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -1144,6 +1145,20 @@ async function main() {
     );
   const viewOf = async (id: string) =>
     db.query.pageViews.findFirst({ where: (t, { eq }) => eq(t.id, id) });
+
+  // The old path is the same handler, so a client that loaded the previous bundle keeps reporting.
+  const { POST: legacyTrack } = await import("../src/app/api/track/route");
+  check("/api/track is the same handler as /api/p/v", legacyTrack === track);
+  const legacyId = randomUUID();
+  const legacyRes = await legacyTrack(
+    new Request("https://orbit.example/api/track", {
+      method: "POST",
+      headers: { "content-type": "application/json", host: "orbit.example", "user-agent": realChrome, "x-forwarded-for": "203.0.113.8" },
+      body: JSON.stringify({ kind: "view", id: legacyId, sessionId: randomUUID(), path: "/pricing", url: "https://orbit.example/pricing" }),
+    })
+  );
+  check("a view posted to the old path still lands", legacyRes.status === 204 && (await db.query.pageViews.findFirst({ where: (t, { eq }) => eq(t.id, legacyId) })) != null);
+  await db.delete(pageViews).where(eq(pageViews.id, legacyId));
 
   const selfRef = randomUUID();
   const res = await beacon({ kind: "view", id: selfRef, sessionId: randomUUID(), path: "/pricing", url: "https://orbit.example/pricing", referrer: "https://www.orbit.example/" });
@@ -1173,7 +1188,7 @@ async function main() {
   // only dwell beacons, used to walk straight past it.
   const from = (ip: string, ua: string, body: Record<string, unknown>) =>
     track(
-      new Request("https://orbit.example/api/track", {
+      new Request("https://orbit.example/api/p/v", {
         method: "POST",
         headers: { "content-type": "application/json", host: "orbit.example", "user-agent": ua, "x-forwarded-for": ip },
         body: JSON.stringify(body),
@@ -1223,6 +1238,58 @@ async function main() {
   check("the admin console is never recorded", (await viewOf(adminId)) == null);
 
   await db.delete(pageViews).where(inArray(pageViews.id, [selfRef, extRef, portRef]));
+
+  // The waitlist host: its / is recorded as /interest, and the neutral path is served there.
+  {
+    const waitlistHostName = "join.orbit-smoke.example";
+    const savedWaitlist = process.env.WAITLIST_HOST;
+    process.env.WAITLIST_HOST = waitlistHostName;
+    const wlId = randomUUID();
+    const wlRes = await beacon(
+      { kind: "view", id: wlId, sessionId: randomUUID(), path: "/", url: `https://${waitlistHostName}/`, referrer: "https://www.reddit.com/r/x" },
+      waitlistHostName
+    );
+    const wlRow = await viewOf(wlId);
+    check("the waitlist host still records through the neutral path, as /interest", wlRes.status === 204 && wlRow?.route === "/interest", `got ${wlRow?.route}`);
+    check("…with its external referrer", wlRow?.referrerHost === "www.reddit.com" || wlRow?.referrerHost === "reddit.com", `got ${wlRow?.referrerHost}`);
+    await db.delete(pageViews).where(eq(pageViews.id, wlId));
+    if (savedWaitlist === undefined) delete process.env.WAITLIST_HOST;
+    else process.env.WAITLIST_HOST = savedWaitlist;
+  }
+
+  // The signup session link: the first signed-in view of a NEW account writes pv_sid onto the
+  // account once and emits first_app_load once. (The route resolves the user through Clerk,
+  // which a script has no session for, so the linker the route calls is driven directly and the
+  // route's wiring is asserted on its source.)
+  {
+    const { linkSignupSession, resetSignupSessionCache } = await import("../src/lib/signup-session");
+    const { productEvents } = await import("../src/db/schema");
+    const fresh = "link_fresh_user";
+    const old = "link_old_user";
+    await db.delete(userSettings).where(inArray(userSettings.userId, [fresh, old]));
+    await db.insert(userSettings).values({ userId: fresh });
+    await db.insert(userSettings).values({ userId: old, createdAt: new Date(Date.now() - 30 * 86_400_000) });
+    resetSignupSessionCache();
+    const first = randomUUID();
+    const second = randomUUID();
+    check("the first signed-in view links the session", (await linkSignupSession({ userId: fresh, sessionId: first, route: "/onboarding" })) === true);
+    check("a later session never overwrites it", (await linkSignupSession({ userId: fresh, sessionId: second, route: "/dashboard" })) === false);
+    resetSignupSessionCache();
+    check("…even on another instance with a cold cache", (await linkSignupSession({ userId: fresh, sessionId: second, route: "/dashboard" })) === false);
+    check("user_settings.signup_session_id holds the first", (await db.query.userSettings.findFirst({ where: eq(userSettings.userId, fresh) }))?.signupSessionId === first);
+    let loaded: Array<typeof productEvents.$inferSelect> = [];
+    for (let i = 0; i < 60 && loaded.length === 0; i++) {
+      loaded = await db.select().from(productEvents).where(eq(productEvents.userId, fresh));
+      if (loaded.length === 0) await new Promise((r) => setTimeout(r, 25));
+    }
+    check("first_app_load is emitted once, with the session and the route pattern", loaded.length === 1 && loaded[0]?.name === "first_app_load" && loaded[0]?.sessionId === first && loaded[0]?.properties.landing_route === "/onboarding");
+    check("an account from before the link existed is left alone", (await linkSignupSession({ userId: old, sessionId: randomUUID(), route: "/dashboard" })) === false && (await db.query.userSettings.findFirst({ where: eq(userSettings.userId, old) }))?.signupSessionId == null);
+    check("a malformed session id links nothing", (await linkSignupSession({ userId: fresh, sessionId: "not-a-uuid", route: "/" })) === false);
+    const routeSource = (await import("node:fs")).readFileSync("src/app/api/p/v/route.ts", "utf8");
+    check("the beacon route calls the linker for signed-in, non-bot views only", /if \(userId && !isBot\) \{\s*await linkSignupSession\(/.test(routeSource));
+    await db.delete(productEvents).where(eq(productEvents.userId, fresh));
+    await db.delete(userSettings).where(inArray(userSettings.userId, [fresh, old]));
+  }
 
   // --- 8. Query budget -------------------------------------------------------------------
   //
