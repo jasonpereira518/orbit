@@ -50,7 +50,7 @@ const SECTIONS: ReadonlyArray<{ title: string; body: React.ReactNode }> = [
   },
   {
     title: "Why",
-    body: "To hold your place in line, to count the friends who joined through your link, and to email you about your place, your invite and, now and then, how Orbit's launch is going. Every email has a link to leave. Nothing else.",
+    body: "To hold your place in line, to count the friends who joined through your link, and to email you about your place, your invite and, now and then, how the launch is going. Every email has a link to leave. Nothing else.",
   },
   {
     title: "Who else sees it",
