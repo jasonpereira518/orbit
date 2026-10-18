@@ -3,6 +3,9 @@ import { getDb } from "@/db";
 import { siteSettings } from "@/db/schema";
 import { recordAdminAction } from "@/lib/admin-audit";
 import type { AiProvider } from "@/lib/ai-providers";
+import { bucketCount, RATE_LIMITS } from "@/lib/rate-limit";
+import { utcDayKey } from "@/lib/timeline-cost";
+import { WEB_SEARCH_ALL_SCOPE } from "@/lib/web-search-budget";
 import {
   forgetManagedAiPause,
   managedAiPausedDefault,
@@ -76,4 +79,53 @@ export async function setManagedAiPaused(
   // Other instances pick it up within the gate's 30-second cache.
   forgetManagedAiPause();
   return getManagedAiSwitchState();
+}
+
+/**
+ * The admin console's web-search switch (`site_settings.web_search_paused`): stops hosted web
+ * search for every account on every key. Beside it, today's Orbit-wide count against the
+ * daily ceiling (`src/lib/web-search-budget.ts`).
+ */
+export type WebSearchSwitchState = {
+  paused: boolean;
+  todaySearches: number;
+  dailyCeiling: number;
+};
+
+export async function getWebSearchSwitchState(now = new Date()): Promise<WebSearchSwitchState> {
+  const db = await getDb();
+  const [[row], todaySearches] = await Promise.all([
+    db.select({ paused: siteSettings.webSearchPaused }).from(siteSettings).where(eq(siteSettings.id, 1)).limit(1),
+    bucketCount(WEB_SEARCH_ALL_SCOPE, utcDayKey(now), RATE_LIMITS.webSearchDaily),
+  ]);
+  return { paused: row?.paused ?? false, todaySearches, dailyCeiling: RATE_LIMITS.webSearchDaily.limit };
+}
+
+export async function setWebSearchPaused(
+  adminUserId: string,
+  paused: boolean,
+  reason = ""
+): Promise<WebSearchSwitchState> {
+  const before = await getWebSearchSwitchState();
+  const db = await getDb();
+  await db
+    .insert(siteSettings)
+    .values({ id: 1, webSearchPaused: paused })
+    .onConflictDoUpdate({
+      target: siteSettings.id,
+      set: { webSearchPaused: sql`excluded.web_search_paused` },
+    });
+
+  await recordAdminAction({
+    adminUserId,
+    action: paused ? "site.web_search.pause" : "site.web_search.resume",
+    resourceType: "site_settings",
+    resourceId: "1",
+    reason: reason.trim() || null,
+    detail: { from: before.paused, to: paused },
+  });
+
+  // Same 30-second cache as the managed-AI switch.
+  forgetManagedAiPause();
+  return getWebSearchSwitchState();
 }

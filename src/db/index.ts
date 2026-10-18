@@ -1567,6 +1567,7 @@ CREATE TABLE IF NOT EXISTS site_settings (
   stealth_since timestamptz,
   waitlist_demo_enabled boolean,
   managed_ai_paused boolean,
+  web_search_paused boolean,
   updated_at timestamptz NOT NULL DEFAULT now(),
   updated_by text,
   CONSTRAINT site_settings_single_row CHECK (id = 1)
@@ -2720,7 +2721,12 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // and its briefs live in ai_result_cache, read back by key. The table was a day old (v169) and
 // held only cached web lookups. Rescanned every ref and worktree on Oct 15 2026: 169 was the
 // highest claimed anywhere.
-export const SCHEMA_VERSION = 170;
+//
+// 175 = site_settings.web_search_paused (the admin console's switch that stops hosted web
+// search for every account). NOT 171-174: claude/serene-cerf-0is3sb holds 171 and
+// claude/trusting-wozniak-ebsks3 reaches 174. Rescanned every local and remote ref and every
+// worktree on Oct 17 2026: 174 was the highest claimed anywhere.
+export const SCHEMA_VERSION = 175;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -4292,6 +4298,8 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS max_nudge_seen_at timestamptz`,
   `ALTER TABLE gate_events ADD COLUMN IF NOT EXISTS unlock_plan text`,
   `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS managed_ai_paused boolean`,
+  // Schema v175: the admin console's web-search switch (null = never set = running).
+  `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS web_search_paused boolean`,
   // Schema v139: the credit emails at 80% and 100% of the monthly allowance — the switch, and
   // which cycle and level were last sent (claimed in one UPDATE before each send).
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credit_email_enabled integer NOT NULL DEFAULT 1`,

@@ -1,7 +1,7 @@
 import { after } from "next/server";
 import { getDb } from "@/db";
 import { usageEvents } from "@/db/schema";
-import { estimateCostMicros } from "@/lib/ai-pricing";
+import { estimateCostMicros, webSearchFeeMicros } from "@/lib/ai-pricing";
 import { classifyAiError } from "@/lib/errors";
 import { settleManagedUsage } from "@/lib/credits/ledger";
 import type { AiProvider } from "@/lib/ai-providers";
@@ -42,6 +42,11 @@ export type TokenCounts = {
    * path as the token counts above — OpenRouter puts it on the same `usage` object.
    */
   reportedCostMicros?: number | null;
+  /**
+   * Hosted web searches the call ran (`webSearchJson`). Not stored: priced into the estimate
+   * by `webSearchFeeMicros`, since a search fee was most of the AI bill when this landed.
+   */
+  webSearches?: number | null;
 };
 
 /**
@@ -87,6 +92,15 @@ export type UsageRecord = UsageMeta &
  */
 export function usageRow(rec: UsageRecord) {
   const reported = rec.reportedCostMicros ?? null;
+  const tokenEstimate = estimateCostMicros({
+    model: rec.model,
+    inputTokens: rec.inputTokens,
+    outputTokens: rec.outputTokens,
+    cachedInputTokens: rec.cachedInputTokens,
+    cacheWriteTokens: rec.cacheWriteTokens,
+    audioInputTokens: rec.audioInputTokens,
+    batch: rec.batch,
+  });
   return {
     userId: rec.userId,
     operation: rec.operation,
@@ -97,17 +111,9 @@ export function usageRow(rec: UsageRecord) {
     inputTokens: rec.inputTokens ?? null,
     outputTokens: rec.outputTokens ?? null,
     cachedInputTokens: rec.cachedInputTokens ?? null,
+    // An unpriced model stays null even with searches: a fee alone would read as the whole cost.
     estimatedCostMicros:
-      reported ??
-      estimateCostMicros({
-        model: rec.model,
-        inputTokens: rec.inputTokens,
-        outputTokens: rec.outputTokens,
-        cachedInputTokens: rec.cachedInputTokens,
-        cacheWriteTokens: rec.cacheWriteTokens,
-        audioInputTokens: rec.audioInputTokens,
-        batch: rec.batch,
-      }),
+      reported ?? (tokenEstimate === null ? null : tokenEstimate + webSearchFeeMicros(rec.provider, rec.webSearches)),
     costSource: (reported === null ? "estimated" : "reported") as "estimated" | "reported",
     success: rec.success ? 1 : 0,
     errorKind: rec.errorKind ?? null,

@@ -193,6 +193,26 @@ export function estimateCostMicros(input: {
   return Math.round(usd * (input.batch ? BATCH_MULTIPLIER : 1) * 1_000_000);
 }
 
+/**
+ * Hosted web search fees, USD per 1,000 searches, billed on top of tokens. Checked Oct 17 2026
+ * (Anthropic's docs; OpenAI and Gemini via published comparisons — re-check on their pages).
+ * Free tiers are ignored on purpose: an over-estimate is the safe side of a budget. Gemini 3
+ * bills per query ($14), 2.5 per grounded prompt ($35 past 1,500/day) — priced as 3, the
+ * default. OpenRouter is absent: its reported cost already includes the plugin fee.
+ */
+const WEB_SEARCH_USD_PER_1K: Partial<Record<AiProvider, number>> = {
+  anthropic: 10,
+  openai: 10,
+  gemini: 14,
+};
+
+/** The search fee for one call, in micros. 0 for no searches or an unlisted provider. */
+export function webSearchFeeMicros(provider: string, searches: number | null | undefined): number {
+  const per1k = WEB_SEARCH_USD_PER_1K[provider as AiProvider];
+  if (!per1k || !searches || searches <= 0) return 0;
+  return Math.round(searches * per1k * 1_000);
+}
+
 /** Human-readable dollars for the admin UI. Null in, null out — never a fake $0.00. */
 export function formatCostMicros(micros: number | null | undefined): string | null {
   if (micros == null) return null;

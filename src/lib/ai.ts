@@ -47,6 +47,7 @@ import {
   tokensFromAnthropic,
   type TokenCounts,
 } from "@/lib/usage-events";
+import { anthropicSearchCount, reserveWebSearch, resumeMaxUses, settleWebSearch } from "@/lib/web-search-budget";
 import {
   AI_INCOMPLETE_MESSAGE,
   aiProviderErrorMessage,
@@ -2724,8 +2725,11 @@ export function anthropicWebSearchToolType(model: string): "web_search_20260209"
 /** A searched answer runs several fetches before it writes a word — more than a plain call. */
 const WEB_SEARCH_TIMEOUT_MS = 120_000;
 
-/** Server-tool turns Anthropic may pause mid-search; each resume is one more request. */
-const MAX_WEB_SEARCH_RESUMES = 3;
+/**
+ * Server-tool turns Anthropic may pause mid-search; each resume is one more request, and one
+ * more chance to search (`resumeMaxUses`). One is enough to finish a lookup.
+ */
+const MAX_WEB_SEARCH_RESUMES = 1;
 
 /**
  * A JSON answer grounded in a live web search, run on the account's own provider.
@@ -2737,9 +2741,10 @@ const MAX_WEB_SEARCH_RESUMES = 3;
  * JSON response format with search — so the answer is read with `parseAiJson`, which finds
  * the object inside any prose around it.
  *
- * Token usage is reported like any other call. Per-search fees are billed by the provider
- * on top and are NOT in those counts; callers bound them with `maxSearches` and by running
- * rarely.
+ * Each search is a provider fee on top of tokens. The real count is read off every response,
+ * priced into the usage row (`webSearchFeeMicros`) and charged to the budget in
+ * `web-search-budget.ts`, which refuses the call up front when the account's month, Orbit's
+ * day, or the admin switch says no.
  */
 export async function webSearchJson(
   userId: string,
@@ -2767,7 +2772,10 @@ export async function webSearchJson(
     return input.signal ? AbortSignal.any([own, input.signal]) : own;
   };
 
-  return runOnGrant(grant, withUsage(
+  await reserveWebSearch(userId);
+  let searches = 0;
+  try {
+  return await runOnGrant(grant, withUsage(
     { userId, operation, provider, model, kind: "completion", keyOwner },
     async (report) => {
       try {
@@ -2785,7 +2793,8 @@ export async function webSearchJson(
               ...geminiThinking(model, operation),
             },
           });
-          report(tokensFromGemini(response));
+          searches = response.candidates?.[0]?.groundingMetadata?.webSearchQueries?.length ?? 0;
+          report({ ...tokensFromGemini(response), webSearches: searches });
           const content = response.text;
           if (!content) throw new Error("Empty AI response");
           const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
@@ -2812,6 +2821,8 @@ export async function webSearchJson(
             }) as Parameters<typeof client.chat.completions.create>[0] & { stream?: false },
             { signal: callSignal() },
           );
+          // One plugin search per call; its fee is inside the reported cost.
+          searches = 1;
           report({ ...tokensFromOpenAi(response), reportedCostMicros: reportedCostMicros(response as OpenAiUsageWithCost) });
           const message = response.choices[0]?.message;
           if (!message?.content) throw new Error("Empty AI response");
@@ -2839,10 +2850,12 @@ export async function webSearchJson(
             },
             { signal: callSignal() },
           );
+          searches = response.output.filter((item) => item.type === "web_search_call").length;
           report({
             inputTokens: response.usage?.input_tokens ?? null,
             outputTokens: response.usage?.output_tokens ?? null,
             cachedInputTokens: response.usage?.input_tokens_details?.cached_tokens ?? null,
+            webSearches: searches,
           });
           const content = response.output_text;
           if (!content) throw new Error("Empty AI response");
@@ -2873,13 +2886,14 @@ export async function webSearchJson(
             ...anthropicEffort(model),
             system,
             messages,
-            tools: [{ type: anthropicWebSearchToolType(model), name: "web_search", max_uses: maxSearches }],
+            tools: [{ type: anthropicWebSearchToolType(model), name: "web_search", max_uses: resumeMaxUses(maxSearches, searches) }],
           }, { signal: callSignal() });
           const t = tokensFromAnthropic(response);
           totals.input += t.inputTokens ?? 0;
           totals.output += t.outputTokens ?? 0;
           totals.cached += t.cachedInputTokens ?? 0;
-          report({ inputTokens: totals.input, outputTokens: totals.output, cachedInputTokens: totals.cached });
+          searches += anthropicSearchCount(response);
+          report({ inputTokens: totals.input, outputTokens: totals.output, cachedInputTokens: totals.cached, webSearches: searches });
           if (response.stop_reason !== "pause_turn") break;
           messages.push({ role: "assistant", content: response.content });
         }
@@ -2906,4 +2920,8 @@ export async function webSearchJson(
     },
     { cancelSignal: input.signal },
   ));
+  } finally {
+    // A failed call may still have searched (a parse error after the results came back).
+    await settleWebSearch(userId, searches);
+  }
 }

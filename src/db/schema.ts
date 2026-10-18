@@ -5074,6 +5074,11 @@ export const siteSettings = pgTable("site_settings", {
    * and on elsewhere. The `ORBIT_MANAGED_AI=off` env kill switch still wins over this.
    */
   managedAiPaused: boolean("managed_ai_paused"),
+  /**
+   * The admin console's web-search switch. True = no hosted web search runs for anyone, on
+   * any key (`src/lib/web-search-budget.ts`). Null = never set, which reads as running.
+   */
+  webSearchPaused: boolean("web_search_paused"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   /** The admin who last changed it. Kept for the audit trail's benefit, not read by the app. */
   updatedBy: text("updated_by"),

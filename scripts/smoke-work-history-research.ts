@@ -14,6 +14,7 @@ import { eq, like } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, rateLimitBuckets } from "../src/db/schema";
 import { anthropicWebSearchToolType } from "../src/lib/ai";
+import { RateLimitedError } from "../src/lib/rate-limit";
 import { aiOperationThinking, aiOperationTier } from "../src/lib/ai-operations";
 import { getContactProfile, saveContactProfile, type IncomingExperience } from "../src/lib/contact-profile";
 import {
@@ -189,6 +190,13 @@ async function main() {
     },
   });
   check("a failed search returns error instead of throwing", broken === "error", broken);
+  const capped = await researchContactWorkHistory(USER, brokenContact, {
+    force: true,
+    researcher: async () => {
+      throw new RateLimitedError("web-search", 3_600);
+    },
+  });
+  check("a web-search budget refusal is rate_limited, not an error", capped === "rate_limited", capped);
 
   // --- which contacts a pull hands to the route ---------------------------------------
   const due = await contactsNeedingWorkHistory(USER, [priya, namesake, captured, noUrl, brokenContact]);

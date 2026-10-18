@@ -258,8 +258,10 @@ export function nextWorkHistoryDue(
   const random = options.random ?? Math.random;
   const day = 86_400_000;
   switch (outcome) {
+    // A week, not a day: a failed search may already have been billed, and a contact that
+    // keeps failing was costing two searches every day.
     case "error":
-      return new Date(now.getTime() + jittered(day, random));
+      return new Date(now.getTime() + jittered(7 * day, random));
     case "rate_limited": {
       // The day's allowance is spent: the next UTC day, spread over its first hours.
       const tomorrow = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
@@ -308,8 +310,9 @@ export async function researchContactWorkHistory(
     outcome = run.outcome;
     cadence = run.cadence;
     freshFrom = run.freshFrom;
-  } catch {
-    outcome = "error";
+  } catch (err) {
+    // The web-search budget refuses from inside the search (month spent, Orbit's day, paused).
+    outcome = isRateLimitedError(err) ? "rate_limited" : "error";
   }
 
   // Every outcome reschedules, whoever asked: a contact pulled from LinkedIn today is not
