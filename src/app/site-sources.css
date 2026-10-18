@@ -161,6 +161,7 @@
 @source "../lib/credits/ledger.ts";
 @source "../lib/crypto.ts";
 @source "../lib/dates.ts";
+@source "../lib/db-error-redact.ts";
 @source "../lib/decisions/catalog.ts";
 @source "../lib/decisions/engine.ts";
 @source "../lib/decisions/gates.ts";
