@@ -179,8 +179,11 @@ async function readText(d: Detected): Promise<string> {
   // Same as the contacts card: photos are stripped in the browser before anything is sent.
   const text = d.target === "contacts_file" ? compactContactsFileText(raw) : raw;
   // Measured after unzipping and compacting: the file's size says nothing about the text a
-  // Server Action carries.
-  if (!fitsInOneRequest(text)) throw new UserFacingError(IMPORT_COPY.tooLarge);
+  // Server Action carries. Connections never travel as one request — they are checked and
+  // uploaded in batches (`linkedin-connections-client.ts`) — so any size of export goes.
+  if (d.target !== "linkedin_connections" && !fitsInOneRequest(text)) {
+    throw new UserFacingError(IMPORT_COPY.tooLarge);
+  }
   return text;
 }
 
