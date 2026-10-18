@@ -5,7 +5,7 @@ import { OUTLOOK_SCAN_IMPORT_TYPE } from "@/lib/outlook-scan-type";
 import { deleteAvatarBlobs } from "@/lib/avatar-blob";
 import { hasBlobStorage } from "@/lib/contact-avatar";
 import { purgeEmailAttachmentsForUser } from "@/lib/email/attachments";
-import { and, asc, eq, getTableName, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, eq, getTableName, inArray, lt, or, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
 import { getDb, rowsOf } from "@/db";
@@ -62,6 +62,9 @@ import {
   feedback,
   feedbackScreenshots,
   gateEvents,
+  productEvents,
+  siteInvites,
+  interestListSignups,
   gmailConnections,
   ignoredPeople,
   importFiles,
@@ -569,8 +572,8 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   activity: {
-    exports: [own(usageEvents), own(extensionUsage, "user_id"), own(errorEvents), own(gateEvents), own(planUpgradeEvents), own(pageViews), own(speechUsage)],
-    counts: [usageEvents, extensionUsage, errorEvents, gateEvents, planUpgradeEvents, speechUsage],
+    exports: [own(usageEvents), own(extensionUsage, "user_id"), own(errorEvents), own(gateEvents), own(planUpgradeEvents), own(pageViews), own(speechUsage), own(productEvents)],
+    counts: [usageEvents, extensionUsage, errorEvents, gateEvents, planUpgradeEvents, speechUsage, productEvents],
     run: async (db, userId) => {
       await db.delete(usageEvents).where(eq(usageEvents.userId, userId));
       // Deepgram usage meter (v89) — same reasoning as `usage_events` above: it is a record
@@ -584,6 +587,8 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       await db.delete(extensionUsage).where(eq(extensionUsage.userId, userId));
       await db.delete(errorEvents).where(eq(errorEvents.userId, userId));
       await db.delete(gateEvents).where(eq(gateEvents.userId, userId));
+      // Product telemetry (v171): ids, enums and counts keyed on the person — deleted outright.
+      await db.delete(productEvents).where(eq(productEvents.userId, userId));
       // The account's own upgrade-celebration queue. Nothing outside this user reads it and
       // it carries no operational or financial value, so it is deleted outright rather than
       // anonymised the way `billing_events` is.
@@ -884,6 +889,24 @@ const PURGE_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 async function runPurgeStep(db: Db, userId: string, key: PurgeStepKey, keepSettings: boolean) {
   if (key === "billing") {
     await db.update(billingEvents).set({ userId: null }).where(eq(billingEvents.userId, userId));
+    // The invitation ledger and the waitlist row are identity, not finance. The invite row is
+    // kept so a wave's counts do not change retroactively, but it stops naming the person; the
+    // waitlist row (email, name, UTMs) is deleted, which is what the waitlist notice promises
+    // once someone has been let in. Runs before `preferences`, so the email is still readable.
+    const [owner] = await db
+      .select({ email: userSettings.email })
+      .from(userSettings)
+      .where(eq(userSettings.userId, userId))
+      .limit(1);
+    await db
+      .update(siteInvites)
+      .set({ acceptedUserId: null, email: sql`'deleted-' || ${siteInvites.id}::text` })
+      .where(eq(siteInvites.acceptedUserId, userId));
+    await db.delete(interestListSignups).where(
+      owner?.email
+        ? or(eq(interestListSignups.userId, userId), eq(interestListSignups.email, owner.email.toLowerCase()))
+        : eq(interestListSignups.userId, userId)
+    );
     // Credit grants are money for the same reason billing rows are: a pack is cash received
     // and its unused credits are a liability, so the rows are anonymised, never deleted. The
     // account is gone, so whatever it had not spent is closed out as revoked — which is what

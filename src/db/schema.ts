@@ -300,6 +300,37 @@ export const userSettings = pgTable("user_settings", {
   signupLandingPath: text("signup_landing_path"),
   signupAttributedAt: timestamp("signup_attributed_at", { withTimezone: true }),
   /**
+   * Where `signup_*` came from: `cookie` (the `orbit_attr` first-touch cookie), `direct` (no
+   * cookie on the first app render), or `waitlist` (copied from the waitlist row when the
+   * account was created from an invite, because the cookie lives on the waitlist host and
+   * never reaches the app host). Null on accounts attributed before this column existed.
+   */
+  signupAttributionSource: text("signup_attribution_source").$type<"cookie" | "direct" | "waitlist">(),
+  /**
+   * The per-tab analytics session id (the beacon's `pv_sid`) of the first signed-in render. It
+   * lets an operator say "this account's first session came in on /pricing from Reddit"
+   * without storing a visitor identity: it is the same random per-tab uuid page_views already
+   * carries, written once, and it dies with the account.
+   */
+  signupSessionId: text("signup_session_id"),
+  /**
+   * Who this account is for the operator's own numbers. Null = a real customer. `internal` is
+   * the operator, teammates and the showcase account; `tester` is someone invited to try the
+   * product rather than to use it. Both are excluded from every product and revenue aggregate
+   * by default (`src/lib/analytics-internal.ts`); comped is derived from `comped_plan`.
+   */
+  accountKind: text("account_kind").$type<"internal" | "tester">(),
+  /**
+   * When this account first had a personal AI key for any provider. Stamped by
+   * `applyAiKeyChange` and never moved or cleared: the key columns carry no timestamp, so
+   * without this "time to AI ready" is unknowable.
+   */
+  aiKeyAddedAt: timestamp("ai_key_added_at", { withTimezone: true }),
+  /** The `site_invites` row this account was created from. Null for organic and pre-ledger accounts. */
+  inviteId: uuid("invite_id"),
+  /** The waitlist row this account came from, resolved at invite claim. Replaces email-match joins. */
+  interestSignupId: uuid("interest_signup_id"),
+  /**
    * Opaque bearer token for the read-only ICS reminder feed. Stored in plaintext
    * deliberately: the URL must stay re-displayable when the user adds a second device,
    * and `crypto.ts` uses a random IV per call so ciphertext could not be indexed for
@@ -1198,6 +1229,12 @@ export const reminders = pgTable(
      * two-week window, and a reminder outlives it.
      */
     calendarEventKey: text("calendar_event_key"),
+    /**
+     * When the person marked this done. `updated_at` moves on any edit, so "completed when"
+     * was unanswerable. Set by the three completion paths, cleared on reopen. Rows already
+     * done before the column existed were backfilled from `updated_at` (approximate).
+     */
+    completedAt: timestamp("completed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -4626,6 +4663,12 @@ export const interestListSignups = pgTable(
      * welcome email ("you filled out the interest form at …"). Null for ordinary web signups.
      */
     signupEventLabel: text("signup_event_label"),
+    /** The per-tab analytics session id at join time (the beacon's `pv_sid`), when the page sent one. */
+    joinSessionId: text("join_session_id"),
+    /** The account this person became, set when an invite is claimed. Replaces the email-equality join. */
+    userId: text("user_id"),
+    /** When that happened. Time-to-convert from the waitlist is `converted_at - created_at`. */
+    convertedAt: timestamp("converted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -5409,6 +5452,10 @@ export const extensionUsage = pgTable("extension_usage", {
     .notNull(),
   aiCount: integer("ai_count").default(0).notNull(),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+  /** First authenticated request ever. Written once; `window_started_at` is overwritten every minute. */
+  firstSeenAt: timestamp("first_seen_at", { withTimezone: true }),
+  /** The extension build that made the latest request (`X-Orbit-Extension-Version`), semver only. */
+  version: text("version"),
 });
 
 /* ==================================================================================
@@ -6316,3 +6363,74 @@ export const dataPurgeRuns = pgTable(
 
 export type StripeProcessedEventRow = typeof stripeProcessedEvents.$inferSelect;
 export type DataPurgeRunRow = typeof dataPurgeRuns.$inferSelect;
+
+/**
+ * Orbit's own record of an invitation. Clerk is still the system that sends and redeems it,
+ * but it keeps no wave, no link to the waitlist row, and an admin list capped at 25 — so
+ * "how many of wave 2 signed up?" was an email match against audit-log text. One row per
+ * invitation Orbit issued (or per existing account it granted access to).
+ *
+ * `email` is lowercased and is the fallback join; `interest_list_signup_id` and
+ * `accepted_user_id` are the real keys. `wave_id` is an operator-chosen label (`w1`, `w2`).
+ * No FK on any cross-row reference, like the interest-list tables.
+ */
+export const siteInvites = pgTable(
+  "site_invites",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    email: text("email").notNull(),
+    interestListSignupId: uuid("interest_list_signup_id"),
+    waveId: text("wave_id"),
+    clerkInvitationId: text("clerk_invitation_id"),
+    source: text("source").$type<"waitlist" | "manual" | "existing_account">().notNull().default("manual"),
+    invitedBy: text("invited_by"),
+    emailed: boolean("emailed").notNull().default(false),
+    sentAt: timestamp("sent_at", { withTimezone: true }).defaultNow().notNull(),
+    acceptedUserId: text("accepted_user_id"),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("site_invites_clerk_invitation_uidx").on(t.clerkInvitationId),
+    index("site_invites_email_idx").on(t.email),
+    index("site_invites_wave_sent_idx").on(t.waveId, t.sentAt),
+    index("site_invites_accepted_user_idx").on(t.acceptedUserId),
+  ]
+);
+
+/**
+ * Append-only product telemetry for the actions that leave no row of their own: an install,
+ * a refused action, an MCP tool call, a click that never became data. Domain tables stay the
+ * source of truth for anything they already record.
+ *
+ * `properties` holds ids, enums, counts, booleans and durations ONLY — validated against the
+ * event's zod schema in `src/lib/product-events.ts` — never note content, names, prompts,
+ * outputs, emails or URLs. `id` is the dedupe key: a retried write is the same event.
+ * `actor = 'system'` marks events no person caused, so activity counts can leave them out.
+ */
+export const productEvents = pgTable(
+  "product_events",
+  {
+    id: uuid("id").primaryKey(),
+    name: text("name").notNull(),
+    version: integer("version").notNull().default(1),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).defaultNow().notNull(),
+    userId: text("user_id"),
+    sessionId: text("session_id"),
+    surface: text("surface").$type<"web" | "extension" | "mcp" | "api" | "cron" | "webhook">().notNull(),
+    actor: text("actor").$type<"user" | "system">().notNull(),
+    isInternal: boolean("is_internal").notNull().default(false),
+    properties: jsonb("properties").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("product_events_name_occurred_idx").on(t.name, t.occurredAt),
+    index("product_events_user_occurred_idx").on(t.userId, t.occurredAt),
+    index("product_events_session_idx").on(t.sessionId),
+  ]
+);
+
+export type SiteInvite = typeof siteInvites.$inferSelect;
+export type NewSiteInvite = typeof siteInvites.$inferInsert;
+export type ProductEvent = typeof productEvents.$inferSelect;
+export type NewProductEvent = typeof productEvents.$inferInsert;

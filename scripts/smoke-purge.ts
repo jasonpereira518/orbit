@@ -108,6 +108,28 @@ async function seed() {
     plan: "free",
   });
 
+  // v171 telemetry and identity links. product_events is deleted with "activity"; the waitlist
+  // row an account came from is deleted on a full purge (the waitlist notice promises that once
+  // someone has been let in), and the invite ledger row is anonymised rather than deleted.
+  await db.insert(schema.productEvents).values({
+    id: randomUUID(),
+    name: "capture_saved",
+    surface: "web",
+    actor: "user",
+    userId: USER,
+    properties: { source_kind: "text" },
+  });
+  await db.insert(schema.interestListSignups).values({
+    email: `${USER}@example.test`,
+    unsubscribeToken: `${USER}-unsub`,
+    userId: USER,
+  });
+  await db.insert(schema.siteInvites).values({
+    email: `${USER}@example.test`,
+    acceptedUserId: USER,
+    source: "waitlist",
+  });
+
   // Anonymised rather than deleted on purge — see `purgeUserData`. The count below is
   // `WHERE user_id = USER`, so nulling the column satisfies the no-leak check honestly.
   await db.insert(schema.billingEvents).values({
