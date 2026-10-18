@@ -3,6 +3,7 @@ import {
   FREE_STARTER_CREDITS,
   PLAN_CONFIG,
   PLAN_LABELS,
+  formatSpeechAllowance,
   type PurchasablePlan,
 } from "@/lib/plans/plan-config";
 import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_LABEL } from "@/lib/stripe-config";
@@ -26,8 +27,7 @@ const COLUMN_ACCENT: Record<Column, { heading: string; tick: string; tint?: stri
   max: { heading: "text-night-max", tick: "text-night-max", tint: "bg-night-max/5" },
 };
 
-const hours = (seconds: number) =>
-  seconds === 0 ? false : `${seconds / 3600} hour${seconds === 3600 ? "" : "s"} a month`;
+const hours = (seconds: number) => (seconds === 0 ? false : `${formatSpeechAllowance(seconds)} a month`);
 const each = <T,>(fn: (plan: Column) => T): [T, T, T] => [fn("free"), fn("orbit"), fn("max")];
 const feature = (key: keyof (typeof PLAN_CONFIG)["free"]["features"]) =>
   each((plan) => PLAN_CONFIG[plan].features[key]);

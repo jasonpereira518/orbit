@@ -548,6 +548,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-schema-upgrade": "pglite",
   "smoke-connector-connections": "pglite",
   "smoke-speech-quota": "pglite",
+  "smoke-speech-credit": "pglite",
   "smoke-stripe-unattributed": "pglite",
   "smoke-stripe-webhook": "pglite",
   "smoke-pricing-v2-billing": "pglite",

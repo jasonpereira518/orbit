@@ -2,6 +2,7 @@
  * The Deepgram request shape, as pure data. No network, no env.
  * Run: npx tsx scripts/smoke-deepgram-params.ts
  */
+import { deepgramKeyterms } from "../src/lib/deepgram";
 import { keytermsFor, listenParams, MAX_KEYTERMS } from "../src/lib/deepgram-params";
 
 let failures = 0;
@@ -45,6 +46,18 @@ console.log("\nlistenParams");
 {
   const p = listenParams({ live: true, keyterms: ["A", "B"] });
   check("every keyterm gets its own param", p.getAll("keyterm").length === 2);
+}
+
+console.log("\nthe keyterm switch");
+{
+  const prior = process.env.ORBIT_DEEPGRAM_KEYTERMS;
+  delete process.env.ORBIT_DEEPGRAM_KEYTERMS;
+  check("on by default: the contact names go to Deepgram", deepgramKeyterms(["Priya Raman"]).join() === "Priya Raman");
+  process.env.ORBIT_DEEPGRAM_KEYTERMS = "off";
+  check("ORBIT_DEEPGRAM_KEYTERMS=off sends none, so the add-on is not billed", deepgramKeyterms(["Priya Raman"]).length === 0);
+  check("…and a request built from that carries no keyterm param", !listenParams({ live: false, keyterms: deepgramKeyterms(["Priya Raman"]) }).has("keyterm"));
+  if (prior === undefined) delete process.env.ORBIT_DEEPGRAM_KEYTERMS;
+  else process.env.ORBIT_DEEPGRAM_KEYTERMS = prior;
 }
 
 if (failures) { console.error(`\n${failures} check(s) failed`); process.exit(1); }

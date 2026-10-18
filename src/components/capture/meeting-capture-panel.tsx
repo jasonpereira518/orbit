@@ -12,6 +12,7 @@
  * page. See that file for the phases and for why nothing extracts until Finish is confirmed.
  */
 
+import { speakerDisplayNames } from "@/lib/speaker-display";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { motion, useTransform, type MotionValue } from "motion/react";
@@ -745,12 +746,6 @@ const STATUS_COPY: Record<ChunkUploadStatus, string> = {
   failed: "Couldn't upload this part",
 };
 
-/** "you" / "speaker-2" from the speaker map, as a person would read it. */
-function speakerLabel(speaker: string): string {
-  if (speaker === "you") return "You";
-  const n = /^speaker-(\d+)$/.exec(speaker)?.[1];
-  return n ? `Speaker ${n}` : speaker;
-}
 
 function TranscriptList({
   segments,
@@ -824,13 +819,16 @@ const SegmentLines = memo(function SegmentLines({
   segments: SegmentView[];
   boundarySet: Set<number>;
 }) {
+  // "You", then Speaker 1, 2, ... in order of first appearance — the stored labels' own
+  // numbers skip (`speakerDisplayNames`).
+  const names = useMemo(() => speakerDisplayNames(segments), [segments]);
   return (
     <>
       {segments.map((s) => (
         <div key={s.seq}>
           {boundarySet.has(s.seq) && (
             <p className="my-2 border-t border-border/60 pt-2 text-xs text-muted-foreground">
-              Reconnected — speakers renumbered from here.
+              Reconnected — voices after this point may get new numbers.
             </p>
           )}
           <p className="leading-relaxed">
@@ -838,7 +836,7 @@ const SegmentLines = memo(function SegmentLines({
               {formatElapsed(s.startMs)}
             </span>
             {s.speaker && (
-              <span className="mr-1.5 font-medium text-foreground">{speakerLabel(s.speaker)}:</span>
+              <span className="mr-1.5 font-medium text-foreground">{names.get(s.speaker) ?? s.speaker}:</span>
             )}
             {s.status === "done" ? (
               s.text ? (
