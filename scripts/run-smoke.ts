@@ -290,6 +290,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-account-alerts": "pglite",
   "smoke-import-history": "pglite",
   "smoke-account-deletion": "pglite",
+  "smoke-money-correctness": "pglite",
   "smoke-ai-access": "pglite",
   "smoke-jev-client": "pglite",
   "smoke-jev-recruiter-scan": "pglite",
