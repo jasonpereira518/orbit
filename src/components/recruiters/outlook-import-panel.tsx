@@ -51,7 +51,7 @@ export function OutlookImportPanel({
           imported from your inbox. You can still add recruiters by hand.
         </p>
         {process.env.NODE_ENV === "development" ? (
-          <p className="text-xs text-muted-foreground/70">
+          <p className="text-xs text-muted-foreground-subtle">
             Dev only — set MICROSOFT_CLIENT_ID, MICROSOFT_CLIENT_SECRET and
             MICROSOFT_REDIRECT_URI
             {connection.redirectUri ? ` (redirect: ${connection.redirectUri})` : ""}

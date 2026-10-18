@@ -3,8 +3,15 @@ import {
   CONSTELLATION_STAGE_HEIGHT,
 } from "@/components/graph/constellation-loading";
 import { ChatRailPlaceholder } from "@/components/chat/chat-rail-placeholder";
+import { LoadingRegion } from "@/components/ui/loading-region";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+
+// Each page-level skeleton's root is a `LoadingRegion`, so a screen reader hears "Loading
+// contacts…" instead of silence while the route streams. One region per page: the part
+// skeletons (`ChatPanelSkeleton`, `CaptureFormSkeleton`, `DashboardCardSkeleton`) stay silent
+// because they also render inside a page skeleton, and a region inside a region announces
+// twice. `GraphPageSkeleton` and `RadarPageSkeleton` already carry their own status text.
 
 function PageHeaderSkeleton({
   subtitle = true,
@@ -31,11 +38,11 @@ function PageHeaderSkeleton({
 
 export function GenericPageSkeleton() {
   return (
-    <div className="space-y-6">
+    <LoadingRegion label="Loading page" className="space-y-6">
       <PageHeaderSkeleton />
       <Skeleton className="h-40 w-full rounded-2xl" />
       <Skeleton className="h-40 w-full rounded-2xl" />
-    </div>
+    </LoadingRegion>
   );
 }
 
@@ -47,7 +54,8 @@ export function GenericPageSkeleton() {
  */
 export function RemindersStageSkeleton() {
   return (
-    <div
+    <LoadingRegion
+      label="Loading reminders"
       data-fill-route
       className="flex min-h-0 flex-1 flex-col gap-4"
     >
@@ -93,7 +101,7 @@ export function RemindersStageSkeleton() {
           </div>
         </div>
       </div>
-    </div>
+    </LoadingRegion>
   );
 }
 
@@ -108,11 +116,11 @@ export function RemindersStageSkeleton() {
  */
 export function DashboardStatRowSkeleton() {
   return (
-    <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+    <LoadingRegion label="Loading dashboard" className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
       {Array.from({ length: 4 }).map((_, i) => (
         <Skeleton key={i} className="h-24 rounded-2xl" />
       ))}
-    </div>
+    </LoadingRegion>
   );
 }
 
@@ -123,7 +131,7 @@ export function DashboardCardSkeleton({ className }: { className?: string }) {
 
 export function ContactsPageSkeleton() {
   return (
-    <div className="space-y-6">
+    <LoadingRegion label="Loading contacts" className="space-y-6">
       <PageHeaderSkeleton actions />
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (
@@ -144,14 +152,14 @@ export function ContactsPageSkeleton() {
           </div>
         ))}
       </div>
-    </div>
+    </LoadingRegion>
   );
 }
 
 /** Matches /recruiters: sharing toggle + Gmail panel + tab bar + list, same shell as Contacts. */
 export function RecruitersPageSkeleton() {
   return (
-    <div className="space-y-6">
+    <LoadingRegion label="Loading recruiters" className="space-y-6">
       <PageHeaderSkeleton actions />
       <Skeleton className="h-36 w-full rounded-2xl" />
       <Skeleton className="h-28 w-full rounded-2xl" />
@@ -173,14 +181,14 @@ export function RecruitersPageSkeleton() {
           </div>
         ))}
       </div>
-    </div>
+    </LoadingRegion>
   );
 }
 
 /** Matches /recruiters/[id]: header + rating card + contact card + history card + form. */
 export function RecruiterDetailPageSkeleton() {
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <LoadingRegion label="Loading recruiter" className="mx-auto max-w-3xl space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-3">
           <Skeleton className="h-4 w-24" />
@@ -197,13 +205,13 @@ export function RecruiterDetailPageSkeleton() {
       <Skeleton className="h-40 w-full rounded-2xl" />
       <Skeleton className="h-52 w-full rounded-2xl" />
       <Skeleton className="h-9 w-40 rounded-lg" />
-    </div>
+    </LoadingRegion>
   );
 }
 
 export function ContactDetailPageSkeleton() {
   return (
-    <div className="space-y-8">
+    <LoadingRegion label="Loading contact" className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-3">
           <Skeleton className="h-4 w-20" />
@@ -228,13 +236,13 @@ export function ContactDetailPageSkeleton() {
         <Skeleton className="h-6 w-28" />
         <Skeleton className="h-80 w-full rounded-2xl" />
       </div>
-    </div>
+    </LoadingRegion>
   );
 }
 
 export function FormPageSkeleton({ wide = false }: { wide?: boolean }) {
   return (
-    <div className={`space-y-6 ${wide ? "" : "mx-auto max-w-2xl"}`}>
+    <LoadingRegion label="Loading form" className={`space-y-6 ${wide ? "" : "mx-auto max-w-2xl"}`}>
       <PageHeaderSkeleton />
       <div className="space-y-4 rounded-2xl border border-border/70 p-6">
         {Array.from({ length: 5 }).map((_, i) => (
@@ -246,7 +254,7 @@ export function FormPageSkeleton({ wide = false }: { wide?: boolean }) {
         <Skeleton className="h-24 w-full rounded-lg" />
         <Skeleton className="mt-2 h-9 w-32" />
       </div>
-    </div>
+    </LoadingRegion>
   );
 }
 
@@ -283,7 +291,7 @@ function SettingsCardSkeleton({
 export function SettingsPageSkeleton() {
   const label = <Skeleton className="ml-1 h-3 w-24" />;
   return (
-    <div className="mx-auto max-w-2xl space-y-10">
+    <LoadingRegion label="Loading settings" className="mx-auto max-w-2xl space-y-10">
       <PageHeaderSkeleton />
       <div className="space-y-4">
         {label}
@@ -317,14 +325,14 @@ export function SettingsPageSkeleton() {
         {label}
         <SettingsCardSkeleton rows={2} />
       </div>
-    </div>
+    </LoadingRegion>
   );
 }
 
 /** Matches /capture/[batchId]: the results view, not the capture form it's nested under. */
 export function NoteBatchResultSkeleton() {
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <LoadingRegion label="Loading capture results" className="mx-auto max-w-3xl space-y-6">
       <div className="space-y-2">
         <Skeleton className="h-9 w-72 max-w-full" />
         <Skeleton className="h-4 w-full max-w-md" />
@@ -334,7 +342,7 @@ export function NoteBatchResultSkeleton() {
         <Skeleton className="h-48 w-full rounded-2xl" />
         <Skeleton className="h-40 w-full rounded-2xl" />
       </div>
-    </div>
+    </LoadingRegion>
   );
 }
 
@@ -436,27 +444,27 @@ export function CaptureFormSkeleton() {
 /** Matches /capture: header (no back link, unlike FormPageSkeleton) at the page's own max-w-3xl. */
 export function CapturePageSkeleton() {
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <LoadingRegion label="Loading capture" className="mx-auto max-w-3xl space-y-6">
       <div className="space-y-2">
         <Skeleton className="h-9 w-40" />
         <Skeleton className="h-4 w-full max-w-md" />
       </div>
       <CaptureFormSkeleton />
-    </div>
+    </LoadingRegion>
   );
 }
 
 export function ChatPageSkeleton() {
   return (
     // Same phone height as the chat page itself, so the load doesn't jump.
-    <div className="flex h-[calc(100dvh-11.375rem-env(safe-area-inset-bottom))] min-h-0 flex-col gap-5 md:h-[calc(100dvh-4rem)]">
+    <LoadingRegion label="Loading chat" className="flex h-[calc(100dvh-11.375rem-env(safe-area-inset-bottom))] min-h-0 flex-col gap-5 md:h-[calc(100dvh-4rem)]">
       <div className="shrink-0 space-y-2">
         <Skeleton className="h-9 w-64" />
         {/* The page hides its subtitle on phones. */}
         <Skeleton className="hidden h-4 w-80 max-w-full sm:block" />
       </div>
       <ChatPanelSkeleton className="flex-1" />
-    </div>
+    </LoadingRegion>
   );
 }
 
@@ -478,7 +486,7 @@ export function GraphPageSkeleton() {
 
 export function ImportsPageSkeleton() {
   return (
-    <div className="mx-auto max-w-3xl space-y-8">
+    <LoadingRegion label="Loading imports" className="mx-auto max-w-3xl space-y-8">
       <PageHeaderSkeleton />
       <Skeleton className="h-44 w-full rounded-2xl" />
       <div className="space-y-2">
@@ -492,7 +500,7 @@ export function ImportsPageSkeleton() {
         <Skeleton className="h-14 w-full rounded-xl" />
         <Skeleton className="h-14 w-full rounded-xl" />
       </div>
-    </div>
+    </LoadingRegion>
   );
 }
 
@@ -503,7 +511,7 @@ export function ImportsPageSkeleton() {
  */
 export function OnboardingPageSkeleton() {
   return (
-    <div className="flex min-h-dvh flex-col">
+    <LoadingRegion label="Loading onboarding" className="flex min-h-dvh flex-col">
       <div className="mx-auto grid w-full max-w-6xl grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 pt-4 sm:px-8 sm:pt-6">
         <Skeleton className="size-7 rounded-full" />
         <Skeleton className="h-3 w-32 rounded-full" />
@@ -518,13 +526,13 @@ export function OnboardingPageSkeleton() {
           <Skeleton className="h-56 w-full rounded-3xl" />
         </div>
       </div>
-    </div>
+    </LoadingRegion>
   );
 }
 
 export function AuthPageSkeleton() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-6">
+    <LoadingRegion label="Loading sign-in" className="flex min-h-dvh items-center justify-center bg-background p-6">
       <div className="w-full max-w-sm space-y-6">
         <div className="space-y-2 text-center">
           <Skeleton className="mx-auto h-8 w-24" />
@@ -532,7 +540,7 @@ export function AuthPageSkeleton() {
         </div>
         <Skeleton className="h-80 w-full rounded-xl" />
       </div>
-    </div>
+    </LoadingRegion>
   );
 }
 
@@ -549,7 +557,7 @@ export function MarketingPageSkeleton() {
     // `landing-root` matches the real landing/pricing pages: globals.css paints the
     // body deep-space while it is mounted, so the skeleton doesn't flash the app's
     // light background behind it (e.g. on overscroll) before the real page takes over.
-    <div className="landing-root relative flex min-h-svh flex-col overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
+    <LoadingRegion label="Loading page" className="landing-root relative flex min-h-svh flex-col overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
       <div className="flex shrink-0 items-center justify-between px-6 py-5 md:px-10">
         <div className="flex items-center gap-2.5">
           <Skeleton className="size-7 rounded-full bg-white/10" />
@@ -577,7 +585,7 @@ export function MarketingPageSkeleton() {
           <Skeleton className="mx-auto aspect-square w-[min(100%,40svh,300px)] rounded-full bg-white/5 lg:mx-0 lg:w-full lg:max-w-[min(100%,560px)] lg:justify-self-end" />
         </div>
       </div>
-    </div>
+    </LoadingRegion>
   );
 }
 
@@ -613,7 +621,7 @@ function DocHeroSkeleton() {
  */
 export function DocPageSkeleton() {
   return (
-    <div className="text-[#e8f3f1]">
+    <LoadingRegion label="Loading document" className="text-[#e8f3f1]">
       <DocHeroSkeleton />
 
       <section className="mx-auto w-full max-w-6xl px-6 pb-16 md:px-10 md:pb-20">
@@ -669,7 +677,7 @@ export function DocPageSkeleton() {
           </div>
         </div>
       </section>
-    </div>
+    </LoadingRegion>
   );
 }
 
@@ -680,7 +688,7 @@ export function DocPageSkeleton() {
  */
 export function ContactPageSkeleton() {
   return (
-    <div className="text-[#e8f3f1]">
+    <LoadingRegion label="Loading contact page" className="text-[#e8f3f1]">
       <DocHeroSkeleton />
 
       <section className="mx-auto w-full max-w-6xl px-6 pb-16 md:px-10 md:pb-20">
@@ -746,7 +754,7 @@ export function ContactPageSkeleton() {
           <Skeleton className="h-11 w-32 rounded-full bg-white/10" />
         </div>
       </section>
-    </div>
+    </LoadingRegion>
   );
 }
 
@@ -760,7 +768,7 @@ export function ContactPageSkeleton() {
  */
 export function UpgradePageSkeleton() {
   return (
-    <div className="landing-root relative min-h-screen overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
+    <LoadingRegion label="Loading upgrade" className="landing-root relative min-h-dvh overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
       <div className="relative z-10 mx-auto flex w-full max-w-4xl items-center justify-between gap-4 px-6 py-6 md:px-8">
         <div className="flex items-center gap-4">
           <Skeleton className="h-7 w-16 rounded-lg bg-white/5" />
@@ -816,19 +824,19 @@ export function UpgradePageSkeleton() {
           </ul>
         </div>
       </div>
-    </div>
+    </LoadingRegion>
   );
 }
 
 /** Matches /suspended: centered notice card on the app's default (light) background. */
 export function SuspendedPageSkeleton() {
   return (
-    <div className="mx-auto flex min-h-dvh max-w-md flex-col justify-center space-y-3 px-6 py-16">
+    <LoadingRegion label="Loading" className="mx-auto flex min-h-dvh max-w-md flex-col justify-center space-y-3 px-6 py-16">
       <Skeleton className="h-7 w-64" />
       <Skeleton className="h-4 w-full" />
       <Skeleton className="h-4 w-3/4" />
       <Skeleton className="mt-4 h-4 w-24" />
-    </div>
+    </LoadingRegion>
   );
 }
 
@@ -841,7 +849,7 @@ export function SuspendedPageSkeleton() {
  */
 export function PricingPageSkeleton() {
   return (
-    <div className="landing-root relative overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
+    <LoadingRegion label="Loading pricing" className="landing-root relative overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
       <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-6 py-6 md:px-10">
         <div className="flex items-center gap-4">
           <Skeleton className="h-7 w-16 rounded-lg bg-white/5" />
@@ -856,7 +864,7 @@ export function PricingPageSkeleton() {
         </div>
       </header>
 
-      <main className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-24 md:px-10">
+      <main id="main-content" className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-24 md:px-10">
         <section className="flex flex-col items-center gap-4 pt-10 text-center md:pt-16">
           <Skeleton className="h-10 w-full max-w-lg bg-white/10 sm:h-12" />
           <div className="w-full max-w-md space-y-2">
@@ -960,32 +968,32 @@ export function PricingPageSkeleton() {
         </div>
         <Skeleton className="h-4 w-24 bg-white/5" />
       </footer>
-    </div>
+    </LoadingRegion>
   );
 }
 
 /** Mirrors the events list: a filter row and a grid of cover-topped cards. */
 export function EventsListSkeleton() {
   return (
-    <div className="space-y-4">
+    <LoadingRegion label="Loading events" className="space-y-4">
       <Skeleton className="h-24 w-full rounded-2xl" />
       <div className="grid gap-4 sm:grid-cols-2">
         {Array.from({ length: 4 }).map((_, i) => (
           <Skeleton key={i} className="h-44 w-full rounded-2xl" />
         ))}
       </div>
-    </div>
+    </LoadingRegion>
   );
 }
 
 /** Mirrors the event detail shell: themed hero, then the roster. */
 export function EventDetailSkeleton() {
   return (
-    <div className="space-y-6">
+    <LoadingRegion label="Loading event" className="space-y-6">
       <Skeleton className="h-60 w-full rounded-2xl" />
       <Skeleton className="h-40 w-full rounded-2xl" />
       <Skeleton className="h-72 w-full rounded-2xl" />
-    </div>
+    </LoadingRegion>
   );
 }
 
@@ -996,7 +1004,7 @@ export function EventDetailSkeleton() {
  */
 export function DuplicatesListSkeleton() {
   return (
-    <div className="space-y-3" aria-hidden>
+    <LoadingRegion label="Loading duplicates" className="space-y-3" aria-hidden>
       {Array.from({ length: 3 }).map((_, i) => (
         <div key={i} className="space-y-3 rounded-xl border border-border/60 p-4">
           <Skeleton className="h-4 w-40" />
@@ -1010,7 +1018,7 @@ export function DuplicatesListSkeleton() {
           </div>
         </div>
       ))}
-    </div>
+    </LoadingRegion>
   );
 }
 
@@ -1037,9 +1045,9 @@ export function RadarPageSkeleton() {
 /** `/find` below its static header: the mode switch, then the lookup form. */
 export function FindPageSkeleton() {
   return (
-    <div className="space-y-5">
+    <LoadingRegion label="Loading Find" className="space-y-5">
       <Skeleton className="h-10 w-72 rounded-lg" />
       <Skeleton className="h-52 w-full rounded-xl" />
-    </div>
+    </LoadingRegion>
   );
 }

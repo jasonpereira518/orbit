@@ -78,6 +78,18 @@ import { markGraphViewportReady } from "@/lib/graph/intro-signal";
 import { markOpenStage } from "@/lib/graph/open-marks";
 import { markFirstPaintThenInteractive } from "@/lib/graph/open-marks-paint";
 import { CAMERA_MS } from "@/lib/motion";
+
+/**
+ * Read at flight time rather than from `usePrefersReducedMotion`: that hook reports false on
+ * the first render, and the opening framing and the first cluster/search flight run from
+ * effects and timers scheduled in that render. The mobile canvas jumps the same way.
+ */
+function reducedMotionNow() {
+  return (
+    typeof window !== "undefined" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
 import { Loader2 } from "lucide-react";
 
 type LayoutNodes = ReturnType<typeof buildHybridGraphLayout>["nodes"];
@@ -136,7 +148,7 @@ function DefaultViewFitter({
 
       const { maxAbsX, maxAbsY } = computeSunExtents(layoutRef.current, liveNodes());
       const zoom = zoomToFitSunCentered(maxAbsX, maxAbsY, width, height);
-      const duration = animate ? CAMERA_MS.move : 0;
+      const duration = animate && !reducedMotionNow() ? CAMERA_MS.move : 0;
 
       void setCenter(0, 0, { zoom, duration }).then((ok) => {
         if (cancelled) return;
@@ -1642,6 +1654,9 @@ function GraphCanvasInner({
                     }
                   : { origin: [0.5, 1] as [number, number] }),
                 data: { ...label, summary, pinnable },
+                // The node is the tab stop; React Flow strips its outline, so the name inside
+                // draws the focus ring off this group (see `ClusterLabelNodeComponent`).
+                className: "group/cluster",
                 ariaLabel: summary
                   ? `${label.label}, ${label.count ?? 0} ${
                       label.count === 1 ? "person" : "people"
@@ -1803,6 +1818,8 @@ function GraphCanvasInner({
       }
     ) => {
       if (ids.length === 0) return;
+      // Under reduced motion every flight (cluster, peek, search) becomes a cut.
+      if (reducedMotionNow()) options = { ...options, duration: 0 };
       const present = new Set(getNodes().map((n) => n.id));
       if (ids.every((id) => present.has(id))) {
         void fitView({ nodes: ids.map((id) => ({ id })), ...options });

@@ -49,7 +49,7 @@ export function DemoWindow() {
     initialDemoState(window.matchMedia(REDUCED_QUERY).matches ? "explore" : "tour")
   );
   const rootRef = useRef<HTMLDivElement>(null);
-  const paneRef = useRef<HTMLElement>(null);
+  const paneRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef(state);
   const pausedRef = useRef(false);
 
@@ -139,7 +139,7 @@ export function DemoWindow() {
               <button
                 type="button"
                 onClick={() => dispatch({ type: "mode", mode: "explore" })}
-                className="inline-flex items-center gap-1.5 rounded-full border border-white/12 px-2.5 py-1 text-[11px] text-muted-foreground hover:text-ink"
+                className="inline-flex items-center gap-1.5 rounded-full border border-white/12 px-2.5 py-1 text-2xs text-muted-foreground hover:text-ink"
               >
                 <MousePointerClick className="size-3.5" aria-hidden="true" />
                 Explore it yourself
@@ -148,7 +148,7 @@ export function DemoWindow() {
               <button
                 type="button"
                 onClick={() => dispatch({ type: "mode", mode: "tour" })}
-                className="inline-flex items-center gap-1.5 rounded-full border border-white/12 px-2.5 py-1 text-[11px] text-muted-foreground hover:text-ink"
+                className="inline-flex items-center gap-1.5 rounded-full border border-white/12 px-2.5 py-1 text-2xs text-muted-foreground hover:text-ink"
               >
                 <RotateCcw className="size-3.5" aria-hidden="true" />
                 {reduced ? "Play tour" : "Replay tour"}
@@ -159,7 +159,7 @@ export function DemoWindow() {
 
         <div className="relative flex h-[calc(100%-2.5rem)]">
           <DemoSidebar state={state} dispatch={dispatch} />
-          <main ref={paneRef} className={cn("relative min-w-0 flex-1 overflow-y-auto pl-3 pt-6", fill ? "pr-4 pb-4" : "pr-16 pb-20")} aria-label="Demo app screen">
+          <div ref={paneRef} className={cn("relative min-w-0 flex-1 overflow-y-auto pl-3 pt-6", fill ? "pr-4 pb-4" : "pr-16 pb-20")} aria-label="Demo app screen">
             <AnimatePresence mode="wait" initial={false}>
               <motion.div
                 key={state.screen === "profile" ? `profile-${state.profileId}` : state.screen}
@@ -172,7 +172,7 @@ export function DemoWindow() {
                 <Screen />
               </motion.div>
             </AnimatePresence>
-          </main>
+          </div>
         </div>
 
         {/* The app's floating controls: notifications at the top right, and the ask
@@ -184,7 +184,7 @@ export function DemoWindow() {
             className="relative inline-flex size-10 items-center justify-center rounded-full border border-border bg-card/80 text-muted-foreground backdrop-blur transition-colors hover:text-foreground"
           >
             <Bell className="size-4" />
-            <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium text-primary-foreground">
+            <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-3xs font-medium text-primary-foreground">
               3
             </span>
           </button>
@@ -216,7 +216,7 @@ export function DemoWindow() {
             >
               <Search className="size-4 text-muted-foreground" aria-hidden="true" />
               <span className={typed ? "flex-1 text-sm text-ink" : "flex-1 text-sm text-muted-foreground"}>{typed || "Ask your network…"}</span>
-              <kbd className="rounded-md border border-border bg-muted/50 px-1.5 text-[11px] text-muted-foreground">⌘J</kbd>
+              <kbd className="rounded-md border border-border bg-muted/50 px-1.5 text-2xs text-muted-foreground">⌘J</kbd>
               <span className="inline-flex size-8 items-center justify-center rounded-full bg-primary text-primary-foreground">
                 <ArrowUp className="size-4" aria-hidden="true" />
               </span>
@@ -254,7 +254,9 @@ export function DemoWindow() {
                 <span key={i} className={cn("size-1.5 rounded-full", i === beat ? "bg-tier-lifetime" : i < beat ? "bg-tier-lifetime/45" : "bg-white/20")} />
               ))}
             </span>
-            <span className="min-w-0 text-xs text-ink" aria-live="polite">
+            {/* Not live: this caption only shows while the tour auto-plays, and announcing every
+                beat narrated the page endlessly over whatever else a screen reader was reading. */}
+            <span className="min-w-0 text-xs text-ink" aria-live="off">
               <AnimatePresence mode="wait" initial={false}>
                 <motion.span
                   key={beat}

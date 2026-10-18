@@ -188,7 +188,7 @@ export function TourCursor({
           />
         </svg>
         )}
-        <span className="absolute top-4 left-4 rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap text-primary-foreground shadow-sm md:top-5 md:left-5">
+        <span className="absolute top-4 left-4 rounded-full bg-primary px-2 py-0.5 text-2xs font-semibold whitespace-nowrap text-primary-foreground shadow-sm md:top-5 md:left-5">
           Orbit
         </span>
       </motion.div>

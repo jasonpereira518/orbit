@@ -20,7 +20,7 @@ import { foundingAppliesToNewSubscription } from "@/lib/founding";
 import { CREDIT_PACK_PRICE_LABEL, isCheckoutConfigured } from "@/lib/stripe-config";
 
 export const metadata: Metadata = {
-  title: "Upgrade — Orbit",
+  title: "Upgrade",
   description: "Move to Orbit Pro or Orbit Max. AI included on both.",
 };
 
@@ -75,7 +75,7 @@ export default async function UpgradePage() {
     // and /upgrade stops being the one black page in the marketing world.
     // Twinkle and shooting stars are Starfield's own; nothing here moves near
     // the payment form itself.
-    <div className="landing-root relative min-h-screen overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
+    <div className="landing-root relative min-h-dvh overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
       <LandingStarfield />
       {/* Ends the time warp's cruise hold. Until this mounts the stage keeps
           the exposure running, which is what covers this page's session
@@ -107,7 +107,7 @@ export default async function UpgradePage() {
             positioned z-auto element paints above non-positioned in-flow
             content whatever the DOM order. /pricing's <main> carries the same
             pair for the same reason. */}
-        <main className="relative z-10 mx-auto w-full max-w-4xl px-6 pb-24 md:px-8">
+        <main id="main-content" className="relative z-10 mx-auto w-full max-w-4xl px-6 pb-24 md:px-8">
           {/* Fades rather than flies on the way home: everything else on this
               page is a card or a band, but this is a line of type, and type
               carried off sideways reads as an object being removed. Dissolving

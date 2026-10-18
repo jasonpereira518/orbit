@@ -5,6 +5,8 @@ import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { OutreachLocked } from "@/components/locked-feature";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
+export const metadata = { title: "New outreach campaign" };
+
 export default async function NewOutreachPage() {
   // See `OutreachPage` for why this comes before the paywall, and `pageVisibilityGate`'s
   // doc comment for why the layout-level check alone is not enough.

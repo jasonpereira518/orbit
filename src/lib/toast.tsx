@@ -150,12 +150,22 @@ type Send = (title: ReactNode, data?: ExternalToast) => string | number;
  * update in a `setTimeout`, after the expansion has already rendered, so the height it
  * measures is the expanded one, and the stack offsets update with it.
  */
+/**
+ * The shortest a toast with a button stays up. Sonner's 4s default is enough to read a
+ * confirmation, not to reach its Undo by keyboard (Alt+T, then Tab) or screen reader, and
+ * hover-to-pause helps neither (WCAG 2.2.1). A caller's own `duration` still wins.
+ */
+const ACTION_TOAST_MS = 10_000;
+
 function send(
   sendFn: Send,
   message: string | ReactNode,
   tone: "default" | "error",
   data: ExternalToast | undefined
 ): string | number {
+  if (data?.action && data.duration === undefined) {
+    data = { ...data, duration: ACTION_TOAST_MS };
+  }
   // The id is only known once sonner returns it, but `remeasure` has to exist before
   // that — it is handed to the elements being sent. Hence a holder, not a `let`.
   const sent: { id?: string | number } = {};

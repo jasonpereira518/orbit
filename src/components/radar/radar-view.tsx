@@ -336,7 +336,7 @@ function FocusDeck({
             {s.keys.map((k, j) => (
               <span key={k}>
                 {j > 0 ? "/" : ""}
-                <kbd className="rounded border border-border/70 bg-muted px-1 font-sans text-[11px] text-ink">{k}</kbd>
+                <kbd className="rounded border border-border/70 bg-muted px-1 font-sans text-2xs text-ink">{k}</kbd>
               </span>
             ))}{" "}
             {s.label}

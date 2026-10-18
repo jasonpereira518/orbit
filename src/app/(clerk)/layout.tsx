@@ -1,5 +1,6 @@
 // The full sheet. The root layout loads none, so marketing pages never pay for it (see site.css).
 import "../globals.css";
+import { MotionConfig } from "motion/react";
 import { AuthProvider } from "@/components/auth-provider";
 
 /**
@@ -18,5 +19,11 @@ import { AuthProvider } from "@/components/auth-provider";
  * Route groups never appear in URLs, so moving routes under `(clerk)` changed no paths.
  */
 export default function ClerkLayout({ children }: { children: React.ReactNode }) {
-  return <AuthProvider>{children}</AuthProvider>;
+  // Reduced motion for every motion/react animation in the group: the app shell had its own,
+  // but the admin console, sign-in, /suspended and checkout sit outside it.
+  return (
+    <AuthProvider>
+      <MotionConfig reducedMotion="user">{children}</MotionConfig>
+    </AuthProvider>
+  );
 }

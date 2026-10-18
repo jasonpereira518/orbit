@@ -13,11 +13,12 @@ import {
   type Highlight,
 } from "@/components/marketing/marketing-doc";
 import type { TocItem } from "@/components/marketing/doc-toc";
+import { ScrollRegion } from "@/components/ui/scroll-region";
 import { GOOGLE_LIMITED_USE, GOOGLE_SCOPE_DISCLOSURES, LEGAL_LAST_UPDATED } from "@/lib/legal";
 import { TIMELINE_DAILY_CONTACT_CAP } from "@/lib/timeline-cost";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy — Orbit",
+  title: "Privacy Policy",
   description:
     "What Orbit collects, who it shares data with, what it does with Google data, and how to export or delete everything in your account.",
 };
@@ -243,7 +244,8 @@ export default function PrivacyPage() {
             permission it needs, at the moment you turn it on, and Google&rsquo;s own screen shows
             exactly what is being granted. You can allow one feature and decline another.
           </p>
-          <div className="overflow-x-auto">
+          {/* Keyboard-scrollable while it overflows (axe scrollable-region-focusable). */}
+          <ScrollRegion label="Google permissions Orbit asks for">
             <table className="w-full min-w-[36rem] border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-[#e8f3f1]/[0.1] text-xs uppercase tracking-[0.12em] text-[#6d807c]">
@@ -262,7 +264,7 @@ export default function PrivacyPage() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </ScrollRegion>
           <p>
             {GOOGLE_LIMITED_USE.before}
             <a href={GOOGLE_LIMITED_USE.href}>{GOOGLE_LIMITED_USE.linkText}</a>

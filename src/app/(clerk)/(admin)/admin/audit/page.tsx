@@ -132,6 +132,7 @@ export default async function AdminAuditPage({
           ) : (
             <>
               <AdminTable
+                label="Audit log"
                 head={
                   <>
                     <Th numeric>When</Th>
