@@ -9,6 +9,7 @@ Drafts and evidence for the onboarding audit. Nothing here is product code. Phas
 | [`mockups.html`](mockups.html) | Static phone mockups of the four key proposed screens, using the tokens from `src/app/theme.css`. Open it in a browser |
 | [`evidence/`](evidence/) | Screenshots E01–E19 cited by the audit |
 | [`evidence/after/`](evidence/after/) | Screenshots A01–A15 of the first Phase 2 batch, taken the same way (hosted credits A01–A07, AI paused A08–A15) |
+| [`evidence/flows/`](evidence/flows/) | Every onboarding screen on every path (quick, branches with import and triage, add later, skip, AI paused, guided tour), desktop and phone |
 
 ## How the evidence was gathered
 
