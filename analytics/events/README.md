@@ -9,6 +9,18 @@ Format per event: **fires when** / **must not fire when** / **read by**. Propert
 - Read by: Referral loop (F4); which share channel works.
 - Added: v171.
 
+## waitlist_join_limited
+- Fires when: the join limiter (`interest.join`) refuses a real submission, or cannot count and the join is answered with the fake ticket. Actor `system`, no user, no address, no IP: a bare count by reason.
+- Must not fire when: a honeypot or BotID block (those are bots and never reach the limiter), or any join that wrote a row.
+- Read by: How many humans did the limiter drop (a campus NAT during an event).
+- Added: v171.
+
+## waitlist_email_sent
+- Fires when: Resend accepted a waitlist welcome or referral-tier email. Actor `system`; carries `kind` only, never the address.
+- Must not fire when: the send was skipped (welcome cap, no Resend key) or Resend rejected it (that is an `error_events` row).
+- Read by: Welcomes delivered per wave; welcome-sent versus joined.
+- Added: v171.
+
 ## invite_sent
 - Fires when: `inviteToSite` creates an invitation or grants an existing account access; one per invite row.
 - Must not fire when: a revoke, or a resend of the same invitation.
@@ -16,14 +28,14 @@ Format per event: **fires when** / **must not fire when** / **read by**. Propert
 - Added: v171.
 
 ## invite_accepted
-- Fires when: `claimSiteInviteGrant` links a new account to its invite.
-- Must not fire when: an account created without an invite.
+- Fires when: `linkInviteToAccount` (the Clerk `user.created` webhook, the existing-account grant, or the onboarding backstop `claimSiteInviteGrant`) first accepts an invite for an account; one per invite (deterministic id). `days_since_sent` is whole days from `site_invites.sent_at`.
+- Must not fire when: an account created without an invite, a second run of the same claim, or an invite someone else already accepted.
 - Read by: Invite to account (F6, F7).
 - Added: v171.
 
 ## first_app_load
-- Fires when: the first signed-in `(app)` render of an account, from `captureAttribution`.
-- Must not fire when: any later render.
+- Fires when: the beacon route (`/api/p/v`) sees the first signed-in page view of an account created in the last two days that has no `signup_session_id`; that view's per-tab session id is written to the account in the same step. One per account (deterministic id).
+- Must not fire when: any later view, a bot, a demo account, or an account older than two days (its signup session is unknowable).
 - Read by: Closes the anonymous-session to account chain.
 - Added: v171.
 
@@ -112,8 +124,8 @@ Format per event: **fires when** / **must not fire when** / **read by**. Propert
 - Added: v171.
 
 ## mcp_connected
-- Fires when: the first request from a (user, client) pair, or an API key is created.
-- Must not fire when: a repeat request.
+- Fires when: the first MCP request from a (user, client, via) triple, where `client` is claude, chatgpt or other (from the OAuth client id, the `initialize` clientInfo name or the User-Agent) and `via` is oauth or api_key. Deterministic id, so a cold server instance or a retry cannot double it. Creating an API key is not wired to it yet (`createApiKey` is outside this workstream); the key's first request emits the same row.
+- Must not fire when: a repeat request, or one that failed authentication.
 - Read by: MCP connected (§2.2).
 - Added: v171.
 
@@ -130,14 +142,14 @@ Format per event: **fires when** / **must not fire when** / **read by**. Propert
 - Added: v171.
 
 ## extension_installed
-- Fires when: the first authenticated `/api/extension/me` after install carries the install marker.
-- Must not fire when: a later session probe.
+- Fires when: the first authenticated extension request after install carries `X-Orbit-Install: 1` (the extension sends it on the first `/me` and clears the marker once answered), with a valid `X-Orbit-Extension-Version`. One per account (deterministic id), so a reinstall or a second browser does not count twice.
+- Must not fire when: a later session probe, or a request with no valid version header.
 - Read by: Extension installs (§2.2).
 - Added: v171.
 
 ## extension_action
-- Fires when: an `/api/extension/*` route performs a user action.
-- Must not fire when: the session probe or a background resolve.
+- Fires when: an `/api/extension/*` route performs a user action: `POST /contacts` (save_person), `POST /interactions` (log_interaction), `POST /event-roster` (event_roster), `POST /starters` (starters), `POST /follow-ups` (schedule_follow_up), `POST /signals` (save_activity). `site` is the page adapter's site (linkedin, gmail, luma, partiful) or `other`.
+- Must not fire when: the session probe `GET /me`, the background `POST /resolve` and `POST /parse`, or the contact search `GET /contacts`.
 - Read by: Extension first use, weekly return.
 - Added: v171.
 

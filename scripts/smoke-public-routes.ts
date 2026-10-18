@@ -12,7 +12,7 @@
  *
  * Run: npx tsx scripts/smoke-public-routes.ts
  */
-import { readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createRouteMatcher } from "@clerk/nextjs/server";
 import robots from "../src/app/robots";
@@ -141,6 +141,12 @@ function main() {
     "/api/scan/orb_scan_7f3a9c2b_" + "a".repeat(43) + "/pages",
     // Vercel BotID's proxy: the waitlist join's POSTs need its proof, signed out.
     `/${BOTID_PATH_PREFIX}/tl`,
+    // The page-view beacon, anonymous by design: at its neutral path (ad-blocker lists match a
+    // generic /api/track) and at the old one, kept as an alias for one release.
+    "/api/p/v",
+    "/api/track",
+    // The extension's uninstall page opens in a browser with no Orbit session at all.
+    "/api/extension/uninstalled",
   ];
   const blocked: string[] = [];
   for (const route of internalRoutes) {
@@ -165,6 +171,22 @@ function main() {
   if (String(robots().sitemap) !== `${base}/sitemap.xml`) crawlerProblems.push("robots does not point at /sitemap.xml");
   if (WAITLIST_ALLOWED_PATHS.some((p) => /robots|sitemap/.test(p))) crawlerProblems.push("the waitlist host allows a crawler file");
   console.log(`\n  ${crawlerProblems.length === 0 ? "ok  " : "FAIL"} sitemap entries are public and not disallowed by robots`);
+
+  // The beacon's rename (audit D5): the client posts to the neutral path, the old path still
+  // answers for cached clients, and the waitlist host serves both.
+  const beaconProblems: string[] = [];
+  const beacon = readFileSync("src/components/analytics/pageview-beacon.tsx", "utf8");
+  if (!beacon.includes('"/api/p/v"')) beaconProblems.push("the beacon does not post to /api/p/v");
+  if (beacon.includes('"/api/track"')) beaconProblems.push("the beacon still posts to /api/track");
+  if (!existsSync("src/app/api/p/v/route.ts")) beaconProblems.push("src/app/api/p/v/route.ts is missing");
+  if (!/export \{ POST \} from "@\/app\/api\/p\/v\/route"/.test(readFileSync("src/app/api/track/route.ts", "utf8"))) {
+    beaconProblems.push("/api/track is no longer a thin alias of /api/p/v");
+  }
+  if (!WAITLIST_ALLOWED_PATHS.includes("api/p/v$" as never) || !WAITLIST_ALLOWED_PATHS.includes("api/track$" as never)) {
+    beaconProblems.push("the waitlist host does not allow both beacon paths");
+  }
+  console.log(`  ${beaconProblems.length === 0 ? "ok  " : "FAIL"} the beacon posts to /api/p/v; /api/track is an alias; the waitlist host serves both`);
+  crawlerProblems.push(...beaconProblems);
 
   // Static assets in public/. `proxy.ts`'s matcher skips middleware for a fixed list of
   // extensions; anything missing from that list is matched, fails isPublicRoute and gets a

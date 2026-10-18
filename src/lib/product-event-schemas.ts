@@ -56,7 +56,13 @@ export const SHARE_CHANNELS = ["copy", "x", "linkedin", "native", "ticket"] as c
 export const eventSchemas = {
   // Acquisition and access
   waitlist_shared: z.object({ signup_id: uuid, channel: z.enum(SHARE_CHANNELS) }),
-  invite_sent: z.object({ invite_id: uuid, wave_id: z.string().regex(/^w\d{1,3}$/), source: z.enum(["waitlist", "manual"]) }),
+  // A real person's join the limiter dropped. Their address is NOT stored anywhere; this is only a count.
+  waitlist_join_limited: z.object({ reason: z.enum(["rate_limited", "limiter_error"]) }),
+  // A waitlist email Resend accepted: makes "how many welcomes went out this wave" answerable.
+  waitlist_email_sent: z.object({ kind: z.enum(["welcome", "tier"]) }),
+  // `wave_id` is optional: the operator labels a wave when they choose to, and an invite without
+  // one is still a fact. `existing_account` is a grant to someone who had already signed up.
+  invite_sent: z.object({ invite_id: uuid, wave_id: z.string().regex(/^w\d{1,3}$/).optional(), source: z.enum(["waitlist", "manual", "existing_account"]) }),
   invite_accepted: z.object({ invite_id: uuid, days_since_sent: days }),
   first_app_load: z.object({ session_id: uuid, landing_route: z.string().regex(/^\/[a-z0-9\-\/\[\]\.]*$/) }),
 
@@ -87,7 +93,7 @@ export const eventSchemas = {
   mcp_tool_called: z.object({ tool: z.string().regex(/^[a-z_]{1,48}$/), client: z.enum(MCP_CLIENTS), ok: z.boolean(), duration_ms: ms, result_count: count.optional() }),
   mcp_disconnected: z.object({ client: z.enum(MCP_CLIENTS) }),
   extension_installed: z.object({ version: z.string().regex(/^\d+\.\d+\.\d+$/), browser: z.enum(["chrome", "edge", "brave", "arc", "other"]) }),
-  extension_action: z.object({ action: z.enum(["save_person", "log_interaction", "open_profile", "event_roster", "starters"]), site: z.enum(["linkedin", "gmail", "luma", "partiful", "other"]), ok: z.boolean() }),
+  extension_action: z.object({ action: z.enum(["save_person", "log_interaction", "open_profile", "event_roster", "starters", "schedule_follow_up", "save_activity"]), site: z.enum(["linkedin", "gmail", "luma", "partiful", "other"]), ok: z.boolean() }),
   extension_uninstalled: z.object({ version: z.string().regex(/^\d+\.\d+\.\d+$/) }),
 
   // Monetization
