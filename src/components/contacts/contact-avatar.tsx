@@ -53,11 +53,13 @@ export function ContactAvatar({
   const label = fullName.trim() || "Contact";
 
   return (
-    <Avatar size={size} className={cn("bg-muted", className)} aria-label={label}>
+    // role="img": an aria-label on a bare <span> is ignored (axe aria-prohibited-attr). The
+    // span is the one image, named once; the photo inside it is presentational.
+    <Avatar size={size} className={cn("bg-muted", className)} role="img" aria-label={label}>
       {photoUrl ? (
         <AvatarImage
           src={photoUrl}
-          alt={label}
+          alt=""
           referrerPolicy="no-referrer"
           loading="lazy"
           decoding="async"

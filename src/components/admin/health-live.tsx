@@ -266,7 +266,7 @@ export function HealthLiveBody({
           {health.imports.length === 0 ? (
             <EmptyState>No imports are failed or stuck.</EmptyState>
           ) : (
-            <AdminTable
+            <AdminTable label="Failed and stalled imports"
               head={
                 <>
                   <Th>Account</Th>
@@ -342,7 +342,7 @@ export function HealthLiveBody({
           {health.connections.length === 0 ? (
             <EmptyState>Every Gmail and Outlook connection is healthy.</EmptyState>
           ) : (
-            <AdminTable
+            <AdminTable label="Broken mail connections"
               head={
                 <>
                   <Th>Account</Th>
@@ -389,7 +389,7 @@ export function HealthLiveBody({
           {health.calendars.length === 0 ? (
             <EmptyState>Every calendar subscription is syncing.</EmptyState>
           ) : (
-            <AdminTable
+            <AdminTable label="Failing calendar feeds"
               head={
                 <>
                   <Th>Account</Th>
@@ -534,7 +534,7 @@ export function HealthLiveBody({
                 No runs recorded yet. The ledger starts at the next midnight run.
               </EmptyState>
             ) : (
-              <AdminTable minWidth="sm"
+              <AdminTable label="Nightly job" minWidth="sm"
                 head={
                   <>
                     <Th>Started</Th>
@@ -688,7 +688,7 @@ export function HealthLiveBody({
               No AI calls have failed in the last {health.windowDays} days.
             </EmptyState>
           ) : (
-            <AdminTable
+            <AdminTable label="AI failures"
               head={
                 <>
                   <Th>Error</Th>
@@ -780,7 +780,8 @@ export function HealthLiveBody({
                     "rounded-full border px-2.5 py-0.5 text-xs transition-colors duration-fast hover:bg-muted/60",
                     p.tone === "danger"
                       ? "border-destructive/40 text-destructive"
-                      : "border-warning/40 text-warning"
+                      : // amber-800 in light: --warning (amber-700) on this tinted strip was 4.42:1.
+                        "border-warning/40 text-amber-800 dark:text-warning"
                   )}
                 >
                   {p.label}

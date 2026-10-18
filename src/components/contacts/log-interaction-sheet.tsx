@@ -314,8 +314,12 @@ export function LogInteractionSheet({
             void under the title. */}
         <div className="space-y-5 px-4 pb-4">
           <div className="space-y-2">
-            <Label>What happened</Label>
-            <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+            <Label id="log-interaction-type-label">What happened</Label>
+            <div
+              role="group"
+              aria-labelledby="log-interaction-type-label"
+              className="grid grid-cols-2 gap-1.5 sm:grid-cols-3"
+            >
               {/* The list is already ordered by family, so tinting each icon gives the
                   options a grouping the eye can use without extra headings in an
                   already tall sheet. */}
@@ -406,7 +410,7 @@ export function LogInteractionSheet({
                 textareaClassName={FIELD_BARE}
               />
             </div>
-            <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
+            <p className="flex items-start gap-1.5 text-2xs leading-relaxed text-muted-foreground">
               <Sparkles className="mt-px size-3 shrink-0" />
               {hasApiKey
                 ? "Write it however you like — the summary, action items and any dates get pulled out for you. Type @ to link someone else who came up."

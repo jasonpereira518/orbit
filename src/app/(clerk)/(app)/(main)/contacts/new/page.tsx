@@ -6,6 +6,8 @@ import { LockedFeature } from "@/components/locked-feature";
 import { getPlanOverview } from "@/actions/settings";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
+export const metadata = { title: "Add contact" };
+
 export default async function NewContactPage({
   searchParams,
 }: {

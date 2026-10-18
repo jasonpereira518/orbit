@@ -510,7 +510,7 @@ function DialogBody({
               <div key={group.key}>
                 <p
                   aria-hidden
-                  className="px-2.5 pt-3 pb-1.5 text-[0.6875rem] font-semibold tracking-[0.08em] text-muted-foreground/80 uppercase"
+                  className="px-2.5 pt-3 pb-1.5 text-[0.6875rem] font-semibold tracking-[0.08em] text-muted-foreground-subtle uppercase"
                 >
                   {group.label}
                 </p>

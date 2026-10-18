@@ -99,7 +99,7 @@ export default async function AdminFunnelPage({
               {disabled ?? "Nothing recorded in this window yet."}
             </EmptyState>
           ) : (
-            <AdminTable minWidth="none"
+            <AdminTable label="The funnel" minWidth="none"
               head={
                 <>
                   <Th>Stage</Th>

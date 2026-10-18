@@ -62,9 +62,10 @@ export function ConstellationPinButton({
         variant={onChart ? "outline" : "default"}
         disabled={pending}
         // The label says where they ARE; the action is the opposite. Spell the action out
-        // here so it is unambiguous to a screen reader and on hover.
+        // here so it is unambiguous to a screen reader and on hover, starting with the
+        // visible words so voice control ("click On your constellation") still finds it.
         aria-label={
-          onChart ? "Remove from your constellation" : "Add to your constellation"
+          onChart ? "On your constellation — remove from it" : "Add to constellation"
         }
         title={
           onChart

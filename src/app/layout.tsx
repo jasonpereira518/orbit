@@ -1,6 +1,7 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Fraunces, Outfit } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
+import { SkipLink } from "@/components/ui/skip-link";
 import { ThemeProvider } from "@/components/theme-provider";
 import { WarpProvider } from "@/components/warp/warp-provider";
 import { PageviewBeacon } from "@/components/analytics/pageview-beacon";
@@ -33,7 +34,13 @@ const frauncesItalic = Fraunces({
 });
 
 export const metadata: Metadata = {
-  title: "Orbit — Personal Networking Tracker",
+  // Every page names itself ("Contacts · Orbit"). Beyond the tab, this is how a screen reader
+  // hears a client-side navigation at all: Next's route announcer speaks only when
+  // `document.title` changes, so pages sharing one title navigated in silence.
+  title: {
+    template: "%s · Orbit",
+    default: "Orbit — Personal Networking Tracker",
+  },
   description:
     "Remember, organize, and act on every meaningful relationship in your network.",
   icons: {
@@ -59,6 +66,17 @@ export const metadata: Metadata = {
   },
 };
 
+/**
+ * `viewport-fit=cover` is what makes `env(safe-area-inset-*)` non-zero on iOS: without it the
+ * bottom nav's and corner controls' safe-area padding resolved to 0 in landscape and in a
+ * home-screen web app. No `maximumScale`: pinch-zoom must always work.
+ */
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -71,6 +89,8 @@ export default function RootLayout({
       className={`${outfit.variable} ${fraunces.variable} ${frauncesItalic.variable} h-full`}
     >
       <body className="h-full min-h-full font-sans antialiased">
+        {/* First in the document, so it is the first Tab on every page. */}
+        <SkipLink />
         <ThemeProvider
           attribute="class"
           defaultTheme="light"

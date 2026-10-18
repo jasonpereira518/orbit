@@ -4,7 +4,7 @@
  * only, so dark mode follows without a second set.
  */
 const KBD =
-  "mx-0.5 inline-flex items-center rounded-md bg-muted px-1.5 py-[3px] align-baseline font-sans text-[11px] font-medium leading-none text-ink/75";
+  "mx-0.5 inline-flex items-center rounded-md bg-muted px-1.5 py-[3px] align-baseline font-sans text-2xs font-medium leading-none text-ink/75";
 
 /**
  * Static dashboard header, rendered by BOTH page.tsx and loading.tsx so

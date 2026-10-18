@@ -82,7 +82,9 @@ export default async function AdminOverviewPage() {
       <div className="space-y-6">
         <LiveAlertsPanel totalUsers={overview.totalUsers} />
 
-        <div className="grid gap-6 lg:grid-cols-2">
+        {/* `grid-cols-1`: a minmax(0, 1fr) track. The implicit auto track sized itself to
+            the widest row inside, which pushed both panels off a phone's screen. */}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <LiveActivationPanel />
           <LiveRecentSignupsPanel totalUsers={overview.totalUsers} />
         </div>

@@ -10,6 +10,7 @@
  * Run: npx tsx scripts/smoke-ops-alerts.ts
  */
 import { MANAGED_AI_ALERTS, MANAGED_AI_POOLS } from "../src/lib/managed-ai-policy";
+import { SPEECH_CREDIT_ALERTS } from "../src/lib/speech-cost";
 import {
   evaluateOpsConditions,
   planTransitions,
@@ -86,6 +87,42 @@ const find = (s: OpsSnapshot, id: string) => evaluateOpsConditions(s, NOW).find(
 function main() {
   console.log("Condition catalogue...");
   check("a healthy snapshot raises nothing", ids(HEALTHY).length === 0, ids(HEALTHY).join(","));
+
+  // Money: the Deepgram credit's ladder, its runway, a spike, and the monthly budget.
+  const CAP = 1_000_000_000; // a $1,000 credit keeps the arithmetic readable
+  const spend = (over: Partial<NonNullable<OpsSnapshot["spend"]>>): OpsSnapshot => ({
+    ...HEALTHY,
+    spend: {
+      creditSpentMicros: 0, creditCapMicros: CAP, speechLast24hMicros: 0, speechLast7dMicros: 0,
+      monthToDateMicros: 0, monthlyBudgetCents: null, ...over,
+    },
+  });
+  check("an untouched credit is quiet", ids(spend({})).length === 0, ids(spend({})).join(","));
+  check("half the credit spent → speech.credit warning",
+    find(spend({ creditSpentMicros: CAP * 0.5 }), "speech.credit")?.severity === "warning");
+  check("…at 90% it says Free has fallen back",
+    /Free voice notes/.test(find(spend({ creditSpentMicros: CAP * 0.9 }), "speech.credit")?.title ?? ""));
+  check("…at 97% it escalates to critical",
+    find(spend({ creditSpentMicros: CAP * 0.97 }), "speech.credit")?.severity === "critical");
+  check("…and at 100% it says the credit is spent",
+    /is spent/.test(find(spend({ creditSpentMicros: CAP }), "speech.credit")?.title ?? ""));
+  // $300 left at $10/day = 30 days, under the 45-day line.
+  check("a short runway at this week's pace → speech.credit_runway",
+    Boolean(find(spend({ creditSpentMicros: CAP * 0.7, speechLast7dMicros: 70_000_000 }), "speech.credit_runway")));
+  check("…a long one is quiet",
+    !find(spend({ creditSpentMicros: CAP * 0.1, speechLast7dMicros: 7_000_000 }), "speech.credit_runway"));
+  check("a day over the spike line → speech.spend_spike",
+    Boolean(find(spend({ speechLast24hMicros: SPEECH_CREDIT_ALERTS.dailySpikeMicros }), "speech.spend_spike")));
+  check("no budget set → no budget alert",
+    !find(spend({ monthToDateMicros: 999_000_000 }), "budget.month"));
+  check("40% of budget is quiet",
+    !find(spend({ monthlyBudgetCents: 10_000, monthToDateMicros: 40_000_000 }), "budget.month"));
+  check("50% of budget → info",
+    find(spend({ monthlyBudgetCents: 10_000, monthToDateMicros: 50_000_000 }), "budget.month")?.severity === "info");
+  check("75% → warning",
+    find(spend({ monthlyBudgetCents: 10_000, monthToDateMicros: 75_000_000 }), "budget.month")?.severity === "warning");
+  check("100% → critical",
+    find(spend({ monthlyBudgetCents: 10_000, monthToDateMicros: 100_000_000 }), "budget.month")?.severity === "critical");
 
   // Orbit's managed AI keys — the cost of Pro and Max's included AI.
   const managed = (over: Partial<OpsSnapshot["managedAi"]>): OpsSnapshot => ({

@@ -153,7 +153,7 @@ function ChatHistoryRailImpl<T extends ThreadLike>({
             ) : (
               groups.map((group) => (
                 <section key={group.label} className="mb-3 last:mb-0">
-                  <h2 className="px-2 pb-1 text-[11px] font-medium text-muted-foreground">
+                  <h2 className="px-2 pb-1 text-2xs font-medium text-muted-foreground">
                     {group.label}
                   </h2>
                   <ul className="space-y-0.5">
@@ -195,7 +195,7 @@ function ChatHistoryRailImpl<T extends ThreadLike>({
                             aria-label={`Delete chat: ${label}`}
                             onClick={() => onDelete(thread.id)}
                             disabled={busy}
-                            className="absolute right-1 top-1.5 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100 disabled:invisible"
+                            className="absolute right-1 top-1.5 rounded p-1 text-muted-foreground pointer-fine:opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100 disabled:invisible"
                           >
                             <Trash2 className="size-3.5" />
                           </button>

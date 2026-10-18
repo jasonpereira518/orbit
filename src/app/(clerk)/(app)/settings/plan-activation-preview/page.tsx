@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { PlanActivationPreview } from "@/components/celebration/plan-activation-preview";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
+export const metadata = { title: "Plan activation preview" };
+
 export const dynamic = "force-dynamic";
 
 export default async function PlanActivationPreviewPage() {

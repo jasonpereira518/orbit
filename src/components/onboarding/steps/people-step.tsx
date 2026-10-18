@@ -75,7 +75,7 @@ export function PeopleStep({
                   <span className="block font-medium text-ink">
                     {path.title}
                     {path.recommended && (
-                      <span className="ml-2 inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-px text-[11px] font-medium text-primary">
+                      <span className="ml-2 inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-px text-2xs font-medium text-primary">
                         Recommended
                       </span>
                     )}

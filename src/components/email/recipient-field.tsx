@@ -71,7 +71,7 @@ export function RecipientField({
   }
 
   return (
-    <div className="flex items-start gap-2 border-b border-border/60 py-1.5">
+    <div className="flex items-start gap-2 border-b border-border/60 py-1.5 focus-within:border-ring focus-within:shadow-[0_1px_0_var(--ring)]">
       <label htmlFor={id} className="w-10 shrink-0 pt-1 text-xs font-medium text-muted-foreground">
         {label}
       </label>
@@ -91,7 +91,8 @@ export function RecipientField({
               <button
                 type="button"
                 aria-label={`Remove ${email}`}
-                className="rounded-full p-0.5 hover:bg-foreground/10"
+                // 24px box (SC 2.5.8) pulled into the chip's padding so the chip keeps its height.
+                className="relative tap-target -my-1 -mr-1.5 grid size-6 shrink-0 place-items-center rounded-full hover:bg-foreground/10"
                 onClick={() => onChange(value.filter((v) => v !== email))}
               >
                 <X className="size-3" />
@@ -105,6 +106,9 @@ export function RecipientField({
           aria-expanded={open}
           aria-controls={listId}
           aria-autocomplete="list"
+          // Which suggestion the arrow keys are on: focus stays in the field, so without this a
+          // screen reader never heard the highlighted address.
+          aria-activedescendant={open && options[active] ? `${listId}-${active}` : undefined}
           autoComplete="off"
           autoFocus={autoFocus}
           value={text}
@@ -166,6 +170,7 @@ export function RecipientField({
             {options.map((r, i) => (
               <li
                 key={r.email}
+                id={`${listId}-${i}`}
                 role="option"
                 aria-selected={i === active}
                 onMouseDown={(e) => {

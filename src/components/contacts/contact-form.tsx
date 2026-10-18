@@ -15,8 +15,8 @@ import { queueContactWorkHistory } from "@/actions/contact-profile";
 import { MET_CONTEXTS, MET_CONTEXT_LABELS, type MetContext } from "@/lib/met-context";
 import { SuggestInput } from "@/components/contacts/suggest-input";
 import { Button } from "@/components/ui/button";
+import { Field, FormError, useFieldControl } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { friendlyError } from "@/lib/errors";
@@ -66,6 +66,9 @@ export function ContactForm({
   const router = useRouter();
   const [pending, start] = useTransition();
   const [lookingUp, setLookingUp] = useState(false);
+  // A save that failed on the server. The toast can time out or be missed; this stays by the
+  // button until the next attempt.
+  const [formError, setFormError] = useState<string | null>(null);
   const lastLookupUrl = useRef<string>("");
   // The LinkedIn URL the contact had when the form opened, so a save only searches for work
   // history when the profile is new or changed — not on every edit of an unrelated field.
@@ -226,6 +229,7 @@ export function ContactForm({
       )}
       onSubmit={(e) => {
         e.preventDefault();
+        setFormError(null);
         start(async () => {
           try {
             const payload: ContactInput = {
@@ -283,7 +287,9 @@ export function ContactForm({
             // create that stays put (onboarding) has nothing re-rendered for it (SRV-1).
             if (!contactId && !redirectOnSuccess) router.refresh();
           } catch (err) {
-            toast.error(friendlyError(err, TOAST_COPY.saveFailed));
+            const message = friendlyError(err, TOAST_COPY.saveFailed);
+            toast.error(message);
+            setFormError(message);
           }
         });
       }}
@@ -293,14 +299,16 @@ export function ContactForm({
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Full name" required>
               <Input
+                autoComplete="off"
                 required
                 value={form.fullName}
                 onChange={(e) => set("fullName", e.target.value)}
                 placeholder="Jason Pereira"
               />
             </Field>
-            <Field label="LinkedIn URL" hint={lookingUp ? "Looking up profile…" : "Paste a profile URL to autofill role"}>
+            <Field label="LinkedIn URL" description={lookingUp ? "Looking up profile…" : "Paste a profile URL to autofill role"}>
               <Input
+                autoComplete="off"
                 type="url"
                 value={form.linkedinUrl}
                 onChange={(e) => {
@@ -318,6 +326,7 @@ export function ContactForm({
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Company">
               <Input
+                autoComplete="off"
                 value={form.company}
                 onChange={(e) => set("company", e.target.value)}
                 placeholder="Amazon Web Services (AWS)"
@@ -325,6 +334,7 @@ export function ContactForm({
             </Field>
             <Field label="Role">
               <Input
+                autoComplete="off"
                 value={form.title}
                 onChange={(e) => set("title", e.target.value)}
                 placeholder="Solutions Architect intern"
@@ -333,6 +343,7 @@ export function ContactForm({
           </div>
           <Field label="How you met">
             <Input
+              autoComplete="off"
               value={form.howMet}
               onChange={(e) => set("howMet", e.target.value)}
               placeholder="Google NYC event, introduced by Alex…"
@@ -344,6 +355,7 @@ export function ContactForm({
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Full name" required>
             <Input
+              autoComplete="off"
               required
               value={form.fullName}
               onChange={(e) => set("fullName", e.target.value)}
@@ -352,6 +364,7 @@ export function ContactForm({
           </Field>
           <Field label="Preferred name">
             <Input
+              autoComplete="off"
               value={form.preferredName}
               onChange={(e) => set("preferredName", e.target.value)}
               placeholder="Jason"
@@ -361,13 +374,14 @@ export function ContactForm({
         <div className="grid gap-4 sm:grid-cols-2">
           <Field
             label="LinkedIn URL"
-            hint={
+            description={
               lookingUp
                 ? "Looking up profile…"
                 : "Paste a profile URL to autofill role"
             }
           >
             <Input
+              autoComplete="off"
               type="url"
               value={form.linkedinUrl}
               onChange={(e) => {
@@ -383,6 +397,7 @@ export function ContactForm({
           </Field>
           <Field label="Website">
             <Input
+              autoComplete="off"
               type="url"
               value={form.website}
               onChange={(e) => set("website", e.target.value)}
@@ -393,6 +408,7 @@ export function ContactForm({
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Bluesky">
             <Input
+              autoComplete="off"
               value={form.blueskyHandle}
               onChange={(e) => set("blueskyHandle", e.target.value)}
               placeholder="name.bsky.social"
@@ -402,6 +418,7 @@ export function ContactForm({
           </Field>
           <Field label="Mastodon">
             <Input
+              autoComplete="off"
               value={form.mastodonAcct}
               onChange={(e) => set("mastodonAcct", e.target.value)}
               placeholder="name@mastodon.social"
@@ -413,13 +430,15 @@ export function ContactForm({
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Company">
             <Input
+              autoComplete="off"
               value={form.company}
               onChange={(e) => set("company", e.target.value)}
               placeholder="Amazon Web Services (AWS)"
             />
           </Field>
-          <Field label="Role" hint="Autofills from LinkedIn when available">
+          <Field label="Role" description="Autofills from LinkedIn when available">
             <Input
+              autoComplete="off"
               value={form.title}
               onChange={(e) => set("title", e.target.value)}
               placeholder="Solutions Architect intern"
@@ -455,7 +474,7 @@ export function ContactForm({
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Context">
-              <select
+              <FieldSelect
                 className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
                 value={form.metContext}
                 onChange={(e) =>
@@ -468,10 +487,11 @@ export function ContactForm({
                     {MET_CONTEXT_LABELS[value]}
                   </option>
                 ))}
-              </select>
+              </FieldSelect>
             </Field>
             <Field label="Date met">
               <Input
+                autoComplete="off"
                 type="date"
                 value={form.dateMet}
                 onChange={(e) => set("dateMet", e.target.value)}
@@ -490,6 +510,7 @@ export function ContactForm({
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Email">
             <Input
+              autoComplete="off"
               type="email"
               value={form.email}
               onChange={(e) => set("email", e.target.value)}
@@ -498,6 +519,7 @@ export function ContactForm({
           </Field>
           <Field label="Phone">
             <Input
+              autoComplete="off"
               type="tel"
               value={form.phone}
               onChange={(e) => set("phone", e.target.value)}
@@ -508,6 +530,7 @@ export function ContactForm({
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Strength (1–5)">
             <Input
+              autoComplete="off"
               type="number"
               min={1}
               max={5}
@@ -520,6 +543,7 @@ export function ContactForm({
           </Field>
           <Field label="Priority (0–3)">
             <Input
+              autoComplete="off"
               type="number"
               min={0}
               max={3}
@@ -530,6 +554,7 @@ export function ContactForm({
         </div>
         <Field label="Industry">
           <Input
+            autoComplete="off"
             value={form.industry}
             onChange={(e) => set("industry", e.target.value)}
             placeholder="Cloud computing, venture capital…"
@@ -545,6 +570,7 @@ export function ContactForm({
         </Field>
         <Field label="Tags (comma-separated)">
           <Input
+            autoComplete="off"
             value={form.tagNames}
             onChange={(e) => set("tagNames", e.target.value)}
             placeholder="AI, OpenAI, internship"
@@ -559,6 +585,7 @@ export function ContactForm({
         </Field>
         </>
       )}
+      <FormError>{formError}</FormError>
       <Button
         type="submit"
         disabled={pending || lookingUp}
@@ -570,27 +597,7 @@ export function ContactForm({
   );
 }
 
-function Field({
-  label,
-  children,
-  required,
-  hint,
-}: {
-  label: string;
-  children: React.ReactNode;
-  required?: boolean;
-  hint?: string;
-}) {
-  return (
-    <div className="space-y-1.5">
-      <Label>
-        {label}
-        {required ? " *" : ""}
-      </Label>
-      {children}
-      {hint ? (
-        <p className="text-xs text-muted-foreground">{hint}</p>
-      ) : null}
-    </div>
-  );
+/** A native <select> labelled by the enclosing `Field`. */
+function FieldSelect(props: React.ComponentProps<"select">) {
+  return <select {...useFieldControl(props)} />;
 }

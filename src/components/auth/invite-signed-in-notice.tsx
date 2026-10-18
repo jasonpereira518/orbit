@@ -20,7 +20,7 @@ export function InviteSignedInNotice({ email }: { email: string | null }) {
   const [pending, setPending] = useState(false);
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-5 bg-background p-6 text-center">
+    <div className="flex min-h-dvh flex-col items-center justify-center gap-5 bg-background p-6 text-center">
       <OrbitLogo size="lg" />
       <h1 className="font-[family-name:var(--font-display)] text-2xl text-ink">
         You&apos;ve been invited to Orbit
