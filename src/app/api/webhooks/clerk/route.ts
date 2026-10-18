@@ -119,6 +119,8 @@ export async function POST(req: NextRequest) {
         // `keepSettings: false` deletes the settings row too — email, name, avatar, every
         // encrypted provider key and the Stripe customer id. The Settings "Delete data" path
         // keeps that row on purpose (its person is still signed in); this one must not.
+        // Because it closes the account, the purge's `account` step first cancels any Stripe
+        // subscription (or queues the cancel if Stripe fails) and removes the waitlist row.
         await purgeUserData(userId, { keepSettings: false });
         result = { outcome: "handled", targetUserId: userId, resourceId: userId };
       } else {

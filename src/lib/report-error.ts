@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { redactDbError, redactQueryParams } from "@/lib/db-error-redact";
 import { friendlyError, isQuietFailureMessage, isUserFacingError, withReference } from "@/lib/errors";
 
 /**
@@ -78,7 +79,8 @@ function sanitize(extra: Record<string, unknown> | undefined): Record<string, un
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(extra)) {
     if (SECRET_KEY.test(k)) continue;
-    out[k] = typeof v === "string" && v.length > 500 ? `${v.slice(0, 500)}…` : v;
+    const s = typeof v === "string" ? redactQueryParams(v) : v;
+    out[k] = typeof s === "string" && s.length > 500 ? `${s.slice(0, 500)}…` : s;
   }
   return out;
 }
@@ -97,10 +99,13 @@ export function reportError(err: unknown, ctx: ReportContext): string {
       lastWarning.set(ctx.where, now);
     }
     const extra = sanitize(ctx.extra);
-    if (process.env.SENTRY_DSN) sendToSentry(err, eventId, level, ctx, extra);
+    // A failed statement's bound values (often a note about a named person) never leave
+    // with the error — see `db-error-redact.ts`. The SQL stays; the values go.
+    const safe = redactDbError(err);
+    if (process.env.SENTRY_DSN) sendToSentry(safe, eventId, level, ctx, extra);
     const who = ctx.userId ? ` user=${ctx.userId}` : "";
     const log = level === "warning" ? console.warn : console.error;
-    log(`[orbit:${ctx.where}] ref=${ref}${who}`, err, extra ?? "");
+    log(`[orbit:${ctx.where}] ref=${ref}${who}`, safe, extra ?? "");
   } catch {
     // Never let reporting fail the caller.
   }

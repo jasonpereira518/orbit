@@ -15,6 +15,7 @@ import { and, count, eq, inArray, sql, lte } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getDb, rowsOf } from "@/db";
+import { redactDbError } from "@/lib/db-error-redact";
 import { notTourExample } from "@/lib/onboarding-examples/sql";
 import {
   buildMemoryChunks,
@@ -1241,7 +1242,7 @@ export async function logInteractionForUser(
         contactIds: [],
       }),
     }).catch((err) => {
-      console.warn("[memory-chunks] could not index interaction", row.id, err);
+      console.warn("[memory-chunks] could not index interaction", row.id, redactDbError(err));
     });
   }
 
@@ -1368,7 +1369,7 @@ export async function deleteInteractionForUser(
     sourceKind: "interaction",
     sourceIds: [interactionId],
   }).catch((err) => {
-    console.warn("[memory-chunks] could not drop passages for", interactionId, err);
+    console.warn("[memory-chunks] could not drop passages for", interactionId, redactDbError(err));
   });
 
   const [remaining] = await db

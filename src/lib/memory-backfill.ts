@@ -12,6 +12,7 @@
  */
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
+import { redactDbError } from "@/lib/db-error-redact";
 import { interactionTypeLabel } from "@/lib/interaction-types";
 import {
   buildMemoryChunks,
@@ -223,7 +224,7 @@ export async function backfillMemoryChunks(
     } catch (err) {
       // One bad row must not stop the sweep — the next pass will try it again, and a row
       // that fails forever is one unindexed note rather than an unindexed account.
-      console.warn("[memory-backfill] could not index interaction", row.id, err);
+      console.warn("[memory-backfill] could not index interaction", row.id, redactDbError(err));
     }
   };
 
@@ -244,7 +245,7 @@ export async function backfillMemoryChunks(
       } catch (err) {
         next++;
         scanned++;
-        console.warn("[memory-backfill] could not index interaction", row.id, err);
+        console.warn("[memory-backfill] could not index interaction", row.id, redactDbError(err));
         continue;
       }
       if (group.length && groupChunks + prepared.drafts.length > SYNC_GROUP_MAX_CHUNKS) break;
@@ -274,7 +275,7 @@ export async function backfillMemoryChunks(
     } catch (err) {
       // The group is one atomic write, so nothing of it landed. Retry it a row at a time,
       // under the same budget, so one row that cannot be written costs only itself.
-      console.warn("[memory-backfill] group write failed; retrying one at a time", err);
+      console.warn("[memory-backfill] group write failed; retrying one at a time", redactDbError(err));
       for (const { row } of group) {
         if (Date.now() - started > budget) break;
         await indexOne(row);

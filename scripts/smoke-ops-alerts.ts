@@ -58,6 +58,7 @@ const HEALTHY: OpsSnapshot = {
   wedgedSyncs: 0,
   failingSyncs: 0,
   stuckPurges: 0,
+  stuckBillingCancels: 0,
   processStalledRecent: ["ok"],
   backfillFailures24h: { accounts: 0, kinds: [] },
   statementTimeout: "20s",
@@ -350,6 +351,9 @@ function main() {
   check("a failed deletion run → purge.stuck (critical)",
     find({ ...HEALTHY, stuckPurges: 1 }, "purge.stuck")?.severity === "critical");
   check("no failed deletion runs → no purge.stuck", !find(HEALTHY, "purge.stuck"));
+  check("a deleted account's subscription that will not cancel → billing.cancel_stuck (critical)",
+    find({ ...HEALTHY, stuckBillingCancels: 1 }, "billing.cancel_stuck")?.severity === "critical");
+  check("nothing stuck in the cancel queue → no billing.cancel_stuck", !find(HEALTHY, "billing.cancel_stuck"));
   check("every condition carries a title and a detail",
     evaluateOpsConditions({ ...HEALTHY, wedgedImports: 1, reauthNeeded: 1, errorEventsLastHour: 9 }, NOW).every((c) => c.title && c.detail));
 

@@ -7,6 +7,7 @@ import { deleteReplacedAvatar } from "@/lib/avatar-blob";
 import { deleteContactForUser } from "@/lib/contact-delete";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
+import { redactDbError } from "@/lib/db-error-redact";
 import {
   actionItems,
   contactTags,
@@ -931,7 +932,7 @@ export async function updateInteraction(
   // "I just fixed that note" is exactly when someone asks about it.
   if (input.rawNotes !== undefined || input.aiSummary !== undefined || when) {
     await reindexInteractionPassages(userId, interactionId).catch((err) => {
-      console.warn("[memory-chunks] could not re-index interaction", interactionId, err);
+      console.warn("[memory-chunks] could not re-index interaction", interactionId, redactDbError(err));
     });
   }
   void generateAndStoreContactBrief(userId, existing.contactId).catch(
@@ -2048,7 +2049,7 @@ export async function resummarizeInteraction(interactionId: string) {
   // A rewritten summary is a rewritten note as far as passage search is concerned: for a row
   // with no `raw_notes`, `ai_summary` IS what was indexed.
   await reindexInteractionPassages(userId, interactionId).catch((err) => {
-    console.warn("[memory-chunks] could not re-index interaction", interactionId, err);
+    console.warn("[memory-chunks] could not re-index interaction", interactionId, redactDbError(err));
   });
   void generateAndStoreContactBrief(userId, existing.contactId).catch(() => null);
 

@@ -176,11 +176,18 @@ export function lockedByImplication(
   return out;
 }
 
-/** A unit of `purgeUserData`: a category, or the full-purge-only billing anonymisation. */
-export type PurgeStepKey = DataCategory | "billing";
+/**
+ * A unit of `purgeUserData`: a category; the full-purge-only billing anonymisation; or
+ * `account`, which runs only when the account itself is closing (a full purge that does not
+ * keep settings): it cancels the Stripe subscription and removes the person's waitlist rows.
+ */
+export type PurgeStepKey = DataCategory | "billing" | "account";
 
 /** Attempts (the first run plus nightly resumes) before a purge run is marked failed. */
 export const PURGE_MAX_ATTEMPTS = 5;
+
+/** A closed account's queued Stripe cancel that has failed this often raises `billing.cancel_stuck`. */
+export const BILLING_CANCEL_STUCK_ATTEMPTS = 3;
 
 export function isDataCategory(value: string): value is DataCategory {
   return (DATA_CATEGORY_IDS as readonly string[]).includes(value);
@@ -189,17 +196,20 @@ export function isDataCategory(value: string): value is DataCategory {
 /**
  * The ordered steps for an already-expanded selection. `preferences` (the `user_settings`
  * reset) always runs LAST, after billing, exactly as `purgeUserData` always has — the
- * settings row is what every other step's bookkeeping hangs off.
+ * settings row is what every other step's bookkeeping hangs off. `account` sits just before
+ * it for the same reason: it reads the Stripe customer id and email from that row.
  */
 export function planPurgeSteps(
   categories: readonly string[],
-  fullPurge: boolean
+  fullPurge: boolean,
+  closeAccount = false
 ): PurgeStepKey[] {
   const selected = new Set(categories);
   const steps: PurgeStepKey[] = DATA_CATEGORY_META.map((c) => c.id).filter(
     (id) => id !== "preferences" && selected.has(id)
   );
   if (fullPurge) steps.push("billing");
+  if (fullPurge && closeAccount) steps.push("account");
   if (selected.has("preferences")) steps.push("preferences");
   return steps;
 }

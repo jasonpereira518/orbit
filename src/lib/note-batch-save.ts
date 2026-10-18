@@ -42,6 +42,7 @@ import { getInboxListId } from "@/lib/reminder-lists";
 import { inferReminderActionKind } from "@/lib/reminder-action-kind";
 import { buildSuggestionItemHash, isoDay, isoDayToLocalNoon } from "@/lib/suggested-reminder-utils";
 import { reportAndContinue } from "@/lib/report-error";
+import { redactDbError } from "@/lib/db-error-redact";
 import { owedByFromDigest } from "@/lib/meeting-extras";
 import { deleteCapturePhotosForBatch } from "@/lib/capture-photos";
 
@@ -481,7 +482,7 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
       // the sweep will never revisit (it claims only interactions with no passages at all).
       // Never fatal: failing to widen the index must not fail saving the batch.
       await syncMemoryChunkMentions(userId, mentionRows.map((m) => m.interactionId)).catch(
-        (err) => console.warn("[memory-chunks] could not apply mentions", err)
+        (err) => console.warn("[memory-chunks] could not apply mentions", redactDbError(err))
       );
     }
 

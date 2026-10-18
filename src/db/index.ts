@@ -1299,6 +1299,16 @@ CREATE TABLE IF NOT EXISTS data_purge_runs (
 );
 CREATE INDEX IF NOT EXISTS data_purge_runs_status_attempt_idx ON data_purge_runs(status, last_attempt_at);
 CREATE INDEX IF NOT EXISTS data_purge_runs_target_idx ON data_purge_runs(target_user_id);
+-- A closing account's Stripe customer whose subscriptions could not be cancelled yet. The
+-- customer id is the only column that names anyone, and the row is deleted as soon as Stripe
+-- confirms the cancel. See src/lib/billing-cancel.ts.
+CREATE TABLE IF NOT EXISTS billing_cancellation_queue (
+  stripe_customer_id text PRIMARY KEY,
+  attempts integer NOT NULL DEFAULT 1,
+  last_error text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  last_attempt_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE UNIQUE INDEX IF NOT EXISTS user_settings_stripe_customer_uidx ON user_settings(stripe_customer_id) WHERE stripe_customer_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS user_settings_speech_tag_uidx ON user_settings(speech_tag_id) WHERE speech_tag_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS error_events (
@@ -2720,7 +2730,12 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // and its briefs live in ai_result_cache, read back by key. The table was a day old (v169) and
 // held only cached web lookups. Rescanned every ref and worktree on Oct 15 2026: 169 was the
 // highest claimed anywhere.
-export const SCHEMA_VERSION = 170;
+//
+// 175 = billing_cancellation_queue (new table): Stripe customers of closed accounts whose
+// subscriptions are still to be cancelled, retried hourly. NOT 171-174:
+// claude/serene-cerf-0is3sb holds 171 and claude/trusting-wozniak-ebsks3 holds 174.
+// Rescanned every remote ref on Oct 18 2026: 174 was the highest claimed anywhere.
+export const SCHEMA_VERSION = 175;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the

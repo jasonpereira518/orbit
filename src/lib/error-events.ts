@@ -1,5 +1,6 @@
 import { getDb } from "@/db";
 import { errorEvents } from "@/db/schema";
+import { redactQueryParams } from "@/lib/db-error-redact";
 import { toUserFacingError } from "@/lib/errors";
 
 /**
@@ -175,8 +176,9 @@ export async function recordErrorEvent(input: ErrorEventInput): Promise<void> {
       source: input.source,
       kind: input.kind,
       userId: input.userId ?? null,
+      // A failed statement's bound values stay out of the table (`db-error-redact.ts`).
       message: input.message
-        ? toUserFacingError(input.message, "Unknown error").message.slice(0, 500)
+        ? redactQueryParams(toUserFacingError(input.message, "Unknown error").message).slice(0, 500)
         : null,
       context: boundedContext(input.context),
     });

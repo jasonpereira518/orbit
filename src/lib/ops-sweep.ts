@@ -4,6 +4,7 @@ import { and, desc, eq, gt, inArray, isNotNull, like, or, sql } from "drizzle-or
 import { getDb, rowsOf } from "@/db";
 import { contacts, cronRuns, errorEvents, imports, opsAlertState, dataPurgeRuns, rateLimitBuckets } from "@/db/schema";
 import { RATE_LIMITS } from "@/lib/rate-limit";
+import { BILLING_CANCEL_STUCK_ATTEMPTS } from "@/lib/data-categories";
 import { aiErrorBreakdown } from "@/lib/admin-health";
 import {
   OUR_ERROR_KINDS,
@@ -183,7 +184,11 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         ),
       loadManagedAiOpsFacts(now),
       db
-        .select({ n: sql<number>`count(*)::int` })
+        .select({
+          n: sql<number>`count(*)::int`,
+          // Rides on the same statement: a closed account still being charged.
+          stuckBillingCancels: sql<number>`(SELECT count(*) FROM billing_cancellation_queue WHERE attempts >= ${BILLING_CANCEL_STUCK_ATTEMPTS})::int`,
+        })
         .from(dataPurgeRuns)
         .where(eq(dataPurgeRuns.status, "failed")),
       // Production only: PGlite and preview branches report Postgres's default of 0, which
@@ -320,6 +325,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     wedgedSyncs: issues.syncWedged,
     failingSyncs: issues.syncFailing,
     stuckPurges: stuckPurgeRow?.n ?? 0,
+    stuckBillingCancels: stuckPurgeRow?.stuckBillingCancels ?? 0,
     managedAi,
   };
 }

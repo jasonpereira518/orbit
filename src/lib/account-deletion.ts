@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { isAdminUser } from "@/lib/admin";
+import { cancelChargeableSubscriptions } from "@/lib/billing-cancel";
 import { isClerkConfigured, isDemoMode } from "@/lib/demo-account";
 import { UserFacingError } from "@/lib/errors";
 import { purgeUserData } from "@/lib/user-data";
@@ -14,8 +15,12 @@ import { purgeUserData } from "@/lib/user-data";
  *      deleted account that kept its subscription would be billed with no way back in.
  *      If this fails, nothing else happens.
  *   2. `purgeUserData(userId, { keepSettings: false })` — every table, the settings row,
- *      keys and tokens included. Idempotent.
+ *      keys and tokens included. Idempotent. Its `account` step cancels again (finding
+ *      nothing chargeable) — that step is what covers the paths that start elsewhere.
  *   3. Delete the Clerk user. Clerk then fires `user.deleted`, whose purge finds nothing.
+ *
+ * Step 1 is kept separate from the purge's own cancel on purpose: here a person is waiting,
+ * so a Stripe failure can still stop everything and say so, instead of queueing.
  *
  * The external calls are injected so `scripts/smoke-delete-my-account.ts` can exercise every
  * ordering without Stripe or Clerk.
@@ -25,25 +30,8 @@ export type AccountDeletionDeps = {
   deleteLogin: (userId: string) => Promise<void>;
 };
 
-/** Stripe statuses that can still charge. */
-const CHARGEABLE = new Set(["active", "trialing", "past_due", "unpaid", "incomplete"]);
-
 export const defaultAccountDeletionDeps: AccountDeletionDeps = {
-  async cancelSubscriptions(stripeCustomerId) {
-    if (!process.env.STRIPE_SECRET_KEY) return;
-    const { getStripe } = await import("@/lib/stripe");
-    const stripe = getStripe();
-    const subscriptions = await stripe.subscriptions.list({
-      customer: stripeCustomerId,
-      status: "all",
-      limit: 100,
-    });
-    for (const subscription of subscriptions.data) {
-      if (CHARGEABLE.has(subscription.status)) {
-        await stripe.subscriptions.cancel(subscription.id);
-      }
-    }
-  },
+  cancelSubscriptions: cancelChargeableSubscriptions,
   async deleteLogin(userId) {
     if (!isClerkConfigured() || isDemoMode()) return;
     const { clerkClient } = await import("@clerk/nextjs/server");

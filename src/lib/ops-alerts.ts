@@ -1,5 +1,5 @@
 import type { CronRunState } from "@/lib/cron-runs";
-import { PURGE_MAX_ATTEMPTS } from "@/lib/data-categories";
+import { BILLING_CANCEL_STUCK_ATTEMPTS, PURGE_MAX_ATTEMPTS } from "@/lib/data-categories";
 import { hasMissedRun } from "@/lib/cron-runs";
 import { MANAGED_AI_ALERTS, MANAGED_AI_POOLS, MANAGED_AI_POOL_WARN_SHARE, poolWindowStart } from "@/lib/managed-ai-policy";
 import type { AiProvider } from "@/lib/ai-providers";
@@ -104,6 +104,8 @@ export type OpsSnapshot = {
   failingSyncs: number;
   /** `data_purge_runs` marked failed: deletions a user asked for that did not finish. */
   stuckPurges: number;
+  /** Closed accounts whose Stripe cancel has failed repeatedly: still being charged. */
+  stuckBillingCancels: number;
   /** Orbit's managed AI keys — the Lifetime cost exposure. See `managed-ai-ops.ts`. */
   managedAi: ManagedAiOpsFacts;
 };
@@ -705,10 +707,22 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
     });
   }
 
+  // Critical for the same reason: the person deleted their account and is still being billed,
+  // with no account left to cancel from.
+  if (s.stuckBillingCancels > 0) {
+    out.push({
+      id: "billing.cancel_stuck",
+      severity: "critical",
+      title: "A deleted account's subscription will not cancel",
+      detail: `${s.stuckBillingCancels} Stripe customer(s) of deleted accounts still have a subscription Orbit could not cancel after ${BILLING_CANCEL_STUCK_ATTEMPTS} attempts. Cancel them in the Stripe dashboard; see billing_cancellation_queue.last_error.`,
+      href: "/admin/health",
+    });
+  }
+
   return out;
 }
 
-const usd = (micros: number) => `$${(micros / 1_000_000).toFixed(2)}`;
+const usd =(micros: number) => `$${(micros / 1_000_000).toFixed(2)}`;
 
 /**
  * Orbit's own AI keys, which every plan's included AI runs on. Free accounts spend with no

@@ -9,6 +9,7 @@ import { pruneOlderThan, pruneUsageEvents } from "@/lib/event-prune";
 import { runAiBatchSweep } from "@/lib/ai-batch-apply";
 import { resumeStalledImports } from "@/lib/import-stall";
 import { resumeStrandedPurges } from "@/lib/user-data";
+import { retryQueuedCancellations } from "@/lib/billing-cancel";
 import { sweepOrphanedAccounts } from "@/lib/clerk-orphan-sweep";
 import { isClerkConfigured } from "@/lib/demo-account";
 import { sweepAbandonedMeetingSessions } from "@/lib/meeting-sessions";
@@ -173,6 +174,10 @@ export async function GET(request: Request) {
     purgesStillFailing: 0,
     purgesGaveUp: 0,
     purgeRunsPruned: 0,
+    /** Closed accounts' Stripe subscriptions whose cancel failed first time, retried here. */
+    billingCancelsFound: 0,
+    billingCancelsDone: 0,
+    billingCancelsStillFailing: 0,
     /** Missed user.deleted webhooks: accounts checked against Clerk, and purged. */
     orphansExamined: 0,
     orphansPurged: 0,
@@ -260,6 +265,19 @@ export async function GET(request: Request) {
       stats.purgesGaveUp = purges.gaveUp;
       stats.purgeRunsPruned = purges.pruned;
       if (purges.stillFailing > 0 || purges.gaveUp > 0) status = "partial";
+    } catch {
+      status = "partial";
+    }
+
+    try {
+      // A closed account whose subscription Stripe would not cancel at the time: the person
+      // has no account left to cancel from, so this keeps trying, and billing.cancel_stuck
+      // pages the operator if it keeps failing.
+      const cancels = await retryQueuedCancellations({ now: new Date() });
+      stats.billingCancelsFound = cancels.found;
+      stats.billingCancelsDone = cancels.cancelled;
+      stats.billingCancelsStillFailing = cancels.stillFailing;
+      if (cancels.stillFailing > 0) status = "partial";
     } catch {
       status = "partial";
     }

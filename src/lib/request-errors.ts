@@ -4,6 +4,7 @@ import { shouldRecordThrottled } from "@/lib/throttle-latch";
 import { notifySlack } from "@/lib/ops-notify";
 import { sendSlackDM } from "@/lib/slack-dm";
 import { toUserFacingError } from "@/lib/errors";
+import { scrubText, scrubUrl } from "@/lib/sentry-scrub";
 
 type Args = Parameters<Instrumentation.onRequestError>;
 
@@ -37,8 +38,10 @@ export async function reportRequestError(err: Args[0], request: Args[1], context
   if (!dmConfigured && !process.env.SLACK_OPS_WEBHOOK_URL) return;
   if (!shouldRecordThrottled(`unhandled:${context.routePath}`)) return;
 
-  const message = toUserFacingError(err, "Unknown error").message.slice(0, 300);
-  const text = `:x: *Unhandled ${context.routeType} error* on \`${context.routePath}\` (${request.method} ${request.path})\n${message}`;
+  // Scrubbed like a Sentry event: the request path can BE a credential (calendar feed, scan
+  // handoff, MCP key), and a failed statement's message ends with the values it was writing.
+  const message = scrubText(toUserFacingError(err, "Unknown error").message).slice(0, 300);
+  const text = `:x: *Unhandled ${context.routeType} error* on \`${context.routePath}\` (${request.method} ${scrubUrl(request.path)})\n${message}`;
   if (dmConfigured) {
     await sendSlackDM(text).catch(() => {});
   } else {

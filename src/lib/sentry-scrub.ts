@@ -12,8 +12,15 @@
  * contact or a send names one) and key-shaped strings (`SECRET_PATTERNS`, the set the chat
  * output guard uses). `sendDefaultPii: false` covers neither.
  *
+ * And the values of a failed database statement (`redactQueryParams`): a Drizzle error's
+ * message ends with the bound parameters, which are often a note or a transcript about a
+ * named person. Names and prose cannot be pattern-matched, so they are cut at the source.
+ * Extras are scrubbed at any depth, not only top-level strings, and so are the span
+ * descriptions of sampled transactions (an outbound fetch span names its URL).
+ *
  * Only relative, import-free imports: loaded by the server, edge and browser Sentry configs alike.
  */
+import { redactQueryParams } from "./db-error-redact";
 import { SECRET_PATTERNS } from "./secret-patterns";
 
 const TOKEN_PATH = /(\/(?:api\/)?(?:calendar|scan|mcp)\/)(?!\[)[^/?#]+/gi;
@@ -27,7 +34,7 @@ export function scrubUrl(url: string): string {
 
 /** For free text — messages, exception values, extras: URLs, then addresses and keys. */
 export function scrubText(text: string): string {
-  let out = scrubUrl(text).replace(EMAIL, "[email]");
+  let out = scrubUrl(redactQueryParams(text)).replace(EMAIL, "[email]");
   for (const [, re] of SECRET_PATTERNS) out = out.replace(re, "[redacted]");
   return out;
 }
@@ -39,10 +46,21 @@ type Scrubbable = {
   exception?: { values?: Array<{ value?: string }> };
   extra?: Record<string, unknown>;
   breadcrumbs?: Array<{ data?: Record<string, unknown> | undefined; message?: string }>;
+  spans?: Array<{ description?: string }>;
 };
 
 function scrubValue(value: unknown): unknown {
   return typeof value === "string" ? scrubUrl(value) : value;
+}
+
+/** Strings anywhere inside arrays and plain objects, to a bounded depth. */
+function scrubDeep(value: unknown, depth = 0): unknown {
+  if (typeof value === "string") return scrubText(value);
+  if (depth >= 6 || value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map((v) => scrubDeep(v, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value)) out[k] = scrubDeep(v, depth + 1);
+  return out;
 }
 
 /** For `beforeSend` and `beforeSendTransaction`. Mutates and returns the event. */
@@ -58,7 +76,10 @@ export function scrubSentryEvent<T extends Scrubbable>(event: T): T {
     if (ex.value) ex.value = scrubText(ex.value);
   }
   for (const [key, value] of Object.entries(event.extra ?? {})) {
-    if (typeof value === "string") event.extra![key] = scrubText(value);
+    event.extra![key] = scrubDeep(value);
+  }
+  for (const span of event.spans ?? []) {
+    if (span.description) span.description = scrubText(span.description);
   }
   for (const crumb of event.breadcrumbs ?? []) {
     if (crumb.message) crumb.message = scrubText(crumb.message);

@@ -5,7 +5,7 @@ import { OUTLOOK_SCAN_IMPORT_TYPE } from "@/lib/outlook-scan-type";
 import { deleteAvatarBlobs } from "@/lib/avatar-blob";
 import { hasBlobStorage } from "@/lib/contact-avatar";
 import { purgeEmailAttachmentsForUser } from "@/lib/email/attachments";
-import { and, asc, eq, getTableName, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, eq, getTableName, inArray, lt, or, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
 import { getDb, rowsOf } from "@/db";
@@ -17,6 +17,7 @@ import {
   apiKeys,
   appleConnections,
   billingEvents,
+  broadcastRecipients,
   creditAccounts,
   creditGrants,
   creditHolds,
@@ -98,7 +99,10 @@ import {
   userRecruiterLinks,
   userSettings,
   webhookEndpoints,
+  interestListSignups,
+  waitlistPollVotes,
 } from "@/db/schema";
+import { cancelOrQueue } from "@/lib/billing-cancel";
 import { purgeCapturePhotosForUser } from "@/lib/capture-photos";
 import { recomputeRecruiterRating,
   RECRUITER_DELETED_CREATOR,
@@ -881,7 +885,62 @@ export class PurgeIncompleteError extends Error {
 export const PURGE_RESUME_AFTER_MS = 10 * 60 * 1000;
 const PURGE_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
+/**
+ * The account is closing, not just emptying (a full purge that does not keep settings): every
+ * deletion path that ends an account comes through here, so none can leave billing running
+ * or the person's waitlist record behind.
+ *
+ *   - Stripe: chargeable subscriptions are cancelled, or the customer id is queued for the
+ *     hourly retry if Stripe fails (`billing-cancel.ts`). This runs before `preferences`
+ *     deletes `stripe_customer_id`, the only link to the subscription. Settings → Delete
+ *     account cancels first anyway (so a failure there stops the deletion, with a message);
+ *     the second call finds nothing chargeable. The Clerk webhook, the admin hard-delete and
+ *     the orphan sweep had no cancel at all.
+ *   - The waitlist: most accounts began as an `interest_list_signups` row, which is global
+ *     (no `user_id`) and so outlived every deletion — email, name, campaign tags and the
+ *     referral graph. Matched on the account's email, with the same child cleanup as the
+ *     admin's `deleteInterestListRow`, plus the broadcast log, which that function keeps on
+ *     purpose but an erasure must not.
+ */
+async function closeAccount(db: Db, userId: string) {
+  const settings = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+    columns: { stripeCustomerId: true, email: true },
+  });
+  if (settings?.stripeCustomerId) await cancelOrQueue(settings.stripeCustomerId);
+
+  const email = settings?.email?.trim().toLowerCase();
+  if (!email) return;
+  const signupIds = (
+    await db
+      .select({ id: interestListSignups.id })
+      .from(interestListSignups)
+      .where(sql`lower(${interestListSignups.email}) = ${email}`)
+  ).map((r) => r.id);
+  if (signupIds.length > 0) {
+    await db
+      .update(interestListSignups)
+      .set({ referredById: null })
+      .where(inArray(interestListSignups.referredById, signupIds));
+    await db
+      .delete(waitlistPollVotes)
+      .where(
+        or(
+          inArray(waitlistPollVotes.signupId, signupIds),
+          inArray(waitlistPollVotes.voterKey, signupIds.map((id) => `signup:${id}`))
+        )
+      );
+    await db.delete(broadcastRecipients).where(inArray(broadcastRecipients.signupId, signupIds));
+    await db.delete(interestListSignups).where(inArray(interestListSignups.id, signupIds));
+  }
+  await db.delete(broadcastRecipients).where(sql`lower(${broadcastRecipients.email}) = ${email}`);
+}
+
 async function runPurgeStep(db: Db, userId: string, key: PurgeStepKey, keepSettings: boolean) {
+  if (key === "account") {
+    await closeAccount(db, userId);
+    return;
+  }
   if (key === "billing") {
     await db.update(billingEvents).set({ userId: null }).where(eq(billingEvents.userId, userId));
     // Credit grants are money for the same reason billing rows are: a pack is cash received
@@ -914,7 +973,7 @@ async function runPurgeStep(db: Db, userId: string, key: PurgeStepKey, keepSetti
 }
 
 async function executePurgeRun(db: Db, run: DataPurgeRunRow): Promise<PurgeOutcome> {
-  const plan = planPurgeSteps(run.categories, run.fullPurge);
+  const plan = planPurgeSteps(run.categories, run.fullPurge, !run.keepSettings);
   const done = new Set<string>(run.completedSteps);
   for (const key of plan) {
     if (done.has(key)) continue;

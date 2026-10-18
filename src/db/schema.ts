@@ -6314,5 +6314,20 @@ export const dataPurgeRuns = pgTable(
   ]
 );
 
+/**
+ * Stripe customers of closed accounts whose subscriptions are still to be cancelled.
+ *
+ * Written by the purge's `account` step when Stripe fails, so a deletion never waits on
+ * billing; drained by the hourly job, and a row leaves only when Stripe confirms the cancel.
+ * The customer id is all it holds — no user id, no email. See `src/lib/billing-cancel.ts`.
+ */
+export const billingCancellationQueue = pgTable("billing_cancellation_queue", {
+  stripeCustomerId: text("stripe_customer_id").primaryKey(),
+  attempts: integer("attempts").default(1).notNull(),
+  lastError: text("last_error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export type StripeProcessedEventRow = typeof stripeProcessedEvents.$inferSelect;
 export type DataPurgeRunRow = typeof dataPurgeRuns.$inferSelect;
