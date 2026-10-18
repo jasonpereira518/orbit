@@ -22,6 +22,8 @@ export const maxDuration = 30;
 export const POST = extensionRoute<StartersRequest, StartersResponse>({
   schema: startersRequestSchema,
   cost: "ai",
+  action: "starters",
+  siteOf: (input) => input.page.site,
   handler: async ({ userId, input }) => {
     const [ctx, writingInstructions] = await Promise.all([
       buildStarterContext(userId, input.page, input.contactId),
