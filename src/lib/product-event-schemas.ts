@@ -28,7 +28,9 @@ export const CHANNELS = [
   "direct", "referral_link", "search", "social", "newsletter", "product_hunt",
   "extension", "mcp", "waitlist", "other",
 ] as const;
-export const ONBOARDING_PATHS = ["capture", "import", "tour"] as const;
+// "quick" is the shipped quick-setup path (src/lib/onboarding-steps.ts); "capture" and "import" stay for
+// a future capture-first / import-first split.
+export const ONBOARDING_PATHS = ["capture", "import", "tour", "quick"] as const;
 export const AI_PROVIDERS = ["gemini", "openai", "anthropic", "openrouter", "typesafe", "deepgram"] as const;
 export const CAPTURE_SOURCES = ["text", "voice", "photo", "file", "meeting", "paste", "drive"] as const;
 export const IMPORT_PROVIDERS = [
@@ -74,7 +76,7 @@ export const eventSchemas = {
   capture_discarded: z.object({ capture_job_id: uuid, people_proposed: count }),
   import_failed: z.object({ import_id: uuid, provider: z.enum(IMPORT_PROVIDERS), error_kind: z.string().regex(/^[a-z_]{1,32}$/), rows_failed: count }),
   followup_set: z.object({ reminder_id: uuid, origin: z.enum(FOLLOWUP_ORIGINS), has_due_date: z.boolean() }),
-  followup_completed: z.object({ reminder_id: uuid, days_late: z.number().int(), via: z.enum(FOLLOWUP_VIA) }),
+  followup_completed: z.object({ reminder_id: uuid, days_late: z.number().int().optional(), via: z.enum(FOLLOWUP_VIA) }),
   followup_snoozed: z.object({ reminder_id: uuid }),
   followup_dismissed: z.object({ reminder_id: uuid }),
   chat_answer_landed: z.object({ message_id: uuid, duration_ms: ms, tool_rounds: count, evidence_count: count }),

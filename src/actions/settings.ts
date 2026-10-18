@@ -45,7 +45,9 @@ import {
   applyAiKeyChange,
   clearedKeyPatch, clearMovesEmbeddings,
   managedEligibilityFor,
+  trackAiKeyAdded,
 } from "@/lib/ai-settings-write";
+import { track } from "@/lib/product-events";
 
 export async function getSettings() {
   const userId = await requireUserId();
@@ -243,9 +245,14 @@ export async function saveAiSettings(input: {
   const newKey = input.apiKey?.trim() || null;
   let keyNote: string | null = null;
   if (newKey) {
-    const outcome = keyCheckOutcome(await checkAiKey(provider, newKey), provider);
+    const verdict = await checkAiKey(provider, newKey);
+    const outcome = keyCheckOutcome(verdict, provider);
     // Returned, not thrown: a thrown message is a digest in production.
-    if (!outcome.save) return { ok: false as const, error: outcome.error };
+    if (!outcome.save) {
+      // The verdict is a closed word ("rejected" | "malformed"), never the key or the provider's text.
+      track("ai_key_check_failed", { provider, error_kind: verdict }, { userId });
+      return { ok: false as const, error: outcome.error };
+    }
     keyNote = outcome.note;
   }
   const encrypted = newKey ? encrypt(newKey) : null;
@@ -349,12 +356,20 @@ export async function saveDecisionKey(apiKey: string) {
   const key = apiKey.trim();
   if (!key) return { ok: false as const, error: "Paste a TypeSafe key first" };
 
-  const outcome = keyCheckOutcome(await checkDecisionKey(key), "typesafe");
+  const verdict = await checkDecisionKey(key);
+  const outcome = keyCheckOutcome(verdict, "typesafe");
   // Returned, not thrown: a thrown message is a digest in production.
-  if (!outcome.save) return { ok: false as const, error: outcome.error };
+  if (!outcome.save) {
+    track("ai_key_check_failed", { provider: "typesafe", error_kind: verdict }, { userId });
+    return { ok: false as const, error: outcome.error };
+  }
 
   const encrypted = encrypt(key);
   const db = await getDb();
+  const before = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+    columns: { typesafeApiKeyEncrypted: true, createdAt: true },
+  });
   await db
     .insert(userSettings)
     .values({ userId, typesafeApiKeyEncrypted: encrypted })
@@ -362,6 +377,12 @@ export async function saveDecisionKey(apiKey: string) {
       target: userSettings.userId,
       set: { typesafeApiKeyEncrypted: encrypted, updatedAt: new Date() },
     });
+
+  // The decision key is a personal key too (`ai_key_added`, provider "typesafe"), but it does not
+  // make chat AI ready, so it does not stamp `user_settings.ai_key_added_at`.
+  if (!before?.typesafeApiKeyEncrypted) {
+    await trackAiKeyAdded(userId, "typesafe", before?.createdAt ?? new Date());
+  }
 
   revalidatePath("/settings");
   return { ok: true as const, keyNote: outcome.note };

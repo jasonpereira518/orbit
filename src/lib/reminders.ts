@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, getTableColumns, inArray, isNull, notInArray, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, inArray, isNull, ne, notInArray, sql, type SQL } from "drizzle-orm";
 import { getDb, rowsOf, runAtomicWrite, type AtomicStatement } from "@/db";
 import { awaitingReplies, awaitingReplyDescription } from "@/lib/awaiting-reply";
 import {
@@ -12,6 +12,9 @@ import {
   userGoals,
 } from "@/db/schema";
 import { daysAgo } from "@/lib/duplicates";
+import { track } from "@/lib/product-events";
+import { eventId } from "@/lib/product-event-ids";
+import type { FOLLOWUP_VIA } from "@/lib/product-event-schemas";
 import { isCometContact } from "@/lib/comet";
 import {
   buildConstellationClusters,
@@ -1381,6 +1384,13 @@ export type SnoozeSnapshot = {
   contactId: string | null;
   previousNextFollowUpAt: string | null;
   previousFollowUpStatus: string | null;
+  /**
+   * `reminders.completed_at` before the snooze, present only when the reminder was done:
+   * snoozing puts it back to pending (so it is no longer completed) and an Undo that
+   * restores "done" must restore when it was done too. Optional so a snapshot minted
+   * before the field existed still validates and still undoes.
+   */
+  previousCompletedAt?: string | null;
 };
 
 export async function snoozeReminder(
@@ -1409,7 +1419,7 @@ export async function snoozeReminderTo(
   const db = await getDb();
   const reminder = await db.query.reminders.findFirst({
     where: and(eq(reminders.id, reminderId), eq(reminders.userId, userId)),
-    columns: { id: true, contactId: true, dueDate: true, status: true },
+    columns: { id: true, contactId: true, dueDate: true, status: true, completedAt: true },
   });
   if (!reminder) return null;
 
@@ -1424,7 +1434,12 @@ export async function snoozeReminderTo(
 
   await db
     .update(reminders)
-    .set({ dueDate: due, status: "pending" })
+    // Snoozing a done reminder reopens it; it is no longer completed.
+    .set(
+      reminder.status === "done"
+        ? { dueDate: due, status: "pending", completedAt: null }
+        : { dueDate: due, status: "pending" }
+    )
     .where(and(eq(reminders.id, reminderId), eq(reminders.userId, userId)));
 
   // Keep contact due clock aligned with reminder snooze.
@@ -1441,6 +1456,14 @@ export async function snoozeReminderTo(
       );
   }
 
+  // One fact per (reminder, new due day): a retried or double-invoked snooze to the same day
+  // is the same event. Fire-and-forget; telemetry never fails the snooze.
+  track(
+    "followup_snoozed",
+    { reminder_id: reminderId },
+    { userId, id: eventId("followup_snoozed", reminderId, due.toISOString().slice(0, 10)) }
+  );
+
   return {
     reminderId,
     snoozedTo: due.toISOString(),
@@ -1451,6 +1474,9 @@ export async function snoozeReminderTo(
       ? contact.nextFollowUpAt.toISOString()
       : null,
     previousFollowUpStatus: contact?.followUpStatus ?? null,
+    ...(reminder.status === "done"
+      ? { previousCompletedAt: reminder.completedAt ? reminder.completedAt.toISOString() : null }
+      : {}),
   };
 }
 
@@ -1479,6 +1505,10 @@ export async function unsnoozeReminder(
     .set({
       dueDate: snap.previousDueDate ? new Date(snap.previousDueDate) : null,
       status: snap.previousStatus,
+      // Restoring "done" restores when it was done; restoring "pending" leaves it cleared.
+      ...(snap.previousStatus === "done" && typeof snap.previousCompletedAt === "string" && !Number.isNaN(Date.parse(snap.previousCompletedAt))
+        ? { completedAt: new Date(snap.previousCompletedAt) }
+        : {}),
     })
     .where(and(eq(reminders.id, snap.reminderId), eq(reminders.userId, userId)));
 
@@ -1521,9 +1551,32 @@ export type CompletionSnapshot = {
   };
 };
 
+/**
+ * Days between completing a follow-up and when it was due, rounded to the nearest whole day:
+ * positive when late, negative when early, 0 within about half a day either way. Due dates are
+ * date-only (noon UTC), so "completed the next morning" reads as 1 day late and "completed
+ * two days before" as 2 early, where truncating would call both of those a day less.
+ * `null` for a reminder with no due date, where "late" has no meaning (the property is then
+ * omitted from the event).
+ */
+export function daysLate(completedAt: Date, dueDate: Date | null): number | null {
+  if (!dueDate) return null;
+  // `|| 0` turns -0 (a completion a few hours early) into 0.
+  return Math.round((completedAt.getTime() - dueDate.getTime()) / 86_400_000) || 0;
+}
+
+export type CompleteReminderOptions = {
+  /**
+   * Which control completed it, for `followup_completed`. Defaults to "list". Pass `null` to
+   * stamp `completed_at` without recording the event (a completion the person did not make).
+   */
+  via?: (typeof FOLLOWUP_VIA)[number] | null;
+};
+
 export async function completeReminder(
   userId: string,
-  reminderId: string
+  reminderId: string,
+  options: CompleteReminderOptions = {}
 ): Promise<CompletionSnapshot | null> {
   const db = await getDb();
   const reminder = await db.query.reminders.findFirst({
@@ -1541,10 +1594,26 @@ export async function completeReminder(
         })
       : null;
 
-  await db
+  // `completed_at` is stamped on the transition only. A reminder that is already done keeps
+  // the instant it was first completed (a double-click, a retry, an offline replay), and a
+  // legacy done row stays NULL = unknown rather than being dated to today. The guard also
+  // makes the transition atomic, so exactly one of two racing calls records the event.
+  const completedAt = new Date();
+  const transitioned = await db
     .update(reminders)
-    .set({ status: "done" })
-    .where(and(eq(reminders.id, reminderId), eq(reminders.userId, userId)));
+    .set({ status: "done", completedAt })
+    .where(and(eq(reminders.id, reminderId), eq(reminders.userId, userId), ne(reminders.status, "done")))
+    .returning(); // bare: a field selector breaks over the Db union
+
+  if (transitioned.length > 0 && options.via !== null) {
+    const late = daysLate(completedAt, reminder.dueDate);
+    // Deterministic id: the same completion replayed lands on the same row.
+    track(
+      "followup_completed",
+      { reminder_id: reminderId, via: options.via ?? "list", ...(late === null ? {} : { days_late: late }) },
+      { userId, id: eventId("followup_completed", reminderId, completedAt.toISOString()), occurredAt: completedAt }
+    );
+  }
 
   // Only the OPEN items. This used to set every linked item to done, which also
   // re-stamped `completedAt` on items finished days earlier — a silent rewrite of when
@@ -1610,7 +1679,12 @@ export async function reopenReminder(
 
   await db
     .update(reminders)
-    .set({ status: snap.previousStatus })
+    // Reopened: no longer completed. (Never "done" here: `validCompletionSnapshot` refuses it.)
+    .set(
+      snap.previousStatus === "done"
+        ? { status: snap.previousStatus }
+        : { status: snap.previousStatus, completedAt: null }
+    )
     .where(and(eq(reminders.id, snap.reminderId), eq(reminders.userId, userId)));
 
   if (snap.closedActionItemIds.length > 0) {
@@ -1672,6 +1746,9 @@ export async function dismissReminder(
     .update(reminders)
     .set({ status: "dismissed" })
     .where(and(eq(reminders.id, reminderId), eq(reminders.userId, userId)));
+
+  // One per reminder: a dismiss, restore and second dismiss is still "dismissed once".
+  track("followup_dismissed", { reminder_id: reminderId }, { userId, id: eventId("followup_dismissed", reminderId) });
 
   return { reminderId, previousStatus: reminder.status };
 }

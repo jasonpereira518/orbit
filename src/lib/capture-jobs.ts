@@ -28,6 +28,7 @@ import {
   type CaptureJobSource,
 } from "@/lib/capture/types";
 import { internalFetch } from "@/lib/internal-auth";
+import { trackCaptureDiscarded, trackCaptureFailed } from "@/lib/capture-events";
 import { reportError } from "@/lib/report-error";
 
 export type CaptureJobRow = typeof captureJobs.$inferSelect;
@@ -279,6 +280,8 @@ export async function discardCaptureBatchRows(userId: string, batchGroupId: stri
       )
     )
     .returning();
+  // The person threw these away: one `capture_discarded` per job that actually moved.
+  for (const r of rows) trackCaptureDiscarded(r, r.result?.items?.length ?? 0);
   return rows.length;
 }
 
@@ -774,7 +777,12 @@ export async function discardCaptureJobRow(
       )
     )
     .returning();
-  if (rows.length > 0) return true;
+  if (rows.length > 0) {
+    // Stop pressed on a half-uploaded job is still the person discarding it; the id is the
+    // dedupe key, so a repeated press is one event.
+    trackCaptureDiscarded(rows[0]!, rows[0]!.result?.items?.length ?? 0);
+    return true;
+  }
   if (opts.tombstone) {
     // Nothing here when the id is already somebody's row, discarded or otherwise.
     await db
@@ -806,12 +814,22 @@ export async function bumpCaptureStallResumes(id: string): Promise<number> {
   return row?.stallResumes ?? 0;
 }
 
-export async function failCaptureJob(id: string, message: string): Promise<void> {
+export async function failCaptureJob(
+  id: string,
+  message: string,
+  /**
+   * What to record in `capture_failed`. The stage defaults to "ingest" because the only
+   * caller that does not say is the upload route, whose failures are all ingest failures.
+   */
+  event: { stage?: "ingest" | "parse" | "save"; errorKind?: string } = {}
+): Promise<void> {
   const db = await getDb();
-  await db
+  const rows = await db
     .update(captureJobs)
     .set({ status: "failed", error: message, claimToken: null, updatedAt: new Date() })
-    .where(eq(captureJobs.id, id));
+    .where(eq(captureJobs.id, id))
+    .returning();
+  if (rows[0]) trackCaptureFailed(rows[0], event.stage ?? "ingest", event.errorKind ?? "unexpected");
 }
 
 /** Stalled capture jobs picked up per sweep; the same bound as `STALL_SWEEP_LIMIT`. */
@@ -870,7 +888,10 @@ export async function resumeStalledCaptureJobs(options: {
   for (const job of stalled) {
     const resumes = await bumpCaptureStallResumes(job.id);
     if (resumes > maxResumes) {
-      await failCaptureJob(job.id, "Reading those notes stalled a few times and gave up — try extracting again.");
+      await failCaptureJob(job.id, "Reading those notes stalled a few times and gave up — try extracting again.", {
+        stage: "parse",
+        errorKind: "stalled",
+      });
       result.gaveUp += 1;
       continue;
     }
@@ -902,6 +923,7 @@ export async function resumeStalledCaptureJobs(options: {
     )
     .returning();
   result.abandoned = abandoned.length;
+  for (const r of abandoned) trackCaptureFailed(r, "ingest", "abandoned");
 
   const cutoff = new Date(now.getTime() - CAPTURE_JOB_RETENTION_DAYS * 86_400_000);
   const swept = await db

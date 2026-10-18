@@ -513,6 +513,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-holdout": "pure",
   "smoke-analytics-retention": "pglite",
   "smoke-billing-reconcile": "pure",
+  "smoke-activation-events": "pglite",
+  "smoke-gate-coverage": "pglite",
   "smoke-admin-feature-adoption": "pglite",
   "smoke-page-load-timing": "pglite",
   "smoke-contact-closeness": "pglite",
