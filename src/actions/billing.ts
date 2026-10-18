@@ -30,6 +30,7 @@ import {
 } from "@/lib/plans/plan-config";
 import { setCompedPlan } from "@/lib/user-settings";
 import { reportError } from "@/lib/report-error";
+import { trackCheckoutStarted, trackSubscriptionCanceled } from "@/lib/checkout-events";
 import { withReference } from "@/lib/errors";
 import {
   cancelSubscription as cancelSubscriptionFor,
@@ -80,10 +81,15 @@ async function checkoutFailed(err: unknown, userId: string, what: string): Promi
  * had a paid subscription gets the founding coupon on a MONTHLY plan (annual is already two
  * months free, and founding pricing is monthly only); Stripe's checkout page then shows the
  * discounted first months and the full price after, which is the disclosure.
+ *
+ * `gate` is the paywall that sent the buyer here (`/upgrade?gate=<feature>`), for the
+ * `checkout_started` event only. It comes from the browser, so it is checked against the
+ * closed gate list before it is used, and it changes nothing about the checkout itself.
  */
 export async function startSubscriptionCheckout(
   plan: PurchasablePlan,
-  period: BillingPeriod = "monthly"
+  period: BillingPeriod = "monthly",
+  gate?: string | null
 ): Promise<CheckoutResult> {
   const userId = await requireUserId();
   if (!isPurchasablePlan(plan)) return { error: CHECKOUT_COPY.notOpen };
@@ -132,6 +138,12 @@ export async function startSubscriptionCheckout(
       cancel_url: `${baseUrl}/pricing`,
     });
     if (!session.url) return { error: "Stripe did not return a checkout URL." };
+    await trackCheckoutStarted(userId, {
+      sessionId: session.id,
+      plan,
+      interval: period === "annual" ? "year" : "month",
+      gate,
+    });
     return { url: session.url };
   } catch (err) {
     return checkoutFailed(err, userId, plan);
@@ -143,7 +155,7 @@ export async function startSubscriptionCheckout(
  * (whose AI has no packs to top up). Never automatic — a person clicks, sees the price and
  * pays.
  */
-export async function startCreditPackCheckout(): Promise<CheckoutResult> {
+export async function startCreditPackCheckout(gate?: string | null): Promise<CheckoutResult> {
   const userId = await requireUserId();
   if (!isCheckoutConfigured()) return { error: CHECKOUT_COPY.notOpen };
   const entitlements = await getEntitlements(userId);
@@ -174,6 +186,13 @@ export async function startCreditPackCheckout(): Promise<CheckoutResult> {
       cancel_url: `${baseUrl}/settings?integration=ai`,
     });
     if (!session.url) return { error: "Stripe did not return a checkout URL." };
+    await trackCheckoutStarted(userId, {
+      sessionId: session.id,
+      // A pack is bought on top of the plan the account is on.
+      plan: entitlements.plan,
+      interval: "once",
+      gate,
+    });
     return { url: session.url };
   } catch (err) {
     return checkoutFailed(err, userId, "credit_pack");
@@ -232,10 +251,22 @@ export async function getSubscriptionOverview(): Promise<SubscriptionOverview> {
   return { ok: true, subscription: result.subscription, planLabel: PLAN_LABELS[result.subscription.plan] };
 }
 
-/** Stop renewing at the end of the paid period. Access continues until then. */
-export async function cancelSubscription(): Promise<SubscriptionResult> {
+/**
+ * Stop renewing at the end of the paid period. Access continues until then.
+ *
+ * `reason` is optional and closed (`CANCEL_REASONS`); nothing asks for it yet, and anything
+ * else is ignored. It is read for the `subscription_canceled` event only.
+ */
+export async function cancelSubscription(reason?: string): Promise<SubscriptionResult> {
   const userId = await requireUserId();
-  return cancelSubscriptionFor(userId);
+  const result = await cancelSubscriptionFor(userId);
+  if (result.ok && result.subscription.cancelAtPeriodEnd) {
+    // After Stripe accepted it. A telemetry failure must never turn a cancellation into an error.
+    await trackSubscriptionCanceled(userId, { periodEnd: result.subscription.periodEnd, reason }).catch(
+      () => undefined
+    );
+  }
+  return result;
 }
 
 /** Undo a pending cancellation. */
