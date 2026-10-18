@@ -6,6 +6,7 @@ import {
   AdminTable,
   EmptyState,
   MetricTile,
+  MiniBars,
   RelativeTime,
   Td,
   Th,
@@ -19,14 +20,16 @@ import {
   loadAdminUserRows,
   subscriptionsNeedingAttention,
 } from "@/lib/admin-metrics";
-import { mrrReconciliation } from "@/lib/billing-events";
+import { currentMrrDetail, mrrReconciliation } from "@/lib/billing-events";
 import { loadCreditsMoney, planDistribution } from "@/lib/credits/admin-credits";
 import { getManagedAiSwitchState } from "@/lib/managed-ai-switch";
 import { ManagedAiSwitch } from "@/components/admin/managed-ai-switch";
+import { LIFETIME_INTRO_PRICE, LIFETIME_STANDARD_PRICE } from "@/lib/plan-limits";
 import { PLAN_CONFIG, PLAN_LABELS } from "@/lib/plans/plan-config";
 import {
   compedForegoneCents,
   cashFlowSeries,
+  lifetimeSales,
   mrrMovementSeries,
   recentMovements,
   revenueAtRiskCents,
@@ -51,7 +54,9 @@ const MONTH = new Intl.DateTimeFormat("en", { month: "short", timeZone: "UTC" })
 export default async function AdminMoneyPage() {
   const [
     rows,
-    lifetimeSold,
+    lifetimeHolders,
+    lifetime,
+    mrrDetail,
     reconciliation,
     movements,
     flow,
@@ -62,7 +67,10 @@ export default async function AdminMoneyPage() {
     // Plans and billing columns come from user_settings and are always live; only the
     // per-account counts may lag, by the same TTL the overview uses.
     loadAdminUserRows({ aggregatesMaxAgeMs: ADMIN_AGGREGATES_TTL_MS }),
+    // Holders: accounts that hold Lifetime right now. Sold: the ledger's count, net of refunds.
     countLifetimePurchases().catch(() => 0),
+    lifetimeSales(),
+    currentMrrDetail(),
     mrrReconciliation(),
     mrrMovementSeries("month", 6),
     cashFlowSeries(3),
@@ -93,7 +101,8 @@ export default async function AdminMoneyPage() {
               {formatCents(reconciliation.liveCents)}
             </span>
             /mo recurring ·{" "}
-            <span className="tabular-nums">{lifetimeSold}</span> Lifetime sold ·{" "}
+            <span className="tabular-nums">{lifetime.sold}</span> Lifetime sold ·{" "}
+            <span className="tabular-nums">{lifetimeHolders}</span> holders ·{" "}
             <span className="tabular-nums">{plans.comped}</span> comped
           </>
         }
@@ -154,7 +163,11 @@ export default async function AdminMoneyPage() {
           <MetricTile
             label="Net MRR"
             value={formatCents(reconciliation.liveCents)}
-            hint="from live subscription state"
+            hint={
+              mrrDetail.pastDueCents > 0
+                ? `live state · includes ${formatCents(mrrDetail.pastDueCents)} past due`
+                : "from live subscription state"
+            }
           />
           <MetricTile
             label="ARR"
@@ -164,7 +177,7 @@ export default async function AdminMoneyPage() {
           <MetricTile
             label="Cash in, this month"
             value={formatCents(thisMonth?.cashInCents ?? 0)}
-            hint="invoices, credit packs, legacy Lifetime"
+            hint={`invoices, credit packs, legacy Lifetime · ${thisMonth?.chargeCount ?? 0} charges`}
           />
           <MetricTile
             label="Contribution"
@@ -213,7 +226,7 @@ export default async function AdminMoneyPage() {
                 label="Past due"
                 value={formatCents(atRisk.pastDueCents)}
                 tone={atRisk.pastDueCents > 0 ? "danger" : "muted"}
-                hint="per month, payment failing"
+                hint="per month, payment failing · still counted in MRR"
               />
               <MetricTile
                 label="Cancelling"
@@ -229,17 +242,38 @@ export default async function AdminMoneyPage() {
               />
               <MetricTile
                 label="Lifetime sold"
-                value={lifetimeSold}
-                hint="one-time purchases"
+                value={lifetime.sold}
+                hint={`ledger purchases net of refunds · ${lifetimeHolders} hold it now`}
               />
             </div>
             <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">
               Money, not headcount. &ldquo;Three past due&rdquo; and &ldquo;
               {formatCents(atRisk.pastDueCents)} past due&rdquo; prompt different
-              decisions, and only one of them is the amount at stake.
+              decisions, and only one of them is the amount at stake. At risk in total:{" "}
+              {formatCents(atRisk.atRiskCents)}/mo (past due plus pending cancellations).
             </p>
           </AdminPanel>
         </div>
+
+        <AdminPanel title="Lifetime sold, by price">
+          {lifetime.sold === 0 ? (
+            <EmptyState>No Lifetime purchases in the ledger.</EmptyState>
+          ) : (
+            <MiniBars
+              rows={[
+                { label: `Intro ($${LIFETIME_INTRO_PRICE})`, count: lifetime.intro },
+                { label: `Standard ($${LIFETIME_STANDARD_PRICE})`, count: lifetime.standard },
+                { label: "Other amount", count: lifetime.unknown },
+              ]}
+            />
+          )}
+          <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">
+            Counts of purchases, from the tier recorded when each sale was booked (older rows are
+            classified from the amount paid, tolerant of sales tax). {lifetime.sold} sold ·{" "}
+            {lifetimeHolders} hold Lifetime now — the gap is refunds already netted out, deleted
+            accounts, and admin-granted plans. {formatCents(lifetime.cashCents)} collected.
+          </p>
+        </AdminPanel>
 
         <AdminPanel title="Plans">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

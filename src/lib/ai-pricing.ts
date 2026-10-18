@@ -101,12 +101,15 @@ const PRICES: Record<string, PriceEntry> = {
 
   // Deepgram — Orbit's own hosted speech-to-text (`@/lib/deepgram`), metered on Orbit's key
   // rather than BYOK. It bills per second of audio, not per token, and `usage_events` has no
-  // separate duration column — so the caller reports the audio length in `inputTokens` (one
-  // "token" = one second) and this row prices that unit like any other: $0.0043/min ÷ 60 ≈
-  // 72 micros/sec, i.e. $72 per 1,000,000 seconds of audio. `output` stays 0; there is no
-  // second leg to a transcription call. NOTE: no caller reports those seconds, and this is
-  // the pre-recorded list rate only. What Deepgram actually costs Orbit — streaming, the
-  // add-ons and the opt-out premium — is priced from `speech_usage` in `speech-cost.ts`.
+  // duration column. This row is the pre-recorded list rate expressed as a per-"token" price
+  // (one "token" = one second): $0.0043/min ÷ 60 ≈ 72 micros/sec, i.e. $72 per 1,000,000
+  // seconds. It is only ever applied if a caller reports audio seconds in `inputTokens`, and
+  // NO caller does: Deepgram `usage_events` rows carry null `estimated_cost_micros`, and they
+  // are excluded from managed-credit settlement on purpose (`credits/ledger.ts`). What
+  // Deepgram actually costs Orbit — streaming vs file, the diarize and keyterm add-ons and
+  // the opt-out premium — is priced from `speech_usage` seconds in `speech-cost.ts`, and THAT
+  // is the figure every money view reads. Do not "fix" the null by writing seconds here: it
+  // would price at the wrong rate and leak Deepgram dollars into the credit ledger.
   [DEEPGRAM_MODEL]: { input: 72, output: 0 },
 };
 
