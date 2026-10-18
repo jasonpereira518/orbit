@@ -544,7 +544,16 @@ export async function recentMovements(limit = 25) {
 }
 
 /** Gate features that exist in the product, so an unhit wall shows as an empty row. */
-export const KNOWN_GATES = ["contacts", ...FEATURE_KEYS] as const;
+export const KNOWN_GATES = [
+  "contacts",
+  ...FEATURE_KEYS,
+  // Pricing-v2 walls recorded since v171: out of managed credits, the background floor, and the
+  // two Deepgram allowances. Without them the Demand page would not list the moments that sell.
+  "managedCredits",
+  "backgroundFloor",
+  "speechShortform",
+  "speechMeeting",
+] as const;
 
 /* ------------------------------------------------------------ lifetime sales ------- */
 
