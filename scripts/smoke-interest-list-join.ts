@@ -13,7 +13,7 @@ import "./smoke/_env";
 
 import { eq, like } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { errorEvents, interestListSignups, rateLimitBuckets } from "../src/db/schema";
+import { errorEvents, interestListSignups, productEvents, rateLimitBuckets } from "../src/db/schema";
 import { generateUnsubscribeToken } from "../src/lib/interest-list-email";
 import {
   getInterestProof,
@@ -226,6 +226,21 @@ async function joinPath() {
   const eleventh = await joinInterestListCore({ ...base, email: `${PREFIX}rl11@example.test` }, ctx("rl"));
   check("eleventh submit still answers ok", eleventh.ok);
   check("eleventh submit writes no row", (await rowFor(`${PREFIX}rl11@example.test`)) === undefined);
+  // The human the limiter dropped is COUNTED, with nothing about them (audit D6).
+  let limited = [] as Array<typeof productEvents.$inferSelect>;
+  for (let i = 0; i < 60 && limited.length === 0; i += 1) {
+    limited = await db.select().from(productEvents).where(eq(productEvents.name, "waitlist_join_limited"));
+    if (limited.length === 0) await new Promise((r) => setTimeout(r, 25));
+  }
+  check("a rate-limited join is counted as waitlist_join_limited", limited.length === 1 && limited[0]?.properties.reason === "rate_limited");
+  check(
+    "…as a system event, with no user, session, address or IP",
+    limited[0]?.actor === "system" &&
+      limited[0]?.userId === null &&
+      limited[0]?.sessionId === null &&
+      !JSON.stringify(limited[0]).includes("rl11") &&
+      Object.keys(limited[0]?.properties ?? {}).join() === "reason"
+  );
 
   // --- the proof memo was invalidated by the inserts
   const proof = await getInterestProof();
