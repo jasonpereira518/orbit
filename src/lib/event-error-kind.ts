@@ -11,6 +11,13 @@ import { ReauthRequiredError, UserFacingError, classifyAiError } from "@/lib/err
  */
 export function eventErrorKind(err: unknown): string {
   if (err instanceof ReauthRequiredError) return "reauth_required";
+  // The AI gate's typed refusals (key_required, managed_limit, managed_unavailable), matched by
+  // name so this file does not import the gate. The reason is a closed enum, never text.
+  if (err instanceof Error && err.name === "AiAccessError") {
+    const reason = (err as Error & { reason?: unknown }).reason;
+    if (typeof reason === "string" && /^[a-z_]{1,32}$/.test(reason)) return reason;
+  }
+  if (err instanceof Error && err.name === "PaywallError") return "paywall";
   if (err instanceof UserFacingError) return "refused";
   const ai = classifyAiError(err);
   if (ai !== "other") return ai;
