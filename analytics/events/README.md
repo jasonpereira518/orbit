@@ -9,6 +9,18 @@ Format per event: **fires when** / **must not fire when** / **read by**. Propert
 - Read by: Referral loop (F4); which share channel works.
 - Added: v171.
 
+## waitlist_join_limited
+- Fires when: the join limiter (`interest.join`) refuses a real submission, or cannot count and the join is answered with the fake ticket. Actor `system`, no user, no address, no IP: a bare count by reason.
+- Must not fire when: a honeypot or BotID block (those are bots and never reach the limiter), or any join that wrote a row.
+- Read by: How many humans did the limiter drop (a campus NAT during an event).
+- Added: v171.
+
+## waitlist_email_sent
+- Fires when: Resend accepted a waitlist welcome or referral-tier email. Actor `system`; carries `kind` only, never the address.
+- Must not fire when: the send was skipped (welcome cap, no Resend key) or Resend rejected it (that is an `error_events` row).
+- Read by: Welcomes delivered per wave; welcome-sent versus joined.
+- Added: v171.
+
 ## invite_sent
 - Fires when: `inviteToSite` creates an invitation or grants an existing account access; one per invite row.
 - Must not fire when: a revoke, or a resend of the same invitation.
@@ -136,8 +148,8 @@ Format per event: **fires when** / **must not fire when** / **read by**. Propert
 - Added: v171.
 
 ## extension_action
-- Fires when: an `/api/extension/*` route performs a user action.
-- Must not fire when: the session probe or a background resolve.
+- Fires when: an `/api/extension/*` route performs a user action: `POST /contacts` (save_person), `POST /interactions` (log_interaction), `POST /event-roster` (event_roster), `POST /starters` (starters), `POST /follow-ups` (schedule_follow_up), `POST /signals` (save_activity). `site` is the page adapter's site (linkedin, gmail, luma, partiful) or `other`.
+- Must not fire when: the session probe `GET /me`, the background `POST /resolve` and `POST /parse`, or the contact search `GET /contacts`.
 - Read by: Extension first use, weekly return.
 - Added: v171.
 

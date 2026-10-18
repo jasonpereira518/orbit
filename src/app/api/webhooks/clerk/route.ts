@@ -105,8 +105,13 @@ export async function POST(req: NextRequest) {
           }
           // Clerk copies an invitation's public metadata onto the account it creates, so an
           // admin-invited sign-up arrives here already carrying the marker: it is eligible
-          // for founding pricing (no longer a comp).
-          await recordSiteInvite(userId, evt.data.public_metadata as Record<string, unknown>);
+          // for founding pricing (no longer a comp). The same marker names the ledger row and the
+          // waitlist row, so the account is linked to both by id (the email is only a fallback
+          // for invitations sent before the ledger existed). Idempotent under webhook retries.
+          await recordSiteInvite(userId, evt.data.public_metadata as Record<string, unknown>, {
+            email: primaryEmail(evt.data),
+            surface: "webhook",
+          });
         }
         result = { outcome: "handled", targetUserId: userId, resourceId: userId };
       } else {

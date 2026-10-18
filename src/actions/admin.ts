@@ -1074,11 +1074,19 @@ export async function inviteToSiteAction(input: {
   email: string;
   notify: boolean;
   firstName?: string | null;
+  /** The operator's wave label (`w1`, `w2`); validated in `inviteToSite`. */
+  wave?: string | null;
 }): Promise<SiteInviteResult | { kind: "error"; message: string }> {
   const adminUserId = await requireAdminUserId();
   const firstName = input.firstName?.trim().slice(0, 60) || null;
   try {
-    const result = await inviteToSite({ adminUserId, email: input.email, notify: input.notify, firstName });
+    const result = await inviteToSite({
+      adminUserId,
+      email: input.email,
+      notify: input.notify,
+      firstName,
+      wave: input.wave ?? null,
+    });
     revalidateAccess();
     return result;
   } catch (err) {

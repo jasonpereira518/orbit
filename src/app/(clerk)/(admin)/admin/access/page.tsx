@@ -73,7 +73,8 @@ export default async function AdminAccessPage() {
           <div className="space-y-2">
             <p className="text-xs text-muted-foreground">
               An invitation lets one address create an account, even in stealth. Clerk sends the
-              email, or leave that off and send the link yourself.
+              email, or leave that off and send the link yourself. A wave (w1, w2…) is optional and
+              groups invitations for the wave report.
             </p>
             <InviteForm clerkOn={clerkOn} />
           </div>
@@ -89,6 +90,7 @@ export default async function AdminAccessPage() {
               head={
                 <>
                   <Th>Email</Th>
+                  <Th>Wave</Th>
                   <Th>Status</Th>
                   <Th>Sent</Th>
                   <Th className="text-right">Actions</Th>
@@ -98,6 +100,7 @@ export default async function AdminAccessPage() {
               {invites.map((invite) => (
                 <tr key={invite.id} className="border-b border-border/40 last:border-0">
                   <Td className="font-medium text-ink">{invite.email}</Td>
+                  <Td className="text-muted-foreground">{invite.waveId ?? "—"}</Td>
                   <Td>
                     <span
                       className={cn(
