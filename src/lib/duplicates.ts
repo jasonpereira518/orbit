@@ -31,6 +31,13 @@ export type DuplicateSubject = Pick<
  */
 export const DUPLICATE_MERGE_CONFIDENCE = 0.85;
 
+/**
+ * The most a name match can score against someone with a different LinkedIn profile, unless
+ * it looks like one person who edited their profile (see `findDuplicateCandidatesIndexed`).
+ * The bare-name tier: a question for the review page, never an automatic merge.
+ */
+export const DIFFERENT_PROFILE_CONFIDENCE = 0.6;
+
 function normalize(s: string | null | undefined) {
   return (s || "").trim().toLowerCase();
 }
@@ -375,6 +382,32 @@ export function findDuplicateCandidatesIndexed(
   const matched = new Set<DuplicateSubject>();
   const matches: DuplicateMatch[] = [];
 
+  /**
+   * A name match against someone on a DIFFERENT LinkedIn profile. Two profiles are two
+   * people unless it looks like one person who edited theirs, which keeps their employer:
+   * the exact same name at the same company (a new profile URL), or a similar name at the
+   * same company with the same title (the display name changed too). Anything else is held
+   * below `DUPLICATE_MERGE_CONFIDENCE`, so it is asked about rather than merged: similar
+   * names sharing only a title ("Jon Smith"/"John Smith", both "Software Engineer") were
+   * being folded into one contact.
+   */
+  const nameMatch = (contact: DuplicateSubject, reason: string, confidence: number): DuplicateMatch => {
+    const theirs = linkedin ? linkedinSlug(contact.linkedinUrl) : "";
+    if (!theirs || theirs === linkedin) return { contact, reason, confidence, strong: false };
+    const sameCompany = Boolean(company) && company === normalize(contact.company);
+    const sameTitle = Boolean(title) && title === normalize(contact.title);
+    const exactName = Boolean(name) && name === normalize(contact.fullName);
+    if (sameCompany && (exactName || sameTitle)) {
+      return { contact, reason: `${reason} (LinkedIn profile changed)`, confidence, strong: false };
+    }
+    return {
+      contact,
+      reason: `${reason}, different LinkedIn profile`,
+      confidence: Math.min(confidence, DIFFERENT_PROFILE_CONFIDENCE),
+      strong: false,
+    };
+  };
+
   const addAll = (
     contacts: DuplicateSubject[] | undefined,
     reason: string,
@@ -384,7 +417,7 @@ export function findDuplicateCandidatesIndexed(
     for (const contact of contacts || []) {
       if (matched.has(contact)) continue;
       matched.add(contact);
-      matches.push({ contact, reason, confidence, strong });
+      matches.push(strong ? { contact, reason, confidence, strong } : nameMatch(contact, reason, confidence));
     }
   };
 
@@ -418,15 +451,10 @@ export function findDuplicateCandidatesIndexed(
       if (fuzzy < 0.88) continue;
       if (sameCompany) {
         matched.add(contact);
-        matches.push({
-          contact,
-          reason: "Similar name + company",
-          confidence: 0.87,
-          strong: false,
-        });
+        matches.push(nameMatch(contact, "Similar name + company", 0.87));
       } else if (sameTitle) {
         matched.add(contact);
-        matches.push({ contact, reason: "Similar name + title", confidence: 0.85, strong: false });
+        matches.push(nameMatch(contact, "Similar name + title", 0.85));
       }
     }
   }

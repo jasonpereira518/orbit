@@ -239,6 +239,31 @@ async function main() {
     );
   }
 
+  console.log("\nTwo LinkedIn profiles are two people, unless one changed their URL...");
+  {
+    await reset();
+    const seedOn = async (name: string, slug: string, company: string, title: string, daysAgo: number) => {
+      const id = await seedContact(name, null, daysAgo);
+      await db.execute(sql`UPDATE contacts SET linkedin_url = ${`https://www.linkedin.com/in/${slug}`},
+                            company = ${company}, title = ${title} WHERE id = ${id}::uuid`);
+      return id;
+    };
+    // Same name and title, different employer and profile: two people.
+    const a = await seedOn("Dana Lee", "dana-lee-1", "Acme", "Designer", 40);
+    const b = await seedOn("Dana Lee", "dana-lee-2", "Globex", "Designer", 3);
+    // Same name and employer, new profile URL: one person who changed it.
+    const c = await seedOn("Priya Raman", "priya-raman-7c9d", "Stripe", "PM", 40);
+    const d = await seedOn("Priya Raman", "priyaraman", "Stripe", "PM", 3);
+    const sweep = await mergeConfidentDuplicates(USER);
+    const alive = async (ids: string[]) =>
+      rowsOf<{ v: number }>(
+        await db.execute(sql`SELECT count(*)::int AS v FROM contacts
+                              WHERE id IN (${sql.join(ids.map((i) => sql`${i}::uuid`), sql`, `)})`)
+      )[0]!.v;
+    check("name + title across two profiles is not merged", (await alive([a, b])) === 2);
+    check("a changed profile URL at the same company is merged", (await alive([c, d])) === 1, `merged ${sweep.merged}`);
+  }
+
   await reset();
   await closeDb();
 

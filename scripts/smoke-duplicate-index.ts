@@ -297,5 +297,69 @@ function expectMatch(
   }
 }
 
+// Two different LinkedIn profiles are two people, unless it looks like one person who
+// edited their profile (kept their employer). Name evidence alone must not merge them.
+{
+  const li = (slug: string) => `https://www.linkedin.com/in/${slug}`;
+  const top = (existing: Partial<Contact>, probe: Parameters<typeof matchAgainst>[1]) =>
+    matchAgainst([contact(existing)], probe)[0];
+  const merges = (m: { confidence: number } | undefined) =>
+    Boolean(m && m.confidence >= DUPLICATE_MERGE_CONFIDENCE);
+
+  // The case that merged 54,750 rows of a 60k import: similar name, same title, different
+  // company and profile.
+  const titleOnly = top(
+    { fullName: "Person20 Batch20", linkedinUrl: li("batch-person-20"), company: "Company 20", title: "Senior Engineer" },
+    { fullName: "Person250 Batch250", linkedinUrl: li("batch-person-250"), company: "Company 250", title: "Senior Engineer" }
+  );
+  if (merges(titleOnly)) throw new Error(`different profiles, similar name + title merged: ${JSON.stringify(titleOnly)}`);
+  if (!titleOnly || !titleOnly.reason.includes("different LinkedIn profile")) {
+    throw new Error("different profiles, similar name + title: should still be offered for review");
+  }
+  const jon = top(
+    { fullName: "John Smith", linkedinUrl: li("john-smith-1a2b"), company: "Acme", title: "Software Engineer" },
+    { fullName: "Jon Smith", linkedinUrl: li("jonsmith"), company: "Globex", title: "Software Engineer" }
+  );
+  if (merges(jon)) throw new Error("Jon/John Smith at different companies with different profiles merged");
+  const exactNameTitle = top(
+    { fullName: "Dana Lee", linkedinUrl: li("dana-lee-1"), company: "Acme", title: "Designer" },
+    { fullName: "Dana Lee", linkedinUrl: li("dana-lee-2"), company: "Globex", title: "Designer" }
+  );
+  if (merges(exactNameTitle)) throw new Error("same name + title across different profiles and companies merged");
+
+  // A profile URL change: same person, same employer.
+  const renamedUrl = top(
+    { fullName: "Priya Raman", linkedinUrl: li("priya-raman-7c9d"), company: "Stripe", title: "PM" },
+    { fullName: "Priya Raman", linkedinUrl: li("priyaraman"), company: "Stripe", title: "PM" }
+  );
+  if (!merges(renamedUrl) || !renamedUrl!.reason.includes("LinkedIn profile changed")) {
+    throw new Error(`renamed profile URL should merge: ${JSON.stringify(renamedUrl)}`);
+  }
+  // A display-name change as well: similar name, same employer and title.
+  const renamedName = top(
+    { fullName: "Jon Smith", linkedinUrl: li("jon-smith-1a2b"), company: "Acme", title: "Software Engineer" },
+    { fullName: "Jonn Smith", linkedinUrl: li("jonn-smith"), company: "Acme", title: "Software Engineer" }
+  );
+  if (!merges(renamedName)) throw new Error(`renamed profile with a similar name should merge: ${JSON.stringify(renamedName)}`);
+  // …but a similar name at the same company in a different role is two colleagues.
+  const colleagues = top(
+    { fullName: "Jon Smith", linkedinUrl: li("jon-smith-1a2b"), company: "Acme", title: "Software Engineer" },
+    { fullName: "Jonn Smith", linkedinUrl: li("jonn-smith"), company: "Acme", title: "Recruiter" }
+  );
+  if (merges(colleagues)) throw new Error("similar names, same company, different roles and profiles merged");
+
+  // Unchanged when either side has no profile, or both share one.
+  const noProfile = top(
+    { fullName: "Person20 Batch20", company: "Company 20", title: "Senior Engineer" },
+    { fullName: "Person25 Batch20", linkedinUrl: li("p25"), company: "Company 25", title: "Senior Engineer" }
+  );
+  if (!noProfile || noProfile.confidence !== 0.85) throw new Error(`no profile on one side should be unchanged: ${JSON.stringify(noProfile)}`);
+  const sameProfile = top(
+    { fullName: "A B", linkedinUrl: li("ab") },
+    { fullName: "Someone Else", linkedinUrl: li("ab") }
+  );
+  if (!sameProfile || sameProfile.confidence !== 0.98) throw new Error("same LinkedIn URL should still match at 0.98");
+}
+
 console.log("duplicate index smoke tests passed");
 process.exit(0);
