@@ -113,17 +113,17 @@ run(async () => {
 
   console.log("\nshares are counted from the server…");
   const ctx = { ip: "smoke-share-ip" };
-  check("a copy of a real pass is recorded", (await recordWaitlistShareCore({ shareToken: a!.shareToken, channel: "copy", ...ctx })) === true);
+  check("a copy of a real pass is recorded", (await recordWaitlistShareCore({ shareToken: a!.shareToken!, channel: "copy", ...ctx })) === true);
   const shared = await eventsNamed("waitlist_shared", 1);
   check("…as the signup id and the channel, nothing else", shared.length === 1 && shared[0]?.properties.signup_id === a!.id && shared[0]?.properties.channel === "copy" && Object.keys(shared[0]!.properties).sort().join() === "channel,signup_id");
-  check("…with no user, session, token or address on the row", shared[0]?.userId === null && shared[0]?.sessionId === null && !JSON.stringify(shared[0]).includes(a!.shareToken) && !JSON.stringify(shared[0]).includes("example.test"));
-  check("a channel outside the list records nothing", (await recordWaitlistShareCore({ shareToken: a!.shareToken, channel: "carrier-pigeon", ...ctx })) === false);
+  check("…with no user, session, token or address on the row", shared[0]?.userId === null && shared[0]?.sessionId === null && !JSON.stringify(shared[0]).includes(a!.shareToken!) && !JSON.stringify(shared[0]).includes("example.test"));
+  check("a channel outside the list records nothing", (await recordWaitlistShareCore({ shareToken: a!.shareToken!, channel: "carrier-pigeon", ...ctx })) === false);
   check("a token that matches nothing records nothing", (await recordWaitlistShareCore({ shareToken: "nope", channel: "copy", ...ctx })) === false);
   check("a pass that has left records nothing", (await recordWaitlistShareCore({ shareToken: `${PREFIX}share-c`, channel: "copy", ...ctx })) === false);
   check("an over-long token is refused before any lookup", (await recordWaitlistShareCore({ shareToken: "x".repeat(500), channel: "copy", ...ctx })) === false);
   let accepted = 0;
   for (let i = 0; i < 60; i += 1) {
-    if (await recordWaitlistShareCore({ shareToken: a!.shareToken, channel: "linkedin", ip: "smoke-share-flood" })) accepted += 1;
+    if (await recordWaitlistShareCore({ shareToken: a!.shareToken!, channel: "linkedin", ip: "smoke-share-flood" })) accepted += 1;
   }
   check("a loop from one address is cut off by the limiter", accepted > 0 && accepted <= 40, String(accepted));
   await db.delete(rateLimitBuckets).where(like(rateLimitBuckets.bucket, "interest.share:%"));
@@ -136,13 +136,13 @@ run(async () => {
     sendTier: async () => sent,
   });
   const before = (await eventsNamed("waitlist_email_sent", 0)).length;
-  await joinInterestListCore({ email: `${PREFIX}h@example.test`, website: "", elapsedMs: MIN_FILL_MS + 10, ref: a!.shareToken }, joinCtx(false));
+  await joinInterestListCore({ email: `${PREFIX}h@example.test`, website: "", elapsedMs: MIN_FILL_MS + 10, ref: a!.shareToken! }, joinCtx(false));
   await new Promise((r) => setTimeout(r, 200));
   check("a welcome Resend did not accept is not counted", (await eventsNamed("waitlist_email_sent", 0)).length === before);
 
   // R has no friends yet; one join through R's link unlocks the first tier.
   const [r] = await db.insert(interestListSignups).values(row("r")).returning();
-  await joinInterestListCore({ email: `${PREFIX}i@example.test`, website: "", elapsedMs: MIN_FILL_MS + 10, ref: r!.shareToken }, joinCtx(true));
+  await joinInterestListCore({ email: `${PREFIX}i@example.test`, website: "", elapsedMs: MIN_FILL_MS + 10, ref: r!.shareToken! }, joinCtx(true));
   const mail = await eventsNamed("waitlist_email_sent", before + 2);
   const kinds = mail.map((m) => m.properties.kind).sort().join();
   check("an accepted welcome and an accepted tier notice are each counted once", kinds === "tier,welcome", kinds);

@@ -16,7 +16,7 @@ import "./smoke/_env";
 
 import { randomUUID } from "node:crypto";
 import { eq, inArray, sql } from "drizzle-orm";
-import { NextRequest, type NextFetchEvent } from "next/server";
+import { NextRequest, type NextFetchEvent, type NextResponse } from "next/server";
 import { getDb } from "../src/db";
 import { interestListSignups, userSettings } from "../src/db/schema";
 import { ATTRIBUTION_COOKIE, parseAttribution } from "../src/lib/attribution-parse";
@@ -74,7 +74,7 @@ run(async () => {
   async function firstTouch(url: string, referer: string | null, host = WAITLIST) {
     const req = new NextRequest(url, { headers: { host, ...(referer ? { referer } : {}) } });
     const res = await proxy(req, event);
-    return parseAttribution(res?.cookies.get(ATTRIBUTION_COOKIE)?.value ?? null);
+    return parseAttribution((res as NextResponse | undefined)?.cookies.get(ATTRIBUTION_COOKIE)?.value ?? null);
   }
   const reddit = await firstTouch(`https://${WAITLIST}/`, "https://www.reddit.com/r/crm/comments/x");
   check("an outside referrer is captured as before", reddit?.referrer === "reddit.com", JSON.stringify(reddit));
