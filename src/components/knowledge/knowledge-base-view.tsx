@@ -19,18 +19,22 @@ import type {
   KnowledgeStats,
 } from "@/lib/knowledge-base-types";
 import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
+import { SegmentedControl } from "@/components/ui/segmented-control";
+import { ROW_HOVER } from "@/lib/interaction";
 import { cn } from "@/lib/utils";
 
 type Filter = "all" | KnowledgeKind;
 
-const FILTERS: { id: Filter; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "message", label: "Messages" },
-  { id: "note", label: "Notes" },
-  { id: "summary", label: "Summaries" },
-  { id: "key_fact", label: "Key facts" },
-  { id: "meeting", label: "Meetings" },
+const FILTERS: { key: Filter; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "message", label: "Messages" },
+  { key: "note", label: "Notes" },
+  { key: "summary", label: "Summaries" },
+  { key: "key_fact", label: "Key facts" },
+  { key: "meeting", label: "Meetings" },
 ];
 
 const KIND_LABEL: Record<KnowledgeKind, string> = {
@@ -42,7 +46,7 @@ const KIND_LABEL: Record<KnowledgeKind, string> = {
 };
 
 function KindIcon({ kind }: { kind: KnowledgeKind }) {
-  const className = "h-3.5 w-3.5 shrink-0 text-muted-foreground";
+  const className = "size-3.5 shrink-0 text-muted-foreground";
   switch (kind) {
     case "message":
       return <MessageSquare className={className} />;
@@ -93,30 +97,21 @@ export function KnowledgeBaseView({
 
   if (entries.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-border/70 px-6 py-12 text-center">
-        <BookOpen className="mx-auto h-8 w-8 text-muted-foreground" />
-        <h2 className="mt-3 font-heading text-xl text-ink">
-          Your knowledge base is empty
-        </h2>
-        <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-          Import LinkedIn connections and messages, or log notes from Capture.
-          Everything you store about people shows up here and powers Chat.
-        </p>
-        <div className="mt-5 flex flex-wrap justify-center gap-3">
-          <Link
-            href="/imports"
-            className="rounded-xl bg-primary px-4 py-2 text-sm text-primary-foreground"
-          >
-            Import LinkedIn
-          </Link>
-          <Link
-            href="/capture"
-            className="rounded-xl border border-border/70 px-4 py-2 text-sm"
-          >
-            Log a note
-          </Link>
-        </div>
-      </div>
+      <EmptyState
+        icon={BookOpen}
+        title="Your knowledge base is empty"
+        description="Import LinkedIn connections and messages, or log notes from Capture. Everything you store about people shows up here and powers Chat."
+        action={
+          <>
+            <Link href="/imports" className={buttonVariants()}>
+              Import LinkedIn
+            </Link>
+            <Link href="/capture" className={buttonVariants({ variant: "outline" })}>
+              Log a note
+            </Link>
+          </>
+        }
+      />
     );
   }
 
@@ -124,7 +119,7 @@ export function KnowledgeBaseView({
     <div className="grid min-h-0 flex-1 items-start gap-6 overflow-y-auto lg:grid-cols-[19rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] lg:items-stretch lg:overflow-hidden xl:grid-cols-[22rem_minmax(0,1fr)]">
       <aside className="space-y-3 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
         <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -134,30 +129,22 @@ export function KnowledgeBaseView({
           />
         </div>
 
-        <div role="group" aria-label="Filter by kind" className="flex flex-wrap gap-1.5">
-          {FILTERS.map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              aria-pressed={filter === f.id}
-              onClick={() => setFilter(f.id)}
-              className={cn(
-                "rounded-lg px-2.5 py-1.5 text-xs transition-colors",
-                filter === f.id
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground"
-              )}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
+        {/* Six short labels in a 19rem rail: the track wraps rather than overflowing. */}
+        <SegmentedControl
+          items={FILTERS}
+          value={filter}
+          onChange={setFilter}
+          ariaLabel="Filter by kind"
+          variant="subtle"
+          size="sm"
+          className="flex-wrap"
+        />
 
-        <dl className="divide-y divide-border/50 rounded-2xl border border-border/60 bg-card/40">
-          <Stat icon={<Users className="h-4 w-4" />} label="People" value={stats.people} />
-          <Stat icon={<MessageSquare className="h-4 w-4" />} label="Messages" value={stats.messages} />
-          <Stat icon={<NotebookPen className="h-4 w-4" />} label="Notes" value={stats.notes} />
-          <Stat icon={<BookOpen className="h-4 w-4" />} label="Searchable chunks" value={stats.embeddings} />
+        <dl className="divide-y divide-border-subtle rounded-xl border border-border-subtle bg-card">
+          <Stat icon={<Users className="size-4" aria-hidden />} label="People" value={stats.people} />
+          <Stat icon={<MessageSquare className="size-4" aria-hidden />} label="Messages" value={stats.messages} />
+          <Stat icon={<NotebookPen className="size-4" aria-hidden />} label="Notes" value={stats.notes} />
+          <Stat icon={<BookOpen className="size-4" aria-hidden />} label="Searchable chunks" value={stats.embeddings} />
         </dl>
 
         <p className="px-1 text-xs leading-relaxed text-muted-foreground">
@@ -175,17 +162,17 @@ export function KnowledgeBaseView({
           Showing {filtered.length} of {entries.length} items
         </p>
 
-        <ul className="divide-y divide-border/50 overflow-hidden rounded-2xl border border-border/60 bg-card/40 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
+        <ul className="divide-y divide-border-subtle overflow-hidden rounded-xl border border-border-subtle bg-card lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
           {filtered.length === 0 ? (
-            <li className="px-4 py-8 text-center text-sm text-muted-foreground">
-              No matches for that search.
+            <li>
+              <EmptyState variant="plain" size="sm" title="No matches for that search" />
             </li>
           ) : (
             filtered.map((entry) => (
               <li key={entry.id}>
                 <IntentLink
                   href={`/knowledge?p=${entry.contactId}`}
-                  className="flex gap-3 px-3.5 py-3 transition-colors hover:bg-muted/40"
+                  className={cn("flex gap-3 px-4 py-3", ROW_HOVER)}
                 >
                   <div className="mt-1">
                     <KindIcon kind={entry.kind} />
@@ -195,7 +182,7 @@ export function KnowledgeBaseView({
                       <span className="truncate text-sm font-medium text-ink">
                         {entry.contactName}
                       </span>
-                      <Badge variant="secondary" className="text-3xs">
+                      <Badge tone="neutral" size="sm">
                         {KIND_LABEL[entry.kind]}
                       </Badge>
                       {entry.date ? (
@@ -233,7 +220,7 @@ function Stat({
   value: number;
 }) {
   return (
-    <div className="flex items-center gap-2 px-3.5 py-2.5">
+    <div className="flex items-center gap-2 px-4 py-2.5">
       <dt className="flex items-center gap-2 text-xs text-muted-foreground">
         {icon}
         {label}

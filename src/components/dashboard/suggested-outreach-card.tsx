@@ -5,7 +5,8 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { SuggestionRow } from "@/components/dashboard/suggestion-row";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/lib/utils";
 
 const PREVIEW_COUNT = 4;
@@ -47,18 +48,17 @@ export function SuggestedOutreachCard({
   const hiddenCount = items.length - PREVIEW_COUNT;
 
   return (
-    <Card className="flex h-full flex-col border-border/70 shadow-none">
-      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
+    <Card className="flex h-full flex-col">
+      <CardHeader>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <CardTitle as="h2" className="text-base">Suggested outreach</CardTitle>
+          <CardTitle as="h2">Suggested outreach</CardTitle>
           {replyRate}
         </div>
-        <Link
-          href="/capture"
-          className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
-        >
-          Capture <ArrowRight className="ml-1 h-3.5 w-3.5" />
-        </Link>
+        <CardAction>
+          <Link href="/capture" className={buttonVariants({ variant: "ghost", size: "sm" })}>
+            Capture <ArrowRight className="size-3.5" aria-hidden />
+          </Link>
+        </CardAction>
       </CardHeader>
       <CardContent
         id="suggestions"
@@ -70,18 +70,28 @@ export function SuggestedOutreachCard({
         className="@container flex flex-1 flex-col space-y-2 scroll-mt-8"
       >
         {items.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-border/70 px-4 py-8 text-center text-sm text-muted-foreground">
-            {/* "Add contacts or log interactions" was shown to accounts with 24 contacts
-                and six overdue follow-ups, because anyone already listed as due is
-                filtered out of this queue. Say what is actually true instead. */}
-            {networkIsEmpty
-              ? "No one to reach out to yet — add a contact or import your network."
-              : dueFollowUpCount > 0
-                ? `Nothing extra to suggest — your ${dueFollowUpCount} due follow-up${
-                    dueFollowUpCount === 1 ? "" : "s"
-                  } are the priority right now.`
-                : "Nobody has gone quiet. Log an interaction and Orbit will keep watching."}
-          </p>
+          // "Add contacts or log interactions" was shown to accounts with 24 contacts and
+          // six overdue follow-ups, because anyone already listed as due is filtered out of
+          // this queue. Say what is actually true instead.
+          <EmptyState
+            size="sm"
+            title={
+              networkIsEmpty
+                ? "No one to reach out to yet"
+                : dueFollowUpCount > 0
+                  ? "Nothing extra to suggest"
+                  : "Nobody has gone quiet"
+            }
+            description={
+              networkIsEmpty
+                ? "Add a contact or import your network."
+                : dueFollowUpCount > 0
+                  ? `Your ${dueFollowUpCount} due follow-up${dueFollowUpCount === 1 ? "" : "s"} ${
+                      dueFollowUpCount === 1 ? "is" : "are"
+                    } the priority right now.`
+                  : "Log an interaction and Orbit will keep watching."
+            }
+          />
         ) : (
           <>
             {/* Two-up once the card itself is past ~768px. Stretched to a full

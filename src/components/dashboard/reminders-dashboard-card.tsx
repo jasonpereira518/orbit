@@ -5,7 +5,8 @@ import { ArrowRight } from "lucide-react";
 import type { ReminderActionKind } from "@/db/schema";
 import { ReminderRow } from "@/components/dashboard/reminder-row";
 import { buttonVariants } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/lib/utils";
 
 // Four, not five: this card shares a stretched row with Due follow-ups, whose rows are
@@ -35,25 +36,24 @@ export function RemindersDashboardCard({
   const hiddenCount = items.length - PREVIEW_COUNT;
 
   return (
-    <Card
-      id="reminders"
-      className="flex h-full flex-col border-border/70 shadow-none scroll-mt-8"
-    >
-      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
-        <CardTitle as="h2" className="text-base">Reminders</CardTitle>
-        <Link
-          href="/reminders"
-          className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
-        >
-          View all
-          <ArrowRight className="ml-1 h-3.5 w-3.5" />
-        </Link>
+    <Card id="reminders" className="flex h-full flex-col scroll-mt-8">
+      <CardHeader>
+        <CardTitle as="h2">Reminders</CardTitle>
+        <CardAction>
+          <Link href="/reminders" className={buttonVariants({ variant: "ghost", size: "sm" })}>
+            View all
+            <ArrowRight className="size-3.5" aria-hidden />
+          </Link>
+        </CardAction>
       </CardHeader>
       <CardContent className="flex flex-1 flex-col space-y-2">
         {items.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No pending reminders. Capture notes to create follow-ups.
-          </p>
+          <EmptyState
+            variant="plain"
+            size="sm"
+            title="No pending reminders"
+            description="Capture notes to create follow-ups."
+          />
         ) : (
           <>
             <div className="space-y-2">

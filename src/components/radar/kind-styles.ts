@@ -1,11 +1,17 @@
 import type { RecommendationKind } from "@/lib/radar/types";
+import type { Tone } from "@/lib/tone";
 
-/** The kind chip's colours, one hue per kind, in the dashboard's pill style. */
-export const KIND_STYLES: Record<RecommendationKind, string> = {
-  prep: "bg-sky-500/15 text-sky-800 dark:text-sky-200",
-  heads_up: "bg-fuchsia-500/15 text-fuchsia-800 dark:text-fuchsia-200",
-  follow_up: "bg-violet-500/15 text-violet-800 dark:text-violet-200",
-  opportunity: "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200",
-  reach_out: "bg-orange-500/15 text-orange-800 dark:text-orange-200",
-  reconnect: "bg-amber-500/15 text-amber-800 dark:text-amber-200",
+/**
+ * The kind chip's tone, on the status tokens — the same palette the dashboard's suggestion
+ * reasons use (`dashboard/suggestion-row.tsx`), so a colour means one thing on both cards:
+ * quiet/dormant is neutral, news is info, something you owe is warning, a fresh opening is
+ * accent.
+ */
+export const KIND_TONES: Record<RecommendationKind, Tone> = {
+  prep: "info",
+  heads_up: "info",
+  follow_up: "warning",
+  opportunity: "accent",
+  reach_out: "warning",
+  reconnect: "neutral",
 };

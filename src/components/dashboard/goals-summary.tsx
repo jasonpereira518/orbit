@@ -10,7 +10,7 @@ import { toast } from "@/lib/toast";
 import { addGoal } from "@/actions/goals";
 import type { UserGoal } from "@/db/schema";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { PRESS, ROW_HOVER_INSET } from "@/lib/interaction";
 import { cn } from "@/lib/utils";
@@ -39,21 +39,16 @@ export function GoalsSummary({
   const shownGoals = goals.slice(0, 5);
 
   return (
-    <Card className="border-border/70 shadow-none">
-      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
-        <div>
-          <CardTitle as="h2" className="text-base">Goals</CardTitle>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Surface people aligned with what you&apos;re working toward
-          </p>
-        </div>
-        <Link
-          href="/settings"
-          className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "gap-1.5")}
-        >
-          <Settings className="h-3.5 w-3.5" />
-          Manage
-        </Link>
+    <Card>
+      <CardHeader>
+        <CardTitle as="h2">Goals</CardTitle>
+        <CardDescription>Surface people aligned with what you’re working toward.</CardDescription>
+        <CardAction>
+          <Link href="/settings" className={buttonVariants({ variant: "ghost", size: "sm" })}>
+            <Settings className="size-3.5" aria-hidden />
+            Manage
+          </Link>
+        </CardAction>
       </CardHeader>
       <CardContent className="space-y-5">
         {shownGoals.length === 0 ? (
@@ -70,7 +65,7 @@ export function GoalsSummary({
                 key={g.id}
                 // A goal can be 200 characters (the input's maxLength), which as a
                 // single unbroken pill ran past the card's right edge.
-                className="max-w-full break-words rounded-full border border-border/60 bg-muted/40 px-3 py-1 text-sm"
+                className="max-w-full break-words rounded-full border border-border-subtle bg-surface-inset px-3 py-1 text-sm"
               >
                 {g.text}
               </li>
@@ -115,15 +110,15 @@ export function GoalsSummary({
             disabled={pending}
             className="flex-1"
           />
-          <Button type="submit" size="sm" disabled={pending || !text.trim()} className="gap-1">
-            <Plus className="h-3.5 w-3.5" />
-            Add
+          <Button type="submit" size="sm" disabled={pending || !text.trim()}>
+            <Plus className="size-3.5" aria-hidden />
+            {pending ? "Adding…" : "Add"}
           </Button>
         </form>
 
         {goalAlignedContacts.length > 0 && (
-          <div className="space-y-2 border-t border-border/60 pt-4">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <div className="space-y-2 border-t border-border-subtle pt-4">
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Goal-aligned contacts
             </p>
             <ul className="space-y-1">

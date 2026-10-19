@@ -10,7 +10,6 @@ import { ProTag } from "@/components/onboarding/onboarding-ui";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
-import { cn } from "@/lib/utils";
 
 export type SetupChecklistItem = {
   id: string;
@@ -81,10 +80,10 @@ export function SetupChecklistCard({ items }: { items: SetupChecklistItem[] }) {
   return (
     <section
       aria-label="Finish setting up"
-      className="reveal-mount rounded-2xl border border-border/70 bg-card px-4 py-3"
+      className="reveal-mount rounded-xl border border-border-subtle bg-card px-4 py-3"
     >
       <div className="flex items-center gap-3">
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-accent text-primary">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent text-primary">
           <ListChecks className="size-4" aria-hidden />
         </span>
         <p className="min-w-0 flex-1 text-sm">
@@ -104,7 +103,7 @@ export function SetupChecklistCard({ items }: { items: SetupChecklistItem[] }) {
           <X aria-hidden />
         </Button>
       </div>
-      <ul className="mt-3 divide-y divide-border/60">
+      <ul className="mt-3 divide-y divide-border-subtle">
         {items.map((item) => (
           <li key={item.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm">
             <span className="min-w-0 flex-1">
@@ -115,14 +114,22 @@ export function SetupChecklistCard({ items }: { items: SetupChecklistItem[] }) {
               <span className="block text-muted-foreground">{item.detail}</span>
             </span>
             {item.href ? (
-              <Link href={item.href} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
+              <Link href={item.href} className={buttonVariants({ variant: "outline", size: "sm" })}>
                 Open
                 <ArrowRight aria-hidden />
               </Link>
             ) : item.action ? (
               <Button type="button" variant="outline" size="sm" disabled={pending} onClick={() => run(item.action!)}>
-                {item.action === "remove-examples" ? "Remove" : item.action === "resume-tour" ? "Resume" : "Start"}
-                <ArrowRight aria-hidden />
+                {pending
+                  ? item.action === "remove-examples"
+                    ? "Removing…"
+                    : "Opening…"
+                  : item.action === "remove-examples"
+                    ? "Remove"
+                    : item.action === "resume-tour"
+                      ? "Resume"
+                      : "Start"}
+                {!pending && <ArrowRight aria-hidden />}
               </Button>
             ) : null}
           </li>

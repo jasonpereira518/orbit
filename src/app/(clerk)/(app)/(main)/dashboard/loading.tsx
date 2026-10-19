@@ -1,4 +1,6 @@
-import { DashboardHeader } from "@/components/dashboard/dashboard-header";
+import { DashboardIntro } from "@/components/dashboard/dashboard-sections";
+import { PageHeader } from "@/components/layout/page-header";
+import { PageShell } from "@/components/layout/page-shell";
 import {
   DashboardCardSkeleton,
   DashboardStatRowSkeleton,
@@ -22,8 +24,8 @@ import {
  */
 export default function DashboardLoading() {
   return (
-    <div className="space-y-8">
-      <DashboardHeader />
+    <PageShell width="full">
+      <PageHeader eyebrow="Your network" title="Stay in orbit" description={<DashboardIntro />} />
 
       <DashboardStatRowSkeleton />
 
@@ -34,9 +36,8 @@ export default function DashboardLoading() {
         <DashboardCardSkeleton className="h-80 min-w-0 lg:flex-1" />
       </div>
 
-      {/* Suggested outreach + outreach performance — flex for the same reason. */}
+      {/* Suggested outreach — one full-width card (the reply rate sits beside its heading). */}
       <div className="flex flex-col items-stretch gap-6 lg:flex-row">
-        <DashboardCardSkeleton className="h-64 min-w-0 lg:flex-1" />
         <DashboardCardSkeleton className="h-64 min-w-0 lg:flex-1" />
       </div>
 
@@ -51,6 +52,6 @@ export default function DashboardLoading() {
 
       {/* Tail: goals, orbit numbers, plan. */}
       <DashboardCardSkeleton className="h-64" />
-    </div>
+    </PageShell>
   );
 }

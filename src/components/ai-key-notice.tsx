@@ -2,11 +2,14 @@
 
 import Link from "next/link";
 import { BuyPackButton } from "@/components/credits/buy-pack-button";
+import { buttonVariants } from "@/components/ui/button";
 import { integrationHref } from "@/components/settings/sections";
 import { useViewerPlan } from "@/components/viewer-plan";
 import { noticeCopyFor } from "@/lib/ai-access-copy";
 import { PLAN_CONFIG } from "@/lib/plans/plan-config";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
+import { TONE } from "@/lib/tone";
+import { cn } from "@/lib/utils";
 
 /**
  * The one message for "AI can't run for you right now". Pages render it from what they
@@ -29,7 +32,7 @@ export function AiKeyNotice({
   reason,
   compact = false,
 }: {
-  feature: "capture" | "chat" | "setup" | "meeting" | "knowledge" | "draft";
+  feature: "capture" | "chat" | "setup" | "meeting" | "knowledge" | "draft" | "find";
   reason?: AiAccessDenial | null;
   compact?: boolean;
 }) {
@@ -49,16 +52,15 @@ export function AiKeyNotice({
             ? "summarize people and see how they fit your goals"
             : feature === "draft"
               ? "write a follow-up"
-            : "read your notes and answer questions";
+              : feature === "find"
+                ? "research people on the web"
+                : "read your notes and answer questions";
   // "Pro and Max include AI" only to a Free account, and only where it can actually run.
   const offerUpgrade = copy.offer === "upgrade" && plan === "free" && includedAiAvailable;
   const offerCredits = copy.offer === "credits" && PLAN_CONFIG[plan].features.creditPacks;
   const link = "font-medium text-primary underline-offset-2 hover:underline";
   return (
-    <div
-      role="status"
-      className="rounded-xl border border-warning-border bg-warning-surface px-4 py-3 text-sm"
-    >
+    <div role="status" className={cn("rounded-xl border px-4 py-3 text-sm", TONE.warning.box)}>
       <p className="font-medium text-foreground">{copy.title(verb)}</p>
       <p className="mt-1 text-muted-foreground">
         <span className={extra}>{copy.body} </span>
@@ -93,7 +95,10 @@ export function AiKeyNotice({
             <Link
               href="/settings#settings-plan"
               data-plan="max"
-              className="inline-flex h-7 items-center rounded-md border border-tier-border bg-tier-surface px-2.5 text-xs font-medium text-tier-accent hover:bg-tier-accent/15"
+              className={cn(
+                buttonVariants({ variant: "outline", size: "sm" }),
+                "border-tier-border bg-tier-surface text-tier-accent hover:bg-tier-accent/15 hover:text-tier-accent"
+              )}
             >
               Upgrade to Max
             </Link>

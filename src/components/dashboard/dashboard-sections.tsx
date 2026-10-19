@@ -2,11 +2,13 @@ import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { Suspense } from "react";
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
-import { formatDistanceToNow } from "date-fns";
 import { Bell, Sparkles, Users } from "lucide-react";
 import type { getOutreachPerformanceSummary } from "@/actions/outreach";
 import type { fetchDashboard } from "@/actions/reminders";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { RelativeTime } from "@/components/ui/relative-time";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import { DashboardGraphPreview } from "@/components/dashboard/dashboard-graph-preview";
 import { DueFollowUpRow } from "@/components/dashboard/due-follow-up-row";
@@ -93,8 +95,37 @@ function contactMeta(data: BundleData, contactId: string | null | undefined) {
  * that land in the same commit, where it produces a real cascade — that is the
  * 40ms below, inside the three sections that render two cards each.
  */
-const revealDelay = (ms: number) =>
+export const revealDelay = (ms: number) =>
   ({ "--reveal-delay": `${ms}ms` }) as React.CSSProperties;
+
+/**
+ * The key caps in the intro line. Flat on purpose: one quiet fill, no border, no gradient and
+ * no shadow, so they read as part of the sentence rather than as raised keys.
+ */
+const KBD =
+  "mx-0.5 inline-flex items-center rounded-md bg-muted px-1.5 py-[3px] align-baseline font-sans text-2xs font-medium leading-none text-ink/75";
+
+/**
+ * The dashboard header's description, rendered by BOTH page.tsx and loading.tsx (inside
+ * `PageHeader`) so client navigation shows identical pixels before and after data arrives.
+ * Static: it must not fetch.
+ */
+export function DashboardIntro() {
+  return (
+    <>
+      Follow-ups, dormant connections, and people worth reaching out to — in one place.
+      {/* A keyboard shortcut is unusable on a touch device that has no keyboard, where it
+          also costs a line of a three-line paragraph. Gated on hover capability rather than
+          viewport width: a narrow window on a laptop still has a ⌘K, and a large tablet
+          still does not. */}
+      <span className="hidden [@media(hover:hover)]:inline">
+        {" "}
+        Press <kbd className={KBD}>⌘K</kbd> to jump anywhere, or <kbd className={KBD}>⌘J</kbd> to
+        ask your network.
+      </span>
+    </>
+  );
+}
 
 /**
  * The LinkedIn export card (start it, then "ready about …") or the arrival nudge that follows
@@ -216,38 +247,33 @@ export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
   return (
     <>
       {isEmptyNetwork && (
-        <div
-          className="reveal-mount rounded-2xl border border-dashed border-border/70 px-6 py-10 text-center"
+        // `EmptyState`'s shape by hand, because this one is a real section heading (an e2e
+        // spec reads "Your orbit is empty" as a heading) and the primitive renders its title
+        // as a paragraph.
+        <section
+          aria-labelledby="dashboard-empty"
+          className="reveal-mount flex flex-col items-center rounded-xl border border-dashed border-border-subtle px-6 py-10 text-center"
           style={revealDelay(0)}
         >
-          <h2 className="font-heading text-2xl text-ink">
+          <h2 id="dashboard-empty" className="font-heading text-2xl text-ink">
             Your orbit is empty
           </h2>
-          <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-            Import LinkedIn connections, capture notes from a meeting, or add
-            someone by hand — then Orbit can remind you who to reach out to.
+          <p className="mt-1 max-w-md text-sm text-muted-foreground">
+            Import LinkedIn connections, capture notes from a meeting, or add someone by hand —
+            then Orbit can remind you who to reach out to.
           </p>
-          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-            <Link
-              href="/imports"
-              className={cn(buttonVariants(), "bg-primary text-primary-foreground")}
-            >
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+            <Link href="/imports" className={buttonVariants()}>
               Import LinkedIn
             </Link>
-            <Link
-              href="/capture"
-              className={cn(buttonVariants({ variant: "outline" }))}
-            >
+            <Link href="/capture" className={buttonVariants({ variant: "outline" })}>
               Capture notes
             </Link>
-            <Link
-              href="/contacts/new"
-              className={cn(buttonVariants({ variant: "ghost" }))}
-            >
+            <Link href="/contacts/new" className={buttonVariants({ variant: "ghost" })}>
               Add a contact
             </Link>
           </div>
-        </div>
+        </section>
       )}
 
       <div
@@ -262,20 +288,20 @@ export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
         <StatCard
           label="Contacts"
           value={data.stats.totalContacts}
-          icon={<Users className="h-4 w-4" />}
+          icon={<Users className="size-4" aria-hidden />}
           href="/contacts"
         />
         <StatCard
           label="Due follow-ups"
           value={data.stats.dueFollowUps}
-          icon={<Bell className="h-4 w-4" />}
+          icon={<Bell className="size-4" aria-hidden />}
           href="/contacts?followUp=due"
           subtitle={data.stats.dueFollowUps > 0 ? "Needs attention" : undefined}
         />
         <StatCard
           label="Strong ties"
           value={data.stats.strongConnections}
-          icon={<Sparkles className="h-4 w-4" />}
+          icon={<Sparkles className="size-4" aria-hidden />}
           href="/graph"
           // Counted from the absolute tiers, like the Network depth card — so it uses
           // that card's words, not the cohort-ranked orbit badges'.
@@ -284,7 +310,7 @@ export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
         <StatCard
           label="Reminders"
           value={data.stats.pendingReminders}
-          icon={<Bell className="h-4 w-4" />}
+          icon={<Bell className="size-4" aria-hidden />}
           href="/reminders"
         />
       </div>
@@ -420,16 +446,21 @@ async function OutreachReplyRate({ summary }: { summary: OutreachSummary }) {
   const { accountMetrics } = await summary;
   if (accountMetrics.sentCount === 0 && accountMetrics.campaignCount === 0) return null;
   return (
-    <Link
-      href="/outreach"
-      title={`${accountMetrics.positiveReplyCount} positive replies from ${accountMetrics.sentCount} sent`}
-      className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted"
+    <Badge
+      variant="outline"
+      className="gap-1.5 text-muted-foreground"
+      render={
+        <Link
+          href="/outreach"
+          title={`${accountMetrics.positiveReplyCount} positive replies from ${accountMetrics.sentCount} sent`}
+        />
+      }
     >
       Reply rate
       <span className="font-semibold text-ink">
         {formatReplyRate(accountMetrics.successfulReplyRate)}
       </span>
-    </Link>
+    </Badge>
   );
 }
 
@@ -463,30 +494,29 @@ export async function RemindersAndFollowUpsSection({
       </div>
 
       <div className="reveal-mount min-w-0" style={revealDelay(40)}>
-        <Card
-          id="due-follow-ups"
-          className="h-full border-border/70 shadow-none scroll-mt-8"
-        >
-          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
-            <CardTitle as="h2" className="text-base">Due follow-ups</CardTitle>
+        <Card id="due-follow-ups" className="h-full scroll-mt-8">
+          <CardHeader>
+            <CardTitle as="h2">Due follow-ups</CardTitle>
             {data.dueFollowUps.length > 0 && (
-              <div className="flex items-center gap-1.5">
+              <CardAction className="flex items-center gap-1.5">
                 <GenerateFollowUpsButton limit={8} />
                 <Link
                   href="/contacts?followUp=due"
-                  className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
+                  className={buttonVariants({ variant: "ghost", size: "sm" })}
                 >
                   View all
                 </Link>
-              </div>
+              </CardAction>
             )}
           </CardHeader>
           <CardContent className="space-y-2">
             {data.dueFollowUps.length === 0 ? (
-              <div className="space-y-3">
-                <Empty hint="You're caught up." />
-                <GenerateFollowUpsButton limit={8} label="Generate follow-ups" />
-              </div>
+              <EmptyState
+                variant="plain"
+                size="sm"
+                title="You’re caught up"
+                action={<GenerateFollowUpsButton limit={8} label="Generate follow-ups" />}
+              />
             ) : (
               data.dueFollowUps.slice(0, DUE_FOLLOW_UPS_PREVIEW).map((c) => (
                 <DueFollowUpRow
@@ -531,35 +561,22 @@ export async function RecentlyUpdatedSection({
   const { data } = await bundle;
   return (
     <div className="reveal-mount min-w-0" style={revealDelay(0)}>
-      <Card className="border-border/70 shadow-none">
+      <Card>
         <CardHeader>
-          <CardTitle as="h2" className="text-base">Recently updated</CardTitle>
+          <CardTitle as="h2">Recently updated</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
           {data.recentContacts.length === 0 ? (
-            <div className="space-y-3">
-              <Empty hint="No contacts yet." />
-              <div className="flex flex-wrap gap-2">
-                <Link
-                  href="/imports"
-                  className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-                >
-                  Import
-                </Link>
-                <Link
-                  href="/capture"
-                  className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-                >
-                  Capture
-                </Link>
-                <Link
-                  href="/contacts/new"
-                  className={cn(buttonVariants({ size: "sm" }))}
-                >
+            <EmptyState
+              variant="plain"
+              size="sm"
+              title="No contacts yet"
+              action={
+                <Link href="/contacts/new" className={buttonVariants({ size: "sm" })}>
                   Add contact
                 </Link>
-              </div>
-            </div>
+              }
+            />
           ) : (
             // Two columns from lg. This card owns a full-width row (see page.tsx),
             // and six rows stretched across it would put each name a thousand
@@ -598,9 +615,7 @@ export async function RecentlyUpdatedSection({
                       <p className="mt-0.5 text-xs text-ink/70">{describeUpdate(c)}</p>
                     </div>
                   </div>
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    {formatDistanceToNow(new Date(c.updatedAt), { addSuffix: true })}
-                  </span>
+                  <RelativeTime date={c.updatedAt} className="shrink-0 text-xs text-muted-foreground" />
                 </IntentLink>
               );
             })}
@@ -683,27 +698,21 @@ function StatCard({
   const inner = (
     <>
       <div className="flex items-center justify-between text-muted-foreground">
-        <span className="text-xs font-medium uppercase tracking-wide">{label}</span>
+        <span className="text-xs font-medium uppercase tracking-wider">{label}</span>
         {icon}
       </div>
-      <p className="mt-3 font-heading text-3xl text-ink">
-        {value}
-      </p>
-      {subtitle && (
-        <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>
-      )}
+      <p className="mt-3 font-heading text-3xl text-ink">{value}</p>
+      {subtitle && <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>}
     </>
   );
 
+  // The card's own class string on a Link: a clickable card is still a card, and `Card` is
+  // a div.
   if (href) {
     return (
       <Link
         href={href}
-        className={cn(
-          "block rounded-2xl border border-border/70 bg-card/80 p-4 backdrop-blur hover:bg-card",
-          CARD_HOVER,
-          PRESS
-        )}
+        className={cn("block rounded-xl border border-border-subtle bg-card p-4", CARD_HOVER, PRESS)}
       >
         {inner}
       </Link>
@@ -711,12 +720,8 @@ function StatCard({
   }
 
   return (
-    <div className="rounded-2xl border border-border/70 bg-card/80 p-4 backdrop-blur">
-      {inner}
-    </div>
+    <Card size="sm">
+      <CardContent>{inner}</CardContent>
+    </Card>
   );
-}
-
-function Empty({ hint }: { hint: string }) {
-  return <p className="text-sm text-muted-foreground">{hint}</p>;
 }

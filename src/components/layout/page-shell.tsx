@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type React from "react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -30,15 +31,17 @@ export function PageShell({
   spacing = "default",
   children,
   className,
+  ...rest
 }: {
   width?: PageWidth;
   /** `tight` for pages whose first child is a toolbar rather than a section. */
   spacing?: "default" | "tight";
   children: ReactNode;
   className?: string;
-}) {
+} & Omit<React.ComponentProps<"div">, "children" | "className">) {
   return (
     <div
+      {...rest}
       data-page-width={width}
       className={cn(
         WIDTH[width],

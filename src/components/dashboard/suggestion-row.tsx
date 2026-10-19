@@ -4,7 +4,6 @@ import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { X } from "lucide-react";
-import { formatDistanceToNow } from "date-fns";
 import { companyBrandColor } from "@/lib/company-brand";
 import { runToastAction, toast } from "@/lib/toast";
 import {
@@ -14,7 +13,11 @@ import {
   scheduleFromSuggestion,
 } from "@/actions/reminders";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
+import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { RelativeTime } from "@/components/ui/relative-time";
+import type { Tone } from "@/lib/tone";
 import { cn } from "@/lib/utils";
 import { friendlyError } from "@/lib/errors";
 
@@ -38,14 +41,19 @@ const NEXT_STEP: Record<string, string> = {
   score_bump: "Orbit thinks this relationship has grown closer.",
 };
 
-const REASON_STYLES: Record<string, string> = {
-  job_change_congrats: "bg-indigo-500/15 text-indigo-800 dark:text-indigo-200",
-  awaiting_reply: "bg-rose-500/15 text-rose-800 dark:text-rose-200",
-  keep_in_touch: "bg-teal-500/15 text-teal-800 dark:text-teal-200",
-  dormant_high_value: "bg-amber-500/15 text-amber-800 dark:text-amber-200",
-  linkedin_thread_quiet: "bg-sky-500/15 text-sky-800 dark:text-sky-200",
-  post_event: "bg-violet-500/15 text-violet-800 dark:text-violet-200",
-  score_bump: "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200",
+/**
+ * The reason chip's tone — the same palette Radar's kind chips use (`radar/kind-styles.ts`),
+ * so a colour means one thing on both cards: quiet/dormant is neutral, news is info, a debt
+ * you owe is warning, a fresh opening is accent.
+ */
+const REASON_TONES: Record<string, Tone> = {
+  job_change_congrats: "info",
+  awaiting_reply: "warning",
+  keep_in_touch: "neutral",
+  dormant_high_value: "neutral",
+  linkedin_thread_quiet: "neutral",
+  post_event: "accent",
+  score_bump: "success",
 };
 
 export function SuggestionRow({
@@ -75,16 +83,13 @@ export function SuggestionRow({
   const reasonLabel = REASON_LABELS[suggestionType] ?? "Suggestion";
   const isScoreBump = suggestionType === "score_bump";
   // Dormant and quiet-thread descriptions already state how long it has been.
-  const lastTouch =
-    lastInteractionAt && !/last (touch|activity)/i.test(description ?? "")
-    ? formatDistanceToNow(new Date(lastInteractionAt), { addSuffix: true })
-    : null;
+  const showLastTouch = Boolean(lastInteractionAt) && !/last (touch|activity)/i.test(description ?? "");
   const nextStep = NEXT_STEP[suggestionType];
   const companyColor = companyBrandColor(contactCompany);
 
   return (
-    <div className="rounded-xl border border-border/60 bg-card p-3">
-      <div className="flex items-start justify-between gap-3">
+    <Card size="sm">
+      <CardContent className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             {contactId ? (
@@ -98,14 +103,9 @@ export function SuggestionRow({
               <p className="font-medium text-ink">{contactName}</p>
             )}
             {tier && <ClosenessTierBadge tier={tier} />}
-            <span
-              className={cn(
-                "rounded-full px-2 py-0.5 text-3xs font-medium uppercase tracking-wide",
-                REASON_STYLES[suggestionType] ?? "bg-muted text-muted-foreground"
-              )}
-            >
+            <Badge tone={REASON_TONES[suggestionType] ?? "neutral"} size="sm">
               {reasonLabel}
-            </span>
+            </Badge>
           </div>
           {(contactTitle || contactCompany) && (
             <p className="mt-0.5 text-sm">
@@ -128,11 +128,15 @@ export function SuggestionRow({
           {description && (
             <p className="mt-1.5 text-sm text-ink/80">{description}</p>
           )}
-          {(nextStep || lastTouch) && (
+          {(nextStep || showLastTouch) && (
             <p className="mt-1 text-xs text-muted-foreground">
               {nextStep}
-              {nextStep && lastTouch ? " " : ""}
-              {lastTouch ? `Last touch ${lastTouch}.` : ""}
+              {nextStep && showLastTouch ? " " : ""}
+              {showLastTouch && lastInteractionAt ? (
+                <>
+                  Last interaction <RelativeTime date={lastInteractionAt} />.
+                </>
+              ) : null}
             </p>
           )}
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -157,7 +161,7 @@ export function SuggestionRow({
                   })
                 }
               >
-                Accept score
+                {pending ? "Saving…" : "Accept score"}
               </Button>
             ) : (
               <Button
@@ -180,7 +184,7 @@ export function SuggestionRow({
                   })
                 }
               >
-                Schedule 7d
+                {pending ? "Saving…" : "Snooze 7 days"}
               </Button>
             )}
             {contactId && (
@@ -211,9 +215,9 @@ export function SuggestionRow({
             )
           }
         >
-          <X className="h-4 w-4" />
+          <X className="size-4" aria-hidden />
         </Button>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }

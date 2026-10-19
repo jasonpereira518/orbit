@@ -37,14 +37,14 @@ export async function TodayMeetingsSection({ now }: { now: Date }) {
 
   return (
     <Card>
-      <CardHeader className="flex-row items-center gap-2 space-y-0">
-        <CalendarDays className="size-4 text-muted-foreground" aria-hidden />
-        <CardTitle as="h2" className="text-base">
+      <CardHeader>
+        <CardTitle as="h2" className="flex items-center gap-2">
+          <CalendarDays className="size-4 text-muted-foreground" aria-hidden />
           Today
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <ul className="divide-y divide-border/60">
+        <ul className="divide-y divide-border-subtle">
           {rows.map((e) => {
             const known = e.attendees.filter((a) => a.contactId);
             const others = e.attendeeCount - known.length;

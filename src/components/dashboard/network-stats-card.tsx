@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
-import { CardStarfield } from "@/components/dashboard/card-starfield";
+import { Card, CardTitle } from "@/components/ui/card";
 import type { NetworkStatItem, NetworkStats } from "@/lib/network-stats";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
@@ -82,6 +82,12 @@ function AnimatedStatValue({
   );
 }
 
+/**
+ * "Your orbit in numbers": a collapsed `<details>` in an ordinary card. It used to be a
+ * night-sky panel with its own hex palette and a canvas starfield at the foot of an
+ * otherwise token-based page; the numbers (and their count-up, which is one rAF per stat
+ * and only while the panel is open) were the point, so those stay and the sky goes.
+ */
 export function NetworkStatsCard({ stats }: { stats: NetworkStats }) {
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const [open, setOpen] = useState(false);
@@ -97,58 +103,55 @@ export function NetworkStatsCard({ stats }: { stats: NetworkStats }) {
   }, []);
 
   return (
-    // The sky lives on this wrapper, not inside the <details>. A <details> puts everything
-    // but its summary in a hidden slot and paints it in order after the summary, so a sky
-    // placed inside it was missing while the card was closed and, once open, painted over the
-    // heading. As a sibling behind the <details> it is there in both states and under both.
-    <div className="relative overflow-hidden rounded-2xl border border-[#f2c14e]/20 bg-[#03050c] text-[#e8f3f1]">
-    <CardStarfield />
-    <details
-      ref={detailsRef}
-      className="group relative"
-    >
-      {/* The summary is this card's only control and had no hover state at all. */}
-      <summary className="relative flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl p-6 transition-colors duration-fast ease-house hover:bg-white/5 focus-visible:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset focus-ring-fallback [&::-webkit-details-marker]:hidden">
-        <div>
-          <p className="text-sm font-medium text-[#e8f3f1]">Your orbit in numbers</p>
-          <p className="mt-0.5 text-sm text-[#9aada8]">{stats.subheadline}</p>
-        </div>
-        <ChevronDown className="h-5 w-5 shrink-0 text-[#9aada8] transition-transform duration-slow ease-house group-open:rotate-180" />
-      </summary>
-      {/* The chevron used to animate while the panel it points at teleported open —
-          animating the indicator but not the thing indicated is worse than animating
-          neither. `grid-rows` 0fr->1fr is the repo's height-collapse technique
-          (contacts-list.tsx:434); `group-open:` drives it straight off the native
-          <details> state, so no JS is involved in the motion.
+    // The card's padding is on the summary and the panel rather than the card, so the
+    // summary's hover wash reaches the card's edges.
+    <Card className="gap-0 py-0">
+      <details ref={detailsRef} className="group">
+        {/* The summary is this card's only control. */}
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-xl px-5 py-4 transition-colors duration-fast ease-house hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset focus-ring-fallback [&::-webkit-details-marker]:hidden">
+          <div className="min-w-0">
+            <CardTitle as="h2">Your orbit in numbers</CardTitle>
+            <p className="mt-0.5 text-sm text-muted-foreground">{stats.subheadline}</p>
+          </div>
+          <ChevronDown
+            className="size-5 shrink-0 text-muted-foreground transition-transform duration-slow ease-house group-open:rotate-180"
+            aria-hidden
+          />
+        </summary>
+        {/* The chevron used to animate while the panel it points at teleported open —
+            animating the indicator but not the thing indicated is worse than animating
+            neither. `grid-rows` 0fr->1fr is the repo's height-collapse technique
+            (contacts-list.tsx:434); `group-open:` drives it straight off the native
+            <details> state, so no JS is involved in the motion.
 
-          `<details>` sets `content-visibility: hidden` on its collapsed content, which
-          would skip the transition, so the panel is force-shown and the grid row does
-          the hiding instead. */}
-      <div className="relative grid grid-rows-[0fr] transition-[grid-template-rows] duration-slow ease-house group-open:grid-rows-[1fr] [content-visibility:visible]">
-      <div className="overflow-hidden">
-      <div className="border-t border-white/10 px-6 pb-6 pt-4">
-        <dl className="grid auto-rows-fr gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {stats.items.map((item) => (
-            <div
-              key={item.label}
-              className="flex h-full min-h-[5.5rem] flex-col rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 backdrop-blur-sm"
-            >
-              <dt className="text-2xs font-medium uppercase tracking-wide text-[#9aada8]">
-                {item.label}
-              </dt>
-              <dd className="mt-1 font-heading text-2xl leading-none text-[#e8f3f1]">
-                <AnimatedStatValue item={item} active={open} />
-              </dd>
-              <dd className="mt-1.5 min-h-[1rem] text-xs text-[#9aada8]">
-                {item.detail && !item.empty ? item.detail : "\u00A0"}
-              </dd>
+            `<details>` sets `content-visibility: hidden` on its collapsed content, which
+            would skip the transition, so the panel is force-shown and the grid row does
+            the hiding instead. */}
+        <div className="grid grid-rows-[0fr] transition-[grid-template-rows] duration-slow ease-house group-open:grid-rows-[1fr] [content-visibility:visible]">
+          <div className="overflow-hidden">
+            <div className="border-t border-border-subtle px-5 pb-5 pt-4">
+              <dl className="grid auto-rows-fr gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {stats.items.map((item) => (
+                  <div
+                    key={item.label}
+                    className="flex h-full min-h-[5.5rem] flex-col rounded-lg border border-border-subtle bg-surface-inset px-3 py-3"
+                  >
+                    <dt className="text-2xs font-medium uppercase tracking-wider text-muted-foreground">
+                      {item.label}
+                    </dt>
+                    <dd className="mt-1 font-heading text-2xl leading-none text-ink">
+                      <AnimatedStatValue item={item} active={open} />
+                    </dd>
+                    <dd className="mt-1.5 min-h-[1rem] text-xs text-muted-foreground">
+                      {item.detail && !item.empty ? item.detail : " "}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
             </div>
-          ))}
-        </dl>
-      </div>
-      </div>
-      </div>
-    </details>
-    </div>
+          </div>
+        </div>
+      </details>
+    </Card>
   );
 }

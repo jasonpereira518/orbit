@@ -2,7 +2,6 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { formatDistanceToNow } from "date-fns";
 import { CalendarPlus, Clock, Copy, MoreHorizontal, PenLine, Sparkles, X } from "lucide-react";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
@@ -10,7 +9,9 @@ import {
   FollowUpDraftSheetLazy,
   preloadFollowUpDraftSheet,
 } from "@/components/follow-up/follow-up-draft-sheet-lazy";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { RelativeTime } from "@/components/ui/relative-time";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -40,7 +41,7 @@ import {
 } from "@/lib/radar/types";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
-import { KIND_STYLES } from "@/components/radar/kind-styles";
+import { KIND_TONES } from "@/components/radar/kind-styles";
 import { useRadarKeys } from "@/components/radar/use-radar-keys";
 import { useRecommendationActions } from "@/components/radar/use-recommendation-actions";
 
@@ -66,9 +67,6 @@ export type RecommendationCardData = {
   tier: "inner" | "mid" | "outer" | null;
   avatarUrl: string | null;
 };
-
-const triggerClass =
-  "tap-target inline-flex h-8 items-center gap-1.5 rounded-md border border-border/70 px-2.5 text-xs font-medium text-ink transition-colors hover:bg-muted disabled:opacity-50";
 
 export function RecommendationCard({
   rec,
@@ -139,7 +137,7 @@ export function RecommendationCard({
       )}
     >
       <div className="min-h-0 overflow-hidden">
-        <article className="rounded-xl border border-border/60 bg-card p-3 sm:p-4" data-recommendation-id={rec.id}>
+        <article className="rounded-xl border border-border-subtle bg-card p-3 sm:p-4" data-recommendation-id={rec.id}>
           <div className="flex items-start gap-3">
             <ContactAvatar contactId={rec.contactId} fullName={rec.contactName} profileImageUrl={rec.avatarUrl} size="default" />
             <div className="min-w-0 flex-1">
@@ -148,13 +146,13 @@ export function RecommendationCard({
                   {rec.contactName}
                 </IntentLink>
                 {rec.tier && <ClosenessTierBadge tier={rec.tier} />}
-                <span className={cn("rounded-full px-2 py-0.5 text-3xs font-medium uppercase tracking-wide", KIND_STYLES[rec.kind])}>
+                <Badge tone={KIND_TONES[rec.kind]} size="sm">
                   {KIND_LABELS[rec.kind]}
-                </span>
+                </Badge>
                 {rec.draft && (
-                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-3xs font-medium uppercase tracking-wide text-primary">
+                  <Badge tone="accent" size="sm">
                     Draft ready
-                  </span>
+                  </Badge>
                 )}
               </div>
               {(rec.title || rec.company) && (
@@ -184,9 +182,9 @@ export function RecommendationCard({
               {(context.length > 0 || evidence) && (
                 <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                   {context.map((r) => (
-                    <span key={r.code} className="rounded-full bg-muted px-2 py-0.5">
+                    <Badge key={r.code} tone="neutral" className="font-normal">
                       {r.label}
-                    </span>
+                    </Badge>
                   ))}
                   {evidence && (
                     <span className="inline-flex items-center gap-1">
@@ -206,9 +204,9 @@ export function RecommendationCard({
                         evidence.label
                       )}
                       {evidence.at && (
-                        <span suppressHydrationWarning>
+                        <span>
                           {" · "}
-                          {formatDistanceToNow(new Date(evidence.at), { addSuffix: true })}
+                          <RelativeTime date={evidence.at} />
                         </span>
                       )}
                     </span>
@@ -224,7 +222,7 @@ export function RecommendationCard({
               )}
 
               {note && (note.why || note.opener) ? (
-                <div className="mt-3 rounded-lg bg-muted/50 p-2.5 text-sm">
+                <div className="mt-3 rounded-lg border border-border-subtle bg-surface-inset p-2.5 text-sm">
                   {note.why && (
                     <p className="flex gap-1.5 text-ink/90">
                       <Sparkles className="mt-0.5 size-3.5 shrink-0 text-primary" aria-hidden />
@@ -234,11 +232,13 @@ export function RecommendationCard({
                   {note.opener && (
                     <div className="mt-1.5 flex items-start justify-between gap-2">
                       <p className="text-muted-foreground">“{note.opener}”</p>
-                      <button
+                      <Button
                         type="button"
+                        variant="ghost"
+                        size="icon-sm"
                         aria-label={`Copy opener for ${rec.contactName}`}
                         title="Copy opener"
-                        className="tap-target inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-ink"
+                        className="tap-target shrink-0 text-muted-foreground"
                         onClick={() => {
                           void navigator.clipboard?.writeText(note.opener).then(
                             () => toast.success("Opener copied"),
@@ -247,7 +247,7 @@ export function RecommendationCard({
                         }}
                       >
                         <Copy className="size-3.5" aria-hidden />
-                      </button>
+                      </Button>
                     </div>
                   )}
                 </div>
@@ -257,16 +257,27 @@ export function RecommendationCard({
                     <AiKeyNotice feature="draft" reason={denial} compact />
                   </div>
                 ) : aiAvailable ? (
-                  <button type="button" onClick={writeWhy} disabled={pending} className="mt-2 inline-flex items-center gap-1 text-xs text-primary hover:underline disabled:opacity-50">
+                  <Button
+                    type="button"
+                    variant="link"
+                    size="xs"
+                    onClick={writeWhy}
+                    disabled={pending}
+                    className="mt-2 h-auto px-0"
+                  >
                     <Sparkles className="size-3" aria-hidden />
-                    Write a one-line why and an opener
-                  </button>
+                    {writing ? "Writing…" : "Write a one-line why and an opener"}
+                  </Button>
                 ) : null
               ) : null}
 
               <div className="mt-3 flex flex-wrap items-center gap-1.5 pointer-coarse:gap-3">
                 <DropdownMenu>
-                  <DropdownMenuTrigger className={triggerClass} disabled={pending} aria-label={`Schedule a follow-up with ${rec.contactName}`}>
+                  <DropdownMenuTrigger
+                    render={<Button type="button" variant="outline" size="sm" className="h-8" />}
+                    disabled={pending}
+                    aria-label={`Schedule a follow-up with ${rec.contactName}`}
+                  >
                     <CalendarPlus className="size-3.5" aria-hidden />
                     Schedule
                   </DropdownMenuTrigger>
@@ -291,7 +302,11 @@ export function RecommendationCard({
                   {rec.draft ? "Review draft" : "Draft message"}
                 </Button>
                 <DropdownMenu>
-                  <DropdownMenuTrigger className={triggerClass} disabled={pending} aria-label={`Snooze ${rec.contactName}`}>
+                  <DropdownMenuTrigger
+                    render={<Button type="button" variant="outline" size="sm" className="h-8" />}
+                    disabled={pending}
+                    aria-label={`Snooze ${rec.contactName}`}
+                  >
                     <Clock className="size-3.5" aria-hidden />
                     Snooze
                   </DropdownMenuTrigger>
@@ -302,10 +317,10 @@ export function RecommendationCard({
                 </DropdownMenu>
                 <DropdownMenu>
                   <DropdownMenuTrigger
+                    render={<Button type="button" variant="ghost" size="icon" className="tap-target text-muted-foreground" />}
                     aria-label={`More actions for ${rec.contactName}`}
                     title="More actions"
                     disabled={pending}
-                    className="tap-target relative inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-ink"
                   >
                     <MoreHorizontal className="size-4" aria-hidden />
                   </DropdownMenuTrigger>

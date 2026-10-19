@@ -44,7 +44,7 @@ export function LockedFeature({
   return (
     <div
       data-plan={unlockPlan}
-      className="mx-auto max-w-xl space-y-6 rounded-2xl border border-tier-border bg-card p-8 text-center"
+      className="mx-auto max-w-xl space-y-6 rounded-xl border border-tier-border bg-card p-8 text-center"
     >
       <div className="space-y-3">
         <span className="mx-auto flex size-11 items-center justify-center rounded-full border border-tier-border bg-tier-surface">
@@ -62,7 +62,7 @@ export function LockedFeature({
         {highlights.map((item) => (
           <li
             key={item}
-            className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm"
+            className="rounded-lg border border-border-subtle bg-surface-inset px-3 py-2 text-sm"
           >
             {item}
           </li>

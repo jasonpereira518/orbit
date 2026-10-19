@@ -6,6 +6,7 @@ import { ExternalLink, FileArchive, RefreshCw, Search, X } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { linkedInArchiveSearch } from "@/lib/inbox-search";
 import { LINKEDIN_DATA_URL } from "@/lib/linkedin-export";
+import { TONE } from "@/lib/tone";
 import { cn } from "@/lib/utils";
 
 const DISMISS_KEY = "orbit-linkedin-export-nudge-dismissed-v1";
@@ -49,10 +50,10 @@ export function LinkedInExportNudge({ email }: { email: string | null }) {
   return (
     <section
       aria-label="LinkedIn export"
-      className="reveal-mount flex flex-col gap-3 rounded-2xl border border-border/70 bg-card px-4 py-3 sm:flex-row sm:items-center"
+      className="reveal-mount flex flex-col gap-3 rounded-xl border border-border-subtle bg-card px-4 py-3 sm:flex-row sm:items-center"
     >
       <div className="flex min-w-0 flex-1 items-center gap-3">
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-accent text-primary">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent text-primary">
           <FileArchive className="size-4" aria-hidden />
         </span>
         <p className="min-w-0 text-sm">
@@ -124,10 +125,10 @@ export function LinkedInRefreshNudge({ days }: { days: number }) {
   return (
     <section
       aria-label="Refresh your LinkedIn export"
-      className="reveal-mount flex flex-col gap-3 rounded-2xl border border-warning/40 bg-card px-4 py-3 sm:flex-row sm:items-center"
+      className="reveal-mount flex flex-col gap-3 rounded-xl border border-warning-border bg-card px-4 py-3 sm:flex-row sm:items-center"
     >
       <div className="flex min-w-0 flex-1 items-center gap-3">
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-warning/10 text-warning">
+        <span className={cn("flex size-9 shrink-0 items-center justify-center rounded-lg", TONE.warning.chip)}>
           <RefreshCw className="size-4" aria-hidden />
         </span>
         <p className="min-w-0 text-sm">

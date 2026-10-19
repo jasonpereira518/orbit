@@ -5,7 +5,7 @@ import { ConstellationPreviewCanvas } from "@/components/dashboard/constellation
 import { buildPreviewSky } from "@/lib/graph/preview-sky";
 import { STAGE_GROUND } from "@/lib/graph/stage-layers";
 import { buttonVariants } from "@/components/ui/button";
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 type GraphPreviewPayload = Awaited<
@@ -20,12 +20,12 @@ export function DashboardGraphPreview({
   // Laid out here, on the server: the browser receives dot positions, not contact records.
   const sky = buildPreviewSky(graphPreview.contacts, graphPreview.summary.userName);
   return (
-    <Card className="flex flex-col border-border/70 shadow-none">
+    <Card className="flex flex-col">
       <CardHeader>
-        <CardTitle as="h2" className="text-base">Constellation preview</CardTitle>
-        <p className="text-sm text-muted-foreground">
-          Your network at a glance — each constellation is a company or school
-        </p>
+        <CardTitle as="h2">Constellation preview</CardTitle>
+        <CardDescription>
+          Your network at a glance — each constellation is a company or school.
+        </CardDescription>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0 px-4 pb-2">
         {/*
@@ -41,7 +41,7 @@ export function DashboardGraphPreview({
         */}
         <div
           className={cn(
-            "relative min-h-[300px] flex-1 overflow-hidden rounded-2xl border border-white/10",
+            "relative min-h-[300px] flex-1 overflow-hidden rounded-xl border border-white/10",
             STAGE_GROUND
           )}
         >
@@ -65,16 +65,10 @@ export function DashboardGraphPreview({
           </div>
         </div>
       </CardContent>
-      <CardFooter className="border-t border-border/60 pt-4">
-        <Link
-          href="/graph"
-          className={cn(
-            buttonVariants({ variant: "ghost", size: "sm" }),
-            "gap-1.5"
-          )}
-        >
+      <CardFooter>
+        <Link href="/graph" className={buttonVariants({ variant: "ghost", size: "sm" })}>
           Open full constellation
-          <ArrowRight className="h-3.5 w-3.5" />
+          <ArrowRight className="size-3.5" aria-hidden />
         </Link>
       </CardFooter>
     </Card>

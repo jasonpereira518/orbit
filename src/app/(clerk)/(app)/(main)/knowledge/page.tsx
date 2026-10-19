@@ -1,14 +1,17 @@
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { Suspense } from "react";
 import Link from "next/link";
-import { BookOpen, Sparkles } from "lucide-react";
+import { BookOpen, UserRound } from "lucide-react";
 import { getKnowledgeBase, getKnowledgePeople } from "@/actions/knowledge";
 import { DossierPane } from "@/components/knowledge/dossier-pane";
 import { KnowledgeBaseView } from "@/components/knowledge/knowledge-base-view";
 import { KnowledgeViewSwitch } from "@/components/knowledge/knowledge-view-switch";
 import { DossierSkeleton } from "@/components/knowledge/knowledge-skeletons";
 import { PeopleIndex } from "@/components/knowledge/people-index";
+import { PageHeader } from "@/components/layout/page-header";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { buttonVariants } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/lib/utils";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -37,28 +40,18 @@ export default async function KnowledgePage({
 
   return (
     // The page does not scroll: it fills the route (`data-fill-route`), the header holds its
-    // place, and the list and the dossier each scroll inside their own pane.
-    <div
-      data-fill-route
-      className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-4"
-    >
+    // place, and the list and the dossier each scroll inside their own pane. The root is a
+    // plain div rather than `PageShell` because the route wrapper reads `data-fill-route` on
+    // its direct child and `PageShell` does not forward it; the width is the shell's own
+    // (`full`), and the column's `gap-4` stands in for the page rhythm.
+    <div data-fill-route className="flex min-h-0 w-full flex-1 flex-col gap-4">
       <RenderStamp />
-      <div
-        className={cn(
-          "shrink-0 flex-wrap items-end justify-between gap-4",
-          selectedId ? "hidden lg:flex" : "flex"
-        )}
-      >
-        <div>
-          <h1 className="font-heading text-3xl text-ink">
-            Knowledge base
-          </h1>
-          <p className="mt-1 text-muted-foreground">
-            Everyone in your orbit, what Orbit knows about them, and how they fit your goals.
-          </p>
-        </div>
-        <KnowledgeViewSwitch view={view} />
-      </div>
+      <PageHeader
+        className={cn("shrink-0", selectedId && "hidden lg:flex")}
+        title="Knowledge base"
+        description="Everyone in your orbit, what Orbit knows about them, and how they fit your goals."
+        actions={<KnowledgeViewSwitch view={view} />}
+      />
 
       {view === "overview" ? <Overview /> : <People selectedId={selectedId} />}
     </div>
@@ -75,24 +68,21 @@ async function People({ selectedId }: { selectedId: string | null }) {
 
   if (people.total === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-border/70 px-6 py-12 text-center">
-        <BookOpen className="mx-auto h-8 w-8 text-muted-foreground" />
-        <h2 className="mt-3 font-heading text-xl text-ink">
-          No one is in your orbit yet
-        </h2>
-        <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-          Import LinkedIn connections, or log notes from Capture. Each person you add gets a
-          summary here, and a place in how your people connect to your goals.
-        </p>
-        <div className="mt-5 flex flex-wrap justify-center gap-3">
-          <Link href="/imports" className="rounded-xl bg-primary px-4 py-2 text-sm text-primary-foreground">
-            Import LinkedIn
-          </Link>
-          <Link href="/capture" className="rounded-xl border border-border/70 px-4 py-2 text-sm">
-            Log a note
-          </Link>
-        </div>
-      </div>
+      <EmptyState
+        icon={BookOpen}
+        title="No one is in your orbit yet"
+        description="Import LinkedIn connections, or log notes from Capture. Each person you add gets a summary here, and a place in how your people connect to your goals."
+        action={
+          <>
+            <Link href="/imports" className={buttonVariants()}>
+              Import LinkedIn
+            </Link>
+            <Link href="/capture" className={buttonVariants({ variant: "outline" })}>
+              Log a note
+            </Link>
+          </>
+        }
+      />
     );
   }
 
@@ -118,16 +108,12 @@ async function People({ selectedId }: { selectedId: string | null }) {
             <DossierPane contactId={selectedId} />
           </Suspense>
         ) : (
-          <div className="rounded-2xl border border-dashed border-border/70 px-6 py-16 text-center">
-            <Sparkles className="mx-auto h-7 w-7 text-muted-foreground" />
-            <h2 className="mt-3 font-heading text-xl text-ink">
-              Pick someone
-            </h2>
-            <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
-              See their summary, how they bear on your goals, who they connect to, and the
-              facts Orbit has kept.
-            </p>
-          </div>
+          <EmptyState
+            icon={UserRound}
+            title="Pick someone"
+            description="See their summary, how they bear on your goals, who they connect to, and the facts Orbit has kept."
+            className="py-16"
+          />
         )}
       </section>
     </div>

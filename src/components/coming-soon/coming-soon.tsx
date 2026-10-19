@@ -119,14 +119,18 @@ function HazardTape() {
           <span className="px-5 text-2xs font-semibold tracking-[0.22em] whitespace-nowrap uppercase">
             {phrase}
           </span>
-          <span className="h-7 w-14 bg-[repeating-linear-gradient(135deg,#1a1406_0_7px,transparent_7px_14px)]" />
+          <span className="h-7 w-14 bg-[repeating-linear-gradient(135deg,var(--color-tier-sheen-ink)_0_7px,transparent_7px_14px)]" />
         </span>
       ))}
     </div>
   );
   return (
     <div aria-hidden="true" className="pointer-events-none relative mt-3 h-14 md:-mt-12">
-      <div className="absolute top-1/2 -right-10 -left-10 -translate-y-1/2 -rotate-3 overflow-hidden bg-[#f2c14e] text-[#1a1406] shadow-md md:-rotate-2">
+      {/* Hazard gold is Max's gold: the plan scope supplies the ink for the stripes and the words. */}
+      <div
+        data-plan="max"
+        className="absolute top-1/2 -right-10 -left-10 -translate-y-1/2 -rotate-3 overflow-hidden bg-night-max text-tier-sheen-ink shadow-md md:-rotate-2"
+      >
         <div className="coming-soon-marquee flex w-max">
           {half(false)}
           {half(true)}
@@ -140,7 +144,7 @@ export function ComingSoon({ surfaceKey, label }: { surfaceKey: string; label: s
   const feature = FEATURES[surfaceKey] ?? FALLBACK;
   return (
     <div className="flex min-h-[calc(100dvh-16.5rem)] min-w-0 flex-col justify-center md:min-h-[calc(100dvh-11rem)]">
-      <div className="relative overflow-hidden rounded-3xl border border-border/70 bg-card/50">
+      <div className="relative overflow-hidden rounded-xl border border-border-subtle bg-card/50">
         <div className="flex min-w-0 flex-col items-center gap-2 px-6 pt-6 md:flex-row md:justify-center md:gap-10 md:px-10 md:pt-8">
           <div className="reveal-mount">
             <DryDock icon={feature.icon} />

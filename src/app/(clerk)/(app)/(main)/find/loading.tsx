@@ -1,12 +1,16 @@
+import { PageHeader } from "@/components/layout/page-header";
+import { PageShell } from "@/components/layout/page-shell";
 import { FindPageSkeleton } from "@/components/loading/page-skeletons";
-import { FindHeader } from "@/components/find/find-header";
 
-/** Mirrors page.tsx's shell (real header + same skeleton) for a seamless handoff. */
+/** Mirrors page.tsx's shell (the same static header + the same skeleton) for a seamless handoff. */
 export default function FindLoading() {
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
-      <FindHeader />
+    <PageShell width="default">
+      <PageHeader
+        title="Find people"
+        description="Research someone outside your network from the public web, then save them to Orbit."
+      />
       <FindPageSkeleton />
-    </div>
+    </PageShell>
   );
 }

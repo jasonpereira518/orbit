@@ -14,10 +14,10 @@ export function PageHeaderSkeleton({
   actions?: boolean;
 }) {
   return (
-    <div className="flex flex-wrap items-end justify-between gap-4">
-      <div className="space-y-2">
+    <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+      <div className="space-y-1">
         <Skeleton className="h-9 w-48" />
-        {subtitle && <Skeleton className="h-4 w-64 max-w-full" />}
+        {subtitle && <Skeleton className="h-6 w-64 max-w-full" />}
       </div>
       {actions && (
         <div className="flex gap-2">
@@ -449,11 +449,11 @@ export function CapturePageSkeleton() {
 export function ChatPageSkeleton() {
   return (
     // Same phone height as the chat page itself, so the load doesn't jump.
-    <div className="flex h-[calc(100dvh-11.375rem-env(safe-area-inset-bottom))] min-h-0 flex-col gap-5 md:h-[calc(100dvh-4rem)]">
-      <div className="shrink-0 space-y-2">
-        <Skeleton className="h-9 w-64" />
+    <div className="flex h-[calc(100dvh-11.375rem-env(safe-area-inset-bottom))] min-h-0 flex-col gap-4 md:h-[calc(100dvh-4rem)]">
+      <div className="shrink-0 space-y-1">
+        <Skeleton className="h-9 w-24" />
         {/* The page hides its subtitle on phones. */}
-        <Skeleton className="hidden h-4 w-80 max-w-full sm:block" />
+        <Skeleton className="hidden h-6 w-80 max-w-full sm:block" />
       </div>
       <ChatPanelSkeleton className="flex-1" />
     </div>
@@ -1038,7 +1038,7 @@ export function RadarPageSkeleton() {
 export function FindPageSkeleton() {
   return (
     <div className="space-y-5">
-      <Skeleton className="h-10 w-72 rounded-lg" />
+      <Skeleton className="h-9 w-80 rounded-lg" />
       <Skeleton className="h-52 w-full rounded-xl" />
     </div>
   );

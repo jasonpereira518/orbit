@@ -25,6 +25,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
+import { TONE } from "@/lib/tone";
+import { cn } from "@/lib/utils";
 
 export function AgentDraftsCard({ drafts }: { drafts: AgentSendSummary[] }) {
   const [rows, setRows] = useState(drafts);
@@ -32,9 +34,9 @@ export function AgentDraftsCard({ drafts }: { drafts: AgentSendSummary[] }) {
 
   return (
     <Card>
-      <CardHeader className="flex-row items-center gap-2 space-y-0">
-        <Bot className="text-muted-foreground size-4" aria-hidden />
-        <CardTitle as="h2" className="text-base">
+      <CardHeader>
+        <CardTitle as="h2" className="flex items-center gap-2">
+          <Bot className="size-4 text-muted-foreground" aria-hidden />
           Waiting for you to send
         </CardTitle>
       </CardHeader>
@@ -103,7 +105,7 @@ function DraftRow({ draft, onDone }: { draft: AgentSendSummary; onDone: () => vo
   }
 
   return (
-    <div className="space-y-2 rounded-lg border p-3">
+    <div className="space-y-2 rounded-lg border border-border-subtle p-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium">
@@ -141,8 +143,8 @@ function DraftRow({ draft, onDone }: { draft: AgentSendSummary; onDone: () => vo
       ) : null}
 
       {needsConfirm ? (
-        <div className="space-y-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs" role="alert">
-          <p className="flex items-start gap-1.5 font-medium">
+        <div className={cn("space-y-1.5 rounded-lg border p-2 text-xs", TONE.warning.box)} role="alert">
+          <p className={cn("flex items-start gap-1.5 font-medium", TONE.warning.text)}>
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
             {draft.recipientTrust === "mismatch"
               ? `Attached to ${draft.contactName ?? "a contact"}, but addressed to ${draft.toEmail} — not their email.`
@@ -162,7 +164,7 @@ function DraftRow({ draft, onDone }: { draft: AgentSendSummary; onDone: () => vo
         </Button>
         <Button size="sm" variant="secondary" disabled={pending || (needsConfirm && !confirmed)} onClick={onApprove}>
           <Check className="size-4" aria-hidden />
-          Send it
+          {pending ? "Sending…" : "Send it"}
         </Button>
         <Button size="sm" variant="ghost" disabled={pending} onClick={onReject}>
           <X className="size-4" aria-hidden />

@@ -147,9 +147,7 @@ function ChatHistoryRailImpl<T extends ThreadLike>({
             {groups.length === 0 && loading ? (
               <ChatHistoryRailSkeleton />
             ) : groups.length === 0 ? (
-              <p className="px-2 py-3 text-xs text-muted-foreground">
-                Your conversations will collect here.
-              </p>
+              <p className="px-2 py-3 text-xs text-muted-foreground">No chats yet</p>
             ) : (
               groups.map((group) => (
                 <section key={group.label} className="mb-3 last:mb-0">

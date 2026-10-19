@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { EyeOff } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 
 /**
  * What renders in place of a surface an operator has hidden from everyone.
@@ -17,8 +16,8 @@ import { cn } from "@/lib/utils";
  */
 export function SurfaceUnavailable({ label }: { label?: string }) {
   return (
-    <div className="mx-auto max-w-md space-y-5 rounded-2xl border border-border/70 bg-card p-8 text-center">
-      <span className="mx-auto flex size-11 items-center justify-center rounded-full border border-border bg-muted/40">
+    <div className="mx-auto max-w-md space-y-5 rounded-xl border border-border-subtle bg-card p-8 text-center">
+      <span className="mx-auto flex size-11 items-center justify-center rounded-full border border-border-subtle bg-surface-inset">
         <EyeOff className="size-5 text-muted-foreground" aria-hidden />
       </span>
 
@@ -32,10 +31,7 @@ export function SurfaceUnavailable({ label }: { label?: string }) {
         </p>
       </div>
 
-      <Link
-        href="/dashboard"
-        className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-      >
+      <Link href="/dashboard" className={buttonVariants({ variant: "outline", size: "sm" })}>
         Back to dashboard
       </Link>
     </div>

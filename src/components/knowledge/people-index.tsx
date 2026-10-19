@@ -3,17 +3,21 @@
 import { useMemo, useState } from "react";
 import { Search, Target } from "lucide-react";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
+import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { IntentLink } from "@/components/ui/intent-link";
+import { SegmentedControl } from "@/components/ui/segmented-control";
+import { ROW_HOVER } from "@/lib/interaction";
 import type { KnowledgePersonRow } from "@/lib/knowledge-people-types";
 import { cn } from "@/lib/utils";
 
 type Sort = "recent" | "fit" | "name";
 
-const SORTS: { id: Sort; label: string }[] = [
-  { id: "recent", label: "Recent" },
-  { id: "fit", label: "Goal fit" },
-  { id: "name", label: "A–Z" },
+const SORTS: { key: Sort; label: string }[] = [
+  { key: "recent", label: "Recent" },
+  { key: "fit", label: "Goal fit" },
+  { key: "name", label: "A–Z" },
 ];
 
 /**
@@ -58,7 +62,7 @@ export function PeopleIndex({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       <div className="relative">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
         <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -68,27 +72,10 @@ export function PeopleIndex({
         />
       </div>
 
-      <div role="group" aria-label="Sort people" className="flex gap-1.5">
-        {SORTS.map((s) => (
-          <button
-            key={s.id}
-            type="button"
-            aria-pressed={sort === s.id}
-            onClick={() => setSort(s.id)}
-            className={cn(
-              "rounded-lg px-2.5 py-1.5 text-xs transition-colors",
-              sort === s.id
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground"
-            )}
-          >
-            {s.label}
-          </button>
-        ))}
-      </div>
+      <SegmentedControl items={SORTS} value={sort} onChange={setSort} ariaLabel="Sort people" variant="subtle" size="sm" />
 
       {sort === "fit" && goalCount === 0 ? (
-        <p className="rounded-xl bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+        <p className="rounded-lg border border-border-subtle bg-surface-inset px-3 py-2 text-xs text-muted-foreground">
           Goal fit needs a goal to measure against.{" "}
           <IntentLink href="/settings" className="font-medium text-primary underline-offset-2 hover:underline">
             Add one in Settings
@@ -97,9 +84,11 @@ export function PeopleIndex({
         </p>
       ) : null}
 
-      <ul className="min-h-0 divide-y divide-border/50 overflow-hidden rounded-2xl border border-border/60 bg-card/40 lg:overflow-y-auto lg:overscroll-contain">
+      <ul className="min-h-0 divide-y divide-border-subtle overflow-hidden rounded-xl border border-border-subtle bg-card lg:overflow-y-auto lg:overscroll-contain">
         {visible.length === 0 ? (
-          <li className="px-4 py-8 text-center text-sm text-muted-foreground">No one matches that.</li>
+          <li>
+            <EmptyState variant="plain" size="sm" title="No one matches that" />
+          </li>
         ) : (
           visible.map((r) => {
             const selected = r.id === selectedId;
@@ -109,10 +98,7 @@ export function PeopleIndex({
                 <IntentLink
                   href={`/knowledge?p=${r.id}`}
                   aria-current={selected ? "true" : undefined}
-                  className={cn(
-                    "flex gap-3 px-3.5 py-3 transition-colors hover:bg-muted/40",
-                    selected && "bg-accent hover:bg-accent"
-                  )}
+                  className={cn("flex gap-3 px-4 py-3", ROW_HOVER, selected && "bg-accent hover:bg-accent")}
                 >
                   <ContactAvatar
                     contactId={r.id}
@@ -126,13 +112,10 @@ export function PeopleIndex({
                     <div className="flex items-center gap-2">
                       <span className="truncate text-sm font-medium text-ink">{r.fullName}</span>
                       {r.fitCount > 0 ? (
-                        <span
-                          className="ml-auto flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-2xs font-medium text-primary"
-                          title={`Bears on ${r.fitCount} of your goals`}
-                        >
-                          <Target className="h-3 w-3" aria-hidden />
+                        <Badge tone="accent" size="sm" className="ml-auto" title={`Bears on ${r.fitCount} of your goals`}>
+                          <Target aria-hidden />
                           <span aria-label={`Bears on ${r.fitCount} of your goals`}>{r.fitCount}</span>
-                        </span>
+                        </Badge>
                       ) : null}
                     </div>
                     {role ? <p className="truncate text-xs text-muted-foreground">{role}</p> : null}

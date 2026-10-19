@@ -34,6 +34,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Skeleton } from "@/components/ui/skeleton";
 import { interactionTypeIcon } from "@/lib/interaction-types";
 import type { ChatSuggestion, SuggestionKind } from "@/lib/chat-suggestions";
 import { cn } from "@/lib/utils";
@@ -250,11 +251,7 @@ export function SuggestionCardsSkeleton() {
   return (
     <Scroller>
       {SKELETON_WIDTHS.map((w) => (
-        <div
-          key={w}
-          aria-hidden
-          className={cn("animate-pulse border border-border/40 bg-muted/50", PILL_BOX, w)}
-        />
+        <Skeleton key={w} aria-hidden className={cn(PILL_BOX, w)} />
       ))}
     </Scroller>
   );

@@ -3,9 +3,11 @@ import { getOutreachPerformanceSummary } from "@/actions/outreach";
 import { fetchDashboard } from "@/actions/reminders";
 import { AgentDraftsCard } from "@/components/dashboard/agent-drafts-card";
 import { TodayMeetingsSection } from "@/components/dashboard/today-meetings";
-import { DashboardHeader } from "@/components/dashboard/dashboard-header";
+import { PageHeader } from "@/components/layout/page-header";
+import { PageShell } from "@/components/layout/page-shell";
 import {
   ChartsSection,
+  DashboardIntro,
   LinkedInExportNudgeSection,
   MorningBriefingSection,
   RecentlyUpdatedSection,
@@ -63,9 +65,9 @@ export default async function DashboardPage() {
   const showSuggestedRow = show("dashboard.suggested-outreach");
 
   return (
-    <div className="space-y-8">
+    <PageShell width="full">
       <RenderStamp />
-      <DashboardHeader />
+      <PageHeader eyebrow="Your network" title="Stay in orbit" description={<DashboardIntro />} />
 
       {/* Today's meetings, when the calendar has any — nothing at all otherwise. */}
       <Suspense fallback={null}>
@@ -170,6 +172,6 @@ export default async function DashboardPage() {
           <TailSection bundle={bundle} />
         </Suspense>
       )}
-    </div>
+    </PageShell>
   );
 }

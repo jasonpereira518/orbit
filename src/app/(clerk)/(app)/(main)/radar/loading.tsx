@@ -1,12 +1,16 @@
+import { PageHeader } from "@/components/layout/page-header";
+import { PageShell } from "@/components/layout/page-shell";
 import { RadarPageSkeleton } from "@/components/loading/page-skeletons";
-import { RadarHeader } from "@/components/radar/radar-header";
 
-/** Mirrors page.tsx's shell (real header + same skeleton) for a seamless handoff. */
+/** Mirrors page.tsx's shell (the same static header + the same skeleton) for a seamless handoff. */
 export default function RadarLoading() {
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
-      <RadarHeader />
+    <PageShell width="wide">
+      <PageHeader
+        title="Radar"
+        description="Who to reach out to this week, and why. Orbit checks your network every night."
+      />
       <RadarPageSkeleton />
-    </div>
+    </PageShell>
   );
 }

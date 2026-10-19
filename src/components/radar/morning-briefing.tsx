@@ -7,7 +7,7 @@ import { preloadFollowUpDraftSheet } from "@/components/follow-up/follow-up-draf
 import { RecommendationDraftSheet, type RecommendationCardData } from "@/components/radar/recommendation-card";
 import { useRecommendationActions } from "@/components/radar/use-recommendation-actions";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -48,25 +48,26 @@ export function MorningBriefing({ items, total, today, drafts, changes, paused }
 
   return (
     <section aria-labelledby="radar-briefing-title">
-      <Card className="border-border/70 shadow-none">
-        <CardContent className="space-y-4 p-4 sm:p-5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="flex items-center gap-1.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-                <Radar className="size-3.5 text-primary" aria-hidden />
-                Radar
-              </p>
-              <h2 id="radar-briefing-title" className="mt-1 font-heading text-xl text-ink sm:text-2xl">
-                {headline}
-              </h2>
-              {sub.length > 0 && <p className="mt-0.5 text-sm text-muted-foreground">{sub.join(" · ")}</p>}
-            </div>
-            <Link href="/radar" className={cn(buttonVariants({ variant: "outline", size: "sm" }), "shrink-0")}>
-              Open Radar <ArrowRight className="ml-1 size-3.5" aria-hidden />
+      <Card>
+        <CardHeader>
+          <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            <Radar className="size-3.5 text-primary" aria-hidden />
+            Radar
+          </p>
+          {/* The dashboard's hero line, so it sits a step above the other card titles. */}
+          <CardTitle as="h2" id="radar-briefing-title" className="text-xl sm:text-2xl">
+            {headline}
+          </CardTitle>
+          {sub.length > 0 && <p className="text-sm text-muted-foreground">{sub.join(" · ")}</p>}
+          <CardAction>
+            <Link href="/radar" className={buttonVariants({ variant: "outline", size: "sm" })}>
+              Open Radar <ArrowRight className="size-3.5" aria-hidden />
             </Link>
-          </div>
+          </CardAction>
+        </CardHeader>
 
-          {(items.length > 0 || changes.length > 0) && (
+        {(items.length > 0 || changes.length > 0) && (
+          <CardContent>
             <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
               {items.length > 0 && (
                 <ul className="space-y-2" aria-label="Today’s first people">
@@ -76,8 +77,8 @@ export function MorningBriefing({ items, total, today, drafts, changes, paused }
                 </ul>
               )}
               {changes.length > 0 && (
-                <section aria-labelledby="radar-briefing-changed" className="min-w-0 rounded-xl bg-muted/40 p-3">
-                  <h3 id="radar-briefing-changed" className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                <section aria-labelledby="radar-briefing-changed" className="min-w-0 rounded-lg border border-border-subtle bg-surface-inset p-3">
+                  <h3 id="radar-briefing-changed" className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     What changed overnight
                   </h3>
                   <ul className="mt-1.5 space-y-1.5">
@@ -94,15 +95,12 @@ export function MorningBriefing({ items, total, today, drafts, changes, paused }
                 </section>
               )}
             </div>
-          )}
-        </CardContent>
+          </CardContent>
+        )}
       </Card>
     </section>
   );
 }
-
-const iconButton =
-  "tap-target inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-ink disabled:opacity-50";
 
 /** One person, compact: who, the one line of why, and draft / schedule / dismiss. */
 function BriefingRow({ rec }: { rec: RecommendationCardData }) {
@@ -116,7 +114,7 @@ function BriefingRow({ rec }: { rec: RecommendationCardData }) {
       )}
     >
       <div className="min-h-0 overflow-hidden">
-        <div className="flex items-center gap-2 rounded-xl border border-border/60 bg-card px-2.5 py-2.5 sm:gap-3 sm:px-3">
+        <div className="flex items-center gap-2 rounded-xl border border-border-subtle bg-card px-2.5 py-2.5 sm:gap-3 sm:px-3">
           <ContactAvatar contactId={rec.contactId} fullName={rec.contactName} profileImageUrl={rec.avatarUrl} size="sm" />
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-2">
@@ -149,7 +147,11 @@ function BriefingRow({ rec }: { rec: RecommendationCardData }) {
             <span className="hidden sm:inline">{rec.draft ? "Review draft" : "Draft"}</span>
           </Button>
           <DropdownMenu>
-            <DropdownMenuTrigger className={iconButton} disabled={actions.pending} aria-label={`Schedule a follow-up with ${rec.contactName}`}>
+            <DropdownMenuTrigger
+              render={<Button type="button" variant="ghost" size="icon" className="tap-target shrink-0 text-muted-foreground" />}
+              disabled={actions.pending}
+              aria-label={`Schedule a follow-up with ${rec.contactName}`}
+            >
               <CalendarPlus className="size-4" aria-hidden />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-44">
@@ -159,15 +161,17 @@ function BriefingRow({ rec }: { rec: RecommendationCardData }) {
               <DropdownMenuItem onClick={() => actions.schedule(14)}>2 weeks</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <button
+          <Button
             type="button"
-            className={iconButton}
+            variant="ghost"
+            size="icon"
+            className="tap-target shrink-0 text-muted-foreground"
             disabled={actions.pending}
             aria-label={`Dismiss the suggestion about ${rec.contactName}`}
             onClick={actions.dismiss}
           >
             <X className="size-4" aria-hidden />
-          </button>
+          </Button>
         </div>
       </div>
       {actions.draftOpen && <RecommendationDraftSheet rec={rec} actions={actions} />}

@@ -3,10 +3,13 @@
 import { useEffect, useState, useSyncExternalStore, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { format, formatDistanceToNow } from "date-fns";
+import { format } from "date-fns";
 import { ChevronLeft, ChevronRight, Focus, LayoutList, Play, RefreshCw, Wand2 } from "lucide-react";
 import { AiKeyNotice } from "@/components/ai-key-notice";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { RelativeTime } from "@/components/ui/relative-time";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import { useViewerPlan } from "@/components/viewer-plan";
 import { RecommendationCard, type RecommendationCardData } from "@/components/radar/recommendation-card";
 import { RadarSettingsSheet } from "@/components/radar/radar-settings-sheet";
@@ -20,7 +23,6 @@ import { RADAR_CAPS } from "@/lib/radar/score";
 import { KIND_SECTION_TITLES, RECOMMENDATION_KINDS, type RecommendationKind } from "@/lib/radar/types";
 import { toast } from "@/lib/toast";
 import { syncTimeZoneCookie } from "@/lib/tz-cookie";
-import { cn } from "@/lib/utils";
 
 export type RadarAutopilotItem = {
   id: string;
@@ -46,6 +48,11 @@ export type RadarViewProps = {
 
 type Mode = "focus" | "list";
 const MODE_KEY = "orbit.radar.mode";
+
+const MODE_ITEMS = [
+  { key: "focus" as const, label: "Focus", icon: <Focus aria-hidden /> },
+  { key: "list" as const, label: "List", icon: <LayoutList aria-hidden /> },
+];
 
 function storedMode(): Mode | null {
   try {
@@ -133,12 +140,16 @@ export function RadarView(props: RadarViewProps) {
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
-        <p suppressHydrationWarning>
-          {paused
-            ? "Paused. Nothing updates overnight until you resume."
-            : lastRunAt
-              ? `Updated ${formatDistanceToNow(new Date(lastRunAt), { addSuffix: true })}`
-              : "Your first list is being put together."}
+        <p>
+          {paused ? (
+            "Paused. Nothing updates overnight until you resume."
+          ) : lastRunAt ? (
+            <>
+              Updated <RelativeTime date={lastRunAt} />
+            </>
+          ) : (
+            "Your first list is being put together."
+          )}
           {!paused && signalsThisWeek > 0 && (
             <span>
               {" · "}
@@ -148,10 +159,15 @@ export function RadarView(props: RadarViewProps) {
         </p>
         <div className="flex flex-wrap items-center gap-1.5">
           {recommendations.length > 0 && (
-            <div role="group" aria-label="Layout" className="mr-1 inline-flex rounded-lg border border-border/70 p-0.5">
-              <ModeButton active={mode === "focus"} onClick={() => chooseMode("focus")} icon={Focus} label="Focus" />
-              <ModeButton active={mode === "list"} onClick={() => chooseMode("list")} icon={LayoutList} label="List" />
-            </div>
+            <SegmentedControl
+              items={MODE_ITEMS}
+              value={mode}
+              onChange={chooseMode}
+              ariaLabel="Layout"
+              variant="subtle"
+              size="sm"
+              className="mr-1"
+            />
           )}
           {paused ? (
             <Button type="button" size="sm" variant="outline" className="h-8" disabled={pending} onClick={resume}>
@@ -160,8 +176,8 @@ export function RadarView(props: RadarViewProps) {
             </Button>
           ) : (
             <Button type="button" size="sm" variant="outline" className="h-8" disabled={pending} onClick={refresh}>
-              <RefreshCw className={pending ? "size-3.5 animate-spin" : "size-3.5"} aria-hidden />
-              Refresh now
+              <RefreshCw className={pending ? "size-3.5 motion-safe:animate-spin" : "size-3.5"} aria-hidden />
+              {pending ? "Updating…" : "Refresh now"}
             </Button>
           )}
           <RadarSettingsSheet settings={settings} />
@@ -174,7 +190,7 @@ export function RadarView(props: RadarViewProps) {
       {!aiAvailable && recommendations.length > 0 && <AiKeyNotice feature="draft" reason={aiReason ?? "key_required"} compact />}
 
       {recommendations.length === 0 ? (
-        <EmptyState hasContacts={hasContacts} ranOnce={lastRunAt !== null} nextRunAt={nextRunAt} paused={paused} />
+        <RadarEmpty hasContacts={hasContacts} ranOnce={lastRunAt !== null} nextRunAt={nextRunAt} paused={paused} />
       ) : mode === "focus" ? (
         <FocusDeck recommendations={recommendations} index={index} setIndex={setIndex} aiAvailable={aiAvailable} />
       ) : (
@@ -184,52 +200,28 @@ export function RadarView(props: RadarViewProps) {
   );
 }
 
-function ModeButton({
-  active,
-  onClick,
-  icon: Icon,
-  label,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: typeof Focus;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={active}
-      onClick={onClick}
-      className={cn(
-        "tap-target inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium transition-colors",
-        active ? "bg-muted text-ink" : "text-muted-foreground hover:text-ink"
-      )}
-    >
-      <Icon className="size-3.5" aria-hidden />
-      {label}
-    </button>
-  );
-}
-
 /** New job moves, headlines and posts, one line each; a line takes you to its card. */
 function WhatChanged({ changes, onJump }: { changes: ChangeLine[]; onJump: (id: string) => void }) {
   return (
-    <section aria-labelledby="radar-changed" className="rounded-xl border border-border/60 bg-muted/30 px-3 py-2.5 sm:px-4">
-      <h2 id="radar-changed" className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+    <section aria-labelledby="radar-changed" className="rounded-lg border border-border-subtle bg-surface-inset px-3 py-2.5 sm:px-4">
+      <h2 id="radar-changed" className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
         What changed
       </h2>
       <ul className="mt-1.5 space-y-1">
         {changes.map((c) => (
           <li key={c.id} className="min-w-0">
-            <button
+            <Button
               type="button"
+              variant="link"
               onClick={() => onJump(c.id)}
-              className="tap-target w-full truncate text-left text-sm text-ink/90 hover:text-ink hover:underline"
+              className="tap-target h-auto w-full justify-start px-0 py-0.5 font-normal text-ink/90 hover:text-ink"
             >
-              <span className="font-medium text-ink">{c.contactName}</span>
-              <span className="text-muted-foreground"> · </span>
-              {c.label}
-            </button>
+              <span className="truncate">
+                <span className="font-medium text-ink">{c.contactName}</span>
+                <span className="text-muted-foreground"> · </span>
+                {c.label}
+              </span>
+            </Button>
           </li>
         ))}
       </ul>
@@ -253,15 +245,15 @@ function AutopilotDid({ items }: { items: RadarAutopilotItem[] }) {
       }
     });
   return (
-    <section aria-labelledby="radar-autopilot" className="rounded-xl border border-border/60 px-3 py-2.5 sm:px-4">
-      <h2 id="radar-autopilot" className="flex items-center gap-1.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+    <section aria-labelledby="radar-autopilot" className="rounded-lg border border-border-subtle px-3 py-2.5 sm:px-4">
+      <h2 id="radar-autopilot" className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
         <Wand2 className="size-3.5" aria-hidden />
         Autopilot did this
       </h2>
       <ul className="mt-1.5 space-y-1">
         {items.map((a) => (
           <li key={a.id} className="flex items-center justify-between gap-2 text-sm">
-            <span className="min-w-0 truncate" suppressHydrationWarning>
+            <span className="min-w-0 truncate">
               Follow-up with{" "}
               <Link href={`/contacts/${a.contactId}`} className="font-medium text-primary hover:underline">
                 {a.contactName}
@@ -313,7 +305,7 @@ function FocusDeck({
   return (
     <section aria-labelledby="radar-focus" className="space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <h2 id="radar-focus" className="text-lg font-medium text-ink">
+        <h2 id="radar-focus" className="font-heading text-lg font-medium text-ink">
           {inToday ? "Today" : KIND_SECTION_TITLES[current.kind]}
           <span className="ml-2 text-sm font-normal text-muted-foreground">
             {at + 1} of {count}
@@ -336,7 +328,7 @@ function FocusDeck({
             {s.keys.map((k, j) => (
               <span key={k}>
                 {j > 0 ? "/" : ""}
-                <kbd className="rounded border border-border/70 bg-muted px-1 font-sans text-2xs text-ink">{k}</kbd>
+                <kbd className="rounded border border-border-subtle bg-muted px-1 font-sans text-2xs text-ink">{k}</kbd>
               </span>
             ))}{" "}
             {s.label}
@@ -360,7 +352,7 @@ function ListView({ recommendations, aiAvailable }: { recommendations: Recommend
   return (
     <>
       <section aria-labelledby="radar-today" className="space-y-3">
-        <h2 id="radar-today" className="text-lg font-medium text-ink">
+        <h2 id="radar-today" className="font-heading text-lg font-medium text-ink">
           Today
         </h2>
         <div className="space-y-3">
@@ -379,7 +371,7 @@ function ListView({ recommendations, aiAvailable }: { recommendations: Recommend
 function KindSection({ kind, items, aiAvailable }: { kind: RecommendationKind; items: RecommendationCardData[]; aiAvailable: boolean }) {
   return (
     <section aria-labelledby={`radar-${kind}`} className="space-y-3">
-      <h2 id={`radar-${kind}`} className="text-base font-medium text-ink">
+      <h2 id={`radar-${kind}`} className="font-heading text-lg font-medium text-ink">
         {KIND_SECTION_TITLES[kind]}
       </h2>
       <div className="space-y-3">
@@ -391,7 +383,7 @@ function KindSection({ kind, items, aiAvailable }: { kind: RecommendationKind; i
   );
 }
 
-function EmptyState({
+function RadarEmpty({
   hasContacts,
   ranOnce,
   nextRunAt,
@@ -404,28 +396,33 @@ function EmptyState({
 }) {
   if (!hasContacts) {
     return (
-      <div className="rounded-2xl border border-dashed border-border p-8 text-center">
-        <p className="font-medium text-ink">Radar needs people to look at</p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Add a few contacts or import your LinkedIn connections, and Radar will start suggesting who to reach out to.
-        </p>
-        <Link href="/imports" className="mt-4 inline-block text-sm font-medium text-primary hover:underline">
-          Import your network
-        </Link>
-      </div>
+      <EmptyState
+        title="Radar needs people to look at"
+        description="Add a few contacts or import your LinkedIn connections, and Radar will start suggesting who to reach out to."
+        action={
+          <Link href="/imports" className={buttonVariants({ variant: "outline", size: "sm" })}>
+            Import your network
+          </Link>
+        }
+      />
     );
   }
-  const next = nextRunAt ? new Date(nextRunAt) : null;
   return (
-    <div className="rounded-2xl border border-dashed border-border p-8 text-center">
-      <p className="font-medium text-ink">{ranOnce ? "All clear" : "Nothing yet"}</p>
-      <p className="mt-1 text-sm text-muted-foreground" suppressHydrationWarning>
-        {paused
-          ? "Radar is paused. Resume it to hear about new people."
-          : ranOnce
-            ? `Nobody needs you right now. Radar checks again ${next ? formatDistanceToNow(next, { addSuffix: true }) : "tonight"}, and anything new will show up here.`
-            : "Radar hasn’t found anyone to suggest yet. It checks your network every night."}
-      </p>
-    </div>
+    <EmptyState
+      title={ranOnce ? "All clear" : "Nothing yet"}
+      description={
+        paused ? (
+          "Radar is paused. Resume it to hear about new people."
+        ) : ranOnce ? (
+          <>
+            Nobody needs you right now. Radar checks again{" "}
+            {nextRunAt ? <RelativeTime date={nextRunAt} /> : "tonight"}, and anything new will show
+            up here.
+          </>
+        ) : (
+          "Radar hasn’t found anyone to suggest yet. It checks your network every night."
+        )
+      }
+    />
   );
 }

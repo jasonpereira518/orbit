@@ -1,5 +1,6 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { NetworkMetrics } from "@/lib/network-metrics";
+import { TONE } from "@/lib/tone";
 import { cn } from "@/lib/utils";
 
 /**
@@ -13,30 +14,15 @@ import { cn } from "@/lib/utils";
  * this card read "Inner 0 (0%)". Same colours, different nouns.
  */
 const TIER_META = [
-  {
-    key: "inner" as const,
-    label: "Close",
-    color: "bg-emerald-500",
-    text: "text-emerald-700 dark:text-emerald-300",
-  },
-  {
-    key: "mid" as const,
-    label: "Warm",
-    color: "bg-amber-500",
-    text: "text-amber-700 dark:text-amber-300",
-  },
-  {
-    key: "outer" as const,
-    label: "Cool",
-    color: "bg-sky-500",
-    text: "text-sky-700 dark:text-sky-300",
-  },
+  { key: "inner" as const, label: "Close", color: TONE.success.dot, text: TONE.success.text },
+  { key: "mid" as const, label: "Warm", color: TONE.warning.dot, text: TONE.warning.text },
+  { key: "outer" as const, label: "Cool", color: TONE.info.dot, text: TONE.info.text },
 ];
 
 const DEGREE_BUCKETS = [
   { key: "none" as const, label: "0 links", color: "bg-muted-foreground/25" },
-  { key: "oneToTwo" as const, label: "1–2 links", color: "bg-sky-500/70" },
-  { key: "threePlus" as const, label: "3+ links", color: "bg-emerald-500/80" },
+  { key: "oneToTwo" as const, label: "1–2 links", color: "bg-info/70" },
+  { key: "threePlus" as const, label: "3+ links", color: "bg-success/80" },
 ];
 
 function pct(count: number, total: number) {
@@ -77,19 +63,19 @@ export function NetworkDepthChart({
   const barWidths = tierBarWidths(tierCounts, tierTotal);
 
   return (
-    <Card className="border-border/70 shadow-none">
-      <CardHeader className="pb-4">
-        <CardTitle as="h2" className="text-base">Network depth</CardTitle>
-        <p className="text-sm text-muted-foreground">
-          How close your network feels and how people connect to each other
-        </p>
+    <Card>
+      <CardHeader>
+        <CardTitle as="h2">Network depth</CardTitle>
+        <CardDescription>
+          How close your network feels and how people connect to each other.
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
         <div className="space-y-2.5">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Relationship strength
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Closeness
           </p>
-          <div className="flex h-3.5 overflow-hidden rounded-full bg-muted/40">
+          <div className="flex h-3.5 overflow-hidden rounded-full bg-muted">
             {TIER_META.map((t) => {
               const width = barWidths[t.key];
               if (width <= 0) return null;
@@ -120,7 +106,7 @@ export function NetworkDepthChart({
                   className="flex items-baseline justify-between gap-2 text-sm"
                 >
                   <span className="flex items-center gap-2">
-                    <span className={cn("h-2 w-2 shrink-0 rounded-full", t.color)} />
+                    <span className={cn("size-2 shrink-0 rounded-full", t.color)} aria-hidden />
                     <span className={t.text}>{t.label}</span>
                   </span>
                   <span className="tabular-nums text-muted-foreground">
@@ -132,14 +118,14 @@ export function NetworkDepthChart({
             })}
           </div>
           <p className="text-xs text-muted-foreground">
-            Strength, recency, cadence, and goal alignment combined — measured on
-            its own terms, not ranked against the rest of your network
+            Closeness, recency, cadence, and goal alignment combined — measured on its own
+            terms, not ranked against the rest of your network.
           </p>
         </div>
 
-        <div className="space-y-2.5 border-t border-border/60 pt-4">
+        <div className="space-y-2.5 border-t border-border-subtle pt-4">
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Peer connections
             </p>
             {sampled && (
@@ -165,7 +151,7 @@ export function NetworkDepthChart({
                   <span className="w-16 shrink-0 text-muted-foreground">
                     {b.label}
                   </span>
-                  <div className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-muted/40">
+                  <div className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
                     <div
                       className={cn("h-full rounded-full", b.color)}
                       style={{
@@ -181,8 +167,7 @@ export function NetworkDepthChart({
             })}
           </div>
           <p className="text-xs text-muted-foreground">
-            Links inferred from shared company, school, tags, interests, and
-            mentions
+            Links inferred from shared company, school, tags, interests, and mentions.
           </p>
         </div>
       </CardContent>
@@ -193,7 +178,7 @@ export function NetworkDepthChart({
 function StatMini({ label, value }: { label: string; value: number }) {
   return (
     <div>
-      <p className="text-3xs uppercase tracking-wide text-muted-foreground">
+      <p className="text-3xs font-medium uppercase tracking-wider text-muted-foreground">
         {label}
       </p>
       <p className="mt-0.5 font-heading text-xl text-ink">

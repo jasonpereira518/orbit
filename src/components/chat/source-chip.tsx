@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { getEvidenceSnippet } from "@/actions/chat";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
+import { IntegrationLogo } from "@/components/integrations/integration-logo";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { interactionTypeLabel } from "@/lib/interaction-types";
 import { cn } from "@/lib/utils";
@@ -70,7 +71,7 @@ function LiveSourceChip({ messageId, id, number }: { messageId: string; id: stri
       <PopoverContent className="w-64" side="top">
         {!snippet || loading ? (
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground" role="status">
-            <Loader2 className="size-3.5 animate-spin" aria-hidden /> Loading…
+            <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden /> Loading…
           </p>
         ) : !snippet.found ? (
           <p className="text-xs text-muted-foreground">That note has been removed.</p>
@@ -96,8 +97,13 @@ function LiveSourceChip({ messageId, id, number }: { messageId: string; id: stri
             )}
             {snippet.kind === "meeting" && <p className="text-muted-foreground">{snippet.date} · Recorded meeting</p>}
             {snippet.kind === "interaction" && (
-              <p className="text-muted-foreground">
-                {snippet.date} · {interactionTypeLabel(snippet.interactionType)}
+              <p className="flex items-center gap-1 text-muted-foreground">
+                {snippet.date} ·{" "}
+                {/* A source that came from a provider shows that provider's mark. */}
+                {snippet.interactionType === "linkedin_message" && (
+                  <IntegrationLogo provider="linkedin" size="sm" tile={false} title="" />
+                )}
+                {interactionTypeLabel(snippet.interactionType)}
               </p>
             )}
             {snippet.snippet && <p className="leading-relaxed text-foreground">{snippet.snippet}</p>}

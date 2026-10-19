@@ -1,3 +1,5 @@
+import { Badge } from "@/components/ui/badge";
+import { TONE, type Tone } from "@/lib/tone";
 import { cn } from "@/lib/utils";
 
 const TIER_LABELS = {
@@ -6,17 +8,12 @@ const TIER_LABELS = {
   outer: "Outer orbit",
 } as const;
 
-const TIER_STYLES = {
-  inner: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
-  mid: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
-  outer: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
-} as const;
-
-const TIER_DOT = {
-  inner: "bg-emerald-500",
-  mid: "bg-sky-500",
-  outer: "bg-amber-500",
-} as const;
+/** One tone per tier, on the status tokens: inner reads as success, mid as info, outer as warning. */
+export const TIER_TONE: Record<keyof typeof TIER_LABELS, Tone> = {
+  inner: "success",
+  mid: "info",
+  outer: "warning",
+};
 
 export function ClosenessTierBadge({
   tier,
@@ -30,25 +27,15 @@ export function ClosenessTierBadge({
   if (dotOnly) {
     return (
       <span
-        className={cn(
-          "inline-block h-2 w-2 shrink-0 rounded-full",
-          TIER_DOT[tier],
-          className
-        )}
+        className={cn("inline-block size-2 shrink-0 rounded-full", TONE[TIER_TONE[tier]].dot, className)}
         title={TIER_LABELS[tier]}
       />
     );
   }
 
   return (
-    <span
-      className={cn(
-        "inline-flex shrink-0 rounded-full px-2 py-0.5 text-3xs font-medium uppercase tracking-wide",
-        TIER_STYLES[tier],
-        className
-      )}
-    >
+    <Badge tone={TIER_TONE[tier]} size="sm" className={className}>
       {TIER_LABELS[tier]}
-    </span>
+    </Badge>
   );
 }

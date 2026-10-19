@@ -1,9 +1,11 @@
 import { Suspense } from "react";
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
+import { revealDelay } from "@/components/dashboard/dashboard-sections";
 import { NetworkStatsCard } from "@/components/dashboard/network-stats-card";
+import { PageHeader } from "@/components/layout/page-header";
+import { PageShell } from "@/components/layout/page-shell";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { RadarPageSkeleton } from "@/components/loading/page-skeletons";
-import { RadarHeader } from "@/components/radar/radar-header";
 import { RadarView } from "@/components/radar/radar-view";
 import { fetchRadar } from "@/actions/radar";
 
@@ -62,14 +64,17 @@ export default async function RadarPage({ searchParams }: { searchParams: Promis
   if (gate) return gate;
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <PageShell width="wide">
       <RenderStamp />
-      <RadarHeader />
-      <div className="reveal-mount" style={{ "--reveal-delay": "90ms" } as React.CSSProperties}>
+      <PageHeader
+        title="Radar"
+        description="Who to reach out to this week, and why. Orbit checks your network every night."
+      />
+      <div className="reveal-mount" style={revealDelay(90)}>
         <Suspense fallback={<RadarPageSkeleton />}>
           <RadarBody searchParams={searchParams} />
         </Suspense>
       </div>
-    </div>
+    </PageShell>
   );
 }

@@ -1,16 +1,19 @@
-import { format, formatDistanceToNowStrict } from "date-fns";
+import { format } from "date-fns";
 import { ArrowLeft, ArrowUpRight, Calendar, Sparkles, Target, Users } from "lucide-react";
 import { listRelatedContacts } from "@/actions/contacts";
 import { AiKeyNotice } from "@/components/ai-key-notice";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
+import { TIER_TONE } from "@/components/dashboard/closeness-tier-badge";
 import { DossierRefresh } from "@/components/knowledge/dossier-refresh";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
 import { IntentLink } from "@/components/ui/intent-link";
+import { RelativeTime } from "@/components/ui/relative-time";
 import { getAiAccessStatus } from "@/lib/ai-access";
-import { closenessTierChipClass } from "@/lib/closeness";
 import { shouldAutoRefreshBrief } from "@/lib/contact-brief";
+import { PRESS, ROW_HOVER_INSET } from "@/lib/interaction";
 import { loadKnowledgeDossier } from "@/lib/knowledge-dossier";
 import { requireUserForSurface } from "@/lib/plan-guards";
 import { cn } from "@/lib/utils";
@@ -38,14 +41,10 @@ export async function DossierPane({ contactId }: { contactId: string }) {
     return (
       <div className="space-y-4">
         <BackToPeople />
-        <div className="rounded-2xl border border-dashed border-border/70 px-6 py-12 text-center">
-          <h2 className="font-heading text-xl text-ink">
-            We couldn’t find that person
-          </h2>
-          <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
-            They may have been merged into someone else or removed. Pick anyone from the list.
-          </p>
-        </div>
+        <EmptyState
+          title="We couldn’t find that person"
+          description="They may have been merged into someone else or removed. Pick anyone from the list."
+        />
       </div>
     );
   }
@@ -90,43 +89,45 @@ export async function DossierPane({ contactId }: { contactId: string }) {
           {role ? <p className="mt-0.5 text-sm text-muted-foreground">{role}</p> : null}
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             {tier ? (
-              <Badge variant="secondary" className={cn("text-3xs", closenessTierChipClass(tier))}>
+              <Badge tone={TIER_TONE[tier]} size="sm">
                 {TIER_LABEL[tier]}
               </Badge>
             ) : null}
             {contact.location ? <span>{contact.location}</span> : null}
             {contact.lastInteractionAt ? (
               <span>
-                Last in touch{" "}
-                {formatDistanceToNowStrict(contact.lastInteractionAt, { addSuffix: true })}
+                Last interaction <RelativeTime date={contact.lastInteractionAt} />
               </span>
             ) : (
-              <span>No conversations logged yet</span>
+              <span>No interactions yet</span>
             )}
           </div>
         </div>
-        <IntentLink
-          href={`/contacts/${contact.id}`}
-          className={cn(buttonVariants({ variant: "outline", size: "sm" }), "gap-1.5")}
-        >
+        <IntentLink href={`/contacts/${contact.id}`} className={buttonVariants({ variant: "outline", size: "sm" })}>
           Open profile <ArrowUpRight className="size-3.5" aria-hidden />
         </IntentLink>
       </header>
 
       {!aiReady ? <AiKeyNotice feature="knowledge" reason={ai?.reason ?? null} compact /> : null}
 
-      <Card className="border-border/70 shadow-none">
-        <CardHeader className="flex-row items-center justify-between gap-3 border-b border-border/50">
+      <Card>
+        <CardHeader className="border-b border-border-subtle">
           <CardTitle as="h3" className="flex items-center gap-2">
             <Sparkles className="size-4 text-primary" aria-hidden /> About {name}
           </CardTitle>
-          <DossierRefresh
-            contactId={contact.id}
-            updatedLabel={
-              brief ? `Updated ${formatDistanceToNowStrict(brief.generatedAt, { addSuffix: true })}` : null
-            }
-            auto={auto}
-          />
+          <CardAction>
+            <DossierRefresh
+              contactId={contact.id}
+              updatedLabel={
+                brief ? (
+                  <>
+                    Updated <RelativeTime date={brief.generatedAt} />
+                  </>
+                ) : null
+              }
+              auto={auto}
+            />
+          </CardAction>
         </CardHeader>
         <CardContent className="space-y-4">
           {contact.aiSummary ? (
@@ -139,14 +140,14 @@ export async function DossierPane({ contactId }: { contactId: string }) {
           )}
           {brief?.standing && brief.standing !== contact.aiSummary ? (
             <div>
-              <p className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 Where things stand
               </p>
               <p className="mt-1 text-sm leading-relaxed text-foreground/90">{brief.standing}</p>
             </div>
           ) : null}
           {brief?.nextStep ? (
-            <p className="rounded-xl bg-accent px-3 py-2 text-sm text-accent-foreground">
+            <p className="rounded-lg bg-accent px-3 py-2 text-sm text-accent-foreground">
               <span className="font-medium">Next: </span>
               {brief.nextStep}
             </p>
@@ -154,8 +155,8 @@ export async function DossierPane({ contactId }: { contactId: string }) {
         </CardContent>
       </Card>
 
-      <Card className="border-border/70 shadow-none">
-        <CardHeader className="border-b border-border/50">
+      <Card>
+        <CardHeader className="border-b border-border-subtle">
           <CardTitle as="h3" className="flex items-center gap-2">
             <Target className="size-4 text-primary" aria-hidden /> Fit with your goals
           </CardTitle>
@@ -174,7 +175,7 @@ export async function DossierPane({ contactId }: { contactId: string }) {
           ) : goals.fits.length > 0 ? (
             <ul className="space-y-3">
               {goals.fits.map((f) => (
-                <li key={f.goalId} className="rounded-xl border border-border/60 px-3.5 py-3">
+                <li key={f.goalId} className="rounded-lg border border-border-subtle px-3.5 py-3">
                   <p className="text-xs font-medium text-primary">{f.goalText}</p>
                   <p className="mt-1 text-sm leading-relaxed text-foreground/90">{f.why}</p>
                 </li>
@@ -195,8 +196,8 @@ export async function DossierPane({ contactId }: { contactId: string }) {
         </CardContent>
       </Card>
 
-      <Card className="border-border/70 shadow-none">
-        <CardHeader className="border-b border-border/50">
+      <Card>
+        <CardHeader className="border-b border-border-subtle">
           <CardTitle as="h3" className="flex items-center gap-2">
             <Users className="size-4 text-primary" aria-hidden /> Connected to
           </CardTitle>
@@ -207,12 +208,12 @@ export async function DossierPane({ contactId }: { contactId: string }) {
               No one else in your orbit shares a company, school, event or note with {name} yet.
             </p>
           ) : (
-            <ul className="divide-y divide-border/50">
+            <ul className="divide-y divide-border-subtle">
               {related.map((r) => (
                 <li key={r.id}>
                   <IntentLink
                     href={`/knowledge?p=${r.id}`}
-                    className="-mx-2 flex items-center gap-3 rounded-lg px-2 py-2.5 transition-colors hover:bg-muted/40"
+                    className={cn("-mx-2 flex items-center gap-3 px-2 py-2.5", ROW_HOVER_INSET, PRESS)}
                   >
                     <ContactAvatar
                       contactId={r.id}
@@ -227,9 +228,9 @@ export async function DossierPane({ contactId }: { contactId: string }) {
                         {[r.title, r.company].filter(Boolean).join(" · ")}
                       </p>
                     </div>
-                    <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-2xs text-muted-foreground">
+                    <Badge tone="neutral" size="sm" className="normal-case tracking-normal">
                       {r.reasonLabel}
-                    </span>
+                    </Badge>
                   </IntentLink>
                 </li>
               ))}
@@ -238,8 +239,8 @@ export async function DossierPane({ contactId }: { contactId: string }) {
         </CardContent>
       </Card>
 
-      <Card className="border-border/70 shadow-none">
-        <CardHeader className="border-b border-border/50">
+      <Card>
+        <CardHeader className="border-b border-border-subtle">
           <CardTitle as="h3">What Orbit knows</CardTitle>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -351,7 +352,7 @@ function Fact({
   return (
     <section>
       <div className="mb-1.5 flex items-baseline justify-between gap-3">
-        <h4 className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{label}</h4>
+        <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{label}</h4>
         <span className="text-2xs text-muted-foreground/80">{source}</span>
       </div>
       {children}

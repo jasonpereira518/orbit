@@ -75,7 +75,7 @@ export function DueFollowUpRow({
   const meta = [role, due?.text, lastTouch].filter(Boolean);
 
   return (
-    <div className="rounded-xl border border-border/60 bg-card p-3">
+    <div className="rounded-xl border border-border-subtle bg-card p-3">
       <div className="flex items-start justify-between gap-3">
         <IntentLink href={`/contacts/${id}`} className="min-w-0 hover:underline">
           <div className="flex flex-wrap items-center gap-2">

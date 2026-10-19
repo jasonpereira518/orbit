@@ -48,7 +48,7 @@ export function GenerateFollowUpsButton({
         })
       }
     >
-      <Sparkles className="h-3.5 w-3.5" />
+      <Sparkles className="size-3.5" aria-hidden />
       {pending ? "Generating…" : label}
     </Button>
   );

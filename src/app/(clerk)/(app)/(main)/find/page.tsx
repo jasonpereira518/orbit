@@ -1,6 +1,8 @@
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
-import { FindHeader } from "@/components/find/find-header";
+import { revealDelay } from "@/components/dashboard/dashboard-sections";
 import { FindPeople } from "@/components/find/find-people";
+import { PageHeader } from "@/components/layout/page-header";
+import { PageShell } from "@/components/layout/page-shell";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { userCanUseAi } from "@/lib/ai";
 import { requireUserId } from "@/lib/auth";
@@ -14,12 +16,15 @@ export default async function FindPage() {
   const userId = await requireUserId();
   const [canUseAi, recent] = await Promise.all([userCanUseAi(userId), listRecentResearch(userId)]);
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <PageShell width="default">
       <RenderStamp />
-      <FindHeader />
-      <div className="reveal-mount" style={{ "--reveal-delay": "90ms" } as React.CSSProperties}>
+      <PageHeader
+        title="Find people"
+        description="Research someone outside your network from the public web, then save them to Orbit."
+      />
+      <div className="reveal-mount" style={revealDelay(90)}>
         <FindPeople canUseAi={canUseAi} recent={recent} />
       </div>
-    </div>
+    </PageShell>
   );
 }

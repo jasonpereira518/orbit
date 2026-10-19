@@ -78,7 +78,10 @@ import { OrbitMark } from "@/components/chat/orbit-mark";
 import { AnswerActions } from "@/components/chat/answer-actions";
 import { ReminderButton } from "@/components/chat/reminder-button";
 import { ChatHistoryRail } from "@/components/chat/chat-history-rail";
+import { AiKeyNotice } from "@/components/ai-key-notice";
 import { Skeleton } from "@/components/ui/skeleton";
+import { aiDenialFromMessage } from "@/lib/ai-access-copy";
+import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 import { headerTitleAfterAnswer, threadsAfterAnswer } from "@/lib/chat-answer-landed";
 import { createThreadPrefetcher } from "@/lib/chat-thread-prefetch";
 import type { ChatStep } from "@/lib/chat-stream-protocol";
@@ -349,6 +352,12 @@ export function ChatPanel({
   }, []);
   const [loadingThread, setLoadingThread] = useState(false);
   const [lastUserQuery, setLastUserQuery] = useState("");
+  /**
+   * A stream the AI gate refused (no key, out of credits, Orbit's AI down). The ask bar
+   * turns the same error into `AiKeyNotice`; a toast alone vanished before anyone could read
+   * which way out applied. Cleared when the next question is sent.
+   */
+  const [streamDenial, setStreamDenial] = useState<AiAccessDenial | null>(null);
   /**
    * People attached with `+` or `@` — a registry of what has been picked, never the live
    * set.
@@ -963,6 +972,7 @@ export function ChatPanel({
 
       const assistantId = newId();
       setStreaming(true);
+      setStreamDenial(null);
       void (async () => {
         let activeId: string;
         try {
@@ -1070,6 +1080,9 @@ export function ChatPanel({
               // A stop is the user's own doing, not a failure: keep whatever arrived and
               // say plainly that it was cut short rather than deleting it and apologising.
               if (controller.signal.aborted) return;
+              // A refusal from the AI gate gets the notice (with the right way out), not a toast.
+              const denial = aiDenialFromMessage(message);
+              if (denial) setStreamDenial(denial);
               if (placed) {
                 // Work already reached the screen — the trail, maybe half an answer. Keep it,
                 // say what went wrong beneath it, and put the question back to try again,
@@ -1079,7 +1092,7 @@ export function ChatPanel({
               } else {
                 // Nothing arrived; there is nothing to keep or reveal into.
                 smoother.cancel();
-                toast.error(message);
+                if (!denial) toast.error(message);
                 setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
               }
               resetQuestion(q);
@@ -1140,6 +1153,7 @@ export function ChatPanel({
       requestAnimationFrame(() => scrollToBottom(true));
 
       setStreaming(true);
+      setStreamDenial(null);
       void (async () => {
         let placed = false;
         const patch = (fn: (m: AssistantMessage) => AssistantMessage) =>
@@ -1197,7 +1211,9 @@ export function ChatPanel({
             onError: (message) => {
               if (controller.signal.aborted) return;
               smoother.cancel();
-              toast.error(message);
+              const denial = aiDenialFromMessage(message);
+              if (denial) setStreamDenial(denial);
+              else toast.error(message);
             },
           },
           controller.signal
@@ -1466,9 +1482,7 @@ export function ChatPanel({
                   ))}
                 </div>
               ) : threads.length === 0 ? (
-                <div className="px-2 py-3 text-xs text-muted-foreground">
-                  No saved chats yet.
-                </div>
+                <div className="px-2 py-3 text-xs text-muted-foreground">No chats yet</div>
               ) : (
                 threads.map((thread) => (
                   <DropdownMenuItem
@@ -1575,17 +1589,17 @@ export function ChatPanel({
               )}
             >
               {loadingThread ? (
-                <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin" />
+                <div role="status" className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
+                  <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden />
                   Loading chat…
                 </div>
               ) : (
                 <>
                   {messages.length === 0 && !busy && (
                     <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8 text-center sm:py-16">
-                      <p className="font-heading text-xl text-ink sm:text-2xl">
+                      <h2 className="font-heading text-xl text-ink sm:text-2xl">
                         Ask your <span className="gold-shimmer-text">network</span>
-                      </p>
+                      </h2>
                       <p className="max-w-md text-sm text-muted-foreground">
                         Who can help, who to follow up with, or who knows what —
                         try a suggestion below.
@@ -1635,7 +1649,7 @@ export function ChatPanel({
                   */}
                   {awaitingFirstToken && (
                     <div className="flex justify-start">
-                      <div className="flex items-center gap-2 px-1 py-2 text-sm text-muted-foreground">
+                      <div role="status" className="flex items-center gap-2 px-1 py-2 text-sm text-muted-foreground">
                         <OrbitMark reduceMotion={reduceMotion} />
                         Starting…
                       </div>
@@ -1675,10 +1689,11 @@ export function ChatPanel({
           </div>
           </div>
 
-          <div className="shrink-0 border-t border-border/60 bg-card p-3 sm:p-4">
+          <div className="shrink-0 border-t border-border-subtle bg-card p-3 sm:p-4">
             {/* `relative`: the `@` type-ahead anchors to this box's top edge, which is the
                 top of the composer pill. */}
             <div className="relative mx-auto max-w-3xl space-y-2.5">
+              {streamDenial && <AiKeyNotice feature="chat" reason={streamDenial} compact />}
               {/* One pill holding every control, rather than a field with satellites.
                   `items-end` keeps the buttons on the last line as the field grows. */}
               <div
@@ -2145,7 +2160,7 @@ const AssistantBubble = memo(function AssistantBubble({
           </p>
         )}
         {msg.failed && (
-          <p role="alert" className="text-xs text-destructive">
+          <p role="alert" className="text-sm text-destructive">
             {msg.failed.replace(/[.!?]?$/, ".")} This turn wasn’t saved — your question is back in the box to try again.
           </p>
         )}

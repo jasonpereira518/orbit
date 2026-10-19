@@ -2,7 +2,7 @@
 
 import { RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/lib/toast";
 
@@ -55,7 +55,7 @@ export function DossierRefresh({
 }: {
   contactId: string;
   /** "Updated 2 days ago", or null when there is no brief yet. */
-  updatedLabel: string | null;
+  updatedLabel: ReactNode | null;
   auto: boolean;
 }) {
   const router = useRouter();

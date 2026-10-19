@@ -3,6 +3,8 @@ import { listChatThreads } from "@/actions/chat";
 import { getSettings } from "@/actions/settings";
 import { AiKeyNotice } from "@/components/ai-key-notice";
 import { ChatPanelLazy } from "@/components/chat/chat-panel-lazy";
+import { PageHeader } from "@/components/layout/page-header";
+import { PageShell } from "@/components/layout/page-shell";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
 /** Ask/chat server actions call AI providers — allow longer serverless runs. */
@@ -25,7 +27,7 @@ export default async function ChatPage() {
 
   return (
     /**
-     * Height lives here, not on the panel.
+     * Height lives on the inner column, not on the panel (or on the shell).
      *
      * `(app)/template.tsx` wraps every route in a bare `<div>` for the view transition,
      * which is display:block — so the shell's bounded flex column stops there and neither
@@ -42,24 +44,23 @@ export default async function ChatPage() {
      * the composer under it. Measured at 375x812: page top 89px, Capture top 735px. The
      * safe-area term matters in standalone mode, where the nav rides above the home bar.
      */
-    <div className="flex h-[calc(100dvh-11.375rem-env(safe-area-inset-bottom))] min-h-0 flex-col gap-4 overflow-hidden md:h-[calc(100dvh-4rem)]">
-      <RenderStamp />
-      <div className="shrink-0">
-        <h1 className="font-heading text-3xl text-ink">
-          Chat with your network
-        </h1>
-        {/* Hidden on phones: the empty chat card says the same thing, and every line here
-            comes out of the message area. */}
-        <p className="mt-1 hidden text-muted-foreground sm:block">
-          Ask who can help, who to follow up with, or who knows what.
-        </p>
+    <PageShell width="full">
+      <div className="flex h-[calc(100dvh-11.375rem-env(safe-area-inset-bottom))] min-h-0 flex-col gap-4 overflow-hidden md:h-[calc(100dvh-4rem)]">
+        <RenderStamp />
+        <PageHeader
+          className="shrink-0"
+          title="Chat"
+          // Hidden on phones: the empty chat card says the same thing, and every line here
+          // comes out of the message area.
+          description={<span className="hidden sm:inline">Ask anything about the people you know.</span>}
+        />
+        {!settings.hasApiKey && (
+          <div className="shrink-0">
+            <AiKeyNotice feature="chat" reason={settings.ai.reason} compact />
+          </div>
+        )}
+        <ChatPanelLazy initialThreads={initialThreads} />
       </div>
-      {!settings.hasApiKey && (
-        <div className="shrink-0">
-          <AiKeyNotice feature="chat" reason={settings.ai.reason} compact />
-        </div>
-      )}
-      <ChatPanelLazy initialThreads={initialThreads} />
-    </div>
+    </PageShell>
   );
 }

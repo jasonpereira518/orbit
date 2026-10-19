@@ -17,6 +17,7 @@ export function EmptyState({
   action,
   variant = "dashed",
   size = "default",
+  titleAs: Title = "p",
   className,
 }: {
   icon?: LucideIcon;
@@ -25,6 +26,8 @@ export function EmptyState({
   action?: ReactNode;
   variant?: "dashed" | "plain" | "card";
   size?: "default" | "sm";
+  /** Heading level when the empty state is the section's only heading. */
+  titleAs?: "p" | "h2" | "h3";
   className?: string;
 }) {
   return (
@@ -49,7 +52,7 @@ export function EmptyState({
           <Icon />
         </span>
       )}
-      <p className={cn("font-medium text-ink", size === "sm" ? "text-sm" : "text-base")}>{title}</p>
+      <Title className={cn("font-medium text-ink", size === "sm" ? "text-sm" : "text-base")}>{title}</Title>
       {description && (
         <p className="mt-1 max-w-sm text-sm text-muted-foreground">{description}</p>
       )}

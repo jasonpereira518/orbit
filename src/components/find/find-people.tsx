@@ -2,15 +2,19 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { Building2, Check, ExternalLink, KeyRound, Loader2, RefreshCw, Search, UserPlus, UserSearch } from "lucide-react";
+import { Building2, Check, ExternalLink, Loader2, RefreshCw, Search, UserPlus, UserSearch } from "lucide-react";
+import { AiKeyNotice } from "@/components/ai-key-notice";
+import { PageSection } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { SegmentedControl, SegmentedPanel } from "@/components/ui/segmented-control";
+import { useViewerPlan } from "@/components/viewer-plan";
 import { saveResearchedPerson } from "@/actions/web-research";
 import { friendlyError, UserFacingError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
-import { cn } from "@/lib/utils";
 import type { Candidate, CompanyDossier, DiscoveryResult, PersonDossier, ResearchBrief } from "@/lib/web-research";
 
 type Brief = { key: string; dossier: ResearchBrief };
@@ -18,6 +22,12 @@ type PersonBrief = { key: string; dossier: PersonDossier };
 type CompanyBrief = { key: string; dossier: CompanyDossier };
 type DiscoveryBrief = { key: string; dossier: DiscoveryResult };
 type Mode = "person" | "company" | "discover";
+
+const MODE_ITEMS = [
+  { key: "person" as const, label: "A person", icon: <UserSearch aria-hidden /> },
+  { key: "company" as const, label: "A company", icon: <Building2 aria-hidden /> },
+  { key: "discover" as const, label: "By description", icon: <Search aria-hidden /> },
+];
 
 /** A LinkedIn profile page is the strongest anchor a brief can get. The server re-checks it. */
 const LINKEDIN_PROFILE = /^https?:\/\/([a-z]{2,3}\.)?linkedin\.com\/in\/[^/?#\s]+\/?$/i;
@@ -40,6 +50,7 @@ async function requestBrief(body: Record<string, unknown>): Promise<Brief> {
 }
 
 export function FindPeople({ canUseAi, recent }: { canUseAi: boolean; recent: Brief[] }) {
+  const { aiReason } = useViewerPlan();
   const [mode, setMode] = useState<Mode>("person");
   const [fullName, setFullName] = useState("");
   const [company, setCompany] = useState("");
@@ -89,41 +100,19 @@ export function FindPeople({ canUseAi, recent }: { canUseAi: boolean; recent: Br
 
   return (
     <div className="space-y-5">
-      {!canUseAi && (
-        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
-          <KeyRound className="size-4 shrink-0" aria-hidden />
-          <p className="min-w-0 flex-1">Research runs a web search on your AI provider. Add a key to start.</p>
-          <Link href="/settings?section=ai" className="font-medium underline underline-offset-4">
-            Add AI key
-          </Link>
-        </div>
-      )}
+      {/* Research runs a web search on the person's AI provider, so without AI it cannot run. */}
+      {!canUseAi && <AiKeyNotice feature="find" reason={aiReason ?? "key_required"} compact />}
 
-      <div role="tablist" aria-label="What to research" className="inline-flex rounded-lg border border-border/60 bg-muted/30 p-1">
-        {(
-          [
-            ["person", "A person", UserSearch],
-            ["company", "A company", Building2],
-            ["discover", "By description", Search],
-          ] as const
-        ).map(([value, label, Icon]) => (
-          <button
-            key={value}
-            type="button"
-            role="tab"
-            aria-selected={mode === value}
-            onClick={() => setMode(value)}
-            className={cn(
-              "inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors",
-              mode === value ? "bg-background text-ink shadow-sm" : "text-muted-foreground hover:text-ink"
-            )}
-          >
-            <Icon className="size-4" aria-hidden />
-            {label}
-          </button>
-        ))}
-      </div>
+      <SegmentedControl
+        id="find-mode"
+        items={MODE_ITEMS}
+        value={mode}
+        onChange={setMode}
+        ariaLabel="What to research"
+      />
 
+      {/* One form serves every mode, so it is the panel for whichever tab is selected. */}
+      <SegmentedPanel id="find-mode" value={mode} active={mode}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -135,17 +124,15 @@ export function FindPeople({ canUseAi, recent }: { canUseAi: boolean; recent: Br
                 : { kind: "discover", query }
           );
         }}
-        className="grid gap-3 rounded-xl border border-border/60 p-4 sm:grid-cols-2"
+        className="grid gap-4 rounded-xl border border-border-subtle bg-card p-4 sm:grid-cols-2"
       >
         {mode === "person" && (
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="find-name">Name</Label>
+          <FormField label="Name" id="find-name" className="sm:col-span-2">
             <Input id="find-name" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Jane Doe" autoComplete="off" maxLength={100} />
-          </div>
+          </FormField>
         )}
         {mode === "discover" && (
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="find-query">Who are you looking for?</Label>
+          <FormField label="Who are you looking for?" id="find-query" className="sm:col-span-2">
             <Input
               id="find-query"
               value={query}
@@ -154,29 +141,26 @@ export function FindPeople({ canUseAi, recent }: { canUseAi: boolean; recent: Br
               autoComplete="off"
               maxLength={300}
             />
-          </div>
+          </FormField>
         )}
         {mode !== "discover" && (
-        <>
-        <div className="space-y-1.5">
-          <Label htmlFor="find-company">Company</Label>
-          <Input id="find-company" value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Stripe" autoComplete="off" maxLength={100} />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="find-domain">Company website</Label>
-          <Input id="find-domain" value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="stripe.com" autoComplete="off" maxLength={253} />
-        </div>
-        </>
+          <>
+            <FormField label="Company" id="find-company">
+              <Input id="find-company" value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Stripe" autoComplete="off" maxLength={100} />
+            </FormField>
+            <FormField label="Company website" id="find-domain">
+              <Input id="find-domain" value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="stripe.com" autoComplete="off" maxLength={253} />
+            </FormField>
+          </>
         )}
         {mode === "person" && (
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="find-linkedin">LinkedIn profile</Label>
+          <FormField label="LinkedIn profile" id="find-linkedin" className="sm:col-span-2">
             <Input id="find-linkedin" value={linkedinUrl} onChange={(e) => setLinkedinUrl(e.target.value)} placeholder="linkedin.com/in/…" autoComplete="off" maxLength={300} />
-          </div>
+          </FormField>
         )}
         <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
           <Button type="submit" disabled={!canSubmit}>
-            {pending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <UserSearch className="size-4" aria-hidden />}
+            {pending ? <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> : <UserSearch className="size-4" aria-hidden />}
             {submitLabel}
           </Button>
           <p className="text-xs text-muted-foreground">
@@ -188,6 +172,7 @@ export function FindPeople({ canUseAi, recent }: { canUseAi: boolean; recent: Br
           </p>
         </div>
       </form>
+      </SegmentedPanel>
 
       <div aria-live="polite">
         {brief?.dossier.kind === "person" && (
@@ -219,18 +204,19 @@ export function FindPeople({ canUseAi, recent }: { canUseAi: boolean; recent: Br
       </div>
 
       {history.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="text-sm font-medium text-muted-foreground">Recent</h2>
+        <PageSection title="Recent" description="Briefs are kept for 14 days, then deleted.">
           <ul className="flex flex-wrap gap-2">
             {history.map((b) => (
               <li key={b.key}>
-                <button
+                <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
+                  className="rounded-full font-normal"
                   onClick={() => {
                     setBrief(b);
                     setMode(b.dossier.kind);
                   }}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-border/60 px-3 py-1 text-sm text-ink hover:bg-muted/50"
                 >
                   {b.dossier.kind === "discover" ? (
                     <>
@@ -248,12 +234,11 @@ export function FindPeople({ canUseAi, recent }: { canUseAi: boolean; recent: Br
                       {b.dossier.subject.company ? <span className="text-muted-foreground"> · {b.dossier.subject.company}</span> : null}
                     </>
                   )}
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
-          <p className="text-xs text-muted-foreground">Briefs are kept for 14 days, then deleted.</p>
-        </section>
+        </PageSection>
       )}
     </div>
   );
@@ -284,22 +269,23 @@ function DossierCard({ brief, refreshing, onRefresh }: { brief: PersonBrief; ref
     });
 
   return (
-    <article className="space-y-4 rounded-xl border border-border/60 bg-card p-4">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-start">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="truncate text-lg font-medium text-ink">{dossier.subject.fullName}</h2>
-            {dossier.match !== "confident" && (
-              <Badge variant="outline">{dossier.match === "unsure" ? "Couldn’t confirm it’s them" : "Nothing found"}</Badge>
-            )}
-          </div>
-          {subtitle && <p className="text-sm text-muted-foreground">{subtitle}</p>}
-          {dossier.location && <p className="text-xs text-muted-foreground">{dossier.location}</p>}
-        </div>
-        <div className="flex shrink-0 gap-2">
-          <Button variant="outline" size="sm" disabled={refreshing} onClick={onRefresh} aria-label="Search again">
-            <RefreshCw className={refreshing ? "size-4 animate-spin" : "size-4"} aria-hidden />
-          </Button>
+    <Card>
+      <CardHeader>
+        <CardTitle as="h2" className="flex flex-wrap items-center gap-2 text-lg">
+          <span className="truncate">{dossier.subject.fullName}</span>
+          {dossier.match !== "confident" && (
+            <Badge variant="outline" tone="neutral">{dossier.match === "unsure" ? "Couldn’t confirm it’s them" : "Nothing found"}</Badge>
+          )}
+        </CardTitle>
+        {(subtitle || dossier.location) && (
+          <CardDescription>
+            {subtitle}
+            {subtitle && dossier.location ? " · " : ""}
+            {dossier.location}
+          </CardDescription>
+        )}
+        <CardAction className="flex gap-2">
+          <SearchAgainButton refreshing={refreshing} onRefresh={onRefresh} />
           {saved ? (
             <Link href={`/contacts/${saved.contactId}`} className="inline-flex items-center gap-1.5 text-sm font-medium text-primary underline-offset-4 hover:underline">
               <Check className="size-4" aria-hidden />
@@ -307,12 +293,13 @@ function DossierCard({ brief, refreshing, onRefresh }: { brief: PersonBrief; ref
             </Link>
           ) : (
             <Button size="sm" disabled={saving} onClick={save}>
-              {saving ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <UserPlus className="size-4" aria-hidden />}
-              Save to Orbit
+              {saving ? <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> : <UserPlus className="size-4" aria-hidden />}
+              {saving ? "Saving…" : "Save to Orbit"}
             </Button>
           )}
-        </div>
-      </header>
+        </CardAction>
+      </CardHeader>
+      <CardContent className="space-y-4">
 
       {dossier.match === "unsure" && (
         <p className="text-sm text-muted-foreground">
@@ -358,7 +345,18 @@ function DossierCard({ brief, refreshing, onRefresh }: { brief: PersonBrief; ref
       )}
 
       <Sources sources={dossier.sources} />
-    </article>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** The same "search again" control on every brief: an icon with its label, never a spinner alone. */
+function SearchAgainButton({ refreshing, onRefresh }: { refreshing: boolean; onRefresh: () => void }) {
+  return (
+    <Button variant="outline" size="sm" disabled={refreshing} onClick={onRefresh}>
+      <RefreshCw className={refreshing ? "size-4 motion-safe:animate-spin" : "size-4"} aria-hidden />
+      {refreshing ? "Searching…" : "Search again"}
+    </Button>
   );
 }
 
@@ -396,26 +394,30 @@ function CompanyCard({
   const facts = [dossier.headquarters, dossier.founded && `Founded ${dossier.founded}`, dossier.size].filter(Boolean);
 
   return (
-    <article className="space-y-4 rounded-xl border border-border/60 bg-card p-4">
-      <header className="flex items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="truncate text-lg font-medium text-ink">{dossier.subject.name}</h2>
-            {dossier.match !== "confident" && (
-              <Badge variant="outline">{dossier.match === "unsure" ? "Couldn’t confirm it’s them" : "Nothing found"}</Badge>
-            )}
-          </div>
-          {dossier.website && (
-            <a href={dossier.website} target="_blank" rel="noopener noreferrer nofollow" className="text-sm text-muted-foreground hover:text-ink">
-              {new URL(dossier.website).hostname.replace(/^www\./, "")}
-            </a>
+    <Card>
+      <CardHeader>
+        <CardTitle as="h2" className="flex flex-wrap items-center gap-2 text-lg">
+          <span className="truncate">{dossier.subject.name}</span>
+          {dossier.match !== "confident" && (
+            <Badge variant="outline" tone="neutral">{dossier.match === "unsure" ? "Couldn’t confirm it’s them" : "Nothing found"}</Badge>
           )}
-          {facts.length > 0 && <p className="text-xs text-muted-foreground">{facts.join(" · ")}</p>}
-        </div>
-        <Button variant="outline" size="sm" disabled={refreshing} onClick={onRefresh} aria-label="Search again">
-          <RefreshCw className={refreshing ? "size-4 animate-spin" : "size-4"} aria-hidden />
-        </Button>
-      </header>
+        </CardTitle>
+        {(dossier.website || facts.length > 0) && (
+          <CardDescription>
+            {dossier.website && (
+              <a href={dossier.website} target="_blank" rel="noopener noreferrer nofollow" className="hover:text-ink">
+                {new URL(dossier.website).hostname.replace(/^www\./, "")}
+              </a>
+            )}
+            {dossier.website && facts.length > 0 ? " · " : ""}
+            {facts.join(" · ")}
+          </CardDescription>
+        )}
+        <CardAction>
+          <SearchAgainButton refreshing={refreshing} onRefresh={onRefresh} />
+        </CardAction>
+      </CardHeader>
+      <CardContent className="space-y-4">
 
       {dossier.match === "unsure" && (
         <p className="text-sm text-muted-foreground">
@@ -447,7 +449,7 @@ function CompanyCard({
       {dossier.people.length > 0 && (
         <section>
           <h3 className="mb-1.5 text-sm font-medium text-ink">People worth talking to</h3>
-          <ul className="divide-y divide-border/60">
+          <ul className="divide-y divide-border-subtle">
             {dossier.people.map((p) => (
               <li key={p.url + p.fullName} className="flex items-center gap-3 py-2">
                 <div className="min-w-0 flex-1">
@@ -467,7 +469,8 @@ function CompanyCard({
       )}
 
       <Sources sources={dossier.sources} />
-    </article>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -484,23 +487,21 @@ function DiscoveryCard({
 }) {
   const { dossier } = brief;
   return (
-    <article className="space-y-4 rounded-xl border border-border/60 bg-card p-4">
-      <header className="flex items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <h2 className="text-lg font-medium text-ink">{dossier.query}</h2>
-          <p className="text-xs text-muted-foreground">
-            {dossier.candidates.length
-              ? `${dossier.candidates.length} ${dossier.candidates.length === 1 ? "person" : "people"} found on the web — not a complete list`
-              : "Nobody clearly matching turned up. Try different wording, or name a company."}
-          </p>
-        </div>
-        <Button variant="outline" size="sm" disabled={refreshing} onClick={onRefresh} aria-label="Search again">
-          <RefreshCw className={refreshing ? "size-4 animate-spin" : "size-4"} aria-hidden />
-        </Button>
-      </header>
-
+    <Card>
+      <CardHeader>
+        <CardTitle as="h2" className="text-lg">{dossier.query}</CardTitle>
+        <CardDescription>
+          {dossier.candidates.length
+            ? `${dossier.candidates.length} ${dossier.candidates.length === 1 ? "person" : "people"} found on the web — not a complete list.`
+            : "Nobody clearly matching turned up. Try different wording, or name a company."}
+        </CardDescription>
+        <CardAction>
+          <SearchAgainButton refreshing={refreshing} onRefresh={onRefresh} />
+        </CardAction>
+      </CardHeader>
+      <CardContent className="space-y-4">
       {dossier.candidates.length > 0 && (
-        <ul className="divide-y divide-border/60">
+        <ul className="divide-y divide-border-subtle">
           {dossier.candidates.map((c) => (
             <li key={c.url + c.fullName} className="flex items-start gap-3 py-2.5">
               <div className="min-w-0 flex-1">
@@ -522,6 +523,7 @@ function DiscoveryCard({
       )}
 
       <Sources sources={dossier.sources} />
-    </article>
+      </CardContent>
+    </Card>
   );
 }
