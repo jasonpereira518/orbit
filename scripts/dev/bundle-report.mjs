@@ -50,16 +50,21 @@ for (const manifestPath of walk(APP)) {
   const [[route, manifest]] = Object.entries(sandbox.globalThis.__RSC_MANIFEST);
   if (!route.endsWith("/page")) continue;
 
-  const chunks = new Set(ROOT_MAIN_FILES.map((f) => `/_next/${f}`));
+  const root = new Set(ROOT_MAIN_FILES.map((f) => `/_next/${f}`));
+  const chunks = new Set(root);
   for (const list of Object.values(manifest.entryJSFiles ?? {})) for (const c of list) chunks.add(c);
   let raw = 0;
   let gz = 0;
+  // The page's own entries without the framework runtime: what a change to the app moves,
+  // and what `scripts/check-bundle-budget.mjs` holds to its ceilings.
+  let appGz = 0;
   for (const c of chunks) {
     const f = join(NEXT, c.replace(/^\/_next\//, ""));
     if (!existsSync(f)) continue;
     const s = sizes(f);
     raw += s.raw;
     gz += s.gz;
+    if (!root.has(c)) appGz += s.gz;
   }
 
   const base = manifestPath.replace(/_client-reference-manifest\.js$/, "");
@@ -93,6 +98,7 @@ for (const manifestPath of walk(APP)) {
     route: route.replace(/\/page$/, "").replace(/\/\([^)]+\)/g, "") || "/",
     js_kb: Math.round(raw / 1024),
     js_gz_kb: Math.round(gz / 1024),
+    app_js_gz_kb: Math.round(appGz / 1024),
     fonts,
     font_kb: Math.round(fontBytes / 1024),
     server_kb: Math.round(serverBytes / 1024),
