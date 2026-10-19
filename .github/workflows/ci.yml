@@ -7,8 +7,10 @@
 # vercel.json, and the smoke suite runs against a throwaway PGlite directory — there is no
 # `.env.local` in CI, and scripts/smoke/_env.ts deletes DATABASE_URL regardless.
 #
-# Turn this into a real gate in GitHub → Settings → Branches → main: require the `check`
-# and `smoke` status checks before merging.
+# Turn this into a real gate in GitHub → Settings → Branches → main: require `check`, the
+# three `smoke suite (PGlite) i/3` checks, `security`, and `browser flows (Playwright)`
+# before merging (FIX_PLAN 4.5). Every job runs on every ready PR, so a required check is
+# never left waiting on a run that did not start.
 name: ci
 
 # CI runs where a result can change a decision, and nowhere else:
@@ -19,12 +21,9 @@ name: ci
 #   GitHub scopes a PR's caches to that PR, so without it each PR's first run starts cold.
 # - Draft PRs are skipped. A PR runs CI when it is opened ready, or when a draft is marked
 #   ready for review, and on every push after that. A ready PR gets every job.
-# - `paths-ignore` skips the run for changes no job reads: docs, agent skills, the
-#   extension (extension.yml covers it), and the workflows that do not touch the app.
-#   docs/RUNBOOK.md is re-included because scripts/smoke-schedules.ts parses it. There are
-#   no required status checks on main (Protected Main Branch only blocks deletion and
-#   force-pushes); if `check`/`smoke` are ever made required, drop `paths-ignore`, or a
-#   docs-only PR waits forever on checks that never start.
+# - No `paths-ignore`. It used to skip docs-only and extension-only changes, but a required
+#   status check that never starts blocks the PR forever, so it went when the checks became
+#   meant to be required (FIX_PLAN 4.5). Hosted runners are free on this public repo.
 #
 # The repository is public, so hosted runners are free. This workflow is written to stay
 # safe there: it triggers on `pull_request` (never `pull_request_target` or `workflow_run`),
@@ -34,19 +33,8 @@ name: ci
 on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
-    paths-ignore: &ignore
-      - "**.md"
-      - "docs/**"
-      - "!docs/RUNBOOK.md"
-      - ".agents/**"
-      - ".claude/**"
-      - "extension/**"
-      - ".github/workflows/ops.yml"
-      - ".github/workflows/extension.yml"
-      - "LICENSE"
   push:
     branches: [main]
-    paths-ignore: *ignore
   workflow_dispatch:
 
 concurrency:
@@ -61,6 +49,27 @@ permissions:
 # The root package has no install scripts, so a restored node_modules is exactly what
 # `npm ci` would have produced.
 jobs:
+  # Supply chain and credentials (FIX_PLAN 4.3 and 4.4). Both scripts are dependency-free:
+  # the audit fails on any high/critical production advisory not allowlisted, with each
+  # allowlisted advisory pinned to the one package it may arrive through; the secret scan
+  # fails on a live credential format in any tracked file. Needs no node_modules, so it is
+  # the fastest job and runs alongside the rest.
+  security:
+    name: security
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: secret scan
+        run: node scripts/scan-secrets.mjs
+      # `npm ls` (used to verify allowlisted paths) reads the lockfile's tree; no install needed.
+      - name: dependency audit
+        run: node scripts/audit-deps.mjs
+
   check:
     name: typecheck · lint · build
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
