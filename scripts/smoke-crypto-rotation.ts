@@ -47,7 +47,14 @@ run(async () => {
     check("it finds the ciphertext columns by name", cols.length >= 20 && cols.some((c) => c.table === "user_settings" && c.column === "openai_api_key_encrypted")
       && cols.some((c) => c.table === "calendar_subscriptions" && c.column === "ics_url"), String(cols.length));
 
+    // The suite shares one database, and other scripts leave values sealed under their own
+    // secrets. Those are legitimately undecryptable here, so measure them first and compare.
+    process.env.ENCRYPTION_SECRET = NEW;
+    process.env.ENCRYPTION_PREVIOUS_SECRETS = OLD;
+    const baseline = (await reencryptAll({ apply: false })).undecryptable;
+
     process.env.ENCRYPTION_SECRET = OLD;
+    delete process.env.ENCRYPTION_PREVIOUS_SECRETS;
     await db.delete(userSettings).where(eq(userSettings.userId, USER));
     await db.insert(userSettings).values({
       userId: USER,
@@ -59,9 +66,9 @@ run(async () => {
 
     const dry = await reencryptAll({ apply: false });
     check("a dry run reports what an old secret still opens and changes nothing",
-      dry.remaining >= 2 && dry.rewritten === 0 && dry.undecryptable === 0, JSON.stringify(dry));
+      dry.remaining >= 2 && dry.rewritten === 0 && dry.undecryptable === baseline, JSON.stringify(dry));
     const applied = await reencryptAll({ apply: true });
-    check("apply rewrites them", applied.rewritten >= 2 && applied.undecryptable === 0, JSON.stringify(applied));
+    check("apply rewrites them", applied.rewritten >= 2 && applied.undecryptable === baseline, JSON.stringify(applied));
     const again = await reencryptAll({ apply: true });
     check("a second run has nothing left (idempotent)", again.rewritten === 0 && again.remaining === 0, JSON.stringify(again));
 
@@ -72,7 +79,7 @@ run(async () => {
 
     await db.execute(sql`UPDATE user_settings SET anthropic_api_key_encrypted = ${encrypt("x").replace(/^.{24}/, "0".repeat(24))} WHERE user_id = ${USER}`);
     const bad = await reencryptAll({ apply: false });
-    check("a value no secret opens is counted, so a rotation cannot be finished by mistake", bad.undecryptable >= 1, JSON.stringify(bad));
+    check("a value no secret opens is counted, so a rotation cannot be finished by mistake", bad.undecryptable === baseline + 1, JSON.stringify(bad));
   } finally {
     await db.delete(userSettings).where(eq(userSettings.userId, USER));
     if (saved.s === undefined) delete process.env.ENCRYPTION_SECRET; else process.env.ENCRYPTION_SECRET = saved.s;
