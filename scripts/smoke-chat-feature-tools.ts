@@ -9,7 +9,17 @@ import "./smoke/_env";
 
 import { eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, contactTags, interactions, tags } from "../src/db/schema";
+import {
+  contactOpportunities,
+  contacts,
+  contactTags,
+  emailSends,
+  eventAttendees,
+  events,
+  imports,
+  interactions,
+  tags,
+} from "../src/db/schema";
 import { ORBIT_TOOLS } from "../src/lib/tools/definitions";
 import { isToolError, runTool } from "../src/lib/tools/registry";
 
@@ -23,6 +33,12 @@ function check(label: string, ok: boolean, detail?: string) {
     failures++;
     console.error(`  FAIL ${label}${detail ? `\n       ${detail}` : ""}`);
   }
+}
+
+async function runToolAs(name: string, args: unknown, userId: string): Promise<unknown> {
+  const tool = ORBIT_TOOLS.find((t) => t.name === name);
+  if (!tool) throw new Error(`no tool ${name}`);
+  return runTool(tool, userId, args, { surface: "chat", scopes: ["read"] });
 }
 
 async function run<T>(name: string, args: unknown, userId = USER): Promise<T> {
@@ -48,6 +64,11 @@ async function clear() {
   const db = await getDb();
   for (const u of [USER, OTHER]) {
     await db.delete(interactions).where(eq(interactions.userId, u));
+    await db.delete(eventAttendees).where(eq(eventAttendees.userId, u));
+    await db.delete(events).where(eq(events.userId, u));
+    await db.delete(contactOpportunities).where(eq(contactOpportunities.userId, u));
+    await db.delete(emailSends).where(eq(emailSends.userId, u));
+    await db.delete(imports).where(eq(imports.userId, u));
     const ids = (await db.query.contacts.findMany({ where: eq(contacts.userId, u), columns: { id: true } })).map((c) => c.id);
     if (ids.length) await db.delete(contactTags).where(inArray(contactTags.contactId, ids));
     await db.delete(contacts).where(eq(contacts.userId, u));
@@ -62,9 +83,9 @@ async function main() {
 
   // 10 at Stripe (3 inner), 6 at Ramp, 4 with no company; 2 added in October, the rest in June.
   const seed = [
-    ...Array.from({ length: 10 }, (_, i) => ({ fullName: `Stripe ${i}`, company: "Stripe", industry: "Fintech", email: i < 7 ? `s${i}@stripe.example` : null, closenessTier: i < 3 ? "inner" : "outer" })),
-    ...Array.from({ length: 6 }, (_, i) => ({ fullName: `Ramp ${i}`, company: "Ramp", industry: "Fintech", email: `r${i}@ramp.example`, closenessTier: "mid" })),
-    ...Array.from({ length: 4 }, (_, i) => ({ fullName: `Loose ${i}`, company: null, industry: null, email: null, closenessTier: null })),
+    ...Array.from({ length: 10 }, (_, i) => ({ fullName: `Stripe ${i}`, company: "Stripe", industry: "Fintech", email: i < 7 ? `s${i}@stripe.example` : null, closenessTier: (i < 3 ? "inner" : "outer") as "inner" | "outer" })),
+    ...Array.from({ length: 6 }, (_, i) => ({ fullName: `Ramp ${i}`, company: "Ramp", industry: "Fintech", email: `r${i}@ramp.example`, closenessTier: "mid" as const })),
+    ...Array.from({ length: 4 }, (_, i) => ({ fullName: `Loose ${i}`, company: null, industry: null, email: null, closenessTier: null as "inner" | null })),
   ];
   const rows = await db
     .insert(contacts)
@@ -144,6 +165,83 @@ async function main() {
     check("one person's history", one.total === 1 && one.rows[0]?.type === "call");
     const theirs = await run<InteractionsResult>("query_interactions", { limit: 0 }, OTHER);
     check("another user sees none of these", theirs.total === 0);
+  }
+
+  console.log("\nEvents");
+  {
+    const soon = new Date(Date.now() + 5 * 86_400_000);
+    const past = new Date(Date.now() - 20 * 86_400_000);
+    const [summit] = await db.insert(events).values({ userId: USER, title: "AWS Summit", startsAt: soon, endsAt: soon, city: "San Francisco" }).returning();
+    const [mixer] = await db.insert(events).values({ userId: USER, title: "Founders mixer", startsAt: past, endsAt: past }).returning();
+    await db.insert(events).values({ userId: OTHER, title: "Their private event", startsAt: soon, endsAt: soon });
+    await db.insert(eventAttendees).values([
+      { eventId: summit.id, userId: USER, fullName: "Stripe 0", company: "Stripe", contactId: stripe0.id, identityKey: "a1" },
+      { eventId: summit.id, userId: USER, fullName: "New Person", company: "Acme", identityKey: "a2" },
+      { eventId: mixer.id, userId: USER, fullName: "Stripe 0", company: "Stripe", contactId: stripe0.id, spokeTo: 1, identityKey: "a3" },
+      { eventId: mixer.id, userId: USER, fullName: "Stranger", identityKey: "a4" },
+    ]);
+    type Ev = Array<{ id: string; title: string; rosterSize: number; inYourContacts: number }>;
+    const upcoming = await run<Ev>("list_events", { when: "upcoming" });
+    check(
+      "list_events: upcoming only, with roster size and how many are contacts",
+      upcoming.length === 1 && upcoming[0].title === "AWS Summit" && upcoming[0].rosterSize === 2 && upcoming[0].inYourContacts === 1,
+      JSON.stringify(upcoming)
+    );
+    const all = await run<Ev>("list_events", { when: "all" });
+    check("…both ways, never another user's", all.length === 2 && !JSON.stringify(all).includes("Their private event"));
+    type Roster = { total: number; people: Array<{ name: string; spokeTo: boolean; contactId: string | null }> };
+    const spoke = await run<Roster>("get_event_roster", { eventId: mixer.id, spoke_to: true });
+    check("get_event_roster: who the user spoke to", spoke.total === 1 && spoke.people[0]?.name === "Stripe 0", JSON.stringify(spoke));
+    const fresh = await run<Roster>("get_event_roster", { eventId: summit.id, in_contacts: false });
+    check("…who is not a contact yet", fresh.total === 1 && fresh.people[0]?.name === "New Person");
+    check("…and never another user's event", isToolError(await runToolAs("get_event_roster", { eventId: summit.id }, OTHER)));
+    const together = await run<Array<{ title: string; spokeTo: boolean }>>("events_with_contact", { contactId: stripe0.id });
+    check(
+      "events_with_contact: both events, and where they spoke",
+      together.length === 2 && together.some((e) => e.title === "Founders mixer" && e.spokeTo),
+      JSON.stringify(together)
+    );
+  }
+
+  console.log("\nOpportunities, sent email, imports, the dossier");
+  {
+    await db.insert(contactOpportunities).values([
+      { userId: USER, contactId: stripe0.id, kind: "referral", label: "Referral to the payments team", dueDate: new Date("2026-11-01T00:00:00Z") },
+      { userId: USER, contactId: ramp0.id, kind: "intro", label: "Intro to their CFO", status: "done" },
+    ] as never);
+    type Opp = Array<{ contactName: string; label: string; status: string; dueDate: string | null }>;
+    const open = await run<Opp>("list_opportunities", {});
+    check("list_opportunities: open ones across the network, with who and when", open.length === 1 && open[0].contactName === "Stripe 0" && open[0].dueDate === "2026-11-01", JSON.stringify(open));
+    const everything = await run<Opp>("list_opportunities", { status: "all" });
+    check("…and closed ones when asked", everything.length === 2);
+
+    await db.insert(emailSends).values({
+      userId: USER,
+      provider: "gmail",
+      fromEmail: "me@example.com",
+      to: ["s0@stripe.example"],
+      subject: "Following up on payments",
+      bodyText: "SECRET EMAIL BODY",
+      contactIds: [stripe0.id],
+      origin: "compose",
+      sendAt: new Date("2026-09-01T10:00:00Z"),
+      sentAt: new Date("2026-09-01T10:00:05Z"),
+      status: "sent",
+      rfcMessageId: "<smoke@orbit>",
+    } as never);
+    type Sent = Array<{ subject: string; status: string; date: string }>;
+    const sent = await run<Sent>("list_sent_emails", { contactId: stripe0.id });
+    check("list_sent_emails: subject, status and date for one contact", sent.length === 1 && sent[0].subject === "Following up on payments" && sent[0].date === "2026-09-01", JSON.stringify(sent));
+    check("…never the body", !JSON.stringify(sent).includes("SECRET EMAIL BODY"));
+    check("…nothing for someone never emailed", (await run<Sent>("list_sent_emails", { contactId: ramp0.id })).length === 0);
+
+    await db.insert(imports).values({ userId: USER, importType: "linkedin_csv", fileName: "Connections.csv", status: "completed", contactsCreated: 20 } as never);
+    const recent = await run<Array<{ type: string; contactsCreated: number }>>("recent_imports", {});
+    check("recent_imports", recent.length === 1 && recent[0].type === "linkedin_csv" && recent[0].contactsCreated === 20, JSON.stringify(recent));
+
+    const dossier = await run<{ contact?: { fullName: string } }>("get_dossier", { contactId: stripe0.id });
+    check("get_dossier: one relationship's brief", dossier.contact?.fullName === "Stripe 0", JSON.stringify(dossier).slice(0, 200));
+    check("…not someone else's contact", isToolError(await runToolAs("get_dossier", { contactId: stripe0.id }, OTHER)));
   }
 
   console.log("\nThe tools are chat's, read-only");

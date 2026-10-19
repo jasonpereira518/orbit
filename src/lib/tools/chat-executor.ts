@@ -90,6 +90,34 @@ export function describeCall(call: ToolCall, ctx: ChatContext): string {
       return typeof args.group_by === "string" ? `Counting your contacts by ${text("group_by")}` : "Counting your contacts";
     case "query_interactions":
       return typeof args.group_by === "string" ? `Counting your interactions by ${text("group_by")}` : "Counting your interactions";
+    case "list_events":
+      return "Checking your events";
+    case "get_event_roster":
+      return "Reading an event's roster";
+    case "who_to_talk_to":
+      return "Checking who to talk to at an event";
+    case "events_with_contact": {
+      const name = typeof args.contactId === "string" ? nameOf(args.contactId) : null;
+      return name ? `Checking events you shared with ${name}` : "Checking events you shared with someone";
+    }
+    case "list_opportunities":
+      return "Checking open opportunities";
+    case "list_radar_cards":
+      return "Checking your radar";
+    case "list_campaigns":
+      return "Checking your outreach campaigns";
+    case "list_my_recruiters":
+      return "Checking your recruiters";
+    case "get_dossier": {
+      const name = typeof args.contactId === "string" ? nameOf(args.contactId) : null;
+      return name ? `Reading your brief on ${name}` : "Reading a relationship brief";
+    }
+    case "list_sent_emails":
+      return "Checking emails you sent";
+    case "recent_captures":
+      return "Checking your recent captures";
+    case "recent_imports":
+      return "Checking your recent imports";
     default:
       return "Looking something up";
   }
@@ -106,6 +134,17 @@ export function contactsIn(name: string, result: unknown): Array<{ id: string; n
   switch (name) {
     case "search_contacts":
       return rows.flatMap((r) => (str(r?.id) ? [{ id: r.id, name: str(r.name) }] : []));
+    case "get_event_roster":
+    case "who_to_talk_to": {
+      const people = (result as { people?: unknown } | null)?.people;
+      return (Array.isArray(people) ? people : []).flatMap((p: { contactId?: unknown; name?: unknown }) =>
+        str(p?.contactId) ? [{ id: p.contactId as string, name: str(p.name) }] : []
+      );
+    }
+    case "list_opportunities":
+      return rows.flatMap((r) => (str(r?.contactId) ? [{ id: r.contactId as string, name: str(r.contactName) }] : []));
+    case "list_radar_cards":
+      return rows.flatMap((r) => (str(r?.contactId) ? [{ id: r.contactId as string, name: str(r.name) }] : []));
     case "query_contacts": {
       const listed = (result as { rows?: unknown } | null)?.rows;
       return (Array.isArray(listed) ? listed : []).flatMap((r: { id?: unknown; name?: unknown }) =>
