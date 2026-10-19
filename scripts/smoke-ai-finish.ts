@@ -8,7 +8,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { usageEvents, userSettings } from "../src/db/schema";
 import { encrypt } from "../src/lib/crypto";
-import { completeJson } from "../src/lib/ai";
+import { completeJson, createEmbedding } from "../src/lib/ai";
 import { AI_REFUSAL_MESSAGE, AiFinishError, anthropicFinish, geminiFinish, openaiFinish, openaiResponsesFinish } from "../src/lib/ai-finish";
 import { AI_INCOMPLETE_MESSAGE, classifyAiError } from "../src/lib/errors";
 
@@ -46,11 +46,20 @@ check("a refusal is classified, not 'other'", classifyAiError(new AiFinishError(
 type Reply = { finishReason: string; text: string };
 let queue: Reply[] = [];
 const seenCaps: number[] = [];
+/** HTTP statuses to answer before the scripted reply, one per request; 0 = no failure. */
+let failFirst: number[] = [];
+let embedRequests = 0;
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   if (!/generativelanguage/.test(url)) return realFetch(input, init);
   const raw = init?.body ?? (input instanceof Request ? await input.clone().text() : null);
+  if (/embedContent|batchEmbed/.test(url)) {
+    embedRequests++;
+    return Response.json({ error: { code: 503, message: "overloaded", status: "UNAVAILABLE" } }, { status: 503 });
+  }
+  const failure = failFirst.shift();
+  if (failure) return Response.json({ error: { code: failure, message: "transient", status: "UNAVAILABLE" } }, { status: failure });
   const body = (typeof raw === "string" ? JSON.parse(raw) : {}) as { generationConfig?: { maxOutputTokens?: number } };
   seenCaps.push(body.generationConfig?.maxOutputTokens ?? -1);
   const next = queue.shift() ?? { finishReason: "STOP", text: "{}" };
@@ -97,6 +106,18 @@ async function main() {
   const refused = await run([{ finishReason: "SAFETY", text: "" }]);
   check("a safety stop is a refusal error", refused.err instanceof AiFinishError && refused.err.kind === "refusal");
   check("…and is never retried", seenCaps.length === 1);
+
+  // Gemini's SDK does not retry on its own; the client is configured to, like the other two.
+  failFirst = [503, 429];
+  const transient = await run([{ finishReason: "STOP", text: '{"title":"After retries"}' }]);
+  check("a transient 503 then a 429 are retried, and the third try answers", transient.out === '{"title":"After retries"}' && failFirst.length === 0, String(transient.err));
+  failFirst = [503, 503, 503];
+  const exhausted = await run([{ finishReason: "STOP", text: "{}" }]);
+  check("but not forever: three failures is an error", exhausted.err !== undefined && failFirst.length === 0, String(exhausted.out));
+
+  embedRequests = 0;
+  try { await createEmbedding(USER, "hello"); } catch { /* the stub answers 503 */ }
+  check("an embedding is not retried by the SDK as well as by its own backoff", embedRequests === 1, String(embedRequests));
 
   await new Promise((r) => setTimeout(r, 400)); // usage rows are written after the response
   const rows = await db.select().from(usageEvents).where(eq(usageEvents.userId, USER));

@@ -1868,7 +1868,7 @@ export async function createEmbedding(userId: string, text: string, access?: AiA
         const res = await client.models.embedContent({
           model: GEMINI_EMBEDDING_MODEL,
           contents: input,
-          config: { abortSignal: aiSignal() },
+          config: { abortSignal: aiSignal(), httpOptions: { retryOptions: { attempts: 1 } } },
         });
         // Gemini's embed endpoint reports no usage metadata — the row stores null tokens
         // rather than a fabricated zero, and counts as volume.
@@ -1923,7 +1923,7 @@ export async function createEmbeddingsBatch(
         const res = await client.models.embedContent({
           model: GEMINI_EMBEDDING_MODEL,
           contents: inputs,
-          config: { abortSignal: aiSignal() },
+          config: { abortSignal: aiSignal(), httpOptions: { retryOptions: { attempts: 1 } } },
         });
         // No usage metadata from Gemini embeddings; see createEmbedding.
         const values = res.embeddings?.map((e) => e.values ?? []) ?? [];
