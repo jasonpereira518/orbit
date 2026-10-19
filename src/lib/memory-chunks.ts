@@ -17,7 +17,7 @@
  */
 import { createHash } from "node:crypto";
 import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
-import { getDb, runAtomicWrite, type AtomicStatement } from "@/db";
+import { getDb, isPgvectorAvailable, runAtomicWrite, type AtomicStatement } from "@/db";
 import { memoryChunks } from "@/db/schema";
 import { computeContentHash } from "@/lib/search";
 
@@ -258,7 +258,7 @@ export async function syncMemoryChunks(
       eq(memoryChunks.sourceKind, input.sourceKind),
       eq(memoryChunks.sourceId, input.sourceId)
     ),
-    columns: { contentHash: true, embeddedHash: true, embedding: true },
+    columns: { contentHash: true, embeddedHash: true, embedding: true, embeddingModel: true },
   });
   const embedded = new Map(
     existing
@@ -283,6 +283,8 @@ export async function syncMemoryChunks(
       sourceHash: input.sourceHash ?? null,
       embeddedHash: carried?.embeddedHash ?? null,
       embedding: carried?.embedding ?? null,
+      // A carried vector keeps the stamp of the model that made it.
+      embeddingModel: carried?.embeddingModel ?? null,
     };
   });
 
@@ -472,4 +474,24 @@ export async function syncMemoryChunkMentions(
          sql`, `
        )}]`})
   `);
+}
+
+/**
+ * Forgets every passage vector for an account, so the backfill makes them again. Passages
+ * stay (they are the text); only the embedding and its "embedded" marker go.
+ *
+ * For a change of embedding backend: vectors from two models cannot be compared, and this
+ * table was the one a key change did not clear — passage search then ranked the new model's
+ * query against the old model's passages without a word.
+ */
+export async function clearMemoryChunkVectors(userId: string): Promise<void> {
+  const db = await getDb();
+  await db.execute(sql`
+    UPDATE memory_chunks
+       SET embedding = NULL, embedded_hash = NULL, embedding_model = NULL
+     WHERE user_id = ${userId} AND (embedding IS NOT NULL OR embedded_hash IS NOT NULL)
+  `);
+  if (isPgvectorAvailable()) {
+    await db.execute(sql`UPDATE memory_chunks SET embedding_vector = NULL WHERE user_id = ${userId} AND embedding_vector IS NOT NULL`);
+  }
 }

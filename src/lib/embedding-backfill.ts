@@ -18,9 +18,9 @@
  * sense and is why this comment now spells out where the loop actually lives.
  */
 import { and, asc, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
-import { getDb, rowsOf } from "@/db";
+import { getDb, isPgvectorAvailable, rowsOf } from "@/db";
 import { contactEmbeddings, contacts, embeddingFailures } from "@/db/schema";
-import { createEmbeddingsBatch } from "@/lib/ai";
+import { createEmbeddingsBatch, currentEmbeddingModel } from "@/lib/ai";
 import { embedWithBisect, planEmbeddingBatches } from "@/lib/embedding-batches";
 import { classifyAiError, isMissingAiApiKeyError } from "@/lib/errors";
 import { internalFetch } from "@/lib/internal-auth";
@@ -123,6 +123,14 @@ export async function runEmbeddingBackfill(
   const start = Date.now();
   let embedded = 0;
 
+  // Vectors another model made are not comparable with this account's queries: queue them to
+  // be made again. Covers every way the backend can move, including the ones no delete path
+  // sees (a plan lapsing moves search off Orbit's key).
+  const model = await currentEmbeddingModel(userId);
+  await reconcileEmbeddingSpace(userId, model).catch((err) =>
+    reportError(err, { where: "job.embedding-backfill.reconcile", userId, level: "warning" })
+  );
+
   // Passages FIRST, and not behind anything that can throw. Cutting notes into passages
   // needs no AI at all, and the phases below rethrow key-level errors by design — which, for
   // an account on a key with no embeddings API, is every run. Put this after them and those
@@ -209,17 +217,18 @@ export async function runEmbeddingBackfill(
           ({ item, vector }) => sql`(
             ${userId}::text, ${item.contactId}::uuid, 'profile'::text,
             ${item.contactId}::text, ${JSON.stringify(vector)}::jsonb,
-            ${item.content}::text, ${item.contentHash}::text
+            ${item.content}::text, ${item.contentHash}::text, ${model}::text
           )`
         );
         // content_hash is written so the next pass — and the immediate path — can tell this
         // vector is current. Rows written before it was stored re-embed once, then settle.
         const result = await db.execute(sql`
           INSERT INTO contact_embeddings
-            (user_id, contact_id, source_type, source_id, embedding, content, content_hash)
+            (user_id, contact_id, source_type, source_id, embedding, content, content_hash, embedding_model)
           VALUES ${sql.join(tuples, sql`, `)}
           ON CONFLICT (user_id, contact_id, source_type, source_id)
-          DO UPDATE SET embedding = EXCLUDED.embedding, content = EXCLUDED.content, content_hash = EXCLUDED.content_hash
+          DO UPDATE SET embedding = EXCLUDED.embedding, content = EXCLUDED.content, content_hash = EXCLUDED.content_hash,
+                        embedding_model = EXCLUDED.embedding_model
           RETURNING id, contact_id
         `);
         // `db.execute` returns an array on neon-http and `{ rows }` on PGlite; both drivers
@@ -402,6 +411,7 @@ async function runMeetingPhase(
   budgetMs: number
 ): Promise<number> {
   const db = await getDb();
+  const model = await currentEmbeddingModel(userId);
   let embedded = 0;
 
   while (Date.now() - start < budgetMs) {
@@ -439,7 +449,7 @@ async function runMeetingPhase(
           ({ item, vector }) => sql`(
             ${userId}::text, ${item.contact_id}::uuid, 'meeting'::text,
             ${item.external_id}::text, ${JSON.stringify(vector)}::jsonb,
-            ${item.content}::text, ${computeContentHash(item.content)}::text
+            ${item.content}::text, ${computeContentHash(item.content)}::text, ${model}::text
           )`
         );
         // Four-column conflict target, matching `embeddings_user_contact_source_id_uidx`.
@@ -448,10 +458,11 @@ async function runMeetingPhase(
         // second meeting of any contact collide with the first.
         const result = await db.execute(sql`
           INSERT INTO contact_embeddings
-            (user_id, contact_id, source_type, source_id, embedding, content, content_hash)
+            (user_id, contact_id, source_type, source_id, embedding, content, content_hash, embedding_model)
           VALUES ${sql.join(tuples, sql`, `)}
           ON CONFLICT (user_id, contact_id, source_type, source_id)
-          DO UPDATE SET embedding = EXCLUDED.embedding, content = EXCLUDED.content, content_hash = EXCLUDED.content_hash
+          DO UPDATE SET embedding = EXCLUDED.embedding, content = EXCLUDED.content, content_hash = EXCLUDED.content_hash,
+                        embedding_model = EXCLUDED.embedding_model
           RETURNING id, source_id
         `);
         const idBySourceId = new Map(
@@ -474,6 +485,47 @@ async function runMeetingPhase(
   }
 
   return embedded;
+}
+
+/**
+ * Queues for re-embedding every stored vector that a different model made.
+ *
+ * `embedding_model IS NULL` (rows from before the stamp existed) is left alone: it is unknown,
+ * not wrong, and the key-change paths already clear those when the backend moves. Only a
+ * vector stamped with another model is certain to be in the wrong space.
+ *
+ * Order matters for crash safety. Profile contacts are flagged stale BEFORE their old rows go,
+ * so a crash between the two leaves the flag set and the rows still there (the next pass
+ * repeats this), never rows gone with nothing asking for them back. Meeting rows need no
+ * flag: their absence is their pending state.
+ */
+export async function reconcileEmbeddingSpace(userId: string, model: string | null): Promise<void> {
+  if (!model) return;
+  const db = await getDb();
+  await db.execute(sql`
+    UPDATE contacts SET embedding_stale_at = now()
+     WHERE user_id = ${userId}
+       AND id IN (
+         SELECT contact_id FROM contact_embeddings
+          WHERE user_id = ${userId} AND source_type IN ('profile', 'notes')
+            AND embedding_model IS NOT NULL AND embedding_model <> ${model}
+       )
+  `);
+  await db.execute(sql`
+    DELETE FROM contact_embeddings
+     WHERE user_id = ${userId} AND embedding_model IS NOT NULL AND embedding_model <> ${model}
+  `);
+  await db.execute(sql`
+    UPDATE memory_chunks
+       SET embedding = NULL, embedded_hash = NULL, embedding_model = NULL
+     WHERE user_id = ${userId} AND embedding_model IS NOT NULL AND embedding_model <> ${model}
+  `);
+  if (isPgvectorAvailable()) {
+    await db.execute(sql`
+      UPDATE memory_chunks SET embedding_vector = NULL
+       WHERE user_id = ${userId} AND embedding_vector IS NOT NULL AND embedded_hash IS NULL
+    `);
+  }
 }
 
 /**
@@ -544,6 +596,7 @@ export async function runMemoryChunkPhase(
   budgetMs: number
 ): Promise<number> {
   const db = await getDb();
+  const model = await currentEmbeddingModel(userId);
   let embedded = 0;
 
   while (Date.now() - start < budgetMs) {
@@ -574,13 +627,13 @@ export async function runMemoryChunkPhase(
         const part = done.slice(i, i + MEMORY_VECTOR_WRITE_CHUNK);
         const tuples = part.map(
           ({ item, vector }) =>
-            sql`(${item.id}::uuid, ${JSON.stringify(vector)}::jsonb, ${item.content_hash}::text)`
+            sql`(${item.id}::uuid, ${JSON.stringify(vector)}::jsonb, ${item.content_hash}::text, ${model}::text)`
         );
         const landed = rowsOf<{ id: string }>(
           await db.execute(sql`
             UPDATE memory_chunks AS m
-               SET embedding = v.emb, embedded_hash = v.hash
-              FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(id, emb, hash)
+               SET embedding = v.emb, embedded_hash = v.hash, embedding_model = v.model
+              FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(id, emb, hash, model)
              WHERE m.id = v.id AND m.user_id = ${userId} AND m.content_hash = v.hash
             RETURNING m.id
           `)

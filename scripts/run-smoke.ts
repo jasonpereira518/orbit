@@ -299,6 +299,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-ai-shared-prefix": "pglite",
   "smoke-ai-batch": "pglite",
   "smoke-ai-finish": "pglite",
+  "smoke-embedding-space": "pglite",
   "smoke-recruiter-scan-batch": "pglite",
   "smoke-api-keys": "pglite",
   "smoke-api-routes": "pglite",

@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
 import { getDb } from "@/db";
+import { clearMemoryChunkVectors } from "@/lib/memory-chunks";
 import {
   contactEmbeddings,
   userSettings,
@@ -294,6 +295,7 @@ export async function clearApiKey(provider?: AiProvider) {
     embeddingReset = clearMovesEmbeddings(active, existing, await managedEligibilityFor(userId));
     if (embeddingReset) {
       await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
+      await clearMemoryChunkVectors(userId);
     }
   }
 

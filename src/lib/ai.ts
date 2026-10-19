@@ -409,6 +409,22 @@ export async function resolveEmbeddingBackend(userId: string, access?: AiAccess)
   return { backend: resolved.requireEmbeddingBackend() };
 }
 
+/**
+ * The embedding model this account's new vectors come from, or null when it has none (an
+ * Anthropic-only account) or the gate would not say. Stored beside every vector so a vector
+ * made by a different model is recognised later instead of being compared as if it were
+ * this one's.
+ */
+export async function currentEmbeddingModel(userId: string, access?: AiAccess): Promise<string | null> {
+  try {
+    const resolved = access?.forUser(userId) ?? (await resolveAiAccess(userId));
+    const backend = resolved.embeddingBackend();
+    return backend ? EMBEDDING_MODELS[backend] : null;
+  } catch {
+    return null;
+  }
+}
+
 function extractJsonText(raw: string) {
   const trimmed = raw.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
