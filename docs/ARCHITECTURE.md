@@ -205,7 +205,7 @@ There are no generated migrations. `schema.ts` is the TypeScript query model. **
 built by the hand-written SQL in `src/db/index.ts`**: the `DDL` template, `SCALE_DDL` (generated
 `search_tsv` columns, GIN and trigram indexes), the Neon `alters` list and the PGlite `ensureColumn`
 calls. One column exists only there: `contact_embeddings.embedding_vector` (pgvector, created by
-`migratePgvector`) with its HNSW index. That is why `drizzle-kit push` is refused: it would drop them.
+`migratePgvector`) with its HNSW index. That is why a schema-diffing tool such as `drizzle-kit push` cannot be used here: it would drop them (the dependency was removed).
 `contacts.linkedin_slug` is a generated column declared in `schema.ts`, with its expression rewritten in
 `SCALE_DDL`. Local PGlite has `pg_trgm` but no pgvector, so local vector search uses a JS fallback.
 

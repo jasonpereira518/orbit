@@ -65,11 +65,9 @@ Restart `npm run dev` afterward if the server was already running, so it reloads
 | `npm run db:setup` | Bootstrap schema + verify read/write |
 | `npm run db:migrate` | Reconcile the schema to `SCHEMA_VERSION` — what every Vercel build runs before `next build` |
 | `npm run db:check` | Fail when DDL changed without a `SCHEMA_VERSION` bump |
-| `npm run db:push:DANGEROUS` | `drizzle-kit push`. Refused unless `ALLOW_DRIZZLE_PUSH=1` and `DATABASE_URL` is not `PRODUCTION_DB_HOST`; prefer `db:migrate` |
-| `npm run db:generate` | `drizzle-kit generate`, which would write SQL to `drizzle/`. That folder does not exist in the repo and the app never applies it; the real DDL is hand-written in `src/db/index.ts` |
 | `npm run db:seed` | Insert a sample contact for `demo-user` |
 
-Leave `DATABASE_URL` unset to use on-disk PGlite (`.data/pglite`). Schema changes go in `src/db/index.ts` — read the comment above `SCHEMA_VERSION` first. There is deliberately no plain `db:push`: `drizzle-kit push` would drop columns Orbit manages outside `schema.ts` (`embedding_vector`, the HNSW index, the migration tables).
+Leave `DATABASE_URL` unset to use on-disk PGlite (`.data/pglite`). Schema changes go in `src/db/index.ts` — read the comment above `SCHEMA_VERSION` first. There is deliberately no `db:push`: a schema-diffing tool would drop columns Orbit manages outside `schema.ts` (`embedding_vector`, the HNSW index, the migration tables).
 
 ### Env vars
 

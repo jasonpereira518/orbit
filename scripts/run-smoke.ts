@@ -177,7 +177,6 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-earth-camera": "pure",
   "smoke-embedding-cache": "pure",
   "smoke-embedding-batches": "pure",
-  "smoke-drizzle-guard": "pure",
   "smoke-no-db-transaction": "pure",
   "smoke-env": "pure",
   "smoke-env-documented": "pure",

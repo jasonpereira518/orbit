@@ -5,7 +5,6 @@ import {
   EXPECTED_IN_PRODUCTION,
   REQUIRED_IN_PREVIEW,
   REQUIRED_IN_PRODUCTION,
-  checkDrizzleCommand,
   checkMigrationTarget,
   databaseHost,
   validateEnv,
@@ -296,34 +295,5 @@ describe("checkMigrationTarget", () => {
   });
   it("a development VERCEL_ENV is treated like preview", () => {
     assert.equal(checkMigrationTarget({ VERCEL: "1", DATABASE_URL: url, PRODUCTION_DB_HOST: "prod.db.net" }, { vercelEnv: "development" }).allowed, false);
-  });
-});
-
-describe("checkDrizzleCommand", () => {
-  const env = { ALLOW_DRIZZLE_PUSH: "1", DATABASE_URL: "postgres://a@branch.db.net/x", PRODUCTION_DB_HOST: "prod.db.net" };
-  it("non-writing commands are allowed without any env", () => {
-    assert.equal(checkDrizzleCommand(["drizzle-kit", "generate"], {}).allowed, true);
-    assert.equal(checkDrizzleCommand([], {}).allowed, true);
-  });
-  for (const cmd of ["push", "migrate", "drop"]) {
-    it(`${cmd} is refused without ALLOW_DRIZZLE_PUSH=1`, () => {
-      const v = checkDrizzleCommand(["drizzle-kit", cmd], { ...env, ALLOW_DRIZZLE_PUSH: undefined });
-      assert.equal(v.allowed, false);
-      assert.ok(v.reason.includes("ALLOW_DRIZZLE_PUSH=1"));
-    });
-  }
-  it("refused with no parseable DATABASE_URL", () => {
-    const v = checkDrizzleCommand(["push"], { ...env, DATABASE_URL: "junk" });
-    assert.equal(v.allowed, false);
-    assert.ok(v.reason.includes("needs a postgres:// DATABASE_URL"));
-  });
-  it("FAIL-CLOSED when PRODUCTION_DB_HOST is unset (unlike checkMigrationTarget)", () => {
-    const v = checkDrizzleCommand(["push"], { ...env, PRODUCTION_DB_HOST: undefined });
-    assert.equal(v.allowed, false);
-    assert.ok(v.reason.includes("PRODUCTION_DB_HOST is unset"));
-  });
-  it("refused when the target is production; allowed on a branch", () => {
-    assert.equal(checkDrizzleCommand(["push"], { ...env, DATABASE_URL: "postgres://a@PROD.db.net/x" }).allowed, false);
-    assert.equal(checkDrizzleCommand(["push"], env).allowed, true);
   });
 });

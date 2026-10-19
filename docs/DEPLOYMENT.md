@@ -44,8 +44,7 @@ How code reaches production, what runs on a schedule, and how to back out. Incid
 
 Follow the checklist in [ARCHITECTURE.md](ARCHITECTURE.md#how-the-schema-is-applied) and
 [CONTRIBUTING.md](../CONTRIBUTING.md). `npm run db:check` fails when DDL changed without a `SCHEMA_VERSION`
-bump. `drizzle-kit push` is refused unless `ALLOW_DRIZZLE_PUSH=1` and the target isn't `PRODUCTION_DB_HOST`; use
-`npm run db:migrate`.
+bump. Apply schema changes with `npm run db:migrate`; `drizzle-kit` is no longer a dependency.
 
 ## Preview deployments
 

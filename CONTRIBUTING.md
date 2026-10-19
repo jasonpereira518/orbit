@@ -37,7 +37,7 @@ Every export of a `"use server"` file is a public POST endpoint.
 
 ## Schema changes
 
-The database is built by hand-written SQL, not by `drizzle-kit` ([ADR 0001](docs/adr/0001-hand-written-ddl.md)).
+The database is built by hand-written SQL, not by generated migrations ([ADR 0001](docs/adr/0001-hand-written-ddl.md)). `drizzle-kit` is not a dependency.
 
 1. Add the column or table to `src/db/schema.ts`.
 2. Add it to the `DDL` template in `src/db/index.ts` (and `SCALE_DDL` for generated columns or indexes).
@@ -52,7 +52,7 @@ The database is built by hand-written SQL, not by `drizzle-kit` ([ADR 0001](docs
    survive the new schema. Add first, remove the code in a later deploy, and drop only after that
    ([ADR 0009](docs/adr/0009-migrate-in-the-vercel-build.md)).
 
-Never run `drizzle-kit push` (it drops `embedding_vector` and the HNSW index).
+Do not reintroduce `drizzle-kit push`: it would drop `embedding_vector` and the HNSW index.
 
 ## Naming
 

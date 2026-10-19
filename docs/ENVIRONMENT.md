@@ -36,7 +36,6 @@ Prod = Vercel Production, GH = GitHub Actions.
 | `ENCRYPTION_SECRET` | prod (also preview) | dev placeholder; **throws** under `NODE_ENV=production` (`lib/crypto.ts`) | all | ≥32 characters, not the placeholder (prod only) |
 | `DATABASE_URL` | prod, preview | **local PGlite** in `.data/pglite`; `db:migrate` refuses on Vercel | all | `postgres://` |
 | `PRODUCTION_DB_HOST` | expected (**set on all environments**) | the guard that stops a preview migrating production is off | P, Prod | presence |
-| `ALLOW_DRIZZLE_PUSH` | dev | `drizzle-kit push/migrate/drop` refused (also needs a `DATABASE_URL` that isn't `PRODUCTION_DB_HOST`) | L | — |
 | `ORBIT_PGLITE_DIR` | dev | `.data/pglite` | L, CI | — |
 | `ORBIT_SIM_DB_LATENCY_MS` | dev | 0 | L | — |
 | `VERCEL`, `VERCEL_ENV`, `VERCEL_URL`, `VERCEL_PROJECT_PRODUCTION_URL`, `VERCEL_GIT_*`, `VERCEL_DEPLOYMENT_ID`, `NODE_ENV`, `NEXT_RUNTIME`, `NEXT_PHASE`, `PORT`, `CI`, `NEXT_PUBLIC_VERCEL_ENV` (browser Sentry environment; *(verify)* needs Vercel's "Automatically expose System Environment Variables") | set by the platform | — | — | — |

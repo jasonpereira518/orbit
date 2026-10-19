@@ -1,6 +1,6 @@
 /**
  * Guards the three invariants that keep the hand-maintained bootstrap DDL in
- * `src/db/index.ts` honest. Orbit deliberately does not use `drizzle-kit push` (it would
+ * `src/db/index.ts` honest. Orbit deliberately has no schema-diffing tool such as `drizzle-kit push` (it would
  * drop the runtime-created `contact_embeddings.embedding_vector` column and its HNSW
  * index), so every column is carried by hand — and hand-maintained lists drift.
  *
@@ -13,10 +13,10 @@
  *   2. INDEX PARITY — every `uniqueIndex` declared in `schema.ts` has a matching
  *      `CREATE UNIQUE INDEX` in the DDL, by name AND by column list. Nothing at runtime
  *      reads Drizzle's index metadata, so a stale declaration is invisible until someone
- *      runs `drizzle-kit push`/`generate` — which `package.json` still ships as
- *      `db:push`/`db:generate`, and `drizzle.config.ts` points at this schema. A key that
- *      disagrees with the DDL therefore sits harmless until the day it is applied to
- *      whatever `DATABASE_URL` resolves to, and then rewrites a live uniqueness contract.
+ *      points a schema-diffing tool (such as the since-removed `drizzle-kit`) at this
+ *      file. A key that disagrees with the DDL therefore sits harmless until the day such a
+ *      tool is applied to whatever `DATABASE_URL` resolves to, and then rewrites a live
+ *      uniqueness contract.
  *      This check exists because that happened: `embeddings_user_contact_source_uidx` was
  *      corrected in all three hand-written SQL sites and left stale in `schema.ts`, where
  *      the column check below could not see it — it iterates `table.columns` and never
@@ -369,8 +369,8 @@ if (indexDrift.length > 0) {
   lines.push(
     "",
     "  A uniqueness key declared in schema.ts but not matched in the DDL is only inert",
-    "  until someone runs `npm run db:push` or `db:generate` — drizzle.config.ts points at",
-    "  schema.ts, so either would apply THIS key to whatever DATABASE_URL resolves to.",
+    "  until a schema-diffing tool is pointed at schema.ts, which would then apply THIS key to",
+    "  whatever DATABASE_URL resolves to.",
     "  Make the declaration and every CREATE UNIQUE INDEX agree on name and columns."
   );
   problems.push(lines.join("\n"));
@@ -385,7 +385,7 @@ if (drift.length > 0) {
   lines.push(
     "",
     "  Add the missing ALTER TABLE ... ADD COLUMN IF NOT EXISTS / ensureColumn entries",
-    "  to src/db/index.ts. Do not run `drizzle-kit push` to fix this."
+    "  to src/db/index.ts. Do not use a schema-diffing tool to fix this."
   );
   problems.push(lines.join("\n"));
 }

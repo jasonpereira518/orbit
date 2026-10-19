@@ -20,10 +20,8 @@
     "*.ts"
   ],
   "ignore": [
-    "drizzle.config.ts",
     "src/app/bench/**"
   ],
-  "drizzle": false,
   "next": false,
   "playwright": false,
   "eslint": false,
