@@ -251,6 +251,7 @@
 @source "../lib/tab-title-badge.ts";
 @source "../lib/throttle-latch.ts";
 @source "../lib/timeline-cost.ts";
+@source "../lib/touch-kinds.ts";
 @source "../lib/transcription-vocabulary.ts";
 @source "../lib/typesafe-api.ts";
 @source "../lib/usage-events.ts";

@@ -47,6 +47,8 @@ const USER = fakeUserId("merge-coverage");
  * `table.column` keys.
  */
 const DELIBERATE: Record<string, string> = {
+  "contact_touch_counts.contact_id":
+    "derived, never written by the app: the interactions triggers move the loser's tallies to the winner as its interactions move, and the loser's row cascades with it",
   // 4f: every pair naming the loser is resolved by the merge itself; repointing would collide.
   "duplicate_suggestions.contact_a_id": "pairs naming the loser cascade by design (merge step 4f)",
   "duplicate_suggestions.contact_b_id": "pairs naming the loser cascade by design (merge step 4f)",
