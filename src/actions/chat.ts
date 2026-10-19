@@ -17,6 +17,7 @@ import { requireUserId } from "@/lib/auth";
 import { prepareChatContext } from "@/lib/chat-context";
 import { maybeGather } from "@/lib/chat-gather";
 import { labelAnswer } from "@/lib/chat-abstention";
+import { answerWithLookups, chatLoopEnabled } from "@/lib/chat-agent-loop";
 import { citedIds, stripUnresolvedMarkers } from "@/lib/chat-evidence";
 import { validateProposedActions } from "@/lib/chat-proposed-actions";
 import {
@@ -407,28 +408,33 @@ async function askNetworkInner(
       askedMessageId = userRow?.id ?? null;
     }
 
-    // The same routing as the streaming route, so the two paths cannot answer differently.
-    const { evidence, notePassages } = await maybeGather(userId, ctx, { requestStartedAt });
-
-    const result = await chatWithNetwork(
-      userId,
-      ctx.scopedQuestion,
-      ctx.modelContacts,
-      ctx.priorTurns,
-      ctx.orgRosters,
-      ctx.attention,
-      ctx.modelRecruiters,
-      ctx.focusProfile,
-      ctx.attachedContext,
-      ctx.goals,
-      ctx.attentionLite,
-      evidence,
-      notePassages,
-      ctx.writingInstructions,
-      ctx.openReminders ?? null,
-      ctx.calendar?.text ?? null,
-      { commitments: ctx.commitments ?? null, events: ctx.events ?? null }
-    );
+    // The same routing as the streaming route, so the two paths cannot answer differently:
+    // behind CHAT_LOOP_V2 the answer looks things up itself, otherwise research decides first.
+    const result = chatLoopEnabled()
+      ? await answerWithLookups(userId, ctx, { onDelta: () => {}, requestStartedAt })
+      : await answerOnePass();
+    async function answerOnePass() {
+      const { evidence, notePassages } = await maybeGather(userId, ctx, { requestStartedAt });
+      return chatWithNetwork(
+        userId,
+        ctx.scopedQuestion,
+        ctx.modelContacts,
+        ctx.priorTurns,
+        ctx.orgRosters,
+        ctx.attention,
+        ctx.modelRecruiters,
+        ctx.focusProfile,
+        ctx.attachedContext,
+        ctx.goals,
+        ctx.attentionLite,
+        evidence,
+        notePassages,
+        ctx.writingInstructions,
+        ctx.openReminders ?? null,
+        ctx.calendar?.text ?? null,
+        { commitments: ctx.commitments ?? null, events: ctx.events ?? null }
+      );
+    }
     const recommendations = ctx.filterRecommendations(
       (result.recommendations || []) as ChatRecommendation[]
     );

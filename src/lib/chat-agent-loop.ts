@@ -41,6 +41,15 @@ import {
   pastTense,
 } from "@/lib/tools/chat-executor";
 
+/**
+ * Whether chat answers through this loop. Off unless `CHAT_LOOP_V2=1` until the chat and
+ * research evals pass on it (docs/superpowers/plans/2026-10-19-chat-agent.md, Task 1.7);
+ * until then the one-pass answer and the research step stay the default.
+ */
+export function chatLoopEnabled(): boolean {
+  return process.env.CHAT_LOOP_V2 === "1";
+}
+
 /** Rounds include the last, tools-off one. Most answers need one round; a lookup makes two. */
 export const AGENT_BOUNDS = { maxRounds: 4, maxCalls: 8, maxResultChars: 6_000 } as const;
 /** Lookups stop by here (ms into the request); the answer stream itself is cut at 55s. */
