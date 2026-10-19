@@ -57,6 +57,8 @@ export const NEVER_REVEALABLE: readonly string[] = [
   "connector_connections.access_token_encrypted",
   "connector_connections.refresh_token_encrypted",
   "webhook_endpoints.secret_encrypted",
+  "interest_list_signups.unsubscribe_token_encrypted",
+  "interest_list_signups.share_token_encrypted",
   "note_batches.source_text",
   "meeting_transcript_segments.text",
   "capture_photos.inline_data",
