@@ -1,6 +1,6 @@
 # Orbit tracking plan
 
-Status: **proposal, phase 1**. Nothing in this document is implemented. It is the metric tree, the event taxonomy, the identity model, and the ranked list of events Orbit does not record today. `ANALYTICS_AUDIT.md` is the evidence; `ANALYTICS_PLAN.md` is the order of work.
+Status: **implemented** (see `ANALYTICS_PLAN.md` §6 for deviations and gaps). The definitions here are the ones in code: `src/lib/activity.ts`, `src/lib/product-event-schemas.ts`. It is the metric tree, the event taxonomy, the identity model, and the ranked list of events Orbit does not record today. `ANALYTICS_AUDIT.md` is the evidence; `ANALYTICS_PLAN.md` is the order of work.
 
 Conventions used throughout:
 

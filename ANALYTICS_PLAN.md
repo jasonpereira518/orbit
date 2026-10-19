@@ -1,6 +1,6 @@
 # Orbit analytics plan
 
-Status: **proposal, phase 1. No application code has been changed.** Evidence for every item is in `ANALYTICS_AUDIT.md` (finding ids like I1, M2 refer to it); definitions are in `TRACKING_PLAN.md`. Draft schemas and check scripts live under `analytics/` and touch nothing in `src/`.
+Status: **implemented on branch `claude/sweet-maxwell-bu2l9z` (phases 1 to 4); see §6 for what shipped, what was assumed and what is left.** The text below is the original proposal. Evidence for every item is in `ANALYTICS_AUDIT.md` (finding ids like I1, M2 refer to it); definitions are in `TRACKING_PLAN.md`. Check scripts live under `analytics/`; the event schemas moved into `src/lib/product-event-schemas.ts`.
 
 Effort: **S** under half a day, **M** one to two days, **L** three days or more, all for one person who knows the codebase. Regression risk is about the product, not the dashboard: a change that can alter what a user sees or is charged is marked accordingly.
 
@@ -198,3 +198,39 @@ Underpowered A/B tests will produce confident noise. The proposal:
 12. **Alert routing**: which of the §3.3 alerts go to the critical webhook.
 13. **`/api/track` rename** to reduce ad-blocker loss, and whether to measure the loss first.
 14. **Micro-survey cadence**: one prompt per 14 days per user, and whether the PMF question runs in the beta or only at launch.
+
+---
+
+## 6. Implementation status (2026-10-19)
+
+Everything in §0 to §4 is built except the items under "Not done". Schema is at version 171. Run `npx tsx scripts/run-smoke.ts --ci` for the full check; `analytics/checks/probe-known-distortions.ts` is now a regression guard (12 probes, 0 regressions).
+
+### What shipped
+
+- **Phase 1, correctness.** One definition of "active" (`intentionalActionsSince`) and one of "activated" (`activatedSql`) in `src/lib/activity.ts`. Internal, tester, showcase and admin accounts excluded everywhere through `internalAccountSql`. Admin charts bucket by UTC. Feature adoption counts completed use only. Credit packs, refunds, comped accounts and lifetime plans are handled in the ledger; churn is booked when an account is deleted (in-app and on the Clerk `user.deleted` webhook); CAC has one implementation; LTV uses the observed churn rate behind a minimum sample; Deepgram is in burn and per-user cost.
+- **Phase 2, events.** Append-only `product_events` (48 events, zod-validated, ids/enums/counts/booleans only, owners listed in `analytics/events/README.md`). Invite ledger (`site_invites`), waitlist-to-account link, signup attribution carried from first visit, tab id saved at join and first app load, MCP and extension telemetry, plan-gate log with `/upgrade?gate=`, reminder `completed_at`.
+- **Phase 3, ops.** Alerts for silent jobs, billing drift, error spikes, cost ceiling, and activation or signup drops (`product-alerts.ts`, wired into `ops-alerts.ts`), a daily Stripe reconcile job, retention pruning, scrubbed error text, a weekly digest (Monday cron), and three admin pages: Beta (`/admin/beta`), Launch (`/admin/launch`), Retain (`/admin/retain`). RUNBOOK rows exist for each alert.
+- **Phase 4, qualitative.** One-tap micro-surveys (one prompt per 14 days per user, answers stored as events), optional cancellation reason, feedback facets and themes in the admin feedback page, and a holdout helper for experiments.
+- **Privacy.** `/privacy` and `/interest/privacy` updated (BotID, retention periods, the saved tab id, product events, Slack feedback excerpt). `TERMS_VERSION` is now `2026-10-19`.
+
+### Assumptions for the 14 decisions (all recommended defaults)
+
+1. Activation = captured and acted within 7 days. 2. North star = Weekly Active Networkers. 3. Account kinds `internal`/`tester`; comped users count in product metrics, not revenue. 4. `product_events` table approved. 5. Tab id stored at waitlist join and first app load. 6. Churn booked on self-deletion. 7. Deepgram in burn and per-user cost. 8. Observed churn behind a sample minimum. 9. Retention 90/90/90/30 days (usage 180, errors 30, product events 400). 10. Vercel Web Analytics and Speed Insights kept, BotID disclosed. 11. Wave thresholds as in §3.2. 12. All new alerts go to the existing Slack ops webhook. 13. Beacon renamed to `/api/p/v`, `/api/track` kept as an alias; loss not measured. 14. Survey cadence 14 days; PMF question runs in the beta.
+
+### Deviations from the plan
+
+- No backfill of `reminders.completed_at`; history before deploy is invisible to completion metrics.
+- Feedback sentiment is derived from category rather than classified.
+- Surveys store answers as `product_events`, not a table.
+- `email_sends` bodies are not pruned.
+- On full account purge the waitlist row is anonymised (`email = 'deleted-<id>'`) or deleted rather than kept for 30 days.
+- No `onboarding_path_chosen_at` column; the `onboarding_path_chosen` event covers it.
+- The typed LTV churn override is per first admin.
+- No job-seeker cut of the funnel.
+
+### Not done / known gaps
+
+- `confirmBulkCapture` records no `capture_saved`; `error_shown` (client errors) has no hook; ICS, Luma and Eventbrite sync failures are not tracked as `sync_failed`.
+- `requireEntitlement` callers outside the main paths do not pass a `route` to the gate log.
+- `signup_session_id` is accepted only within two days of signup.
+- Operator actions: set `STRIPE_SECRET_KEY` for the reconcile job; set `account_kind` for yourself and testers (`scripts/seed-account-kind.ts` or the admin control). Deploying forces every user to re-accept the terms because the version changed.
