@@ -21,6 +21,7 @@ import {
   planForLookupKey,
 } from "@/lib/stripe-config";
 import { annualMonthlyEquivalentCents, PLAN_CONFIG } from "@/lib/plans/plan-config";
+import { reportError } from "@/lib/report-error";
 
 /**
  * What a Stripe event means, decided without touching anything.
@@ -292,8 +293,9 @@ export function periodEndOf(subscription: Stripe.Subscription): number | null {
   const root = (subscription as unknown as { current_period_end?: number })
     .current_period_end;
   if (typeof root === "number") return root;
-  console.error(
-    `Stripe subscription ${subscription.id} carries no current_period_end on item or root.`
+  reportError(
+    new Error(`Stripe subscription ${subscription.id} carries no current_period_end on item or root.`),
+    { where: "lib.billing-stripe.period-end", extra: { subscriptionId: subscription.id } }
   );
   return null;
 }

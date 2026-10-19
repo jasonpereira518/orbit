@@ -5,6 +5,7 @@ import { estimateCostMicros } from "@/lib/ai-pricing";
 import { classifyAiError } from "@/lib/errors";
 import { settleManagedUsage } from "@/lib/credits/ledger";
 import type { AiProvider } from "@/lib/ai-providers";
+import { reportError } from "@/lib/report-error";
 
 export type UsageKind =
   | "completion"
@@ -144,7 +145,13 @@ export function recordUsage(rec: UsageRecord): void {
     try {
       await settleManagedUsage(row);
     } catch (err) {
-      console.error("[credits] settling a managed call did not complete", err);
+      // Fire-and-forget, but a failed settlement leaves the credit ledger out of step with real
+      // spend, so it is an error (not a throttled warning).
+      reportError(err, {
+        where: "lib.usage.settle-managed",
+        userId: rec.userId,
+        extra: { operation: rec.operation, provider: rec.provider },
+      });
     }
   };
 

@@ -1,6 +1,7 @@
 import { verifyWebhook } from "@clerk/nextjs/webhooks";
 import type { NextRequest } from "next/server";
 import { purgeUserData } from "@/lib/user-data";
+import { reportError } from "@/lib/report-error";
 import {
   ensureUserSettings,
   recordTermsAcceptance,
@@ -50,7 +51,8 @@ export async function POST(req: NextRequest) {
   try {
     evt = await verifyWebhook(req);
   } catch (err) {
-    console.error("Clerk webhook verification failed:", err);
+    // Unauthenticated callers can trigger this, so a warning (throttled), not an error per POST.
+    reportError(err, { where: "webhook.clerk.verify", level: "warning" });
     // Deliberately stores nothing from the body: an unverified payload is untrusted input.
     // Once per hour, not once per request: this write happens BEFORE any authentication, so
     // without the latch anyone can grow the ledger a row per POST. One row still says

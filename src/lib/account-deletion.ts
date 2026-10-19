@@ -4,6 +4,7 @@ import { userSettings } from "@/db/schema";
 import { isAdminUser } from "@/lib/admin";
 import { isClerkConfigured, isDemoMode } from "@/lib/demo-account";
 import { UserFacingError } from "@/lib/errors";
+import { reportError } from "@/lib/report-error";
 import { purgeUserData } from "@/lib/user-data";
 
 /**
@@ -78,7 +79,7 @@ export async function deleteOwnAccount(
     try {
       await deps.cancelSubscriptions(settings.stripeCustomerId);
     } catch (err) {
-      console.error("[account-deletion] cancelling the subscription threw", err);
+      reportError(err, { where: "account.delete.cancel-subscription", userId });
       throw new UserFacingError(
         "Couldn’t cancel your Orbit subscription, so nothing was deleted — try again, or contact us"
       );
@@ -90,7 +91,8 @@ export async function deleteOwnAccount(
   try {
     await deps.deleteLogin(userId);
   } catch (err) {
-    console.error("[account-deletion] removing the sign-in threw", err);
+    // The data is already gone, so this is the one a person must follow up by hand.
+    reportError(err, { where: "account.delete.remove-login", userId });
     throw new UserFacingError(
       "Your data is deleted, but your sign-in couldn’t be removed — try again, or contact us"
     );

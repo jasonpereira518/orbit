@@ -270,7 +270,7 @@ export async function confirmCheckoutSession(
     if (result.reason === "unpaid") return { status: "processing" };
   } catch (err) {
     // Not recorded as a stripeCheckout error event: that source pages "nobody can pay".
-    console.error("Checkout confirmation on return did not complete:", err);
+    reportError(err, { where: "action.billing.confirm-checkout", userId });
   }
   return { status: "unconfirmed" };
 }

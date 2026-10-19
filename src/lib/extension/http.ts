@@ -15,6 +15,7 @@ import { extensionUsage } from "@/db/schema";
 import { ContactNotFoundError } from "@/lib/contact-writes";
 import type { ExtensionError, ExtensionErrorCode } from "./contract";
 import { MAX_BODY_BYTES } from "./contract.schema";
+import { reportError } from "@/lib/report-error";
 import {
   ExtensionRateLimitError,
   ExtensionUnauthorizedError,
@@ -244,7 +245,7 @@ function toErrorResponse(error: unknown) {
   }
 
   // Never leak internals to the extension; the detail goes to the server log.
-  console.error("[extension] unhandled route error", error);
+  reportError(error, { where: "extension.route" });
   return jsonError({
     code: "server_error",
     message: "Orbit is having a moment. Try again.",
