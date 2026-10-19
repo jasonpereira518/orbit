@@ -6,9 +6,9 @@
   "smoke-action-user-scope.ts": [
     "src/actions",
     "src/actions/",
-    "src/actions/apple.ts",
+    "src/actions/contacts.ts",
     "src/lib/",
-    "src/lib/apple.ts"
+    "src/lib/contact-writes.ts"
   ],
   "smoke-admin-analytics.ts": [
     "scripts/run-smoke.ts",

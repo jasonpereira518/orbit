@@ -4,9 +4,9 @@
  *
  * Every function here takes `userId` as a plain parameter rather than calling
  * `requireUserId()` itself, so it can be exercised without a Clerk session —
- * `scripts/smoke-apple-actions.ts` calls these directly. `src/actions/apple.ts` ("use
- * server") is the only production caller, and it supplies `requireUserId()`'s result —
- * never `requireSyncUser()`'s. Connecting any calendar account — Google, Microsoft, Apple —
+ * `scripts/smoke-apple-actions.ts` calls these directly. The server-action wrappers
+ * (`src/actions/apple.ts`) had no UI and were removed, so today nothing in the app can start
+ * a connection; the sync path still reads existing ones. Connecting any calendar account — Google, Microsoft, Apple —
  * is free (a controller ruling settled this); pasted ICS/webcal URLs are the thing that
  * keeps the sync entitlement gate, not this.
  */

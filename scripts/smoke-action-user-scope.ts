@@ -31,7 +31,7 @@
  * callable with an arbitrary user id and no session at all (a route handler, a cron job)
  * does not belong in `src/actions/` at all: move it to a plain module under `src/lib/` and
  * have the action import it, so no action id is minted for it. That is the shape
- * `src/actions/apple.ts` over `src/lib/apple.ts` already uses.
+ * `src/actions/contacts.ts` over `src/lib/contact-writes.ts` already uses.
  *
  * `--report` prints the full export inventory instead of only the offenders.
  * Run: npx tsx scripts/smoke-action-user-scope.ts [--report]
