@@ -1,0 +1,18 @@
+# Reviewed gitleaks false positives (security audit branch). One fingerprint per line:
+# commit:file:rule:line. Every entry is a test fixture or prose, never a live credential.
+# scripts/smoke-origin-checks.ts: route names in the origin-check allowlist, not keys
+f72af5a97299beecef3ffdb1f3b64405fe8b4a3b:scripts/smoke-origin-checks.ts:generic-api-key:48
+# scripts/smoke-origin-checks.ts: route names in the origin-check allowlist, not keys
+f72af5a97299beecef3ffdb1f3b64405fe8b4a3b:scripts/smoke-origin-checks.ts:generic-api-key:70
+# scripts/smoke-crypto-rotation.ts: a test-only secret and the legacy tokens derived from it
+067d130797bff972cf6fbe65230be5e6318f038d:scripts/smoke-crypto-rotation.ts:generic-api-key:45
+# scripts/smoke-crypto-rotation.ts: a test-only secret and the legacy tokens derived from it
+067d130797bff972cf6fbe65230be5e6318f038d:scripts/smoke-crypto-rotation.ts:generic-api-key:57
+# scripts/smoke-crypto-rotation.ts: a test-only secret and the legacy tokens derived from it
+067d130797bff972cf6fbe65230be5e6318f038d:scripts/smoke-crypto-rotation.ts:generic-api-key:58
+# scripts/smoke-input-helpers.ts: an import line naming two helper functions
+1f2f5f6b528877ea25804614c593657fede7274d:scripts/smoke-input-helpers.ts:linkedin-client-secret:8
+# scripts/smoke-env.ts: a fake sk_live_ placeholder that must not appear in error output
+02074fd10c533f34fa87c7d49f1a79082efc5827:scripts/smoke-env.ts:stripe-access-token:172
+# SECURITY_AUDIT.md: the audit report quoting a test fixture name
+c25197c84251dd2a5d52faa7660149a9035620f3:SECURITY_AUDIT.md:stripe-access-token:345
