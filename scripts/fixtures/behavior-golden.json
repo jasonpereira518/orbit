@@ -5463,7 +5463,7 @@
             "title": "Partnerships Lead",
             "email": "sarah.chen@example.com",
             "location": "San Francisco, CA",
-            "linkedinUrl": null,
+            "linkedinUrl": "https://www.linkedin.com/in/sarah-chen-demo",
             "closenessTier": "inner",
             "lastInteractionAt": null
           },
