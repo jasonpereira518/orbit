@@ -139,6 +139,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-commands": "pure",
   "smoke-chat-refine": "pure",
   "smoke-cross-tenant-refs": "pglite",
+  "smoke-contact-tags-ownership": "pglite",
   "smoke-tenant-isolation": "pglite", // every id-taking tool and the v1 API, called with another account's ids
   "smoke-extension-auth": "pglite",
   "smoke-resend-signature": "pglite",

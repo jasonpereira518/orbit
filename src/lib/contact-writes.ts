@@ -1090,7 +1090,10 @@ export async function updateContactForUser(
     await syncIdentitiesForContact(userId, id, contact, input.source);
   }
 
-  if (input.tagNames) {
+  // Only once the update matched the caller's own row. The UPDATE above is user-scoped, but
+  // `syncTags` deletes and attaches by contact id alone: run for another account's id, it
+  // stripped that contact's tags and attached the caller's (scripts/smoke-contact-tags-ownership.ts).
+  if (contact && input.tagNames) {
     await syncTags(userId, id, input.tagNames);
   }
 
