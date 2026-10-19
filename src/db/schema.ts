@@ -6323,6 +6323,24 @@ export const dataPurgeRuns = pgTable(
  * billing; drained by the hourly job, and a row leaves only when Stripe confirms the cancel.
  * The customer id is all it holds — no user id, no email. See `src/lib/billing-cancel.ts`.
  */
+/**
+ * A closed account, remembered only well enough to delete it again after a backup restore.
+ *
+ * Keyed HMACs (`deletion-tombstones.ts`) of the account id and email, never the values: a
+ * restored database is checked by hashing its own ids, so the tombstone needs nothing it
+ * could leak. Pruned once older than any backup (`TOMBSTONE_RETENTION_DAYS`).
+ */
+export const deletionTombstones = pgTable(
+  "deletion_tombstones",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userIdHash: text("user_id_hash").notNull(),
+    emailHash: text("email_hash"),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("deletion_tombstones_deleted_at_idx").on(t.deletedAt)]
+);
+
 export const billingCancellationQueue = pgTable("billing_cancellation_queue", {
   stripeCustomerId: text("stripe_customer_id").primaryKey(),
   attempts: integer("attempts").default(1).notNull(),

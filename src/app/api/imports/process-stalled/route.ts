@@ -11,6 +11,8 @@ import { resumeStalledImports } from "@/lib/import-stall";
 import { resumeStrandedPurges } from "@/lib/user-data";
 import { retryQueuedCancellations } from "@/lib/billing-cancel";
 import { expireMergeArchives } from "@/lib/contact-merge";
+import { pruneDeletionTombstones } from "@/lib/deletion-tombstones";
+import { runRetention, type RetentionRun } from "@/lib/retention";
 import { sweepOrphanedAccounts } from "@/lib/clerk-orphan-sweep";
 import { isClerkConfigured } from "@/lib/demo-account";
 import { sweepAbandonedMeetingSessions } from "@/lib/meeting-sessions";
@@ -183,6 +185,10 @@ export async function GET(request: Request) {
     mergeArchivesExpired: 0,
     /** Search passages whose interaction no longer exists (a deleted note, still quotable). */
     orphanPassagesPruned: 0,
+    /** Deletion tombstones older than any backup, pruned. */
+    tombstonesPruned: 0,
+    /** The retention table (`retention.ts`): per rule, rows due and rows removed. */
+    retention: null as RetentionRun | null,
     /** Missed user.deleted webhooks: accounts checked against Clerk, and purged. */
     orphansExamined: 0,
     orphansPurged: 0,
@@ -301,6 +307,16 @@ export async function GET(request: Request) {
     } catch (err) {
       status = "partial";
       reportError(err, { where: "job.process-stalled.orphan-passages" });
+    }
+
+    try {
+      stats.tombstonesPruned = await pruneDeletionTombstones(new Date());
+      // Report-only unless ORBIT_RETENTION=apply; a failing rule is recorded in its entry.
+      stats.retention = await runRetention();
+      if (Object.values(stats.retention.rules).some((r) => "error" in r)) status = "partial";
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.retention" });
     }
 
     try {
@@ -458,7 +474,21 @@ export async function GET(request: Request) {
     reportError(err, { where: "job.process-stalled" });
   } finally {
     // In `finally` so it survives an early return and cannot be forgotten in a new branch.
-    await finishCronRun(run, { status, stats, error });
+    // The retention run is flattened into one counter per rule (`retention.<rule>` = rows due,
+    // `.applied` = rows removed), because cron stats are numbers and flags only.
+    const { retention, ...counters } = stats;
+    const retentionCounters: Record<string, number | boolean> = retention
+      ? Object.fromEntries(
+          Object.entries(retention.rules).flatMap(([id, r]): Array<[string, number | boolean]> =>
+            "error" in r ? [[`retention.${id}.error`, true]] : [[`retention.${id}`, r.due], [`retention.${id}.applied`, r.applied]]
+          )
+        )
+      : {};
+    await finishCronRun(run, {
+      status,
+      stats: { ...counters, ...retentionCounters, ...(retention ? { retentionApplying: retention.mode === "apply" } : {}) },
+      error,
+    });
   }
 
   // A 500 turns the failure red in Vercel's own cron log for free. Vercel does not retry

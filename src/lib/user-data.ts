@@ -103,6 +103,7 @@ import {
   waitlistPollVotes,
 } from "@/db/schema";
 import { cancelOrQueue } from "@/lib/billing-cancel";
+import { writeDeletionTombstone } from "@/lib/deletion-tombstones";
 import { DERIVED_ARCHIVE_TABLES } from "@/lib/merge-archive";
 import { purgeCapturePhotosForUser } from "@/lib/capture-photos";
 import { recomputeRecruiterRating,
@@ -929,6 +930,9 @@ async function closeAccount(db: Db, userId: string) {
     columns: { stripeCustomerId: true, email: true },
   });
   if (settings?.stripeCustomerId) await cancelOrQueue(settings.stripeCustomerId);
+  // Hashes only, so a backup restored later can be purged of this account again
+  // (`deletion-tombstones.ts`). A resumed run writes a second one; replay is idempotent.
+  await writeDeletionTombstone(userId, settings?.email);
 
   const email = settings?.email?.trim().toLowerCase();
   if (!email) return;

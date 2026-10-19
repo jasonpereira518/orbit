@@ -47,6 +47,8 @@ export const OPERATOR_TABLES = new Set([
   // Holds only a Stripe customer id, written by the purge itself; seeding it with a user's
   // marker would report the seed as a survivor.
   "billing_cancellation_queue",
+  // Keyed hashes only, written by the purge itself.
+  "deletion_tombstones",
 ]);
 
 export type SeedReport = {

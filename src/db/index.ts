@@ -1302,6 +1302,16 @@ CREATE INDEX IF NOT EXISTS data_purge_runs_target_idx ON data_purge_runs(target_
 -- A closing account's Stripe customer whose subscriptions could not be cancelled yet. The
 -- customer id is the only column that names anyone, and the row is deleted as soon as Stripe
 -- confirms the cancel. See src/lib/billing-cancel.ts.
+-- One row per closed account, written by the purge: keyed hashes of the account id and email,
+-- never the values. A database restored from a backup taken before the deletion is replayed
+-- against these before it is used (scripts/replay-deletions.ts). Kept longer than backups are.
+CREATE TABLE IF NOT EXISTS deletion_tombstones (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id_hash text NOT NULL,
+  email_hash text,
+  deleted_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS deletion_tombstones_deleted_at_idx ON deletion_tombstones(deleted_at);
 CREATE TABLE IF NOT EXISTS billing_cancellation_queue (
   stripe_customer_id text PRIMARY KEY,
   attempts integer NOT NULL DEFAULT 1,
@@ -2731,11 +2741,16 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // held only cached web lookups. Rescanned every ref and worktree on Oct 15 2026: 169 was the
 // highest claimed anywhere.
 //
-// 175 = billing_cancellation_queue (new table): Stripe customers of closed accounts whose
-// subscriptions are still to be cancelled, retried hourly. NOT 171-174:
-// claude/serene-cerf-0is3sb holds 171 and claude/trusting-wozniak-ebsks3 holds 174.
-// Rescanned every remote ref on Oct 18 2026: 174 was the highest claimed anywhere.
-export const SCHEMA_VERSION = 175;
+// 176 = the privacy work (claude/sharp-ptolemy-pkfcqi): billing_cancellation_queue (new
+// table: Stripe customers of closed accounts whose subscriptions are still to be cancelled,
+// retried hourly) and deletion_tombstones (new table: hashed record of every account
+// deletion, replayed after a backup restore). Built as 175 on Oct 18; renumbered on Oct 19
+// because claude/web-search-cost-reduction-3e2210 also declared 175 (the same silent
+// collision this log records above). NOT 171-175: claude/serene-cerf-0is3sb and
+// claude/sweet-maxwell-bu2l9z hold 171, claude/trusting-wozniak-ebsks3 holds 174 and
+// claude/web-search-cost-reduction-3e2210 holds 175. Rescanned every remote ref on Oct 19
+// 2026: 175 was the highest claimed anywhere.
+export const SCHEMA_VERSION = 176;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the

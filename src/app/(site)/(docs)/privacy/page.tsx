@@ -584,10 +584,13 @@ export default function PrivacyPage() {
             the operator&rsquo;s audit log of actions taken on your account, which refers to an
             account id that no longer exists and, where the operator deleted the account, the
             email address it had; the record of the deletion itself (the deletion&rsquo;s own
-            progress log, kept 30 days, and the log of account events Clerk sent, which names only
-            the account id); and rate-limit counters keyed by that same id, which expire within two
-            days. Encrypted database backups are kept for 90 days, so deleted data leaves the last
-            backup within 90 days.
+            progress log, kept 30 days, the log of account events Clerk sent, which names only
+            the account id, and a deletion marker holding a one-way, keyed fingerprint of your
+            account id and email — never either one — kept 120 days); and rate-limit counters
+            keyed by that same id, which expire within two days. Encrypted database backups are
+            kept for 90 days, so deleted data leaves the last backup within 90 days. If a backup is
+            ever restored, the deletion marker is how Orbit finds your account in it and deletes
+            it again before the restored data is used.
           </p>
           <p>
             A merge of two contacts can be undone for 30 days. Until then Orbit keeps a copy of the

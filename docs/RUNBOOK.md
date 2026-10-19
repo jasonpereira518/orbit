@@ -260,8 +260,26 @@ age -d -i backup-key.txt orbit-YYYY-MM-DD.pgc.age > orbit.pgc
 pg_restore --clean --if-exists --no-owner --no-privileges -d "$BRANCH_URL" orbit.pgc
 ```
 
-Check `select count(*) from contacts;`, point a preview at the branch, then promote the
-branch in Neon (or set `DATABASE_URL` to it) once it looks right.
+Check `select count(*) from contacts;`.
+
+**Before promoting, re-apply every deletion made after the dump was taken.** The dump predates
+them, so every account deleted since is back in the restored copy. Production's
+`deletion_tombstones` (keyed hashes, kept 120 days) records them:
+
+```bash
+# DRY RUN first: lists what it would purge. --since = when the dump was taken (artifact time).
+DATABASE_URL="$BRANCH_URL" TOMBSTONE_SOURCE_URL="$PRODUCTION_URL" ENCRYPTION_SECRET="<production's>" \
+  npx tsx scripts/replay-deletions.ts --since 2026-10-01T03:00:00Z
+# then the same command with --apply
+```
+
+It must run with production's `ENCRYPTION_SECRET` (the hashes are keyed by it). It also
+re-queues the Stripe cancel for each purged account. If production itself is unreadable (the
+reason for the restore), replay from the newest tombstones you can read — an older dump of
+production carries the table too — and note the gap in the drill log.
+
+Then point a preview at the branch, and promote it in Neon (or set `DATABASE_URL` to it) once
+it looks right.
 
 When Neon upgrades the project's Postgres major, raise `PG_MAJOR` in `backup.yml` the same
 day: pg_dump refuses a server newer than itself, and the backup fails (and pages) until then.
