@@ -113,7 +113,10 @@ export function UpgradePlanCards({
   currentPlan,
   founding,
   checkoutOpen,
+  gate,
 }: {
+  /** The paywall that sent the buyer here, from `/upgrade?gate=`; validated by the page. */
+  gate?: string | null;
   currentPlan: Plan;
   /** Whether this account's first subscription gets founding pricing. */
   founding: boolean;
@@ -154,7 +157,7 @@ export function UpgradePlanCards({
         </p>
       );
     }
-    return <SubscriptionCheckoutButton plan={plan} period={period} />;
+    return <SubscriptionCheckoutButton plan={plan} period={period} gate={gate} />;
   };
 
   return (

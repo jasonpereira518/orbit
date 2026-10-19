@@ -33,8 +33,12 @@ export {
  * sales you cannot buy it". Any copy implying scarcity of availability is wrong.
  *
  * These are display and threshold values. What anyone is actually charged is the Stripe
- * price object chosen in `src/lib/lifetime-offer.ts`, which reads these to stay in step —
- * a number changed here alone would make the page advertise a price nobody is charged.
+ * price object the Checkout Session was created with — Lifetime is no longer on sale
+ * (pricing v2), and there is no `lifetime-offer` module any more. A number changed here
+ * alone would make a page advertise a price nobody is charged. The ledger records which
+ * offer each past sale was (`billing_events.detail.tier`, derived from these two prices by
+ * `lifetimeTierFor` in `billing-stripe.ts`), so changing them also re-labels how new sales
+ * classify; leave old rows alone.
  */
 export const LIFETIME_INTRO_PRICE = 25;
 export const LIFETIME_STANDARD_PRICE = 75;

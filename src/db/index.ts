@@ -78,6 +78,12 @@ CREATE TABLE IF NOT EXISTS user_settings (
   signup_utm_campaign text,
   signup_landing_path text,
   signup_attributed_at timestamptz,
+  signup_attribution_source text,
+  signup_session_id text,
+  account_kind text,
+  ai_key_added_at timestamptz,
+  invite_id uuid,
+  interest_signup_id uuid,
   comped_plan text,
   lifetime_purchased_at timestamptz,
   lifetime_checkout_session_id text,
@@ -199,7 +205,9 @@ CREATE TABLE IF NOT EXISTS extension_usage (
   request_count integer NOT NULL DEFAULT 0,
   ai_window_started_at timestamptz NOT NULL DEFAULT now(),
   ai_count integer NOT NULL DEFAULT 0,
-  last_seen_at timestamptz
+  last_seen_at timestamptz,
+  first_seen_at timestamptz,
+  version text
 );
 CREATE TABLE IF NOT EXISTS user_goals (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -273,6 +281,7 @@ CREATE TABLE IF NOT EXISTS reminders (
   date_basis text,
   item_hash text,
   calendar_event_key text,
+  completed_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS suggested_reminders (
@@ -1373,6 +1382,9 @@ CREATE TABLE IF NOT EXISTS interest_list_signups (
   pass_check_count integer NOT NULL DEFAULT 0,
   pass_last_checked_at timestamptz,
   signup_event_label text,
+  join_session_id text,
+  user_id text,
+  converted_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_email_uidx ON interest_list_signups(email);
@@ -1381,6 +1393,40 @@ CREATE INDEX IF NOT EXISTS interest_list_signups_created_idx ON interest_list_si
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_token_uidx ON interest_list_signups(share_token);
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_referral_slug_uidx ON interest_list_signups(referral_slug);
 CREATE INDEX IF NOT EXISTS interest_list_signups_referred_by_idx ON interest_list_signups(referred_by_id);
+CREATE TABLE IF NOT EXISTS site_invites (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  email text NOT NULL,
+  interest_list_signup_id uuid,
+  wave_id text,
+  clerk_invitation_id text,
+  source text NOT NULL DEFAULT 'manual',
+  invited_by text,
+  emailed boolean NOT NULL DEFAULT false,
+  sent_at timestamptz NOT NULL DEFAULT now(),
+  accepted_user_id text,
+  accepted_at timestamptz,
+  revoked_at timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS site_invites_clerk_invitation_uidx ON site_invites(clerk_invitation_id);
+CREATE INDEX IF NOT EXISTS site_invites_email_idx ON site_invites(email);
+CREATE INDEX IF NOT EXISTS site_invites_wave_sent_idx ON site_invites(wave_id, sent_at);
+CREATE INDEX IF NOT EXISTS site_invites_accepted_user_idx ON site_invites(accepted_user_id);
+CREATE TABLE IF NOT EXISTS product_events (
+  id uuid PRIMARY KEY,
+  name text NOT NULL,
+  version integer NOT NULL DEFAULT 1,
+  occurred_at timestamptz NOT NULL DEFAULT now(),
+  user_id text,
+  session_id text,
+  surface text NOT NULL,
+  actor text NOT NULL,
+  is_internal boolean NOT NULL DEFAULT false,
+  properties jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS product_events_name_occurred_idx ON product_events(name, occurred_at);
+CREATE INDEX IF NOT EXISTS product_events_user_occurred_idx ON product_events(user_id, occurred_at);
+CREATE INDEX IF NOT EXISTS product_events_session_idx ON product_events(session_id);
 CREATE TABLE IF NOT EXISTS waitlist_poll_votes (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   option_id text NOT NULL,
@@ -2746,7 +2792,14 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // contacts.work_history_misses + work_history_miss_slug (two misses against the same LinkedIn
 // slug stop automatic work-history checks; a new URL lifts it). Rescanned every remote ref on
 // Oct 19 2026: 178 (main) was the highest claimed anywhere.
-export const SCHEMA_VERSION = 179;
+//
+// 181 = measurement (docs: ANALYTICS_PLAN.md): user_settings.account_kind / ai_key_added_at /
+// signup_attribution_source / signup_session_id / invite_id / interest_signup_id,
+// reminders.completed_at, extension_usage.first_seen_at + version, interest_list_signups
+// .join_session_id / user_id / converted_at, and two new tables: site_invites (Orbit's own
+// invitation ledger) and product_events (append-only, schema-validated telemetry). Renumbered from 171 on Oct 19 2026
+// after main reached 179; rescanned every remote ref that day: 180 was the highest claimed anywhere.
+export const SCHEMA_VERSION = 181;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3759,6 +3812,18 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "meeting_sessions", "calendar_event_key", "text");
   await ensureColumn(client, "meeting_sessions", "calendar_series_id", "text");
   await ensureColumn(client, "calendar_events", "agenda", "text");
+  await ensureColumn(client, "user_settings", "signup_attribution_source", "text");
+  await ensureColumn(client, "user_settings", "signup_session_id", "text");
+  await ensureColumn(client, "user_settings", "account_kind", "text");
+  await ensureColumn(client, "user_settings", "ai_key_added_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "invite_id", "uuid");
+  await ensureColumn(client, "user_settings", "interest_signup_id", "uuid");
+  await ensureColumn(client, "reminders", "completed_at", "timestamptz");
+  await ensureColumn(client, "extension_usage", "first_seen_at", "timestamptz");
+  await ensureColumn(client, "extension_usage", "version", "text");
+  await ensureColumn(client, "interest_list_signups", "join_session_id", "text");
+  await ensureColumn(client, "interest_list_signups", "user_id", "text");
+  await ensureColumn(client, "interest_list_signups", "converted_at", "timestamptz");
   await ensureColumn(client, "user_settings", "email_activity_sync", "integer NOT NULL DEFAULT 0");
   await ensureColumn(
     client,
@@ -4571,6 +4636,21 @@ const alters = [
   // Schema v162: the invite’s agenda (for the meeting summarizer) and the recurring series a
   // recording belongs to (for "last time" in the next one).
   `ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS agenda text`,
+  // Schema v181: measurement. Account kind and attribution/identity links on user_settings, the
+  // moment a reminder was completed, extension first-seen/version, and the waitlist-to-account
+  // link. The two new tables (site_invites, product_events) are in the DDL template.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_attribution_source text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_session_id text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS account_kind text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_key_added_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS invite_id uuid`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS interest_signup_id uuid`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS completed_at timestamptz`,
+  `ALTER TABLE extension_usage ADD COLUMN IF NOT EXISTS first_seen_at timestamptz`,
+  `ALTER TABLE extension_usage ADD COLUMN IF NOT EXISTS version text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS join_session_id text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS user_id text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS converted_at timestamptz`,
   `ALTER TABLE meeting_sessions ADD COLUMN IF NOT EXISTS calendar_series_id text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_activity_sync integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,

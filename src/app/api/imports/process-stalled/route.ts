@@ -34,6 +34,7 @@ import {
   usersWithPendingTimelineEvents,
 } from "@/lib/linkedin-timeline-backfill";
 import { backfillEmbeddingVectors, neonClient } from "@/db";
+import { runAnalyticsRetention } from "@/lib/analytics-retention";
 import { isInternalRequest } from "@/lib/internal-auth";
 import { reportAndContinue, reportError } from "@/lib/report-error";
 import { kickRelationshipRun } from "@/lib/relationship-engine/runner";
@@ -232,6 +233,10 @@ export async function GET(request: Request) {
         errorEvents,
         ERROR_EVENT_RETENTION_DAYS
       );
+      // The tables that used to grow without a limit: cron_runs, webhook_deliveries (and the
+      // recipient addresses in them sooner), gate_events, product_events, and converted
+      // waitlist rows. See src/lib/analytics-retention.ts for what is deliberately kept.
+      Object.assign(stats, await runAnalyticsRetention());
       // Remembered AI answers past the longest TTL any caller reads them with.
       await pruneAiResultCache();
       // Rate-limit buckets whose window ended long ago; only the next hit ever reset one.

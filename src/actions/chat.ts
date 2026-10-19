@@ -407,7 +407,7 @@ async function askNetworkInner(
     }
 
     // The same routing as the streaming route, so the two paths cannot answer differently.
-    const { evidence, notePassages } = await maybeGather(userId, ctx, { requestStartedAt });
+    const { evidence, notePassages, research } = await maybeGather(userId, ctx, { requestStartedAt });
 
     const result = await chatWithNetwork(
       userId,
@@ -447,6 +447,7 @@ async function askNetworkInner(
       recommendations,
       evidence: citedEvidence,
       proposedActions,
+      metrics: { durationMs: Date.now() - requestStartedAt, toolRounds: research?.rounds ?? 0 },
     });
 
     return {

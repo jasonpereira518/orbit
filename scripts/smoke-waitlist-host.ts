@@ -92,6 +92,7 @@ for (const path of [
   "/_next/static/chunks/app.js",
   "/api/interest-list/unsubscribe",
   "/api/interest-list/ticket-image",
+  "/api/p/v",
   "/api/track",
   "/api/csp-report",
   "/_vercel/insights/script.js",
@@ -128,7 +129,7 @@ for (const path of [
 ]) {
   check(`${path} redirects to /`, show(onWaitlist(path)) === show({ kind: "redirect", to: "/" }), show(onWaitlist(path)));
 }
-check("the pure allowlist agrees with the config", ["/", "/privacy", "/api/track", "/landing/planets/earth.png"].every(waitlistServesPath) && !waitlistServesPath("/pricing") && !waitlistServesPath("/landing/earth.png"));
+check("the pure allowlist agrees with the config", ["/", "/privacy", "/api/p/v", "/api/track", "/landing/planets/earth.png"].every(waitlistServesPath) && !waitlistServesPath("/pricing") && !waitlistServesPath("/landing/earth.png"));
 check(
   "the poll's live-results read is served on the waitlist host",
   waitlistServesPath("/api/waitlist-poll/results") && !waitlistServesPath("/api/waitlist-poll/anything-else")
@@ -157,7 +158,7 @@ check("sign-in stays open, steps included", ["/sign-in", "/sign-in/factor-one", 
 check("a Clerk invitation opens /sign-up", gate("/sign-up?__clerk_ticket=abc&__clerk_status=sign_up", false) === pass);
 check("Clerk's own sign-up steps are left alone", gate("/sign-up/continue", false) === pass);
 check("the phone scan page stays open", gate("/scan/tok123", false) === pass);
-check("API routes pass, signed out or not", gate("/api/track", false) === pass && gate("/api/v1/contacts", false) === pass);
+check("API routes pass, signed out or not", gate("/api/track", false) === pass && gate("/api/p/v", false) === pass && gate("/api/v1/contacts", false) === pass);
 check("the API schema is hidden", gate("/api/v1/openapi.json", true) === JSON.stringify({ kind: "not-found" }));
 check(
   "old /interest links move to the waitlist host",
@@ -231,7 +232,7 @@ async function botIdChecks() {
   for (const path of ["/", "/interest", "/waitlist/ada.lovelace"]) {
     check(`the join's POSTs from ${path} carry BotID's proof`, protects(path));
   }
-  check("…and the rest of the app's do not", !protects("/contacts") && !protects("/api/track"));
+  check("…and the rest of the app's do not", !protects("/contacts") && !protects("/api/track") && !protects("/api/p/v"));
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

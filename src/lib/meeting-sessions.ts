@@ -31,6 +31,7 @@ import type { TranscribeOptions, TranscriptionResult } from "@/lib/ai";
 import { deepgramOpenFor, meetingHasAudio } from "@/lib/speech-credit";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError, releaseBucket } from "@/lib/rate-limit";
 import { recordSpeechSeconds, speechAllowance } from "@/lib/speech-quota";
+import { recordGateRefusal } from "@/lib/gate-refusal";
 
 export type MeetingAttendee = { name: string; email?: string | null };
 
@@ -488,6 +489,7 @@ export async function ingestMeetingChunk(
       const allowance = await speechAllowance(userId, "meeting");
       // Lenient: a meeting already recording finishes past the cap (`meetingSecondsAllowed`).
       if (allowance.exhausted && !(await meetingHasAudio(session.id))) {
+        await recordGateRefusal(userId, "speechMeeting", { surface: "web", route: "meeting.chunk" });
         return { ok: false, status: 402, error: "You’ve used this month’s meeting transcription minutes" };
       }
     }

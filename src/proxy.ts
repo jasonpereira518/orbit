@@ -7,6 +7,7 @@ import { isLocalhost } from "@/lib/demo-account";
 import { clerkJwtKey } from "@/lib/clerk-jwt-key";
 import { STEALTH_ROBOTS, isWaitlistHostHeader, stealthGate } from "@/lib/waitlist-host";
 import { readStealthForProxy } from "@/lib/site-mode-proxy";
+import { bareHost, isOwnOrRoundTrip } from "@/lib/round-trip-hosts";
 import {
   ATTRIBUTION_COOKIE,
   ATTRIBUTION_MAX_AGE_S,
@@ -96,7 +97,15 @@ function withFirstTouch(req: Request, url: URL, res: NextResponse) {
     }
   }
 
-  const attribution = attributionFromUrl(url.toString(), external);
+  const parsed = attributionFromUrl(url.toString(), external);
+  // The same round-trip filter the page-view beacon applies (`@/lib/round-trip-hosts`): an
+  // OAuth callback from accounts.google.com, a Stripe return or Clerk's own portal is Orbit
+  // talking to itself, and must never become a signup's first-touch referrer. UTMs in the URL
+  // still count — a tagged link that happens to come back through a provider is a campaign.
+  const attribution =
+    parsed.referrer && isOwnOrRoundTrip(parsed.referrer, bareHost(req.headers.get("host") ?? url.host))
+      ? { ...parsed, referrer: null }
+      : parsed;
   if (!hasSignal(attribution)) return res;
 
   res.cookies.set(ATTRIBUTION_COOKIE, serializeAttribution(attribution), {

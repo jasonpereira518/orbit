@@ -1,11 +1,17 @@
+import Link from "next/link";
 import { AlertTriangle } from "lucide-react";
 import {
   AdminPageHeader,
   AdminPanel,
+  AdminTable,
   EmptyState,
   MetricTile,
   MiniBars,
+  Td,
+  Th,
 } from "@/components/admin/primitives";
+import { cacFor, cacWindow } from "@/lib/admin-yc-metrics";
+import { MIN_RATE_DENOMINATOR } from "@/lib/format-rate";
 import { MoneyTabs } from "@/components/admin/money-tabs";
 import { RankedBars, RevenueCostChart } from "@/components/admin/charts";
 import { CostEntryForm } from "@/components/admin/money/cost-forms";
@@ -19,8 +25,9 @@ import {
   cashFlowSeries,
   costToRunBreakdown,
   paidSignupsByChannel,
+  planUnitEconomics,
 } from "@/lib/money-metrics";
-import { PLAN_CONFIG } from "@/lib/plans/plan-config";
+import { PLAN_CONFIG, PLAN_LABELS } from "@/lib/plans/plan-config";
 import { creditRunwayDays } from "@/lib/speech-cost";
 import { proSubscriberSpeechSpend, speechCreditState, speechSpendMicros } from "@/lib/speech-credit";
 
@@ -44,19 +51,24 @@ const MONTH = new Intl.DateTimeFormat("en", {
 export default async function MoneyCostsPage() {
   const now = new Date();
   const since = new Date(now.getTime() - 30 * 86_400_000);
+  // THE CAC window, shared with /admin/yc/economics: month-aligned, because acquisition spend
+  // belongs to one calendar month. Per-channel spend and signups use the same window.
+  const window = cacWindow(now);
 
   const weekAgo = new Date(now.getTime() - 7 * 86_400_000);
-  const [flow, infra, acquisition, channels, aiSpend, speechMonthMicros, speechWeekMicros, credit, proSpeech] =
+  const [flow, infra, cac, acquisition, channels, aiSpend, speechMonthMicros, speechWeekMicros, credit, proSpeech, planEconomics] =
     await Promise.all([
       cashFlowSeries(6),
       infraBreakdown(monthStart(now)),
-      acquisitionByChannel(since, now),
-      paidSignupsByChannel(since),
+      cacFor(window),
+      acquisitionByChannel(window.since, window.until),
+      paidSignupsByChannel(window.since),
       costToRunBreakdown(30),
       speechSpendMicros(monthStart(now)),
       speechSpendMicros(weekAgo),
       speechCreditState(),
       proSubscriberSpeechSpend(since),
+      planUnitEconomics(now),
     ]);
   const creditLeftMicros = Math.max(0, credit.capMicros - credit.spentMicros);
   const runwayDays = creditRunwayDays(credit.spentMicros, speechWeekMicros / 7);
@@ -112,7 +124,12 @@ export default async function MoneyCostsPage() {
       <MoneyTabs />
 
       <div className="space-y-6">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+          <MetricTile
+            label="CAC"
+            value={cac.cac === null ? "—" : formatCents(Math.round(cac.cac * 100))}
+            hint={`${formatCents(Math.round(cac.spendUsd * 100))} spend / ${cac.newSubscribers} new subscribers · ${MONTH.format(window.since)} to now`}
+          />
           <MetricTile
             label="Cost this month"
             value={thisMonth?.infraMissing ? "—" : formatCents(fixedMonthlyCents)}
@@ -146,7 +163,7 @@ export default async function MoneyCostsPage() {
             label="On Orbit's AI keys"
             value={formatMicros(aiSpend.orbitKeyMicros)}
             tone="muted"
-            hint={`Pro and Max included AI · ${PLAN_CONFIG.orbit.monthlyCredits} / ${PLAN_CONFIG.max.monthlyCredits} credits per account per cycle`}
+            hint={`Pro and Max included AI · ${PLAN_CONFIG.orbit.monthlyCredits} / ${PLAN_CONFIG.max.monthlyCredits} credits per account per cycle · excludes Deepgram`}
           />
         </div>
 
@@ -183,6 +200,85 @@ export default async function MoneyCostsPage() {
           />
         </AdminPanel>
 
+        <AdminPanel title={`Unit economics by plan, ${MONTH.format(planEconomics.monthStart)} so far`}>
+          <AdminTable label="Unit economics by plan" minWidth="sm"
+            head={
+              <>
+                <Th>Plan</Th>
+                <Th numeric>Accounts</Th>
+                <Th numeric>Revenue</Th>
+                <Th numeric>Cost</Th>
+                <Th numeric>Margin</Th>
+              </>
+            }
+          >
+            {planEconomics.rows.map((row) => {
+              const label = row.plan === "comped" ? "Comped" : PLAN_LABELS[row.plan];
+              const costCents = Math.round(row.costMicros / 10_000);
+              return (
+                <tr key={row.plan} className="border-b border-border/40 last:border-b-0">
+                  <Td>{label}</Td>
+                  <Td numeric>{row.accounts}</Td>
+                  <Td numeric>{formatCents(row.revenueCents)}</Td>
+                  <Td numeric>{formatCents(costCents)}</Td>
+                  <Td numeric>
+                    <span className={row.marginCents < 0 ? "text-destructive" : undefined}>
+                      {formatCents(row.marginCents)}
+                    </span>
+                    {/* A percentage only once the plan has enough accounts to mean something. */}
+                    {row.accounts >= MIN_RATE_DENOMINATOR && row.revenueCents > 0 && (
+                      <span className="ml-1 text-xs text-muted-foreground">
+                        ({Math.round((row.marginCents / row.revenueCents) * 100)}%)
+                      </span>
+                    )}
+                  </Td>
+                </tr>
+              );
+            })}
+          </AdminTable>
+          <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">
+            Revenue is each account&apos;s value this month: a subscription&apos;s monthly value (annual
+            spread over twelve), a Lifetime purchase spread over 36 months, and credit-pack cash.
+            Free and comped accounts earn nothing — comped is its own row so the decision to comp
+            shows as a cost. Cost is what Orbit pays: included AI on its keys plus Deepgram; accounts
+            on their own AI keys cost Orbit nothing here. Dollars, not percentages, until a plan has{" "}
+            {MIN_RATE_DENOMINATOR} accounts. Internal and tester accounts are left out.
+          </p>
+
+          <h3 className="mt-4 text-sm font-medium">Costing more than they bring in</h3>
+          {planEconomics.heavyUsers.length === 0 ? (
+            <EmptyState>No account&apos;s cost this month exceeds its revenue.</EmptyState>
+          ) : (
+            <AdminTable label="Accounts whose cost exceeds their revenue" minWidth="sm"
+              head={
+                <>
+                  <Th>Account</Th>
+                  <Th>Plan</Th>
+                  <Th numeric>Revenue</Th>
+                  <Th numeric>Cost</Th>
+                </>
+              }
+            >
+              {planEconomics.heavyUsers.map((user) => (
+                <tr key={user.userId} className="border-b border-border/40 last:border-b-0">
+                  <Td>
+                    <Link href={`/admin/users/${encodeURIComponent(user.userId)}`} className="hover:text-primary">
+                      {user.userId}
+                    </Link>
+                  </Td>
+                  <Td>{user.plan === "comped" ? "Comped" : PLAN_LABELS[user.plan]}</Td>
+                  <Td numeric>{formatCents(user.revenueCents)}</Td>
+                  <Td numeric>{formatMicros(user.costMicros)}</Td>
+                </tr>
+              ))}
+            </AdminTable>
+          )}
+          <p className="mt-3 text-xs text-muted-foreground">
+            Account ids only. Free accounts qualify with any cost at all (their revenue is 0), and
+            comped accounts are listed separately by plan, not netted against anyone.
+          </p>
+        </AdminPanel>
+
         <AdminPanel title="Record a cost">
           <CostEntryForm />
         </AdminPanel>
@@ -206,7 +302,7 @@ export default async function MoneyCostsPage() {
 
           <AdminPanel title="Acquisition and CAC">
             {cacRows.length === 0 ? (
-              <EmptyState>No acquisition spend logged in the last 30 days.</EmptyState>
+              <EmptyState>No acquisition spend logged since {MONTH.format(window.since)}.</EmptyState>
             ) : (
               <RankedBars
                 rows={cacRows.map((row) => ({
@@ -219,13 +315,17 @@ export default async function MoneyCostsPage() {
                       ? "No paid signups yet — CAC is undefined, not infinite."
                       : `${formatCents(Math.round(row.cac))} per paid signup`,
                 }))}
-                emptyLabel="No acquisition spend logged in the last 30 days."
+                emptyLabel="No acquisition spend logged."
               />
             )}
             <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">
-              Spend in dollars, paid signups beside it. Attribution is first-touch, so a
-              channel keeps credit for someone who read for a week and then typed the URL
-              directly.
+              Headline CAC above is {formatCents(Math.round(cac.spendUsd * 100))} of spend logged for{" "}
+              {MONTH.format(window.since)} to now, over {cac.newSubscribers} new subscribers in the same
+              months — the same figure as Unit Economics. This panel splits the spend by channel
+              against signups from those months that are paid today (a cohort, so its counts can
+              differ from the ledger&apos;s). Attribution is first-touch, so a channel keeps credit for
+              someone who read for a week and then typed the URL directly. Internal, tester and comped
+              accounts are in neither side.
             </p>
           </AdminPanel>
         </div>
