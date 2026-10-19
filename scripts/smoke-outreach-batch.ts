@@ -22,16 +22,25 @@ function check(label: string, ok: boolean, detail?: string) {
   }
 }
 
-/** Replies, one per model call, in order; "rate" answers 429. */
+/**
+ * Replies, one per draft, in order. "rate" is a provider that is rate-limiting: it answers 429
+ * to every request from then on (the SDK retries a 429, so one canned 429 would just be retried
+ * into a success).
+ */
 let script: Array<"ok" | "bad" | "rate"> = [];
-let calls = 0;
+let rateLimited = false;
+/** Which drafts (by their "Variant N of M" hint) reached the provider. */
+const started = new Set<number>();
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   if (!/generativelanguage/.test(url)) return realFetch(input, init);
-  calls++;
-  const next = script.shift() ?? "ok";
+  const raw = init?.body ?? (input instanceof Request ? await input.clone().text() : null);
+  const variant = /Variant (\d+) of/.exec(typeof raw === "string" ? raw : "")?.[1];
+  if (variant) started.add(Number(variant));
+  const next = rateLimited ? "rate" : (script[Math.max(0, (variant ? Number(variant) : 1) - 1)] ?? "ok");
   if (next === "rate") {
+    rateLimited = true;
     return Response.json({ error: { code: 429, message: "Resource has been exhausted (e.g. check quota).", status: "RESOURCE_EXHAUSTED" } }, { status: 429 });
   }
   const text = next === "bad" ? JSON.stringify({ subject: "Hi", body: 5 }) : JSON.stringify({ subject: "Hello", body: "A short, specific note." });
@@ -53,18 +62,21 @@ async function main() {
   const four = ["A", "B", "C", "D"].map(input);
 
   script = ["ok", "bad", "ok", "ok"];
-  calls = 0;
+  started.clear();
+  rateLimited = false;
   const mixed = await generateOutreachDraftsBatch(USER, four, 1);
   check("one malformed draft is that prospect's alone", mixed.filter(Boolean).length === 3 && mixed[1] === null, JSON.stringify(mixed.map((m) => m !== null)));
-  check("…and the others are still drafted", calls === 4);
+  check("…and the others are still drafted", started.size === 4);
 
   script = ["ok", "rate", "ok", "ok"];
-  calls = 0;
+  started.clear();
+  rateLimited = false;
   const limited = await generateOutreachDraftsBatch(USER, four, 1);
-  check("a rate limit stops new drafts being started", calls === 2, String(calls));
+  check("a rate limit stops new drafts being started", started.size === 2, JSON.stringify([...started]));
   check("…keeping what was already drafted", limited[0] !== null && limited.slice(1).every((d) => d === null));
 
   script = ["rate"];
+  rateLimited = false;
   let thrown: unknown = null;
   try {
     await generateOutreachDraftsBatch(USER, four, 1);

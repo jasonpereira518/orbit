@@ -65,6 +65,13 @@ import {
 import type { AiProvider, EmbeddingBackend } from "@/lib/ai-providers";
 import { aiOperationOnTruncate, aiOperationThinking, type AiOperationId } from "@/lib/ai-operations";
 import {
+  isSchemaRejection,
+  SchemaRejectedError,
+  structuredOutputAllowed,
+  toWireSchema,
+  type StructuredSchema,
+} from "@/lib/ai-structured";
+import {
   AiFinishError,
   anthropicFinish,
   assertUsableFinish,
@@ -594,6 +601,14 @@ async function completeJsonOnce(
      * provider request kept running (and billing) for up to AI_CALL_TIMEOUT_MS after the
      * caller had moved on. With a signal, the request itself is aborted.
      */
+    /**
+     * Ask the provider to constrain the reply to this shape (Gemini `responseJsonSchema`,
+     * OpenAI `json_schema`, Anthropic `output_config.format`) instead of only describing it in
+     * the prompt. Still validate the result: this guarantees the wire shape, not the meaning.
+     * A provider or model that cannot take a schema, or rejects this one, gets the prompt-only
+     * call it always had (`ai-structured.ts`).
+     */
+    schema?: StructuredSchema;
     signal?: AbortSignal;
     /**
      * The account already resolved for this request (see `AiAccess.forUser`): skips the
@@ -614,6 +629,10 @@ async function completeJsonOnce(
   const prefix = input.sharedPrefix?.text ?? "";
   const userText = prefix + input.user;
   const callSignal = () => (input.signal ? AbortSignal.any([aiSignal(), input.signal]) : aiSignal());
+  const schemaJson =
+    input.schema && structuredOutputAllowed(provider, model) && !schemaRefused.has(`${provider}:${model}`)
+      ? toWireSchema(input.schema.zod)
+      : null;
 
   return runOnGrant(grant, withUsage(
     {
@@ -635,6 +654,7 @@ async function completeJsonOnce(
               temperature,
               maxOutputTokens,
               responseMimeType: "application/json",
+              ...(schemaJson ? { responseJsonSchema: schemaJson } : {}),
               systemInstruction: system,
               ...geminiThinking(model, operation),
             },
@@ -651,7 +671,10 @@ async function completeJsonOnce(
           const response = await client.chat.completions.create(withOpenRouterRouting(provider, {
             model,
             ...openaiCompletionOptions(model, { temperature, maxOutputTokens, thinking: aiOperationThinking(operation) }),
-            response_format: { type: "json_object" },
+            response_format:
+              schemaJson && input.schema
+                ? { type: "json_schema", json_schema: { name: input.schema.name, strict: true, schema: schemaJson } }
+                : { type: "json_object" },
             messages: [
               { role: "system", content: system },
               { role: "user", content: userText },
@@ -671,7 +694,10 @@ async function completeJsonOnce(
           max_tokens: maxOutputTokens,
           // Claude 4.7 and later reject sampling parameters with a 400.
           ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
-          ...anthropicEffort(model),
+          // `effort` and `format` share one `output_config`; spreading both would drop the first.
+          ...(schemaJson
+            ? { output_config: { ...anthropicEffort(model).output_config, format: { type: "json_schema" as const, schema: schemaJson } } }
+            : anthropicEffort(model)),
           system,
           messages: [
             {
@@ -695,6 +721,7 @@ async function completeJsonOnce(
         return normalizeJsonResponse(block.text);
       } catch (err) {
         if (err instanceof AiFinishError) throw err;
+        if (schemaJson && isSchemaRejection(err)) throw new SchemaRejectedError(provider, model);
         if (err instanceof Error && err.message === "Empty AI response")
           throw err;
         if (
@@ -751,15 +778,25 @@ async function failingOverManaged<T>(signal: AbortSignal | undefined, run: () =>
   }
 }
 
+/** Provider+model pairs that refused a schema; not asked again by this instance. */
+const schemaRefused = new Set<string>();
+
 export async function completeJson(
   userId: string,
   input: Parameters<typeof completeJsonOnce>[1],
 ): Promise<string> {
-  return retryingOnTruncation(
-    input,
-    (i) => failingOverManaged(i.signal, () => completeJsonOnce(userId, i)),
-    4096,
-  );
+  const run = (i: typeof input) =>
+    retryingOnTruncation(i, (j) => failingOverManaged(j.signal, () => completeJsonOnce(userId, j)), 4096);
+  try {
+    return await run(input);
+  } catch (err) {
+    if (!(err instanceof SchemaRejectedError)) throw err;
+    // The provider would not take the schema. Remember that, and make the call the way every
+    // call was made before schemas: describe the shape in the prompt, validate afterwards.
+    schemaRefused.add(`${err.provider}:${err.model}`);
+    const { schema: _dropped, ...promptOnly } = input;
+    return run(promptOnly);
+  }
 }
 
 /**
