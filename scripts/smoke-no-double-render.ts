@@ -31,10 +31,11 @@ const read = (p: string) =>
     .replace(/^\s*\/\/.*$/gm, "");
 /** The body of `function name(` / `async function name(` up to the next function declaration. */
 function fnBody(src: string, name: string): string {
-  const start = src.search(new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`));
+  // A plain function, or a server action declared `export const name = defineAction(…)`.
+  const start = src.search(new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(|const\\s+${name}\\s*=\\s*defineAction\\(`));
   if (start < 0) return "";
   const rest = src.slice(start + 1);
-  const next = rest.search(/\n\s*(?:export\s+)?(?:async\s+)?function\s+\w+\s*\(/);
+  const next = rest.search(/\n\s*(?:export\s+)?(?:(?:async\s+)?function\s+\w+\s*\(|const\s+\w+\s*=\s*defineAction\()/);
   return next < 0 ? rest : rest.slice(0, next);
 }
 
