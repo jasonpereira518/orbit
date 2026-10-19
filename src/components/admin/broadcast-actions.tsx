@@ -46,10 +46,10 @@ export function BroadcastRowActions({
       {sendable && (
         <ConfirmActionDialog
           trigger={
-            <span className={`${BUTTON} border-accent/40 text-accent-foreground hover:bg-accent/10`}>
+            <button type="button" className={`${BUTTON} border-accent/40 text-accent-foreground hover:bg-accent/10`}>
               <Send className="size-3" aria-hidden />
               {status === "sending" ? `Resume (${remaining})` : `Send to ${target}`}
-            </span>
+            </button>
           }
           title={
             status === "sending"
@@ -76,10 +76,10 @@ export function BroadcastRowActions({
       {status === "draft" && (
         <ConfirmActionDialog
           trigger={
-            <span className={`${BUTTON} border-destructive/40 text-destructive hover:bg-destructive/10`}>
+            <button type="button" className={`${BUTTON} border-destructive/40 text-destructive hover:bg-destructive/10`}>
               <Trash2 className="size-3" aria-hidden />
               Delete
-            </span>
+            </button>
           }
           title="Delete this draft?"
           description="Nothing has been sent, so this only discards the text."

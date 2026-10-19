@@ -24,7 +24,7 @@ function check(label: string, ok: boolean, detail = "") {
 }
 
 function main() {
-  const css = readFileSync("src/app/globals.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, " ");
+  const css = readFileSync("src/app/theme.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, " ");
   // Innermost rules only, as { selectors, body }: rules nested in @media still match.
   const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
     selectors: m[1].split(",").map((sel) => sel.trim()),

@@ -1,6 +1,6 @@
 "use client";
 
-import { companyBrandColor } from "@/lib/company-brand";
+import { companyBrandText } from "@/lib/company-brand";
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
@@ -109,6 +109,7 @@ export function GoalsSummary({
         >
           <Input
             placeholder="Add a goal…"
+            aria-label="New goal"
             value={text}
             onChange={(e) => setText(e.target.value)}
             maxLength={200}
@@ -145,8 +146,8 @@ export function GoalsSummary({
                           {c.title && c.company ? " · " : ""}
                           {c.company && (
                             <span
-                              className="font-medium"
-                              style={{ color: companyBrandColor(c.company) ?? undefined }}
+                              className={cn("font-medium", companyBrandText(c.company)?.className)}
+                              style={companyBrandText(c.company)?.style}
                             >
                               {c.company}
                             </span>

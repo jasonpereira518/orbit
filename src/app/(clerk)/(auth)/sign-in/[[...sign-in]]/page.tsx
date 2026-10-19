@@ -3,6 +3,8 @@ import { isClerkConfigured, redirectIfAuthenticated } from "@/lib/auth";
 import { clerkAppearance } from "@/lib/clerk-appearance";
 import { OrbitLogo } from "@/components/orbit-logo";
 
+export const metadata = { title: "Sign in" };
+
 export default async function SignInPage() {
   // Demo mode never reaches the branch below: `redirectIfAuthenticated` treats it as
   // already signed in and sends the visitor straight into the app. What's left here is
@@ -11,7 +13,7 @@ export default async function SignInPage() {
 
   if (!isClerkConfigured()) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background p-6">
+      <div className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-background p-6">
         <OrbitLogo size="lg" />
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
           Orbit
@@ -24,7 +26,7 @@ export default async function SignInPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
+    <div className="flex min-h-dvh items-center justify-center bg-background">
       <SignIn
         appearance={clerkAppearance}
         forceRedirectUrl="/dashboard"

@@ -166,7 +166,7 @@ function CaptureHistoryRow({
                 className="size-full object-cover"
               />
               {item.photoCount > 1 && (
-                <span className="absolute right-0.5 bottom-0.5 rounded bg-black/60 px-1 text-[10px] leading-4 font-medium text-white">
+                <span className="absolute right-0.5 bottom-0.5 rounded bg-black/60 px-1 text-3xs leading-4 font-medium text-white">
                   +{item.photoCount - 1}
                 </span>
               )}
@@ -183,7 +183,7 @@ function CaptureHistoryRow({
                 {item.title ?? primary.label}
               </span>
               {item.status === "undone" && (
-                <Badge variant="secondary" className="shrink-0 text-[10px]">
+                <Badge variant="secondary" className="shrink-0 text-3xs">
                   Undone
                 </Badge>
               )}

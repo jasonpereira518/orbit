@@ -21,6 +21,8 @@ import {
   paidSignupsByChannel,
 } from "@/lib/money-metrics";
 import { PLAN_CONFIG } from "@/lib/plans/plan-config";
+import { creditRunwayDays } from "@/lib/speech-cost";
+import { proSubscriberSpeechSpend, speechCreditState, speechSpendMicros } from "@/lib/speech-credit";
 
 export const metadata = { title: "Admin · Money · Costs" };
 
@@ -34,36 +36,56 @@ const MONTH = new Intl.DateTimeFormat("en", {
  * What Orbit spends, and whether what comes in covers it.
  *
  * Gross margin was not merely unknown before this screen — the figure that looked most
- * like a cost (AI spend) is mostly the USERS' spend, because production is strictly BYOK.
- * The console was pointing at the wrong number entirely.
+ * like a cost (AI spend) was mostly the USERS' spend, on their own keys, while the largest
+ * cost Orbit actually pays — Deepgram — read as nothing at all. Deepgram is priced from
+ * `speech_usage` (`speech-cost.ts`) and drawn from a prepaid credit, so it is shown beside
+ * the month's bills rather than inside them: it is not cash out until the credit runs dry.
  */
 export default async function MoneyCostsPage() {
   const now = new Date();
   const since = new Date(now.getTime() - 30 * 86_400_000);
 
-  const [flow, infra, acquisition, channels, aiSpend] = await Promise.all([
-    cashFlowSeries(6),
-    infraBreakdown(monthStart(now)),
-    acquisitionByChannel(since, now),
-    paidSignupsByChannel(since),
-    costToRunBreakdown(30),
-  ]);
+  const weekAgo = new Date(now.getTime() - 7 * 86_400_000);
+  const [flow, infra, acquisition, channels, aiSpend, speechMonthMicros, speechWeekMicros, credit, proSpeech] =
+    await Promise.all([
+      cashFlowSeries(6),
+      infraBreakdown(monthStart(now)),
+      acquisitionByChannel(since, now),
+      paidSignupsByChannel(since),
+      costToRunBreakdown(30),
+      speechSpendMicros(monthStart(now)),
+      speechSpendMicros(weekAgo),
+      speechCreditState(),
+      proSubscriberSpeechSpend(since),
+    ]);
+  const creditLeftMicros = Math.max(0, credit.capMicros - credit.spentMicros);
+  const runwayDays = creditRunwayDays(credit.spentMicros, speechWeekMicros / 7);
 
   const thisMonth = flow.at(-1);
   const fixedMonthlyCents = thisMonth?.costs.totalCents ?? 0;
 
-  // Stripe's cut, estimated from what was actually collected. Charge count is approximated
-  // by the payment rows behind `cashInCents`; at this volume the fixed 30c term is the
-  // part that matters and it is labelled as an estimate on screen either way.
+  // Stripe's cut, estimated from what was actually collected: 30c per charge (the payment
+  // and one-time rows behind `cashInCents`), plus Billing's 0.7% on the recurring part.
+  // Labelled as an estimate on screen; `cost/reconcile` checks it against the real fees.
   const grossCents = thisMonth?.cashInCents ?? 0;
-  const feeCents = estimatedStripeFeesCents(grossCents, grossCents > 0 ? 1 : 0);
+  const feeCents = estimatedStripeFeesCents(
+    grossCents,
+    Math.max(thisMonth?.chargeCount ?? 0, grossCents > 0 ? 1 : 0),
+    thisMonth?.recurringCents ?? 0
+  );
 
   // Contribution per subscriber is revenue less the variable cost of serving them: Pro's
-  // list price, less Stripe's cut, less the whole included-AI allowance (300 credits = $3).
+  // list price, less Stripe's cut, less the whole included-AI allowance (300 credits = $3),
+  // less what the average Pro subscriber spent on Deepgram over the last 30 days.
   // Assuming every credit is spent is the ceiling, so break-even here is never flattering.
   const proCents = PLAN_CONFIG.orbit.monthlyPriceCents ?? 0;
+  const proSpeechCents =
+    proSpeech.subscribers > 0 ? Math.round(proSpeech.micros / proSpeech.subscribers / 10_000) : 0;
   const contributionPerSubscriberCents =
-    proCents - Math.round(proCents * 0.029 + 30) - (PLAN_CONFIG.orbit.monthlyCredits ?? 0);
+    proCents -
+    estimatedStripeFeesCents(proCents, 1, proCents) -
+    (PLAN_CONFIG.orbit.monthlyCredits ?? 0) -
+    proSpeechCents;
   const breakEven = breakEvenSubscribers(
     fixedMonthlyCents,
     contributionPerSubscriberCents
@@ -90,7 +112,7 @@ export default async function MoneyCostsPage() {
       <MoneyTabs />
 
       <div className="space-y-6">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <MetricTile
             label="Cost this month"
             value={thisMonth?.infraMissing ? "—" : formatCents(fixedMonthlyCents)}
@@ -102,7 +124,14 @@ export default async function MoneyCostsPage() {
           <MetricTile
             label="Stripe fees"
             value={formatCents(feeCents)}
-            hint="estimated, 2.9% + 30¢"
+            hint="estimated, 2.9% + 30¢ a charge + 0.7% Billing"
+          />
+          <MetricTile
+            label="Deepgram this month"
+            value={formatMicros(speechMonthMicros)}
+            hint={`est. · ${formatMicros(creditLeftMicros)} of the credit left${
+              runwayDays === null ? "" : ` · ~${Math.round(runwayDays)} days at this week’s pace`
+            }`}
           />
           <MetricTile
             label="Break-even"
@@ -110,7 +139,7 @@ export default async function MoneyCostsPage() {
             hint={
               breakEven === null
                 ? "no positive contribution"
-                : `subscribers at ${formatCents(contributionPerSubscriberCents)} each`
+                : `subscribers at ${formatCents(contributionPerSubscriberCents)} each (after ${formatCents(proSpeechCents)} Deepgram)`
             }
           />
           <MetricTile

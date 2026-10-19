@@ -81,10 +81,10 @@ const SPEC: Record<
     extension: boolean;
   }
 > = {
-  free: { contactLimit: 500, credits: 50, packs: true, meeting: 0, shortform: 1 * HOUR, enrich: 0, connections: 1, recruiters: false, sync: false, api: false, meetings: false, hostedAi: true, extension: true },
-  orbit: { contactLimit: null, credits: 300, packs: true, meeting: 5 * HOUR, shortform: 5 * HOUR, enrich: 0, connections: null, recruiters: true, sync: true, api: false, meetings: true, hostedAi: true, extension: true },
-  max: { contactLimit: null, credits: 650, packs: true, meeting: 10 * HOUR, shortform: 10 * HOUR, enrich: 0, connections: null, recruiters: true, sync: true, api: true, meetings: true, hostedAi: true, extension: true },
-  lifetime: { contactLimit: null, credits: 150, packs: false, meeting: 10 * HOUR, shortform: 10 * HOUR, enrich: 0, connections: null, recruiters: true, sync: true, api: true, meetings: true, hostedAi: true, extension: true },
+  free: { contactLimit: 500, credits: 50, packs: true, meeting: 0, shortform: 1.5 * HOUR, enrich: 0, connections: 1, recruiters: false, sync: false, api: false, meetings: false, hostedAi: true, extension: true },
+  orbit: { contactLimit: null, credits: 300, packs: true, meeting: 8 * HOUR, shortform: 8 * HOUR, enrich: 0, connections: null, recruiters: true, sync: true, api: false, meetings: true, hostedAi: true, extension: true },
+  max: { contactLimit: null, credits: 650, packs: true, meeting: 15 * HOUR, shortform: 15 * HOUR, enrich: 0, connections: null, recruiters: true, sync: true, api: true, meetings: true, hostedAi: true, extension: true },
+  lifetime: { contactLimit: null, credits: 150, packs: false, meeting: 15 * HOUR, shortform: 15 * HOUR, enrich: 0, connections: null, recruiters: true, sync: true, api: true, meetings: true, hostedAi: true, extension: true },
 };
 
 function matrix() {

@@ -21,7 +21,7 @@ const PRO_PRICE = formatPlanPrice(PLAN_CONFIG.orbit.monthlyPriceCents ?? 0);
 const MAX_PRICE = formatPlanPrice(PLAN_CONFIG.max.monthlyPriceCents ?? 0);
 
 export const metadata: Metadata = {
-  title: "Pricing — Orbit",
+  title: "Pricing",
   description: `Orbit is free for your first ${FREE_CONTACT_LIMIT} contacts. Orbit Pro is ${PRO_PRICE} a month and Orbit Max ${MAX_PRICE} a month, both with AI included. ${AI_POSITIONING}`,
 };
 
@@ -68,8 +68,10 @@ export default function PricingPage() {
           instead of flashing PricingPageSkeleton. No-op on a direct load. */}
       <WarpArrivalBeacon />
 
-      <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-6 py-6 md:px-10">
-        <div className="flex items-center gap-4">
+      {/* Tighter on phones: at 360px Back, the wordmark and both auth buttons ran 5px past
+          the edge. Same rhythm as marketing-doc's header. */}
+      <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 py-6 sm:gap-4 sm:px-6 md:px-10">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-4">
           <BackControl />
           <Link
             href="/"
@@ -85,7 +87,7 @@ export default function PricingPage() {
         <LandingAuthControls {...authProps} variant="header" />
       </header>
 
-      <main className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-24 md:px-10">
+      <main id="main-content" className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-24 md:px-10">
         <section className="pt-10 text-center md:pt-16">
           <Reveal className="reveal-celestial">
             <h1 className={`${HEADING} text-[clamp(32px,5vw,56px)]`}>

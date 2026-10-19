@@ -40,11 +40,17 @@ export const sharedAvatarUrlSql = sql<string | null>`(CASE WHEN ${contacts.profi
  * fallback belongs. `isUnusableAvatarUrl` has refused the marker since it shipped; this
  * mirror never learned it, which is precisely the drift the note above warns about. The
  * prefix is now interpolated from the same constant rather than restated here.
+ *
+ * The inline-photo branch is tested first, on an 11-character `substr`, so Postgres
+ * decompresses only that prefix of a toasted base64 photo rather than all of it: every list,
+ * dashboard and graph scan runs this per contact (LATENCY_PLAN DB-4). A data URL is never
+ * blank and never the marker, so moving it first changes no result.
  */
 export const clientAvatarUrlSql = sql<string | null>`coalesce(${sharedAvatarUrlSql}, CASE
-  WHEN ${contacts.profileImageUrl} IS NULL OR btrim(${contacts.profileImageUrl}) = '' THEN NULL
+  WHEN ${contacts.profileImageUrl} IS NULL THEN NULL
+  WHEN substr(${contacts.profileImageUrl}, 1, 11) = 'data:image/' THEN '/api/avatars/' || ${contacts.id}
+  WHEN btrim(${contacts.profileImageUrl}) = '' THEN NULL
   WHEN ${contacts.profileImageUrl} LIKE ${NO_PHOTO_PREFIX + "%"} THEN NULL
-  WHEN ${contacts.profileImageUrl} LIKE 'data:image/%' THEN '/api/avatars/' || ${contacts.id}
   WHEN ${contacts.profileImageUrl} LIKE '%unavatar.io%'
     OR ${contacts.profileImageUrl} LIKE '%static.licdn.com/aero%' THEN NULL
   ELSE btrim(${contacts.profileImageUrl})

@@ -80,6 +80,7 @@ function SidebarNavLink({
   return (
     <NavLink
       href={item.href}
+      aria-current={active ? "page" : undefined}
       onPointerEnter={warm}
       onFocus={warm}
       title={
@@ -109,15 +110,16 @@ function SidebarNavLink({
         />
       )}
       <Icon className="relative z-10 h-4 w-4 shrink-0" />
-      <span className="relative z-10 hidden lg:inline">{item.label}</span>
+      {/* Below lg the rail is icons only; the label stays in the accessibility tree. */}
+      <span className="relative z-10 max-lg:sr-only">{item.label}</span>
       {hiddenFromUsers && (
-        <span className="relative z-10 ml-auto hidden rounded-full border border-border/70 px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground lg:inline">
+        <span className="relative z-10 ml-auto hidden rounded-full border border-border/70 px-1.5 py-px text-3xs uppercase tracking-wide text-muted-foreground lg:inline">
           Hidden
         </span>
       )}
       {comingSoon && (
         <>
-          <span className="relative z-10 ml-auto hidden rounded-full border border-warning/40 px-1.5 py-px text-[10px] uppercase tracking-wide text-warning lg:inline">
+          <span className="relative z-10 ml-auto hidden rounded-full border border-warning/40 px-1.5 py-px text-3xs uppercase tracking-wide text-warning lg:inline">
             Soon
           </span>
           {/* The icon rail has no room for a word, so the tag collapses to its colour. */}
@@ -131,7 +133,7 @@ function SidebarNavLink({
         <>
           <span
             data-plan={tierPlan}
-            className="relative z-10 ml-auto hidden items-center gap-1 rounded-full border border-tier-border px-1.5 py-px text-[10px] uppercase tracking-wide text-tier-accent lg:inline-flex"
+            className="relative z-10 ml-auto hidden items-center gap-1 rounded-full border border-tier-border px-1.5 py-px text-3xs uppercase tracking-wide text-tier-accent lg:inline-flex"
           >
             <Lock aria-hidden className="size-2.5" />
             {PLAN_SHORT_LABELS[tierPlan]}
@@ -195,7 +197,11 @@ export function AppSidebar({
   };
 
   return (
-    <aside className="liquid-glass flex h-full w-[4.5rem] flex-col text-sidebar-foreground lg:w-60">
+    // The desktop banner: logo, the main action and the navigation. Not <aside> (it is not
+    // complementary content, and a second complementary landmark clashed with pages that
+    // have their own). Only one banner exists at a time: the phone header is display:none
+    // from md, where this appears.
+    <header className="liquid-glass flex h-full w-[4.5rem] flex-col text-sidebar-foreground lg:w-60">
       {/* Stacked on the icon rail, where logo and search cannot share a row; side by side
           once the panel is wide enough to carry the wordmark. */}
       <div className="flex flex-col items-center gap-3 px-3 py-5 lg:flex-row lg:justify-between lg:gap-2 lg:px-5 lg:py-6">
@@ -211,7 +217,7 @@ export function AppSidebar({
             <p className="font-[family-name:var(--font-display)] text-lg leading-none tracking-tight text-sidebar-primary">
               Orbit
             </p>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">
+            <p className="mt-0.5 text-2xs text-muted-foreground">
               Network tracker
             </p>
           </div>
@@ -235,7 +241,7 @@ export function AppSidebar({
           />
           <TooltipContent side="bottom">
             Search
-            <kbd className="ml-1.5 rounded border border-current/20 px-1 text-[10px] opacity-80">
+            <kbd className="ml-1.5 rounded border border-current/20 px-1 text-3xs opacity-80">
               {shortcut}
             </kbd>
           </TooltipContent>
@@ -260,12 +266,12 @@ export function AppSidebar({
           )}
         >
           <Plus className="h-4 w-4" />
-          <span className="hidden lg:inline">Log interaction</span>
+          <span className="max-lg:sr-only">Log interaction</span>
         </IntentLink>
       </div>
       )}
 
-      <nav className="relative flex flex-1 flex-col gap-0.5 px-1.5 lg:px-2">
+      <nav aria-label="Main" className="relative flex flex-1 flex-col gap-0.5 px-1.5 lg:px-2">
         {core.map((item) => (
           <SidebarNavLink
             soon={comingSoon}
@@ -281,7 +287,7 @@ export function AppSidebar({
         {extras.length > 0 && (
           <div className="my-2 flex items-center gap-2 px-2 lg:px-3">
             <div className="h-px flex-1 bg-border/60" />
-            <span className="hidden text-[10px] font-medium uppercase tracking-wider text-muted-foreground/80 lg:inline">
+            <span className="hidden text-3xs font-medium uppercase tracking-wider text-muted-foreground-subtle lg:inline">
               Coming soon
             </span>
             <div className="hidden h-px flex-1 bg-border/60 lg:block" />
@@ -329,6 +335,6 @@ export function AppSidebar({
           </p>
         )}
       </div>
-    </aside>
+    </header>
   );
 }

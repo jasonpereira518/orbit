@@ -47,6 +47,7 @@ export function RecruiterSearch({
         name="q"
         defaultValue={initialQ}
         placeholder="Search name, firm, specialty…"
+        aria-label="Search recruiters"
         className="pl-9"
         disabled={pending}
       />
@@ -87,11 +88,11 @@ export function RecruiterList({
               </p>
               {r.myLink && (
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  <Badge variant="secondary" className="text-[10px]">
+                  <Badge variant="secondary" className="text-3xs">
                     {r.myLink.status}
                   </Badge>
                   {r.myLink.sharedToPool === 0 && (
-                    <Badge variant="outline" className="text-[10px]">
+                    <Badge variant="outline" className="text-3xs">
                       Kept private
                     </Badge>
                   )}
@@ -106,7 +107,7 @@ export function RecruiterList({
                 <>
                   <p>
                     ★ {formatAvg(r.avgRating)}
-                    <span className="text-muted-foreground/70">
+                    <span className="text-muted-foreground-subtle">
                       {" "}
                       ({r.ratingCount})
                     </span>
@@ -114,10 +115,10 @@ export function RecruiterList({
                   <p className="mt-0.5">{r.logCount} logs</p>
                 </>
               ) : (
-                <p className="text-muted-foreground/70">No community ratings</p>
+                <p className="text-muted-foreground-subtle">No community ratings</p>
               )}
               {!r.piiUnlocked && (
-                <p className="mt-1 text-[10px] uppercase tracking-wide">
+                <p className="mt-1 text-3xs uppercase tracking-wide">
                   Contact locked
                 </p>
               )}

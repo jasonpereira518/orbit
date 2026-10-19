@@ -155,6 +155,8 @@ export type MrrMovement = {
    * exactly zero.
    */
   paymentCents: number;
+  /** How many charges brought that cash in — Stripe's fixed fee is per charge, not per month. */
+  chargeCount: number;
   /** All cash in, whatever its shape: `payment` + `lifetime`. */
   cashInCents: number;
   /** Cash in less cash returned. The bottom line for a period. */
@@ -198,6 +200,7 @@ export async function mrrMovement(since: Date, until: Date): Promise<MrrMovement
     netCents: 0,
     oneTimeCents: 0,
     paymentCents: 0,
+    chargeCount: 0,
     cashInCents: 0,
     netCashCents: 0,
     refundedCents: 0,
@@ -224,9 +227,11 @@ export async function mrrMovement(since: Date, until: Date): Promise<MrrMovement
         break;
       case "lifetime":
         out.oneTimeCents += num(r.amount);
+        out.chargeCount += num(r.n);
         break;
       case "payment":
         out.paymentCents += num(r.amount);
+        out.chargeCount += num(r.n);
         break;
       case "refund":
         out.refundedCents += num(r.amount);

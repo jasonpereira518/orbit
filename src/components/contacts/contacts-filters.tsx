@@ -128,8 +128,10 @@ export function ContactsFilters({
     if (importId) params.set("importId", importId);
     const qs = params.toString();
     const href = qs ? `/contacts?${qs}` : "/contacts";
+    // A new query string is a fresh server render already, and a revisited one served from
+    // the router cache is re-read by the page's `FreshOnArrival`. The `router.refresh()` that
+    // used to follow rendered the whole page a second time per search (LATENCY_PLAN CLI-3).
     router.replace(href);
-    router.refresh();
   }
 
   function scheduleSearch(value: string) {
@@ -374,7 +376,7 @@ function SearchPill({
     <div
       className={cn(
         "flex h-11 w-full items-center gap-1 rounded-full border border-border/70 bg-card pl-3.5 pr-1.5 shadow-sm",
-        "focus-within:border-primary/40 focus-within:ring-[3px] focus-within:ring-primary/15"
+        "focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
       )}
     >
       <input
@@ -417,16 +419,20 @@ function SearchPill({
           )}
         >
           <Building2 className="size-3.5" />
-          <span className="hidden max-w-[5rem] truncate sm:inline">
+          <span className="max-w-[5rem] truncate max-sm:sr-only">
             {companyActive ? company : "Company"}
           </span>
           <ChevronDown className="size-3 opacity-60" />
         </PopoverTrigger>
         <PopoverContent align="end" className="w-64 space-y-2 p-3">
-          <p className="text-xs font-medium text-muted-foreground">
+          <label
+            htmlFor="contacts-company-filter"
+            className="block text-xs font-medium text-muted-foreground"
+          >
             Exact company
-          </p>
+          </label>
           <Input
+            id="contacts-company-filter"
             autoFocus
             placeholder="e.g. Acme"
             value={companyDraft}

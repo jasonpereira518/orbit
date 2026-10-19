@@ -11,7 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 export function WaitlistSkeleton() {
   return (
     <div className="landing-root relative overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
-      <main className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-20 pt-6 md:px-10 md:pt-10">
+      <main id="main-content" className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-20 pt-6 md:px-10 md:pt-10">
         <section className="flex flex-col items-center gap-4 pt-10 text-center md:pt-16">
           <Skeleton className="h-3 w-40 bg-white/5" />
           <Skeleton className="h-10 w-full max-w-lg bg-white/10 sm:h-14" />

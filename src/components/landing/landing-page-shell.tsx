@@ -31,8 +31,12 @@ export function LandingPageShell({
   return (
     <>
       <LandingHeader pastHero={pastHero} {...authProps} />
-      <HeroPin ref={setHeroPinNode} heroCopy={heroCopy} claim={claim} />
-      {children}
+      {/* One <main> for the whole page (it used to wrap the hero alone), and the skip
+          link's target. */}
+      <main id="main-content">
+        <HeroPin ref={setHeroPinNode} heroCopy={heroCopy} claim={claim} />
+        {children}
+      </main>
     </>
   );
 }

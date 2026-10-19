@@ -1,0 +1,13 @@
+{
+  "_note": "FAKE numbers. Produce the real one with the read-only queries in cost/unit-economics/README.md (section 'Reconciliation export') and keep it out of git.",
+  "month": "2026-09",
+  "infraCosts": [
+    { "provider": "vercel", "amount_cents": 2000 },
+    { "provider": "neon", "amount_cents": 1900 },
+    { "provider": "domains", "amount_cents": 183 }
+  ],
+  "speechSeconds": { "meeting": 61200, "shortform": 14400 },
+  "orbitAiMicros": { "anthropic": 0, "openai": 0 },
+  "stripe": { "grossCents": 31460, "chargeCount": 31, "recurringCents": 31460 },
+  "monthlyActiveUsers": 140
+}

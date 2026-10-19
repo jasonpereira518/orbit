@@ -19,8 +19,8 @@ import {
  *  - `ORBIT_MANAGED_AI=off` in the environment always wins (a deploy-level kill switch);
  *  - Orbit must hold a key for at least one provider;
  *  - at least one provider pool (`MANAGED_AI_POOLS`) must have budget left;
- *  - this switch. Never set reads as PAUSED on production, so included AI cannot start before
- *    someone turns it on here, deliberately.
+ *  - this switch. Never set reads as running; pausing it here stops included AI for everyone
+ *    within the 30-second cache.
  */
 export type ManagedAiSwitchState = {
   paused: boolean;

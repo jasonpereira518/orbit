@@ -78,9 +78,7 @@ export function ManagedAiSwitch({ state }: { state: ManagedAiSwitchState }) {
         <p className="mt-0.5 text-xs text-muted-foreground">
           {running
             ? "Every plan spends its monthly credits on Orbit’s keys unless the account prefers its own."
-            : state.paused && !state.explicit
-              ? "Never switched on here, so it is paused by default on production."
-              : "Accounts use their own key if they have one; otherwise AI features wait."}{" "}
+            : "Accounts use their own key if they have one; otherwise AI features wait."}{" "}
           Changes reach every server within about thirty seconds.
         </p>
         {pools.map(({ provider, pool, spent }) => (

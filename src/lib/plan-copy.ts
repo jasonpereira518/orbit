@@ -4,6 +4,7 @@ import {
   PLAN_CONFIG,
   annualMonthlyEquivalentCents,
   formatPlanPrice,
+  formatSpeechAllowance,
   type BillingPeriod,
   type Plan,
   type PurchasablePlan,
@@ -65,7 +66,7 @@ export const EXTENSION_PUBLISHED = EXTENSION_STORE_URL !== null;
 /** The one-line positioning, used wherever plans are summarised. */
 export const AI_POSITIONING = "Free: a small AI allowance to start. Pro and Max: AI included.";
 
-const HOURS = (seconds: number) => `${seconds / 3600} hour${seconds === 3600 ? "" : "s"}`;
+const HOURS = formatSpeechAllowance;
 const pro = PLAN_CONFIG.orbit;
 const max = PLAN_CONFIG.max;
 const lifetime = PLAN_CONFIG.lifetime;

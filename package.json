@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "typecheck": "tsc --noEmit",
+    "css:site": "tsx scripts/gen-site-css-sources.ts",
     "check:env": "tsx scripts/check-env.ts",
     "start": "next start",
     "lint": "eslint",
@@ -17,6 +18,7 @@
     "test:coverage": "c8 tsx scripts/run-smoke.ts --ci",
     "coverage:merge": "tsx scripts/coverage-merge.ts",
     "perf:pages": "tsx scripts/smoke-page-budgets.ts",
+    "perf:bundle": "node scripts/check-bundle-budget.mjs",
     "analyze": "next experimental-analyze",
     "db:generate": "drizzle-kit generate",
     "db:push:DANGEROUS": "drizzle-kit push",
@@ -76,6 +78,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
     "@playwright/test": "1.63.0",
     "@tailwindcss/postcss": "^4",
     "@types/istanbul-lib-coverage": "^2.0.6",

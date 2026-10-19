@@ -2,6 +2,8 @@
 
 import { useEffect } from "react";
 import { reportClientError } from "@/lib/sentry-lazy";
+// Renders its own <html>, outside every route group, so it brings its own sheet.
+import "./site.css";
 
 /**
  * Replaces the root layout when IT throws. Must carry its own <html>/<body> and cannot
@@ -21,10 +23,15 @@ export default function GlobalError({
 
   return (
     <html lang="en">
+      <head>
+        <title>Something went wrong · Orbit</title>
+      </head>
       <body
         style={{
           margin: 0,
-          minHeight: "100vh",
+          // dvh, not vh: on mobile `100vh` is taller than the visible area, so the message sat
+          // below the fold behind the browser toolbar.
+          minHeight: "100dvh",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
