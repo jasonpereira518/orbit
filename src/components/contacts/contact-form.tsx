@@ -282,7 +282,10 @@ export function ContactForm({
               onSuccess?.({ id: c.id });
               if (redirectOnSuccess) router.push(`/contacts/${c.id}`);
             }
-            router.refresh();
+            // An update revalidates `/contacts/{id}` (the profile this form edits on) and a
+            // redirect fetches the new page, so either way the fresh render has arrived. Only a
+            // create that stays put (onboarding) has nothing re-rendered for it (SRV-1).
+            if (!contactId && !redirectOnSuccess) router.refresh();
           } catch (err) {
             const message = friendlyError(err, TOAST_COPY.saveFailed);
             toast.error(message);
