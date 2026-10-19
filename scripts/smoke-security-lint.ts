@@ -52,8 +52,36 @@ const SQL_RAW_ALLOWLIST: Record<string, string> = {
     "intervals built from `grainInterval` (three literals) or clamped integers; `columns` is built from the constant FEATURES table list.",
   "src/lib/admin-trends.ts :: `interval '${step}'`":
     "intervals built from `grainInterval` (three literals) or clamped integers; `columns` is built from the constant FEATURES table list.",
-  "src/lib/admin-trends.ts :: columns":
-    "intervals built from `grainInterval` (three literals) or clamped integers; `columns` is built from the constant FEATURES table list.",
+  "src/lib/activity.ts :: `interval '${ACTIVATION_WINDOW_DAYS} days'`":
+    "`ACTIVATION_WINDOW_DAYS` is a numeric module constant.",
+  "src/lib/admin-trends.ts :: `\"${f.key}\"`":
+    "`f.key` comes from the constant FEATURES list.",
+  "src/lib/admin-trends.ts :: f.table":
+    "`f.table` comes from the constant FEATURES list.",
+  "src/lib/admin-trends.ts :: f.where":
+    "`f.where` comes from the constant FEATURES list.",
+  "src/lib/admin-trends.ts :: `interval '${ACTIVATION_WINDOW_DAYS} days'`":
+    "`ACTIVATION_WINDOW_DAYS` is a numeric module constant.",
+  "src/lib/admin-trends.ts :: column":
+    "`bucketOf`'s string form; no caller passes anything but SQL or a literal column name.",
+  "src/lib/analytics-retention.ts :: table":
+    "`table` is typed `PrunableTable`, a key of the constant TABLES map.",
+  "src/lib/analytics-retention.ts :: column":
+    "`column` is TABLES[table], a literal from the constant map.",
+  "src/lib/attribution.ts :: alias":
+    "`alias` is checked against /^[a-z_][a-z0-9_]*$/i before use.",
+  "src/lib/money-costs.ts :: deepgramMicrosPerSecond(kind, source).toFixed(6)":
+    "a number from the constant rate table, formatted by toFixed.",
+  "src/lib/money-metrics.ts :: `interval '${step}'`":
+    "`step` is one of three literals chosen from the closed Grain union.",
+  "src/lib/product-metrics.ts :: col":
+    "every `real(...)` call passes a literal column name.",
+  "src/lib/product-ops.ts :: col":
+    "every `nonInternal(...)` call passes a literal column name.",
+  "src/lib/signup-session.ts :: SIGNUP_SESSION_WINDOW":
+    "a string module constant (\"2 days\").",
+  "src/lib/work-history-sweep.ts :: `(work_history_misses < ${WORK_HISTORY_MAX_MISSES} OR work_history_miss_slug IS DISTINCT FROM linkedin_slug)`":
+    "a literal predicate; `WORK_HISTORY_MAX_MISSES` is a numeric module constant.",
   "src/lib/ai-access.ts :: String(UNPRICED_CALL_MICROS.embedding)":
     "numeric constants.",
   "src/lib/ai-access.ts :: String(UNPRICED_CALL_MICROS.other)":
