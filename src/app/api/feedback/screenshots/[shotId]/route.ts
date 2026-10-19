@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { withMediaResourcePolicy } from "@/lib/media-headers";
 import { getDb } from "@/db";
 import { feedbackScreenshots } from "@/db/schema";
 import { isAdminUser } from "@/lib/admin";
@@ -26,7 +27,7 @@ type Params = { params: Promise<{ shotId: string }> };
  * A shot belonging to someone else 404s rather than 403s: a 403 confirms both that the row
  * exists and that you guessed its id. Same reasoning as `AdminForbiddenError`'s "Not found".
  */
-export async function GET(_req: Request, { params }: Params) {
+async function serve(_req: Request, { params }: Params) {
   let userId: string;
   try {
     userId = await requireUserId();
@@ -77,4 +78,9 @@ export async function GET(_req: Request, { params }: Params) {
 
   if (!shot.inlineData) return new NextResponse(null, { status: 404 });
   return new NextResponse(new Uint8Array(Buffer.from(shot.inlineData, "base64")), { headers });
+}
+
+/** Every response, redirects and misses included, is same-origin only (audit L-09). */
+export async function GET(_req: Request, ctx: Params) {
+  return withMediaResourcePolicy(await serve(_req, ctx));
 }
