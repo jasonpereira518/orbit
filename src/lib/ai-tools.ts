@@ -23,7 +23,7 @@
 import { z, type ZodRawShape } from "zod";
 import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
-import { FunctionCallingConfigMode, type Content, type FunctionDeclaration } from "@google/genai";
+import type { Content, FunctionCallingConfigMode, FunctionDeclaration } from "@google/genai";
 import {
   anthropicClient,
   geminiClient,
@@ -316,7 +316,7 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
               maxOutputTokens,
               systemInstruction: input.system,
               tools: [{ functionDeclarations }],
-              ...(stepOptions?.noTools ? { toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.NONE } } } : {}),
+              ...(stepOptions?.noTools ? { toolConfig: { functionCallingConfig: { mode: "NONE" as FunctionCallingConfigMode } } } : {}),
               ...geminiThinking(model, input.operation),
             },
           });
@@ -337,7 +337,7 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
             maxOutputTokens,
             systemInstruction: input.system,
             tools: [{ functionDeclarations }],
-            ...(stepOptions?.noTools ? { toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.NONE } } } : {}),
+            ...(stepOptions?.noTools ? { toolConfig: { functionCallingConfig: { mode: "NONE" as FunctionCallingConfigMode } } } : {}),
             ...geminiThinking(model, input.operation),
           },
         });
