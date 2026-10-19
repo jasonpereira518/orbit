@@ -130,7 +130,7 @@ export function ImportPeopleReview({
                     <div className="flex flex-col items-end gap-0.5">
                       <Badge variant="secondary">Already in orbit</Badge>
                       {person.repeatReason ? (
-                        <span className="text-[10px] text-muted-foreground">
+                        <span className="text-3xs text-muted-foreground">
                           {person.repeatReason}
                         </span>
                       ) : null}

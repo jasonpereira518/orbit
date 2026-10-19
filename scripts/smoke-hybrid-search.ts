@@ -17,6 +17,7 @@ import { eq } from "drizzle-orm";
 import { getDb, isPgvectorAvailable } from "../src/db";
 import { contacts, contactEmbeddings, tags, contactTags } from "../src/db/schema";
 import { hybridSearchContacts } from "../src/lib/hybrid-search";
+import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 
 const U = "smoke-hybrid-user";
 
@@ -111,6 +112,26 @@ async function main() {
   hits = await hybridSearchContacts(U, { query: "Hopper", embedding: axisVector(0) });
   const ids = hits.map((h) => h.id);
   check("fusion keeps both arms' hits", ids.includes(grace.id) && ids.includes(ada.id));
+
+  // 4b. A pending embedding (LATENCY_PLAN DB-6): the lexical arms must not wait for it, and
+  // the answer must be the one a resolved embedding gives.
+  {
+    startQueryCount();
+    let issuedBeforeEmbedding = -1;
+    const pending = new Promise<number[]>((resolve) =>
+      setTimeout(() => {
+        issuedBeforeEmbedding = capturedQueries().length;
+        resolve(axisVector(0));
+      }, 80)
+    );
+    const viaPending = await hybridSearchContacts(U, { query: "Hopper", embedding: pending });
+    stopQueryCount();
+    check("lexical arms are issued before a pending embedding resolves", issuedBeforeEmbedding >= 2, String(issuedBeforeEmbedding));
+    check(
+      "a pending embedding gives the same ranking as a resolved one",
+      JSON.stringify(viaPending.map((h) => [h.id, h.matchedArms])) === JSON.stringify(hits.map((h) => [h.id, h.matchedArms]))
+    );
+  }
 
   // 5. Mixed recall-guard case: the industry filter matches exactly Ada, while
   // the unfiltered query "engineer" also lexically matches Grace (her title).

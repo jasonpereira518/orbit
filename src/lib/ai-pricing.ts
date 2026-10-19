@@ -104,7 +104,9 @@ const PRICES: Record<string, PriceEntry> = {
   // separate duration column — so the caller reports the audio length in `inputTokens` (one
   // "token" = one second) and this row prices that unit like any other: $0.0043/min ÷ 60 ≈
   // 72 micros/sec, i.e. $72 per 1,000,000 seconds of audio. `output` stays 0; there is no
-  // second leg to a transcription call.
+  // second leg to a transcription call. NOTE: no caller reports those seconds, and this is
+  // the pre-recorded list rate only. What Deepgram actually costs Orbit — streaming, the
+  // add-ons and the opt-out premium — is priced from `speech_usage` in `speech-cost.ts`.
   [DEEPGRAM_MODEL]: { input: 72, output: 0 },
 };
 
@@ -203,3 +205,18 @@ export function formatCostMicros(micros: number | null | undefined): string | nu
 }
 
 export type { AiProvider };
+
+/**
+ * What one hosted web search costs on top of its tokens, in micros, by provider — charged by
+ * `webSearchJson` through `surchargeMicros` so included AI's credits and pools see it.
+ *
+ *  - anthropic: $10 per 1,000 searches (platform.claude.com/docs/en/about-claude/pricing,
+ *    checked 2026-10-18), counted from `usage.server_tool_use.web_search_requests`.
+ *  - openai: UNCONFIRMED; the hosted `web_search` tool's per-call fee priced at a pessimistic
+ *    $25 per 1,000 calls until checked against openai.com/api/pricing. One per
+ *    `web_search_call` output item.
+ *  - gemini: UNCONFIRMED; Google Search grounding priced at a pessimistic $35 per 1,000
+ *    grounded prompts (ai.google.dev pricing). One per grounded response.
+ *  - openrouter reports its own cost, plugin included, so it needs no entry.
+ */
+export const WEB_SEARCH_FEE_MICROS = { anthropic: 10_000, openai: 25_000, gemini: 35_000 } as const;

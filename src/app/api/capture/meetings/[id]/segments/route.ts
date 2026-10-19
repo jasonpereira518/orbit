@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { friendlyError } from "@/lib/errors";
 import { reportedFailure } from "@/lib/report-error";
 import { isPaywallError } from "@/lib/entitlements";
-import { recordLiveSegments, type LiveSegmentInput } from "@/lib/meeting-sessions";
+import { recordLiveSegments, validYouClaim, type LiveSegmentInput, type YouClaim } from "@/lib/meeting-sessions";
 import { requireMeetingsUser } from "@/lib/plan-guards";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 
@@ -57,19 +57,23 @@ export async function POST(request: Request, ctx: Params) {
   }
 
   let segments: LiveSegmentInput[];
+  let you: YouClaim | null = null;
   try {
-    const body = (await request.json()) as { segments?: unknown };
+    const body = (await request.json()) as { segments?: unknown; you?: unknown };
     if (!Array.isArray(body.segments)) {
       return NextResponse.json({ error: "Bad segment batch" }, { status: 400 });
     }
     segments = body.segments as LiveSegmentInput[];
+    // Which speaker label is the user, once the browser knows (`claimedYou`). A malformed
+    // claim is dropped rather than refusing the sentences it rode with.
+    you = validYouClaim(body.you);
   } catch {
     return NextResponse.json({ error: "Bad segment batch" }, { status: 400 });
   }
 
   const { id } = await ctx.params;
   try {
-    const result = await recordLiveSegments(userId, id, { recorderId, segments });
+    const result = await recordLiveSegments(userId, id, { recorderId, segments, you });
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: result.status });
     }

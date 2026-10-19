@@ -1,5 +1,6 @@
 "use server";
 
+import { relatedSqlLower } from "@/lib/related-contacts-sql";
 import { and, asc, desc, eq, gte, inArray, sql, type SQL } from "drizzle-orm";
 import { listSchools } from "@/lib/events/target-companies";
 import { contactSearchCondition, nameMatchTierSql } from "@/lib/contact-search-rank";
@@ -1706,8 +1707,7 @@ export async function listRelatedContacts(
   // else, which is the `translate()`; the two `replace`s are its KELVIN SIGN and the U+0130
   // step. Through `orbit_related_corpus`, or with `translate()`, this one pass over the
   // account cost 1.8 s at 100k contacts on Postgres 16; this way it is ~0.3 s.
-  const lowered = (value: SQL) =>
-    sql`replace(replace(lower(${value} collate "C"), chr(8490), 'k'), chr(304), chr(105) || chr(775))`;
+  const lowered = relatedSqlLower;
   const unusual = sql`(orbit_unusual_json_array(c.key_facts) or orbit_unusual_json_array(c.shared_interests))`;
   const mentionsSource = patterns.length
     ? sql`orbit_related_corpus(c.ai_summary, c.notes, c.key_facts, c.shared_interests)

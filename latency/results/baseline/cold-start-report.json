@@ -1,0 +1,1094 @@
+[
+  {
+    "route": "(clerk)/(app)/(main)/events/page.js",
+    "eagerKB": 3639,
+    "requireMs": 351,
+    "treeMs": 218,
+    "ssrMs": 201,
+    "totalMs": 780
+  },
+  {
+    "route": "(clerk)/(app)/(main)/imports/page.js",
+    "eagerKB": 3607,
+    "requireMs": 341,
+    "treeMs": 203,
+    "ssrMs": 173,
+    "totalMs": 732
+  },
+  {
+    "route": "(clerk)/(app)/onboarding/page.js",
+    "eagerKB": 3569,
+    "requireMs": 284,
+    "treeMs": 241,
+    "ssrMs": 190,
+    "totalMs": 718
+  },
+  {
+    "route": "(clerk)/(app)/(main)/dashboard/page.js",
+    "eagerKB": 3772,
+    "requireMs": 286,
+    "treeMs": 256,
+    "ssrMs": 171,
+    "totalMs": 713
+  },
+  {
+    "route": "(clerk)/(app)/(main)/radar/page.js",
+    "eagerKB": 3666,
+    "requireMs": 328,
+    "treeMs": 244,
+    "ssrMs": 177,
+    "totalMs": 709
+  },
+  {
+    "route": "(clerk)/(app)/settings/page.js",
+    "eagerKB": 3708,
+    "requireMs": 321,
+    "treeMs": 198,
+    "ssrMs": 201,
+    "totalMs": 702
+  },
+  {
+    "route": "(clerk)/(app)/(main)/knowledge/page.js",
+    "eagerKB": 3631,
+    "requireMs": 292,
+    "treeMs": 186,
+    "ssrMs": 153,
+    "totalMs": 682
+  },
+  {
+    "route": "(clerk)/(app)/(main)/chat/page.js",
+    "eagerKB": 3582,
+    "requireMs": 316,
+    "treeMs": 220,
+    "ssrMs": 128,
+    "totalMs": 678
+  },
+  {
+    "route": "(clerk)/(app)/(main)/reminders/page.js",
+    "eagerKB": 3592,
+    "requireMs": 283,
+    "treeMs": 157,
+    "ssrMs": 202,
+    "totalMs": 671
+  },
+  {
+    "route": "(clerk)/(app)/(main)/contacts/new/page.js",
+    "eagerKB": 3585,
+    "requireMs": 330,
+    "treeMs": 188,
+    "ssrMs": 150,
+    "totalMs": 669
+  },
+  {
+    "route": "(clerk)/(app)/(main)/graph/page.js",
+    "eagerKB": 3588,
+    "requireMs": 335,
+    "treeMs": 154,
+    "ssrMs": 201,
+    "totalMs": 660
+  },
+  {
+    "route": "(clerk)/(app)/(main)/contacts/page.js",
+    "eagerKB": 3596,
+    "requireMs": 289,
+    "treeMs": 183,
+    "ssrMs": 189,
+    "totalMs": 659
+  },
+  {
+    "route": "(clerk)/(app)/(main)/recruiters/compose/page.js",
+    "eagerKB": 3597,
+    "requireMs": 310,
+    "treeMs": 189,
+    "ssrMs": 150,
+    "totalMs": 658
+  },
+  {
+    "route": "(clerk)/(app)/(main)/contacts/[id]/page.js",
+    "eagerKB": 3710,
+    "requireMs": 278,
+    "treeMs": 187,
+    "ssrMs": 173,
+    "totalMs": 648
+  },
+  {
+    "route": "(clerk)/(app)/(main)/meetings/[id]/page.js",
+    "eagerKB": 3585,
+    "requireMs": 309,
+    "treeMs": 141,
+    "ssrMs": 173,
+    "totalMs": 640
+  },
+  {
+    "route": "(clerk)/(app)/(main)/events/[id]/page.js",
+    "eagerKB": 3640,
+    "requireMs": 295,
+    "treeMs": 167,
+    "ssrMs": 165,
+    "totalMs": 636
+  },
+  {
+    "route": "(clerk)/(app)/(main)/capture/page.js",
+    "eagerKB": 3597,
+    "requireMs": 277,
+    "treeMs": 214,
+    "ssrMs": 131,
+    "totalMs": 631
+  },
+  {
+    "route": "(clerk)/(app)/(main)/outreach/page.js",
+    "eagerKB": 3626,
+    "requireMs": 286,
+    "treeMs": 171,
+    "ssrMs": 158,
+    "totalMs": 626
+  },
+  {
+    "route": "(clerk)/(app)/settings/plan-activation-preview/page.js",
+    "eagerKB": 3565,
+    "requireMs": 306,
+    "treeMs": 110,
+    "ssrMs": 182,
+    "totalMs": 616
+  },
+  {
+    "route": "(clerk)/(app)/(main)/find/page.js",
+    "eagerKB": 3580,
+    "requireMs": 262,
+    "treeMs": 159,
+    "ssrMs": 160,
+    "totalMs": 606
+  },
+  {
+    "route": "(clerk)/(app)/(main)/recruiters/page.js",
+    "eagerKB": 3588,
+    "requireMs": 267,
+    "treeMs": 180,
+    "ssrMs": 154,
+    "totalMs": 594
+  },
+  {
+    "route": "(clerk)/(app)/(main)/outreach/[id]/page.js",
+    "eagerKB": 3631,
+    "requireMs": 256,
+    "treeMs": 157,
+    "ssrMs": 150,
+    "totalMs": 589
+  },
+  {
+    "route": "(clerk)/(app)/(main)/capture/[batchId]/page.js",
+    "eagerKB": 3587,
+    "requireMs": 284,
+    "treeMs": 137,
+    "ssrMs": 163,
+    "totalMs": 585
+  },
+  {
+    "route": "(clerk)/(admin)/admin/growth/page.js",
+    "eagerKB": 2562,
+    "requireMs": 321,
+    "treeMs": 142,
+    "ssrMs": 106,
+    "totalMs": 582
+  },
+  {
+    "route": "(clerk)/(admin)/admin/users/[userId]/page.js",
+    "eagerKB": 2592,
+    "requireMs": 252,
+    "treeMs": 204,
+    "ssrMs": 114,
+    "totalMs": 570
+  },
+  {
+    "route": "(clerk)/(app)/(main)/contacts/duplicates/page.js",
+    "eagerKB": 3595,
+    "requireMs": 263,
+    "treeMs": 139,
+    "ssrMs": 142,
+    "totalMs": 560
+  },
+  {
+    "route": "(clerk)/(app)/(main)/recruiters/new/page.js",
+    "eagerKB": 3582,
+    "requireMs": 303,
+    "treeMs": 94,
+    "ssrMs": 153,
+    "totalMs": 543
+  },
+  {
+    "route": "(clerk)/(app)/(main)/recruiters/[id]/page.js",
+    "eagerKB": 3594,
+    "requireMs": 280,
+    "treeMs": 100,
+    "ssrMs": 152,
+    "totalMs": 533
+  },
+  {
+    "route": "(clerk)/(app)/(main)/meetings/page.js",
+    "eagerKB": 3583,
+    "requireMs": 275,
+    "treeMs": 102,
+    "ssrMs": 146,
+    "totalMs": 523
+  },
+  {
+    "route": "(clerk)/(app)/(main)/outreach/new/page.js",
+    "eagerKB": 3620,
+    "requireMs": 300,
+    "treeMs": 87,
+    "ssrMs": 148,
+    "totalMs": 521
+  },
+  {
+    "route": "(clerk)/(app)/onboarding/wizard/page.js",
+    "eagerKB": 3564,
+    "requireMs": 278,
+    "treeMs": 81,
+    "ssrMs": 142,
+    "totalMs": 511
+  },
+  {
+    "route": "(clerk)/(admin)/admin/health/page.js",
+    "eagerKB": 2544,
+    "requireMs": 258,
+    "treeMs": 104,
+    "ssrMs": 106,
+    "totalMs": 487
+  },
+  {
+    "route": "(clerk)/(admin)/admin/users/[userId]/contacts/[contactId]/page.js",
+    "eagerKB": 2532,
+    "requireMs": 228,
+    "treeMs": 167,
+    "ssrMs": 90,
+    "totalMs": 486
+  },
+  {
+    "route": "(clerk)/(admin)/admin/avatars/page.js",
+    "eagerKB": 2512,
+    "requireMs": 225,
+    "treeMs": 170,
+    "ssrMs": 91,
+    "totalMs": 479
+  },
+  {
+    "route": "(clerk)/(admin)/admin/billing/demand/page.js",
+    "eagerKB": 2543,
+    "requireMs": 255,
+    "treeMs": 107,
+    "ssrMs": 106,
+    "totalMs": 474
+  },
+  {
+    "route": "(clerk)/(admin)/admin/audit/page.js",
+    "eagerKB": 2514,
+    "requireMs": 226,
+    "treeMs": 174,
+    "ssrMs": 80,
+    "totalMs": 468
+  },
+  {
+    "route": "(clerk)/(admin)/admin/growth/interest-list/page.js",
+    "eagerKB": 2523,
+    "requireMs": 256,
+    "treeMs": 108,
+    "ssrMs": 94,
+    "totalMs": 467
+  },
+  {
+    "route": "(clerk)/(admin)/admin/billing/run-cost/page.js",
+    "eagerKB": 2544,
+    "requireMs": 253,
+    "treeMs": 103,
+    "ssrMs": 91,
+    "totalMs": 462
+  },
+  {
+    "route": "(clerk)/(admin)/admin/analytics/radar/page.js",
+    "eagerKB": 2520,
+    "requireMs": 262,
+    "treeMs": 108,
+    "ssrMs": 86,
+    "totalMs": 456
+  },
+  {
+    "route": "(clerk)/(admin)/admin/analytics/funnel/page.js",
+    "eagerKB": 2562,
+    "requireMs": 261,
+    "treeMs": 96,
+    "ssrMs": 86,
+    "totalMs": 455
+  },
+  {
+    "route": "(clerk)/(admin)/admin/analytics/engagement/page.js",
+    "eagerKB": 2551,
+    "requireMs": 255,
+    "treeMs": 87,
+    "ssrMs": 115,
+    "totalMs": 444
+  },
+  {
+    "route": "(clerk)/(admin)/admin/page.js",
+    "eagerKB": 2517,
+    "requireMs": 244,
+    "treeMs": 110,
+    "ssrMs": 98,
+    "totalMs": 441
+  },
+  {
+    "route": "(clerk)/(admin)/admin/billing/costs/page.js",
+    "eagerKB": 2546,
+    "requireMs": 234,
+    "treeMs": 98,
+    "ssrMs": 101,
+    "totalMs": 435
+  },
+  {
+    "route": "(clerk)/(admin)/admin/analytics/page.js",
+    "eagerKB": 2555,
+    "requireMs": 258,
+    "treeMs": 81,
+    "ssrMs": 94,
+    "totalMs": 434
+  },
+  {
+    "route": "(clerk)/(admin)/admin/billing/movement/page.js",
+    "eagerKB": 2542,
+    "requireMs": 252,
+    "treeMs": 91,
+    "ssrMs": 90,
+    "totalMs": 434
+  },
+  {
+    "route": "(clerk)/(admin)/admin/users/page.js",
+    "eagerKB": 2527,
+    "requireMs": 253,
+    "treeMs": 84,
+    "ssrMs": 104,
+    "totalMs": 433
+  },
+  {
+    "route": "(clerk)/(admin)/admin/yc/fundraising/page.js",
+    "eagerKB": 2542,
+    "requireMs": 238,
+    "treeMs": 95,
+    "ssrMs": 91,
+    "totalMs": 431
+  },
+  {
+    "route": "(clerk)/(admin)/admin/access/page.js",
+    "eagerKB": 2513,
+    "requireMs": 252,
+    "treeMs": 76,
+    "ssrMs": 89,
+    "totalMs": 430
+  },
+  {
+    "route": "(clerk)/(admin)/admin/billing/page.js",
+    "eagerKB": 2554,
+    "requireMs": 243,
+    "treeMs": 98,
+    "ssrMs": 91,
+    "totalMs": 428
+  },
+  {
+    "route": "bench/preview-old/page.js",
+    "eagerKB": 2446,
+    "requireMs": 345,
+    "treeMs": 4,
+    "ssrMs": 44,
+    "totalMs": 416
+  },
+  {
+    "route": "(clerk)/(admin)/admin/feedback/[feedbackId]/page.js",
+    "eagerKB": 2515,
+    "requireMs": 243,
+    "treeMs": 74,
+    "ssrMs": 90,
+    "totalMs": 414
+  },
+  {
+    "route": "(clerk)/(admin)/admin/feedback/page.js",
+    "eagerKB": 2521,
+    "requireMs": 224,
+    "treeMs": 86,
+    "ssrMs": 96,
+    "totalMs": 414
+  },
+  {
+    "route": "(clerk)/(admin)/admin/growth/broadcasts/page.js",
+    "eagerKB": 2514,
+    "requireMs": 216,
+    "treeMs": 105,
+    "ssrMs": 88,
+    "totalMs": 414
+  },
+  {
+    "route": "(clerk)/(admin)/admin/yc/page.js",
+    "eagerKB": 2509,
+    "requireMs": 231,
+    "treeMs": 75,
+    "ssrMs": 85,
+    "totalMs": 414
+  },
+  {
+    "route": "(clerk)/(admin)/admin/yc/economics/page.js",
+    "eagerKB": 2531,
+    "requireMs": 232,
+    "treeMs": 83,
+    "ssrMs": 98,
+    "totalMs": 406
+  },
+  {
+    "route": "(clerk)/(admin)/admin/product/page.js",
+    "eagerKB": 2517,
+    "requireMs": 234,
+    "treeMs": 77,
+    "ssrMs": 94,
+    "totalMs": 402
+  },
+  {
+    "route": "(clerk)/(marketing)/pricing/page.js",
+    "eagerKB": 1354,
+    "requireMs": 229,
+    "treeMs": 89,
+    "ssrMs": 77,
+    "totalMs": 394
+  },
+  {
+    "route": "(site)/interest/page.js",
+    "eagerKB": 1349,
+    "requireMs": 220,
+    "treeMs": 90,
+    "ssrMs": 79,
+    "totalMs": 389
+  },
+  {
+    "route": "(clerk)/(admin)/admin/yc/runway/page.js",
+    "eagerKB": 2532,
+    "requireMs": 227,
+    "treeMs": 76,
+    "ssrMs": 85,
+    "totalMs": 388
+  },
+  {
+    "route": "(clerk)/(admin)/admin/yc/revenue/page.js",
+    "eagerKB": 2525,
+    "requireMs": 221,
+    "treeMs": 74,
+    "ssrMs": 80,
+    "totalMs": 375
+  },
+  {
+    "route": "(site)/(docs)/contact/page.js",
+    "eagerKB": 1351,
+    "requireMs": 198,
+    "treeMs": 101,
+    "ssrMs": 71,
+    "totalMs": 370
+  },
+  {
+    "route": "(site)/page.js",
+    "eagerKB": 1383,
+    "requireMs": 222,
+    "treeMs": 70,
+    "ssrMs": 63,
+    "totalMs": 363
+  },
+  {
+    "route": "(clerk)/(auth)/sign-up/[[...sign-up]]/page.js",
+    "eagerKB": 1074,
+    "requireMs": 202,
+    "treeMs": 76,
+    "ssrMs": 76,
+    "totalMs": 355
+  },
+  {
+    "route": "(clerk)/(checkout)/upgrade/page.js",
+    "eagerKB": 1339,
+    "requireMs": 186,
+    "treeMs": 74,
+    "ssrMs": 82,
+    "totalMs": 348
+  },
+  {
+    "route": "(site)/connect/page.js",
+    "eagerKB": 1027,
+    "requireMs": 213,
+    "treeMs": 72,
+    "ssrMs": 82,
+    "totalMs": 339
+  },
+  {
+    "route": "(clerk)/(auth)/sign-in/[[...sign-in]]/page.js",
+    "eagerKB": 1073,
+    "requireMs": 184,
+    "treeMs": 72,
+    "ssrMs": 78,
+    "totalMs": 337
+  },
+  {
+    "route": "(clerk)/suspended/page.js",
+    "eagerKB": 1062,
+    "requireMs": 175,
+    "treeMs": 79,
+    "ssrMs": 79,
+    "totalMs": 333
+  },
+  {
+    "route": "bench/constellation/page.js",
+    "eagerKB": 2446,
+    "requireMs": 289,
+    "treeMs": 3,
+    "ssrMs": 40,
+    "totalMs": 328
+  },
+  {
+    "route": "(site)/(docs)/privacy/page.js",
+    "eagerKB": 1066,
+    "requireMs": 172,
+    "treeMs": 78,
+    "ssrMs": 48,
+    "totalMs": 295
+  },
+  {
+    "route": "(site)/(docs)/terms/page.js",
+    "eagerKB": 1050,
+    "requireMs": 170,
+    "treeMs": 71,
+    "ssrMs": 48,
+    "totalMs": 285
+  },
+  {
+    "route": "api/v1/openapi.json/route.js",
+    "eagerKB": 497,
+    "requireMs": 224,
+    "treeMs": 53,
+    "ssrMs": 0,
+    "totalMs": 277
+  },
+  {
+    "route": "scan/[token]/page.js",
+    "eagerKB": 688,
+    "requireMs": 169,
+    "treeMs": 51,
+    "ssrMs": 54,
+    "totalMs": 273
+  },
+  {
+    "route": "(site)/interest/privacy/page.js",
+    "eagerKB": 412,
+    "requireMs": 174,
+    "treeMs": 7,
+    "ssrMs": 54,
+    "totalMs": 230
+  },
+  {
+    "route": "bench/preview/page.js",
+    "eagerKB": 354,
+    "requireMs": 168,
+    "treeMs": 7,
+    "ssrMs": 42,
+    "totalMs": 219
+  },
+  {
+    "route": "favicon.ico/route.js",
+    "eagerKB": 204,
+    "requireMs": 192,
+    "treeMs": 9,
+    "ssrMs": 0,
+    "totalMs": 203
+  },
+  {
+    "route": "icon.png/route.js",
+    "eagerKB": 220,
+    "requireMs": 189,
+    "treeMs": 7,
+    "ssrMs": 0,
+    "totalMs": 196
+  },
+  {
+    "route": "_not-found/page.js",
+    "eagerKB": 304,
+    "requireMs": 159,
+    "treeMs": 2,
+    "ssrMs": 29,
+    "totalMs": 192
+  },
+  {
+    "route": "apple-icon.png/route.js",
+    "eagerKB": 218,
+    "requireMs": 177,
+    "treeMs": 7,
+    "ssrMs": 0,
+    "totalMs": 184
+  },
+  {
+    "route": "api/avatars/encode/route.js",
+    "eagerKB": 109,
+    "requireMs": 180,
+    "treeMs": 1,
+    "ssrMs": 0,
+    "totalMs": 181
+  },
+  {
+    "route": "robots.txt/route.js",
+    "eagerKB": 199,
+    "requireMs": 169,
+    "treeMs": 7,
+    "ssrMs": 0,
+    "totalMs": 176
+  },
+  {
+    "route": "sitemap.xml/route.js",
+    "eagerKB": 199,
+    "requireMs": 168,
+    "treeMs": 7,
+    "ssrMs": 0,
+    "totalMs": 175
+  },
+  {
+    "route": ".well-known/oauth-authorization-server/route.js",
+    "eagerKB": 110,
+    "requireMs": 156,
+    "treeMs": 1,
+    "ssrMs": 0,
+    "totalMs": 156
+  },
+  {
+    "route": ".well-known/oauth-protected-resource/api/mcp/route.js",
+    "eagerKB": 110,
+    "requireMs": 155,
+    "treeMs": 1,
+    "ssrMs": 0,
+    "totalMs": 156
+  },
+  {
+    "route": "_global-error/page.js",
+    "eagerKB": 266,
+    "requireMs": 148,
+    "treeMs": 0,
+    "ssrMs": 5,
+    "totalMs": 153
+  },
+  {
+    "route": "api/admin/email-preview/route.js",
+    "eagerKB": 793,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/admin/export/route.js",
+    "eagerKB": 1856,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/admin/health/live/route.js",
+    "eagerKB": 833,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/admin/ops/test-error/route.js",
+    "eagerKB": 759,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/admin/overview/live/route.js",
+    "eagerKB": 818,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/admin/presence/route.js",
+    "eagerKB": 760,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/avatars/[contactId]/route.js",
+    "eagerKB": 802,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/calendar/[token]/route.js",
+    "eagerKB": 554,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/capture/jobs/[id]/run/route.js",
+    "eagerKB": 1396,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/capture/jobs/route.js",
+    "eagerKB": 1631,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/capture/meetings/[id]/chunks/route.js",
+    "eagerKB": 827,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/capture/meetings/[id]/segments/route.js",
+    "eagerKB": 825,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/capture/meetings/[id]/stream-token/route.js",
+    "eagerKB": 827,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/capture/photos/[photoId]/route.js",
+    "eagerKB": 760,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/chat/route.js",
+    "eagerKB": 1802,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/cloud-notes/run/route.js",
+    "eagerKB": 1767,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/connectors/outbox/drain/route.js",
+    "eagerKB": 572,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/contacts/avatar-backfill/route.js",
+    "eagerKB": 1668,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/credits/email/unsubscribe/route.js",
+    "eagerKB": 601,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/credits/notices/route.js",
+    "eagerKB": 603,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/csp-report/route.js",
+    "eagerKB": 473,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/email/attachments/upload/route.js",
+    "eagerKB": 1717,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/email/drain/route.js",
+    "eagerKB": 1543,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/embeddings/backfill/route.js",
+    "eagerKB": 1029,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/events/eventbrite/callback/route.js",
+    "eagerKB": 1626,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/export/route.js",
+    "eagerKB": 892,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/extension/contacts/route.js",
+    "eagerKB": 1454,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/extension/event-roster/route.js",
+    "eagerKB": 1471,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/extension/follow-ups/route.js",
+    "eagerKB": 1426,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/extension/interactions/route.js",
+    "eagerKB": 1452,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/extension/me/route.js",
+    "eagerKB": 1410,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/extension/parse/route.js",
+    "eagerKB": 1417,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/extension/resolve/route.js",
+    "eagerKB": 1425,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/extension/signals/route.js",
+    "eagerKB": 1412,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/extension/starters/route.js",
+    "eagerKB": 1425,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/feedback/screenshots/[shotId]/route.js",
+    "eagerKB": 760,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/gmail/callback/route.js",
+    "eagerKB": 1731,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/health/route.js",
+    "eagerKB": 639,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/imports/[id]/continue/route.js",
+    "eagerKB": 1584,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/imports/files/[fileId]/route.js",
+    "eagerKB": 768,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/imports/process-stalled/route.js",
+    "eagerKB": 1856,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/interest-list/progress/route.js",
+    "eagerKB": 561,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/interest-list/ticket-image/route.js",
+    "eagerKB": 561,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/interest-list/unsubscribe/route.js",
+    "eagerKB": 574,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/jobs/feed/sweep/route.js",
+    "eagerKB": 888,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/knowledge/refresh/route.js",
+    "eagerKB": 1430,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/linkedin/timeline-events/backfill/route.js",
+    "eagerKB": 1036,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/mcp/[token]/route.js",
+    "eagerKB": 2073,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/mcp/route.js",
+    "eagerKB": 2073,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/meetings/candidates/route.js",
+    "eagerKB": 1337,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/openrouter/callback/route.js",
+    "eagerKB": 1308,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/ops/speech-usage/route.js",
+    "eagerKB": 594,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/ops/sweep/route.js",
+    "eagerKB": 689,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/outlook/callback/route.js",
+    "eagerKB": 1743,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/plan-upgrades/claim/route.js",
+    "eagerKB": 768,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/presence/route.js",
+    "eagerKB": 759,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/radar/digest/route.js",
+    "eagerKB": 830,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/radar/digest/unsubscribe/route.js",
+    "eagerKB": 587,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/radar/feeds/sweep/route.js",
+    "eagerKB": 890,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/radar/run/route.js",
+    "eagerKB": 1864,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/relationships/run/route.js",
+    "eagerKB": 1290,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/research/route.js",
+    "eagerKB": 1502,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/scan/[token]/finish/route.js",
+    "eagerKB": 574,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/scan/[token]/pages/route.js",
+    "eagerKB": 1044,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/speech/token/route.js",
+    "eagerKB": 815,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/speech/usage/route.js",
+    "eagerKB": 803,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/sync/run/route.js",
+    "eagerKB": 1539,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/track/route.js",
+    "eagerKB": 777,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/v1/contacts/route.js",
+    "eagerKB": 1434,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/v1/events/route.js",
+    "eagerKB": 1423,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/v1/followups/[id]/route.js",
+    "eagerKB": 1079,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/v1/followups/route.js",
+    "eagerKB": 1067,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/v1/interactions/route.js",
+    "eagerKB": 1041,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/v1/me/route.js",
+    "eagerKB": 741,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/v1/notes/route.js",
+    "eagerKB": 1575,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/v1/webhook-endpoints/[id]/route.js",
+    "eagerKB": 742,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/v1/webhook-endpoints/route.js",
+    "eagerKB": 1061,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/waitlist-poll/results/route.js",
+    "eagerKB": 558,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/webhooks/clerk/route.js",
+    "eagerKB": 904,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/webhooks/outbound/drain/route.js",
+    "eagerKB": 584,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/webhooks/resend/route.js",
+    "eagerKB": 564,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/webhooks/stripe/route.js",
+    "eagerKB": 719,
+    "error": "<claude-code-hint v=\"1\" type=\"plugin\" value=\"stripe@claude-plugins-official\" />"
+  },
+  {
+    "route": "api/work-history/research/route.js",
+    "eagerKB": 1224,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  },
+  {
+    "route": "api/work-history/sweep/route.js",
+    "eagerKB": 1229,
+    "error": "/home/user/orbit/node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js:5"
+  }
+]

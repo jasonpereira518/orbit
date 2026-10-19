@@ -632,7 +632,7 @@ export function FeedbackPanel({
                   aria-label={`Remove screenshot ${index + 1}`}
                   // Focus-within as well as hover: a hover-only control does not exist for
                   // anyone using a keyboard.
-                  className="absolute -right-1.5 -top-1.5 size-5 rounded-full bg-background opacity-0 shadow group-hover:opacity-100 group-focus-within:opacity-100"
+                  className="absolute -right-1.5 -top-1.5 size-5 rounded-full bg-background pointer-fine:opacity-0 shadow group-hover:opacity-100 group-focus-within:opacity-100"
                   onClick={() => onRemoveShot(shot.id)}
                 >
                   <X className="size-3" />

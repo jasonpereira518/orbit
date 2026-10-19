@@ -46,7 +46,7 @@ import { createReminder } from "@/actions/reminders";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Button } from "@/components/ui/button";
 import type { KeywordSearchHit } from "@/lib/keyword-search";
-import { companyBrandColor } from "@/lib/company-brand";
+import { companyBrandText } from "@/lib/company-brand";
 import { cn } from "@/lib/utils";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
@@ -576,7 +576,12 @@ export function FloatingAskBar() {
         "bottom-[calc(6.875rem+env(safe-area-inset-bottom))] md:bottom-5",
         !visible && "pointer-events-none"
       )}
-      aria-hidden={!visible}
+      // `inert`, not `aria-hidden`: hidden on scroll, the bar's input and buttons stayed in
+      // the tab order while gone from the accessibility tree. Inert takes them out of both.
+      inert={!visible}
+      // A landmark of its own, outside <main>, so it is reachable from the landmarks list.
+      role="search"
+      aria-label="Ask your network"
     >
       {/* A slim pill at rest that opens out to full width once it is in use. A spring, not a
           CSS transition: it picks up from wherever it is when a click lands mid-animation. */}
@@ -667,7 +672,7 @@ export function FloatingAskBar() {
                 </div>
               )}
 
-              <div className="max-h-[min(56vh,30rem)] overflow-y-auto">
+              <div className="max-h-[min(56dvh,30rem)] overflow-y-auto">
                 {messages.length === 0 && !chatPending && hits.length === 0 && (
                   <div className="px-2 pb-2">
                     {query.trim() ? (
@@ -754,8 +759,11 @@ export function FloatingAskBar() {
                                   {hit.title}
                                   {hit.title && hit.company && ", "}
                                   {hit.company && (
-                                    <span style={{ color: companyBrandColor(hit.company) ?? undefined }}>
-                                      {hit.company}
+                                    <span
+                                      className={companyBrandText(hit.company)?.className}
+                                      style={companyBrandText(hit.company)?.style}
+                                    >
+                                      <bdi>{hit.company}</bdi>
                                     </span>
                                   )}
                                 </span>
@@ -849,7 +857,9 @@ export function FloatingAskBar() {
         <motion.div
           className={cn(
             "flex h-12 items-center gap-2 rounded-full border border-border/70 bg-card/95 pl-4 pr-1.5 shadow-lg backdrop-blur-md",
-            "focus-within:border-primary/40 focus-within:ring-[3px] focus-within:ring-primary/15",
+            // The same focus ring as every other field (ui/input); the old primary/15 wash was
+            // under the 3:1 a focus indicator needs.
+            "focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50",
             personContextActive && "border-primary/25",
             open && "shadow-xl"
           )}
@@ -859,6 +869,7 @@ export function FloatingAskBar() {
             id={inputId}
             ref={inputRef}
             type="text"
+            aria-label="Ask your network"
             value={query}
             placeholder={placeholder}
             disabled={chatPending}
@@ -892,7 +903,7 @@ export function FloatingAskBar() {
             }}
           />
           {!open && !query && (
-            <kbd className="hidden h-5 shrink-0 items-center rounded-md border border-border/60 bg-background px-1.5 font-sans text-[11px] text-muted-foreground sm:inline-flex">
+            <kbd className="hidden h-5 shrink-0 items-center rounded-md border border-border/60 bg-background px-1.5 font-sans text-2xs text-muted-foreground sm:inline-flex">
               ⌘J
             </kbd>
           )}
@@ -950,7 +961,10 @@ function BrandedQuestion({ question, company }: { question: string; company?: st
   return (
     <>
       {question.slice(0, at)}
-      <span className="font-medium" style={{ color: companyBrandColor(company) ?? undefined }}>
+      <span
+        className={cn("font-medium", companyBrandText(company)?.className)}
+        style={companyBrandText(company)?.style}
+      >
         {company}
       </span>
       {question.slice(at + company.length)}

@@ -208,7 +208,7 @@ export function interestTextPattern(lowered: string): string | null {
   return /["\\\u0000-\u001f]/.test(lowered) ? null : `%${likeBody(lowered)}%`;
 }
 
-/** `from`/`to` for SQL `translate()`: A-Z and U+212A lowered the way JS lowers them. */
+/** A-Z and U+212A lowered the way JS lowers them; `relatedSqlLower` (related-contacts-sql.ts) is the SQL form. */
 export const RELATED_SQL_LOWER = {
   from: "ABCDEFGHIJKLMNOPQRSTUVWXYZ\u212A",
   to: "abcdefghijklmnopqrstuvwxyzk",

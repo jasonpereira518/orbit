@@ -1,0 +1,17 @@
+{
+  "_note": "FAKE numbers, to show the format. Copy to a private file (never commit real invoices to this public repo) and type in each vendor's bill for the month.",
+  "month": "2026-09",
+  "bills": [
+    { "provider": "vercel", "amountCents": 2000, "source": "Vercel → Settings → Billing → Invoices" },
+    { "provider": "neon", "amountCents": 2412, "source": "Neon console → Billing" },
+    { "provider": "deepgram", "amountCents": 1830, "source": "Deepgram console → Billing" },
+    { "provider": "resend", "amountCents": 0, "source": "Resend → Settings → Billing" },
+    { "provider": "domains", "amountCents": 183, "source": "registrar receipts / 12" }
+  ],
+  "deepgram": { "minutes": 1500, "amountCents": 1830 },
+  "ai": [
+    { "provider": "anthropic", "amountCents": 0 },
+    { "provider": "openai", "amountCents": 0 }
+  ],
+  "stripe": { "feesCents": 2050, "source": "Stripe → Balance → Reports → Fees for the month" }
+}

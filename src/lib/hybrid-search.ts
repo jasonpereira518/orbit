@@ -23,7 +23,12 @@ export type SearchFilters = {
 
 export type HybridSearchOptions = {
   query: string;
-  embedding?: number[] | null;
+  /**
+   * The query's embedding, or a promise of it. Pending is fine: the lexical arms start at
+   * once and only the semantic arm waits for it, so a slow embedding no longer delays the
+   * other three (LATENCY_PLAN DB-6).
+   */
+  embedding?: number[] | null | Promise<number[] | null>;
   filters?: SearchFilters | null;
   expansionTerms?: string[];
   limit?: number;
@@ -661,9 +666,9 @@ async function runArms(
     // otherwise produce the Toronto contact for the filter to keep.
     ftsArm(userId, options.query, options.expansionTerms ?? [], filter, armLimit, options.filters?.locations ?? []),
     trigramArm(userId, options.query, filter, armLimit),
-    options.embedding?.length
-      ? semanticArm(userId, options.embedding, armLimit)
-      : Promise.resolve([]),
+    Promise.resolve(options.embedding ?? null).then((embedding) =>
+      embedding?.length ? semanticArm(userId, embedding, armLimit) : []
+    ),
     experienceArm(userId, options.query, options.expansionTerms ?? [], filter, armLimit),
   ]);
   return [

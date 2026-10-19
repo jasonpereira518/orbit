@@ -62,25 +62,25 @@ export function PersonCardBody({
       >
         <div className="flex items-start gap-4 pr-16">
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+            <p className="text-2xs font-medium uppercase tracking-wider text-muted-foreground">
               {index + 1} of {total}
             </p>
             <h3 className="mt-0.5 truncate font-[family-name:var(--font-display)] text-2xl leading-tight text-ink">{name}</h3>
             {subline && <p className="mt-0.5 truncate text-sm text-muted-foreground">{subline}</p>}
             <div className="mt-2 flex flex-wrap gap-1.5">
               {draft.mergeContactId && (
-                <Badge variant="secondary" className="text-[10px]">
+                <Badge variant="secondary" className="text-3xs">
                   Already in your network
                 </Badge>
               )}
               {/* A combined upload has a card per person per note — say which note. */}
               {item.noteLabel && (
-                <Badge variant="outline" className="max-w-full truncate text-[10px] font-normal">
+                <Badge variant="outline" className="max-w-full truncate text-3xs font-normal">
                   From {item.noteLabel}
                 </Badge>
               )}
               {item.sharedNoteTexts.length > 0 && (
-                <Badge variant="secondary" className="text-[10px]">
+                <Badge variant="secondary" className="text-3xs">
                   Includes shared note
                 </Badge>
               )}

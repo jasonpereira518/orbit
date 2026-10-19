@@ -164,6 +164,12 @@ export async function listContactsPage(
 
   if (cursor) conditions.push(contactsCursorCondition(cursor, tier));
 
+  // The total needs only the conditions, so it runs beside the page rather than after it:
+  // one round trip less on every first page and every search (LATENCY_PLAN DB-15).
+  const totalP = cursor ? Promise.resolve(null) : countContacts(and(...conditions));
+  // Still awaited below; this only keeps a failed count from going unhandled when the page
+  // query throws first.
+  totalP.catch(() => {});
   const rows = await db
     .select({ ...contactsListSelection, nameTier: tier ?? sql<number>`2` })
     .from(contacts)
@@ -180,7 +186,7 @@ export async function listContactsPage(
 
   const [tagsByContact, total, addedHere] = await Promise.all([
     tagsForContacts(page.map((r) => r.id)),
-    cursor ? Promise.resolve(null) : countContacts(and(...conditions)),
+    totalP,
     addedByImports(userId, importIds, page.map((r) => r.id)),
   ]);
 

@@ -11,6 +11,8 @@ import { PeopleIndex } from "@/components/knowledge/people-index";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { cn } from "@/lib/utils";
 
+export const metadata = { title: "Knowledge" };
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**

@@ -203,7 +203,9 @@ export function IntegrationsSettings({
 
   return (
     <SettingsSection
-      title="Integrations"
+      // Not "Integrations": the page's group heading already says that, and two regions
+      // with one name are indistinguishable in a landmark list (axe `landmark-unique`).
+      title="Connections"
       description={
         connected
           ? `${connected} set up. Connect the accounts Orbit works with.`

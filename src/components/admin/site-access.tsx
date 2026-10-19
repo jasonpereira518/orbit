@@ -77,7 +77,7 @@ export function StealthSwitch({
         <ConfirmActionDialog
           key={String(stealth)}
           trigger={
-            <span
+            <button type="button"
               className={cn(
                 BUTTON,
                 stealth
@@ -87,7 +87,7 @@ export function StealthSwitch({
             >
               {stealth ? <Globe className="size-3" aria-hidden /> : <EyeOff className="size-3" aria-hidden />}
               {stealth ? "Open the site" : "Turn on stealth"}
-            </span>
+            </button>
           }
           title={stealth ? "Open the site to everyone?" : "Put the site in stealth?"}
           description={
@@ -109,7 +109,7 @@ export function StealthSwitch({
             Save stealth here to start checking every account created from now on.
           </p>
           <ConfirmActionDialog
-            trigger={<span className={cn(BUTTON, "border-border/70 hover:text-foreground")}>Start checking</span>}
+            trigger={<button type="button" className={cn(BUTTON, "border-border/70 hover:text-foreground")}>Start checking</button>}
             title="Start checking new accounts?"
             description="Stealth stays on. Accounts created from now on need an invitation to get in. Every account that exists today keeps working."
             confirmLabel="Start checking"
@@ -264,10 +264,10 @@ export function InviteRowActions({
       )}
       <ConfirmActionDialog
         trigger={
-          <span className={cn(BUTTON, "border-destructive/40 px-2 text-destructive hover:bg-destructive/10")}>
+          <button type="button" className={cn(BUTTON, "border-destructive/40 px-2 text-destructive hover:bg-destructive/10")}>
             <XCircle className="size-3" aria-hidden />
             Revoke
-          </span>
+          </button>
         }
         title="Revoke this invitation?"
         description={

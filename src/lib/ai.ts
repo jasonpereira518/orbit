@@ -4,6 +4,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
 import { createHash, randomBytes } from "node:crypto";
 import { nothingUsable } from "@/lib/managed-ai-policy";
+import { WEB_SEARCH_FEE_MICROS } from "@/lib/ai-pricing";
 import { renderWritingPreferences } from "@/lib/writing-instructions";
 import {
   anthropicClient,
@@ -26,7 +27,8 @@ import {
   vocabularyToWhisperPrompt,
   WHISPER_PROMPT_MAX_CHARS,
 } from "@/lib/transcription-vocabulary";
-import { deepgramEnabled, transcribeFile } from "@/lib/deepgram";
+import { transcribeFile } from "@/lib/deepgram";
+import { deepgramOpenFor, meetingHasAudio } from "@/lib/speech-credit";
 import { DEEPGRAM_MODEL, meetingTag, shortformTag } from "@/lib/deepgram-params";
 import { speechAllowance, recordSpeechSeconds } from "@/lib/speech-quota";
 import { speechKindForOperation } from "@/lib/speech-limits";
@@ -920,24 +922,28 @@ export async function transcribeAudioWithAI(
   // transcript with misspelled names beats no transcript.
   const vocabulary = await loadNetworkVocabulary(userId);
 
-  // Deepgram first, on Orbit's key, while the account has short-form seconds left. It is the
-  // only engine most accounts can reach: Whisper and Gemini below need a key the user pasted.
-  if (deepgramEnabled()) {
-    // The METER FOLLOWS THE OPERATION, not the call site. `meeting.transcribe` is meeting
-    // chunk recovery — the fallback that carries a whole meeting whenever the live socket
-    // cannot open — and it bills Orbit's key exactly like a live meeting does, so it must
-    // check and spend the `meeting` cap. Before this, it checked and spent `shortform`: a
-    // three-hour meeting behind a firewall cost Orbit three hours, left the 5 h meeting cap
-    // reading zero, and ate the user's voice-note allowance until voice notes stopped.
-    const kind = speechKindForOperation(operation);
+  // The METER FOLLOWS THE OPERATION, not the call site. `meeting.transcribe` is meeting
+  // chunk recovery — the fallback that carries a whole meeting whenever the live socket
+  // cannot open — and it bills Orbit's key exactly like a live meeting does, so it must
+  // check and spend the `meeting` cap. Before this, it checked and spent `shortform`: a
+  // three-hour meeting behind a firewall cost Orbit three hours, left the 5 h meeting cap
+  // reading zero, and ate the user's voice-note allowance until voice notes stopped.
+  const kind = speechKindForOperation(operation);
+
+  // Deepgram first, on Orbit's key, while the account has short-form seconds left and the
+  // Deepgram credit has not reached this plan's rung (`speech-cost.ts`). It is the only
+  // engine most accounts can reach: Whisper and Gemini below need a key the user pasted.
+  if (await deepgramOpenFor(userId, kind, { sessionId: opts.sessionId })) {
     const allowance = await speechAllowance(userId, kind);
-    if (kind === "meeting" && allowance.exhausted) {
+    // Lenient: a meeting already recording on Deepgram finishes past the cap.
+    if (kind === "meeting" && allowance.exhausted && !(opts.sessionId && (await meetingHasAudio(opts.sessionId)))) {
       // Not a fall-through to the user's own key, unlike short-form below: a meeting's cap is
       // the product promise ("5 hours a month"), and `ingestMeetingChunk` has already refused
       // this chunk with a 402 by the time we could get here. This is the backstop.
       throw new UserFacingError("You’ve used this month’s meeting transcription minutes");
     }
-    if (!allowance.exhausted) {
+    // A meeting reaching here past its cap is one already recording, which finishes on Deepgram.
+    if (!allowance.exhausted || kind === "meeting") {
       // A meeting is tagged by its session, which belongs to one recording. Everything else
       // is tagged with the account's OPAQUE id — never the user id, which would sit in
       // Deepgram's usage records linking every voice note an account ever made. See
@@ -1603,8 +1609,17 @@ async function parseMultiPersonTwoPass(
       ? { text: notesPrefix, cacheKey: `capture.details:${createHash("sha256").update(notesPrefix).digest("hex").slice(0, 32)}` }
       : undefined;
 
+  // The batches are independent, so they run concurrently and are merged back in batch
+  // order: the same people, fields and order as one-after-another, in the time of the
+  // slowest batch rather than the sum (LATENCY_PLAN AI-5: a 5-person note spent 8 s of its
+  // 12 s here). The trade: concurrent calls cannot read a prompt cache the first one writes,
+  // so a provider-side cache of `sharedPrefix` saves less input cost than it did serially.
+  const batches: (typeof peopleIds)[] = [];
   for (let i = 0; i < peopleIds.length; i += DETAIL_BATCH_SIZE) {
-    const batch = peopleIds.slice(i, i + DETAIL_BATCH_SIZE);
+    batches.push(peopleIds.slice(i, i + DETAIL_BATCH_SIZE));
+  }
+  const detailedBatches = await Promise.all(batches.map(async (batch) => {
+    const merged: ParsedPersonNote[] = [];
     const batchRaw = await completeJson(userId, {
       operation: "capture.parse.details",
       temperature: 0.2,
@@ -1645,7 +1660,7 @@ ${PERSON_FIELD_RULES}`,
             requested.name.trim().toLowerCase(),
         ) || batchParsed.people[j];
 
-      const merged: ParsedPersonNote = {
+      const person: ParsedPersonNote = {
         name: requested.name,
         presence: requested.presence,
         company: found?.company || requested.company || null,
@@ -1684,9 +1699,11 @@ ${PERSON_FIELD_RULES}`,
         source_excerpt: found?.source_excerpt || "",
       };
 
-      detailed.push(merged);
+      merged.push(person);
     }
-  }
+    return merged;
+  }));
+  for (const batch of detailedBatches) detailed.push(...batch);
 
   // Excerpts that came back empty. The notes are already in hand, so look for the person's
   // own sentence first — free, and exact where the note names them. Only whoever is still
@@ -2737,9 +2754,10 @@ const MAX_WEB_SEARCH_RESUMES = 3;
  * JSON response format with search — so the answer is read with `parseAiJson`, which finds
  * the object inside any prose around it.
  *
- * Token usage is reported like any other call. Per-search fees are billed by the provider
- * on top and are NOT in those counts; callers bound them with `maxSearches` and by running
- * rarely.
+ * Token usage is reported like any other call, and each provider's per-search fee rides
+ * along as `surchargeMicros` (`WEB_SEARCH_FEE_MICROS`), so on Orbit's key a search spends the
+ * account's credits and the provider pool like the tokens around it do. Callers still bound
+ * searches with `maxSearches` and by running rarely.
  */
 export async function webSearchJson(
   userId: string,
@@ -2785,7 +2803,8 @@ export async function webSearchJson(
               ...geminiThinking(model, operation),
             },
           });
-          report(tokensFromGemini(response));
+          const grounded = Boolean(response.candidates?.[0]?.groundingMetadata);
+          report({ ...tokensFromGemini(response), surchargeMicros: grounded ? WEB_SEARCH_FEE_MICROS.gemini : 0 });
           const content = response.text;
           if (!content) throw new Error("Empty AI response");
           const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
@@ -2839,10 +2858,12 @@ export async function webSearchJson(
             },
             { signal: callSignal() },
           );
+          const searchCalls = response.output.filter((item) => item.type === "web_search_call").length;
           report({
             inputTokens: response.usage?.input_tokens ?? null,
             outputTokens: response.usage?.output_tokens ?? null,
             cachedInputTokens: response.usage?.input_tokens_details?.cached_tokens ?? null,
+            surchargeMicros: searchCalls * WEB_SEARCH_FEE_MICROS.openai,
           });
           const content = response.output_text;
           if (!content) throw new Error("Empty AI response");
@@ -2861,7 +2882,7 @@ export async function webSearchJson(
 
         const client = await anthropicClient(grant);
         const messages: Anthropic.MessageParam[] = [{ role: "user", content: input.user }];
-        const totals = { input: 0, output: 0, cached: 0 };
+        const totals = { input: 0, output: 0, cached: 0, searches: 0 };
         let response: Anthropic.Message | null = null;
         // A long search can end the turn with `pause_turn`; sending the partial turn back
         // lets it continue where it stopped rather than starting the research over.
@@ -2879,7 +2900,13 @@ export async function webSearchJson(
           totals.input += t.inputTokens ?? 0;
           totals.output += t.outputTokens ?? 0;
           totals.cached += t.cachedInputTokens ?? 0;
-          report({ inputTokens: totals.input, outputTokens: totals.output, cachedInputTokens: totals.cached });
+          totals.searches += response.usage?.server_tool_use?.web_search_requests ?? 0;
+          report({
+            inputTokens: totals.input,
+            outputTokens: totals.output,
+            cachedInputTokens: totals.cached,
+            surchargeMicros: totals.searches * WEB_SEARCH_FEE_MICROS.anthropic,
+          });
           if (response.stop_reason !== "pause_turn") break;
           messages.push({ role: "assistant", content: response.content });
         }

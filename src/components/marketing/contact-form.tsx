@@ -11,7 +11,7 @@ import {
 import { cn } from "@/lib/utils";
 
 const fieldClass =
-  "w-full rounded-xl border border-[#e8f3f1]/[0.14] bg-[#03050c]/60 px-4 py-3 text-[15px] text-[#e8f3f1] transition-colors placeholder:text-[#6d807c] focus:border-[#f2c14e]/50 focus:outline-none";
+  "w-full rounded-xl border border-[#e8f3f1]/[0.14] bg-[#03050c]/60 px-4 py-3 text-[15px] text-[#e8f3f1] transition-colors placeholder:text-[#6d807c] focus:border-[#f2c14e]/50 focus:outline-none focus-visible:ring-3 focus-visible:ring-[#f2c14e]/70";
 const labelClass = "block text-[13px] text-[#9aada8]";
 const errorClass = "mt-1.5 text-[13px] text-[#e8a84e]";
 

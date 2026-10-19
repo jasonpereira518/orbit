@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 type Snippet = Awaited<ReturnType<typeof getEvidenceSnippet>>;
 
 const CHIP =
-  "mx-0.5 inline-flex size-4 -translate-y-0.5 items-center justify-center rounded-full bg-muted text-[10px] font-medium text-muted-foreground align-super";
+  "mx-0.5 inline-flex size-4 -translate-y-0.5 items-center justify-center rounded-full bg-muted text-3xs font-medium text-muted-foreground align-super";
 
 /**
  * A `[eN]` marker in an answer, rendered as a small numbered chip. Hovering or clicking it

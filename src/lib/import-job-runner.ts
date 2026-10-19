@@ -39,6 +39,21 @@ import {
 
 const POLL_INTERVAL_MS = 1500;
 
+/**
+ * One progress poll, through `/api/imports/[id]/status` rather than the `getImportJobStatus`
+ * Server Action: a tab runs its actions one at a time, and this poll runs every 1.5 s for the
+ * whole import, so as an action every click during an import waited behind it
+ * (LATENCY_PLAN SRV-5). Same function on the server; throws where the action threw.
+ */
+async function fetchImportJobStatus(importId: string): Promise<ImportJobStatus> {
+  const res = await fetch(`/api/imports/${encodeURIComponent(importId)}/status`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+  });
+  if (!res.ok) throw new Error(`Import status poll failed (${res.status})`);
+  return (await res.json()) as ImportJobStatus;
+}
+
 function sleep(ms: number) {
   return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 }
@@ -350,13 +365,6 @@ type ServerOwnedKind =
   | "drive_docs"
   | "chat"
   | "linkedin_export";
-
-/** One progress read, from the GET route (see `readImportJobStatus` for why not the action). */
-async function fetchImportJobStatus(importId: string): Promise<ImportJobStatus> {
-  const res = await fetch(`/api/imports/${encodeURIComponent(importId)}/status`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`import status answered ${res.status}`);
-  return (await res.json()) as ImportJobStatus;
-}
 
 /** Polls a server-owned import job's status until it leaves "processing"/"pending". */
 async function pollServerOwnedImportJob(

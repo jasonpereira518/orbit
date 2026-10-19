@@ -1,11 +1,11 @@
 import { Plus } from "lucide-react";
 import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_LABEL } from "@/lib/stripe-config";
-import { FREE_CONTACT_LIMIT, FREE_STARTER_CREDITS, PLAN_CONFIG, formatPlanPrice } from "@/lib/plans/plan-config";
+import { FREE_CONTACT_LIMIT, FREE_STARTER_CREDITS, PLAN_CONFIG, formatPlanPrice, formatSpeechAllowance } from "@/lib/plans/plan-config";
 
 const free = PLAN_CONFIG.free;
 const pro = PLAN_CONFIG.orbit;
 const max = PLAN_CONFIG.max;
-const h = (seconds: number) => `${seconds / 3600} hours`;
+const h = formatSpeechAllowance;
 
 /**
  * Native <details> rather than a scripted accordion: it is keyboard-operable, works
