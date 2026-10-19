@@ -409,7 +409,8 @@ async function processDoc(
   let result;
   try {
     // The doc's own date is the anchor, so "next Tuesday" in an old doc means next from then.
-    result = await deps.parse(userId, text, { eventDate: payload.modifiedTime.slice(0, 10) }, { now });
+    // No one waits on a Drive import or reviews it, so it runs as background work.
+    result = await deps.parse(userId, text, { eventDate: payload.modifiedTime.slice(0, 10) }, { now, background: true });
   } catch (err) {
     if (err instanceof UserFacingError && err.message === NO_PEOPLE_OR_DATES_MESSAGE) {
       return { status: "skipped", reason: DRIVE_ROW_COPY.nobody };

@@ -460,6 +460,20 @@ async function main() {
     check("…filling blanks but never overwriting what was there", kaiAfter?.company === "OldCo", String(kaiAfter?.company));
   }
 
+  // Nobody waits on a Drive import or reviews it, so its model calls are background work.
+  {
+    let asked: { background?: boolean } | undefined;
+    const bg = await stageDriveImport(USER, [file("bg")]);
+    await runDriveImportJob(bg.importId, deps({
+      exportText: async () => "Lunch with Omar Haddad about the roadmap.",
+      parse: async (_u, text, _hints, opts) => {
+        asked = opts as { background?: boolean };
+        return parsed(text, ["Omar Haddad"], []);
+      },
+    }));
+    check("a Drive import parses its docs as background work", asked?.background === true, JSON.stringify(asked));
+  }
+
   // I4: a row already started twice without finishing is skipped without being read.
   const stuck = await stageDriveImport(USER, [file("l")]);
   await db

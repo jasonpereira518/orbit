@@ -340,6 +340,17 @@ export type CaptureParseHints = {
   goals?: string[];
 };
 
+/** The capture parse's operation ids, and the unattended twins `background` selects. */
+const CAPTURE_OPERATIONS = {
+  "capture.parse": "capture.parse.bg",
+  "capture.parse.identify": "capture.parse.identify.bg",
+  "capture.parse.details": "capture.parse.details.bg",
+  "capture.parse.excerpt-retry": "capture.parse.excerpt-retry.bg",
+} as const satisfies Record<string, AiOperationId>;
+function captureOperation<K extends keyof typeof CAPTURE_OPERATIONS>(base: K, background?: boolean): AiOperationId {
+  return background ? CAPTURE_OPERATIONS[base] : base;
+}
+
 const TWO_PASS_CHAR_THRESHOLD = 2500;
 /**
  * People per details call. Every batch re-reads the whole note, so a wider batch is fewer
@@ -1491,9 +1502,10 @@ async function parseMultiPersonSinglePass(
   userId: string,
   notes: string,
   hints?: CaptureParseHints | null,
+  background?: boolean,
 ): Promise<ParsedMultiPersonNotes> {
   const content = await completeJson(userId, {
-    operation: "capture.parse",
+    operation: captureOperation("capture.parse", background),
     temperature: 0.2,
     maxOutputTokens: CAPTURE_MAX_OUTPUT_TOKENS,
     user: fenceUntrusted("NOTES", notes.slice(0, 100_000)) + hintsPreamble(hints),
@@ -1582,9 +1594,10 @@ async function identifyPeople(
   sliced: string,
   hints: CaptureParseHints | null | undefined,
   onProgress: ParseProgress | undefined,
+  background?: boolean,
 ) {
   const identityRaw = await completeJson(userId, {
-    operation: "capture.parse.identify",
+    operation: captureOperation("capture.parse.identify", background),
     temperature: 0.2,
     maxOutputTokens: 4096,
     user: fenceUntrusted("NOTES", sliced) + hintsPreamble(hints),
@@ -1670,6 +1683,7 @@ async function parseMultiPersonTwoPass(
   onProgress?: ParseProgress,
   /** People a single pass already found, so an escalation need not pay to identify twice. */
   known?: ParsedMultiPersonNotes,
+  background?: boolean,
 ): Promise<ParsedMultiPersonNotes> {
   const sliced = notes.slice(0, 100_000);
   const identity = known
@@ -1686,7 +1700,7 @@ async function parseMultiPersonTwoPass(
         })),
         mentions: known.mentions,
       }
-    : await identifyPeople(userId, sliced, hints, onProgress);
+    : await identifyPeople(userId, sliced, hints, onProgress, background);
   const peopleIds = identity.people.filter((p) => p.name?.trim());
 
   // Merge seed people that weren't found by name/email.
@@ -1745,7 +1759,7 @@ async function parseMultiPersonTwoPass(
   type Requested = (typeof peopleIds)[number];
   const callDetails = async (batch: Requested[]) => {
     const batchRaw = await completeJson(userId, {
-      operation: "capture.parse.details",
+      operation: captureOperation("capture.parse.details", background),
       temperature: 0.2,
       maxOutputTokens: CAPTURE_MAX_OUTPUT_TOKENS,
       ...(sharedPrefix ? { sharedPrefix } : {}),
@@ -1874,7 +1888,7 @@ ${PERSON_FIELD_RULES}`,
   if (stillEmpty.length > 0) {
     try {
       const retryRaw = await completeJson(userId, {
-        operation: "capture.parse.excerpt-retry",
+        operation: captureOperation("capture.parse.excerpt-retry", background),
         temperature: 0.1,
         maxOutputTokens: 2048,
         user: `NOTES:\n${fenceUntrusted("NOTES", sliced)}\n\nPeople:\n${stillEmpty.map((p, i) => `${i + 1}. ${p.name}`).join("\n")}\n\nReturn JSON { "excerpts": [{ "name": string, "source_excerpt": string }] } with each person's own slice of the notes.`,
@@ -1909,22 +1923,26 @@ export async function parseMultiPersonNotesWithAI(
   userId: string,
   notes: string,
   hints?: CaptureParseHints | null,
-  opts: { onProgress?: ParseProgress } = {},
+  opts: {
+    onProgress?: ParseProgress;
+    /** Unattended work nobody reviews or waits on: runs under the `.bg` operation ids. */
+    background?: boolean;
+  } = {},
 ): Promise<ParsedMultiPersonNotes> {
   const useTwoPass =
     notes.length >= TWO_PASS_CHAR_THRESHOLD ||
     (hints?.seedPeople?.length || 0) >= 5;
 
   if (useTwoPass) {
-    return parseMultiPersonTwoPass(userId, notes, hints, opts.onProgress);
+    return parseMultiPersonTwoPass(userId, notes, hints, opts.onProgress, undefined, opts.background);
   }
 
-  const single = await parseMultiPersonSinglePass(userId, notes, hints);
+  const single = await parseMultiPersonSinglePass(userId, notes, hints, opts.background);
   await beat(opts.onProgress);
   // Escalate to two-pass when many people came back (token pressure risk) — reusing the
   // people this pass already found, rather than paying to identify them a second time.
   if (single.people.length > DETAIL_BATCH_SIZE) {
-    return parseMultiPersonTwoPass(userId, notes, hints, opts.onProgress, single);
+    return parseMultiPersonTwoPass(userId, notes, hints, opts.onProgress, single, opts.background);
   }
   return single;
 }
