@@ -8,6 +8,8 @@ import {
   type AccountHealthContext,
 } from "@/lib/account-health";
 import type { AccountAlert } from "@/lib/account-alerts";
+import { isDateOnlyDue } from "@/lib/reminder-due-bucket";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 
 /** Upcoming follow-ups are shown this far ahead; further out is noise. */
 const UPCOMING_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
@@ -54,6 +56,7 @@ export async function loadNotificationPanel(
     captureRows,
     radarRows,
     cloudNoteRows,
+    timeZone,
   ] = await Promise.all([
     db.query.reminders.findMany({
       where: and(eq(reminders.userId, userId), eq(reminders.status, "pending")),
@@ -146,6 +149,7 @@ export async function loadNotificationPanel(
           .orderBy(desc(cloudNoteFiles.modifiedAt))
           .limit(50)
       : [],
+    viewerTimeZone(),
   ]);
   const radarRow = radarRows ? rowsOf<{ n: number; drafts: number; names: string[] | null }>(radarRows)[0] : undefined;
   const radarCount = Number(radarRow?.n ?? 0);
@@ -271,10 +275,13 @@ export async function loadNotificationPanel(
       id: `suggested_reminder:${s.id}`,
       kind: "suggested_reminder",
       title: s.title,
+      // A date-only suggestion is a floating date (its UTC day); a timed one is read in the
+      // viewer's zone — the same rule as the reminder rows (`dueDayOf`, audit L-17).
       body: `${due.toLocaleDateString(undefined, {
         month: "short",
         day: "numeric",
         year: "numeric",
+        timeZone: isDateOnlyDue(due) ? "UTC" : timeZone,
       })} · from your notes`,
       url: "/reminders",
       dueAt: due.toISOString(),

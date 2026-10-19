@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { HEARTBEAT_INTERVAL_MS } from "@/lib/presence-window";
 import { isOffline, reportRequestError, reportRequestOk } from "@/lib/connectivity-store";
+import { syncTimeZoneCookie } from "@/lib/tz-cookie";
 
 /**
  * Tells the server this tab is still open and being used.
@@ -22,6 +23,12 @@ import { isOffline, reportRequestError, reportRequestOk } from "@/lib/connectivi
  * an admin screen, and the next one is already scheduled.
  */
 export function PresenceHeartbeat() {
+  // Mounted once for the whole signed-in shell, so it is also where the browser's zone is
+  // kept in the `orbit-tz` cookie: every server-rendered date reads it (`viewerTimeZone`).
+  useEffect(() => {
+    syncTimeZoneCookie();
+  }, []);
+
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | null = null;
 

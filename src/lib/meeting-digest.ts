@@ -285,6 +285,8 @@ export type MeetingMeta = {
   userName: string | null;
   /** Everyone known to have been on the call, from the user's list and the digest. */
   presentNames: string[];
+  /** The viewer's IANA zone, so an evening meeting is not dated the next (UTC) day. */
+  timeZone?: string;
 };
 
 /**
@@ -302,6 +304,7 @@ export function buildMeetingCorpus(digest: MeetingDigest, meta: MeetingMeta): st
         year: "numeric",
         month: "long",
         day: "numeric",
+        timeZone: meta.timeZone ?? "UTC",
       });
   const header = [
     `Video call${meta.title ? ` — "${meta.title}"` : ""} on ${dateLabel}.`,

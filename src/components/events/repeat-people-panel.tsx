@@ -11,12 +11,13 @@ import { IntentLink } from "@/components/ui/intent-link";
 import { Users } from "lucide-react";
 import type { RepeatPerson } from "@/lib/events/people-store";
 
-function lastSeen(date: Date | null): string | null {
+/** In the viewer's zone (audit L-17): this renders on the server, whose zone is UTC. */
+function lastSeen(date: Date | null, timeZone: string): string | null {
   if (!date) return null;
-  return date.toLocaleDateString(undefined, { month: "short", year: "numeric" });
+  return date.toLocaleDateString(undefined, { month: "short", year: "numeric", timeZone });
 }
 
-export function RepeatPeoplePanel({ people }: { people: RepeatPerson[] }) {
+export function RepeatPeoplePanel({ people, timeZone }: { people: RepeatPerson[]; timeZone: string }) {
   // Nothing to say yet. An empty "people you keep seeing" panel on a page with two events is
   // a promise the product has not earned, so it renders nothing at all until it has.
   if (people.length === 0) return null;
@@ -35,7 +36,7 @@ export function RepeatPeoplePanel({ people }: { people: RepeatPerson[] }) {
       <ul className="mt-4 divide-y divide-border/60">
         {people.map((person) => {
           const detail = [person.title, person.company].filter(Boolean).join(" · ");
-          const seen = lastSeen(person.lastTogetherAt);
+          const seen = lastSeen(person.lastTogetherAt, timeZone);
           return (
             <li
               key={person.clusterKey}

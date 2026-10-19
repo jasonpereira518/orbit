@@ -50,6 +50,7 @@ import { notFound, redirect } from "next/navigation";
 import { resolveContactId } from "@/lib/contact-merge";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 
 /**
  * Above the (main) layout's 60: "Find work history" runs a web search inside its server
@@ -698,11 +699,11 @@ async function StreamedEventsTogether({
   contactId: string;
   name: string;
 }) {
-  const events = await getEventsWithContact(contactId).catch(() => []);
+  const [events, timeZone] = await Promise.all([getEventsWithContact(contactId).catch(() => []), viewerTimeZone()]);
   if (events.length === 0) return null;
   return (
     <div className="reveal-mount">
-      <ContactEventsTogether events={events} name={name} />
+      <ContactEventsTogether events={events} name={name} timeZone={timeZone} />
     </div>
   );
 }

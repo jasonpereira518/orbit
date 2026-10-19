@@ -15,6 +15,7 @@ import {
   listHiddenEvents,
 } from "@/actions/events";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 
 async function ConnectionsSection() {
   const { connections, eventbriteConfigured, googleConnected, googleMailGranted, googleCalendarGranted } =
@@ -31,8 +32,8 @@ async function ConnectionsSection() {
 }
 
 async function RepeatPeopleSection() {
-  const people = await getRepeatCoAttendees({ limit: 8 });
-  return <RepeatPeoplePanel people={people} />;
+  const [people, timeZone] = await Promise.all([getRepeatCoAttendees({ limit: 8 }), viewerTimeZone()]);
+  return <RepeatPeoplePanel people={people} timeZone={timeZone} />;
 }
 
 /**
@@ -46,7 +47,7 @@ async function RepeatPeopleSection() {
  * but everything hidden before that is still here, one click from restored.
  */
 async function HiddenList() {
-  const hidden = await listHiddenEvents();
+  const [hidden, timeZone] = await Promise.all([listHiddenEvents(), viewerTimeZone()]);
   if (hidden.length === 0) return null;
 
   return (
@@ -59,14 +60,22 @@ async function HiddenList() {
       </p>
       <div className="mt-3 grid gap-4 sm:grid-cols-2">
         {hidden.map((event) => (
-          <EventCard key={event.id} event={event} hidden />
+          <EventCard key={event.id} event={event} hidden timeZone={timeZone} />
         ))}
       </div>
     </details>
   );
 }
 
-function EventGrid({ events, empty }: { events: EventListRow[]; empty: React.ReactNode }) {
+function EventGrid({
+  events,
+  empty,
+  timeZone,
+}: {
+  events: EventListRow[];
+  empty: React.ReactNode;
+  timeZone: string;
+}) {
   if (events.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-border/70 px-4 py-10 text-center">
@@ -77,19 +86,20 @@ function EventGrid({ events, empty }: { events: EventListRow[]; empty: React.Rea
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       {events.map((event) => (
-        <EventCard key={event.id} event={event} />
+        <EventCard key={event.id} event={event} timeZone={timeZone} />
       ))}
     </div>
   );
 }
 
 async function EventsList() {
-  const { upcoming, past } = await listEventsByTab();
+  const [{ upcoming, past }, timeZone] = await Promise.all([listEventsByTab(), viewerTimeZone()]);
 
   if (upcoming.length === 0 && past.length === 0) {
     return (
       <EventGrid
         events={[]}
+        timeZone={timeZone}
         empty={
           <>
             No events yet. Add one by pasting its link — the event page or your ticket, from
@@ -109,10 +119,11 @@ async function EventsList() {
       upcoming={
         <EventGrid
           events={upcoming}
+          timeZone={timeZone}
           empty="Nothing coming up. Events you RSVP to will appear here as soon as you're confirmed."
         />
       }
-      past={<EventGrid events={past} empty="No past events yet." />}
+      past={<EventGrid events={past} timeZone={timeZone} empty="No past events yet." />}
     />
   );
 }

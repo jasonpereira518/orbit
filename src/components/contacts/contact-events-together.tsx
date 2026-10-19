@@ -16,9 +16,12 @@ import type { EventTogether } from "@/lib/events/people-store";
 export function ContactEventsTogether({
   events,
   name,
+  timeZone,
 }: {
   events: EventTogether[];
   name: string;
+  /** The viewer's IANA zone (`viewerTimeZone`): this renders on the server (audit L-17). */
+  timeZone: string;
 }) {
   if (events.length === 0) return null;
 
@@ -42,6 +45,7 @@ export function ContactEventsTogether({
                 ? event.startsAt.toLocaleDateString(undefined, {
                     month: "short",
                     year: "numeric",
+                    timeZone,
                   })
                 : "date not set"}
               {/* The distinction worth keeping: in the same room, or actually met. */}

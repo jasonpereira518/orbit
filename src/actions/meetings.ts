@@ -39,6 +39,7 @@ import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { speechAllowance } from "@/lib/speech-quota";
 import { isoDay } from "@/lib/suggested-reminder-utils";
 import { actionFailure } from "@/lib/action-failure";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 
 /**
  * Meeting capture's session lifecycle. The audio itself never passes through here — chunks
@@ -331,6 +332,7 @@ export async function analyzeMeetingSession(
       startedAtIso,
       userName,
       presentNames: present,
+      timeZone: await viewerTimeZone(),
     });
 
     return {

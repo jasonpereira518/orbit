@@ -41,10 +41,14 @@ export function formatHowMetSummary(input: {
       typeof input.dateMet === "string" ? new Date(input.dateMet) : input.dateMet;
     if (!Number.isNaN(d.getTime())) {
       parts.push(
+        // UTC on purpose: `dateMet` is a floating date stored at UTC midnight (the form's
+        // YYYY-MM-DD). Converting it into a US zone would show the day before — on a browser
+        // that renders this (the graph's inspect panel) as much as on the server.
         d.toLocaleDateString(undefined, {
           month: "short",
           day: "numeric",
           year: "numeric",
+          timeZone: "UTC",
         })
       );
     }
