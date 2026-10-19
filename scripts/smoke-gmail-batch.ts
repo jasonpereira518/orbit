@@ -10,7 +10,8 @@
  *
  * Run: npx tsx scripts/smoke-gmail-batch.ts
  */
-import { fetchGmailThreadsBatched } from "../src/lib/gmail";
+import { ReauthRequiredError } from "../src/lib/errors";
+import { fetchGmailHeadersBatched, fetchGmailThreadsBatched } from "../src/lib/gmail";
 
 let failures = 0;
 function check(label: string, condition: boolean, detail?: string) {
@@ -180,6 +181,41 @@ async function main() {
   );
   threads = await fetchGmailThreadsBatched("tok", ["ta"]);
   check("a 404 sub-response yields no thread", threads.length === 0, JSON.stringify(threads));
+
+  console.log("\nmessage headers, batched");
+  const messageJson = (id: string) =>
+    JSON.stringify({ id, threadId: `thread-${id}`, internalDate: "3000", snippet: `about ${id}`, payload: { headers: [{ name: "From", value: `x@${id}.com` }, { name: "Cc", value: "c@c.com" }] } });
+  const messageBatch = (ids: string[]) =>
+    new Response(
+      ids
+        .map((id) => ["--mb", "Content-Type: application/http", `Content-ID: <response-${id}>`, "", "HTTP/1.1 200 OK", "Content-Type: application/json", "", messageJson(id), ""].join("\r\n"))
+        .join("") + "--mb--",
+      { status: 200, headers: { "Content-Type": "multipart/mixed; boundary=mb" } }
+    );
+  const refs = Array.from({ length: 120 }, (_, i) => ({ id: `m${i}`, threadId: `thread-m${i}` }));
+  calls = install((c) => {
+    if (!c.url.includes("/batch/")) {
+      const id = c.url.match(/messages\/([^?]+)\?/)?.[1] ?? "";
+      return new Response(messageJson(id), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    const ids = [...c.body.matchAll(/messages\/([^?]+)\?/g)].map((m) => m[1]);
+    // Out of order, and one part missing.
+    return messageBatch(ids.filter((id) => id !== "m7").reverse());
+  });
+  const headers = await fetchGmailHeadersBatched("tok", refs);
+  check("120 messages take 3 batch requests and one retry", calls.length === 4, `${calls.length} calls`);
+  check("every message comes back, in the order asked", headers.map((h) => h.id).join() === refs.map((r) => r.id).join());
+  check("the batched part parses the same headers", headers[0].from === "x@m0.com" && headers[0].cc === "c@c.com" && headers[0].internalDate === 3000);
+  check("  and asks for Cc, as the single GET does", calls[0].body.includes("metadataHeaders=Cc"));
+
+  install((c) => (c.url.includes("/batch/") ? new Response("no", { status: 401 }) : new Response("{}", { status: 200 })));
+  let reauth = false;
+  try {
+    await fetchGmailHeadersBatched("tok", refs.slice(0, 2));
+  } catch (err) {
+    reauth = err instanceof ReauthRequiredError;
+  }
+  check("an expired session is reported, not counted as empty", reauth);
 
   console.log("\nrequest shape");
   calls = install((c) => batchResponse([...c.body.matchAll(/threads\/([^?]+)\?/g)].map((m) => m[1])));

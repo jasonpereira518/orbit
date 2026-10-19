@@ -408,20 +408,30 @@ export async function emitDueFollowupEvents(
   return { users: users.length, events };
 }
 
-export type DrainStats = { attempted: number; delivered: number; failed: number };
+export type DrainStats = { attempted: number; delivered: number; failed: number; deferred: number };
+
+/** Endpoints delivered to at once. Each endpoint's own deliveries still go one at a time, in order. */
+const DRAIN_ENDPOINT_CONCURRENCY = 4;
+/** Consecutive failures after which an endpoint's remaining deliveries wait for the next tick. */
+const DRAIN_ENDPOINT_FAILURE_STREAK = 2;
 
 /**
  * Deliver what is due, inside a wall-clock budget.
  *
  * The budget is checked before each item, never after — a deadline tested after the work has
  * already run bounds nothing.
+ *
+ * Endpoints are drained side by side, a few at a time. One at a time, a single endpoint that
+ * hangs to the attempt timeout spent the whole tick's budget on its backlog and every healthy
+ * endpoint behind it waited. An endpoint that fails twice in a row is left for the next tick:
+ * its remaining deliveries stay pending with their attempts untouched (`deferred`).
  */
 export async function drainDueDeliveries(
   opts: { budgetMs: number; max: number; now?: Date } = { budgetMs: 45_000, max: 200 }
 ): Promise<DrainStats> {
   const now = opts.now ?? new Date();
   const deadline = Date.now() + opts.budgetMs;
-  const stats: DrainStats = { attempted: 0, delivered: 0, failed: 0 };
+  const stats: DrainStats = { attempted: 0, delivered: 0, failed: 0, deferred: 0 };
   const db = await getDb();
 
   const due = rowsOf<DueRow>(
@@ -438,14 +448,40 @@ export async function drainDueDeliveries(
     `)
   );
 
+  const byEndpoint = new Map<string, DueRow[]>();
   for (const row of due) {
-    if (Date.now() >= deadline) break;
-    stats.attempted++;
-    // One endpoint's failure must never stop the queue.
-    const ok = await attemptDelivery(row, now).catch(() => false);
-    if (ok) stats.delivered++;
-    else stats.failed++;
+    const queue = byEndpoint.get(row.endpoint_id);
+    if (queue) queue.push(row);
+    else byEndpoint.set(row.endpoint_id, [row]);
   }
+  const queues = [...byEndpoint.values()];
+
+  async function drainEndpoint(queue: DueRow[]) {
+    let streak = 0;
+    for (let i = 0; i < queue.length; i++) {
+      if (Date.now() >= deadline || streak >= DRAIN_ENDPOINT_FAILURE_STREAK) {
+        stats.deferred += queue.length - i;
+        return;
+      }
+      stats.attempted++;
+      // One endpoint's failure must never stop the queue.
+      const ok = await attemptDelivery(queue[i], now).catch(() => false);
+      if (ok) {
+        stats.delivered++;
+        streak = 0;
+      } else {
+        stats.failed++;
+        streak++;
+      }
+    }
+  }
+
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(DRAIN_ENDPOINT_CONCURRENCY, queues.length) }, async () => {
+      while (next < queues.length) await drainEndpoint(queues[next++]);
+    })
+  );
   return stats;
 }
 
