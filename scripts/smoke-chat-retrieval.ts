@@ -121,6 +121,21 @@ async function main() {
   check("rerank drops hallucinated ids", !reranked.some((c) => c.id === "hallucinated"));
   check("rerank caps at FINAL_CONTACT_COUNT", reranked.length <= FINAL_CONTACT_COUNT);
 
+  // Short ids: the prompt names candidates c01, c02, ... and the model answers in them.
+  const uuidPool = Array.from({ length: 20 }, (_, i) => mkCandidate(`7c1b0e0a-0000-4000-8000-0000000000${String(i).padStart(2, "0")}`, `Person ${i}`));
+  let promptSeen = "";
+  const aliasStub = (async (_u: string, input: { user: string }) => {
+    promptSeen = input.user;
+    return JSON.stringify({ scores: [
+      { id: "c05", relevance: 9 }, { id: "C2", relevance: 8 }, { id: "c11", relevance: 7 }, { id: "c05", relevance: 1 },
+      { id: "c99", relevance: 10 }, // nobody was offered a c99
+    ] });
+  }) as never;
+  const byAlias = await rerankCandidates("u1", "q", uuidPool, aliasStub);
+  check("the prompt names candidates by short id, not by uuid", promptSeen.includes("[id=c01]") && promptSeen.includes("[id=c20]") && !promptSeen.includes("7c1b0e0a"), promptSeen.slice(0, 160));
+  check("an alias comes back to the right candidate, in any case or padding", byAlias[0].id === uuidPool[4].id && byAlias[1].id === uuidPool[1].id && byAlias[2].id === uuidPool[10].id, JSON.stringify(byAlias.map((c) => c.fullName)));
+  check("an alias nobody was offered is dropped, and a repeat counts once", !byAlias.some((c) => c.id === "c99") && byAlias.filter((c) => c.id === uuidPool[4].id).length === 1);
+
   // The semanticQuery must actually reach the rerank prompt. It used to be computed on
   // every question and read by nothing at all; this is the assertion that keeps it wired.
   let capturedUser = "";
