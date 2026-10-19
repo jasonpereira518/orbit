@@ -26,6 +26,11 @@ export function pastTense(label: string): string {
 export function describeOutcome(out: { ok: boolean; result: unknown }): string {
   if (!out.ok) return "failed";
   const r = out.result as Record<string, unknown> | unknown[] | null;
+  // One record (a contact, a meeting) came back: it was found. Counting the first list inside
+  // it — an empty timeline — used to report a contact that was read as "nothing found".
+  if (r && !Array.isArray(r) && typeof r === "object" && typeof (r as Record<string, unknown>).id === "string") {
+    return "found";
+  }
   const rows = Array.isArray(r)
     ? r
     : r && typeof r === "object"
