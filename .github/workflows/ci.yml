@@ -10,10 +10,11 @@
 # vercel.json, and the smoke suite runs against a throwaway PGlite directory — there is no
 # `.env.local` in CI, and scripts/smoke/_env.ts deletes DATABASE_URL regardless.
 #
-# Turn this into a real gate in GitHub → Settings → Branches → main: require `check`, the
-# three `smoke suite (PGlite) i/3` checks, `security`, and `browser flows (Playwright)`
-# before merging (FIX_PLAN 4.5). Every job runs on every ready PR, so a required check is
-# never left waiting on a run that did not start.
+# Turn this into a real gate in GitHub → Settings → Branches → main: require
+# `typecheck · lint · build`, the three `smoke suite (PGlite) i/3` checks,
+# `audit · dependency review · secret scan`, and `browser flows (Playwright)` before merging
+# (FIX_PLAN 4.5). Every job runs on every ready PR, so a required check is never left waiting
+# on a run that did not start.
 name: ci
 
 # CI runs where a result can change a decision, and nowhere else:
@@ -54,27 +55,6 @@ permissions:
 # The root package has no install scripts, so a restored node_modules is exactly what
 # `npm ci` would have produced.
 jobs:
-  # Supply chain and credentials (FIX_PLAN 4.3 and 4.4). Both scripts are dependency-free:
-  # the audit fails on any high/critical production advisory not allowlisted, with each
-  # allowlisted advisory pinned to the one package it may arrive through; the secret scan
-  # fails on a live credential format in any tracked file. Needs no node_modules, so it is
-  # the fastest job and runs alongside the rest.
-  security:
-    name: security
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version-file: .nvmrc
-      - name: secret scan
-        run: node scripts/scan-secrets.mjs
-      # `npm ls` (used to verify allowlisted paths) reads the lockfile's tree; no install needed.
-      - name: dependency audit
-        run: node scripts/audit-deps.mjs
-
   check:
     name: typecheck · lint · build
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
@@ -264,6 +244,14 @@ jobs:
         run: |
           npm audit --omit=dev --audit-level=high || true   # the full picture, in the log
           npm audit --omit=dev --audit-level=critical
+      # FIX_PLAN 4.3: fails on any high/critical production advisory not allowlisted, each
+      # allowlisted advisory pinned to the one package it may arrive through (read from the
+      # lockfile's tree, so no install is needed).
+      - name: dependency audit (allowlisted, high and up)
+        run: node scripts/audit-deps.mjs
+      # FIX_PLAN 4.4: every tracked file, not just new commits, for live credential formats.
+      - name: secret scan (tracked files)
+        run: node scripts/scan-secrets.mjs
       # Needs Settings → Code security → Dependency graph, which is off on this repository
       # (the action errors out without it, failing every PR). Turn the graph on, then set the
       # repository variable DEPENDENCY_REVIEW=true to start enforcing this step.
