@@ -298,7 +298,7 @@ function expectMatch(
 }
 
 // Two different LinkedIn profiles are two people, unless it looks like one person who
-// edited their profile (kept their employer). Name evidence alone must not merge them.
+// changed their profile URL: the exact same name at the same company.
 {
   const li = (slug: string) => `https://www.linkedin.com/in/${slug}`;
   const top = (existing: Partial<Contact>, probe: Parameters<typeof matchAgainst>[1]) =>
@@ -335,13 +335,16 @@ function expectMatch(
   if (!merges(renamedUrl) || !renamedUrl!.reason.includes("LinkedIn profile changed")) {
     throw new Error(`renamed profile URL should merge: ${JSON.stringify(renamedUrl)}`);
   }
-  // A display-name change as well: similar name, same employer and title.
-  const renamedName = top(
+  // A similar name is not enough, even at the same company in the same role: it is asked
+  // about, not merged (two colleagues can be a letter apart).
+  const similarSameRole = top(
     { fullName: "Jon Smith", linkedinUrl: li("jon-smith-1a2b"), company: "Acme", title: "Software Engineer" },
     { fullName: "Jonn Smith", linkedinUrl: li("jonn-smith"), company: "Acme", title: "Software Engineer" }
   );
-  if (!merges(renamedName)) throw new Error(`renamed profile with a similar name should merge: ${JSON.stringify(renamedName)}`);
-  // …but a similar name at the same company in a different role is two colleagues.
+  if (merges(similarSameRole) || !similarSameRole) {
+    throw new Error(`similar name, same company and role, different profiles: should be offered, not merged: ${JSON.stringify(similarSameRole)}`);
+  }
+  // …nor in a different role.
   const colleagues = top(
     { fullName: "Jon Smith", linkedinUrl: li("jon-smith-1a2b"), company: "Acme", title: "Software Engineer" },
     { fullName: "Jonn Smith", linkedinUrl: li("jonn-smith"), company: "Acme", title: "Recruiter" }

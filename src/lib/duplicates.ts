@@ -33,7 +33,7 @@ export const DUPLICATE_MERGE_CONFIDENCE = 0.85;
 
 /**
  * The most a name match can score against someone with a different LinkedIn profile, unless
- * it looks like one person who edited their profile (see `findDuplicateCandidatesIndexed`).
+ * it looks like one person who changed their profile URL (see `findDuplicateCandidatesIndexed`).
  * The bare-name tier: a question for the review page, never an automatic merge.
  */
 export const DIFFERENT_PROFILE_CONFIDENCE = 0.6;
@@ -384,20 +384,19 @@ export function findDuplicateCandidatesIndexed(
 
   /**
    * A name match against someone on a DIFFERENT LinkedIn profile. Two profiles are two
-   * people unless it looks like one person who edited theirs, which keeps their employer:
-   * the exact same name at the same company (a new profile URL), or a similar name at the
-   * same company with the same title (the display name changed too). Anything else is held
-   * below `DUPLICATE_MERGE_CONFIDENCE`, so it is asked about rather than merged: similar
-   * names sharing only a title ("Jon Smith"/"John Smith", both "Software Engineer") were
-   * being folded into one contact.
+   * people unless it looks like one person who changed their profile URL: the exact same
+   * name at the same company. Anything else is held below `DUPLICATE_MERGE_CONFIDENCE`, so it
+   * is asked about rather than merged: similar names sharing a title ("Jon Smith"/"John
+   * Smith", both "Software Engineer") were being folded into one contact. A similar name is
+   * never enough on its own here, even at the same company in the same role: two colleagues
+   * can be one letter apart, and a wrong merge costs more than one review prompt.
    */
   const nameMatch = (contact: DuplicateSubject, reason: string, confidence: number): DuplicateMatch => {
     const theirs = linkedin ? linkedinSlug(contact.linkedinUrl) : "";
     if (!theirs || theirs === linkedin) return { contact, reason, confidence, strong: false };
     const sameCompany = Boolean(company) && company === normalize(contact.company);
-    const sameTitle = Boolean(title) && title === normalize(contact.title);
     const exactName = Boolean(name) && name === normalize(contact.fullName);
-    if (sameCompany && (exactName || sameTitle)) {
+    if (sameCompany && exactName) {
       return { contact, reason: `${reason} (LinkedIn profile changed)`, confidence, strong: false };
     }
     return {

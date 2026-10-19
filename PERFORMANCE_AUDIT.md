@@ -55,6 +55,17 @@ once, with every difference checked (§ "Behavior changes" below).
 | Webhook drain: four endpoints at a time, an endpoint deferred after two failures in a row | One hanging endpoint next to a healthy one: 40.2 s, 8/10 healthy delivered | **10.0 s, 10/10** |
 | Background pack | Recruiter scans killed at the page's 60 s; import poll queued behind Server Actions; `process-stalled` unbounded overall; timeline fallback without a deadline; capture claims stale before `maxDuration`; Gmail headers one GET each | Scans kicked into a 300 s invocation; `GET /api/imports/[id]/status`; stages stop starting past 180 s, with per-stage timings in `cron_runs`; fallback inside the budget; 5.5 min claims; headers 50 to a batch request |
 
+**Follow-ups (2026-10-19):**
+- The import hub (drag and drop) still held a connections file to one request. It now uploads
+  any size in batches like the card. A 60,000-connection export imported end to end: 30 upload
+  batches, 135 s, all 60,000 added.
+- That run exposed a pre-existing dedupe rule: a similar name plus the same title merged two
+  people automatically even when their LinkedIn profiles differed (54,750 of 60,000 rows
+  merged on synthetic names). Across different profiles, name evidence now merges only for the
+  exact same name at the same company (someone who changed their profile URL). Everything else
+  scores 0.60 and goes to the review page. The nightly sweep follows the same rule. The same
+  synthetic import now adds all 5,000 of 5,000 rows, against 1,600 before.
+
 **Measured and not shipped:**
 - **`LazyMotion`.** Converting all 77 files to `m` with `domMax` loaded asynchronously made every
   route 0–12 KB gz *larger* (median +2 KB). The async features chunk was ~3 KB: `AnimatePresence`,
