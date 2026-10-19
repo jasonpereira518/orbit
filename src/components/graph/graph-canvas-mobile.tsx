@@ -287,7 +287,7 @@ export function GraphCanvasMobile(props: GraphChartProps) {
   // A webfont resolving after first paint invalidates every measured label width.
   useEffect(() => {
     let cancelled = false;
-    document.fonts?.ready?.then(() => {
+    void document.fonts?.ready?.then(() => {
       if (cancelled) return;
       clearTextCache();
       requestDraw();

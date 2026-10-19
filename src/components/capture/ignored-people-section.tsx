@@ -49,7 +49,7 @@ function IgnoredList({ onCount }: { onCount: (n: number) => void }) {
 
   useEffect(() => {
     let cancelled = false;
-    listIgnoredPeople().then((res) => {
+    void listIgnoredPeople().then((res) => {
       if (cancelled) return;
       if (!res.ok) {
         toast.error(res.error);

@@ -239,6 +239,13 @@ export async function mrrMovement(since: Date, until: Date): Promise<MrrMovement
       case "payment_failed":
         out.failedPayments += num(r.n);
         break;
+      case "credit_pack":
+        // NOT counted in cashInCents, as before this case was spelled out (the exhaustiveness
+        // lint found it missing). Pack sales are reported by `loadCreditsMoney`, but "cash in"
+        // above is documented as all cash and pack refunds ARE subtracted in `refundedCents`,
+        // so this is probably an undercount. Behavior is preserved here on purpose; it is a
+        // finance decision, tracked as a follow-up to the code health PR.
+        break;
     }
   }
 

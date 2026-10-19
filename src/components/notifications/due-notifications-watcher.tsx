@@ -39,7 +39,7 @@ export function DueNotificationsWatcher() {
 
     let cancelled = false;
     running.current = true;
-    (async () => {
+    void (async () => {
       try {
         if (!swReady.current) {
           await registerNotificationServiceWorker();

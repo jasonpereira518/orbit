@@ -109,7 +109,7 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
                 provider="outlook"
                 disabled={busy}
                 onConfirm={(opts) => {
-                  connection.disconnect(opts).then(() => {
+                  void connection.disconnect(opts).then(() => {
                     contacts.reset();
                   });
                 }}

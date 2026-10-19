@@ -222,6 +222,7 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
 
       let attempts = 0;
       let running = false;
+      // eslint-disable-next-line @typescript-eslint/no-misused-promises -- the async body catches its own errors; nothing can reject out of it
       interval = window.setInterval(async () => {
         if (running) return;
         if (activeRef.current || attempts >= FAST_POLL_ATTEMPTS) {

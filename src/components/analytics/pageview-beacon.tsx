@@ -194,7 +194,7 @@ export function PageviewBeacon() {
       const payload = { kind: "dwell", id: current.id, dwellMs: current.accumulated };
       if (viaBeacon) {
         // The page may be going away: `sendBeacon` now, or never.
-        post(payload, true);
+        void post(payload, true);
       } else {
         // A route change, so the page is staying and there is time to wait. A short visit's
         // dwell could otherwise overtake its own view's insert, update no row, and leave the

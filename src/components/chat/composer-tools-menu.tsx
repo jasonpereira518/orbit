@@ -99,6 +99,7 @@ export function ComposerToolsMenu({
     const run = ++runRef.current;
     // Inside the timer, not the effect body: a keystroke that gets debounced away should
     // never have flashed a loading state in the first place.
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- the async body catches its own errors; nothing can reject out of it
     const timer = setTimeout(async () => {
       setLoading(true);
       try {

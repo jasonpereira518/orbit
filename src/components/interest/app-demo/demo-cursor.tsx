@@ -83,7 +83,7 @@ export function useDemoTour({
       return null;
     };
 
-    (async () => {
+    void (async () => {
       try {
         dispatch({ type: "reset" });
         await sleep(700);

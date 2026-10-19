@@ -200,7 +200,7 @@ export function FooterWordmark({ className }: { className?: string }) {
     reduced.addEventListener("change", onReducedChange);
     // Sample the letters in the real face, not the fallback it swaps from. The heading
     // font is almost always loaded by the time the page bottom mounts.
-    document.fonts
+    void document.fonts
       .load(`${WEIGHT} 100px ${family}`, "Orbit")
       .catch(() => undefined)
       .then(() => {

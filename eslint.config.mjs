@@ -42,7 +42,15 @@ const eslintConfig = defineConfig([
       ],
       "@typescript-eslint/no-unnecessary-type-assertion": "error",
       "@typescript-eslint/await-thenable": "error",
+      "@typescript-eslint/no-floating-promises": "error",
+      "@typescript-eslint/no-misused-promises": ["error", { checksVoidReturn: { attributes: false } }],
+      "@typescript-eslint/switch-exhaustiveness-check": ["error", { considerDefaultExhaustiveForUnions: true }],
     },
+  },
+  // node:test's describe()/it() return promises by design; awaiting each would be noise.
+  {
+    files: ["**/*.test.{ts,tsx}"],
+    rules: { "@typescript-eslint/no-floating-promises": "off" },
   },
   // Server code reports caught errors through `reportError` (src/lib/report-error.ts), which
   // reaches Sentry and prints one greppable `[orbit:<where>] ref=<ref>` line. A bare

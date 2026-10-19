@@ -254,6 +254,7 @@ export function useRecruiterScan(
     if (!running || !scan) return;
     let cancelled = false;
 
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- the async body catches its own errors; nothing can reject out of it
     const timer = setInterval(async () => {
       try {
         const next = await config.getScanStatus(scan.importId);

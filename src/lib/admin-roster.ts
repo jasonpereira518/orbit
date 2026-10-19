@@ -274,6 +274,8 @@ function buildPredicates(query: RosterQuery) {
   }
 
   switch (query.state ?? "all") {
+    case "all":
+      break;
     case "live":
       // Interpolated as an interval rather than compared against a JS `now`: the cutoff has
       // to be evaluated by the database at query time, or a cached render would filter

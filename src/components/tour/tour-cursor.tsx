@@ -73,7 +73,7 @@ export function TourCursor({
     const ax = animate(x, tx, SPRING_SOFT);
     const ay = animate(y, ty, SPRING_SOFT);
     let cancelled = false;
-    Promise.all([ax, ay]).then(() => {
+    void Promise.all([ax, ay]).then(() => {
       if (!cancelled) setArrivedAt(arrivalKey);
     });
     return () => {

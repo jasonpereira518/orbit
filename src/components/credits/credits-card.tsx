@@ -68,7 +68,7 @@ export function CreditsCard() {
     const sessionId = params.get("session_id");
     const confirm =
       params.get("credits") === "added" && sessionId ? confirmCheckoutSession(sessionId).catch(() => null) : null;
-    (async () => {
+    void (async () => {
       const result = confirm ? await confirm : null;
       if (!live) return;
       if (result?.status === "granted") toast.success(`${CREDIT_PACK_CREDITS} credits added`);
