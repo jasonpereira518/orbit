@@ -37,7 +37,7 @@ export function schoolAcronym(name: string | null | undefined): string | null {
   if (!name) return null;
   const significant = words(name).filter((w) => !SKIP_WORDS.has(w));
   if (significant.length < 2) return null;
-  const acronym = significant.map((w) => w[0]!).join("");
+  const acronym = significant.map((w) => w[0]).join("");
   return ACRONYM_RE.test(acronym) ? acronym : null;
 }
 

@@ -85,7 +85,7 @@ export type MeasuredWindow = {
 function measuredWindow(range: Range, now: Date, firstView: Date | null): MeasuredWindow {
   const rangeFrom = new Date(now.getTime() - rangeDays(range) * 86_400_000);
   const clamped = firstView != null && firstView > rangeFrom;
-  const from = clamped ? firstView! : rangeFrom;
+  const from = clamped ? firstView : rangeFrom;
   return {
     from,
     days: Math.max(1, (now.getTime() - from.getTime()) / 86_400_000),

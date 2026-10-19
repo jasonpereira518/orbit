@@ -600,7 +600,7 @@ export function buildChatSuggestions(
   let pool = deduped.filter((c) => !asked.has(normalizeQuestionKey(c.question)));
   // If it removed everything, keep the best one anyway: a card you asked about eleven days
   // ago still beats "Who do I know at AWS?".
-  if (!pool.length && deduped.length) pool = [deduped[0]!];
+  if (!pool.length && deduped.length) pool = [deduped[0]];
 
   const buckets = new Map<SuggestionKind, Candidate[]>();
   for (const c of pool) {
@@ -610,7 +610,7 @@ export function buildChatSuggestions(
   }
   // Kinds are visited in the order of their best candidate, so a strong rung still leads.
   const kindOrder = [...buckets.entries()]
-    .sort((a, b) => compareCandidates(a[1][0]!, b[1][0]!))
+    .sort((a, b) => compareCandidates(a[1][0], b[1][0]))
     .map(([kind]) => kind);
 
   const chosen: ChatSuggestion[] = [];
@@ -637,7 +637,7 @@ export function buildChatSuggestions(
         const bucket = buckets.get(kind)!;
         let i = cursor.get(kind) ?? 0;
         while (i < bucket.length) {
-          const c = bucket[i]!;
+          const c = bucket[i];
           i++;
           // Every person on the card counts against the per-person cap, so a mention card
           // about A and B blocks a later card about either of them.

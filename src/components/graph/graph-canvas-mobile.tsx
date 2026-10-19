@@ -33,7 +33,6 @@ import {
   selectionForContact,
   selectionForUser,
 } from "@/lib/graph/sky-selection";
-import type { GraphNodeData } from "@/lib/graph-layout";
 import { markGraphViewportReady } from "@/lib/graph/intro-signal";
 import { CAMERA_MS } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
@@ -445,7 +444,7 @@ export function GraphCanvasMobile(props: GraphChartProps) {
           return;
         }
         const entry = indexRef.current.starsById.get(star.id);
-        if (entry) onSelect(selectionForContact(star.id, entry.data as GraphNodeData));
+        if (entry) onSelect(selectionForContact(star.id, entry.data));
         return;
       }
 
@@ -556,7 +555,7 @@ export function GraphCanvasMobile(props: GraphChartProps) {
               <li key={id}>
                 <button
                   type="button"
-                  onClick={() => onSelect(selectionForContact(id, star.data as GraphNodeData))}
+                  onClick={() => onSelect(selectionForContact(id, star.data))}
                 >
                   {star.data.label}
                   {star.data.company ? `, ${star.data.company}` : ""}

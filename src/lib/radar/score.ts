@@ -189,7 +189,7 @@ export const NO_SUPPRESSION: RadarSuppression = Object.freeze({
   dismissedAt: {},
   acceptedAt: {},
   snoozedUntil: {},
-}) as RadarSuppression;
+});
 
 export type KindScore = {
   kind: RecommendationKind;

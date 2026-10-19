@@ -46,7 +46,7 @@ export function SaveTargetChoice({
   return (
     <div className="space-y-2">
       <div className="inline-flex w-full rounded-lg bg-muted p-[3px]" role="radiogroup" aria-label="Save as">
-        <Segment name={name} active={updating} onSelect={() => onChange(selected?.id ?? candidates[0]!.id)} pill={`${name}-target`}>
+        <Segment name={name} active={updating} onSelect={() => onChange(selected?.id ?? candidates[0].id)} pill={`${name}-target`}>
           Update {selected ? shortName(selected.fullName) : "existing"}
         </Segment>
         <Segment name={name} active={!updating} onSelect={() => onChange(null)} pill={`${name}-target`}>

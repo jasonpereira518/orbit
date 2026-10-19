@@ -457,7 +457,7 @@ function repairTruncatedJson(text: string): string | null {
   const stack: string[] = [];
 
   for (let i = 0; i < slice.length; i++) {
-    const ch = slice[i]!;
+    const ch = slice[i];
     if (inString) {
       if (escaped) {
         escaped = false;
@@ -1225,7 +1225,7 @@ export async function transcribeImagePages(
       if (i >= total) return;
       const pageNumber = numbering.offset + i + 1;
       try {
-        const text = await transcribeNotePage(userId, images[i]!, pageNumber, noteTotal);
+        const text = await transcribeNotePage(userId, images[i], pageNumber, noteTotal);
         results[i] = { pageNumber, text, ok: true };
       } catch (err) {
         // One bad photo must not cost the person the other seven — but the REASON is kept
@@ -1652,7 +1652,7 @@ ${PERSON_FIELD_RULES}`,
     await beat(onProgress);
     const batchParsed = personDetailBatchSchema.parse(JSON.parse(batchRaw));
     for (let j = 0; j < batch.length; j++) {
-      const requested = batch[j]!;
+      const requested = batch[j];
       const found =
         batchParsed.people.find(
           (p) =>
@@ -2320,7 +2320,7 @@ async function streamText(
         if (usage) {
           report({
             ...tokensFromOpenAi({ usage }),
-            reportedCostMicros: reportedCostMicros({ usage } as OpenAiUsageWithCost),
+            reportedCostMicros: reportedCostMicros({ usage }),
           });
         }
       } else {

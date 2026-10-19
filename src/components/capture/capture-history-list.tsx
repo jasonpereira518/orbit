@@ -159,7 +159,7 @@ function CaptureHistoryRow({
               {/* eslint-disable-next-line @next/next/no-img-element -- served by an
                   auth-gated API route, not a remote origin next/image can optimise. */}
               <img
-                src={capturePhotoSrc(item.thumbnailIds[0]!)}
+                src={capturePhotoSrc(item.thumbnailIds[0])}
                 alt=""
                 loading="lazy"
                 decoding="async"

@@ -322,7 +322,7 @@ function reportedNotRestored(result: unknown): boolean {
     typeof result === "object" &&
     result !== null &&
     "restored" in result &&
-    (result as { restored: unknown }).restored === false
+    (result).restored === false
   );
 }
 

@@ -725,6 +725,7 @@ export async function recordLiveSegments(
         startMs: Math.round(s.startMs),
         endMs: Math.round(s.endMs),
         text: s.text,
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- keeps the literal type through the insert array
         engine: "deepgram" as MeetingSegmentEngine,
         speaker: s.speaker,
       })),

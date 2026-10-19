@@ -693,7 +693,7 @@ export async function loadAuditLog(query: AuditQuery = {}): Promise<AuditPage> {
   return {
     rows: rows.map((r) => ({
       ...r,
-      detail: (r.detail ?? {}) as Record<string, unknown>,
+      detail: (r.detail ?? {}),
     })),
     total,
     page,

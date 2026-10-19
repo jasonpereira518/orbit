@@ -16,7 +16,7 @@ beforeEach(() => {
     new Response(
       JSON.stringify({ name: "validation_error", message: `Invalid \`to\` field: ${RECIPIENT}`, statusCode: 422 }),
       { status: 422, headers: { "content-type": "application/json" } }
-    )) as typeof fetch;
+    ));
 });
 
 afterEach(() => {

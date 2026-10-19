@@ -401,7 +401,7 @@ export function reportedCostMicros(response: OpenAiUsageWithCost): number | null
  */
 export function withOpenRouterRouting<T extends object>(provider: AiProvider, params: T): T {
   if (provider !== "openrouter") return params;
-  return { ...params, provider: { data_collection: "deny" } } as T;
+  return { ...params, provider: { data_collection: "deny" } };
 }
 
 /**
@@ -581,7 +581,7 @@ export class AiAccess {
         ? { key: devDecisionKey, source: "managed" as const }
         : null;
 
-    const preference = (row?.aiKeyPreference ?? null) as AiKeyPreference;
+    const preference = (row?.aiKeyPreference ?? null);
     return new AiAccess(userId, row, plan, eligibility, preference, personal, managed, decisionKey);
   }
 

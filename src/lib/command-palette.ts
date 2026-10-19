@@ -70,7 +70,7 @@ export function visibleEntries<T extends PaletteEntry>(entries: T[], hidden: Rea
   return entries.filter((entry) => {
     if (entry.settingsId && hidden.has(surfaceKeyForSettingsId(entry.settingsId))) return false;
     if (!entry.href) return true;
-    const path = entry.href.split(/[?#]/)[0]!;
+    const path = entry.href.split(/[?#]/)[0];
     const surface = surfaceForPathname(path);
     return !surface || !hidden.has(surface.key);
   });
@@ -107,5 +107,5 @@ export function looksLikeNote(query: string): boolean {
  */
 export function emailVerbTerm(query: string): string | null {
   const m = /^\s*(?:e-?mail|mail)\s+(\S.*?)\s*$/i.exec(query);
-  return m ? m[1]!.replace(/\s+/g, " ") : null;
+  return m ? m[1].replace(/\s+/g, " ") : null;
 }

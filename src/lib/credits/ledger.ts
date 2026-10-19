@@ -301,7 +301,7 @@ export async function placeHold(input: {
         + ${input.reserveStarter ? starterSql(input.userId) : sql`0`}
       RETURNING id`),
   ]);
-  const inserted = rowsOf<{ id: string }>(results[1] as never);
+  const inserted = rowsOf<{ id: string }>(results[1]);
   return inserted[0]?.id ?? null;
 }
 

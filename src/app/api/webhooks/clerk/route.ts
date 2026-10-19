@@ -108,7 +108,7 @@ export async function POST(req: NextRequest) {
           // Clerk copies an invitation's public metadata onto the account it creates, so an
           // admin-invited sign-up arrives here already carrying the marker: it is eligible
           // for founding pricing (no longer a comp).
-          await recordSiteInvite(userId, evt.data.public_metadata as Record<string, unknown>);
+          await recordSiteInvite(userId, evt.data.public_metadata);
         }
         result = { outcome: "handled", targetUserId: userId, resourceId: userId };
       } else {

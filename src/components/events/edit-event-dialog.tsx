@@ -87,7 +87,7 @@ export function EditEventDialog({
     url: event.url ?? "",
     organizerName: event.organizerName ?? "",
     organizerUrl: event.organizerUrl ?? "",
-    attendanceMode: (event.attendanceMode ?? UNSET) as string,
+    attendanceMode: (event.attendanceMode ?? UNSET),
   });
 
   const set = (key: keyof typeof form) => (value: string) =>

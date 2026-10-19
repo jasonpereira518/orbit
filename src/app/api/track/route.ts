@@ -210,7 +210,7 @@ function geoFrom(headers: Headers) {
 /** A Host header reduced to the form `referrerHost()` produces: no port, no `www.`. */
 function bareHost(host: string | null): string | null {
   if (!host) return null;
-  return host.split(",")[0]!.trim().split(":")[0]!.replace(/^www\./, "").toLowerCase() || null;
+  return host.split(",")[0].trim().split(":")[0].replace(/^www\./, "").toLowerCase() || null;
 }
 
 const isUuid = (value: unknown): value is string =>

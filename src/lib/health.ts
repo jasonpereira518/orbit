@@ -174,7 +174,7 @@ export async function checkHealth(options: {
         );
       return row?.n ?? 0;
     }, timeoutMs),
-    section(async () => Boolean(await isPgvectorAvailable()), timeoutMs),
+    section(async () => isPgvectorAvailable(), timeoutMs),
     section(probeStatementTimeout, timeoutMs),
   ]);
 

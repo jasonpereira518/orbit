@@ -343,7 +343,7 @@ export async function upsertConnectorConnection(
     // Drizzle's overload resolution after `.onConflictDoUpdate()` against the union `Db`
     // type (same trap noted in contact-identity.ts, action-items.ts and import-engine.ts).
     .returning();
-  return { id: row!.id };
+  return { id: row.id };
 }
 
 export type ConnectorConnectionSummary = {

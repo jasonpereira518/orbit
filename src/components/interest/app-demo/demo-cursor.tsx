@@ -88,7 +88,7 @@ export function useDemoTour({
         dispatch({ type: "reset" });
         await sleep(700);
         for (let i = 0; ; i = (i + 1) % TOUR.length) {
-          const b = TOUR[i]!;
+          const b = TOUR[i];
           setBeat(i);
           const el = await find(b.target);
           const root = rootRef.current;

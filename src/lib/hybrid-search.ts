@@ -319,7 +319,7 @@ export async function listContactsMatching(
     total: number | string;
     last_at: Date | string | null;
   }>(result);
-  const total = rows.length ? Number(rows[0]!.total) : 0;
+  const total = rows.length ? Number(rows[0].total) : 0;
   return {
     total,
     people: rows.map((r) => ({

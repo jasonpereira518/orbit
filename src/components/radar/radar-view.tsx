@@ -80,7 +80,7 @@ export function RadarView(props: RadarViewProps) {
   // a remembered choice, or a phone. A choice made here wins from then on.
   // Fixed at arrival: resolving the linked card removes it, and must not flip the layout.
   const [arrivedLinked] = useState(linked >= 0);
-  const arrival = useSyncExternalStore(noSubscription, () => arrivalMode(arrivedLinked), () => "list" as Mode);
+  const arrival = useSyncExternalStore(noSubscription, () => arrivalMode(arrivedLinked), () => "list");
   const [chosen, setChosen] = useState<Mode | null>(null);
   const mode = chosen ?? arrival;
   const [index, setIndex] = useState(Math.max(0, linked));
@@ -301,7 +301,7 @@ function FocusDeck({
   const count = recommendations.length;
   // A resolved card leaves the list, so the same index is already the next one.
   const at = Math.min(index, count - 1);
-  const current = recommendations[at]!;
+  const current = recommendations[at];
   const inToday = at < RADAR_CAPS.today;
   const move = (delta: number) => setIndex(Math.max(0, Math.min(count - 1, at + delta)));
 

@@ -196,7 +196,7 @@ export function ProspectTable({
           <tbody className="block md:table-row-group">
             {prospects.map((prospect) => {
               const message = prospect.message;
-              const channel = (message?.channel || defaultChannel) as OutreachChannel;
+              const channel = (message?.channel || defaultChannel);
               const isSelected = prospect.status === "selected";
               const awaiting =
                 message &&

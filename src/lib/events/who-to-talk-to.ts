@@ -129,7 +129,7 @@ export async function whoToTalkTo(
           title: row.title ?? row.contact_title,
           industry: row.contact_industry,
           notes: row.contact_notes,
-        } as Parameters<typeof goalRelevanceComponent>[0],
+        },
         goals
       ),
       focusFit: focusFitComponent(

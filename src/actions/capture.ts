@@ -263,7 +263,7 @@ export async function confirmBulkCapture(
   // The /capture page saves through `runCaptureJobById`, which does the same thing.
   if (out.contactIds.length === 1) {
     const db = await getDb();
-    await resolveAvatarNow(db, userId, out.contactIds[0]!, {
+    await resolveAvatarNow(db, userId, out.contactIds[0], {
       persistRemote: downloadAndPersistAvatar,
       resolveLinkedIn: (id, url) => resolveLinkedInPhotoCached(id, url, userId),
     });

@@ -749,7 +749,7 @@ export async function prepareChatContext(
   // attached: there is no single person to answer "primarily about". The mention is still
   // loaded as attached (the step, the thread's mark) but not rendered twice.
   const pinnedContactId =
-    options.focusContactId?.trim() || (attachedIds.length === 1 ? attachedIds[0]!.trim() : null);
+    options.focusContactId?.trim() || (attachedIds.length === 1 ? attachedIds[0].trim() : null);
   const steps = options.steps ?? NULL_STEPS;
   const photos = createPhotoCache();
 
@@ -773,7 +773,7 @@ export async function prepareChatContext(
           // A stopped turn persists its question with no reply. Newest-first, so that is
           // only ever the first row — never orphan it into history as an unanswered ask.
           // The router reads these too: an unanswered question is not a turn to follow up on.
-          rows.length && rows[0]!.role === "user" ? rows.slice(1) : rows
+          rows.length && rows[0].role === "user" ? rows.slice(1) : rows
         )
     : Promise.resolve([] as PriorRow[]);
   // ONE account read for the whole question. The decider, the query embedding and its cache

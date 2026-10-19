@@ -34,7 +34,7 @@ export function ContactsScreen() {
   const people = visibleContacts(state);
   const groups = new Map<string, typeof people>();
   for (const p of people) {
-    const letter = p.name[0]!.toUpperCase();
+    const letter = p.name[0].toUpperCase();
     groups.set(letter, [...(groups.get(letter) ?? []), p]);
   }
   const strengthLabel = STRENGTHS.find((s) => s.n === state.strength)?.label ?? "Any";

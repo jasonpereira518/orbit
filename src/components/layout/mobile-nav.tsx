@@ -9,7 +9,7 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import { Lock, MessageSquarePlus, Sparkles } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
 import {
-  APP_NAV,
+  type APP_NAV,
   MOBILE_BOTTOM_NAV,
   MOBILE_MORE_NAV,
   fullPrefetch,

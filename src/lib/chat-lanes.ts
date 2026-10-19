@@ -130,7 +130,7 @@ export async function personLane(
   const match = await matchContactsByName(userId, who).catch(() => ({ strong: [], weak: [] }));
   const best = match.strong.length ? match.strong : match.weak;
   if (best.length === 1) {
-    const person = best[0]!;
+    const person = best[0];
     steps.done("resolve", {
       label: `Found ${person.name}`,
       detail: [person.title, person.company].filter(Boolean).join(" @ ") || undefined,

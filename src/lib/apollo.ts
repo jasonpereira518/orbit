@@ -275,7 +275,7 @@ function normalizePerson(person: ApolloPerson): NormalizedProspect | null {
     phone: phone?.trim() || null,
     linkedinUrl: person.linkedin_url?.trim() || null,
     location: personLocation(person) || null,
-    enrichment: person as Record<string, unknown>,
+    enrichment: person,
   };
 }
 

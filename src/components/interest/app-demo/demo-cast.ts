@@ -431,7 +431,7 @@ export function personById(id: string | null | undefined): DemoPerson | undefine
 }
 
 export function firstName(p: DemoPerson) {
-  return p.name.split(" ")[0]!;
+  return p.name.split(" ")[0];
 }
 
 export function initials(p: DemoPerson) {

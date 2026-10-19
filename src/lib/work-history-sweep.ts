@@ -147,7 +147,7 @@ function nextUtcDay(now: Date): Date {
 function interleave(groups: Array<{ userId: string; ids: string[] }>): Array<{ userId: string; contactId: string }> {
   const out: Array<{ userId: string; contactId: string }> = [];
   for (let i = 0; groups.some((g) => i < g.ids.length); i++) {
-    for (const g of groups) if (i < g.ids.length) out.push({ userId: g.userId, contactId: g.ids[i]! });
+    for (const g of groups) if (i < g.ids.length) out.push({ userId: g.userId, contactId: g.ids[i] });
   }
   return out;
 }
@@ -190,7 +190,7 @@ export async function runWorkHistorySweep(deps: WorkHistorySweepDeps = {}): Prom
 
   const worker = async () => {
     while (next < queue.length) {
-      const item = queue[next++]!;
+      const item = queue[next++];
       const { userId, contactId } = item;
       const hold = (map: Map<string, string[]>) => map.set(userId, [...(map.get(userId) ?? []), contactId]);
       if (deps.deadline !== undefined && Date.now() >= deps.deadline) {

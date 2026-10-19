@@ -277,7 +277,7 @@ export function ReminderFormFields({
           <Label htmlFor={`${idPrefix}-kind`}>Action type</Label>
           <Select
             value={actionKind}
-            onValueChange={(v) => setActionKind((v ?? "auto") as ReminderActionKind | "auto")}
+            onValueChange={(v) => setActionKind((v ?? "auto"))}
             items={kindItems}
           >
             <SelectTrigger id={`${idPrefix}-kind`} className="h-8 w-full">

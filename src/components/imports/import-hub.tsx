@@ -529,10 +529,10 @@ export function ImportHub({
         const guessed = result.degraded ? IMPORT_COPY.linkNameGuessed : undefined;
 
         if (added.length === 1) {
-          toast.success(`Added ${added[0]!.name} to your contacts`, {
+          toast.success(`Added ${added[0].name} to your contacts`, {
             id,
             description: guessed,
-            action: view(added[0]!.contactId),
+            action: view(added[0].contactId),
           });
         } else if (added.length > 1) {
           toast.success(`Added ${added.length} people to your contacts`, {
@@ -541,9 +541,9 @@ export function ImportHub({
             action: { label: "View", onClick: () => router.push("/contacts") },
           });
         } else if (existing.length === 1) {
-          toast.message(`${existing[0]!.name} is already in your contacts`, {
+          toast.message(`${existing[0].name} is already in your contacts`, {
             id,
-            action: view(existing[0]!.contactId),
+            action: view(existing[0].contactId),
           });
         } else if (existing.length > 1) {
           toast.message(`All ${existing.length} are already in your contacts`, { id });

@@ -246,7 +246,7 @@ export async function loadNotificationPanel(
 
   for (const s of suggestions) {
     const related = Array.isArray(s.relatedContactIds)
-      ? (s.relatedContactIds as string[])
+      ? (s.relatedContactIds)
       : [];
     items.push({
       id: `suggestion:${s.id}`,

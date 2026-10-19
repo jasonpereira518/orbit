@@ -67,7 +67,7 @@ function parseCursor(raw: unknown): EventProviderSyncCursor | null {
       return null;
     }
   }
-  return raw as EventProviderSyncCursor;
+  return raw;
 }
 
 /**

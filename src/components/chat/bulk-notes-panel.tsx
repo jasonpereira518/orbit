@@ -694,7 +694,7 @@ export function BulkNotesPanel({
         setNotes(res.text);
         setCaptureHints(res.hints || null);
         setIngestSources(res.sources || []);
-        setFileName(pages.length === 1 ? pages[0]!.filename : `${pages.length} pages`);
+        setFileName(pages.length === 1 ? pages[0].filename : `${pages.length} pages`);
         if (wasEmpty && hasApiKey) runParse(res.text, res.hints || null);
       } catch (err) {
         const message = friendlyError(err, "Couldn’t read those pages — try again?");
@@ -729,7 +729,7 @@ export function BulkNotesPanel({
         if (totalBytes > CAPTURE_MAX_UPLOAD_BYTES) {
           toast.error(
             files.length === 1
-              ? `${files[0]!.name} is ${formatUploadSize(totalBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)} per upload`
+              ? `${files[0].name} is ${formatUploadSize(totalBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)} per upload`
               : `Those ${files.length} files total ${formatUploadSize(totalBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)} per upload, so try smaller batches`
           );
           return;
@@ -744,7 +744,7 @@ export function BulkNotesPanel({
         );
         await ingestPayloads(
           payloads,
-          files.length === 1 ? files[0]!.name : `${files.length} files ingested`,
+          files.length === 1 ? files[0].name : `${files.length} files ingested`,
           "Ready — check the text, then extract people"
         );
       } catch (err) {

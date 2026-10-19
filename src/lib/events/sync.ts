@@ -127,7 +127,7 @@ async function syncGmail(
 
   await markEventSyncResult(conn.id, {
     ok: true,
-    cursor: { ...(cursor ?? {}), gmail: result.cursor } as EventProviderSyncCursor,
+    cursor: { ...(cursor ?? {}), gmail: result.cursor },
     // Mid-listing: come back immediately rather than waiting out the half-hour cadence, or a
     // year of backlog would take days to walk at 100 messages per run.
     nextSyncAt: result.cursor.pageToken ? new Date() : undefined,
@@ -246,7 +246,7 @@ export async function runEventSyncPass(
         error instanceof EventbriteAuthError ||
         error instanceof IcsFeedGoneError
       ) {
-        await markNeedsReauth(conn.id, (error as Error).message).catch(
+        await markNeedsReauth(conn.id, (error).message).catch(
           reportAndContinue({ where: "job.event-sync.mark-reauth", userId: conn.userId }, undefined)
         );
         continue;

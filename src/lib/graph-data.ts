@@ -241,7 +241,7 @@ export async function loadGraphData(
     }
   }
 
-  const socialLinks = (settings?.socialLinks || {}) as UserSocialLinks;
+  const socialLinks = (settings?.socialLinks || {});
   // Awaited last so the Clerk profile round trip overlaps the scan, not precedes it.
   const profile = await options.profile;
 
@@ -269,7 +269,7 @@ export async function loadGraphData(
         active: filterActive,
         /** True when the operator has the feature on at all, whatever this request asked for. */
         enabled: constellationConfig.enabled,
-        scope: (options.scope ?? "engaged") as GraphScope,
+        scope: (options.scope ?? "engaged"),
         shown: visibleContacts.length,
         engaged: eligibleCount,
         available: graphContacts.length,

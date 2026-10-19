@@ -472,7 +472,7 @@ export function stripeEventSubject(event: Stripe.Event): {
 
   return {
     userIdHint,
-    customerId: customerIdOf(object as { customer?: string | null }),
+    customerId: customerIdOf(object),
     resourceId,
   };
 }

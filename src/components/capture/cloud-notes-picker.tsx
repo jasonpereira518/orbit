@@ -73,7 +73,7 @@ async function extractPicked(picked: Pickable[]): Promise<number> {
     toast.info(duplicates === 1 ? "That doc was already captured" : `Those ${duplicates} docs were already captured`);
   }
   if (failures.length) {
-    toast.error(failures.length === 1 ? failures[0]! : `${failures.length} docs couldn’t be read`, {
+    toast.error(failures.length === 1 ? failures[0] : `${failures.length} docs couldn’t be read`, {
       description: failures.length > 1 ? failures.slice(0, 3).join(" · ") : undefined,
     });
   }

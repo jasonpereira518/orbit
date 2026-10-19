@@ -511,7 +511,7 @@ export async function rebuildContactEmbeddingsBatch(
   if (toInsert.length > 0) {
     const inserted = await db.insert(contactEmbeddings).values(toInsert).returning();
     for (const row of inserted) {
-      vectorRows.push({ id: row.id, embedding: row.embedding as number[] });
+      vectorRows.push({ id: row.id, embedding: row.embedding });
     }
   }
 

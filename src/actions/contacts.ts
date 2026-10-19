@@ -1539,7 +1539,7 @@ export async function sendContactFollowUpEmail(
   });
   if (!queued.ok) return queued;
   scheduleDispatch(queued.id, queued.sendAt);
-  return { ok: true, sendId: queued.id, sendAt: queued.sendAt.toISOString(), to: queued.to[0]! };
+  return { ok: true, sendId: queued.id, sendAt: queued.sendAt.toISOString(), to: queued.to[0] };
 }
 
 /**

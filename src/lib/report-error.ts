@@ -121,7 +121,7 @@ export function reportedFailure(
   fallback: string,
   ctx: ReportContext
 ): { error: string; ref: string | null } {
-  if (isUserFacingError(err)) return { error: (err as Error).message, ref: null };
+  if (isUserFacingError(err)) return { error: (err).message, ref: null };
   const message = friendlyError(err, fallback);
   if (isQuietFailureMessage(message)) return { error: message, ref: null };
   const ref = reportError(err, { ...ctx, level: ctx.level ?? (message === fallback ? "error" : "warning") });

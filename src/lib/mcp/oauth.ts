@@ -147,7 +147,7 @@ export async function verifyOAuthCaller(): Promise<OAuthCaller | null> {
       ("userId" in result ? result.userId : null);
     if (!userId) return null;
     const clientId = "clientId" in result ? ((result.clientId as string) ?? null) : null;
-    const tokenScopes = "scopes" in result && Array.isArray(result.scopes) ? (result.scopes as string[]) : [];
+    const tokenScopes = "scopes" in result && Array.isArray(result.scopes) ? (result.scopes) : [];
     const scopes = oauthGrantFor(tokenScopes, oauthScopesRequired());
     // A token with no Orbit scope while enforcement is on is not a caller at all: the same
     // 401 an unknown key gets, which sends a well-behaved client back through consent.

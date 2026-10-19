@@ -381,7 +381,7 @@ export async function updateCampaign(
   // Allowlisted, never spread: every export here is a public POST endpoint, and spreading
   // the argument into `.set()` let a caller write any real column — `userId` included,
   // which moved a campaign and its drafts into another account.
-  const fields = pickCampaignFields(input as Record<string, unknown>);
+  const fields = pickCampaignFields(input);
   const patch: Record<string, unknown> = {
     ...fields,
     updatedAt: new Date(),
@@ -391,7 +391,7 @@ export async function updateCampaign(
     if (!Array.isArray(sequenceSteps) || sequenceSteps.length > MAX_SEQUENCE_STEPS) {
       throw new UserFacingError(`A sequence can have at most ${MAX_SEQUENCE_STEPS} steps`);
     }
-    patch.sequenceSteps = sequenceSteps as OutreachSequenceStep[];
+    patch.sequenceSteps = sequenceSteps;
   }
 
   if (audienceFilters !== undefined) {
@@ -423,7 +423,7 @@ async function searchProspectsCore(campaignId: string, page = 1) {
   const campaign = await requireCampaign(userId, campaignId);
   const db = await getDb();
 
-  const filters = (campaign.audienceFilters ?? {}) as AudienceFilters;
+  const filters = (campaign.audienceFilters ?? {});
   const { prospects, total, source } = await searchPeople(userId, filters, page);
 
   let matched = 0;

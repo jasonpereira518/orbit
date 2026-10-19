@@ -165,6 +165,6 @@ export function xHandleFrom(value: unknown): string | null {
   const raw = str(value);
   if (!raw) return null;
   const fromUrl = /^https?:\/\/(?:www\.)?(?:twitter|x)\.com\/([A-Za-z0-9_]{1,15})/i.exec(raw);
-  const handle = fromUrl ? fromUrl[1]! : raw.replace(/^@/, "");
+  const handle = fromUrl ? fromUrl[1] : raw.replace(/^@/, "");
   return /^[A-Za-z0-9_]{1,15}$/.test(handle) ? handle : null;
 }

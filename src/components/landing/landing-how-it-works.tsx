@@ -211,7 +211,7 @@ function useMarkerOffsets(listRef: React.RefObject<HTMLOListElement | null>) {
       // different heights, so evenly-spaced windows drifted off the markers.
       setMarks((prev) =>
         prev.length === next.length &&
-        prev.every((v, i) => Math.abs(v - next[i]!) < 0.5)
+        prev.every((v, i) => Math.abs(v - next[i]) < 0.5)
           ? prev
           : next
       );
@@ -292,7 +292,7 @@ function MobileTimeline({ reduced }: { reduced: boolean }) {
   });
 
   const first = marks[0] ?? 0;
-  const last = marks.length ? marks[marks.length - 1]! : 0;
+  const last = marks.length ? marks[marks.length - 1] : 0;
   const travel = Math.max(0, last - first);
 
   const dotY = useTransform(
@@ -332,7 +332,7 @@ function MobileTimeline({ reduced }: { reduced: boolean }) {
             arrival={
               travel > 0
                 ? DOT_RUN[0] +
-                  (DOT_RUN[1] - DOT_RUN[0]) * ((marks[index]! - first) / travel)
+                  (DOT_RUN[1] - DOT_RUN[0]) * ((marks[index] - first) / travel)
                 : index / Math.max(1, STEPS.length - 1)
             }
             reduced={reduced}

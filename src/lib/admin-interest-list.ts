@@ -749,7 +749,7 @@ export async function addManualInterestListSignupsFromPaste(input: {
   const { rows, errors: parseErrors } = parseEventSignupPaste(input.paste);
   if (rows.length === 0) {
     if (parseErrors.length > 0) {
-      throw new UserFacingError(parseErrors[0]!);
+      throw new UserFacingError(parseErrors[0]);
     }
     throw new UserFacingError("Paste at least one row: timestamp, name, and email");
   }

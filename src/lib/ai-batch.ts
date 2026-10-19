@@ -1,4 +1,3 @@
-import type Anthropic from "@anthropic-ai/sdk";
 import { JSON_SYSTEM_SUFFIX } from "@/lib/ai-security";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
@@ -238,7 +237,7 @@ const anthropicAdapter: Adapter = {
 
     const outcomes: BatchOutcome[] = [];
     for await (const entry of await client.messages.batches.results(job.providerBatchId)) {
-      const result = entry.result as Anthropic.Messages.MessageBatchIndividualResponse["result"];
+      const result = entry.result;
       if (result.type === "succeeded") {
         const message = result.message;
         const text = message.content.find((b) => b.type === "text");
@@ -391,7 +390,7 @@ export async function listPendingBatchJobs(limit = 25): Promise<AiBatchJobRow[]>
 export async function pollAiBatch(job: AiBatchJobRow): Promise<PollResult> {
   let grant: AiGrant;
   try {
-    grant = await (await resolveAiAccess(job.userId)).completion(job.operation as AiOperationId);
+    grant = await (await resolveAiAccess(job.userId)).completion(job.operation);
   } catch (err) {
     // The key that submitted this is gone (removed, rotated, allowance spent). Nothing can
     // read the batch, so stop holding the work hostage to it.
@@ -453,7 +452,7 @@ export async function pollAiBatch(job: AiBatchJobRow): Promise<PollResult> {
 export async function finishBatchJob(job: AiBatchJobRow): Promise<void> {
   await settleBatchJob(job, "applied", null);
   try {
-    const grant = await (await resolveAiAccess(job.userId)).completion(job.operation as AiOperationId);
+    const grant = await (await resolveAiAccess(job.userId)).completion(job.operation);
     await ADAPTERS[job.provider].cleanup(grant, job);
   } catch (err) {
     // The provider keeps batch inputs for its own retention window; failing to delete them
@@ -491,7 +490,7 @@ export async function cancelBatchJobsFor(userId: string, jobIds?: string[]): Pro
   });
   for (const row of rows) {
     try {
-      const grant = await (await resolveAiAccess(userId)).completion(row.operation as AiOperationId);
+      const grant = await (await resolveAiAccess(userId)).completion(row.operation);
       await ADAPTERS[row.provider].cleanup(grant, row);
     } catch {
       // Nothing to do: the row is being closed regardless.

@@ -135,7 +135,7 @@ function Activity({ steps, at, done, totalMs }: { steps: DemoStep[]; at: number;
   const { dispatch, reduced } = useDemo();
   const [liveOpen, setLiveOpen] = useState(true);
   const [finalOpen, setFinalOpen] = useState(false);
-  const current = steps[Math.min(at, steps.length - 1)]!;
+  const current = steps[Math.min(at, steps.length - 1)];
   const finished = steps.slice(0, at);
   const orbit = steps.slice(0, at + 1).flatMap((s) => (s.kind === "read" || s.kind === "search" ? s.refs ?? [] : []));
   const looked = new Set(steps.filter((s) => s.kind === "read").flatMap((s) => s.refs ?? []));
@@ -300,7 +300,7 @@ function Answer({ turn, last }: { turn: AssistantTurn; last: boolean }) {
   // Walk the stages at their own pace, then hand over to the writing.
   useEffect(() => {
     if (done || at >= writingAt) return;
-    const t = window.setTimeout(() => setAt((i) => i + 1), steps[at]!.ms);
+    const t = window.setTimeout(() => setAt((i) => i + 1), steps[at].ms);
     return () => window.clearTimeout(t);
   }, [at, done, steps, writingAt]);
 
@@ -576,7 +576,7 @@ export function ChatScreen() {
             </form>
             <div className="flex gap-2 overflow-hidden" aria-label="Suggested questions">
               {CHAT_SUGGESTIONS.map((sg, i) => {
-                const Icon = SUGGESTION_ICONS[i % SUGGESTION_ICONS.length]!;
+                const Icon = SUGGESTION_ICONS[i % SUGGESTION_ICONS.length];
                 return (
                   <button
                     key={sg.q}

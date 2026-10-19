@@ -742,8 +742,8 @@ export async function runImportJob(importId: string): Promise<void> {
         if (engines.jev) {
           const nameFolds: Array<{ rowId: string; probe: DuplicateProbe; best: DuplicateMatch }> = [];
           for (const row of pendingRows) {
-            if (pinnedSubject(row.payload as ImportJobRowPayload)) continue;
-            const probe = adapter.identity(row.payload as ImportJobRowPayload);
+            if (pinnedSubject(row.payload)) continue;
+            const probe = adapter.identity(row.payload);
             if (!probe) continue;
             const best = findDuplicateCandidatesIndexed(duplicateIndex, probe)[0];
             if (best && !best.strong && best.confidence >= matchConfidence) {
@@ -771,7 +771,7 @@ export async function runImportJob(importId: string): Promise<void> {
           // The adapter was chosen from this job's own `importType` and the rows belong to
           // that job, so the payload union is narrowed once here rather than at each of the
           // dozen field reads inside the adapter.
-          const payload = row.payload as ImportJobRowPayload;
+          const payload = row.payload;
           const personKey = personKeyOf(payload);
           // A row whose person an earlier row already settled (or is creating) adds history,
           // not a person: it is merged but never counted as "already in your orbit".
@@ -988,7 +988,7 @@ export async function runImportJob(importId: string): Promise<void> {
               toUpdate.push({
                 row: f.row,
                 contactId: subject.id,
-                input: adapter.toMerge(f.row.payload as ImportJobRowPayload, subject),
+                input: adapter.toMerge(f.row.payload, subject),
                 follower: true,
               });
             } else if (leaderFate.get(f.key) === "blocked") {
@@ -1120,7 +1120,7 @@ export async function runImportJob(importId: string): Promise<void> {
             if (!contactId) continue;
             interactionRows.push(
               ...adapter
-                .interactions(row.payload as ImportJobRowPayload, contactId, userId)
+                .interactions(row.payload, contactId, userId)
                 // Provenance stamped here, not in each adapter: it is a property of the job,
                 // not of the row, and an adapter that forgot it would produce interactions
                 // no revert could find.
@@ -1196,7 +1196,7 @@ export async function runImportJob(importId: string): Promise<void> {
             if (!contactId) continue;
             reminderRows.push(
               ...adapter
-                .reminders(row.payload as ImportJobRowPayload, contactId, userId)
+                .reminders(row.payload, contactId, userId)
                 .map((reminder) => ({ ...reminder, importId }))
             );
           }

@@ -6,7 +6,7 @@ export function nameFromEmail(email: string): string {
   return (email.split("@")[0] ?? "")
     .split(/[._-]+/)
     .filter(Boolean)
-    .map((w) => w[0]!.toUpperCase() + w.slice(1))
+    .map((w) => w[0].toUpperCase() + w.slice(1))
     .join(" ");
 }
 
@@ -111,7 +111,7 @@ export function peopleFromDescription(description: string): Array<{
 
   // mailto: links scattered in the description
   for (const match of description.matchAll(/mailto:([\w.+-]+@[\w.-]+)/gi)) {
-    add("", match[1]!.toLowerCase());
+    add("", match[1].toLowerCase());
   }
 
   return people;

@@ -722,7 +722,7 @@ export async function generateConversationStarters(
     candidates = parsed.data.starters.map((s, i) => ({
       id: `a${i}`,
       text: s.text.trim(),
-      kind: s.kind as StarterKind,
+      kind: s.kind,
       basis: s.basis.trim(),
       source: "ai" as const,
     }));

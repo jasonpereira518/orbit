@@ -60,7 +60,7 @@ export function titleNames(title: string, self: string[]): string[] {
   return out;
 }
 
-const cap = (w: string) => w[0]!.toUpperCase() + w.slice(1);
+const cap = (w: string) => w[0].toUpperCase() + w.slice(1);
 
 /**
  * How a title name reads an address: "david.craver" and "davidcraver" are David Craver
@@ -70,7 +70,7 @@ function readAddress(name: string, email: string): { name: string; full: boolean
   const n = name.toLowerCase();
   const local = (email.split("@")[0] ?? "").toLowerCase();
   const parts = local.split(/[._-]+/).map((p) => p.replace(/[^a-z]/g, "")).filter(Boolean);
-  if (parts.length >= 2 && parts[0] === n) return { name: `${name} ${cap(parts[parts.length - 1]!)}`, full: true };
+  if (parts.length >= 2 && parts[0] === n) return { name: `${name} ${cap(parts[parts.length - 1])}`, full: true };
   const letters = local.replace(/[^a-z]/g, "");
   if (letters.startsWith(n)) {
     const rest = letters.slice(n.length);
@@ -97,8 +97,8 @@ export function pairNames(
   const out = new Map<string, { name: string; full: boolean }>();
   fits.forEach((f, i) => {
     if (f.length !== 1) return;
-    const claimed = fits.some((g, j) => j !== i && g.some((x) => x.email === f[0]!.email));
-    if (!claimed) out.set(f[0]!.email, f[0]!.read);
+    const claimed = fits.some((g, j) => j !== i && g.some((x) => x.email === f[0].email));
+    if (!claimed) out.set(f[0].email, f[0].read);
   });
   return out;
 }
@@ -294,7 +294,7 @@ export async function getMeetingContext(
   const self = await loadMeetingSelf(userId);
   const names = titleNames(linked.title, [self.firstName ?? "", self.lastName ?? ""]);
   const paired = pairNames(names, linked.attendees);
-  const pairedFirst = new Set([...paired.values()].map((p) => p.name.split(" ")[0]!.toLowerCase()));
+  const pairedFirst = new Set([...paired.values()].map((p) => p.name.split(" ")[0].toLowerCase()));
   const onInvite = new Set(linked.attendees.map((a) => a.contactId).filter(Boolean));
   // A title name nobody on the invite answers to: the one contact by that first name, if one.
   const titled = (
@@ -304,8 +304,8 @@ export async function getMeetingContext(
         .slice(0, 2)
         .map(async (n) => {
           const { strong } = await matchContactsByName(userId, n).catch(() => ({ strong: [] as { id: string; name: string }[] }));
-          const hits = strong.filter((h) => h.name.split(/\s+/)[0]!.toLowerCase() === n.toLowerCase());
-          return hits.length === 1 && !onInvite.has(hits[0]!.id) ? hits[0]!.id : null;
+          const hits = strong.filter((h) => h.name.split(/\s+/)[0].toLowerCase() === n.toLowerCase());
+          return hits.length === 1 && !onInvite.has(hits[0].id) ? hits[0].id : null;
         })
     )
   ).filter((id): id is string => !!id);

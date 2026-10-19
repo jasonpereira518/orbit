@@ -174,7 +174,7 @@ const SLUG_PATTERN = `(?!${RESERVED_WAITLIST_SLUGS.map((s) => `${escapeRegex(s)}
 /** The slug in a `/waitlist/<slug>` pathname, or null when it is any other path. */
 export function waitlistSlugFromPath(pathname: string): string | null {
   const match = new RegExp(`^/waitlist/(${SLUG_PATTERN})$`).exec(pathname);
-  return match ? match[1]! : null;
+  return match ? match[1] : null;
 }
 
 /**

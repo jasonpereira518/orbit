@@ -297,7 +297,7 @@ export async function createEventForUser(
       notes: input.notes ?? null,
     })
     .returning();
-  return row!;
+  return row;
 }
 
 export async function updateEventForUser(

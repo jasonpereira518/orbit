@@ -141,7 +141,7 @@ export async function buildPreviews(
       if (signal?.aborted) return;
       const next = cursor++;
       if (next >= files.length) return;
-      const entry = files[next]!;
+      const entry = files[next];
       const preview = await buildPreview(entry.file);
       if (signal?.aborted) {
         revokePreview(preview);

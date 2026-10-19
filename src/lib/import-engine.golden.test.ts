@@ -3,7 +3,7 @@ import "../../scripts/smoke/_env";
 import { after, before, describe, it, mock } from "node:test";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { contacts, importJobRows, imports, interactions, type ImportJobRowPayload } from "@/db/schema";
+import { contacts, importJobRows, imports, interactions,} from "@/db/schema";
 import { runImportJobById } from "@/lib/import-job-dispatch";
 import { parseLinkedInConnectionsCsv } from "@/lib/linkedin-connections";
 import { ensureUserSettings } from "@/lib/user-settings";
@@ -79,7 +79,7 @@ describe("runImportJob (golden)", () => {
         importId: job.id,
         userId: GOLDEN_USER,
         rowIndex: i,
-        payload: { index: i, ...row } as unknown as ImportJobRowPayload,
+        payload: { index: i, ...row },
       }))
     );
 

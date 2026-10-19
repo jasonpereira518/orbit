@@ -73,10 +73,10 @@ export function splitDirectives(text: string, options: { streaming?: boolean } =
     }
     flush();
     if (m[1] === "people") {
-      const ids = idsOf(m[2]!);
+      const ids = idsOf(m[2]);
       if (ids.length) segments.push({ kind: "people", ids });
     } else {
-      const key = m[2]!.trim();
+      const key = m[2].trim();
       if (key) segments.push({ kind: "list", key });
     }
   }
@@ -104,12 +104,12 @@ export function stripInvalidDirectives(
       continue;
     }
     if (m[1] === "people") {
-      const all = idsOf(m[2]!);
+      const all = idsOf(m[2]);
       const kept = all.filter((id) => known.people.has(id)).slice(0, MAX_PEOPLE_PER_BLOCK);
       removed += all.length - kept.length;
       if (kept.length) lines.push(`::people[${kept.join(",")}]`);
     } else {
-      const key = m[2]!.trim();
+      const key = m[2].trim();
       if (known.lists.has(key)) lines.push(`::list[${key}]`);
       else removed += 1;
     }
@@ -155,7 +155,7 @@ export function expandLists(text: string, lists: Readonly<Record<string, ChatBlo
         : segment.kind === "people"
           ? `::people[${segment.ids.join(",")}]`
           : lists[segment.key]
-            ? listToMarkdown(lists[segment.key]!)
+            ? listToMarkdown(lists[segment.key])
             : ""
     )
     .filter(Boolean)
@@ -179,7 +179,7 @@ export function directivesAsText(
               .map((n) => `- ${n}`)
               .join("\n")
           : lists[segment.key]
-            ? listToMarkdown(lists[segment.key]!)
+            ? listToMarkdown(lists[segment.key])
             : ""
     )
     .filter(Boolean)

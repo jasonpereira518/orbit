@@ -93,10 +93,10 @@ export function DemoSidebar({ state, dispatch }: { state: DemoState; dispatch: D
               exit={reduced ? undefined : { opacity: 0 }}
               transition={{ duration: 0.16 }}
               role="dialog"
-              aria-label={`${SOON[it.href]!.label} is coming soon`}
+              aria-label={`${SOON[it.href].label} is coming soon`}
               className="absolute left-[calc(100%+0.5rem)] top-0 z-40 w-56 rounded-xl border border-border bg-popover p-3 text-left shadow-xl"
             >
-              <p className="text-sm font-medium text-ink">{SOON[it.href]!.label} is coming soon</p>
+              <p className="text-sm font-medium text-ink">{SOON[it.href].label} is coming soon</p>
               <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                 It&apos;s one of the features you can vote for — spend a star on it.
               </p>

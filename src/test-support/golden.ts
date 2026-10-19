@@ -72,7 +72,7 @@ export function normalize(value: unknown, extraStrings: Record<string, string> =
     if (v instanceof Set) return { "<set>": [...v].map(walk) };
     if (Array.isArray(v)) return v.map(walk);
     const out: Record<string, unknown> = {};
-    for (const k of Object.keys(v as object).sort()) {
+    for (const k of Object.keys(v).sort()) {
       const r = (v as Record<string, unknown>)[k];
       if (typeof r === "function") continue;
       // `itemHash` digests a (randomly generated) contact id, so it differs per run.

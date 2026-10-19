@@ -1051,7 +1051,7 @@ export async function getAdminContactDetail(
   const presenceById = new Map(presence.map((p) => [p.id, p]));
 
   return {
-    contact: toContactRow(record as ContactRecord, presence.length, true),
+    contact: toContactRow(record, presence.length, true),
     userId,
     relationshipScore: record.relationshipScore ?? null,
     statedCloseness: record.statedCloseness ?? null,

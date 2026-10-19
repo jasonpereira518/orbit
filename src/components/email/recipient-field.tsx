@@ -141,7 +141,7 @@ export function RecipientField({
             if (e.key === "Enter" || e.key === "," || e.key === ";" || (e.key === "Tab" && text.trim())) {
               if (open && options[active] && e.key !== "," && e.key !== ";") {
                 e.preventDefault();
-                add(options[active]!.email);
+                add(options[active].email);
                 return;
               }
               if (text.trim()) {

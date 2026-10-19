@@ -125,7 +125,7 @@ export function lumaEventUrl(value: unknown): string | null {
  * single-event endpoint, so both shapes are accepted rather than assuming one.
  */
 export function toProviderEvent(entry: LumaEntry): ProviderEvent | null {
-  const raw = (entry.event ?? entry) as Record<string, unknown>;
+  const raw = (entry.event ?? entry);
   const id = str(raw.api_id) ?? str(raw.event_api_id);
   const title = str(raw.name);
   if (!id || !title) return null;

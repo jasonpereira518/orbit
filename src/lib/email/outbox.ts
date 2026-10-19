@@ -197,7 +197,7 @@ export async function enqueueEmail(userId: string, input: EnqueueInput): Promise
         inReplyToSendId: input.inReplyToSendId ?? null,
       })
       .returning(); // bare: a field selector breaks over the Db union
-    return { ok: true, id: row!.id, sendAt: row!.sendAt, to: recipients.to, provider: sender.provider };
+    return { ok: true, id: row.id, sendAt: row.sendAt, to: recipients.to, provider: sender.provider };
   } catch (err) {
     if (isUniqueViolation(err)) return refuse("duplicate");
     throw err;

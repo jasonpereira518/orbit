@@ -178,7 +178,7 @@ export async function listSiteInvites(limit = 25): Promise<SiteInviteRow[]> {
   return data.map((inv) => ({
     id: inv.id,
     email: inv.emailAddress,
-    status: inv.status as SiteInviteRow["status"],
+    status: inv.status,
     createdAt: new Date(inv.createdAt),
     url: inv.status === "pending" ? inv.url ?? null : null,
   }));
@@ -231,7 +231,7 @@ export async function claimSiteInviteGrant(userId: string): Promise<boolean> {
   if (!isClerkConfigured() || userId === "demo-user") return false;
   try {
     const user = await (await clerkClient()).users.getUser(userId);
-    return await recordSiteInvite(userId, user.publicMetadata as Record<string, unknown>);
+    return await recordSiteInvite(userId, user.publicMetadata);
   } catch (err) {
     reportError(err, { where: "site.invite.grant", level: "warning" });
     return false;

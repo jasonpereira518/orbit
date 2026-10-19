@@ -250,8 +250,8 @@ export function ConstellationPreview() {
           ))}
           {CHAINS.flatMap((chain) =>
             chain.slice(0, -1).map((a, i) => {
-              const from = byId[a]!;
-              const to = byId[chain[i + 1]!]!;
+              const from = byId[a];
+              const to = byId[chain[i + 1]];
               return (
                 <line
                   key={`${a}-${i}`}

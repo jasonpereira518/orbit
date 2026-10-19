@@ -22,7 +22,7 @@ export function schedulePresets(now: Date): { tomorrowMorning: Date; mondayMorni
 export function atLocal(ymd: string, hhmm: string): Date {
   const [y, mo, d] = ymd.split("-").map(Number);
   const [h, mi] = hhmm.split(":").map(Number);
-  return new Date(y!, (mo ?? 1) - 1, d ?? 1, h ?? 0, mi ?? 0, 0, 0);
+  return new Date(y, (mo ?? 1) - 1, d ?? 1, h ?? 0, mi ?? 0, 0, 0);
 }
 
 /** `"06:00"` … `"22:30"`, every half hour. */

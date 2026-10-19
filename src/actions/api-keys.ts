@@ -58,7 +58,7 @@ export async function listApiKeys(): Promise<ApiKeySummary[]> {
     name: r.name,
     kind: r.kind,
     prefix: r.prefix,
-    scopes: (r.scopes ?? ["read"]) as ApiKeyScope[],
+    scopes: (r.scopes ?? ["read"]),
     lastUsedAt: r.lastUsedAt,
     createdAt: r.createdAt,
   }));

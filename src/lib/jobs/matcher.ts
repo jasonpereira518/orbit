@@ -353,7 +353,7 @@ export async function matchJobPostings(opts: { now?: Date } = {}): Promise<Match
         continue;
       }
       budget -= 1;
-      const first = items[0]!.candidate;
+      const first = items[0].candidate;
       const titles = items.slice(0, MAX_TITLES_IN_BODY).map((i) => i.candidate.title);
       const more = items.length - titles.length;
       const roleWord = items.length === 1 ? "role" : "roles";

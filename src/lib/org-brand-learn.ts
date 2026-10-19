@@ -88,14 +88,14 @@ export async function extractBrandHex(image: Buffer): Promise<string | null> {
   const ink = { n: 0, r: 0, g: 0, b: 0 };
   let opaque = 0;
   for (let i = 0; i + 3 < data.length; i += 4) {
-    if (data[i + 3]! < 200) continue;
+    if (data[i + 3] < 200) continue;
     opaque += 1;
-    const r = data[i]!;
-    const g = data[i + 1]!;
-    const b = data[i + 2]!;
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
     const { h, s, l } = hsl(r, g, b);
     if (s >= 0.3 && l >= 0.15 && l <= 0.85) {
-      const bin = bins[Math.floor(h / (360 / HUE_BINS)) % HUE_BINS]!;
+      const bin = bins[Math.floor(h / (360 / HUE_BINS)) % HUE_BINS];
       bin.n += 1;
       bin.r += r;
       bin.g += g;

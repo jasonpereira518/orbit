@@ -167,7 +167,7 @@ export function enqueueOfflineAction(
   id = newQueueId(now)
 ): QueuedAction[] {
   const kept = queue.filter((a) => a.subject !== intent.subject);
-  return [...kept, { ...intent, id, queuedAt: now } as QueuedAction].slice(-OFFLINE_QUEUE_MAX);
+  return [...kept, { ...intent, id, queuedAt: now }].slice(-OFFLINE_QUEUE_MAX);
 }
 
 export function removeQueuedAction(queue: readonly QueuedAction[], id: string): QueuedAction[] {

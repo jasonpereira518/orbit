@@ -162,7 +162,7 @@ export function personNameFromSlug(slug: string): string | null {
 
   // Only trailing disambiguators go — a leading digit run is part of however they spell
   // their name, and dropping from the middle would reorder a name we cannot read anyway.
-  while (tokens.length > 1 && isDisambiguator(tokens[tokens.length - 1]!)) {
+  while (tokens.length > 1 && isDisambiguator(tokens[tokens.length - 1])) {
     tokens.pop();
   }
 

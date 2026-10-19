@@ -310,7 +310,7 @@ function expectedFailure(err: unknown): { ok: false; reason: "no_ai" | "rate_lim
 
 function asBrief(result: unknown): ResearchBrief | null {
   if (typeof result !== "object" || result === null || !("v" in result)) return null;
-  const v = (result as { v: unknown }).v;
+  const v = (result).v;
   if (typeof v !== "object" || v === null) return null;
   const kind = (v as { kind?: unknown }).kind;
   return kind === "person" || kind === "company" || kind === "discover" ? (v as ResearchBrief) : null;

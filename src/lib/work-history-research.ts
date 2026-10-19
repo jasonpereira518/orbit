@@ -525,7 +525,7 @@ export async function researchWorkHistories(
       // Checked before starting a person, not during: one call is well under the margin
       // the callers leave between this deadline and their function's own.
       if (options.deadline !== undefined && Date.now() >= options.deadline) return;
-      const id = ids[next++]!;
+      const id = ids[next++];
       const outcome = await researchContactWorkHistory(userId, id, {
         researcher: options.researcher,
         checker: options.checker,

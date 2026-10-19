@@ -196,7 +196,7 @@ export const isHeldByStealth = cache(
             isAdmin: false,
             clerk: {
               createdAtMs: user.createdAt,
-              publicMetadata: user.publicMetadata as Record<string, unknown>,
+              publicMetadata: user.publicMetadata,
             },
           });
         } catch (err) {

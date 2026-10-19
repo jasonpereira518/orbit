@@ -224,7 +224,7 @@ export async function mergeCaptureBatchRows(
     const [only] = await db
       .update(captureJobs)
       .set({ status: "ready", batchGroupId: null, updatedAt: new Date() })
-      .where(eq(captureJobs.id, parts[0]!.id))
+      .where(eq(captureJobs.id, parts[0].id))
       .returning();
     return only ?? null;
   }
@@ -240,7 +240,7 @@ export async function mergeCaptureBatchRows(
         userId,
         sourceKind: "messy",
         status: "ready",
-        entryPoint: parts[0]!.entryPoint,
+        entryPoint: parts[0].entryPoint,
         sourceLabel: `${parts.length} notes`,
         result: combined.result,
         sourceText: combined.sourceText,
@@ -307,7 +307,7 @@ export type CreateCaptureJobInput = {
 export async function createCaptureJob(userId: string, input: CreateCaptureJobInput): Promise<CaptureJobRow> {
   const db = await getDb();
   const [row] = await db.insert(captureJobs).values(captureJobValues(userId, input)).returning();
-  return row!;
+  return row;
 }
 
 /**

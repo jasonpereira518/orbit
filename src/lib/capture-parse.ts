@@ -26,7 +26,6 @@ import {
   validateCadences,
   validateCommitments,
   emptyCommitmentResult,
-  type RejectedCounts,
 } from "@/lib/date-commitment-extract";
 import { normalizePastedCaptureText } from "@/lib/capture-ingest";
 import { buildDuplicateIndex, findDuplicateCandidatesIndexed, type DuplicateSubject } from "@/lib/duplicates";
@@ -242,7 +241,7 @@ export async function runCaptureParse(
       knownPeople: seedPeople.map((p) => p.name).filter(Boolean) as string[],
       engines: enginesP,
     }).catch(
-      () => ({ commitments: [], cadences: [] }) as Awaited<ReturnType<typeof fetchRawCommitments>>
+      () => ({ commitments: [], cadences: [] })
     ),
     getDb().then((db) =>
       db.query.contacts.findMany({
@@ -604,7 +603,7 @@ export async function runCaptureParse(
     sourceText: corpus,
     sourceHash,
     suggestedReminders: [...suggestedReminders, ...impliedReminders, ...promiseReminders],
-    suggestionsSkipped: commitmentResult.rejected as RejectedCounts,
+    suggestionsSkipped: commitmentResult.rejected,
     mentions,
     mentionedOnly,
     linkedinLookup: linkedin
@@ -746,7 +745,7 @@ async function parsePastedLinkedInProfiles(
     sourceText,
     sourceHash: hashSourceNote(sourceText),
     suggestedReminders: [],
-    suggestionsSkipped: emptyCommitmentResult().rejected as RejectedCounts,
+    suggestionsSkipped: emptyCommitmentResult().rejected,
     mentions: [],
     mentionedOnly: [],
     linkedinLookup: {

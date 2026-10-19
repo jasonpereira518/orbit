@@ -3944,7 +3944,7 @@ const ADMIN_V2_STATEMENTS = [
  */
 export function rowsOf<T>(result: unknown): T[] {
   if (Array.isArray(result)) return result as T[];
-  return ((result as { rows?: T[] } | null)?.rows ?? []) as T[];
+  return ((result as { rows?: T[] } | null)?.rows ?? []);
 }
 
 export function isPgvectorAvailable() {
@@ -5234,7 +5234,7 @@ export async function runAtomicWrite(
   };
 
   if (typeof batchable.batch === "function") {
-    const statements = build(db as unknown as AtomicWriter);
+    const statements = build(db);
     if (!statements.length) return;
     await batchable.batch(statements);
     return;
@@ -5244,7 +5244,7 @@ export async function runAtomicWrite(
   await local.transaction(async (tx) => {
     // Awaited one at a time on purpose: these are ordered writes (delete-then-insert),
     // and a `Promise.all` would let the driver interleave them.
-    for (const statement of build(tx as unknown as AtomicWriter)) {
+    for (const statement of build(tx)) {
       await (statement as unknown as Promise<unknown>);
     }
   });
@@ -5268,15 +5268,15 @@ export async function runAtomicBatch(
     batch?: (statements: AtomicStatement[]) => Promise<unknown[]>;
   };
   if (typeof batchable.batch === "function") {
-    const statements = build(db as unknown as AtomicWriter);
+    const statements = build(db);
     if (!statements.length) return [];
     return batchable.batch(statements);
   }
   const local = db as ReturnType<typeof drizzlePglite<typeof schema>>;
   return local.transaction(async (tx) => {
     const results: unknown[] = [];
-    for (const statement of build(tx as unknown as AtomicWriter)) {
-      results.push(await (statement as unknown as Promise<unknown>));
+    for (const statement of build(tx)) {
+      results.push(await (statement as unknown));
     }
     return results;
   });

@@ -71,6 +71,7 @@ export function EditAttendeeDialog({
     title: row.title ?? "",
     linkedinUrl: row.linkedinUrl ?? "",
     xHandle: row.xHandle ?? "",
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- the cast narrows the DB string to the role union
     attendeeRole: (row.attendeeRole ?? NO_ROLE) as AttendeeRole | typeof NO_ROLE,
   });
 

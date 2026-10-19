@@ -793,7 +793,7 @@ export function foldMergesByContact(
   }
   return [...byId].map(([contactId, input]) => ({
     contactId,
-    input: input as Partial<ContactInput>,
+    input: input,
   }));
 }
 

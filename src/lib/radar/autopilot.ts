@@ -87,7 +87,7 @@ export async function applyAutopilot(userId: string, settings: RadarAutopilot, n
     try {
       const result = await scheduleContactFollowUpForUser(userId, t.contact_id, days);
       const action: RadarAutopilotAction = {
-        reminderId: result.reminder!.id,
+        reminderId: result.reminder.id,
         dueDate: result.dueDate,
         at: now.toISOString(),
       };

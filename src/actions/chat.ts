@@ -157,8 +157,8 @@ export async function getChatThread(threadId: string) {
   const sent: Record<string, Record<string, string>> = {};
   for (const claim of claims) {
     const match = /^chat-send:([^:]+):([^:]+)$/.exec(claim.externalId ?? "");
-    if (!match || !messageIds.has(match[1]!)) continue;
-    (sent[match[1]!] ??= {})[match[2]!] = claim.at.toISOString();
+    if (!match || !messageIds.has(match[1])) continue;
+    (sent[match[1]] ??= {})[match[2]] = claim.at.toISOString();
   }
 
   return { thread, messages, sent, versions, versionSlot: lastAssistant?.slot ?? null };

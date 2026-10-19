@@ -330,7 +330,7 @@ export async function askPerItem<T, Q extends Question>(
     for (const { key } of chunk) questions[key] = args.question(key);
     const result = await decider.ask({ operation: args.operation, state: args.state(chunk), questions }, opts);
     if (!result) return;
-    for (const { key, index } of chunk) out[index] = result.answers[key] as AnswerFor<Q>;
+    for (const { key, index } of chunk) out[index] = result.answers[key];
   });
   return out;
 }

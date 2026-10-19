@@ -730,8 +730,8 @@ export async function unmergeContacts(userId: string, mergeId: string): Promise<
     );
   }
 
-  const repointed = (merge.repointed ?? {}) as Record<string, string[]>;
-  const deleted = (merge.deleted ?? {}) as Record<string, unknown[]>;
+  const repointed = (merge.repointed ?? {});
+  const deleted = (merge.deleted ?? {});
   const loserId = merge.loserContactId;
   const winnerId = merge.winnerContactId;
 
@@ -753,7 +753,7 @@ export async function unmergeContacts(userId: string, mergeId: string): Promise<
   const catalogueRows = (Array.isArray(catalogue) ? catalogue : catalogue.rows) as {
     column_name: string;
   }[];
-  const snapshot = merge.loserSnapshot as Record<string, unknown>;
+  const snapshot = merge.loserSnapshot;
   const restoreColumns = catalogueRows
     .map((r) => r.column_name)
     .filter((name) => Object.hasOwn(snapshot, name));

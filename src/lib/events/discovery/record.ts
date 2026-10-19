@@ -173,7 +173,7 @@ async function createFromCandidate(
       RETURNING id
     `)
   );
-  return rows[0]!.id;
+  return rows[0].id;
 }
 
 /**
@@ -304,7 +304,7 @@ export async function recordDiscoveryCandidates(
     }
     await writeGuests(userId, settled, candidate);
     // Record what we now know for the next pass, whichever row won.
-    known.set(keyId(keys[0]!), { eventId: settled, tombstoned: false, dismissed: false });
+    known.set(keyId(keys[0]), { eventId: settled, tombstoned: false, dismissed: false });
   }
 
   return stats;

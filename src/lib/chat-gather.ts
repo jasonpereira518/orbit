@@ -132,7 +132,7 @@ function describeOutcome(out: { ok: boolean; result: unknown }): string {
 function describeCall(call: ToolCall, ctx: ChatContext): string {
   const args = (call.args && typeof call.args === "object" ? call.args : {}) as Record<string, unknown>;
   const text = (key: string) =>
-    typeof args[key] === "string" ? sanitizeProfileLine(args[key] as string).slice(0, 60) : "";
+    typeof args[key] === "string" ? sanitizeProfileLine(args[key]).slice(0, 60) : "";
   const nameOf = (id: string) =>
     ctx.retrieved.find((c) => c.id === id)?.fullName ??
     ctx.attachedPeople.find((p) => p.id === id)?.name ??

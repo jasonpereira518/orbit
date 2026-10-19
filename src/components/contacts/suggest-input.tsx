@@ -84,7 +84,7 @@ export function SuggestInput({
       setHighlight((h) => (h - 1 + matches.length) % matches.length);
     } else if (event.key === "Enter" && matches[highlight]) {
       event.preventDefault();
-      choose(matches[highlight]!);
+      choose(matches[highlight]);
     } else if (event.key === "Escape") {
       setOpen(false);
     }

@@ -306,7 +306,7 @@ export async function decideCaptureChecks(
     for (const item of input.items) {
       if (!item.parsed.tags?.length) continue;
       const next = item.parsed.tags.map((t) => mapped.get(t.trim().toLowerCase()) ?? t);
-      out.tagsMapped += next.filter((t, i) => t !== item.parsed.tags![i]).length;
+      out.tagsMapped += next.filter((t, i) => t !== item.parsed.tags[i]).length;
       item.parsed.tags = [...new Map(next.map((t) => [t.toLowerCase(), t])).values()];
     }
   }

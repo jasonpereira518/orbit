@@ -192,7 +192,7 @@ export async function setStarsCore(input: StarsInput, ctx: VoteContext): Promise
         .values({ optionId: pick, voterKey, signupId, stars: allocation as Record<string, number> })
         .onConflictDoUpdate({
           target: waitlistPollVotes.voterKey,
-          set: { optionId: pick, signupId, stars: allocation as Record<string, number>, updatedAt: new Date() },
+          set: { optionId: pick, signupId, stars: allocation, updatedAt: new Date() },
         });
     }
 

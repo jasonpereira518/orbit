@@ -60,7 +60,7 @@ export const PLANETS: Record<PlanetId, PlanetDef> = {
 export function planetForIndex(index: number): PlanetDef {
   const n = PLANET_ORDER.length;
   const i = ((Math.floor(index) % n) + n) % n;
-  return PLANETS[PLANET_ORDER[i]!];
+  return PLANETS[PLANET_ORDER[i]];
 }
 
 /**
@@ -83,5 +83,5 @@ export function planetForCloseness(closeness: number, index: number): PlanetDef 
   const level = Math.min(5, Math.max(1, Math.round(closeness) || 2)) as 1 | 2 | 3 | 4 | 5;
   const ring = PLANET_RINGS[level];
   const i = ((Math.floor(index) % ring.length) + ring.length) % ring.length;
-  return PLANETS[ring[i]!];
+  return PLANETS[ring[i]];
 }

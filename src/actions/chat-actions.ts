@@ -52,7 +52,7 @@ async function claim(
   const actions = row.proposedActions ?? [];
   const index = actions.findIndex((a) => a.id === actionId);
   if (index === -1) return { ok: false, reason: "not_found" };
-  const current = actions[index]!;
+  const current = actions[index];
   if (current.status === "done") return { ok: false, reason: "already_done" };
   if (current.status === "dismissed") return { ok: false, reason: "already_dismissed" };
   if (current.status !== "proposed") return { ok: false, reason: "conflict" };
@@ -73,7 +73,7 @@ async function claim(
     )
     .returning(); // bare: a field selector breaks over the Db union
   if (!updated.length) return { ok: false, reason: "conflict" };
-  return { ok: true, actions: claimed, index, action: claimed[index]! };
+  return { ok: true, actions: claimed, index, action: claimed[index] };
 }
 
 /** Writes the array back with one entry settled, by the same CAS the claim used to set it. */
@@ -87,7 +87,7 @@ async function settle(
   const db = await getDb();
   const before = JSON.stringify(claimedActions);
   const after = claimedActions.slice();
-  after[index] = { ...after[index]!, ...next };
+  after[index] = { ...after[index], ...next };
   await db
     .update(chatMessages)
     .set({ proposedActions: after })

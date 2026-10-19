@@ -62,7 +62,7 @@ export async function runNewsSweep(deps: { fetchDeps?: FetchPageDeps; now?: Date
       stats.budgetExhausted = true;
       break;
     }
-    const kind = source.kind as ExternalSourceKind;
+    const kind = source.kind;
     let res;
     try {
       res = await guardedFetchText(source.url, {

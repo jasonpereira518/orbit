@@ -155,7 +155,7 @@ export function PersonDeck({
   const current = items[index] ?? null;
   const next = items[index + 1] ?? null;
   const previousDecided = useMemo(() => {
-    for (let i = index - 1; i >= 0; i--) if (people[items[i]!.key]) return i;
+    for (let i = index - 1; i >= 0; i--) if (people[items[i].key]) return i;
     return -1;
   }, [index, items, people]);
 
@@ -189,7 +189,7 @@ export function PersonDeck({
   const back = useCallback(() => {
     if (previousDecided < 0) return;
     setCustom({ dir: -1, leaving: "back", reduced });
-    const prev = items[previousDecided]!;
+    const prev = items[previousDecided];
     setAnnounce(`Back to ${prev.parsed.name || "the previous person"}, ${previousDecided + 1} of ${items.length}.`);
     onBack(prev.key);
   }, [items, onBack, previousDecided]);

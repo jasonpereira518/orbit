@@ -28,7 +28,7 @@ export async function ingestCaptureMediaInParts(input: {
     CAPTURE_BASE64_REQUEST_FILE_BYTES
   );
   if (oversized.length) {
-    const first = oversized[0]!;
+    const first = oversized[0];
     return {
       ok: false as const,
       error: `${first.filename} is ${formatUploadSize(base64DecodedBytes(first.base64))} — one file can be at most ${formatUploadSize(CAPTURE_BASE64_REQUEST_FILE_BYTES)}`,
@@ -38,7 +38,7 @@ export async function ingestCaptureMediaInParts(input: {
 
   let combined: IngestOk | null = null;
   for (let i = 0; i < batches.length; i++) {
-    const res = await ingestCaptureMedia({ text: i === 0 ? input.text : undefined, files: batches[i]! });
+    const res = await ingestCaptureMedia({ text: i === 0 ? input.text : undefined, files: batches[i] });
     if (!res.ok) return res;
     combined = combined
       ? {

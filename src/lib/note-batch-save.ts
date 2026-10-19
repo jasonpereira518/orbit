@@ -372,7 +372,7 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
         const inserted = await insertOpportunities(
           userId,
           p.opportunities.map((o) => ({
-            contactId: contactId!,
+            contactId: contactId,
             kind: o.kind,
             label: o.label,
             direction: o.direction,
@@ -383,7 +383,7 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
             rawDatePhrase: o.rawDatePhrase,
             confidenceScore: o.confidenceScore,
             createdBy: "ai" as const,
-            itemHash: buildOpportunityItemHash(input.sourceHash, contactId!, o.kind, o.label),
+            itemHash: buildOpportunityItemHash(input.sourceHash, contactId, o.kind, o.label),
           }))
         );
         // `emptyNoteBatchResult` always seeds this, but the field is optional on the type so
@@ -392,7 +392,7 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
         for (const r of inserted) {
           opportunityResults.push({
             id: r.id,
-            contactId: contactId!,
+            contactId: contactId,
             kind: r.kind,
             label: r.label,
             dueIso: r.dueDate ? isoDay(new Date(r.dueDate)) : null,
@@ -617,7 +617,7 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
       for (const r of inserted) {
         result.reminders.push({
           id: r.id, contactId: r.contactId, title: r.title, dueIso: isoDay(new Date(r.dueDate!)),
-          dateBasis: (r.dateBasis ?? "window") as NoteBatchResult["reminders"][number]["dateBasis"],
+          dateBasis: (r.dateBasis ?? "window"),
           rawDatePhrase: r.rawDatePhrase, sourceExcerpt: r.sourceExcerpt,
         });
         if (r.actionItemId) {

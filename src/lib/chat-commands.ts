@@ -97,7 +97,7 @@ export type SlashQuery = {
 export function slashQueryAt(text: string, caret: number): SlashQuery | null {
   if (caret < 1 || caret > text.length) return null;
   for (let i = caret - 1; i >= 0 && caret - i <= SLASH_QUERY_MAX_LEN + 1; i--) {
-    const ch = text[i]!;
+    const ch = text[i];
     if (ch === "/") {
       if (i !== 0 && text[i - 1] !== "\n") return null;
       return { start: i, query: text.slice(i + 1, caret) };

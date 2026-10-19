@@ -116,9 +116,7 @@ export async function explainAttendeeForUser(
     companyKeys: companyMatchKeys(row.company),
     targetKeys,
     goalFit: goalRelevanceComponent(
-      { company: row.company, title: row.title } as Parameters<
-        typeof goalRelevanceComponent
-      >[0],
+      { company: row.company, title: row.title },
       goals
     ),
     focusFit: focusFitComponent({ title: row.title }, focus),

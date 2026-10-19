@@ -388,7 +388,7 @@ export async function ingestEvents(
   if (nameFolds.length) {
     const vetoes = await nameMergeVetoes(
       ctx.engines,
-      nameFolds.map(({ best, i }) => [personCard(probeOf(pairs[i])), personCard(best!.contact)] as const),
+      nameFolds.map(({ best, i }) => [personCard(probeOf(pairs[i])), personCard(best.contact)] as const),
       DUPLICATE_TUNING.backgroundBudgetMs
     );
     nameFolds.forEach(({ i }, j) => {
@@ -508,7 +508,7 @@ export async function ingestEvents(
     created.forEach((contact, i) => {
       // Fold new contacts into the index so a LATER batch matches them rather than creating
       // the person again. Within this batch, `createIndexByKey` already did that job.
-      addToDuplicateIndex(ctx.index, contact as DuplicateSubject);
+      addToDuplicateIndex(ctx.index, contact);
       for (const pair of toCreate[i]?.pairs ?? []) {
         resolved.push({ pair, contactId: contact.id });
       }

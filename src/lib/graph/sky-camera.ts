@@ -226,7 +226,7 @@ function trimmedRange(values: number[]): [number, number] {
   const sorted = [...values].sort((a, b) => a - b);
   const lo = Math.floor((sorted.length - 1) * FRAME_TRIM);
   const hi = Math.ceil((sorted.length - 1) * (1 - FRAME_TRIM));
-  return [sorted[lo]!, sorted[hi]!];
+  return [sorted[lo], sorted[hi]];
 }
 
 /**

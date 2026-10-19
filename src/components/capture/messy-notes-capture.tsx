@@ -202,7 +202,7 @@ export function MessyNotesCapture({
         if (match) {
           const when = new Date(match.capturedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
           toast.message(
-            files.length === 1 ? `You already captured ${files[0]!.name} on ${when}` : `You already captured these on ${when}`,
+            files.length === 1 ? `You already captured ${files[0].name} on ${when}` : `You already captured these on ${when}`,
             {
               description: "Nothing new was read",
               action: { label: "Read it again", onClick: () => void ingestIntoBox(files, { force: true }) },
@@ -269,7 +269,7 @@ export function MessyNotesCapture({
         state = { ...state, excludedIds: skipped.map((f) => f.id) };
         toast.message(
           skipped.length === 1
-            ? `Skipped ${skipped[0]!.name} — you already captured it`
+            ? `Skipped ${skipped[0].name} — you already captured it`
             : `Skipped ${skipped.length} files you already captured`
         );
       }
@@ -284,7 +284,7 @@ export function MessyNotesCapture({
       if (!plans.length) return;
       const oversized = oversizedUploads(plans, CAPTURE_MAX_UPLOAD_BYTES);
       if (oversized.length) {
-        toast.error(`${oversized[0]!.label} is over ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)} — remove it and try again`);
+        toast.error(`${oversized[0].label} is over ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)} — remove it and try again`);
         return;
       }
       fanout.start(plans, (id) => byId.get(id));

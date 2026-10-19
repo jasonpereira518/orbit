@@ -152,7 +152,7 @@ export const MANAGED_FAST_MODELS: Partial<Record<AiProvider, string>> = {
  */
 export function managedModel(provider: AiProvider, requested: string | null | undefined, tier?: string): string {
   // The allowlist protects Orbit's money.
-  if (tier === "fast" && MANAGED_FAST_MODELS[provider]) return MANAGED_FAST_MODELS[provider]!;
+  if (tier === "fast" && MANAGED_FAST_MODELS[provider]) return MANAGED_FAST_MODELS[provider];
   if (requested && MANAGED_MODELS[provider].includes(requested)) return requested;
   return MANAGED_DEFAULT_MODELS[provider];
 }

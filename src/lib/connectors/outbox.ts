@@ -71,7 +71,7 @@ export const MAX_OUTBOX_ATTEMPTS = 7;
 const BACKOFF_MINUTES = [0.5, 2, 10, 60, 360, 1440];
 
 function backoffFor(attempt: number): number {
-  const minutes = BACKOFF_MINUTES[Math.min(attempt, BACKOFF_MINUTES.length - 1)]!;
+  const minutes = BACKOFF_MINUTES[Math.min(attempt, BACKOFF_MINUTES.length - 1)];
   // ±20% jitter, so a provider-wide outage does not bring every item back on the same
   // ten-minute boundary once it clears.
   return minutes * (0.8 + Math.random() * 0.4) * 60_000;
@@ -86,7 +86,7 @@ function backoffFor(attempt: number): number {
  * an override could quietly become the only thing exercised.
  */
 export function backoffBoundsMs(attempt: number): { min: number; max: number } {
-  const minutes = BACKOFF_MINUTES[Math.min(attempt, BACKOFF_MINUTES.length - 1)]!;
+  const minutes = BACKOFF_MINUTES[Math.min(attempt, BACKOFF_MINUTES.length - 1)];
   return { min: minutes * 0.8 * 60_000, max: minutes * 1.2 * 60_000 };
 }
 

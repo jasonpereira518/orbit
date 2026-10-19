@@ -55,7 +55,7 @@ export function oversizeMessage(files: { name: string; size: number }[]): string
   if (totalBytes <= CAPTURE_MAX_UPLOAD_BYTES) return null;
   const limit = formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES);
   return files.length === 1
-    ? `${files[0]!.name} is ${formatUploadSize(totalBytes)} — the limit is ${limit} per upload`
+    ? `${files[0].name} is ${formatUploadSize(totalBytes)} — the limit is ${limit} per upload`
     : `Those ${files.length} files total ${formatUploadSize(totalBytes)} — the limit is ${limit} per upload, so try smaller batches`;
 }
 
@@ -140,7 +140,7 @@ export async function uploadCaptureMedia(input: UploadInput): Promise<CaptureUpl
   const files = input.files.map(asFile);
   const { batches, oversized } = planUploadBatches(files, (f) => f.size, CAPTURE_REQUEST_FILE_BYTES);
   if (oversized.length) {
-    const first = oversized[0]!;
+    const first = oversized[0];
     return {
       ok: false,
       status: 413,
@@ -161,7 +161,7 @@ export async function uploadCaptureMedia(input: UploadInput): Promise<CaptureUpl
   let transcriptionEngine: string | null = null;
 
   for (let i = 0; i < batches.length; i++) {
-    const batch = batches[i]!;
+    const batch = batches[i];
     const res = await postCapturePart(input, batch, {
       final: i === batches.length - 1,
       // The first part creates the job — under `input.jobId` when one was minted — and every

@@ -66,7 +66,7 @@ export async function mrrMovementSeries(
     bounds.map((b) => mrrMovement(b.start, b.end))
   );
   return results.map((movement, i) => ({
-    bucketStart: bounds[i]!.start,
+    bucketStart: bounds[i].start,
     ...movement,
   }));
 }

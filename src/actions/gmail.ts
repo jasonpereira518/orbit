@@ -38,7 +38,7 @@ import { revokeGoogleGrant } from "@/lib/oauth-revoke";
 import { deleteEventConnection } from "@/lib/events/connections";
 import { purgeUserData } from "@/lib/user-data";
 import { DISCONNECT_DELETE_CATEGORIES } from "@/lib/data-categories";
-import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
+import { type ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 import { demoWorkspaceEmail, isDemoWorkspace } from "@/lib/demo-workspace";
 import { demoGmailConnectionStatus } from "@/lib/demo-workspace-connections";
 import { recordDemoRecruiterScan } from "@/lib/demo-workspace-actions";

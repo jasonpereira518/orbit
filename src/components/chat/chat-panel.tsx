@@ -2209,12 +2209,12 @@ function VersionSwitcher({
 }) {
   const index = versions.findIndex((v) => v.assistantMessageId === currentId);
   if (index === -1) return null;
-  const current = versions[index]!;
+  const current = versions[index];
   return (
     <div className="flex items-center gap-0.5 text-xs text-muted-foreground" role="group" aria-label="Answer version">
       <button
         type="button"
-        onClick={() => onSwitch?.(versions[index - 1]!.version)}
+        onClick={() => onSwitch?.(versions[index - 1].version)}
         disabled={index === 0}
         aria-label="Previous version"
         className="relative flex size-6 tap-target items-center justify-center rounded transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
@@ -2226,7 +2226,7 @@ function VersionSwitcher({
       </span>
       <button
         type="button"
-        onClick={() => onSwitch?.(versions[index + 1]!.version)}
+        onClick={() => onSwitch?.(versions[index + 1].version)}
         disabled={index === versions.length - 1}
         aria-label="Next version"
         className="relative flex size-6 tap-target items-center justify-center rounded transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"

@@ -268,7 +268,7 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
       // is also the case where the missing face is most obvious.
       if (out.contactIds.length === 1) {
         const db = await getDb();
-        await resolveAvatarNow(db, userId, out.contactIds[0]!, {
+        await resolveAvatarNow(db, userId, out.contactIds[0], {
           persistRemote: downloadAndPersistAvatar,
           resolveLinkedIn: (id, url) => resolveLinkedInPhotoCached(id, url, userId),
         }).catch(reportAndContinue(followOn("avatar"), false));
@@ -319,7 +319,7 @@ function summarizeExistingBatch(batch: NonNullable<Awaited<ReturnType<typeof get
     updated: participants.filter((p) => !p.created).length,
     contactIds: participants.map((p) => p.contactId),
     remindersCreated: result?.reminders.length ?? 0,
-    result: result!,
+    result: result,
   };
 }
 

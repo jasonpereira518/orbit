@@ -200,8 +200,8 @@ export function useRecruiterScan(
   const router = useRouter();
   const config: ScanConfig<Scan> =
     provider === "google"
-      ? (GOOGLE_SCAN_CONFIG as ScanConfig<Scan>)
-      : (OUTLOOK_SCAN_CONFIG as ScanConfig<Scan>);
+      ? (GOOGLE_SCAN_CONFIG)
+      : (OUTLOOK_SCAN_CONFIG);
 
   const [scan, setScan] = useState<Scan | null>(initialScan);
   const jobIdRef = useRef<string | null>(null);
@@ -331,5 +331,5 @@ export function useRecruiterScan(
     start,
     cancel,
     reset,
-  } as RecruiterScanState<GmailScanStatus> | RecruiterScanState<OutlookScanStatus>;
+  };
 }

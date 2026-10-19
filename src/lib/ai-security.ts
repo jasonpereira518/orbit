@@ -390,7 +390,7 @@ export function cleanAgentContactFields<
     if (typeof fields[key] === "string") out[key] = cleanSingleLine(fields[key], 200) ?? undefined;
   }
   for (const key of ["notes", "howMet"] as const) {
-    if (typeof fields[key] === "string") out[key] = sanitizeAgentText(fields[key] as string);
+    if (typeof fields[key] === "string") out[key] = sanitizeAgentText(fields[key]);
   }
   let badUrl = false;
   if (typeof fields.linkedinUrl === "string" && fields.linkedinUrl.trim()) {

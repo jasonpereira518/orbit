@@ -4,7 +4,6 @@ import { contactIdentities, gmailConnections } from "@/db/schema";
 import {
   emailEventsFrom,
   normalizeEmail,
-  type EmailHeader,
 } from "@/lib/email-activity";
 import {
   fetchGmailHeaders,
@@ -148,7 +147,7 @@ export async function syncEmailActivity(
   stats.fetched = headers.length;
 
   const events = emailEventsFrom({
-    headers: headers as EmailHeader[],
+    headers: headers,
     selfEmails,
     knownEmails,
   });

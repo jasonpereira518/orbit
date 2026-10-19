@@ -215,7 +215,7 @@ export async function logRecruiter(input: LogRecruiterInput) {
       }
     } else {
       const created = await upsertCanonicalRecruiter({
-        fullName: fullName!,
+        fullName: fullName,
         firm: input.firm,
         specialty: input.specialty,
         email: input.email,
@@ -234,7 +234,7 @@ export async function logRecruiter(input: LogRecruiterInput) {
 
     await ensureUserLink({
       userId,
-      recruiterId: recruiterId!,
+      recruiterId: recruiterId,
       status: input.status || "planned",
       email: input.email,
       phone: input.phone,
@@ -245,11 +245,11 @@ export async function logRecruiter(input: LogRecruiterInput) {
     });
 
     if (rating !== null) {
-      await recomputeRecruiterRating(recruiterId!);
+      await recomputeRecruiterRating(recruiterId);
     }
 
     revalidateRecruiterPaths(recruiterId);
-    return { id: recruiterId! };
+    return { id: recruiterId };
   });
 }
 

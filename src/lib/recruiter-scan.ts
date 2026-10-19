@@ -131,7 +131,7 @@ export const RULED_OUT_VERDICT: RecruiterScanResult = Object.freeze({
   companiesMentioned: [],
   rolesDiscussed: [],
   summary: null,
-}) as RecruiterScanResult;
+});
 
 export async function classifyRecruiterSender(
   userId: string,

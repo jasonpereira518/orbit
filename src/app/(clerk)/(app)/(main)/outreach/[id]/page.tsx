@@ -12,7 +12,6 @@ import { CampaignWorkspace } from "@/components/outreach/campaign-workspace";
 import { buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { formatReplyRate } from "@/lib/outreach-metrics";
-import type { SequenceStep } from "@/lib/outreach-types";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
 /** Request-memoized so `generateMetadata` and the page share one read. */
@@ -102,7 +101,7 @@ export default async function OutreachCampaignPage({
       <CampaignWorkspace
         campaign={{
           ...campaign,
-          sequenceSteps: (campaign.sequenceSteps ?? []) as SequenceStep[],
+          sequenceSteps: (campaign.sequenceSteps ?? []),
         }}
       />
     </div>

@@ -168,7 +168,7 @@ export async function loadFeedbackList(options: {
     .limit(FEEDBACK_PAGE_SIZE)
     .offset((page - 1) * FEEDBACK_PAGE_SIZE);
 
-  return { rows: rows as FeedbackListRow[], total, page, pageCount };
+  return { rows: rows, total, page, pageCount };
 }
 
 export type FeedbackScreenshotRow = {
@@ -273,7 +273,7 @@ export async function loadFeedbackAll(filter: FeedbackFilter): Promise<FeedbackE
     .leftJoin(userSettings, eq(userSettings.userId, feedback.userId))
     .where(whereFor(filter))
     .orderBy(desc(feedback.createdAt));
-  return rows.map(({ excerpt, ...rest }) => ({ ...rest, text: excerpt })) as FeedbackExportRow[];
+  return rows.map(({ excerpt, ...rest }) => ({ ...rest, text: excerpt }));
 }
 
 /**

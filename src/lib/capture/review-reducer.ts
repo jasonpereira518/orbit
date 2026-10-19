@@ -45,7 +45,7 @@ export function firstPendingIndex(
 ): number {
   const people = peopleDecisions(decisions);
   for (let i = 0; i < items.length; i++) {
-    if (!people[items[i]!.key]) return i;
+    if (!people[items[i].key]) return i;
   }
   return -1;
 }

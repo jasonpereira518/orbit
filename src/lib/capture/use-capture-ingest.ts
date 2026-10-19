@@ -277,7 +277,7 @@ export function useCaptureIngest({
         toast.error(tooBig);
         return;
       }
-      void upload(files, files.length === 1 ? files[0]!.name : `${files.length} files`, "merge", {
+      void upload(files, files.length === 1 ? files[0].name : `${files.length} files`, "merge", {
         successMessage: "Ready — check the text, then extract people",
         failureFallback: TOAST_COPY.fileReadFailed,
         fileHashes: extras.fileHashes,
@@ -307,7 +307,7 @@ export function useCaptureIngest({
         mimeType: page.mimeType,
         blob: base64ToBlob(page.base64, page.mimeType),
       }));
-      void upload(files, pages.length === 1 ? pages[0]!.filename : `${pages.length} pages`, "replace", {
+      void upload(files, pages.length === 1 ? pages[0].filename : `${pages.length} pages`, "replace", {
         backgroundLabel: pages.length === 1 ? "Reading your page" : `Reading ${pages.length} pages`,
         successMessage: pages.length === 1 ? "Read 1 page" : `Read ${pages.length} pages`,
         failureFallback: "Couldn’t read those pages — try again?",

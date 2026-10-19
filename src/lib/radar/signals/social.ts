@@ -43,7 +43,7 @@ export function handlesForTonight(candidates: readonly RadarCandidateRow[], now:
   if (all.length <= RADAR_POST_HANDLES_PER_RUN) return all;
   const day = Math.floor(now.getTime() / DAY_MS);
   const start = (day * RADAR_POST_HANDLES_PER_RUN) % all.length;
-  return Array.from({ length: RADAR_POST_HANDLES_PER_RUN }, (_, i) => all[(start + i) % all.length]!);
+  return Array.from({ length: RADAR_POST_HANDLES_PER_RUN }, (_, i) => all[(start + i) % all.length]);
 }
 
 async function getJson(url: string, deps: FetchPageDeps | undefined): Promise<unknown> {

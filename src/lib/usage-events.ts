@@ -118,6 +118,7 @@ export function usageRow(rec: UsageRecord) {
     outputTokens: rec.outputTokens ?? null,
     cachedInputTokens: rec.cachedInputTokens ?? null,
     estimatedCostMicros: surcharge > 0 ? (base ?? 0) + surcharge : base,
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- keeps the literal union when the row is spread into the insert
     costSource: (reported === null ? "estimated" : "reported") as "estimated" | "reported",
     success: rec.success ? 1 : 0,
     errorKind: rec.errorKind ?? null,

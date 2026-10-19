@@ -107,7 +107,7 @@ export function buildMime(input: MimeInput, boundary = `orbit-${randomUUID()}`):
           [`--${boundary}`, `Content-Type: ${type}; charset="UTF-8"`, "Content-Transfer-Encoding: 8bit", "", content].join(
             "\r\n"
           );
-        return [part("text/plain", input.bodyText), part("text/html", input.bodyHtml!), `--${boundary}--`, ""].join("\r\n");
+        return [part("text/plain", input.bodyText), part("text/html", input.bodyHtml), `--${boundary}--`, ""].join("\r\n");
       })()
     : input.bodyText;
 

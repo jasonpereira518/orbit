@@ -219,7 +219,7 @@ export function PageStatusList({
   const byKey = new Map(pages.map((p) => [p.key, p]));
   const inNav = new Set(navKeys);
   const rows = [
-    ...navItems.map((item, i) => ({ key: navKeys[i]!, icon: item.icon, navIndex: i })),
+    ...navItems.map((item, i) => ({ key: navKeys[i], icon: item.icon, navIndex: i })),
     ...pages
       .filter((p) => !inNav.has(p.key))
       .map((p) => ({ key: p.key, icon: null, navIndex: -1 })),
@@ -312,7 +312,7 @@ export function PageStatusList({
     const next = [...navKeys];
     const target = navIndex + by;
     if (target < 0 || target >= next.length) return;
-    [next[navIndex], next[target]] = [next[target]!, next[navIndex]!];
+    [next[navIndex], next[target]] = [next[target], next[navIndex]];
     void saveOrder(next);
   }
 

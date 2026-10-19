@@ -23,7 +23,7 @@ export function captureSourceKinds(labels: readonly unknown[] | null | undefined
   const kinds = new Set<CaptureSourceKind>();
   for (const label of labels ?? []) {
     if (typeof label !== "string") continue;
-    const prefix = label.split(":")[0]!.trim().toLowerCase();
+    const prefix = label.split(":")[0].trim().toLowerCase();
     if (prefix === "voice") kinds.add("voice");
     else if (prefix === "photos" || prefix === "photo") kinds.add("photo");
     else if (prefix === "calendar") kinds.add("calendar");
@@ -340,7 +340,7 @@ export function pickLockedParticipant(
   const byName = items.find((item) => (item.name || "").trim().toLowerCase() === lockedName);
   if (byName) return byName.key;
 
-  if (items.length === 1) return items[0]!.key;
+  if (items.length === 1) return items[0].key;
 
   return null;
 }

@@ -183,7 +183,7 @@ export function parseEventSignupPaste(text: string): {
   const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
 
   for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i]!.trim();
+    const raw = lines[i].trim();
     if (!raw) continue;
     const line = i + 1;
     const cols = raw.includes("\t")
@@ -195,7 +195,7 @@ export function parseEventSignupPaste(text: string): {
     let nameRaw: string;
     let emailRaw: string;
     if (cols.length >= 3) {
-      signedAt = parseEventSpreadsheetTime(cols[0]!);
+      signedAt = parseEventSpreadsheetTime(cols[0]);
       nameRaw = cols[1]!;
       emailRaw = cols[2]!;
     } else if (cols.length === 2) {
@@ -222,8 +222,8 @@ export function parseEventSignupPaste(text: string): {
       errors.push(`Line ${line}: missing name.`);
       continue;
     }
-    const firstName = nameParts[0]!.slice(0, NAME_MAX);
-    const lastName = (nameParts.slice(1).join(" ") || nameParts[0]!).slice(0, NAME_MAX);
+    const firstName = nameParts[0].slice(0, NAME_MAX);
+    const lastName = (nameParts.slice(1).join(" ") || nameParts[0]).slice(0, NAME_MAX);
 
     rows.push({ signedAt, firstName, lastName, email, line });
   }

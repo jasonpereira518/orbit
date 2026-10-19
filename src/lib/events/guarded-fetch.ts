@@ -196,7 +196,7 @@ async function readCapped(
 
 function typeAllowed(contentType: string | null, allowed: readonly string[]): boolean {
   if (!contentType) return false;
-  const type = contentType.split(";")[0]!.trim().toLowerCase();
+  const type = contentType.split(";")[0].trim().toLowerCase();
   return allowed.includes(type);
 }
 

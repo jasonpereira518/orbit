@@ -24,7 +24,7 @@ export function getNotificationSupport(): NotificationPermissionState {
   if (typeof window === "undefined" || !("Notification" in window)) {
     return "unsupported";
   }
-  return Notification.permission as "default" | "granted" | "denied";
+  return Notification.permission;
 }
 
 export const DESKTOP_PREFERENCE_EVENT = "orbit:desktop-notifications-change";

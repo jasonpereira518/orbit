@@ -340,7 +340,7 @@ const FOLLOWUP_SWEEP_SLOT_MS = 10 * 60 * 1000;
 export function rotatingWindow<T>(items: readonly T[], size: number, slot: number): T[] {
   if (items.length <= size) return [...items];
   const start = (((slot * size) % items.length) + items.length) % items.length;
-  return Array.from({ length: size }, (_, i) => items[(start + i) % items.length]!);
+  return Array.from({ length: size }, (_, i) => items[(start + i) % items.length]);
 }
 
 /**

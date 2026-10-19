@@ -44,7 +44,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     });
   }
   return realFetch(input, init);
-}) as typeof fetch;
+});
 
 /** `revalidatePath` throws outside a request, after the action's writes have landed. */
 async function outsideRequest<T>(work: Promise<T>): Promise<T | undefined> {

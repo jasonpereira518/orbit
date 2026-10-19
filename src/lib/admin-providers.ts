@@ -117,7 +117,7 @@ function fromSnapshot(
     checkedAt: row.checkedAt,
     stale,
     href: typeof href === "string" ? href : configuredLink(provider),
-    metrics: metrics as Record<string, string | number | boolean | null>,
+    metrics: metrics,
   };
 }
 

@@ -22,6 +22,28 @@ const eslintConfig = defineConfig([
       ],
     },
   },
+  // Typed rules (plan P3). `projectService` reads tsconfig.json, which is why the two
+  // `.well-known` routes are listed in its `include`: its `**/*.ts` glob skips dot-directories.
+  // Typed linting roughly doubles lint time (~75 s); the rules below are the ones that find
+  // real defects or are safe autofixes.
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    languageOptions: {
+      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
+    },
+    linterOptions: { reportUnusedDisableDirectives: "error" },
+    rules: {
+      // `typeof import("x")` types are deliberate here (they type a lazily imported module
+      // without loading it, e.g. Sentry in report-error.ts), so only the import-statement
+      // half of the rule is enforced.
+      "@typescript-eslint/consistent-type-imports": [
+        "error",
+        { fixStyle: "inline-type-imports", disallowTypeAnnotations: false },
+      ],
+      "@typescript-eslint/no-unnecessary-type-assertion": "error",
+      "@typescript-eslint/await-thenable": "error",
+    },
+  },
   // Server code reports caught errors through `reportError` (src/lib/report-error.ts), which
   // reaches Sentry and prints one greppable `[orbit:<where>] ref=<ref>` line. A bare
   // `console.error` reaches only Vercel's runtime log, which keeps it about an hour (audit

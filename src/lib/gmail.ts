@@ -1117,7 +1117,7 @@ async function fetchThreadBatch(
   for (const id of threadIds) {
     const raw = parsed.get(id);
     if (!raw) continue;
-    const thread = parseThread(raw as RawGmailThread, id);
+    const thread = parseThread(raw, id);
     if (thread) threads.push(thread);
   }
   return threads;

@@ -17,7 +17,7 @@ import { pauseSync, resumeSync } from "@/lib/provider-connections";
 import { requireRecruitersUser } from "@/lib/plan-guards";
 import { getAiConfig } from "@/lib/ai";
 import { isAiAccessError } from "@/lib/ai-access";
-import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
+import { type ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 import { demoWorkspaceEmail, isDemoWorkspace } from "@/lib/demo-workspace";
 import { demoOutlookConnectionStatus } from "@/lib/demo-workspace-connections";
 import { recordDemoRecruiterScan } from "@/lib/demo-workspace-actions";
