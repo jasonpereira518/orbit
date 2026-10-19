@@ -13,7 +13,7 @@
  * 1. `loading` — a skeleton. The cards this replaces rendered NOTHING at all until the status
  *    landed (`if (!status) return null`), so opening the page showed an empty panel that
  *    suddenly filled.
- * 2. `failed` AND no status yet — "Couldn't check your {Provider} connection." and **Try
+ * 2. `failed` AND no status yet — "Couldn’t check your {Provider} connection." and **Try
  *    again**. Also nothing, before: a status fetch that rejected left the same empty panel
  *    forever. The order of those two conditions is load-bearing: `useConnection` raises
  *    `failed` on ANY rejected read, including the re-read after the Meetings switch or after
@@ -23,7 +23,7 @@
  * 3. `not_configured` — this deployment has no credentials for the provider. Nothing to
  *    connect, so no button.
  * 4. `not_connected` — the connect prompt: what Orbit will ask for, and what it will never do.
- * 5. `needs_reauth` — the account signed Orbit out. The header still names it (so Switch
+ * 5. `needs_reauth` — the account needs reconnecting. The header still names it (so Switch
  *    account and Disconnect stay reachable), the notice says what happened, and the rows below
  *    render dimmed and `inert`: their capabilities are empty in this state, so every control
  *    would be a no-op anyway, and making that visible is better than letting them look live.
@@ -37,7 +37,6 @@
 
 import { useId, useState } from "react";
 import { Check, Lock, MoreHorizontal } from "lucide-react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -47,15 +46,17 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
+import {
+  INTEGRATION_STATUS_COPY,
+  IntegrationLogo,
+  integrationLabel,
+} from "@/components/integrations/integration-logo";
 import type { AccountProvider, AccountStatus, RowControl } from "@/lib/integration-status";
 import type { DisconnectProvider } from "@/lib/data-categories";
+import { TONE } from "@/lib/tone";
 import { cn } from "@/lib/utils";
-
-const PROVIDER_NAME: Record<AccountProvider, string> = {
-  google: "Google",
-  microsoft: "Microsoft",
-};
 
 /** The disconnect dialog is keyed by the connection it deletes, which predates these pages. */
 const DISCONNECT_PROVIDER: Record<AccountProvider, DisconnectProvider> = {
@@ -92,7 +93,7 @@ export function AccountPageShell({
   /** The feature rows. */
   children: React.ReactNode;
 }) {
-  const name = PROVIDER_NAME[provider];
+  const name = integrationLabel(provider);
 
   if (loading) return <AccountSkeleton name={name} />;
 
@@ -115,8 +116,8 @@ export function AccountPageShell({
 
   if (account.state === "not_configured") {
     return (
-      <section className="space-y-2 rounded-2xl border border-dashed border-border/70 bg-card/50 p-5">
-        <h2 className="text-lg font-medium text-ink">{name}</h2>
+      <section className="space-y-2 rounded-xl border border-dashed border-border-subtle bg-card p-5">
+        <h2 className="font-heading text-lg font-medium text-ink">{name}</h2>
         <p className="text-sm text-muted-foreground">
           This copy of Orbit can’t connect {name} accounts. You can still bring people in from a
           file on the Imports page.
@@ -143,12 +144,18 @@ export function AccountPageShell({
       />
 
       {signedOut ? (
-        <div className="flex flex-wrap items-center gap-3 rounded-xl bg-warning/10 p-4 text-sm text-warning">
+        <div
+          className={cn(
+            "flex flex-wrap items-center gap-3 rounded-lg border p-4 text-sm",
+            TONE.warning.box,
+            TONE.warning.text
+          )}
+        >
           <p className="min-w-0 flex-1">
-            {name} signed Orbit out. Sign in again to keep things up to date.
+            {name} needs reconnecting. Reconnect to keep things up to date.
           </p>
           <Button size="sm" onClick={onConnect}>
-            Sign in again
+            Reconnect
           </Button>
         </div>
       ) : null}
@@ -198,12 +205,12 @@ export function FeatureRow({
   return (
     <li
       id={id}
-      className="scroll-mt-4 border-b border-border/60 py-4 first:pt-1 last:border-b-0 last:pb-1"
+      className="scroll-mt-4 border-b border-border-subtle py-4 first:pt-1 last:border-b-0 last:pb-1"
     >
       <div className="flex items-start gap-3">
         <span
           aria-hidden
-          className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground"
+          className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg border border-border-subtle bg-surface-inset text-muted-foreground"
         >
           {icon}
         </span>
@@ -254,28 +261,15 @@ function RowControlButton({
       );
     case "switch":
       return (
-        <button
-          type="button"
-          role="switch"
-          aria-checked={control.on}
+        <Switch
+          checked={control.on}
           // Named by the row's own title, so the switch never needs a label of its own that
           // could drift from it.
           aria-labelledby={labelledBy}
           disabled={disabled}
-          onClick={onAction}
-          className={cn(
-            "tap-target relative inline-flex h-5 w-9 shrink-0 items-center rounded-full outline-none transition-colors duration-fast ease-house focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50",
-            control.on ? "bg-primary" : "bg-muted-foreground/30"
-          )}
-        >
-          <span
-            aria-hidden
-            className={cn(
-              "pointer-events-none size-4 rounded-full bg-background shadow-sm transition-transform duration-fast ease-house",
-              control.on ? "translate-x-[1.125rem]" : "translate-x-0.5"
-            )}
-          />
-        </button>
+          onCheckedChange={() => onAction()}
+          className="tap-target"
+        />
       );
     case "none":
       return null;
@@ -301,12 +295,12 @@ function AccountHeader({
 
   return (
     <div className="flex items-center gap-3">
-      <Avatar>
-        <AvatarFallback className="text-xs font-medium">{initials(email, name)}</AvatarFallback>
-      </Avatar>
+      <IntegrationLogo provider={provider} size="lg" title="" />
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium text-ink">{name}</p>
-        <p className="truncate text-sm text-muted-foreground">{email ?? "Connected"}</p>
+        <p className="truncate text-sm text-muted-foreground">
+          {email ? `${INTEGRATION_STATUS_COPY.connected} as ${email}` : INTEGRATION_STATUS_COPY.connected}
+        </p>
       </div>
       <DropdownMenu>
         <DropdownMenuTrigger
@@ -349,17 +343,17 @@ function ConnectPrompt({ name, onConnect }: { name: string; onConnect: () => voi
         Bring in your contacts and log your meetings from your {name} account.
       </p>
       <Button onClick={onConnect}>Connect {name}</Button>
-      <div className="space-y-2 rounded-xl bg-muted/40 p-4">
+      <div className="space-y-2 rounded-lg border border-border-subtle bg-surface-inset p-4">
         <p className="text-sm font-medium text-ink">Orbit will ask to</p>
         <ul className="space-y-1.5">
           {["See your contacts", "See your calendar"].map((line) => (
             <li key={line} className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Check aria-hidden className="size-4 shrink-0 text-primary" />
+              <Check aria-hidden className="size-4 shrink-0 text-success" />
               {line}
             </li>
           ))}
         </ul>
-        <p className="text-xs leading-snug text-muted-foreground">
+        <p className="text-2xs leading-snug text-muted-foreground">
           It never changes, sends or deletes anything in your {name} account. Mail features ask
           separately, only if you turn them on.
         </p>
@@ -372,14 +366,14 @@ function AccountSkeleton({ name }: { name: string }) {
   return (
     <div className="space-y-4" aria-busy="true" aria-label={`Loading your ${name} connection`}>
       <div className="flex items-center gap-3">
-        <Skeleton className="size-8 rounded-full" />
+        <Skeleton className="size-10 rounded-lg" />
         <div className="flex-1 space-y-1.5">
           <Skeleton className="h-3.5 w-20" />
           <Skeleton className="h-3.5 w-44" />
         </div>
       </div>
       {[0, 1, 2].map((row) => (
-        <div key={row} className="flex items-center gap-3 border-t border-border/60 pt-4">
+        <div key={row} className="flex items-center gap-3 border-t border-border-subtle pt-4">
           <Skeleton className="size-8 rounded-lg" />
           <div className="min-w-0 flex-1 space-y-1.5">
             <Skeleton className="h-3.5 w-28" />
@@ -390,11 +384,4 @@ function AccountSkeleton({ name }: { name: string }) {
       ))}
     </div>
   );
-}
-
-/** Two letters for the header's avatar — from the address, or the provider when there is none. */
-function initials(email: string | null, name: string): string {
-  const local = (email ?? "").split("@")[0] ?? "";
-  const letters = local.replace(/[^a-zA-Z0-9]/g, "");
-  return (letters.slice(0, 2) || name.slice(0, 1)).toUpperCase();
 }

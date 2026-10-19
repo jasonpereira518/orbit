@@ -23,6 +23,7 @@ import { IntegrationIcon, StatusDot, statusText } from "@/components/settings/in
 import { IntegrationsDialog, tabForImportJob } from "@/components/settings/integrations-dialog";
 import { useImportJob } from "@/lib/import-job-runner";
 import type { IntegrationStatuses } from "@/lib/integration-status";
+import { CARD_HOVER } from "@/lib/interaction";
 import { cn } from "@/lib/utils";
 import type { SpeechAllowances } from "@/components/settings/speech-usage-card";
 
@@ -221,18 +222,16 @@ export function IntegrationsSettings({
             const status = statuses?.pages[id];
             return (
               <li key={id}>
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
                   onClick={() => openOn(id)}
                   className={cn(
-                    "group/row flex w-full items-center gap-3 rounded-xl border border-border/60 px-3 py-2.5 text-left",
-                    "outline-none transition-colors duration-fast ease-house",
-                    "hover:border-border hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/70"
+                    "group/row h-auto w-full justify-start gap-3 rounded-xl border border-border-subtle bg-card px-3 py-2.5 text-left whitespace-normal",
+                    CARD_HOVER
                   )}
                 >
-                  <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/70 text-muted-foreground transition-colors group-hover/row:text-primary">
-                    <IntegrationIcon id={id} className="size-4" />
-                  </span>
+                  <IntegrationIcon id={id} size="md" />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium text-ink">
                       {integrationLabel(id)}
@@ -246,7 +245,7 @@ export function IntegrationsSettings({
                     aria-hidden
                     className="size-4 shrink-0 text-muted-foreground/50 transition-transform duration-fast ease-house group-hover/row:translate-x-0.5"
                   />
-                </button>
+                </Button>
               </li>
             );
           })}

@@ -17,6 +17,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { Stagger, StaggerItem } from "@/components/onboarding/onboarding-ui";
+import { TONE } from "@/lib/tone";
 import { cn } from "@/lib/utils";
 import {
   VIRGO_CHAINS as CHAINS,
@@ -33,7 +34,7 @@ import {
  * global reduced-motion clamp stops it and nothing here commits React state per frame.
  */
 
-const card = "rounded-xl border border-border/60 bg-card shadow-[0_1px_2px_rgba(0,0,0,0.04)]";
+const card = "rounded-xl border border-border-subtle bg-card shadow-xs";
 
 function Initials({ name, tone = "primary" }: { name: string; tone?: "primary" | "gold" }) {
   const initials = name
@@ -46,7 +47,7 @@ function Initials({ name, tone = "primary" }: { name: string; tone?: "primary" |
       aria-hidden
       className={cn(
         "flex size-8 shrink-0 items-center justify-center rounded-full text-2xs font-semibold",
-        tone === "primary" ? "bg-primary/12 text-primary" : "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+        tone === "primary" ? "bg-primary/12 text-primary" : TONE.warning.chip,
       )}
     >
       {initials}
@@ -63,7 +64,7 @@ export function CapturePreview() {
   ];
   return (
     <Stagger className="flex h-full flex-col gap-2.5">
-      <StaggerItem className="flex gap-1 self-start rounded-lg border border-border/60 bg-muted/50 p-0.5">
+      <StaggerItem className="flex gap-1 self-start rounded-lg border border-border-subtle bg-muted p-0.5">
         {modes.map(({ icon: Icon, label, active }) => (
           <span
             key={label}
@@ -129,7 +130,7 @@ export function PeoplePreview() {
           send her your internship application.
         </p>
         <div className="mt-2.5 flex flex-wrap gap-1.5">
-          <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-3xs font-medium text-emerald-700 dark:text-emerald-300">
+          <span className={cn("rounded-full px-2 py-0.5 text-3xs font-medium", TONE.success.chip)}>
             Referral offered
           </span>
           <span className="rounded-full bg-muted px-2 py-0.5 text-3xs text-muted-foreground">
@@ -177,8 +178,8 @@ export function FollowUpsPreview() {
           <span className="rounded-md bg-primary px-2 py-1 text-3xs font-medium text-primary-foreground">
             Draft a note
           </span>
-          <span className="rounded-md border border-border/70 px-2 py-1 text-3xs text-muted-foreground">
-            Snooze
+          <span className="rounded-md border border-border-subtle px-2 py-1 text-3xs text-muted-foreground">
+            Snooze 7 days
           </span>
         </div>
       </StaggerItem>
@@ -190,7 +191,7 @@ export function FollowUpsPreview() {
             <p
               className={cn(
                 "text-3xs",
-                r.overdue ? "font-medium text-amber-700 dark:text-amber-300" : "text-muted-foreground",
+                r.overdue ? cn("font-medium", TONE.warning.text) : "text-muted-foreground",
               )}
             >
               {r.due}
@@ -220,7 +221,7 @@ export function AskPreview() {
           {["Marcus Lee", "Priya Nair"].map((n) => (
             <span
               key={n}
-              className="flex items-center gap-1 rounded-full border border-border/70 px-2 py-0.5 text-3xs text-muted-foreground"
+              className="flex items-center gap-1 rounded-full border border-border-subtle px-2 py-0.5 text-3xs text-muted-foreground"
             >
               <span className="size-1.5 rounded-full bg-primary" aria-hidden />
               {n}
@@ -228,10 +229,10 @@ export function AskPreview() {
           ))}
         </div>
       </StaggerItem>
-      <StaggerItem className="mt-auto flex items-center gap-2 rounded-xl border border-border/70 bg-muted/40 px-3 py-2">
+      <StaggerItem className="mt-auto flex items-center gap-2 rounded-lg border border-border-subtle bg-surface-inset px-3 py-2">
         <Sparkles className="size-3.5 text-primary" aria-hidden />
         <span className="flex-1 text-2xs text-muted-foreground">Ask about your network…</span>
-        <span className="flex items-center gap-0.5 rounded-md border border-border/70 bg-card px-1.5 py-0.5 text-3xs text-muted-foreground">
+        <span className="flex items-center gap-0.5 rounded-md border border-border-subtle bg-card px-1.5 py-0.5 text-3xs text-muted-foreground">
           <Command className="size-2.5" aria-hidden />K
         </span>
       </StaggerItem>
@@ -243,7 +244,7 @@ export function ConstellationPreview() {
   const byId = Object.fromEntries(STARS.map((s) => [s.id, s]));
   return (
     <Stagger className="relative h-full">
-      <StaggerItem className="absolute inset-0 overflow-hidden rounded-xl border border-border/60 bg-[radial-gradient(ellipse_at_center,_#1a2030_0%,_#0a0c12_60%,_#05060a_100%)]">
+      <StaggerItem className="absolute inset-0 overflow-hidden rounded-xl border border-border-subtle bg-[radial-gradient(ellipse_at_center,var(--color-space-900)_0%,var(--color-space-950)_60%,var(--color-space-980)_100%)]">
         <svg viewBox="0 0 280 220" className="h-full w-full" role="img" aria-label="A network drawn as a constellation">
           {FIELD_STARS.map(([x, y], i) => (
             <circle key={`f-${i}`} cx={x} cy={y} r={0.85} fill="rgba(232,243,241,0.26)" />
@@ -281,8 +282,8 @@ export function ConstellationPreview() {
           ))}
         </svg>
       </StaggerItem>
-      <StaggerItem className="absolute right-3 bottom-3 left-3 rounded-xl border border-white/10 bg-[#0f1420]/90 p-3 text-white sm:left-auto sm:w-56">
-        <p className="text-3xs font-medium uppercase tracking-wide text-sky-300">Event · Tomorrow</p>
+      <StaggerItem className="absolute right-3 bottom-3 left-3 rounded-xl border border-white/10 bg-space-900/90 p-3 text-white sm:left-auto sm:w-56">
+        <p className="text-3xs font-medium uppercase tracking-wider text-white/70">Event · Tomorrow</p>
         <p className="mt-0.5 text-xs font-medium">AI Founders Night</p>
         <p className="mt-1 text-2xs text-white/70">3 people you know are going · talk to Priya first</p>
       </StaggerItem>
@@ -318,7 +319,7 @@ export function OutreachPreview() {
         </p>
       </StaggerItem>
       <StaggerItem className="flex justify-end gap-1.5">
-        <span className="rounded-md border border-border/70 px-2.5 py-1 text-3xs text-muted-foreground">Edit</span>
+        <span className="rounded-md border border-border-subtle px-2.5 py-1 text-3xs text-muted-foreground">Edit</span>
         <span className="flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-3xs font-medium text-primary-foreground">
           <Send className="size-3" aria-hidden />
           Send
@@ -332,10 +333,10 @@ export function EverywherePreview() {
   return (
     <Stagger className="flex h-full flex-col gap-2.5">
       <StaggerItem className={cn(card, "overflow-hidden")}>
-        <div className="flex items-center gap-1.5 border-b border-border/60 bg-muted/40 px-2.5 py-1.5">
-          <span className="size-2 rounded-full bg-red-400/70" aria-hidden />
-          <span className="size-2 rounded-full bg-amber-400/70" aria-hidden />
-          <span className="size-2 rounded-full bg-emerald-400/70" aria-hidden />
+        <div className="flex items-center gap-1.5 border-b border-border-subtle bg-surface-inset px-2.5 py-1.5">
+          <span className="size-2 rounded-full bg-destructive/60" aria-hidden />
+          <span className="size-2 rounded-full bg-warning/60" aria-hidden />
+          <span className="size-2 rounded-full bg-success/60" aria-hidden />
           <span className="ml-2 flex-1 truncate rounded bg-card px-2 py-0.5 text-3xs text-muted-foreground">
             linkedin.com/in/diego-alvarez
           </span>
@@ -343,7 +344,7 @@ export function EverywherePreview() {
         </div>
         <div className="grid grid-cols-[1fr_9.5rem] gap-2 p-2.5">
           <div className="space-y-1.5">
-            <div className="h-10 rounded-md bg-gradient-to-r from-sky-500/25 to-primary/20" />
+            <div className="h-10 rounded-md bg-gradient-to-r from-info/25 to-primary/20" />
             <div className="h-2 w-2/3 rounded bg-muted" />
             <div className="h-2 w-1/2 rounded bg-muted" />
             <div className="h-2 w-3/4 rounded bg-muted" />
@@ -373,7 +374,7 @@ export function EverywherePreview() {
           </StaggerItem>
         ))}
       </div>
-      <StaggerItem className="rounded-lg bg-muted/60 px-3 py-2 font-mono text-3xs text-muted-foreground">
+      <StaggerItem className="rounded-lg border border-border-subtle bg-surface-inset px-3 py-2 font-mono text-3xs text-muted-foreground">
         POST /api/v1/contacts · MCP · webhooks
       </StaggerItem>
     </Stagger>

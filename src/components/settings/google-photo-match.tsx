@@ -5,7 +5,7 @@ import { ImageDown } from "lucide-react";
 import { matchGooglePhotos } from "@/actions/imports";
 import { toast } from "@/lib/toast";
 import { FeatureRow } from "@/components/settings/account-page";
-import { rowControl, type CapabilityStatus } from "@/lib/integration-status";
+import { isAllowControl, rowControl, type CapabilityStatus } from "@/lib/integration-status";
 
 /**
  * Fills missing contact photos from Google Contacts.
@@ -28,7 +28,7 @@ export function GooglePhotoMatch({
   const [summary, setSummary] = useState<string | null>(null);
 
   const control = rowControl("contacts", capability);
-  const needsAllow = control.kind === "action" && control.label === "Allow";
+  const needsAllow = isAllowControl(control);
 
   const match = () =>
     start(async () => {
@@ -60,7 +60,9 @@ export function GooglePhotoMatch({
       icon={<ImageDown className="size-4" />}
       title="Photos from Google Contacts"
       description="Fills in missing contact photos. Matches on email address, so nobody gets someone else’s face."
-      control={{ kind: "action", label: pending ? "Matching…" : needsAllow ? "Allow" : "Match photos" }}
+      control={
+        needsAllow ? control : { kind: "action", label: pending ? "Matching…" : "Match photos" }
+      }
       disabled={pending || busy}
       onAction={needsAllow ? onAllow : match}
     >

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { auth } from "@clerk/nextjs/server";
+import { buttonVariants } from "@/components/ui/button";
 import { getDb } from "@/db";
 import { eq } from "drizzle-orm";
 import { userSettings } from "@/db/schema";
@@ -37,9 +38,7 @@ export default async function SuspendedPage() {
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center px-6 py-16">
-      <h1 className="text-2xl font-semibold tracking-tight">
-        Your account is on hold
-      </h1>
+      <h1 className="font-heading text-3xl text-ink">Your account is on hold</h1>
       <p className="mt-3 text-sm text-muted-foreground">
         Orbit access for this account was suspended on{" "}
         <time dateTime={settings.suspendedAt.toISOString()} className="tabular-nums">
@@ -51,11 +50,8 @@ export default async function SuspendedPage() {
         If you think this is a mistake, reply to any email you have had from Orbit
         and we will take another look.
       </p>
-      <Link
-        href="/"
-        className="mt-8 text-sm text-primary underline-offset-4 hover:underline"
-      >
-        Back to orbit
+      <Link href="/" className={buttonVariants({ variant: "outline", className: "mt-8 w-fit" })}>
+        Back to Orbit
       </Link>
     </main>
   );

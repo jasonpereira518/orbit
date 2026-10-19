@@ -12,6 +12,17 @@ import type { IntegrationTabId } from "@/components/settings/sections";
 import type { ConnectorStatusId } from "@/lib/connectors/status";
 import type { ConnectionHealth } from "@/lib/connection-status";
 
+/**
+ * Status words, mirrored from `INTEGRATION_STATUS_COPY` (`components/integrations/
+ * integration-logo.tsx`) rather than imported, so this module stays free of component
+ * imports for the smoke scripts and the server. `smoke-integration-status.ts` pins them.
+ */
+const STATUS_COPY = {
+  connected: "Connected",
+  needsReconnect: "Needs reconnecting",
+  notConnected: "Not connected",
+} as const;
+
 export type AccountProvider = "google" | "microsoft";
 export type AccountCapability = "contacts" | "meetings" | "inbox" | "send";
 
@@ -87,7 +98,7 @@ export type MicrosoftConnectionInput = {
  * `"unknown"` is the plan lookup having failed or timed out. It is the only thing the plan
  * decides here — whether the inbox scan is included — so it costs that one capability its
  * certainty and nothing else: the account still says whether it is connected, what contacts
- * and meetings it allows, and whether it signed Orbit out.
+ * and meetings it allows, and whether it needs reconnecting.
  */
 type Plan = { canUseRecruiters: boolean } | "unknown";
 type ProviderName = "Google" | "Microsoft";
@@ -112,7 +123,7 @@ function meetingsStatus(
   const scopeMissing = Boolean(syncError && /not granted|insufficient|scope/i.test(syncError));
   return {
     state: "paused",
-    detail: `Meetings stopped coming in. Sign in to ${provider} again${scopeMissing ? " and allow calendar access" : ""}.`,
+    detail: `Meetings stopped coming in. Reconnect ${provider}${scopeMissing ? " and allow calendar access" : ""}.`,
   };
 }
 
@@ -174,8 +185,11 @@ export function microsoftAccountStatus(c: MicrosoftConnectionInput, plan: Plan):
  * off; that lives in the account header's menu.
  */
 export type RowControl =
-  /** Import contacts / Check for new / Scan inbox / Allow / Fix / Add. */
-  | { kind: "action"; label: string }
+  /**
+   * Import contacts / Check for new / Scan inbox / Allow {feature} / See what happened / Add.
+   * `intent` names the two labels a row branches on, so the pages never compare copy.
+   */
+  | { kind: "action"; label: string; intent?: "allow" | "fix" }
   /** Meetings, the one capability that runs continuously and can be switched off. */
   | { kind: "switch"; on: boolean }
   /** A paid feature on a plan that doesn't include it. */
@@ -183,13 +197,26 @@ export type RowControl =
   /** Nothing to do: already allowed, or nothing to run yet. */
   | { kind: "none" };
 
+/** What "Allow" asks for, per feature — the scope's name, not the row's. */
+const ALLOW_LABEL: Record<AccountCapability, string> = {
+  contacts: "Allow contacts",
+  meetings: "Allow calendar",
+  inbox: "Allow mail",
+  send: "Allow sending",
+};
+
+/** True for the one action that asks the provider for a scope rather than running anything. */
+export function isAllowControl(control: RowControl): boolean {
+  return control.kind === "action" && control.intent === "allow";
+}
+
 export function rowControl(
   capability: AccountCapability,
   status: CapabilityStatus | undefined
 ): RowControl {
   if (!status) return { kind: "none" };
   if (status.state === "locked") return { kind: "locked", label: "Upgrade" };
-  if (status.state === "not_allowed") return { kind: "action", label: "Allow" };
+  if (status.state === "not_allowed") return { kind: "action", label: ALLOW_LABEL[capability], intent: "allow" };
   switch (capability) {
     case "contacts":
       // `on` means this account has brought contacts in before, so the run is a top-up.
@@ -197,7 +224,7 @@ export function rowControl(
     case "meetings":
       // `paused` is the sync having given up, which a switch can't undo — only signing in
       // again can. The person's own `off` stays a switch, because flipping it is the fix.
-      if (status.state === "paused") return { kind: "action", label: "Fix" };
+      if (status.state === "paused") return { kind: "action", label: "See what happened", intent: "fix" };
       return { kind: "switch", on: status.state === "on" };
     case "inbox":
       return { kind: "action", label: "Scan inbox" };
@@ -212,12 +239,15 @@ export function accountPageStatus(a: AccountStatus): PageStatus {
     case "not_configured":
       return { state: "off", detail: "Unavailable" };
     case "not_connected":
-      return { state: "off", detail: "Not connected" };
+      return { state: "off", detail: STATUS_COPY.notConnected };
     case "needs_reauth":
-      return { state: "partial", detail: "Sign in again" };
+      return { state: "partial", detail: STATUS_COPY.needsReconnect };
     case "connected":
       if (a.capabilities.meetings?.state === "paused") return { state: "partial", detail: "Meetings paused" };
-      return { state: "on", detail: a.email ? `Connected as ${a.email}` : "Connected" };
+      return {
+        state: "on",
+        detail: a.email ? `${STATUS_COPY.connected} as ${a.email}` : STATUS_COPY.connected,
+      };
   }
 }
 
@@ -244,7 +274,7 @@ const PROVIDERS: ReadonlyArray<[AccountProvider, ProviderName]> = [
 ];
 
 /**
- * What the Overview's strip lists, most urgent first: accounts that signed Orbit out, then
+ * What the Overview's strip lists, most urgent first: accounts that need reconnecting, then
  * meetings that stopped arriving, then AI being off. The caller drops items whose page the
  * viewer can't see.
  */
@@ -263,8 +293,8 @@ export function attentionItems(input: {
       items.push({
         id: `${provider}-reauth`,
         tab: provider,
-        message: `${name} signed Orbit out. Sign in again to keep things up to date.`,
-        action: "Sign in again",
+        message: `${name} needs reconnecting to keep things up to date.`,
+        action: "Reconnect",
       });
     }
   }
@@ -295,12 +325,12 @@ export function attentionItems(input: {
 }
 
 /**
- * The one button on each Overview card. Only "Connect …", "Sign in again" and "Turn on AI"
+ * The one button on each Overview card. Only "Connect …", "Reconnect" and "Turn on AI"
  * are primary: they are the steps that make something work, not ways to look at it.
  *
  * `connects` names the account whose consent screen the button starts itself instead of
  * opening that account's page — the Overview's only button that isn't navigation. It is set
- * here rather than read off the label so the two can't drift apart. "Manage", "Sign in again"
+ * here rather than read off the label so the two can't drift apart. "Manage", "Reconnect"
  * and "Open" all open the page, which is where that account's own hook owns the sign-in
  * return.
  */
@@ -323,7 +353,7 @@ export function overviewAction(
           connects: id,
         };
       }
-      if (account.state === "needs_reauth") return { label: "Sign in again", primary: true };
+      if (account.state === "needs_reauth") return { label: "Reconnect", primary: true };
       return { label: "Manage", primary: false };
     }
     case "linkedin":

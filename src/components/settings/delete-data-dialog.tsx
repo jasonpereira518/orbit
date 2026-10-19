@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -13,6 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { toast } from "@/lib/toast";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { friendlyError } from "@/lib/errors";
@@ -42,8 +44,14 @@ const CONFIRMATION = "delete";
  *
  * Everything here is permanent and there is no export step in between, which is why the
  * typed confirmation is unconditional rather than reserved for the big categories.
+ *
+ * Drawn to `ConfirmDialog`'s shape (question title, outline Cancel, destructive action, typed
+ * word) but not on it: the category list and the partial-delete report are its own body,
+ * and the typed field keeps a `placeholder` the e2e suite finds it by. Moving onto
+ * `ConfirmDialog` needs that primitive to take a placeholder and to let `onConfirm` keep the
+ * dialog open for the partial case.
  */
-export function DeleteDataDialog({ trigger }: { trigger: React.ReactNode }) {
+export function DeleteDataDialog() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   // What the user themselves ticked. The boxes actually rendered as checked are this
@@ -143,9 +151,12 @@ export function DeleteDataDialog({ trigger }: { trigger: React.ReactNode }) {
         if (!next) reset();
       }}
     >
-      <span onClick={() => setOpen(true)}>{trigger}</span>
+      <Button variant="destructive" size="sm" className="w-fit" onClick={() => setOpen(true)}>
+        <Trash2 className="size-3.5" />
+        Delete data…
+      </Button>
 
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg" showCloseButton={false}>
         <DialogHeader>
           <DialogTitle className="text-destructive">
             Delete your Orbit data
@@ -163,8 +174,7 @@ export function DeleteDataDialog({ trigger }: { trigger: React.ReactNode }) {
           <div className="flex gap-1">
             <Button
               variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs"
+              size="xs"
               disabled={pending}
               onClick={() => setPicked(new Set(DATA_CATEGORY_IDS))}
             >
@@ -172,8 +182,7 @@ export function DeleteDataDialog({ trigger }: { trigger: React.ReactNode }) {
             </Button>
             <Button
               variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs"
+              size="xs"
               disabled={pending}
               onClick={() => setPicked(new Set())}
             >
@@ -210,17 +219,17 @@ export function DeleteDataDialog({ trigger }: { trigger: React.ReactNode }) {
                         {category.label}
                       </span>
                       {count !== undefined && count > 0 && (
-                        <span className="text-xs tabular-nums text-muted-foreground">
+                        <span className="text-2xs tabular-nums text-muted-foreground">
                           {count.toLocaleString()}{" "}
                           {count === 1 ? "record" : "records"}
                         </span>
                       )}
                     </span>
-                    <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">
+                    <span className="mt-0.5 block text-2xs leading-snug text-muted-foreground">
                       {category.description}
                     </span>
                     {isLocked && (
-                      <span className="mt-1 block text-xs leading-snug font-medium text-foreground/70">
+                      <span className="mt-1 block text-2xs leading-snug font-medium text-foreground/70">
                         Included — deleting contacts removes this too.
                       </span>
                     )}
@@ -234,7 +243,7 @@ export function DeleteDataDialog({ trigger }: { trigger: React.ReactNode }) {
         {partial && (
           <div
             role="status"
-            className="rounded-lg border border-border bg-muted/40 p-3 text-xs leading-snug"
+            className="rounded-lg border border-border-subtle bg-surface-inset p-3 text-xs leading-snug"
           >
             <p className="font-medium text-foreground">Part of this is still being deleted</p>
             <p className="mt-1 text-muted-foreground">
@@ -247,31 +256,38 @@ export function DeleteDataDialog({ trigger }: { trigger: React.ReactNode }) {
           </div>
         )}
 
-        <label className="block space-y-1.5">
-          <span className="text-xs font-medium">
-            Type {CONFIRMATION} to confirm
-          </span>
+        <div className="space-y-2">
+          <Label htmlFor="delete-data-confirmation">
+            Type <span className="font-mono font-medium text-ink">{CONFIRMATION}</span> to continue
+          </Label>
           <Input
+            id="delete-data-confirmation"
             value={typed}
             onChange={(e) => setTyped(e.target.value)}
             placeholder={CONFIRMATION}
-            className="h-8 text-sm"
             autoComplete="off"
+            spellCheck={false}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                submit();
+              }
+            }}
           />
-        </label>
+        </div>
 
         <DialogFooter>
           <Button
-            variant="ghost"
-            size="sm"
+            type="button"
+            variant="outline"
             onClick={() => setOpen(false)}
             disabled={pending}
           >
             Cancel
           </Button>
           <Button
+            type="button"
             variant="destructive"
-            size="sm"
             onClick={submit}
             disabled={!ready}
           >

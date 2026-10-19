@@ -28,7 +28,12 @@ export function deriveConnectionHealth(row: {
   return "active";
 }
 
-export const SESSION_EXPIRED_LINE = "Session expired — reconnect";
+/**
+ * The re-auth line everywhere. Spelled out rather than imported, to keep this module
+ * import-free; it mirrors `INTEGRATION_STATUS_COPY["needs-reconnect"]` in
+ * `components/integrations/integration-logo.tsx`, the one place status words are defined.
+ */
+export const SESSION_EXPIRED_LINE = "Needs reconnecting";
 export const CALENDAR_PAUSED_SHORT = "Calendar sync paused";
 
 /** The full line for a card. Never echoes `sync_error`, which can be a provider's raw body. */

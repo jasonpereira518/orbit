@@ -365,7 +365,7 @@ export function SettingsSectionNav({ sections }: { sections: RailSection[] }) {
       <div
         aria-hidden
         className={cn(
-          "pointer-events-none absolute inset-0 rounded-2xl border border-border/70 bg-card/85 opacity-0 shadow-[0_18px_40px_-28px_rgba(15,61,62,0.65)] backdrop-blur-xl",
+          "pointer-events-none absolute inset-0 rounded-xl border border-border-subtle bg-card/85 opacity-0 shadow-md backdrop-blur-xl",
           "transition-opacity duration-base ease-house",
           "group-hover:opacity-100 group-focus-within:opacity-100 group-data-[dragging=true]:opacity-100",
         )}
@@ -404,7 +404,7 @@ export function SettingsSectionNav({ sections }: { sections: RailSection[] }) {
                     else labelsRef.current.delete(section.id);
                   }}
                   className={cn(
-                    "shrink-0 whitespace-nowrap text-[0.8125rem] font-medium leading-none opacity-0",
+                    "shrink-0 whitespace-nowrap text-xs font-medium leading-none opacity-0",
                     "transition-[opacity,color] duration-base ease-house",
                     "group-hover:opacity-100 group-focus-within:opacity-100 group-data-[dragging=true]:opacity-100",
                     isCurrent

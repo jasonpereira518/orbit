@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { formatDistanceToNow } from "date-fns";
 import { toast } from "@/lib/toast";
 import {
   disableCalendarFeed,
@@ -10,12 +9,14 @@ import {
   regenerateCalendarFeedToken,
   type CalendarFeedStatus,
 } from "@/actions/calendar-feed";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ErrorState } from "@/components/ui/error-state";
 import { Input } from "@/components/ui/input";
+import { RelativeTime } from "@/components/ui/relative-time";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SettingsSection } from "@/components/settings/settings-section";
 import { Disclosure } from "@/components/settings/disclosure";
-import { useConfirmFocus } from "@/components/settings/use-confirm-focus";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { friendlyError, TIMEOUT_MESSAGE } from "@/lib/errors";
 
@@ -31,6 +32,9 @@ import { friendlyError, TIMEOUT_MESSAGE } from "@/lib/errors";
 const LOAD_TIMEOUT_MS = 12_000;
 
 const TIMED_OUT = "orbit:timed-out";
+
+/** One line for either way a load can fail; the toast on a mutation keeps the two apart. */
+const LOAD_FAILED = "Couldn’t load this — try again?";
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -63,7 +67,6 @@ export function CalendarFeedSettings() {
   const [revealed, setRevealed] = useState(false);
   const [confirmingRegen, setConfirmingRegen] = useState(false);
   const [pending, start] = useTransition();
-  const regenFocus = useConfirmFocus(confirmingRegen ? "regen" : null);
 
   // A failed load must be visible and recoverable. Without this the section sits on
   // "Loading…" forever — a dead panel with no way to retry. The two failure modes are
@@ -115,20 +118,16 @@ export function CalendarFeedSettings() {
     >
 
       {loadFailure && !status ? (
-        <div className="space-y-2">
-          <p className="text-sm text-muted-foreground">
-            {loadFailure === "timeout"
-              ? "Your calendar feed settings took too long to load."
-              : "Couldn't load your calendar feed settings."}
-          </p>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setReloadKey((k) => k + 1)}
-          >
-            Try again
-          </Button>
-        </div>
+        <ErrorState
+          size="sm"
+          title={LOAD_FAILED}
+          description={
+            loadFailure === "timeout"
+              ? "The request took too long to answer."
+              : "Something went wrong on our side."
+          }
+          onRetry={() => setReloadKey((k) => k + 1)}
+        />
       ) : !status ? (
         <div className="space-y-2" aria-busy="true" aria-label="Loading calendar feed">
           <Skeleton className="h-4 w-2/3" />
@@ -154,17 +153,14 @@ export function CalendarFeedSettings() {
                 These open your calendar app’s add-calendar screen — finish subscribing there.
               </p>
               <div className="flex flex-wrap items-center gap-2">
-                <a
-                  href={status.webcalUrl!}
-                  className="inline-flex h-8 items-center rounded-md border border-input px-3 text-sm hover:bg-accent"
-                >
+                <a href={status.webcalUrl!} className={buttonVariants({ variant: "outline" })}>
                   Open in Apple Calendar
                 </a>
                 <a
                   href={status.googleAddUrl!}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex h-8 items-center rounded-md border border-input px-3 text-sm hover:bg-accent"
+                  className={buttonVariants({ variant: "outline" })}
                 >
                   Open in Google Calendar
                 </a>
@@ -199,12 +195,13 @@ export function CalendarFeedSettings() {
           )}
 
           <p className="text-xs text-muted-foreground">
-            {status.lastFetchedAt
-              ? `Last fetched by a calendar app ${formatDistanceToNow(
-                  new Date(status.lastFetchedAt),
-                  { addSuffix: true }
-                )}.`
-              : "Not fetched yet — calendar apps can take several hours to check the first time."}
+            {status.lastFetchedAt ? (
+              <>
+                Last fetched by a calendar app <RelativeTime date={status.lastFetchedAt} />.
+              </>
+            ) : (
+              "Not fetched yet — calendar apps can take several hours to check the first time."
+            )}
           </p>
 
           <ul className="space-y-1 text-xs text-muted-foreground">
@@ -258,43 +255,24 @@ export function CalendarFeedSettings() {
             )}
 
             <div className="flex flex-wrap gap-2">
-              {confirmingRegen ? (
-                <>
-                  <Button
-                    ref={regenFocus.confirmRef("regen")}
-                    size="sm"
-                    variant="outline"
-                    disabled={pending}
-                    onClick={() =>
-                      run("New link created", regenerateCalendarFeedToken)
-                    }
-                  >
-                    Yes, replace the link
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setConfirmingRegen(false)}
-                  >
-                    Cancel
-                  </Button>
-                  <p role="status" className="w-full text-xs text-muted-foreground">
-                    Your old link stops working immediately. You&apos;ll need to
-                    re-subscribe on every device.
-                  </p>
-                </>
-              ) : (
-                <Button
-                  ref={regenFocus.triggerRef("regen")}
-                  size="sm"
-                  variant="outline"
-                  disabled={pending}
-                  onClick={() => setConfirmingRegen(true)}
-                >
-                  Regenerate link
-                </Button>
-              )}
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={pending}
+                onClick={() => setConfirmingRegen(true)}
+              >
+                Regenerate link
+              </Button>
             </div>
+            <ConfirmDialog
+              open={confirmingRegen}
+              onOpenChange={setConfirmingRegen}
+              title="Replace the calendar link?"
+              description="Your old link stops working immediately. You’ll need to re-subscribe on every device."
+              confirmLabel="Replace the link"
+              pendingLabel="Replacing…"
+              onConfirm={() => run("New link created", regenerateCalendarFeedToken)}
+            />
           </Disclosure>
 
           <div>

@@ -4,10 +4,9 @@ import { useSyncExternalStore, useTransition } from "react";
 import { Monitor, Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { saveThemePreference } from "@/actions/settings";
-import { Button } from "@/components/ui/button";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import { SettingsRow } from "@/components/settings/settings-section";
 import type { ThemePreference } from "@/lib/theme";
-import { cn } from "@/lib/utils";
 
 const OPTIONS: Array<{
   value: ThemePreference;
@@ -62,25 +61,19 @@ export function AppearanceSettings({
       title="Theme"
       description="Light, dark, or match your system. Saved to your account, so it follows you across devices."
     >
-      <div className="flex flex-wrap gap-2">
-        {OPTIONS.map(({ value, label, icon: Icon }) => (
-          <Button
-            key={value}
-            type="button"
-            variant={active === value ? "default" : "outline"}
-            size="sm"
-            disabled={pending}
-            className={cn(
-              "gap-1.5",
-              active === value && "bg-primary text-primary-foreground hover:bg-primary/90"
-            )}
-            onClick={() => select(value)}
-          >
-            <Icon className="h-3.5 w-3.5" />
-            {label}
-          </Button>
-        ))}
-      </div>
+      <SegmentedControl
+        ariaLabel="Theme"
+        value={active}
+        onChange={(next) => {
+          if (!pending && next !== active) select(next);
+        }}
+        items={OPTIONS.map(({ value, label, icon: Icon }) => ({
+          key: value,
+          label,
+          icon: <Icon aria-hidden />,
+          disabled: pending,
+        }))}
+      />
     </SettingsRow>
   );
 }

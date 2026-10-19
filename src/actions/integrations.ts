@@ -160,7 +160,7 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
         conns.length === 0
           ? { state: "off", detail: "Not connected" }
           : conns.some((c) => c.status === "needs_reauth")
-            ? { state: "partial", detail: "Reconnect needed" }
+            ? { state: "partial", detail: "Needs reconnecting" }
             : { state: "on", detail: "Connected" };
     }
   }

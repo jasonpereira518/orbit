@@ -1,32 +1,42 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { Moon, Sun } from "lucide-react";
+import { Monitor, Moon, Sun } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import { useTheme } from "next-themes";
 import { saveThemePreference } from "@/actions/settings";
 import { Button } from "@/components/ui/button";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
+import type { ThemePreference } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
 /**
- * The light/dark control.
+ * The theme control in the chrome.
  *
- * A button, not a switch. The track showed both destinations at once, which is honest about
- * there being two — but it spent a 56px pill on a setting most people press once, and sat in
- * the sidebar header and the mobile sheet next to controls that are all square icon buttons,
- * so the one form control in the chrome read as something you were being asked to fill in.
+ * A button, not a switch. It cycles through the same three choices the appearance setting
+ * offers — light → dark → system — through the same `setTheme` and `saveThemePreference`,
+ * so pressing it never overwrites a saved "system" with a plain "light" the way a two-way
+ * toggle did. The icon is the DESTINATION, not the current state: a moon means pressing
+ * this gets you dark, a monitor means it hands the choice to the OS. Which theme you are in
+ * is not information the button has to carry — the whole page is already the answer.
  *
- * The icon is the DESTINATION, not the current state: a moon means pressing this gets you
- * dark. Which of the two you are in is not information the button has to carry — the whole
- * page is already the answer — so the glyph is free to say what the press does instead.
- *
- * Hence a plain `<button>` rather than `role="switch"` too. It announces "Switch to dark mode,
- * button" — the action — where the switch announced a state that the page itself states more
- * loudly than any control could.
+ * Hence a plain button rather than `role="switch"` too. It announces the action ("Switch to
+ * dark mode, button") where a switch announced a state the page itself states more loudly.
  */
+const ORDER: readonly ThemePreference[] = ["light", "dark", "system"];
+
+const DESTINATION: Record<ThemePreference, { icon: typeof Sun; label: string }> = {
+  light: { icon: Sun, label: "Switch to light mode" },
+  dark: { icon: Moon, label: "Switch to dark mode" },
+  system: { icon: Monitor, label: "Match the system theme" },
+};
+
+function isPreference(value: string | undefined): value is ThemePreference {
+  return value === "light" || value === "dark" || value === "system";
+}
+
 export function ThemeToggle({ className }: { className?: string }) {
-  const { resolvedTheme, setTheme } = useTheme();
+  const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   const [, start] = useTransition();
   const reducedMotion = useReducedMotion();
@@ -35,10 +45,12 @@ export function ThemeToggle({ className }: { className?: string }) {
     setMounted(true);
   }, []);
 
-  const isDark = mounted && resolvedTheme === "dark";
+  // next-themes reads localStorage, so `theme` is unknown until mount; the server render
+  // matches the provider's default so the first paint and hydration agree.
+  const current: ThemePreference = mounted && isPreference(theme) ? theme : "light";
+  const next = ORDER[(ORDER.indexOf(current) + 1) % ORDER.length];
 
-  function toggleTheme() {
-    const next = isDark ? "light" : "dark";
+  function cycleTheme() {
     setTheme(next);
     start(async () => {
       try {
@@ -52,32 +64,37 @@ export function ThemeToggle({ className }: { className?: string }) {
   return (
     <Button
       type="button"
-      // Outline, not ghost. The switch it replaces carried its own border and muted fill, and
-      // in the mobile sheet the control sits alone in a footer row with nothing beside it to
-      // read as an affordance — a bare glyph there is a decoration until you happen to press
-      // it. It also puts this in the same square as the notification bell, which is the point
-      // of dropping the pill.
+      // Outline, not ghost. In the mobile sheet the control sits alone in a footer row with
+      // nothing beside it to read as an affordance — a bare glyph there is a decoration
+      // until you happen to press it. It also puts this in the same square as the
+      // notification bell.
       variant="outline"
       size="icon"
-      aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
-      onClick={toggleTheme}
+      aria-label={DESTINATION[next].label}
+      onClick={cycleTheme}
       className={cn(
-        "relative rounded-full border-border/70 text-muted-foreground hover:text-ink",
+        "relative rounded-full border-border-subtle text-muted-foreground hover:text-ink",
         className
       )}
     >
-      {/* Both glyphs stay mounted and stacked, so the swap is a cross-fade in place rather
-          than one icon being exchanged for another — and the button cannot reflow mid-press.
-          `absolute` on both, because a stack of two is the only way neither can push the
-          other around while they overlap. */}
-      <ThemeIcon icon={Sun} show={isDark} reduced={reducedMotion} />
-      <ThemeIcon icon={Moon} show={!isDark} reduced={reducedMotion} />
+      {/* All three glyphs stay mounted and stacked, so the swap is a cross-fade in place
+          rather than one icon being exchanged for another — and the button cannot reflow
+          mid-press. `absolute` on each, because a stack is the only way none can push the
+          others around while they overlap. */}
+      {ORDER.map((pref) => (
+        <ThemeIcon
+          key={pref}
+          icon={DESTINATION[pref].icon}
+          show={pref === next}
+          reduced={reducedMotion}
+        />
+      ))}
     </Button>
   );
 }
 
 /**
- * One glyph of the pair, fading and turning into or out of place.
+ * One glyph of the stack, fading and turning into or out of place.
  *
  * The rotation is what stops the cross-fade reading as a dissolve: a sun and a moon at the
  * same size in the same spot are similar enough that opacity alone looks like a rendering

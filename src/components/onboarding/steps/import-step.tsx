@@ -39,7 +39,7 @@ export function ImportStep({ onContinue }: { onContinue: (started: boolean) => v
       <div className="space-y-2">
         <LinkedInMessagesImport />
         <p className="flex items-start gap-2 px-1 text-xs text-muted-foreground">
-          <Badge variant="secondary" className="shrink-0">
+          <Badge tone="accent" size="sm" className="shrink-0">
             Recommended
           </Badge>
           Connections tell Orbit who you know. Messages tell it who you actually talk to, so

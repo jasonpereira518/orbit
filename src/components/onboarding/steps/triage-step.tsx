@@ -8,6 +8,8 @@ import {
 } from "@/actions/contacts";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorState } from "@/components/ui/error-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/lib/toast";
 import { useDelayedLoading } from "@/lib/use-delayed-loading";
@@ -16,7 +18,7 @@ import { cn } from "@/lib/utils";
 /** Shown a screen at a time so onboarding never dumps the whole shortlist on one page. */
 const SCREEN_SIZE = 8;
 
-/** Same 1–5 scale as the contact-detail "Strength" field (contact-form.tsx). */
+/** Same 1–5 scale as the contact-detail "Your rating" field (contact-form.tsx). */
 const RATING_VALUES = [1, 2, 3, 4, 5] as const;
 
 export function TriageStep({ onDone }: { onDone: () => void }) {
@@ -147,9 +149,9 @@ export function TriageStep({ onDone }: { onDone: () => void }) {
     if (!showLoadingSkeleton) return null;
     return (
       <div className="space-y-3">
-        <Skeleton className="h-20 w-full rounded-2xl" />
-        <Skeleton className="h-20 w-full rounded-2xl" />
-        <Skeleton className="h-20 w-full rounded-2xl" />
+        <Skeleton className="h-20 w-full rounded-xl" />
+        <Skeleton className="h-20 w-full rounded-xl" />
+        <Skeleton className="h-20 w-full rounded-xl" />
       </div>
     );
   }
@@ -157,39 +159,31 @@ export function TriageStep({ onDone }: { onDone: () => void }) {
   if (loadError) {
     return (
       <div className="space-y-4">
-        <p className="text-sm text-muted-foreground">
-          Couldn&apos;t load anyone to rate. This is a loading problem, not an
-          empty orbit — try again.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            onClick={retry}
-          >
-            Try again
-          </Button>
-          <Button type="button" variant="outline" onClick={onDone}>
-            Skip this step
-          </Button>
-        </div>
+        <ErrorState
+          size="sm"
+          title="Couldn’t load anyone to rate"
+          description="This is a loading problem, not an empty orbit."
+          onRetry={retry}
+        />
+        <Button type="button" variant="outline" onClick={onDone}>
+          Skip for now
+        </Button>
       </div>
     );
   }
 
   if (candidates.length === 0) {
     return (
-      <div className="space-y-4">
-        <p className="text-sm text-muted-foreground">
-          Nothing to rate yet — Orbit asks about people once it has some to
-          ask about.
-        </p>
-        <Button
-          type="button"
-          onClick={onDone}
-        >
-          Continue
-        </Button>
-      </div>
+      <EmptyState
+        variant="plain"
+        title="Nothing to rate yet"
+        description="Orbit asks about people once it has some to ask about."
+        action={
+          <Button type="button" onClick={onDone}>
+            Continue
+          </Button>
+        }
+      />
     );
   }
 
@@ -208,7 +202,7 @@ export function TriageStep({ onDone }: { onDone: () => void }) {
           className="shrink-0 text-muted-foreground"
           onClick={onDone}
         >
-          Skip this step
+          Skip for now
         </Button>
       </div>
 
@@ -216,7 +210,7 @@ export function TriageStep({ onDone }: { onDone: () => void }) {
         {pageItems.map((c) => (
           <div
             key={c.id}
-            className="flex flex-wrap items-center gap-3 rounded-2xl border border-border/70 bg-background/70 p-4"
+            className="flex flex-wrap items-center gap-3 rounded-xl border border-border-subtle bg-card p-4"
           >
             <ContactAvatar
               contactId={c.id}
@@ -236,38 +230,40 @@ export function TriageStep({ onDone }: { onDone: () => void }) {
             </div>
             <div className="flex items-center gap-1">
               {RATING_VALUES.map((value) => (
-                <button
+                <Button
                   key={value}
                   type="button"
+                  size="icon"
+                  variant={ratings[c.id] === value ? "default" : "outline"}
                   disabled={pending}
                   aria-pressed={ratings[c.id] === value}
                   aria-label={`Rate ${c.fullName} ${value} out of 5`}
                   onClick={() => rate(c.id, value)}
                   className={cn(
-                    "flex h-8 w-8 items-center justify-center rounded-full border text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-50",
-                    ratings[c.id] === value
-                      ? "border-primary bg-primary text-primary-foreground"
-                      : "border-border/70 bg-background/70 text-muted-foreground hover:border-primary/25 hover:bg-accent"
+                    "rounded-full",
+                    ratings[c.id] !== value && "text-muted-foreground hover:border-primary/25"
                   )}
                 >
                   {value}
-                </button>
+                </Button>
               ))}
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="xs"
                 disabled={pending}
                 aria-label={`Skip ${c.fullName}`}
                 onClick={() => clearRating(c.id)}
-                className="ml-1 rounded-full px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                className="ml-1 rounded-full text-muted-foreground"
               >
                 Skip
-              </button>
+              </Button>
             </div>
           </div>
         ))}
       </div>
 
-      <div className="flex items-center justify-between border-t border-border/60 pt-4">
+      <div className="flex items-center justify-between border-t border-border-subtle pt-4">
         <p className="text-xs text-muted-foreground">
           Screen {screen + 1} of {screens}
         </p>
@@ -276,7 +272,7 @@ export function TriageStep({ onDone }: { onDone: () => void }) {
           disabled={pending}
           onClick={submitScreenAndAdvance}
         >
-          {pending ? "Saving…" : isLastScreen ? "Finish" : "Next"}
+          {pending ? "Saving…" : isLastScreen ? "Continue" : "Next"}
         </Button>
       </div>
     </div>

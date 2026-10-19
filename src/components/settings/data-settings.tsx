@@ -2,7 +2,7 @@
 
 import { useTransition } from "react";
 import Link from "next/link";
-import { Download, Trash2, UserX } from "lucide-react";
+import { Download } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { friendlyError, UserFacingError } from "@/lib/errors";
 import { Button } from "@/components/ui/button";
@@ -75,36 +75,14 @@ export function DataSettings() {
         title="Delete data"
         description="Choose what to remove — some or all of it. Your account stays; anything you keep is untouched."
       >
-        <DeleteDataDialog
-          trigger={
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-fit text-destructive hover:border-destructive/40 hover:bg-destructive/10"
-            >
-              <Trash2 className="size-3.5" />
-              Delete data…
-            </Button>
-          }
-        />
+        <DeleteDataDialog />
       </SettingsRow>
 
       <SettingsRow
         title="Delete account"
         description="Erase everything and remove your sign-in. Cancels an active Orbit subscription."
       >
-        <DeleteAccountDialog
-          trigger={
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-fit text-destructive hover:border-destructive/40 hover:bg-destructive/10"
-            >
-              <UserX className="size-3.5" />
-              Delete account…
-            </Button>
-          }
-        />
+        <DeleteAccountDialog />
       </SettingsRow>
     </SettingsSection>
   );

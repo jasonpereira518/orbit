@@ -25,9 +25,9 @@ export function AvatarSyncStatus() {
       <div className="flex items-start gap-2.5">
         <div className="mt-0.5 shrink-0">
           {job.status === "running" ? (
-            <Loader2 className="size-4 animate-spin text-primary" />
+            <Loader2 className="size-4 motion-safe:animate-spin text-primary" aria-hidden />
           ) : job.status === "completed" ? (
-            <CheckCircle2 className="size-4 text-primary" />
+            <CheckCircle2 className="size-4 text-success" aria-hidden />
           ) : job.status === "failed" ? (
             <XCircle className="size-4 text-destructive" />
           ) : (

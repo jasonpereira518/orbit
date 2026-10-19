@@ -1,6 +1,14 @@
 "use client";
 
 import { createContext, useContext, useId } from "react";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 /**
@@ -30,7 +38,8 @@ export function SettingsSurfaceProvider({
 }
 
 /**
- * The one card every settings section is drawn in.
+ * The one card every settings section is drawn in: a thin wrapper over the house `Card`
+ * (`size="lg"`), so a settings card and any other card on the page share one surface.
  *
  * Headings sit one level under the page's group labels: h1 "Settings" › h2 group › h3 this
  * › h4 `SettingsRow`. In the Integrations dialog the dialog title is the h2, so the ladder
@@ -53,27 +62,37 @@ export function SettingsSection({
   const surface = useContext(SettingsSurfaceContext);
   const headingId = useId();
 
-  return (
-    <section
-      aria-labelledby={headingId}
-      className={cn(
-        "space-y-4",
-        surface === "card" && "rounded-2xl border border-border/70 bg-card p-6",
-        className
-      )}
-    >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <h3 id={headingId} className="text-lg font-medium text-ink">
-            {title}
-          </h3>
-          {description ? (
-            <p className="mt-1 text-sm text-muted-foreground">{description}</p>
-          ) : null}
+  if (surface === "panel") {
+    return (
+      <section aria-labelledby={headingId} className={cn("space-y-4", className)}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <h3 id={headingId} className="font-heading text-lg font-medium text-ink">
+              {title}
+            </h3>
+            {description ? (
+              <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+            ) : null}
+          </div>
+          {action}
         </div>
-        {action}
-      </div>
-      {children}
+        {children}
+      </section>
+    );
+  }
+
+  return (
+    <section aria-labelledby={headingId}>
+      <Card size="lg" className={className}>
+        <CardHeader>
+          <CardTitle as="h3" id={headingId} className="text-lg">
+            {title}
+          </CardTitle>
+          {description ? <CardDescription>{description}</CardDescription> : null}
+          {action ? <CardAction>{action}</CardAction> : null}
+        </CardHeader>
+        {children ? <CardContent className="space-y-4">{children}</CardContent> : null}
+      </Card>
     </section>
   );
 }
@@ -100,7 +119,7 @@ export function SettingsRow({
   return (
     <div
       id={id}
-      className={cn("space-y-3 border-t border-border/60 pt-4", id && "scroll-mt-8")}
+      className={cn("space-y-3 border-t border-border-subtle pt-4", id && "scroll-mt-8")}
     >
       <div>
         <h4 className="text-sm font-medium text-ink">{title}</h4>

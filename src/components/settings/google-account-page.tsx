@@ -50,7 +50,6 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { formatDistanceToNow } from "date-fns";
 import { CalendarClock, CalendarDays, Loader2, Mail, Send, Users } from "lucide-react";
 import { getGmailScanStatus, setCalendarSync, type GmailScanStatus } from "@/actions/gmail";
 import { Button } from "@/components/ui/button";
@@ -65,12 +64,16 @@ import { focusTargetId, type IntegrationTabId } from "@/components/settings/sect
 import { friendlyError } from "@/lib/errors";
 import {
   googleAccountStatus,
+  isAllowControl,
   rowControl,
   type CapabilityStatus,
   type RowControl,
 } from "@/lib/integration-status";
+import { RelativeTime } from "@/components/ui/relative-time";
+import { TONE } from "@/lib/tone";
 import { toast } from "@/lib/toast";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { cn } from "@/lib/utils";
 
 /** Where `?integration=gmail` lands. Kept on the inbox row itself, which is what it names. */
 const INBOX_ROW_ID = focusTargetId("google", "inbox");
@@ -226,7 +229,7 @@ function ContactsRow({
   onAllow: () => void;
 }) {
   const control = rowControl("contacts", capability);
-  const needsAllow = control.kind === "action" && control.label === "Allow";
+  const needsAllow = isAllowControl(control);
   // This provider's own job, not any job — see the note at the top of the file.
   const working = busy || contacts.loading || contacts.jobRunning;
 
@@ -330,8 +333,8 @@ function MeetingsRow({
       control={control}
       disabled={busy || pending}
       onAction={() => {
-        // Fix and Allow both come down to asking Google for the calendar again; only a live
-        // grant has a switch to flip.
+        // "See what happened" and Allow both come down to asking Google for the calendar
+        // again; only a live grant has a switch to flip.
         if (control.kind === "switch") toggle(!control.on);
         else onAllow();
       }}
@@ -340,12 +343,16 @@ function MeetingsRow({
 }
 
 /** Never `syncError`, which can be a raw provider body — `detail` is already safe to show. */
-function meetingsLine(capability: CapabilityStatus | undefined, lastCheckedAt: string | null): string {
+function meetingsLine(capability: CapabilityStatus | undefined, lastCheckedAt: string | null): React.ReactNode {
   if (capability?.state === "paused" && capability.detail) return capability.detail;
   if (capability?.state === "off") return "Off — meetings aren’t being logged.";
   const base = "Logs meetings with people you know onto their timelines.";
   if (capability?.state !== "on" || !lastCheckedAt) return base;
-  return `${base} Checked ${formatDistanceToNow(new Date(lastCheckedAt), { addSuffix: true })}.`;
+  return (
+    <>
+      {base} Checked <RelativeTime date={lastCheckedAt} />.
+    </>
+  );
 }
 
 /**
@@ -387,7 +394,7 @@ function InboxRow({
 
   const control = rowControl("inbox", capability);
   const isScan = control.kind === "action" && control.label === "Scan inbox";
-  const isAllow = control.kind === "action" && control.label === "Allow";
+  const isAllow = isAllowControl(control);
   // A scan reads mail with the AI, so it cannot start without one — the row says where to
   // turn it on rather than starting something the server would refuse.
   const needsAi = isScan && !aiReady;
@@ -441,17 +448,17 @@ function InboxRow({
       ) : null}
 
       {running && scan ? (
-        <div className="space-y-2 rounded-xl bg-muted/40 p-4">
+        <div className="space-y-2 rounded-lg border border-border-subtle bg-surface-inset p-4">
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
             <span className="flex items-center gap-2 text-foreground">
-              <Loader2 className="size-4 animate-spin text-muted-foreground" />
+              <Loader2 className="size-4 motion-safe:animate-spin text-muted-foreground" aria-hidden />
               {phaseLabel}
             </span>
             <Button variant="ghost" size="sm" onClick={() => startTransition(() => cancel())}>
               Cancel
             </Button>
           </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-border/60">
+          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
             <div
               className={
                 percent == null
@@ -469,7 +476,7 @@ function InboxRow({
       ) : null}
 
       {!running && scan?.status === "completed" ? (
-        <p className="rounded-xl bg-muted/40 p-4 text-sm text-muted-foreground">
+        <p className="rounded-lg border border-border-subtle bg-surface-inset p-4 text-sm text-muted-foreground">
           Last scan read {scan.messagesScanned.toLocaleString()} messages and found{" "}
           <span className="font-medium text-foreground">
             {scan.recruitersFound} recruiter{scan.recruitersFound === 1 ? "" : "s"}
@@ -479,7 +486,7 @@ function InboxRow({
       ) : null}
 
       {!running && scan?.status === "failed" ? (
-        <p className="rounded-xl bg-destructive/10 p-4 text-sm text-destructive">
+        <p className={cn("rounded-lg border p-4 text-sm", TONE.destructive.box, TONE.destructive.text)}>
           {/* The stored message can be a raw Gmail body. */}
           {friendlyError(scan.errorMessage, "The last scan didn’t finish — try again?")}
         </p>

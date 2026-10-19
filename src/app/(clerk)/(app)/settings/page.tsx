@@ -32,6 +32,8 @@ import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { surfaceKeyForSettingsId, FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
 import { speechAllowance } from "@/lib/speech-quota";
 import type { SpeechAllowances } from "@/components/settings/speech-usage-card";
+import { PageHeader } from "@/components/layout/page-header";
+import { PageShell } from "@/components/layout/page-shell";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { cookies } from "next/headers";
 import { after } from "next/server";
@@ -86,7 +88,7 @@ function Group({
     <section id={id} aria-labelledby={`${id}-label`} className="scroll-mt-8 space-y-4">
       <h2
         id={`${id}-label`}
-        className="px-1 text-[0.8125rem] font-semibold tracking-[0.08em] text-muted-foreground uppercase"
+        className="px-1 text-xs font-medium uppercase tracking-wider text-muted-foreground"
       >
         {label}
       </h2>
@@ -160,16 +162,12 @@ export default async function SettingsPage() {
   }));
 
   return (
-    <div className="mx-auto max-w-2xl space-y-10">
+    <PageShell width="narrow">
       <RenderStamp />
-      <div>
-        <h1 className="font-heading text-3xl text-ink">
-          Settings
-        </h1>
-        <p className="mt-1 text-muted-foreground">
-          Your account, how Orbit behaves, what it connects to, and your data.
-        </p>
-      </div>
+      <PageHeader
+        title="Settings"
+        description="Your account, how Orbit behaves, what it connects to, and your data."
+      />
 
       <Group group="account" visible={groupVisible("account")}>
         <Section id="settings-profile" hidden={hidden}>
@@ -260,6 +258,6 @@ export default async function SettingsPage() {
       </Group>
 
       <SettingsSectionNav sections={railSections} />
-    </div>
+    </PageShell>
   );
 }

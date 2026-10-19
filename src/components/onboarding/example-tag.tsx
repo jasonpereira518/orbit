@@ -1,4 +1,4 @@
-import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 
 /**
  * The chip beside an example person's name. Muted on purpose: it labels, it does not
@@ -6,14 +6,13 @@ import { cn } from "@/lib/utils";
  */
 export function ExampleTag({ className }: { className?: string }) {
   return (
-    <span
-      className={cn(
-        "inline-flex shrink-0 items-center rounded-full border border-border/70 bg-muted/50 px-1.5 py-px text-3xs font-semibold uppercase tracking-wide text-muted-foreground",
-        className,
-      )}
+    <Badge
+      tone="neutral"
+      size="sm"
+      className={className}
       title="Added for the guided tour; removed when it ends"
     >
       Example
-    </span>
+    </Badge>
   );
 }

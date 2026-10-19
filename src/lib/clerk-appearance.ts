@@ -15,7 +15,7 @@ export const clerkAppearance = {
   },
   elements: {
     card: "shadow-none border border-border",
-    headerTitle: "font-heading text-primary",
+    headerTitle: "font-heading text-ink",
     headerSubtitle: "text-muted-foreground",
     formButtonPrimary:
       "bg-primary text-primary-foreground hover:bg-primary/90 text-sm font-medium",

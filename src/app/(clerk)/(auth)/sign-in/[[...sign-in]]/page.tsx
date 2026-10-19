@@ -1,6 +1,7 @@
 import { SignIn } from "@clerk/nextjs";
 import { isClerkConfigured, redirectIfAuthenticated } from "@/lib/auth";
 import { clerkAppearance } from "@/lib/clerk-appearance";
+import { AuthFrame } from "@/components/auth/auth-frame";
 import { OrbitLogo } from "@/components/orbit-logo";
 
 export default async function SignInPage() {
@@ -24,12 +25,12 @@ export default async function SignInPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
+    <AuthFrame>
       <SignIn
         appearance={clerkAppearance}
         forceRedirectUrl="/dashboard"
         signUpForceRedirectUrl="/onboarding"
       />
-    </div>
+    </AuthFrame>
   );
 }

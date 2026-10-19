@@ -98,10 +98,10 @@ export function ProfileSettings({
             <img
               src={profile.imageUrl}
               alt=""
-              className="h-12 w-12 rounded-full border border-border/60 object-cover"
+              className="size-12 rounded-full border border-border-subtle object-cover"
             />
           ) : (
-            <div className="flex h-12 w-12 items-center justify-center rounded-full border border-border/60 bg-muted text-sm font-medium text-ink">
+            <div className="flex size-12 items-center justify-center rounded-full border border-border-subtle bg-muted text-sm font-medium text-ink">
               {profile.name.slice(0, 1).toUpperCase()}
             </div>
           )}

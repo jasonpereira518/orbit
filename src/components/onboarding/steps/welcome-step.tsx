@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { ArrowRight, Check } from "lucide-react";
 import { OrbitLogo } from "@/components/orbit-logo";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Stagger, StaggerItem } from "@/components/onboarding/onboarding-ui";
@@ -11,7 +12,7 @@ import type { OnboardingPath } from "@/lib/onboarding-steps";
 import { cn } from "@/lib/utils";
 
 const TOUR_SETS_UP = [
-  "Your Google or Outlook contacts, brought in with one click",
+  "Your Google or Microsoft contacts, brought in with one click",
   "Every page, with six example people already in place",
 ];
 
@@ -30,7 +31,13 @@ export function WelcomeStep({
   onChoose: (path: OnboardingPath) => void;
 }) {
   const [agreed, setAgreed] = useState(false);
+  // Which card was pressed, so only that button reads "Starting…" while the path is saved.
+  const [chosen, setChosen] = useState<OnboardingPath | null>(null);
   const blocked = pending || (needsTerms && !agreed);
+  const choose = (path: OnboardingPath) => {
+    setChosen(path);
+    onChoose(path);
+  };
 
   return (
     <Stagger className="mx-auto flex max-w-3xl flex-col items-center text-center">
@@ -63,7 +70,7 @@ export function WelcomeStep({
 
       {needsTerms && (
         <StaggerItem className="mt-4 w-full max-w-lg">
-          <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-border/70 bg-card/70 px-3 py-2.5 text-left text-sm text-muted-foreground">
+          <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border-subtle bg-card px-3 py-2.5 text-left text-sm text-muted-foreground">
             <Checkbox
               checked={agreed}
               onCheckedChange={(checked) => setAgreed(checked === true)}
@@ -93,13 +100,14 @@ export function WelcomeStep({
             title="Guided tour"
             time="Connect your accounts, then a three-minute tour of the real pages."
             action="Start the tour"
+            pending={pending && chosen === "tour"}
             disabled={blocked}
-            onClick={() => onChoose("tour")}
+            onClick={() => choose("tour")}
           >
             <ul className="space-y-1.5">
               {TOUR_SETS_UP.map((line) => (
                 <li key={line} className="flex items-start gap-2 text-sm text-foreground">
-                  <Check className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+                  <Check className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
                   <span className="min-w-0">{line}</span>
                 </li>
               ))}
@@ -111,8 +119,9 @@ export function WelcomeStep({
             title="Quick setup"
             time="About a minute."
             action="Set up quickly"
+            pending={pending && chosen === "quick"}
             disabled={blocked}
-            onClick={() => onChoose("quick")}
+            onClick={() => choose("quick")}
           >
             <p className="text-sm text-muted-foreground">
               Your people first, then your accounts, then a quick look at what Orbit can do. The
@@ -131,6 +140,7 @@ function PathCard({
   title,
   time,
   action,
+  pending,
   disabled,
   onClick,
   children,
@@ -140,6 +150,8 @@ function PathCard({
   title: string;
   time: string;
   action: string;
+  /** This card's path is being started: the button says so. */
+  pending?: boolean;
   disabled: boolean;
   onClick: () => void;
   children: React.ReactNode;
@@ -147,17 +159,15 @@ function PathCard({
   return (
     <div
       className={cn(
-        "flex h-full flex-col gap-3 rounded-3xl border p-5",
-        primary
-          ? "border-primary/40 bg-card shadow-[0_18px_50px_-30px] shadow-primary/40"
-          : "border-border/70 bg-card/60",
+        "flex h-full flex-col gap-3 rounded-xl border bg-card p-5",
+        primary ? "border-primary/40 shadow-md" : "border-border-subtle",
       )}
     >
       <div className="space-y-1">
         {eyebrow && (
-          <span className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wide text-primary">
+          <Badge tone="accent" size="sm">
             {eyebrow}
-          </span>
+          </Badge>
         )}
         <h2 className="font-heading text-2xl tracking-tight text-ink">
           {title}
@@ -173,8 +183,8 @@ function PathCard({
         disabled={disabled}
         onClick={onClick}
       >
-        {action}
-        <ArrowRight className="size-4" aria-hidden />
+        {pending ? "Starting…" : action}
+        {!pending && <ArrowRight className="size-4" aria-hidden />}
       </Button>
     </div>
   );

@@ -104,6 +104,9 @@ export function OnboardingFlow({
   planFlags,
 }: OnboardingFlowProps) {
   const [pending, start] = useTransition();
+  // The header's Skip setup shares `pending` with every other path action, so it remembers
+  // being the one pressed: only then does its label say "Skipping…".
+  const [skipping, setSkipping] = useState(false);
 
   // Record the first view (from #302). Once a step is stored the first-run gate stops sending
   // this person back here (see `needsOnboarding`), so onboarding shows once even if they leave
@@ -304,9 +307,12 @@ export function OnboardingFlow({
               size="sm"
               className="text-muted-foreground"
               disabled={pending}
-              onClick={() => leave(false)}
+              onClick={() => {
+                setSkipping(true);
+                leave(false);
+              }}
             >
-              Skip setup
+              {skipping && pending ? "Skipping…" : "Skip setup"}
             </Button>
           )}
         </div>

@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { SettingsRow } from "@/components/settings/settings-section";
 import { setRadarDigest } from "@/actions/radar";
 import { friendlyError } from "@/lib/errors";
@@ -37,13 +38,11 @@ export function RadarDigestSetting({ initialEnabled }: { initialEnabled: boolean
       title="Radar’s Monday email"
       description="Your week’s top people to write to, and how many drafts are waiting, early on Monday in your time zone. Nothing is sent to anyone else."
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" variant="outline" disabled={pending} onClick={toggle}>
-          {enabled ? "Turn off" : "Turn on"}
-        </Button>
-        <span className="text-sm text-muted-foreground" role="status">
-          {enabled ? "On" : "Off"}
-        </span>
+      <div className="flex flex-wrap items-center gap-3">
+        <Switch id="radar-digest" checked={enabled} disabled={pending} onCheckedChange={toggle} />
+        <Label htmlFor="radar-digest" className="text-sm font-normal text-muted-foreground">
+          <span role="status">{pending ? "Saving…" : enabled ? "On" : "Off"}</span>
+        </Label>
       </div>
     </SettingsRow>
   );

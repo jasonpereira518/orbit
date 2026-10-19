@@ -1,12 +1,65 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect } from "react";
-import { buttonVariants } from "@/components/ui/button";
+import { useEffect, type ReactNode } from "react";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { IntentLink } from "@/components/ui/intent-link";
 import { onReconnect, useConnectivity } from "@/lib/connectivity-store";
 import { isNetworkError } from "@/lib/errors";
-import { cn } from "@/lib/utils";
 import { reportClientError } from "@/lib/sentry-lazy";
+
+/**
+ * The one frame for a page that did not render: the error boundaries and the two
+ * not-found pages all draw into it, so "We hit a snag" and "Page not found" share a
+ * height, a title style (the `PageHeader` h1) and a button row.
+ */
+export function ErrorFrame({
+  eyebrow,
+  title,
+  description,
+  reference,
+  actions,
+}: {
+  eyebrow: ReactNode;
+  title: ReactNode;
+  description: ReactNode;
+  /** A digest or reference the person can quote to support. */
+  reference?: ReactNode;
+  actions: ReactNode;
+}) {
+  return (
+    <div className="mx-auto flex min-h-[60vh] max-w-lg flex-col items-center justify-center gap-3 px-4 py-16 text-center">
+      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{eyebrow}</p>
+      <h1 className="font-heading text-3xl text-ink">{title}</h1>
+      <p className="max-w-md text-muted-foreground">{description}</p>
+      {reference ? <p className="text-2xs text-muted-foreground">{reference}</p> : null}
+      <div className="mt-3 flex flex-wrap items-center justify-center gap-2">{actions}</div>
+    </div>
+  );
+}
+
+/** The 404 body, shared by the root and the `(app)` not-found pages. */
+export function NotFoundFrame({
+  title = "We couldn’t find that page",
+  description = "That link may be out of date, or the page has moved.",
+  home,
+}: {
+  title?: ReactNode;
+  description?: ReactNode;
+  home: { href: string; label: string };
+}) {
+  return (
+    <ErrorFrame
+      eyebrow="404"
+      title={title}
+      description={description}
+      actions={
+        <IntentLink href={home.href} className={buttonVariants()}>
+          {home.label}
+        </IntentLink>
+      }
+    />
+  );
+}
 
 /**
  * The one error boundary body, shared by every route group's `error.tsx`.
@@ -48,33 +101,31 @@ export function ErrorFallback({
   }, [offline, retry]);
 
   return (
-    <div className="mx-auto flex min-h-[50vh] max-w-lg flex-col items-center justify-center gap-4 px-6 py-16 text-center">
-      <p className="text-sm font-medium text-ink">
-        {offline ? "No connection" : "Something went wrong"}
-      </p>
-      <h1 className="font-heading text-3xl tracking-tight text-ink">
-        {offline
+    <ErrorFrame
+      eyebrow={offline ? "No connection" : "Something went wrong"}
+      title={
+        offline
           ? status === "unreachable"
             ? "Can’t reach Orbit"
             : "You’re offline"
-          : "We hit a snag"}
-      </h1>
-      <p className="text-muted-foreground">
-        {offline
+          : "We hit a snag"
+      }
+      description={
+        offline
           ? "This page needs a connection to load. It’ll try again on its own as soon as you’re back."
-          : "This page failed to load. You can try again or head back."}
-      </p>
-      {error.digest ? (
-        <p className="text-xs text-muted-foreground">Reference: {error.digest}</p>
-      ) : null}
-      <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
-        <button type="button" onClick={retry} className={cn(buttonVariants({ variant: "default" }))}>
-          Try again
-        </button>
-        <Link href={home.href} className={cn(buttonVariants({ variant: "outline" }))}>
-          {home.label}
-        </Link>
-      </div>
-    </div>
+          : "This page didn’t load. You can try again or head back."
+      }
+      reference={error.digest ? <>Reference: {error.digest}</> : undefined}
+      actions={
+        <>
+          <Button type="button" onClick={retry}>
+            Try again
+          </Button>
+          <IntentLink href={home.href} className={buttonVariants({ variant: "outline" })}>
+            {home.label}
+          </IntentLink>
+        </>
+      }
+    />
   );
 }

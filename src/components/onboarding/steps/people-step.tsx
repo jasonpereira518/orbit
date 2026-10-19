@@ -7,7 +7,9 @@ import {
   StaggerItem,
   StepHeading,
 } from "@/components/onboarding/onboarding-ui";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { CARD_HOVER } from "@/lib/interaction";
 import { cn } from "@/lib/utils";
 
 export type PeoplePath = "capture" | "manual" | "import";
@@ -63,9 +65,9 @@ export function PeopleStep({
                 type="button"
                 onClick={() => onChoose(path.id)}
                 className={cn(
-                  "group flex h-full w-full flex-col items-start gap-3 rounded-2xl border border-border/70 bg-card p-5 text-left",
-                  "transition-[border-color,background-color,box-shadow,transform] duration-200 active:scale-[0.98]",
-                  "hover:border-primary/30 hover:shadow-md focus-visible:border-primary focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+                  "group flex h-full w-full flex-col items-start gap-3 rounded-xl border border-border-subtle bg-card p-5 text-left",
+                  CARD_HOVER,
+                  "active:translate-y-px focus-visible:border-primary focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
                 )}
               >
                 <span className="flex size-11 items-center justify-center rounded-xl bg-accent text-primary transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
@@ -75,9 +77,9 @@ export function PeopleStep({
                   <span className="block font-medium text-ink">
                     {path.title}
                     {path.recommended && (
-                      <span className="ml-2 inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-px text-2xs font-medium text-primary">
+                      <Badge tone="accent" size="sm" className="ml-2 align-middle">
                         Recommended
-                      </span>
+                      </Badge>
                     )}
                   </span>
                   <span className="mt-1 block text-sm text-muted-foreground">{path.body}</span>

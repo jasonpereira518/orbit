@@ -13,7 +13,6 @@
  * rather than letting someone close the panel and lose it.
  */
 import { useCallback, useEffect, useState, useTransition } from "react";
-import { formatDistanceToNow } from "date-fns";
 import { Copy, KeyRound, Trash2 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
@@ -23,8 +22,13 @@ import {
   type ApiKeySummary,
   type CreatedApiKey,
 } from "@/actions/api-keys";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorState } from "@/components/ui/error-state";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { RelativeTime } from "@/components/ui/relative-time";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SettingsSection } from "@/components/settings/settings-section";
 import { useConfirmFocus } from "@/components/settings/use-confirm-focus";
@@ -33,6 +37,8 @@ import { TOAST_COPY } from "@/lib/toast-copy";
 
 const LOAD_TIMEOUT_MS = 12_000;
 const TIMED_OUT = "orbit:timed-out";
+/** The same line `calendar-feed-settings.tsx` and `webhook-settings.tsx` show; a shared helper is wanted. */
+const LOAD_FAILED = "Couldn’t load this — try again?";
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -61,7 +67,7 @@ async function copy(value: string, what: string) {
 
 export function ApiSettings() {
   const [keys, setKeys] = useState<ApiKeySummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<"timeout" | "error" | null>(null);
   const [name, setName] = useState("");
   const [allowWrite, setAllowWrite] = useState(true);
   const [created, setCreated] = useState<CreatedApiKey | null>(null);
@@ -80,11 +86,7 @@ export function ApiSettings() {
       },
       (err: Error) => {
         setKeys([]);
-        setError(
-          err.message === TIMED_OUT
-            ? "Took too long to load. Try again."
-            : "Could not load your keys."
-        );
+        setError(err.message === TIMED_OUT ? "timeout" : "error");
       }
     );
   }, []);
@@ -137,16 +139,16 @@ export function ApiSettings() {
     >
       {/* A new key, shown once. */}
       {created ? (
-        <div className="border-primary/40 bg-primary/5 space-y-3 rounded-lg border p-4">
-          <p className="text-sm font-medium">
-            Copy this now — it will not be shown again.
+        <div className="space-y-3 rounded-lg border border-primary/25 bg-primary/6 p-4">
+          <p className="text-sm font-medium text-ink">
+            Copy this now — it won’t be shown again.
           </p>
-          <p className="text-muted-foreground text-xs">
-            Orbit stores only a hash of the key, so it cannot be recovered or re-displayed. If
+          <p className="text-xs text-muted-foreground">
+            Orbit stores only a hash of the key, so it can’t be recovered or shown again. If
             you lose it, revoke it and create another.
           </p>
           <div className="flex items-center gap-2">
-            <code className="bg-background flex-1 overflow-x-auto rounded border px-3 py-2 font-mono text-xs">
+            <code className="flex-1 overflow-x-auto rounded-lg border border-border-subtle bg-background px-3 py-2 font-mono text-xs">
               {created.mcpUrl ?? created.token}
             </code>
             <Button
@@ -165,22 +167,17 @@ export function ApiSettings() {
       ) : null}
 
       {blocked ? (
-        <div className="bg-muted/40 space-y-2 rounded-lg border p-4">
+        <div className="space-y-2 rounded-lg border border-border-subtle bg-surface-inset p-4">
           <p className="text-sm">{blocked}</p>
-          <a
-            href="/upgrade"
-            className="bg-primary text-primary-foreground inline-flex h-8 items-center rounded-md px-3 text-sm font-medium"
-          >
+          <a href="/upgrade" className={buttonVariants({ size: "sm" })}>
             See plans
           </a>
         </div>
       ) : null}
 
       {/* Create */}
-      <div className="space-y-3 rounded-lg border p-4">
-        <label className="text-sm font-medium" htmlFor="api-key-name">
-          Create a key
-        </label>
+      <div className="space-y-3 rounded-lg border border-border-subtle p-4">
+        <Label htmlFor="api-key-name">Create a key</Label>
         <Input
           id="api-key-name"
           value={name}
@@ -188,21 +185,20 @@ export function ApiSettings() {
           placeholder="What is it for? e.g. Zapier"
           maxLength={80}
         />
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
+        <Label className="font-normal">
+          <Checkbox
             checked={allowWrite}
-            onChange={(e) => setAllowWrite(e.target.checked)}
+            onCheckedChange={(checked) => setAllowWrite(checked === true)}
           />
           Allow this key to add contacts and log interactions
-        </label>
+        </Label>
         <div className="flex flex-wrap gap-2">
           <Button size="sm" disabled={pending} onClick={() => onCreate("api")}>
             <KeyRound className="size-4" />
             API key
           </Button>
         </div>
-        <p className="text-muted-foreground text-xs">
+        <p className="text-xs text-muted-foreground">
           Use an API key for Zapier, Make, n8n or the command line. Claude and ChatGPT don’t
           need one — set them up under Claude and ChatGPT.
         </p>
@@ -211,40 +207,51 @@ export function ApiSettings() {
       {/* Existing */}
       <div className="space-y-2">
         {error ? (
-          <div className="text-sm">
-            <p className="text-destructive">{error}</p>
-            <Button size="sm" variant="ghost" onClick={load}>
-              Retry
-            </Button>
-          </div>
+          <ErrorState
+            size="sm"
+            title={LOAD_FAILED}
+            description={
+              error === "timeout" ? "The request took too long to answer." : "Something went wrong on our side."
+            }
+            onRetry={load}
+          />
         ) : keys === null ? (
           <div className="space-y-2" aria-busy="true" aria-label="Loading your keys">
             <Skeleton className="h-16 w-full rounded-lg" />
             <Skeleton className="h-16 w-full rounded-lg" />
           </div>
         ) : keys.length === 0 ? (
-          <p className="text-muted-foreground text-sm">No keys yet.</p>
+          <EmptyState
+            variant="plain"
+            size="sm"
+            title="No keys yet"
+            description="Create one above to connect Zapier, Make, n8n or your own scripts."
+          />
         ) : (
           keys.map((key) => (
             <div
               key={key.id}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border-subtle p-3"
             >
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium">{key.name}</p>
-                <p className="text-muted-foreground font-mono text-xs">
+                <p className="truncate text-sm font-medium text-ink">{key.name}</p>
+                <p className="font-mono text-xs text-muted-foreground">
                   {key.prefix}…
                   {key.scopes.includes("write") ? " · read and write" : " · read only"}
                 </p>
-                <p className="text-muted-foreground text-xs">
-                  {key.lastUsedAt
-                    ? `Last used ${formatDistanceToNow(new Date(key.lastUsedAt), { addSuffix: true })}`
-                    : "Never used"}
+                <p className="text-xs text-muted-foreground">
+                  {key.lastUsedAt ? (
+                    <>
+                      Last used <RelativeTime date={key.lastUsedAt} />
+                    </>
+                  ) : (
+                    "Never used"
+                  )}
                 </p>
               </div>
               {confirmingRevoke === key.id ? (
-                <div className="flex items-center gap-2">
-                  <span role="status" className="text-muted-foreground text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span role="status" className="text-xs text-muted-foreground">
                     Anything using it stops working.
                   </span>
                   <Button

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import {
   cancelSubscription,
   getSubscriptionOverview,
@@ -120,7 +120,7 @@ export function SubscriptionManager() {
       <SubscriptionSummary sub={sub} />
 
       {sub.cancelAtPeriodEnd ? (
-        <div className="flex flex-col gap-3 rounded-xl border border-border/70 bg-muted/40 p-3">
+        <div className="flex flex-col gap-3 rounded-lg border border-border-subtle bg-surface-inset p-3">
           <p className="text-sm text-muted-foreground">
             Your subscription is canceled. You keep {PLAN_LABELS[sub.plan]}{endsOn ? ` until ${endsOn}` : " until the end of this period"},
             then the account moves to Free.
@@ -216,7 +216,7 @@ function SwitchPlanButton({ target }: { target: PurchasablePlan }) {
         })
       }
     >
-      {pending && <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />}
+      {pending && <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden="true" />}
       {label}
     </Button>
   );
@@ -244,7 +244,7 @@ function ResumeButton({ onResumed }: { onResumed: (sub: SubscriptionDetails) => 
         })
       }
     >
-      {pending && <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />}
+      {pending && <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden="true" />}
       Resume subscription
     </Button>
   );
@@ -325,7 +325,7 @@ function CancelDialog({
               })
             }
           >
-            {pending && <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />}
+            {pending && <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden="true" />}
             Cancel subscription
           </Button>
         </DialogFooter>

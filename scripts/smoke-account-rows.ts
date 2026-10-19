@@ -48,16 +48,16 @@ function describe(control: RowControl): string {
 const TABLE: ReadonlyArray<[AccountCapability, CapabilityState | "—", string]> = [
   ["contacts", "available", 'action "Import contacts"'],
   ["contacts", "on", 'action "Check for new"'],
-  ["contacts", "not_allowed", 'action "Allow"'],
+  ["contacts", "not_allowed", 'action "Allow contacts"'],
   ["meetings", "on", "switch on"],
   ["meetings", "off", "switch off"],
-  ["meetings", "paused", 'action "Fix"'],
-  ["meetings", "not_allowed", 'action "Allow"'],
+  ["meetings", "paused", 'action "See what happened"'],
+  ["meetings", "not_allowed", 'action "Allow calendar"'],
   ["inbox", "locked", 'locked "Upgrade"'],
   ["inbox", "available", 'action "Scan inbox"'],
-  ["inbox", "not_allowed", 'action "Allow"'],
+  ["inbox", "not_allowed", 'action "Allow mail"'],
   ["send", "on", "none"],
-  ["send", "not_allowed", 'action "Allow"'],
+  ["send", "not_allowed", 'action "Allow sending"'],
   ["contacts", "—", "none"],
   ["meetings", "—", "none"],
   ["inbox", "—", "none"],
@@ -112,7 +112,7 @@ check(
 );
 check(
   "and offers to ask for mail before sending",
-  describe(rowControl("send", free.capabilities.send)) === 'action "Allow"'
+  describe(rowControl("send", free.capabilities.send)) === 'action "Allow sending"'
 );
 
 const pro = googleAccountStatus(google({ canRead: true, canSend: true }), { canUseRecruiters: true });
@@ -127,7 +127,7 @@ const stopped = googleAccountStatus(google({ status: "disarmed", syncError: "Goo
 });
 check(
   "meetings that stopped on their own offer a fix, not a switch",
-  describe(rowControl("meetings", stopped.capabilities.meetings)) === 'action "Fix"'
+  describe(rowControl("meetings", stopped.capabilities.meetings)) === 'action "See what happened"'
 );
 const switchedOff = googleAccountStatus(google({ status: "paused" }), { canUseRecruiters: true });
 check(
@@ -158,7 +158,7 @@ const microsoft = (over: Partial<MicrosoftConnectionInput> = {}): MicrosoftConne
 const m = microsoftAccountStatus(microsoft(), { canUseRecruiters: true });
 check(
   "contacts left unticked ask for themselves",
-  describe(rowControl("contacts", m.capabilities.contacts)) === 'action "Allow"'
+  describe(rowControl("contacts", m.capabilities.contacts)) === 'action "Allow contacts"'
 );
 check("its inbox scan starts the same way", describe(rowControl("inbox", m.capabilities.inbox)) === 'action "Scan inbox"');
 check(

@@ -3,9 +3,8 @@
 import { useState, useTransition } from "react";
 import { Loader2 } from "lucide-react";
 import { openBillingPortal } from "@/actions/billing";
-import { buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { friendlyError } from "@/lib/errors";
-import { cn } from "@/lib/utils";
 
 /** Opens Stripe's portal: cancel, change card, download invoices. */
 export function ManageBillingButton() {
@@ -14,10 +13,11 @@ export function ManageBillingButton() {
 
   return (
     <div className="flex flex-col gap-1.5">
-      <button
+      <Button
         type="button"
+        variant="outline"
+        size="sm"
         disabled={pending}
-        className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
         onClick={() => {
           setError(null);
           start(async () => {
@@ -34,9 +34,9 @@ export function ManageBillingButton() {
           });
         }}
       >
-        {pending && <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />}
-        Manage billing
-      </button>
+        {pending && <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden="true" />}
+        {pending ? "Opening…" : "Manage billing"}
+      </Button>
       {error && (
         <p role="alert" className="text-xs text-destructive">
           {error}

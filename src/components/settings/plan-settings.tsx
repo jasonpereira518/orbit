@@ -13,6 +13,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
+import { SettingsSection } from "@/components/settings/settings-section";
 import { SubscriptionManager } from "@/components/settings/subscription-manager";
 import { cn } from "@/lib/utils";
 import { WarpLink } from "@/components/warp/warp-link";
@@ -67,9 +68,9 @@ const TIER_ACCENT: Record<
   }
 > = {
   free: {
-    ring: "border-border/70",
+    ring: "border-border-subtle",
     wash: null,
-    badge: "border border-border/70 text-muted-foreground",
+    badge: "border border-border-subtle text-muted-foreground",
     ink: "text-muted-foreground",
     chip: "bg-muted",
     meter: "bg-muted-foreground/70",
@@ -152,50 +153,44 @@ export function PlanSettings({
   const pct =
     usage.limit === null ? 0 : Math.min(100, (usage.used / usage.limit) * 100);
 
-  return (
-    <section
-      data-plan={entitlements.plan}
+  const badge = (
+    <span
       className={cn(
-        "relative overflow-hidden rounded-2xl border bg-card p-6",
-        accent.ring
+        "relative inline-flex shrink-0 items-center gap-1.5 overflow-hidden rounded-full px-3 py-1 text-sm font-medium",
+        accent.badge
       )}
     >
-      {accent.wash && (
-        <div
+      {accent.glint && (
+        <span
           aria-hidden="true"
-          className={cn(
-            "pointer-events-none absolute -right-24 -top-28 size-72 rounded-full blur-3xl",
-            accent.wash
-          )}
+          className="plan-badge-glint pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/70 to-transparent"
         />
       )}
+      {/* Above the glint, which is positioned. */}
+      {!isFree && <Sparkles className="relative size-3.5" aria-hidden="true" />}
+      <span className="relative">{copy.name}</span>
+    </span>
+  );
 
-      {/* Positioned so it paints above the wash, which is itself positioned. */}
-      <div className="relative space-y-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h3 className="text-lg font-medium text-ink">Pricing Plan</h3>
-            <p className="mt-1 text-sm text-muted-foreground">{copy.tagline}</p>
-          </div>
-          <span
+  return (
+    // `data-plan` scopes the tier tokens; `isolate` on the card lets the wash sit at `-z-10`,
+    // above the card's own background and under everything in it.
+    <div data-plan={entitlements.plan}>
+      <SettingsSection
+        title="Plan"
+        description={copy.tagline}
+        action={badge}
+        className={cn("relative isolate", accent.ring)}
+      >
+        {accent.wash && (
+          <div
+            aria-hidden="true"
             className={cn(
-              "relative inline-flex shrink-0 items-center gap-1.5 overflow-hidden rounded-full px-3 py-1 text-sm font-medium",
-              accent.badge
+              "pointer-events-none absolute -right-24 -top-28 -z-10 size-72 rounded-full blur-3xl",
+              accent.wash
             )}
-          >
-            {accent.glint && (
-              <span
-                aria-hidden="true"
-                className="plan-badge-glint pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/70 to-transparent"
-              />
-            )}
-            {/* Above the glint, which is positioned. */}
-            {!isFree && (
-              <Sparkles className="relative size-3.5" aria-hidden="true" />
-            )}
-            <span className="relative">{copy.name}</span>
-          </span>
-        </div>
+          />
+        )}
 
         {note && <p className="text-sm text-muted-foreground">{note}</p>}
 
@@ -242,7 +237,7 @@ export function PlanSettings({
         {/* The card used to name the plan and say nothing about what it buys.
             Read from the same copy the pricing page renders, so the two cannot
             describe a tier differently. */}
-        <div className="border-t border-border/60 pt-4">
+        <div className="border-t border-border-subtle pt-4">
           <h4 className="text-sm font-medium text-ink">
             What&apos;s included
           </h4>
@@ -278,13 +273,13 @@ export function PlanSettings({
         </div>
 
         {entitlements.source === "subscription" && (
-          <div className="border-t border-border/60 pt-4">
+          <div className="border-t border-border-subtle pt-4">
             <h4 className="mb-3 text-sm font-medium text-ink">Your subscription</h4>
             <SubscriptionManager />
           </div>
         )}
 
-        <div className="flex flex-wrap items-center gap-3 border-t border-border/60 pt-4">
+        <div className="flex flex-wrap items-center gap-3 border-t border-border-subtle pt-4">
           {isFree && (
             /* Points at the transaction page, not back at /pricing — that round
                trip was a loop with no way to actually pay at either end.
@@ -307,7 +302,7 @@ export function PlanSettings({
             {isFree ? "Compare plans" : "See all plans"}
           </WarpLink>
         </div>
-      </div>
-    </section>
+      </SettingsSection>
+    </div>
   );
 }

@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, LayoutGrid } from "lucide-react";
 import type { getSettings } from "@/actions/settings";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -429,7 +430,6 @@ function DialogBody({
     // is in the other list.
     const tabbable = selected || (!ids.includes(view) && id === ids[0]);
     const status = id === OVERVIEW ? undefined : statuses?.pages[id];
-    const iconClass = cn("size-4 shrink-0", selected ? "text-primary" : "opacity-80");
     return (
       <button
         key={id}
@@ -448,14 +448,22 @@ function DialogBody({
           "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm whitespace-nowrap",
           "outline-none transition-colors duration-fast ease-house focus-visible:ring-2 focus-visible:ring-ring/70",
           selected
-            ? "bg-card text-ink shadow-sm ring-1 ring-border/70"
+            ? "bg-card text-ink shadow-xs ring-1 ring-border-subtle"
             : "text-muted-foreground hover:bg-card/60 hover:text-foreground"
         )}
       >
         {id === OVERVIEW ? (
-          <LayoutGrid aria-hidden className={iconClass} />
+          <span
+            aria-hidden
+            className={cn(
+              "inline-flex size-6 shrink-0 items-center justify-center rounded-md border border-border-subtle bg-card",
+              selected ? "text-primary" : "text-muted-foreground"
+            )}
+          >
+            <LayoutGrid className="size-3.5" />
+          </span>
         ) : (
-          <IntegrationIcon id={id} className={iconClass} />
+          <IntegrationIcon id={id} size="sm" />
         )}
         <span className="min-w-0 flex-1 truncate font-medium">
           {label}
@@ -473,17 +481,19 @@ function DialogBody({
 
   return (
     <>
-      <aside className="flex shrink-0 flex-col border-b border-border/60 bg-muted/30 md:min-h-0 md:border-r md:border-b-0">
+      <aside className="flex shrink-0 flex-col border-b border-border-subtle bg-surface-inset md:min-h-0 md:border-r md:border-b-0">
         <div className="flex items-center gap-1.5 px-4 pt-4 pb-3 pr-12 md:block md:px-5 md:pt-5 md:pr-5">
           {view !== OVERVIEW ? (
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               onClick={backToOverview}
               aria-label="Back to overview"
-              className="tap-target -ml-1.5 flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-card/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/70 md:hidden"
+              className="tap-target -ml-1.5 text-muted-foreground md:hidden"
             >
               <ChevronLeft aria-hidden className="size-5" />
-            </button>
+            </Button>
           ) : null}
           <div className="min-w-0">
             <DialogTitle className="font-heading text-xl text-ink">
@@ -510,7 +520,7 @@ function DialogBody({
               <div key={group.key}>
                 <p
                   aria-hidden
-                  className="px-2.5 pt-3 pb-1.5 text-[0.6875rem] font-semibold tracking-[0.08em] text-muted-foreground/80 uppercase"
+                  className="px-2.5 pt-3 pb-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground"
                 >
                   {group.label}
                 </p>
@@ -520,13 +530,14 @@ function DialogBody({
           </div>
 
           {advancedTabs.length > 0 ? (
-            <div className="mt-3 border-t border-border/60 pt-2">
-              <button
+            <div className="mt-3 border-t border-border-subtle pt-2">
+              <Button
                 type="button"
+                variant="ghost"
                 aria-expanded={advancedOpen}
                 aria-controls="integration-advanced-tabs"
                 onClick={() => onAdvancedOpenChange(!advancedOpen)}
-                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-muted-foreground outline-none hover:bg-card/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/70"
+                className="w-full justify-start text-muted-foreground"
               >
                 <ChevronRight
                   aria-hidden
@@ -536,7 +547,7 @@ function DialogBody({
                   )}
                 />
                 Advanced
-              </button>
+              </Button>
               {/* `hidden` rather than unmounted, the same way the Overview's phone-only
                   Advanced block does it: the button's `aria-controls` names this list, and a
                   list that isn't in the document is a reference to nothing. */}

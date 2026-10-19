@@ -31,7 +31,7 @@ export function GoalsSettings({ initialGoals }: { initialGoals: UserGoal[] }) {
           {goals.map((g) => (
             <li
               key={g.id}
-              className="flex items-center justify-between gap-3 rounded-xl border border-border/60 px-3 py-2"
+              className="flex items-center justify-between gap-3 rounded-lg border border-border-subtle px-3 py-2"
             >
               <span className="text-sm">{g.text}</span>
               <Button
@@ -75,7 +75,7 @@ export function GoalsSettings({ initialGoals }: { initialGoals: UserGoal[] }) {
                   )
                 }
               >
-                <Trash2 className="h-4 w-4" />
+                <Trash2 className="size-4" aria-hidden />
               </Button>
             </li>
           ))}

@@ -8,7 +8,6 @@ import {
   saveAiSettings,
   saveWorkHistoryAutoEnabled,
 } from "@/actions/settings";
-import { cn } from "@/lib/utils";
 import {
   AI_PROVIDERS,
   SELECTABLE_AI_PROVIDERS,
@@ -21,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { SettingsSection } from "@/components/settings/settings-section";
 import { Disclosure } from "@/components/settings/disclosure";
 import { ClearKeyButton, ProviderCard, SAVE_THREW, TIER_LABELS } from "@/components/settings/provider-card";
@@ -179,12 +179,14 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
       </ul>
 
       {movedFrom ? (
-        <p className="rounded-xl bg-muted/50 p-3 text-sm text-muted-foreground">
+        <p className="rounded-lg border border-border-subtle bg-surface-inset p-3 text-sm text-muted-foreground">
           Moved from {modelLabel(provider, movedFrom)} to {modelLabel(provider, model)}: newer, and
           about half the price per token.{" "}
-          <button
+          <Button
             type="button"
-            className="underline underline-offset-2 hover:text-ink"
+            variant="link"
+            size="sm"
+            className="h-auto p-0 align-baseline text-sm"
             disabled={pending}
             onClick={() =>
               start(async () => {
@@ -193,32 +195,30 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
             }
           >
             Switch back
-          </button>
+          </Button>
         </p>
       ) : null}
 
       {/* The background half of work history. LinkedIn pulls and the profile's own button
           search regardless; this only governs the unattended re-checks, because they spend
           this account's key without anyone clicking. */}
-      <div className="flex items-start justify-between gap-4 rounded-xl border border-border/70 p-3">
+      <div className="flex items-start justify-between gap-4 rounded-lg border border-border-subtle p-3">
         <div className="space-y-0.5">
-          <p id="work-history-auto-label" className="text-sm font-medium text-ink">
+          <Label htmlFor="work-history-auto" className="text-sm font-medium text-ink">
             Keep work history current
-          </p>
+          </Label>
           <p className="text-sm text-muted-foreground">
             Re-checks contacts&rsquo; jobs with a web search on your AI key — closest people
             monthly, everyone else less often, at most 20 lookups a day — and notes when
             someone changes jobs.
           </p>
         </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={settings.workHistoryAutoEnabled}
-          aria-labelledby="work-history-auto-label"
+        <Switch
+          id="work-history-auto"
+          checked={settings.workHistoryAutoEnabled}
           disabled={pending}
-          onClick={() => {
-            const next = !settings.workHistoryAutoEnabled;
+          className="tap-target mt-0.5"
+          onCheckedChange={(next) => {
             setSettings({ ...settings, workHistoryAutoEnabled: next });
             start(async () => {
               try {
@@ -229,19 +229,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
               }
             });
           }}
-          className={cn(
-            "tap-target relative mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full outline-none transition-colors duration-fast ease-house focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50",
-            settings.workHistoryAutoEnabled ? "bg-primary" : "bg-muted-foreground/30"
-          )}
-        >
-          <span
-            aria-hidden
-            className={cn(
-              "pointer-events-none size-4 rounded-full bg-background shadow-sm transition-transform duration-fast ease-house",
-              settings.workHistoryAutoEnabled ? "translate-x-[1.125rem]" : "translate-x-0.5"
-            )}
-          />
-        </button>
+        />
       </div>
 
       <Disclosure label="Advanced">
@@ -287,13 +275,13 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
         )}
 
         {provider === "anthropic" && (
-          <p className="rounded-xl bg-muted/50 p-3 text-sm text-muted-foreground">
+          <p className="rounded-lg border border-border-subtle bg-surface-inset p-3 text-sm text-muted-foreground">
             Anthropic has no embeddings API. Keep an OpenAI or Gemini key available
             so chat search can still embed contacts.
           </p>
         )}
 
-        <div className="space-y-1.5">
+        <div className="space-y-2">
           <Label htmlFor="model">Custom model ID</Label>
           <div className="flex gap-2">
             {/*
@@ -337,7 +325,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
           </p>
         </div>
 
-        <div className="space-y-3 border-t border-border/60 pt-4">
+        <div className="space-y-3 border-t border-border-subtle pt-4">
           <h4 className="text-sm font-medium text-ink">Saved keys</h4>
           <ul className="space-y-1 text-sm text-muted-foreground">
             {/* Same rule as the cards: a provider with no user-facing surface is not listed
@@ -399,13 +387,13 @@ function KeyPreference({
     { id: "own" as const, label: "My own key", hint: "Never uses credits" },
   ];
   return (
-    <fieldset className="space-y-2 rounded-xl border border-border/70 p-4" disabled={pending}>
+    <fieldset className="space-y-2 rounded-lg border border-border-subtle p-4" disabled={pending}>
       <legend className="px-1 text-sm font-medium text-ink">Run AI on</legend>
       <div className="grid gap-2 sm:grid-cols-2">
         {options.map((o) => (
           <label
             key={o.id}
-            className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border/70 p-3 text-sm has-[:checked]:border-primary"
+            className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border-subtle p-3 text-sm has-[:checked]:border-primary"
           >
             <input
               type="radio"

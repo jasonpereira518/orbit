@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ChevronRight, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { IntegrationIcon, StatusDot, statusText } from "@/components/settings/integration-ui";
+import { TONE } from "@/lib/tone";
 import {
   INTEGRATION_TABS,
   OVERVIEW_TABS,
@@ -72,7 +73,7 @@ export function IntegrationsOverview({
   return (
     <div className="space-y-5">
       <div>
-        <h3 className="text-lg font-medium text-ink">Overview</h3>
+        <h3 className="font-heading text-lg font-medium text-ink">Overview</h3>
         <p className="mt-1 text-sm text-muted-foreground">
           What Orbit is connected to, and what’s left to set up.
         </p>
@@ -83,9 +84,9 @@ export function IntegrationsOverview({
           {attention.map((item) => (
             <li
               key={item.id}
-              className="flex flex-wrap items-center gap-3 rounded-xl border border-warning/40 bg-warning/10 px-3 py-2.5 text-sm"
+              className={cn("flex flex-wrap items-center gap-3 rounded-lg border px-3 py-2.5 text-sm", TONE.warning.box)}
             >
-              <TriangleAlert aria-hidden className="size-4 shrink-0 text-warning" />
+              <TriangleAlert aria-hidden className={cn("size-4 shrink-0", TONE.warning.text)} />
               <span className="min-w-0 flex-1 text-foreground">{item.message}</span>
               <Button size="sm" variant="outline" onClick={() => onOpen(item.tab)}>
                 {item.action}
@@ -102,11 +103,9 @@ export function IntegrationsOverview({
           const action = overviewAction(id, status, account);
           const showStatus = !(status && status !== "unknown" && status.state === "none");
           return (
-            <li key={id} className="flex flex-col gap-3 rounded-xl border border-border/60 p-4">
+            <li key={id} className="flex flex-col gap-3 rounded-xl border border-border-subtle bg-card p-4">
               <div className="flex items-center gap-2.5">
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/70">
-                  <IntegrationIcon id={id} className="size-4" />
-                </span>
+                <IntegrationIcon id={id} size="md" />
                 <h4 id={`integration-card-name-${id}`} className="text-sm font-medium text-ink">
                   {integrationLabel(id)}
                   {runningTab === id ? (
@@ -143,13 +142,14 @@ export function IntegrationsOverview({
       </ul>
 
       {advancedTabs.length > 0 ? (
-        <div className="border-t border-border/60 pt-4 md:hidden">
-          <button
+        <div className="border-t border-border-subtle pt-4 md:hidden">
+          <Button
             type="button"
+            variant="ghost"
             aria-expanded={advancedOpen}
             aria-controls="integration-overview-advanced"
             onClick={() => setAdvancedOpen((wasOpen) => !wasOpen)}
-            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-muted-foreground outline-none hover:bg-card/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/70"
+            className="w-full justify-start text-muted-foreground"
           >
             <ChevronRight
               aria-hidden
@@ -159,7 +159,7 @@ export function IntegrationsOverview({
               )}
             />
             Advanced
-          </button>
+          </Button>
           <div id="integration-overview-advanced" hidden={!advancedOpen} className="space-y-1 pt-1">
             <p className="px-2.5 pb-2 text-xs text-muted-foreground">
               For developers and automation tools. You don’t need anything here to use Orbit.
@@ -167,20 +167,21 @@ export function IntegrationsOverview({
             {advancedTabs.map((tab) => {
               const status = statuses?.pages[tab.id];
               return (
-                <button
+                <Button
                   key={tab.id}
                   type="button"
+                  variant="ghost"
                   data-integration-card={tab.id}
                   onClick={() => onOpen(tab.id)}
-                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm outline-none hover:bg-card/60 focus-visible:ring-2 focus-visible:ring-ring/70"
+                  className="h-auto w-full justify-start gap-2.5 px-2.5 py-2"
                 >
-                  <IntegrationIcon id={tab.id} className="size-4 shrink-0 opacity-80" />
-                  <span className="min-w-0 flex-1 truncate font-medium text-ink">
+                  <IntegrationIcon id={tab.id} size="sm" />
+                  <span className="min-w-0 flex-1 truncate text-left font-medium text-ink">
                     {integrationLabel(tab.id)}
                   </span>
                   <StatusDot status={status} />
                   <span className="sr-only">, {statusText(status)}</span>
-                </button>
+                </Button>
               );
             })}
           </div>

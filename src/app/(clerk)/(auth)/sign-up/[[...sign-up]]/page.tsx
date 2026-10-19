@@ -3,6 +3,7 @@ import { auth, currentUser } from "@clerk/nextjs/server";
 import { isClerkConfigured, redirectIfAuthenticated } from "@/lib/auth";
 import { InviteSignedInNotice } from "@/components/auth/invite-signed-in-notice";
 import { clerkAppearance } from "@/lib/clerk-appearance";
+import { AuthFrame } from "@/components/auth/auth-frame";
 import { OrbitLogo } from "@/components/orbit-logo";
 
 /**
@@ -57,12 +58,12 @@ export default async function SignUpPage({
       : "/onboarding";
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
+    <AuthFrame>
       <SignUp
         appearance={clerkAppearance}
         forceRedirectUrl={redirectUrl}
         signInForceRedirectUrl="/dashboard"
       />
-    </div>
+    </AuthFrame>
   );
 }

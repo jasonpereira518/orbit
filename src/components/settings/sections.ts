@@ -33,7 +33,7 @@ export type SettingsGroupId = (typeof SETTINGS_GROUPS)[number]["id"];
  */
 export const SETTINGS_SECTIONS = [
   { id: "settings-profile", label: "Profile", group: "account" },
-  { id: "settings-plan", label: "Pricing Plan", group: "account" },
+  { id: "settings-plan", label: "Plan", group: "account" },
   { id: "settings-appearance", label: "Appearance", group: "preferences" },
   { id: "settings-notifications", label: "Notifications", group: "preferences" },
   { id: "settings-email", label: "Email", group: "preferences" },

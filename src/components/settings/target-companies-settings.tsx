@@ -12,7 +12,8 @@
  */
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Star, Trash2 } from "lucide-react";
+import { Star, Trash2, X } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -150,13 +151,13 @@ export function TargetCompaniesSettings({
             {initialCompanies.map((company) => (
               <li
                 key={company.id}
-                className="flex items-center justify-between gap-3 rounded-xl border border-border/60 px-3 py-2"
+                className="flex items-center justify-between gap-3 rounded-lg border border-border-subtle px-3 py-2"
               >
                 <span className="min-w-0 truncate text-sm">
                   {company.name}
-                  <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-2xs text-muted-foreground">
+                  <Badge tone="neutral" size="sm" className="ml-2 align-middle">
                     {PRIORITY_LABEL[company.priority]}
-                  </span>
+                  </Badge>
                   {/* The useful part: a target you already have a way into. */}
                   {company.contactCount > 0 ? (
                     <span className="ml-2 text-xs text-muted-foreground">
@@ -202,20 +203,21 @@ export function TargetCompaniesSettings({
         {initialSchools.length > 0 ? (
           <ul className="flex flex-wrap gap-2 pt-1">
             {initialSchools.map((item) => (
-              <li
-                key={item}
-                className="inline-flex items-center gap-1 rounded-full border border-border/60 px-2 py-0.5 text-xs"
-              >
-                {item}
-                <button
-                  type="button"
-                  onClick={() => removeSchool(item)}
-                  disabled={pending}
-                  aria-label={`Remove ${item}`}
-                  className="text-muted-foreground hover:text-foreground"
-                >
-                  ×
-                </button>
+              <li key={item}>
+                <Badge variant="outline" tone="none" className="gap-1 pr-0.5">
+                  {item}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    onClick={() => removeSchool(item)}
+                    disabled={pending}
+                    aria-label={`Remove ${item}`}
+                    className="size-4 rounded-full text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="size-3" aria-hidden />
+                  </Button>
+                </Badge>
               </li>
             ))}
           </ul>

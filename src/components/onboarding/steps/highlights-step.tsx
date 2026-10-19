@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, type PanInfo } from "motion/react";
 import { ArrowLeft, ArrowRight, Check } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   BackButton,
@@ -151,7 +152,7 @@ export function HighlightsStep({
           <section
             aria-roledescription="carousel"
             aria-label="Orbit features"
-            className="relative overflow-hidden rounded-3xl border border-border/60 bg-card/60"
+            className="relative overflow-hidden rounded-xl border border-border-subtle bg-card"
           >
             {/* The frame never moves: the two panes and the divider between them are static,
                 and only what is inside them changes. The preview crossfades in its fixed-height
@@ -167,7 +168,7 @@ export function HighlightsStep({
               aria-roledescription="slide"
               aria-label={`${index + 1} of ${chapters.length}: ${chapter.title}`}
             >
-              <div className="relative h-[19rem] overflow-hidden border-b border-border/60 bg-gradient-to-b from-muted/40 to-transparent md:h-auto md:min-h-[19rem] md:border-r md:border-b-0">
+              <div className="relative h-[19rem] overflow-hidden border-b border-border-subtle bg-gradient-to-b from-surface-inset to-transparent md:h-auto md:min-h-[19rem] md:border-r md:border-b-0">
                 <AnimatePresence initial={false}>
                   <motion.div
                     key={chapter.id}
@@ -225,26 +226,27 @@ export function HighlightsStep({
           </div>
           <p className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-center text-xs text-muted-foreground lg:justify-end">
             {/* Kept in place (just hidden) on the last chapter, so nothing below the card moves. */}
-            <button
+            <Button
               type="button"
+              variant="link"
+              size="sm"
               onClick={onDone}
               tabIndex={index < last ? 0 : -1}
               aria-hidden={index >= last}
-              className={cn(
-                "underline-offset-4 hover:text-foreground hover:underline",
-                index >= last && "invisible",
-              )}
+              className={cn("h-auto p-0 text-xs text-muted-foreground", index >= last && "invisible")}
             >
               Skip to the dashboard
-            </button>
+            </Button>
             {onTour && (
-              <button
+              <Button
                 type="button"
+                variant="link"
+                size="sm"
                 onClick={onTour}
-                className="underline-offset-4 hover:text-foreground hover:underline"
+                className="h-auto p-0 text-xs text-muted-foreground"
               >
                 Take the guided tour instead
-              </button>
+              </Button>
             )}
           </p>
         </StaggerItem>
@@ -308,7 +310,7 @@ function ChapterRail({
                   layoutId="onboarding-chapter-pill"
                   transition={SPRING_PILL}
                   aria-hidden
-                  className="absolute inset-0 rounded-xl border border-border/70 bg-card shadow-sm"
+                  className="absolute inset-0 rounded-xl border border-border-subtle bg-card shadow-xs"
                 />
               )}
               <span
@@ -332,11 +334,19 @@ function ChapterRail({
 }
 
 function NeedTag({ chapter, facts }: { chapter: HighlightChapter; facts: OverviewFacts }) {
-  const base =
-    "inline-flex items-center rounded-full border border-border/70 bg-muted/40 px-2 py-px text-2xs font-medium text-muted-foreground";
-  if (chapter.needs === "ai") return <span className={base}>Uses AI credits</span>;
+  if (chapter.needs === "ai") {
+    return (
+      <Badge tone="neutral" size="sm">
+        Uses AI credits
+      </Badge>
+    );
+  }
   if (chapter.needs === "linkedin" && facts.linkedinPending) {
-    return <span className={base}>Upload when your export arrives</span>;
+    return (
+      <Badge tone="neutral" size="sm">
+        Upload when your export arrives
+      </Badge>
+    );
   }
   return null;
 }
@@ -374,7 +384,7 @@ function ChapterCopy({
       <Stagger as="ul" className="space-y-2">
         {chapter.bullets.map((b) => (
           <StaggerItem as="li" key={b.label} className="flex items-start gap-2 text-sm text-foreground">
-            <Check className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+            <Check className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
             <span className="min-w-0">
               {b.label}
               {b.soon && <SoonTag className="ml-1.5 align-[1px]" />}

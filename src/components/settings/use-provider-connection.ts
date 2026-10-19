@@ -369,7 +369,7 @@ export function useMicrosoftConnection(opts: {
     enabled: opts.enabled,
     oauthParam: "outlook",
     extraStripKeys: MICROSOFT_EXTRA_STRIP_KEYS,
-    label: opts.label ?? "Outlook",
+    label: opts.label ?? "Microsoft",
     deletedDataSuffix: opts.deletesData === false ? undefined : "its recruiter data deleted",
     defaultPurposes: MICROSOFT_CONNECT_PURPOSES,
     getStatus: getOutlookConnectionStatus,

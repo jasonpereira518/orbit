@@ -23,7 +23,11 @@ import {
   type WebhookEndpointSummary,
 } from "@/actions/webhook-endpoints";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorState } from "@/components/ui/error-state";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SettingsSection } from "@/components/settings/settings-section";
 import { useConfirmFocus } from "@/components/settings/use-confirm-focus";
@@ -31,6 +35,8 @@ import { TOAST_COPY } from "@/lib/toast-copy";
 
 const LOAD_TIMEOUT_MS = 12_000;
 const TIMED_OUT = "orbit:timed-out";
+/** The same line `api-settings.tsx` and `calendar-feed-settings.tsx` show; a shared helper is wanted. */
+const LOAD_FAILED = "Couldn’t load this — try again?";
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -56,7 +62,7 @@ const EVENTS = [
 
 export function WebhookSettings() {
   const [endpoints, setEndpoints] = useState<WebhookEndpointSummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<"timeout" | "error" | null>(null);
   const [url, setUrl] = useState("");
   const [selected, setSelected] = useState<string[]>(["contact.created"]);
   const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
@@ -70,11 +76,7 @@ export function WebhookSettings() {
       .then(setEndpoints)
       .catch((err: unknown) => {
         setEndpoints([]);
-        setError(
-          err instanceof Error && err.message === TIMED_OUT
-            ? "That took too long. Check your connection and retry."
-            : "Could not load your webhooks."
-        );
+        setError(err instanceof Error && err.message === TIMED_OUT ? "timeout" : "error");
       });
   }, []);
 
@@ -116,7 +118,7 @@ export function WebhookSettings() {
         const endpointId = result.endpoint.id;
         toast.error(
           `Saved, but ${describeVerification(result.verificationError)} — retry once it’s reachable`,
-          { action: { label: "Retry", onClick: () => onRetry(endpointId) } }
+          { action: { label: "Try again", onClick: () => onRetry(endpointId) } }
         );
       }
       load();
@@ -150,14 +152,14 @@ export function WebhookSettings() {
       description="Have Orbit POST to your own endpoint — or a Zapier or Make hook — when something happens."
     >
       {revealedSecret ? (
-        <div className="space-y-2 rounded-lg border p-3">
-          <p className="text-sm font-medium">Signing secret</p>
-          <p className="text-muted-foreground text-xs">
+        <div className="space-y-2 rounded-lg border border-primary/25 bg-primary/6 p-3">
+          <p className="text-sm font-medium text-ink">Signing secret</p>
+          <p className="text-xs text-muted-foreground">
             Shown once. Your receiver needs it to verify the{" "}
             <code className="font-mono">Orbit-Signature</code> header.
           </p>
           <div className="flex items-center gap-2">
-            <code className="bg-muted min-w-0 flex-1 truncate rounded px-2 py-1 font-mono text-xs">
+            <code className="min-w-0 flex-1 truncate rounded-lg bg-muted px-2 py-1 font-mono text-xs">
               {revealedSecret}
             </code>
             <Button
@@ -191,21 +193,20 @@ export function WebhookSettings() {
         />
         <div className="flex flex-wrap gap-3">
           {EVENTS.map((event) => (
-            <label key={event.id} className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
+            <Label key={event.id} className="font-normal">
+              <Checkbox
                 checked={selected.includes(event.id)}
-                onChange={() => toggle(event.id)}
+                onCheckedChange={() => toggle(event.id)}
               />
               {event.label}
-            </label>
+            </Label>
           ))}
         </div>
         <Button size="sm" disabled={pending || !url.trim()} onClick={onCreate}>
           <Webhook className="size-4" />
           Add webhook
         </Button>
-        <p className="text-muted-foreground text-xs">
+        <p className="text-xs text-muted-foreground">
           Orbit sends a signed test event straight away and only turns the webhook on if your
           endpoint answers. Must be an https:// address.
         </p>
@@ -213,28 +214,35 @@ export function WebhookSettings() {
 
       <div className="space-y-2">
         {error ? (
-          <div className="text-sm">
-            <p className="text-destructive">{error}</p>
-            <Button size="sm" variant="ghost" onClick={load}>
-              Retry
-            </Button>
-          </div>
+          <ErrorState
+            size="sm"
+            title={LOAD_FAILED}
+            description={
+              error === "timeout" ? "The request took too long to answer." : "Something went wrong on our side."
+            }
+            onRetry={load}
+          />
         ) : endpoints === null ? (
           <div className="space-y-2" aria-busy="true" aria-label="Loading your webhooks">
             <Skeleton className="h-14 w-full rounded-lg" />
             <Skeleton className="h-14 w-full rounded-lg" />
           </div>
         ) : endpoints.length === 0 ? (
-          <p className="text-muted-foreground text-sm">No webhooks yet.</p>
+          <EmptyState
+            variant="plain"
+            size="sm"
+            title="No webhooks yet"
+            description="Add an endpoint above and Orbit will send it a signed test event."
+          />
         ) : (
           endpoints.map((endpoint) => (
             <div
               key={endpoint.id}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border-subtle p-3"
             >
               <div className="min-w-0">
-                <p className="truncate font-mono text-sm">{endpoint.url}</p>
-                <p className="text-muted-foreground text-xs">
+                <p className="truncate font-mono text-sm text-ink">{endpoint.url}</p>
+                <p className="text-xs text-muted-foreground">
                   {endpoint.eventTypes.join(", ") || "no events"}
                 </p>
                 <p className="text-xs">
@@ -242,7 +250,7 @@ export function WebhookSettings() {
                     <span className="text-muted-foreground">Active</span>
                   ) : endpoint.status === "pending" ? (
                     <span className="text-destructive">
-                      Not verified — Orbit could not reach it
+                      Not verified — Orbit couldn’t reach it
                     </span>
                   ) : (
                     <span className="text-destructive">
@@ -251,20 +259,23 @@ export function WebhookSettings() {
                   )}
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {endpoint.status === "active" ? null : (
                   <Button
                     size="sm"
-                    variant="secondary"
+                    variant="outline"
                     disabled={pending}
                     onClick={() => onRetry(endpoint.id)}
                   >
                     <RefreshCw className="size-4" />
-                    Retry
+                    Try again
                   </Button>
                 )}
                 {confirmingDelete === endpoint.id ? (
                   <>
+                    <span role="status" className="text-xs text-muted-foreground">
+                      Orbit stops sending to it.
+                    </span>
                     <Button
                       ref={deleteFocus.confirmRef(endpoint.id)}
                       size="sm"

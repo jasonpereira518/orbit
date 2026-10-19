@@ -8,6 +8,8 @@ import { confirmCheckoutSession, startPlanSwitch } from "@/actions/billing";
 import { dismissMaxNudge, getCreditsOverview, setCreditEmailEnabled, type CreditsOverview } from "@/actions/credits";
 import { BuyPackButton } from "@/components/credits/buy-pack-button";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -21,6 +23,7 @@ import { formatAllowanceReset, allowancePercentUsed, FREE_LOW_CREDITS } from "@/
 import { PLAN_CONFIG } from "@/lib/plans/plan-config";
 import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_LABEL } from "@/lib/stripe-config";
 import { toast } from "@/lib/toast";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 const MICROS_PER_CREDIT = 10_000;
 const credits = (micros: number) => Math.floor(Math.max(0, micros) / MICROS_PER_CREDIT);
@@ -85,7 +88,7 @@ export function CreditsCard() {
 
   if (overview === undefined) {
     return (
-      <div className="space-y-2 rounded-xl border border-border/70 p-4" aria-busy="true" aria-label="Loading your credits">
+      <div className="space-y-2 rounded-xl border border-border-subtle p-4" aria-busy="true" aria-label="Loading your credits">
         <Skeleton className="h-4 w-40" />
         <Skeleton className="h-2 w-full" />
         <Skeleton className="h-4 w-64 max-w-full" />
@@ -112,7 +115,7 @@ export function CreditsCard() {
       data-plan={plan}
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 id="credits-heading" className="font-heading text-base text-ink">
+        <h3 id="credits-heading" className="font-heading text-base font-medium text-ink">
           AI credits
         </h3>
       </div>
@@ -205,26 +208,25 @@ function CreditEmailToggle({ initial }: { initial: boolean }) {
   const [enabled, setEnabled] = useState(initial);
   const [pending, start] = useTransition();
   return (
-    <label className="flex items-start gap-2 border-t border-tier-border pt-3 text-sm text-muted-foreground">
-      <input
-        type="checkbox"
-        className="mt-0.5 size-4 shrink-0 accent-tier-accent"
+    <Label className="items-start border-t border-tier-border pt-3 text-sm font-normal leading-snug text-muted-foreground">
+      <Checkbox
+        className="mt-0.5"
         checked={enabled}
         disabled={pending}
-        onChange={(event) => {
-          const next = event.target.checked;
+        onCheckedChange={(checked) => {
+          const next = checked === true;
           setEnabled(next);
           start(async () => {
             const result = await setCreditEmailEnabled(next).catch(() => ({ ok: false }));
             if (!result.ok) {
               setEnabled(!next);
-              toast.error("Couldn’t save that — try again?");
+              toast.error(TOAST_COPY.saveFailed);
             }
           });
         }}
       />
       <span>Email me when I’ve used 80% of my monthly credits, and when they run out.</span>
-    </label>
+    </Label>
   );
 }
 
@@ -248,8 +250,8 @@ function UpgradeToMaxButton({ label = "Upgrade to Max" }: { label?: string }) {
         })
       }
     >
-      {pending && <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />}
-      {label}
+      {pending && <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden="true" />}
+      {pending ? "Opening…" : label}
     </Button>
   );
 }
@@ -271,7 +273,7 @@ function MaxNudgeDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
           </DialogDescription>
         </DialogHeader>
         <DialogFooter className="gap-2 sm:gap-2">
-          <Button variant="ghost" size="sm" onClick={() => close(false)}>
+          <Button variant="outline" size="sm" onClick={() => close(false)}>
             Not now
           </Button>
           <UpgradeToMaxButton label="See Max" />

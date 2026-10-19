@@ -2,6 +2,7 @@
 
 import { useId, useState } from "react";
 import { ChevronRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 /**
@@ -26,13 +27,14 @@ export function Disclosure({
   const panelId = useId();
 
   return (
-    <div className={cn("border-t border-border/60 pt-4", className)}>
-      <button
+    <div className={cn("border-t border-border-subtle pt-4", className)}>
+      <Button
         type="button"
+        variant="ghost"
         aria-expanded={open}
         aria-controls={panelId}
         onClick={() => setOpen((wasOpen) => !wasOpen)}
-        className="flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-muted-foreground outline-none hover:bg-card/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/70"
+        className="min-h-9 w-full justify-start text-muted-foreground"
       >
         <ChevronRight
           aria-hidden
@@ -42,7 +44,7 @@ export function Disclosure({
           )}
         />
         {label}
-      </button>
+      </Button>
       <div id={panelId} hidden={!open} className="space-y-4 px-2.5 pt-2">
         {children}
       </div>

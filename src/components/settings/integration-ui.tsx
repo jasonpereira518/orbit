@@ -1,46 +1,102 @@
 "use client";
 
 import {
-  BookUser,
-  Bot,
   CalendarDays,
-  FileSpreadsheet,
+  Cpu,
   KeyRound,
   Send,
-  Sparkles,
-  Users,
   Webhook,
   type LucideIcon,
 } from "lucide-react";
 import type { IntegrationTabId } from "@/components/settings/sections";
-import { GoogleMark, LinkedInMark, MicrosoftMark } from "@/components/settings/provider-marks";
+import {
+  INTEGRATION_STATUS_COPY,
+  IntegrationLogo,
+  type IntegrationKey,
+  type IntegrationLogoSize,
+} from "@/components/integrations/integration-logo";
 import type { PageStatus } from "@/lib/integration-status";
 import { cn } from "@/lib/utils";
 
-const ICONS: Record<IntegrationTabId, LucideIcon> = {
-  google: Users,
-  microsoft: BookUser,
-  linkedin: FileSpreadsheet,
-  ai: Sparkles,
-  assistants: Bot,
+/** Pages that are a brand: their tile is the brand mark through `IntegrationLogo`. */
+const BRANDS: Partial<Record<IntegrationTabId, IntegrationKey>> = {
+  google: "google",
+  microsoft: "microsoft",
+  linkedin: "linkedin",
+};
+
+/** The one page that is two brands at once. */
+const ASSISTANT_BRANDS: readonly IntegrationKey[] = ["claude", "chatgpt"];
+
+const ICONS: Partial<Record<IntegrationTabId, LucideIcon>> = {
+  ai: Cpu,
   reminders: CalendarDays,
   api: KeyRound,
   webhooks: Webhook,
   outreach: Send,
 };
 
-const MARKS: Partial<Record<IntegrationTabId, (props: { className?: string }) => React.JSX.Element>> = {
-  google: GoogleMark,
-  microsoft: MicrosoftMark,
-  linkedin: LinkedInMark,
+const TILE: Record<IntegrationLogoSize, { tile: string; icon: string }> = {
+  sm: { tile: "size-6 rounded-md", icon: "size-3.5" },
+  md: { tile: "size-8 rounded-lg", icon: "size-4" },
+  lg: { tile: "size-10 rounded-lg", icon: "size-5" },
 };
 
-/** Decorative: every use sits beside the page's name. Accounts get their provider's mark. */
-export function IntegrationIcon({ id, className }: { id: IntegrationTabId; className?: string }) {
-  const Mark = MARKS[id];
-  if (Mark) return <Mark className={className} />;
-  const Icon = ICONS[id];
-  return <Icon aria-hidden className={className} />;
+/**
+ * Decorative: every use sits beside the page's name. Accounts and assistants get their
+ * brand mark in `IntegrationLogo`'s neutral tile; the rest get a lucide glyph in the same
+ * tile, so a nav of mixed pages lines up.
+ */
+export function IntegrationIcon({
+  id,
+  size = "md",
+  className,
+}: {
+  id: IntegrationTabId;
+  size?: IntegrationLogoSize;
+  className?: string;
+}) {
+  const brand = BRANDS[id];
+  if (brand) return <IntegrationLogo provider={brand} size={size} title="" className={className} />;
+
+  const dims = TILE[size];
+  if (id === "assistants") {
+    return (
+      <span
+        aria-hidden
+        className={cn(
+          "inline-flex shrink-0 items-center justify-center gap-0.5 border border-border-subtle bg-card",
+          dims.tile,
+          className
+        )}
+      >
+        {ASSISTANT_BRANDS.map((key) => (
+          <IntegrationLogo
+            key={key}
+            provider={key}
+            size="sm"
+            tile={false}
+            title=""
+            className={size === "sm" ? "[&>*]:size-2.5" : "[&>*]:size-3"}
+          />
+        ))}
+      </span>
+    );
+  }
+
+  const Icon = ICONS[id] ?? Cpu;
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "inline-flex shrink-0 items-center justify-center border border-border-subtle bg-card text-muted-foreground",
+        dims.tile,
+        className
+      )}
+    >
+      <Icon className={dims.icon} />
+    </span>
+  );
 }
 
 /** `undefined` is still loading; `none` is a page with nothing to be on or off. */
@@ -55,7 +111,7 @@ export function StatusDot({
     return (
       <span
         aria-hidden
-        className={cn("size-1.5 shrink-0 animate-pulse rounded-full bg-muted-foreground/30", className)}
+        className={cn("size-1.5 shrink-0 animate-pulse rounded-full bg-muted-foreground/50", className)}
       />
     );
   }
@@ -66,9 +122,9 @@ export function StatusDot({
       aria-hidden
       className={cn(
         "size-1.5 shrink-0 rounded-full",
-        state === "on" && "bg-primary",
+        state === "on" && "bg-success",
         state === "partial" && "bg-warning",
-        state === "off" && "bg-muted-foreground/35",
+        state === "off" && "bg-muted-foreground/50",
         className
       )}
     />
@@ -76,7 +132,7 @@ export function StatusDot({
 }
 
 export function statusText(status: PageStatus | "unknown" | undefined) {
-  if (status === undefined) return "Checking…";
+  if (status === undefined) return INTEGRATION_STATUS_COPY.checking;
   if (status === "unknown") return "Couldn’t check";
   return status.detail;
 }

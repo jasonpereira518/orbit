@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { motion, type Variants } from "motion/react";
 import { ChevronLeft } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { cn } from "@/lib/utils";
@@ -78,7 +79,7 @@ export function StepHeading({
     <div className={cn("space-y-2", className)}>
       {eyebrow && (
         <StaggerItem>
-          <p className="text-xs font-medium uppercase tracking-[0.14em] text-primary">{eyebrow}</p>
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{eyebrow}</p>
         </StaggerItem>
       )}
       <StaggerItem>
@@ -114,33 +115,20 @@ export function BackButton({ onClick, disabled }: { onClick: () => void; disable
   );
 }
 
-/**
- * A small "Pro" tag for features the viewer's plan does not include. Same tier colours as
- * `PlanBadge` — `text-tier-pro`, because the flat brand blue fails contrast on a light card.
- */
-/** "Coming soon" — `--warning` amber, never Lifetime gold, which reads as a paid tier. */
+/** "Coming soon" — the neutral chip: it labels, it does not sell. */
 export function SoonTag({ className }: { className?: string }) {
   return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full border border-warning/40 bg-warning/10 px-1.5 py-px text-3xs font-semibold uppercase tracking-wide text-warning",
-        className,
-      )}
-    >
+    <Badge tone="neutral" size="sm" className={className}>
       Soon
-    </span>
+    </Badge>
   );
 }
 
+/** A small "Pro" tag for features the viewer's plan does not include. */
 export function ProTag({ className }: { className?: string }) {
   return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full border border-brand-pro/35 bg-brand-pro/10 px-1.5 py-px text-3xs font-semibold uppercase tracking-wide text-tier-pro",
-        className,
-      )}
-    >
+    <Badge tone="accent" size="sm" className={className}>
       Pro
-    </span>
+    </Badge>
   );
 }

@@ -94,9 +94,10 @@ export const CoachRail = forwardRef<
         >
           {desktopCollapsed && !props.finish ? (
             <div className="flex items-center gap-1">
-              <button
+              <Button
                 type="button"
-                className="flex min-w-0 items-center gap-2 rounded-xl px-2.5 py-1.5 text-left text-sm hover:bg-muted/60"
+                variant="ghost"
+                className="h-auto min-w-0 justify-start gap-2 rounded-xl px-2.5 py-1.5 text-left text-sm font-normal"
                 aria-expanded={false}
                 onClick={onToggleCollapsed}
               >
@@ -110,7 +111,7 @@ export const CoachRail = forwardRef<
                   className="size-4 shrink-0 text-muted-foreground"
                   aria-hidden
                 />
-              </button>
+              </Button>
               <Button
                 type="button"
                 size="sm"
@@ -218,23 +219,27 @@ function RailBody({
           </p>
           <div className="-mr-1 -mt-1 flex items-center">
             {onCollapse && (
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon-xs"
                 onClick={onCollapse}
                 aria-label="Shrink the tour card"
-                className="rounded-full p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                className="rounded-full text-muted-foreground"
               >
                 <ChevronDown className="size-4" aria-hidden />
-              </button>
+              </Button>
             )}
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon-xs"
               onClick={() => setConfirmExit(true)}
               aria-label="Exit the tour"
-              className="rounded-full p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="rounded-full text-muted-foreground"
             >
               <X className="size-4" aria-hidden />
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -252,7 +257,7 @@ function RailBody({
             {stop.body}
           </p>
           {offRoute ? (
-            <div className="rounded-xl border border-border/70 bg-card/70 p-3 text-sm">
+            <div className="rounded-lg border border-border-subtle bg-surface-inset p-3 text-sm">
               <p className="text-foreground">
                 {offRoute.message ?? (
                   <>
@@ -305,9 +310,7 @@ function RailBody({
               <span
                 className={cn(
                   "flex size-5 items-center justify-center rounded-full border",
-                  done
-                    ? "border-tier-lifetime/50 bg-tier-lifetime/10 text-tier-lifetime"
-                    : "border-border/80",
+                  done ? "border-success/30 bg-success/10 text-success" : "border-border-subtle",
                 )}
                 aria-hidden
               >
@@ -342,13 +345,15 @@ function RailBody({
       )}
 
       {compact && !finish && (
-        <button
+        <Button
           type="button"
+          variant="link"
+          size="sm"
           onClick={() => setConfirmExit(true)}
-          className="self-start text-xs text-muted-foreground underline-offset-4 hover:underline"
+          className="h-auto self-start p-0 text-xs text-muted-foreground"
         >
           Exit the tour
-        </button>
+        </Button>
       )}
 
     </div>
@@ -425,8 +430,8 @@ function ExitConfirm({
         <Button
           type="button"
           size="sm"
-          variant="outline"
-          className="flex-1 border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
+          variant="destructive"
+          className="flex-1"
           disabled={pending}
           onClick={onExit}
         >

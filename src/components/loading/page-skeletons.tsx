@@ -31,7 +31,7 @@ export function PageHeaderSkeleton({
 
 export function GenericPageSkeleton() {
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeaderSkeleton />
       <Skeleton className="h-40 w-full rounded-xl" />
       <Skeleton className="h-40 w-full rounded-xl" />
@@ -124,7 +124,17 @@ export function DashboardCardSkeleton({ className }: { className?: string }) {
 export function ContactsPageSkeleton() {
   return (
     <div className="space-y-6">
-      <PageHeaderSkeleton actions />
+      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+        <div className="space-y-1">
+          <Skeleton className="h-9 w-40" />
+          <Skeleton className="h-6 w-28" />
+        </div>
+        <Skeleton className="h-8 w-44 rounded-lg" />
+      </div>
+      <div className="flex min-h-10 flex-wrap gap-2">
+        <Skeleton className="h-8 w-28" />
+        <Skeleton className="h-8 w-24" />
+      </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (
           <Skeleton key={i} className="h-10 rounded-lg" />
@@ -151,12 +161,12 @@ export function ContactsPageSkeleton() {
 /** Matches /recruiters: sharing toggle + Gmail panel + tab bar + list, same shell as Contacts. */
 export function RecruitersPageSkeleton() {
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeaderSkeleton actions />
       <Skeleton className="h-36 w-full rounded-xl" />
       <Skeleton className="h-28 w-full rounded-xl" />
       <div className="flex flex-wrap items-center gap-3">
-        <Skeleton className="h-9 w-56 rounded-lg" />
+        <Skeleton className="h-8 w-56 rounded-lg" />
         <Skeleton className="h-9 min-w-[16rem] flex-1 rounded-lg" />
       </div>
       <div className="overflow-hidden rounded-xl border border-border-subtle">
@@ -180,12 +190,12 @@ export function RecruitersPageSkeleton() {
 /** Matches /recruiters/[id]: header + rating card + contact card + history card + form. */
 export function RecruiterDetailPageSkeleton() {
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="space-y-3">
-          <Skeleton className="h-4 w-24" />
+    <div className="max-w-3xl space-y-8">
+      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+        <div className="space-y-1">
+          <Skeleton className="mb-2 h-4 w-24" />
           <Skeleton className="h-9 w-56" />
-          <Skeleton className="h-4 w-40" />
+          <Skeleton className="h-6 w-40" />
           <div className="flex gap-2">
             <Skeleton className="h-6 w-16 rounded-full" />
             <Skeleton className="h-6 w-20 rounded-full" />
@@ -203,7 +213,7 @@ export function RecruiterDetailPageSkeleton() {
 
 export function ContactDetailPageSkeleton() {
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-3">
           <Skeleton className="h-4 w-20" />
@@ -234,9 +244,12 @@ export function ContactDetailPageSkeleton() {
 
 export function FormPageSkeleton({ wide = false }: { wide?: boolean }) {
   return (
-    <div className={`space-y-6 ${wide ? "" : "mx-auto max-w-2xl"}`}>
-      <PageHeaderSkeleton />
-      <div className="space-y-4 rounded-xl border border-border-subtle p-6">
+    <div className={cn("space-y-8", !wide && "max-w-2xl")}>
+      <div className="space-y-1">
+        <Skeleton className="mb-2 h-4 w-20" />
+        <Skeleton className="h-9 w-48" />
+      </div>
+      <div className="space-y-4 rounded-xl border border-border-subtle bg-card p-6">
         {Array.from({ length: 5 }).map((_, i) => (
           <div key={i} className="space-y-2">
             <Skeleton className="h-4 w-24" />
@@ -281,9 +294,9 @@ function SettingsCardSkeleton({
  * Resources, Data.
  */
 export function SettingsPageSkeleton() {
-  const label = <Skeleton className="ml-1 h-3 w-24" />;
+  const label = <Skeleton className="ml-1 h-4 w-20" />;
   return (
-    <div className="mx-auto max-w-2xl space-y-10">
+    <div className="max-w-2xl space-y-8">
       <PageHeaderSkeleton />
       <div className="space-y-4">
         {label}
@@ -468,10 +481,13 @@ export function GraphPageSkeleton() {
   // rearranged itself into something else the moment the data arrived.
   return (
     <div className="-mx-1 space-y-3 md:-mx-2">
-      <div className="space-y-2 px-1">
-        <Skeleton className="h-3 w-24" />
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-4 w-80 max-w-full" />
+      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 px-1">
+        <div className="space-y-1">
+          <Skeleton className="h-5 w-20" />
+          <Skeleton className="h-9 w-48" />
+          <Skeleton className="hidden h-4 w-80 max-w-full md:block" />
+        </div>
+        <Skeleton className="h-8 w-16 rounded-full" />
       </div>
       <ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />
     </div>
@@ -513,12 +529,12 @@ export function OnboardingPageSkeleton() {
         <Skeleton className="h-7 w-20 justify-self-end" />
       </div>
       <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col items-center justify-center gap-4 px-4 pb-16">
-        <Skeleton className="size-28 rounded-full" />
+        <Skeleton className="size-16 rounded-full" />
         <Skeleton className="h-11 w-72" />
         <Skeleton className="h-4 w-80 max-w-full" />
         <div className="mt-4 grid w-full gap-3 sm:grid-cols-2">
-          <Skeleton className="h-56 w-full rounded-3xl" />
-          <Skeleton className="h-56 w-full rounded-3xl" />
+          <Skeleton className="h-56 w-full rounded-xl" />
+          <Skeleton className="h-56 w-full rounded-xl" />
         </div>
       </div>
     </div>
@@ -529,11 +545,12 @@ export function AuthPageSkeleton() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-6">
       <div className="w-full max-w-sm space-y-6">
-        <div className="space-y-2 text-center">
-          <Skeleton className="mx-auto h-8 w-24" />
-          <Skeleton className="mx-auto h-4 w-48" />
+        <div className="flex items-center justify-center gap-2">
+          <Skeleton className="size-8 rounded-full" />
+          <Skeleton className="h-7 w-16" />
         </div>
         <Skeleton className="h-80 w-full rounded-xl" />
+        <Skeleton className="mx-auto h-7 w-28" />
       </div>
     </div>
   );
@@ -971,7 +988,7 @@ export function PricingPageSkeleton() {
 export function EventsListSkeleton() {
   return (
     <div className="space-y-4">
-      <Skeleton className="h-24 w-full rounded-xl" />
+      <Skeleton className="h-8 w-40 rounded-lg" />
       <div className="grid gap-4 sm:grid-cols-2">
         {Array.from({ length: 4 }).map((_, i) => (
           <Skeleton key={i} className="h-44 w-full rounded-xl" />
@@ -985,6 +1002,7 @@ export function EventsListSkeleton() {
 export function EventDetailSkeleton() {
   return (
     <div className="space-y-6">
+      <Skeleton className="h-4 w-28" />
       <Skeleton className="h-60 w-full rounded-xl" />
       <Skeleton className="h-40 w-full rounded-xl" />
       <Skeleton className="h-72 w-full rounded-xl" />

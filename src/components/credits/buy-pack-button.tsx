@@ -45,7 +45,7 @@ export function BuyPackButton({
           })
         }
       >
-        {pending && <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />}
+        {pending && <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden="true" />}
         {pending ? "Opening checkout…" : label}
       </Button>
       {error && (

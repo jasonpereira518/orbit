@@ -3,18 +3,13 @@
 import { useState, useSyncExternalStore } from "react";
 import { Check, Copy, ExternalLink } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import { SettingsSection } from "@/components/settings/settings-section";
-import { ChatGptMark, ClaudeMark } from "@/components/settings/provider-marks";
+import { IntegrationLogo } from "@/components/integrations/integration-logo";
 import { toast } from "@/lib/toast";
 import { TOAST_COPY } from "@/lib/toast-copy";
-import { cn } from "@/lib/utils";
 
 type Assistant = "claude" | "chatgpt";
-
-const MARKS: Record<Assistant, (props: { className?: string }) => React.ReactElement> = {
-  claude: ClaudeMark,
-  chatgpt: ChatGptMark,
-};
 
 const ASSISTANTS: Record<
   Assistant,
@@ -76,33 +71,17 @@ export function AssistantsSettings() {
       title="Claude and ChatGPT"
       description="Ask Claude or ChatGPT about your network, and let them log notes for you. They sign in to Orbit, so there’s no key to copy. Works on every plan."
     >
-      <div
-        role="group"
-        aria-label="Which assistant do you use?"
-        className="inline-flex rounded-lg border border-border/70 p-0.5"
-      >
-        {ASSISTANT_IDS.map((id) => {
-          const Mark = MARKS[id];
-          return (
-            <button
-              key={id}
-              type="button"
-              aria-pressed={assistant === id}
-              onClick={() => setAssistant(id)}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium outline-none transition-colors duration-fast ease-house",
-                "focus-visible:ring-2 focus-visible:ring-ring/70",
-                assistant === id
-                  ? "bg-card text-ink shadow-sm ring-1 ring-border/70"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              <Mark className="size-4" />
-              I use {ASSISTANTS[id].label}
-            </button>
-          );
-        })}
-      </div>
+      <SegmentedControl
+        ariaLabel="Which assistant do you use?"
+        variant="subtle"
+        value={assistant}
+        onChange={setAssistant}
+        items={ASSISTANT_IDS.map((id) => ({
+          key: id,
+          label: `I use ${ASSISTANTS[id].label}`,
+          icon: <IntegrationLogo provider={id} size="sm" tile={false} title="" />,
+        }))}
+      />
 
       <ol className="list-decimal space-y-2 pl-5 text-sm text-foreground">
         {chosen.steps.map((step) => (

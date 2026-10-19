@@ -69,9 +69,7 @@ export function TourFinishCard({
             <span
               className={cn(
                 "flex size-5 shrink-0 items-center justify-center rounded-full border",
-                r.done
-                  ? "border-tier-lifetime/50 bg-tier-lifetime/10 text-tier-lifetime"
-                  : "border-border/80 text-muted-foreground",
+                r.done ? "border-success/30 bg-success/10 text-success" : "border-border-subtle text-muted-foreground",
               )}
               aria-hidden
             >
@@ -82,7 +80,7 @@ export function TourFinishCard({
           </li>
         ))}
       </ul>
-      <div className="rounded-xl border border-border/70 bg-card/70 p-3 text-xs text-muted-foreground">
+      <div className="rounded-lg border border-border-subtle bg-surface-inset p-3 text-xs text-muted-foreground">
         <p className="flex flex-wrap items-center gap-1.5 font-medium text-foreground">
           What’s ahead <SoonTag />
         </p>

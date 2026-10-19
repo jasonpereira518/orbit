@@ -77,7 +77,7 @@ const paused = googleAccountStatus(google({ status: "disarmed", syncError: "Goog
   .meetings;
 check("sync that gave up reads paused", paused?.state === "paused");
 check("paused detail never echoes the provider's error", !(paused?.detail ?? "").includes("403"), paused?.detail);
-check("paused detail names the fix", /sign in to Google again/i.test(paused?.detail ?? ""), paused?.detail);
+check("paused detail names the fix", /reconnect Google/i.test(paused?.detail ?? ""), paused?.detail);
 check(
   "a scope-shaped error asks for calendar access",
   /allow calendar access/.test(
@@ -151,7 +151,7 @@ check("unconfigured reads Unavailable", accountPageStatus(googleAccountStatus(go
 const notConnected = accountPageStatus(googleAccountStatus(google({ connected: false, status: null }), pro));
 check("not connected is off", notConnected.state === "off" && notConnected.detail === "Not connected");
 const expired = accountPageStatus(googleAccountStatus(google({ connected: false, status: "needs_reauth" }), pro));
-check("expired is partial, in plain words", expired.state === "partial" && expired.detail === "Sign in again", expired.detail);
+check("expired is partial, in plain words", expired.state === "partial" && expired.detail === "Needs reconnecting", expired.detail);
 const pausedPage = accountPageStatus(googleAccountStatus(google({ status: "disarmed", syncError: "x" }), pro));
 check("paused meetings are partial", pausedPage.state === "partial" && pausedPage.detail === "Meetings paused");
 const connectedPage = accountPageStatus(g);
@@ -190,7 +190,7 @@ check("every item opens a page", items.every((i) => ["google", "microsoft", "ai"
 // would do it to — is not among them.
 check(
   "each button says where it goes",
-  items.map((i) => i.action).join(" | ") === "Sign in again | See what happened | Turn on AI",
+  items.map((i) => i.action).join(" | ") === "Reconnect | See what happened | Turn on AI",
   items.map((i) => i.action).join(" | ")
 );
 for (const item of items) {
@@ -216,8 +216,8 @@ const offMicrosoft = microsoftAccountStatus(microsoft({ connected: false, status
 check("names Microsoft", label("microsoft", accountPageStatus(offMicrosoft), offMicrosoft) === "Connect Microsoft");
 check("Connect starts the Microsoft consent screen", connects("microsoft", accountPageStatus(offMicrosoft), offMicrosoft) === "microsoft");
 const expiredGoogle = googleAccountStatus(google({ connected: false, status: "needs_reauth" }), pro);
-check("an expired account offers Sign in again", label("google", accountPageStatus(expiredGoogle), expiredGoogle) === "Sign in again");
-check("Sign in again opens the page, which owns the return", connects("google", accountPageStatus(expiredGoogle), expiredGoogle) === undefined);
+check("an expired account offers Reconnect", label("google", accountPageStatus(expiredGoogle), expiredGoogle) === "Reconnect");
+check("Reconnect opens the page, which owns the return", connects("google", accountPageStatus(expiredGoogle), expiredGoogle) === undefined);
 check("a connected account offers Manage", label("google", accountPageStatus(g), g) === "Manage");
 check("Manage opens the page", connects("google", accountPageStatus(g), g) === undefined);
 check("a still-loading account offers Open", label("google", undefined, undefined) === "Open");

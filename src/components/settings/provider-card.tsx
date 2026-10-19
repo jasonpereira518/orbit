@@ -1,16 +1,12 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useConfirmFocus } from "@/components/settings/use-confirm-focus";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  ClaudeMark,
-  GeminiMark,
-  OpenAiMark,
-  OpenRouterMark,
-} from "@/components/settings/provider-marks";
+import { IntegrationLogo, type IntegrationKey } from "@/components/integrations/integration-logo";
 import { PROVIDER_MODELS, tieredModels, type AiProvider, type ModelTier } from "@/lib/ai-providers";
 import { cn } from "@/lib/utils";
 
@@ -22,14 +18,14 @@ export const TIER_LABELS: Record<ModelTier, string> = {
 };
 
 /**
- * Decorative — the provider's name sits beside the mark either way. Partial on purpose:
- * All four selectable providers carry a mark.
+ * Decorative — the provider's name sits beside the mark either way. Anthropic shows the
+ * Claude mark, which is the one its users recognise.
  */
-const MARKS: Partial<Record<AiProvider, (props: { className?: string }) => React.ReactElement>> = {
-  gemini: GeminiMark,
-  openai: OpenAiMark,
-  anthropic: ClaudeMark,
-  openrouter: OpenRouterMark,
+const MARKS: Record<AiProvider, IntegrationKey> = {
+  gemini: "gemini",
+  openai: "openai",
+  anthropic: "anthropic",
+  openrouter: "openrouter",
 };
 
 export type ProviderCardStatus = {
@@ -132,7 +128,6 @@ export function ProviderCard({
   const [replacing, setReplacing] = useState(false);
   const [pending, start] = useTransition();
   const tierRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const Mark = MARKS[provider.id];
   const tiers = tieredModels(provider.id);
   const keyFieldId = `provider-key-${provider.id}`;
   const keyErrorId = `provider-key-error-${provider.id}`;
@@ -179,19 +174,19 @@ export function ProviderCard({
   return (
     <li
       className={cn(
-        "flex flex-col gap-3 rounded-xl border p-4",
-        active ? "border-primary/60 bg-primary/5" : "border-border/60"
+        "flex flex-col gap-3 rounded-xl border bg-card p-4",
+        active ? "border-primary/40 bg-primary/6" : "border-border-subtle"
       )}
     >
       <div className="flex items-center gap-2.5">
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/70">
-          {Mark ? <Mark className="size-4" /> : null}
-        </span>
+        <IntegrationLogo provider={MARKS[provider.id]} size="md" title="" />
         <h4 id={`provider-card-name-${provider.id}`} className="text-sm font-medium text-ink">
           {provider.label}
         </h4>
         {active ? (
-          <span className="rounded-full bg-primary/15 px-2 py-0.5 text-xs text-ink">In use</span>
+          <Badge tone="accent" size="sm">
+            In use
+          </Badge>
         ) : null}
       </div>
 
@@ -225,8 +220,8 @@ export function ProviderCard({
                   })
                 }
                 className={cn(
-                  "min-h-11 flex-1 basis-32 rounded-lg border px-2.5 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/70 disabled:opacity-60",
-                  chosen ? "border-primary bg-primary/10" : "border-border/60 hover:bg-card/60"
+                  "min-h-11 flex-1 basis-32 rounded-lg border px-2.5 py-2 text-left outline-none transition-colors duration-fast ease-house focus-visible:ring-2 focus-visible:ring-ring/70 disabled:opacity-60",
+                  chosen ? "border-primary bg-primary/10" : "border-border-subtle hover:bg-muted/40"
                 )}
               >
                 <span className="block text-sm font-medium text-ink">
@@ -240,7 +235,7 @@ export function ProviderCard({
       ) : null}
 
       {showKeyField ? (
-        <div className="space-y-1.5">
+        <div className="space-y-2">
           <Label htmlFor={keyFieldId} className="text-xs text-muted-foreground">
             {hasKey ? `New ${provider.label} API key` : `${provider.label} API key`}
           </Label>
