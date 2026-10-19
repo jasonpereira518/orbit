@@ -71,6 +71,7 @@ import {
 } from "@/lib/events/connect";
 import {
   deleteEventConnection,
+  deleteSyncedProviderEvents,
   findGmailGrant,
   listEventConnections,
   upsertEventConnection,
@@ -938,9 +939,17 @@ export async function consumeEventbriteOAuthState(state: string | null): Promise
 }
 
 export async function disconnectEventProvider(
-  provider: EventConnectionProvider
-): Promise<void> {
+  provider: EventConnectionProvider,
+  opts: { alsoDelete?: boolean } = {}
+): Promise<{ eventsDeleted: number }> {
   const userId = await requireSyncUser();
   await deleteEventConnection(userId, provider);
+  // Neither Luma nor Eventbrite offers an app-side revoke; what Orbit can do is not keep what
+  // it synced, if the person asks. Only for the two providers whose sync creates events.
+  const eventsDeleted =
+    opts.alsoDelete === true && (provider === "luma" || provider === "eventbrite")
+      ? await deleteSyncedProviderEvents(userId, provider)
+      : 0;
   revalidateEvents();
+  return { eventsDeleted };
 }

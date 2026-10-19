@@ -8,7 +8,6 @@ import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { gmailConnections, imports, userSettings } from "@/db/schema";
-import { deleteCalendarSourcesForProvider } from "@/lib/calendar-sources";
 import { getCurrentUserProfile, requireUserId } from "@/lib/auth";
 import { requireRecruitersUser } from "@/lib/plan-guards";
 import { getAiConfig } from "@/lib/ai";
@@ -34,15 +33,11 @@ import {
 } from "@/lib/google-scopes";
 import { deriveConnectionHealth, type ConnectionHealth } from "@/lib/connection-status";
 import { pauseSync, resumeSync } from "@/lib/provider-connections";
-import { revokeGoogleGrant } from "@/lib/oauth-revoke";
-import { deleteEventConnection } from "@/lib/events/connections";
-import { purgeUserData } from "@/lib/user-data";
-import { DISCONNECT_DELETE_CATEGORIES } from "@/lib/data-categories";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 import { demoWorkspaceEmail, isDemoWorkspace } from "@/lib/demo-workspace";
 import { demoGmailConnectionStatus } from "@/lib/demo-workspace-connections";
 import { recordDemoRecruiterScan } from "@/lib/demo-workspace-actions";
-import { dropCloudNoteSource } from "@/lib/cloud-notes/sources";
+import { disconnectGoogleForUser } from "@/lib/provider-disconnect";
 
 const OAUTH_STATE_COOKIE = "orbit_gmail_oauth_state";
 
@@ -230,27 +225,9 @@ export async function disconnectGmail(opts: { alsoDelete?: boolean } = {}) {
   const userId = await requireUserId();
   // Nothing is stored to disconnect, and `alsoDelete` would purge the seeded workspace.
   if (await isDemoWorkspace(userId)) return;
-  const db = await getDb();
-  const grant = await db.query.gmailConnections.findFirst({
-    where: eq(gmailConnections.userId, userId),
-    columns: { refreshTokenEncrypted: true, accessTokenEncrypted: true },
-  });
-  // Row first: the disconnect is done even if Google never answers.
-  await db.delete(gmailConnections).where(eq(gmailConnections.userId, userId));
-  // Explicit, not a cascade: calendar_sources has no FK to any connection table (they are
-  // deliberately separate — see provider-connections.ts), so a reconnect's fresh connection
-  // id would otherwise never dedupe against the orphaned row and seedCalendarSources would
-  // double the calendar.
-  await deleteCalendarSourcesForProvider(userId, "google");
-  await dropCloudNoteSource(userId, "google");
-  if (grant) await revokeGoogleGrant(grant);
-  if (opts.alsoDelete === true) {
-    await purgeUserData(userId, { only: DISCONNECT_DELETE_CATEGORIES.gmail });
-  }
-  // The confirmation-email scan is an opt-in row that carries no token of its own — it borrows
-  // this connection's. Left behind, the scheduler claims it every pass and fails on a mailbox
-  // that is no longer connected.
-  await deleteEventConnection(userId, "gmail");
+  // The sequence (row, calendar sources, cloud notes, revoke, optional purge, event scan) is
+  // shared with the admin's disconnect — see provider-disconnect.ts.
+  await disconnectGoogleForUser(userId, opts);
   revalidatePath("/recruiters");
   revalidatePath("/settings");
   revalidatePath("/imports");

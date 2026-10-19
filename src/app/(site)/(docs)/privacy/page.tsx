@@ -554,7 +554,8 @@ export default function PrivacyPage() {
             Deleting your account from Clerk&rsquo;s own account page does the same deletion through
             our account webhook, including cancelling an active subscription. If Stripe cannot be
             reached at that moment, the deletion still goes ahead and Orbit keeps retrying the
-            cancellation until Stripe confirms it. Settings → Integrations → AI provider shows your AI usage, and you
+            cancellation until Stripe confirms it. Disconnecting Luma or Eventbrite offers to delete the
+            events and guest lists Orbit synced from it. Settings → Integrations → AI provider shows your AI usage, and you
             can disconnect any connected account from the Integrations dialog.
           </p>
         </DocSection>

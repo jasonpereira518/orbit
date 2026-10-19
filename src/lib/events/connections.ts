@@ -330,6 +330,41 @@ export async function findGmailGrant(
   return rows[0] ? { emailAddress: rows[0].email_address, scopes: rows[0].scopes } : null;
 }
 
+/**
+ * "Also delete what Orbit synced from this account", for Luma and Eventbrite: every event
+ * the provider sync created (`events.provider`), with its guest roster and linked companies
+ * (both cascade), its alias rows (which survive an event on purpose and so are deleted
+ * explicitly, as the purge does) and its cover image. Events the person added by hand or
+ * from a pasted link stay. Returns how many events went.
+ */
+export async function deleteSyncedProviderEvents(
+  userId: string,
+  provider: "luma" | "eventbrite"
+): Promise<number> {
+  const db = await getDb();
+  const rows = rowsOf<{ id: string; cover: string | null }>(
+    await db.execute(sql`
+      SELECT id, cover_image_url AS cover FROM events WHERE user_id = ${userId} AND provider = ${provider}
+    `)
+  );
+  if (rows.length === 0) return 0;
+  const list = sql`ARRAY[${sql.join(rows.map((r) => sql`${r.id}::uuid`), sql`, `)}]::uuid[]`;
+  await db.execute(sql`DELETE FROM event_aliases WHERE user_id = ${userId} AND event_id = ANY(${list})`);
+  await db.execute(sql`DELETE FROM event_attendees WHERE user_id = ${userId} AND event_id = ANY(${list})`);
+  await db.execute(sql`DELETE FROM events WHERE user_id = ${userId} AND id = ANY(${list})`);
+  const covers = rows
+    .map((r) => r.cover)
+    .filter((u): u is string => Boolean(u && u.includes(".blob.vercel-storage.com/event-covers/")));
+  if (covers.length) {
+    const { hasBlobStorage } = await import("@/lib/contact-avatar");
+    if (hasBlobStorage()) {
+      const { del } = await import("@/lib/blob-lazy");
+      await del(covers).catch(() => {});
+    }
+  }
+  return rows.length;
+}
+
 /** Disconnecting deletes the row — the same rule the Gmail/Outlook tables follow. */
 export async function deleteEventConnection(
   userId: string,

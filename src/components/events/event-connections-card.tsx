@@ -23,6 +23,7 @@ import { useRouter } from "next/navigation";
 import { CalendarPlus, ChevronDown, Loader2, Mail, Plug, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DisconnectEventProviderDialog } from "@/components/events/disconnect-event-provider-dialog";
 import { toast } from "@/lib/toast";
 import {
   connectEventFeed,
@@ -235,13 +236,21 @@ export function EventConnectionsCard({
     });
   }
 
-  function disconnect(provider: EventConnectionProvider) {
+  function disconnect(provider: EventConnectionProvider, opts: { alsoDelete?: boolean } = {}) {
     start(async () => {
-      await disconnectEventProvider(provider);
-      toast.success("Disconnected");
+      const { eventsDeleted } = await disconnectEventProvider(provider, opts);
+      toast.success(
+        eventsDeleted > 0
+          ? `Disconnected — ${eventsDeleted} synced event${eventsDeleted === 1 ? "" : "s"} deleted`
+          : "Disconnected"
+      );
       router.refresh();
     });
   }
+
+  // Luma and Eventbrite confirm first: their sync brings in guest lists, which the person
+  // may want gone with the connection.
+  const [confirming, setConfirming] = useState<"luma" | "eventbrite" | null>(null);
 
   function feedRow(provider: "luma_ics" | "partiful_ics") {
     const connection = byProvider(provider);
@@ -419,7 +428,7 @@ export function EventConnectionsCard({
             </p>
           </div>
           {luma ? (
-            <Button variant="ghost" size="sm" onClick={() => disconnect("luma")} disabled={pending}>
+            <Button variant="ghost" size="sm" onClick={() => setConfirming("luma")} disabled={pending}>
               <Trash2 className="size-4" aria-hidden />
               Disconnect
             </Button>
@@ -462,7 +471,7 @@ export function EventConnectionsCard({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => disconnect("eventbrite")}
+              onClick={() => setConfirming("eventbrite")}
               disabled={pending}
             >
               <Trash2 className="size-4" aria-hidden />
@@ -483,6 +492,16 @@ export function EventConnectionsCard({
       </div>
       </div>
       </div>
+      <DisconnectEventProviderDialog
+        provider={confirming}
+        open={confirming !== null}
+        onOpenChange={(next) => {
+          if (!next) setConfirming(null);
+        }}
+        onConfirm={(opts) => {
+          if (confirming) disconnect(confirming, opts);
+        }}
+      />
     </details>
   );
 }

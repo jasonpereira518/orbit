@@ -4,11 +4,10 @@ import { getDb } from "@/db";
 import {
   adminAuditLog,
   calendarSubscriptions,
-  gmailConnections,
   imports,
-  outlookConnections,
   userSettings,
 } from "@/db/schema";
+import { disconnectGoogleForUser, disconnectMicrosoftForUser } from "@/lib/provider-disconnect";
 import { isAdminUser } from "@/lib/admin";
 import { getAppBaseUrl } from "@/lib/app-url";
 import {
@@ -43,7 +42,6 @@ import { purgeUserData } from "@/lib/user-data";
 
 export { recordAdminAction } from "@/lib/admin-audit";
 import { recordAdminAction } from "@/lib/admin-audit";
-import { dropCloudNoteSource } from "@/lib/cloud-notes/sources";
 
 export function requireReason(reason: string, minimum = 4): string {
   const trimmed = reason.trim();
@@ -385,8 +383,10 @@ export async function resetOnboarding(adminUserId: string, input: {
 /**
  * Force-clear a dead Gmail or Outlook connection so the user can reconnect cleanly.
  *
- * Deleting the row *is* the disconnect, exactly as `disconnectGmail()` does it for the user
- * themselves. No token is ever decrypted — not to revoke it upstream, not to log it.
+ * The same sequence the user's own disconnect runs (`provider-disconnect.ts`): this used to
+ * delete only the connection row, leaving the grant live at Google and the calendar sources
+ * and confirmation-email scan behind. The token is decrypted only inside the revoke call and
+ * never logged. Nothing the user imported is deleted (`alsoDelete` is the user's choice).
  */
 export async function disconnectIntegration(adminUserId: string, input: {
   targetUserId: string;
@@ -405,12 +405,8 @@ export async function disconnectIntegration(adminUserId: string, input: {
     reason,
   });
 
-  const db = await getDb();
-  const table =
-    input.provider === "gmail" ? gmailConnections : outlookConnections;
-  await db.delete(table).where(eq(table.userId, input.targetUserId));
-  await dropCloudNoteSource(input.targetUserId, input.provider === "gmail" ? "google" : "microsoft");
-
+  if (input.provider === "gmail") await disconnectGoogleForUser(input.targetUserId);
+  else await disconnectMicrosoftForUser(input.targetUserId);
 }
 
 /** Silence a calendar feed that is erroring on every sync, without deleting the user's URL. */

@@ -6,11 +6,8 @@ import { safeReturnPath } from "@/lib/safe-return-path";
 import { cookies } from "next/headers";
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
-import { purgeUserData } from "@/lib/user-data";
-import { DISCONNECT_DELETE_CATEGORIES } from "@/lib/data-categories";
 import { getDb } from "@/db";
 import { outlookConnections, imports } from "@/db/schema";
-import { deleteCalendarSourcesForProvider } from "@/lib/calendar-sources";
 import { requireUserId } from "@/lib/auth";
 import { deriveConnectionHealth, type ConnectionHealth } from "@/lib/connection-status";
 import { pauseSync, resumeSync } from "@/lib/provider-connections";
@@ -39,7 +36,7 @@ import {
   serializeMicrosoftPurposes,
   type MicrosoftPurpose,
 } from "@/lib/microsoft-scopes";
-import { dropCloudNoteSource } from "@/lib/cloud-notes/sources";
+import { disconnectMicrosoftForUser } from "@/lib/provider-disconnect";
 
 const OAUTH_STATE_COOKIE = "orbit_outlook_oauth_state";
 
@@ -217,18 +214,8 @@ export async function disconnectOutlook(opts: { alsoDelete?: boolean } = {}) {
   const userId = await requireUserId();
   // Nothing is stored to disconnect, and `alsoDelete` would purge the seeded workspace.
   if (await isDemoWorkspace(userId)) return;
-  const db = await getDb();
-  await db.delete(outlookConnections).where(eq(outlookConnections.userId, userId));
-  // Explicit, not a cascade: calendar_sources has no FK to any connection table (they are
-  // deliberately separate — see provider-connections.ts), so a reconnect's fresh connection
-  // id would otherwise never dedupe against the orphaned row and seedCalendarSources would
-  // double the calendar.
-  await deleteCalendarSourcesForProvider(userId, "microsoft");
-  await dropCloudNoteSource(userId, "microsoft");
-  const extra = DISCONNECT_DELETE_CATEGORIES.outlook;
-  if (opts.alsoDelete === true && extra.length > 0) {
-    await purgeUserData(userId, { only: extra });
-  }
+  // Shared with the admin's disconnect — see provider-disconnect.ts.
+  await disconnectMicrosoftForUser(userId, opts);
   revalidatePath("/settings");
   revalidatePath("/recruiters");
   revalidatePath("/imports");
