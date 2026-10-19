@@ -43,6 +43,8 @@ import { PUBLIC_ROUTES } from "../src/lib/public-routes";
 import { checker } from "./smoke/check";
 
 import { POST as opsSweep } from "../src/app/api/ops/sweep/route";
+import { POST as billingReconcile } from "../src/app/api/ops/billing-reconcile/route";
+import { POST as weeklyDigest } from "../src/app/api/ops/weekly-digest/route";
 import { POST as jobsFeedSweep } from "../src/app/api/jobs/feed/sweep/route";
 import { POST as relationshipsRun } from "../src/app/api/relationships/run/route";
 import { POST as emailDrain } from "../src/app/api/email/drain/route";
@@ -80,7 +82,9 @@ const GATES: Record<string, string> = {
  */
 const INTENTIONALLY_OPEN: Record<string, { reason: string; mustContain?: RegExp }> = {
   "csp-report#POST": { reason: "browsers POST CSP violation reports with no session; stores a directive and a URI, throttled" },
+  "p/v#POST": { reason: "the anonymous traffic beacon (renamed from /api/track, which stays as an alias); stores no IP and sets no cookie" },
   "track#POST": { reason: "the anonymous traffic beacon; stores no IP and sets no cookie" },
+  "extension/uninstalled#GET": { reason: "the browser opens it as the extension is removed, when its session is already gone; it accepts a bare version number, records no user, IP or user agent, is rate limited, and always answers 204" },
   "waitlist-poll/results#GET": { reason: "aggregate poll tallies, nothing about any one voter" },
   "v1/openapi.json#GET": { reason: "the static OpenAPI document" },
   "credits/email/unsubscribe#GET": {
@@ -93,8 +97,9 @@ const INTENTIONALLY_OPEN: Record<string, { reason: string; mustContain?: RegExp 
   },
   "interest-list/unsubscribe#GET": { reason: "renders a confirmation button only; the POST does the work, behind the token" },
   "interest-list/unsubscribe#POST": {
+    // `unsubscribeTokenMatches` compares the token's hash (audit L-05), still the whole WHERE.
     reason: "the token IS the WHERE clause of the only write: an unknown token matches no row",
-    mustContain: /\.where\(eq\(interestListSignups\.unsubscribeToken, token\)\)/,
+    mustContain: /\.where\(unsubscribeTokenMatches\(token\)\)/,
   },
 };
 /** CORS preflight for the extension: answers headers, touches nothing. */
@@ -127,6 +132,8 @@ const DYNAMIC: Record<string, Handler> = {
   "cloud-notes/run": cloudNotesRun,
   "sync/run": syncRun,
   "ops/speech-usage": speechUsage,
+  "ops/billing-reconcile": billingReconcile,
+  "ops/weekly-digest": weeklyDigest,
   "avatars/encode": avatarsEncode,
 };
 

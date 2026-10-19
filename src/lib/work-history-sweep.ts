@@ -29,10 +29,12 @@
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { userCanUseAi } from "@/lib/ai";
-import { consumeBucket, isRateLimitedError, RATE_LIMITS } from "@/lib/rate-limit";
+import { bucketCount, consumeBucket, isRateLimitedError, RATE_LIMITS } from "@/lib/rate-limit";
+import { WEB_SEARCH_BACKGROUND_SHARE, WEB_SEARCH_SCOPE, webSearchMonthKey } from "@/lib/web-search-budget";
 import { utcDayKey } from "@/lib/timeline-cost";
 import {
   researchContactWorkHistory,
+  WORK_HISTORY_MAX_MISSES,
   type CurrentRoleChecker,
   type WorkHistoryOutcome,
   type WorkHistoryResearcher,
@@ -72,6 +74,21 @@ export type WorkHistorySweepDeps = {
   random?: () => number;
 };
 
+/**
+ * Cold contacts — never talked to, rated or prioritised: a name from an import — are looked up
+ * on demand only (their profile's button, a paste, a capture), never by the sweep. Researching
+ * every imported connection was most of the web-search bill. The same rule as
+ * `workHistoryIntervalDays`'s "cold"; a contact leaves it the day it gains a tier or a touch.
+ */
+const notCold = sql.raw(
+  "(priority_level > 0 OR closeness_tier IS NOT NULL OR last_interaction_at IS NOT NULL OR stated_closeness IS NOT NULL)"
+);
+
+/** Not given up on: fewer than the max misses, or the misses were against an older URL. */
+const notGivenUp = sql.raw(
+  `(work_history_misses < ${WORK_HISTORY_MAX_MISSES} OR work_history_miss_slug IS DISTINCT FROM linkedin_slug)`
+);
+
 /** Accounts with at least one due contact and the sweep switched on, most overdue first. */
 async function usersWithDueContacts(now: Date, limit: number): Promise<string[]> {
   const db = await getDb();
@@ -82,6 +99,8 @@ async function usersWithDueContacts(now: Date, limit: number): Promise<string[]>
         JOIN user_settings s ON s.user_id = c.user_id
        WHERE s.work_history_auto_enabled = 1
          AND c.linkedin_url IS NOT NULL
+         AND (c.priority_level > 0 OR c.closeness_tier IS NOT NULL OR c.last_interaction_at IS NOT NULL OR c.stated_closeness IS NOT NULL)
+         AND (c.work_history_misses < ${WORK_HISTORY_MAX_MISSES} OR c.work_history_miss_slug IS DISTINCT FROM c.linkedin_slug)
          AND (c.work_history_due_at IS NULL OR c.work_history_due_at <= ${now})
        GROUP BY c.user_id
        ORDER BY min(coalesce(c.work_history_due_at, '-infinity'::timestamptz)), random()
@@ -105,6 +124,8 @@ async function claimDueContacts(userId: string, limit: number, now: Date): Promi
            SELECT id FROM contacts
             WHERE user_id = ${userId}
               AND linkedin_url IS NOT NULL
+              AND ${notCold}
+              AND ${notGivenUp}
               AND (work_history_due_at IS NULL OR work_history_due_at <= ${now})
             ORDER BY work_history_due_at ASC NULLS FIRST, closeness DESC NULLS LAST, id
             LIMIT ${limit}
@@ -207,6 +228,9 @@ export async function runWorkHistorySweep(deps: WorkHistorySweepDeps = {}): Prom
         now,
         random: deps.random,
         spend: async () => {
+          // Background stops at its share of the account's monthly searches.
+          const used = await bucketCount(WEB_SEARCH_SCOPE, webSearchMonthKey(userId, now), RATE_LIMITS.webSearchMonthly);
+          if (used >= RATE_LIMITS.webSearchMonthly.limit * WEB_SEARCH_BACKGROUND_SHARE) return false;
           try {
             await consumeBucket(
               "work-history-background",

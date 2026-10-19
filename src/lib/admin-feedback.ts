@@ -3,6 +3,7 @@ import { getDb } from "@/db";
 import { feedback, feedbackScreenshots, userSettings } from "@/db/schema";
 import { countInt } from "@/lib/admin-metrics";
 import { assertRevealable } from "@/lib/admin-redaction";
+import { FEEDBACK_AREAS, FEEDBACK_CATEGORIES, type FeedbackArea, type FeedbackCategory } from "@/lib/feedback-report";
 
 /**
  * The feedback console's read side: what people said, and what has been done about it.
@@ -24,6 +25,34 @@ export type FeedbackStatus = "new" | "triaged" | "resolved";
 
 export function isFeedbackFilter(value: string | undefined): value is FeedbackFilter {
   return value != null && (FEEDBACK_FILTERS as readonly string[]).includes(value);
+}
+
+export function isFeedbackArea(value: string | undefined): value is FeedbackArea {
+  return value != null && (FEEDBACK_AREAS as readonly string[]).includes(value);
+}
+
+export function isFeedbackCategory(value: string | undefined): value is FeedbackCategory {
+  return value != null && (FEEDBACK_CATEGORIES as readonly string[]).includes(value);
+}
+
+/**
+ * The mood of a category, for the one question the widget has no field for: is this a
+ * complaint or a compliment? Derived rather than asked, so a submission stays one tap shorter
+ * and the scale needs no migration. `idea` is neutral: a request is neither.
+ */
+export type FeedbackSentiment = "negative" | "neutral" | "positive";
+export function categorySentiment(category: string | null): FeedbackSentiment | null {
+  switch (category) {
+    case "bug":
+    case "confusing":
+      return "negative";
+    case "idea":
+      return "neutral";
+    case "praise":
+      return "positive";
+    default:
+      return null;
+  }
 }
 
 /**
@@ -55,6 +84,8 @@ export type FeedbackListRow = {
   statusChangedAt: Date | null;
   /** From the `user_settings` mirror. Null once the account has been purged. */
   submitterEmail: string | null;
+  /** They ticked "you may contact me about this". Null on entries older than the field. */
+  contactOk: boolean | null;
 };
 
 export type FeedbackSummary = {
@@ -69,6 +100,61 @@ export type FeedbackSummary = {
 function whereFor(filter: FeedbackFilter) {
   if (filter === "all") return undefined;
   return eq(feedback.status, filter);
+}
+
+/** The widget's two facets. Both are closed sets, validated before they reach here. */
+function facetsFor(area?: FeedbackArea | null, category?: FeedbackCategory | null) {
+  return and(area ? eq(feedback.area, area) : undefined, category ? eq(feedback.category, category) : undefined);
+}
+
+export type FeedbackThemes = {
+  days: number;
+  byCategory: Array<{ category: string; sentiment: FeedbackSentiment | null; count: number }>;
+  byArea: Array<{ area: string; count: number; negative: number }>;
+  /** Entries in the window that ticked "you may contact me", and that are still unresolved. */
+  contactableOpen: number;
+};
+
+/**
+ * What the widget says in aggregate over a window: how much of each kind, where it is
+ * about, and how much of it is a complaint. Counts only; with a few hundred users a share of
+ * a dozen entries is not a finding, so none is computed.
+ */
+export async function getFeedbackThemes(days = 28): Promise<FeedbackThemes> {
+  const db = await getDb();
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const [byCategory, byArea, contactable] = await Promise.all([
+    db
+      .select({ category: feedback.category, count: countInt })
+      .from(feedback)
+      .where(sql`${feedback.createdAt} >= ${since}`)
+      .groupBy(feedback.category),
+    db
+      .select({
+        area: feedback.area,
+        count: countInt,
+        negative: sql<number>`count(*) filter (where ${feedback.category} in ('bug', 'confusing'))::int`,
+      })
+      .from(feedback)
+      .where(sql`${feedback.createdAt} >= ${since}`)
+      .groupBy(feedback.area),
+    db
+      .select({ n: countInt })
+      .from(feedback)
+      .where(
+        sql`${feedback.createdAt} >= ${since} AND ${feedback.status} <> 'resolved' AND ${feedback.context} ->> 'contactOk' = 'true'`
+      ),
+  ]);
+  return {
+    days,
+    byCategory: byCategory
+      .map((r) => ({ category: r.category ?? "uncategorised", sentiment: categorySentiment(r.category), count: r.count }))
+      .sort((a, b) => b.count - a.count),
+    byArea: byArea
+      .map((r) => ({ area: r.area ?? "unspecified", count: r.count, negative: r.negative }))
+      .sort((a, b) => b.count - a.count),
+    contactableOpen: contactable[0]?.n ?? 0,
+  };
 }
 
 /**
@@ -140,6 +226,7 @@ function listSelection() {
     createdAt: feedback.createdAt,
     statusChangedAt: feedback.statusChangedAt,
     submitterEmail: userSettings.email,
+    contactOk: sql<boolean | null>`(${feedback.context} ->> 'contactOk')::boolean`,
   };
 }
 
@@ -148,9 +235,11 @@ export async function loadFeedbackList(options: {
   page: number;
   filter: FeedbackFilter;
   q?: string;
+  area?: FeedbackArea | null;
+  category?: FeedbackCategory | null;
 }): Promise<{ rows: FeedbackListRow[]; total: number; page: number; pageCount: number }> {
   const db = await getDb();
-  const where = and(whereFor(options.filter), searchFor(options.q));
+  const where = and(whereFor(options.filter), searchFor(options.q), facetsFor(options.area, options.category));
 
   const [counted] = await db.select({ n: countInt }).from(feedback).where(where);
   const total = counted?.n ?? 0;

@@ -65,7 +65,7 @@ export default async function AdminOverviewPage() {
           <>
             <span className="tabular-nums">{overview.totalUsers}</span> account
             {overview.totalUsers === 1 ? "" : "s"} ·{" "}
-            <span className="tabular-nums">{plans.paidTotal}</span> paid ·{" "}
+            <span className="tabular-nums">{plans.paid}</span> paid ·{" "}
             <span className="tabular-nums">{plans.subscribed}</span> subscribed ·{" "}
             {alerts.length > 0 ? (
               <span className="text-foreground">

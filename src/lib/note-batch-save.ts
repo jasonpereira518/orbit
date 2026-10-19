@@ -44,6 +44,7 @@ import { buildSuggestionItemHash, isoDay, isoDayToLocalNoon } from "@/lib/sugges
 import { reportAndContinue } from "@/lib/report-error";
 import { owedByFromDigest } from "@/lib/meeting-extras";
 import { deleteCapturePhotosForBatch } from "@/lib/capture-photos";
+import { trackFollowUpSet } from "@/lib/reminder-writes";
 
 export type NoteBatchParticipantInput = {
   notes: string;
@@ -137,6 +138,12 @@ export type SaveNoteBatchInput = {
    * meeting is saveable with no people and no dates — the summary is the point.
    */
   meeting?: { summary: NoteBatchMeeting; extraReminders: MeetingExtraReminderInput[] } | null;
+  /**
+   * Record `followup_set` (origin "capture") for each reminder this save creates. Opt-in:
+   * the review flow sets it because the person ticked those reminders; an unattended caller
+   * (the Drive importer) leaves it off, since a reminder nobody reviewed is not one they set.
+   */
+  trackFollowUps?: boolean;
 };
 
 const MEETING_REMINDER_PREFIX: Record<MeetingExtraReminderInput["kind"], string> = {
@@ -692,6 +699,10 @@ export async function saveNoteBatch(
       const landed = opts.resumeBatchId
         ? await db.select().from(reminders).where(and(eq(reminders.userId, userId), eq(reminders.noteBatchId, batchId)))
         : inserted;
+      // Deterministic per (reminder, due day), so the resumed save of a crashed job is a no-op.
+      if (input.trackFollowUps) {
+        for (const r of inserted) trackFollowUpSet(userId, r, "capture");
+      }
       const reminderByActionItem = new Map<string, string>();
       for (const r of landed) {
         result.reminders.push({

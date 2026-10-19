@@ -14,9 +14,9 @@ import {
 import { MoneyTabs } from "@/components/admin/money-tabs";
 import { formatCents } from "@/lib/format-money";
 import { ADMIN_AGGREGATES_TTL_MS, loadAdminUserRows } from "@/lib/admin-metrics";
-import { PLAN_CONFIG } from "@/lib/plans/plan-config";
+import { annualMonthlyEquivalentCents, PLAN_CONFIG } from "@/lib/plans/plan-config";
 import { countLifetimePurchases } from "@/lib/user-settings";
-import { compedForegoneCents, mrrMovementSeries } from "@/lib/money-metrics";
+import { compedForegoneCents, lifetimeSales, mrrMovementSeries } from "@/lib/money-metrics";
 
 export const metadata = { title: "Admin · Money · Movement" };
 
@@ -26,6 +26,13 @@ const MONTH = new Intl.DateTimeFormat("en", {
   timeZone: "UTC",
 });
 
+// The copy below quotes the plan prices, so it is derived from the plan table and cannot go
+// stale when the prices move (it once explained a "$5/mo becomes $4.17/mo" that no plan has).
+const PRO_MONTHLY = formatCents(PLAN_CONFIG.orbit.monthlyPriceCents ?? 0);
+const PRO_ANNUAL_MONTHLY = formatCents(annualMonthlyEquivalentCents("orbit"));
+const MAX_MONTHLY = formatCents(PLAN_CONFIG.max.monthlyPriceCents ?? 0);
+const MAX_ANNUAL_MONTHLY = formatCents(annualMonthlyEquivalentCents("max"));
+
 /**
  * Where the recurring number came from, broken into its parts.
  *
@@ -34,8 +41,9 @@ const MONTH = new Intl.DateTimeFormat("en", {
  * nothing happened" where an autoscaled shape would read as a dramatic month.
  */
 export default async function MoneyMovementPage() {
-  const [movements, lifetimeSold, comps, rows] = await Promise.all([
+  const [movements, lifetime, lifetimeHolders, comps, rows] = await Promise.all([
     mrrMovementSeries("month", 6),
+    lifetimeSales(),
     countLifetimePurchases(),
     compedForegoneCents(),
     // Only user_settings columns are read here, and those are always live.
@@ -77,7 +85,7 @@ export default async function MoneyMovementPage() {
           <MetricTile
             label="One-time, 6mo"
             value={formatCents(totals.oneTimeCents)}
-            hint="legacy Lifetime and credit packs"
+            hint="credit packs and legacy Lifetime"
           />
           <MetricTile
             label="Comped away"
@@ -104,14 +112,20 @@ export default async function MoneyMovementPage() {
           />
           <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">
             Whole dollars per month. <strong>Contract</strong> counts a monthly subscriber
-            moving to annual: $5/mo becomes $4.17/mo, so recurring revenue genuinely falls
-            while cash goes up. Both are true, and the cash side is on the Costs tab.
+            moving to annual: {PRO_MONTHLY}/mo becomes {PRO_ANNUAL_MONTHLY}/mo on Pro (
+            {MAX_MONTHLY}/mo becomes {MAX_ANNUAL_MONTHLY}/mo on Max), so recurring revenue
+            genuinely falls while cash goes up. Both are true, and the cash side is on the
+            Costs tab. Internal, tester and comped accounts are not in these figures.
           </p>
         </AdminPanel>
 
         <AdminPanel title="One-time sales">
           <div className="grid gap-3 sm:grid-cols-3">
-            <MetricTile label="Lifetime sold" value={lifetimeSold} hint="before pricing v2; no longer on sale" />
+            <MetricTile
+              label="Lifetime sold"
+              value={lifetime.sold}
+              hint={`ledger purchases net of refunds · ${lifetimeHolders} hold it now · no longer on sale`}
+            />
           </div>
           <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">
             Revenue is booked from what each buyer actually paid. Credit packs are one-time

@@ -30,6 +30,7 @@ import {
 } from "@/lib/plans/plan-config";
 import { setCompedPlan } from "@/lib/user-settings";
 import { reportError } from "@/lib/report-error";
+import { trackCheckoutStarted, trackSubscriptionCanceled } from "@/lib/checkout-events";
 import { withReference } from "@/lib/errors";
 import {
   cancelSubscription as cancelSubscriptionFor,
@@ -82,10 +83,14 @@ async function checkoutFailed(err: unknown, userId: string, what: string): Promi
  * had a paid subscription gets the founding coupon on a MONTHLY plan (annual is already two
  * months free, and founding pricing is monthly only); Stripe's checkout page then shows the
  * discounted first months and the full price after, which is the disclosure.
+ *
+ * `gate` is the paywall that sent the buyer here (`/upgrade?gate=<feature>`), for the
+ * `checkout_started` event only. It comes from the browser, so it is checked against the
+ * closed gate list before it is used, and it changes nothing about the checkout itself.
  */
 export const startSubscriptionCheckout = defineAction(
-  { schema: z.tuple([z.enum(["orbit", "max"]), z.enum(["monthly", "annual"]).optional()]), invalid: errorResult },
-  async (userId, plan: PurchasablePlan, period: BillingPeriod = "monthly"): Promise<CheckoutResult> => {
+  { schema: z.tuple([z.enum(["orbit", "max"]), z.enum(["monthly", "annual"]).optional(), z.string().nullish()]), invalid: errorResult },
+  async (userId, plan: PurchasablePlan, period: BillingPeriod = "monthly", gate?: string | null): Promise<CheckoutResult> => {
     if (!isPurchasablePlan(plan)) return { error: CHECKOUT_COPY.notOpen };
     if (period !== "monthly" && period !== "annual") return { error: CHECKOUT_COPY.notOpen };
     if (!isCheckoutConfigured()) return { error: CHECKOUT_COPY.notOpen };
@@ -132,6 +137,12 @@ export const startSubscriptionCheckout = defineAction(
         cancel_url: `${baseUrl}/pricing`,
       });
       if (!session.url) return { error: "Stripe did not return a checkout URL." };
+      trackCheckoutStarted(userId, {
+        sessionId: session.id,
+        plan,
+        interval: period === "annual" ? "year" : "month",
+        gate,
+      });
       return { url: session.url };
     } catch (err) {
       return checkoutFailed(err, userId, plan);
@@ -145,8 +156,8 @@ export const startSubscriptionCheckout = defineAction(
  * pays.
  */
 export const startCreditPackCheckout = defineAction(
-  { invalid: errorResult },
-  async (userId): Promise<CheckoutResult> => {
+  { schema: z.tuple([z.string().nullish()]), invalid: errorResult },
+  async (userId, gate?: string | null): Promise<CheckoutResult> => {
     if (!isCheckoutConfigured()) return { error: CHECKOUT_COPY.notOpen };
     const entitlements = await getEntitlements(userId);
     if (!entitlements.canBuyCreditPacks) return { error: CHECKOUT_COPY.packsNeedPlan };
@@ -176,6 +187,13 @@ export const startCreditPackCheckout = defineAction(
         cancel_url: `${baseUrl}/settings?integration=ai`,
       });
       if (!session.url) return { error: "Stripe did not return a checkout URL." };
+      trackCheckoutStarted(userId, {
+        sessionId: session.id,
+        // A pack is bought on top of the plan the account is on.
+        plan: entitlements.plan,
+        interval: "once",
+        gate,
+      });
       return { url: session.url };
     } catch (err) {
       return checkoutFailed(err, userId, "credit_pack");
@@ -245,11 +263,21 @@ export const getSubscriptionOverview = defineAction(
   }
 );
 
-/** Stop renewing at the end of the paid period. Access continues until then. */
+/**
+ * Stop renewing at the end of the paid period. Access continues until then.
+ *
+ * `reason` is optional and closed (`CANCEL_REASONS`); nothing asks for it yet, and anything
+ * else is ignored. It is read for the `subscription_canceled` event only.
+ */
 export const cancelSubscription = defineAction(
-  { invalid: failResult },
-  async (userId): Promise<SubscriptionResult> => {
-    return cancelSubscriptionFor(userId);
+  { schema: z.tuple([z.string().optional()]), invalid: failResult },
+  async (userId, reason?: string): Promise<SubscriptionResult> => {
+    const result = await cancelSubscriptionFor(userId);
+    if (result.ok && result.subscription.cancelAtPeriodEnd) {
+      // After Stripe accepted it. A telemetry failure must never turn a cancellation into an error.
+      trackSubscriptionCanceled(userId, { periodEnd: result.subscription.periodEnd, reason });
+    }
+    return result;
   }
 );
 

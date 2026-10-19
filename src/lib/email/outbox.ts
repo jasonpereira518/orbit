@@ -31,6 +31,8 @@ import { getEntitlements } from "@/lib/entitlements";
 import { markOutlookNeedsReauth } from "@/lib/outlook";
 import { consumeBucket, isRateLimitedError, RATE_LIMITS } from "@/lib/rate-limit";
 import { reportError } from "@/lib/report-error";
+import { track } from "@/lib/product-events";
+import { eventId } from "@/lib/product-event-ids";
 
 /**
  * The person-to-person email outbox. Every 1:1 send in Orbit — Compose, follow-ups, Chat,
@@ -236,6 +238,15 @@ export async function cancelEmailSend(
   return existing.status === "canceled" ? "canceled" : "already_sent";
 }
 
+/** The outbox's origins as `email_send_failed.kind`. Every origin here is a person's own mail; digests and notices go through Resend elsewhere. */
+const EMAIL_FAILED_KIND = {
+  compose: "outreach",
+  follow_up: "followup",
+  chat: "outreach",
+  agent: "outreach",
+  recruiter: "outreach",
+} as const satisfies Record<EmailOrigin, "outreach" | "followup">;
+
 export type DispatchOutcome = "sent" | "retry" | "failed" | "not_due" | "not_claimable";
 
 /** Claim → (Sent check on retries) → send → settle. See the file header for the rules. */
@@ -376,6 +387,16 @@ async function settleFailed(
     .returning();
   const done = settled[0];
   if (!done) return "not_claimable";
+  // The terminal failed state, reached once per row (the claim guard above is what makes it
+  // once; the id makes a replay harmless too). Provider and kind are closed enums, never the
+  // error text. The demo provider sends nothing, so its "failure" is not a delivery problem.
+  if (done.provider !== "demo") {
+    track(
+      "email_send_failed",
+      { provider: done.provider, kind: EMAIL_FAILED_KIND[done.origin] },
+      { userId: done.userId, actor: "system", id: eventId("email_send_failed", done.id) }
+    );
+  }
   if (kind === "auth" && done.provider === "gmail") {
     // A refused token is flagged by `getValidAccessToken`; a 401/403 on the send itself isn't.
     await db

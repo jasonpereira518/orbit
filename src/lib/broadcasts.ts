@@ -1,13 +1,13 @@
-import { and, desc, eq, isNull, notExists, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { revealUnsubscribeToken } from "@/lib/interest-list-tokens";
 import { getDb } from "@/db";
 import {
   broadcastRecipients,
   broadcasts,
   interestListSignups,
-  userSettings,
 } from "@/db/schema";
 import { BODY_MAX, BODY_MIN, SUBJECT_MAX, SUBJECT_MIN } from "@/lib/broadcast-limits";
+import { convertedSql } from "@/lib/interest-list-converted";
 import {
   ACCENT,
   SERIF_STACK,
@@ -157,17 +157,11 @@ export async function audienceFor(): Promise<
     .where(
       and(
         isNull(interestListSignups.unsubscribedAt),
-        // Drizzle's `notExists` with a query-builder subquery, NOT a raw `sql` template:
-        // interpolating the two columns by hand renders both as an unqualified `"email"`,
-        // which inside the subquery both bind to `user_settings.email`. That collapses the
-        // correlation to `lower(u.email) = u.email` — true for any lowercase address — so
-        // the NOT EXISTS excludes everyone and a broadcast silently reaches nobody.
-        notExists(
-          db
-            .select({ one: sql`1` })
-            .from(userSettings)
-            .where(eq(sql`lower(${userSettings.email})`, interestListSignups.email))
-        )
+        // "Converted" is the console's definition, one shared fragment (`convertedSql`): linked
+        // to an account by id, or the address matches an account's email. Its correlation is
+        // aliased and qualified on purpose (see that file), the failure mode being a NOT EXISTS
+        // that excludes everyone so a broadcast silently reaches nobody.
+        sql`not ${convertedSql}`
       )
     );
   // Stored hashed and encrypted (audit L-05); a row whose token cannot be read is skipped

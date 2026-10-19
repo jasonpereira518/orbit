@@ -18,6 +18,7 @@ import { resolvePlan } from "@/lib/entitlements";
 import type { Plan } from "@/lib/plans/plan-config";
 import { setCompedPlan } from "@/lib/user-settings";
 import { grantLifetime, previewLifetime, revokeLifetime, type LifetimePreview } from "@/lib/admin-lifetime";
+import { setAccountKindAsAdmin, type AccountKind } from "@/lib/admin-account-kind";
 import { runOpsSweep } from "@/lib/ops-sweep";
 import { notifySlack } from "@/lib/ops-notify";
 import { sendSlackDM } from "@/lib/slack-dm";
@@ -34,7 +35,12 @@ import {
   type ConstellationConfig,
 } from "@/lib/constellation-config";
 import { setStealth } from "@/lib/site-access";
-import { setManagedAiPaused, type ManagedAiSwitchState } from "@/lib/managed-ai-switch";
+import {
+  setManagedAiPaused,
+  setWebSearchPaused,
+  type ManagedAiSwitchState,
+  type WebSearchSwitchState,
+} from "@/lib/managed-ai-switch";
 import { setWaitlistDemoEnabled } from "@/lib/waitlist-demo";
 import {
   inviteToSite,
@@ -114,6 +120,29 @@ export const setCompAction = defineAction(
     // Resolved from the returned row, NOT from getEntitlements(): that helper is a React
     // cache() memo and may still hold the pre-write value within this same request.
     return { ok: true, plan: resolvePlan(row).plan };
+  }
+);
+
+/**
+ * Mark an account `internal` (the operator, a teammate, the showcase account), `tester`, or
+ * neither (`null`, a real customer). Takes the account out of, or back into, every product and
+ * revenue aggregate. A reason is required and an audit row is written; the body is
+ * `setAccountKindAsAdmin`.
+ */
+export const setAccountKindAction = defineAction(
+  // `kind` is checked against the closed list in `setAccountKindAsAdmin`.
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ targetUserId: z.string(), kind: z.string().nullable(), reason: z.string() })]) },
+  async (adminUserId, input: {
+    targetUserId: string;
+    kind: AccountKind | null;
+    reason: string;
+  }): Promise<{ ok: true; kind: AccountKind | null; changed: boolean }> => {
+    const result = await setAccountKindAsAdmin(adminUserId, input);
+    revalidatePath("/admin");
+    revalidatePath("/admin/users");
+    revalidatePath("/admin/growth");
+    revalidatePath(`/admin/users/${input.targetUserId}`);
+    return { ok: true, kind: result.to, changed: result.changed };
   }
 );
 
@@ -1149,15 +1178,23 @@ export const setWaitlistDemoAction = defineAction(
  * database failures still throw.
  */
 export const inviteToSiteAction = defineAction(
-  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ email: z.string(), notify: z.boolean(), firstName: z.string().nullish() })]) },
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ email: z.string(), notify: z.boolean(), firstName: z.string().nullish(), wave: z.string().nullish() })]) },
   async (adminUserId, input: {
     email: string;
     notify: boolean;
     firstName?: string | null;
+    /** The operator's wave label (`w1`, `w2`); validated in `inviteToSite`. */
+    wave?: string | null;
   }): Promise<SiteInviteResult | { kind: "error"; message: string }> => {
     const firstName = input.firstName?.trim().slice(0, 60) || null;
     try {
-      const result = await inviteToSite({ adminUserId, email: input.email, notify: input.notify, firstName });
+      const result = await inviteToSite({
+        adminUserId,
+        email: input.email,
+        notify: input.notify,
+        firstName,
+        wave: input.wave ?? null,
+      });
       revalidateAccess();
       return result;
     } catch (err) {
@@ -1191,6 +1228,16 @@ export const setManagedAiPausedAction = defineAction(
     reason: string;
   }): Promise<ManagedAiSwitchState> => {
     const state = await setManagedAiPaused(adminUserId, input.paused === true, input.reason);
+    revalidatePath("/admin/billing");
+    return state;
+  }
+);
+
+/** Stop or restart hosted web search for every account. Audited; same 30-second reach. */
+export const setWebSearchPausedAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ paused: z.boolean(), reason: z.string() })]) },
+  async (adminUserId, input: { paused: boolean; reason: string }): Promise<WebSearchSwitchState> => {
+    const state = await setWebSearchPaused(adminUserId, input.paused === true, input.reason);
     revalidatePath("/admin/billing");
     return state;
   }

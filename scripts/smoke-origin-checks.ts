@@ -63,8 +63,10 @@ const CROSS_ORIGIN_ALLOWED: Record<string, string> = {
   "imports/[id]/continue": "internal secret",
   "jobs/feed/sweep": "cron secret",
   "linkedin/timeline-events/backfill": "internal secret",
+  "ops/billing-reconcile": "cron secret",
   "ops/speech-usage": "cron secret",
   "ops/sweep": "cron secret",
+  "ops/weekly-digest": "cron secret",
   "radar/digest": "cron secret",
   "radar/feeds/sweep": "cron secret",
   "radar/run": "cron secret",
@@ -156,7 +158,8 @@ function parserCheck() {
     "email/attachments/upload",
     "plan-upgrades/claim",
     "presence",
-    "track",
+    // The page-view beacon; `/api/track` re-exports this handler for one release.
+    "p/v",
   ]) {
     const source = code(readFileSync(join(root, route, "route.ts"), "utf8"));
     check(`/api/${route} calls the guard`, GUARD.test(source));

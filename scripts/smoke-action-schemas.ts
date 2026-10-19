@@ -46,10 +46,11 @@ const PUBLIC_ACTIONS = new Set([
   // The public contact page.
   "contact.ts:isContactFormEnabled",
   "contact.ts:submitContactMessage",
-  // The waitlist: joining, naming the pass, opening a shared pass, voting on the poll.
+  // The waitlist: joining, naming the pass, opening or sharing a pass, voting on the poll.
   "interest-list.ts:joinInterestList",
   "interest-list.ts:saveInterestListName",
   "interest-list.ts:recordPassCheckAction",
+  "interest-list.ts:recordWaitlistShare",
   "waitlist-poll.ts:setPollStars",
   // OAuth callbacks: they run before any session check and trust only the state cookie.
   "events.ts:consumeEventbriteOAuthState",

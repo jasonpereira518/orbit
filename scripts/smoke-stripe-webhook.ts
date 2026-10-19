@@ -38,6 +38,7 @@ import {
 import { resolvePlan } from "../src/lib/entitlements";
 import { POST } from "../src/app/api/webhooks/stripe/route";
 import { mrrMovement, mrrReconciliation } from "../src/lib/billing-events";
+import { lifetimeTierFor } from "../src/lib/billing-stripe";
 
 const USER = "smoke-stripe-user";
 // Separate user for the Pro path: `getEntitlements` is a React cache() memo, so plan
@@ -733,6 +734,13 @@ async function main() {
     String(lifetimeRows[0]?.eventId)
   );
   check("…with zero MRR delta", lifetimeRows[0]?.mrrDeltaCents === 0);
+  // 1.15: the booking records which offer this was. This first session carries no amount, so
+  // it is honestly "unknown" rather than a guess; the tiers proper are asserted below.
+  check(
+    "…recording a tier and a (here absent) price id",
+    lifetimeRows[0]?.detail?.tier === "unknown" && lifetimeRows[0]?.detail?.priceId === null,
+    JSON.stringify(lifetimeRows[0]?.detail)
+  );
 
   // The two fulfil event types carry DIFFERENT event ids for the same purchase.
   const asyncFulfil = sessionEvent({ amount_total: 2500 }) as Record<string, unknown>;
@@ -804,6 +812,58 @@ async function main() {
     "and they are attributed to stripe, not clerk",
     deliveries.every((d) => d.source === "stripe")
   );
+
+  /* ------------------------------------------------------ lifetime tier ---------- */
+  console.log("\nrecords which Lifetime offer each purchase was");
+  const TIER_USER = "smoke-stripe-tier-user";
+  await db.delete(billingEvents).where(eq(billingEvents.userId, TIER_USER));
+  await db.delete(userSettings).where(eq(userSettings.userId, TIER_USER));
+  await ensureUserSettings(TIER_USER);
+  const tierCases: Array<{ id: string; over: Record<string, unknown>; tier: string; priceId: string | null }> = [
+    { id: "cs_tier_intro", over: { amount_total: 2500 }, tier: "intro", priceId: null },
+    // Tax on top of the intro price: the subtotal is what identifies the offer.
+    { id: "cs_tier_intro_tax", over: { amount_total: 2700, amount_subtotal: 2500, total_details: { amount_tax: 200 } }, tier: "intro", priceId: null },
+    { id: "cs_tier_standard", over: { amount_total: 7500 }, tier: "standard", priceId: null },
+    {
+      id: "cs_tier_standard_tax",
+      over: {
+        amount_total: 8100,
+        line_items: { data: [{ price: { id: "price_lifetime_standard" } }] },
+      },
+      tier: "standard",
+      priceId: "price_lifetime_standard",
+    },
+    { id: "cs_tier_other", over: { amount_total: 4200 }, tier: "unknown", priceId: null },
+  ];
+  for (const c of tierCases) {
+    const evt = sessionEvent({
+      id: c.id,
+      client_reference_id: TIER_USER,
+      customer: "cus_tier_user",
+      payment_intent: `pi_${c.id}`,
+      ...c.over,
+    }) as Record<string, unknown>;
+    evt.id = `evt_${c.id}`;
+    await post(signedRequest(evt));
+  }
+  const tierRows = (await ledgerFor(TIER_USER)).filter((r) => r.kind === "lifetime");
+  for (const c of tierCases) {
+    const row = tierRows.find((r) => r.eventId === `cs:${c.id}`);
+    check(
+      `${c.id}: tier ${c.tier}${c.priceId ? ", price id kept" : ""}`,
+      row?.detail?.tier === c.tier && (row?.detail?.priceId ?? null) === c.priceId,
+      JSON.stringify(row?.detail)
+    );
+  }
+  check(
+    "the pure classifier agrees: total-only is tax-tolerant, subtotal is exact",
+    lifetimeTierFor({ amount_total: 2699 }) === "intro" &&
+      lifetimeTierFor({ amount_total: 8000 }) === "standard" &&
+      lifetimeTierFor({ amount_total: 2699, amount_subtotal: 2699 }) === "unknown" &&
+      lifetimeTierFor({ amount_total: null }) === "unknown"
+  );
+  await db.delete(billingEvents).where(eq(billingEvents.userId, TIER_USER));
+  await db.delete(userSettings).where(eq(userSettings.userId, TIER_USER));
 
   /* ------------------------------------------------------ reconciliation --------- */
   console.log("\nreconciles the two derivations of MRR");

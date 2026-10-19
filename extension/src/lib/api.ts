@@ -41,6 +41,45 @@ export class ApiError extends Error {
 
 export type TokenGetter = () => Promise<string | null>;
 
+/**
+ * Which build is talking, so the server can tell installs and versions apart
+ * (`extension_usage.version`, `extension_installed`). The manifest's own version, three plain
+ * numbers; null where there is no extension runtime (the design preview in a normal tab), in
+ * which case the header is simply not sent.
+ */
+export function extensionVersion(): string | null {
+  try {
+    const version = chrome.runtime.getManifest().version;
+    return /^\d{1,4}\.\d{1,4}\.\d{1,4}$/.test(version) ? version : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Set by the service worker on install and cleared once the server has seen it. The first
+ * `/me` after install carries `X-Orbit-Install: 1`, which is how the server learns this
+ * account installed the extension; every later `/me` is just a session probe.
+ */
+export const INSTALL_PENDING_KEY = "orbitInstallPending";
+
+async function installPending(): Promise<boolean> {
+  try {
+    const stored = await chrome.storage.local.get(INSTALL_PENDING_KEY);
+    return stored[INSTALL_PENDING_KEY] === true;
+  } catch {
+    return false;
+  }
+}
+
+async function clearInstallPending(): Promise<void> {
+  try {
+    await chrome.storage.local.remove(INSTALL_PENDING_KEY);
+  } catch {
+    // The marker stays and the next /me sends it again; the server counts an account once.
+  }
+}
+
 async function request<T>(
   path: string,
   init: RequestInit,
@@ -49,6 +88,8 @@ async function request<T>(
 ): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("content-type", "application/json");
+  const version = extensionVersion();
+  if (version) headers.set("x-orbit-extension-version", version);
 
   const token = await getToken();
   if (token) headers.set("authorization", `Bearer ${token}`);
@@ -83,8 +124,18 @@ export function createApi(getToken: TokenGetter) {
     request<T>(path, { method: "POST", body: JSON.stringify(body) }, getToken, signal);
 
   return {
-    me: (signal?: AbortSignal) =>
-      request<MeResponse>("/me", { method: "GET" }, getToken, signal),
+    me: async (signal?: AbortSignal) => {
+      const install = await installPending();
+      const me = await request<MeResponse>(
+        "/me",
+        { method: "GET", headers: install ? { "x-orbit-install": "1" } : undefined },
+        getToken,
+        signal
+      );
+      // Only after the server answered: a failed or signed-out probe must not eat the marker.
+      if (install) void clearInstallPending();
+      return me;
+    },
 
     resolve: (page: PageContext, signal?: AbortSignal) =>
       post<ResolveResponse>("/resolve", { page }, signal),

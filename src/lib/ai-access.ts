@@ -16,6 +16,7 @@ import { resolvePlan, type BillingColumns } from "@/lib/entitlements";
 import { classifyAiError } from "@/lib/errors";
 import { ERROR_SOURCES, recordErrorEvent, shouldRecordThrottled } from "@/lib/error-events";
 import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
+import { recordGateHitThrottled } from "@/lib/gate-events";
 import { AI_OPERATIONS } from "@/lib/ai-operations";
 import {
   creditPeriodFor,
@@ -178,7 +179,7 @@ export function managedAiSwitchedOff(): boolean {
  * for has spent its pool.
  */
 const PAUSE_TTL_MS = 30_000;
-type PoolState = { paused: boolean; spent: ReadonlySet<AiProvider> };
+type PoolState = { paused: boolean; spent: ReadonlySet<AiProvider>; webSearchPaused: boolean };
 let pauseCache: (PoolState & { at: number }) | null = null;
 
 export function managedAiPausedDefault(): boolean {
@@ -239,21 +240,28 @@ export async function managedPoolState(now = Date.now()): Promise<PoolState> {
     const [result, spentMicros] = await Promise.all([
       db.execute(sql`
         SELECT (SELECT managed_ai_paused FROM site_settings WHERE id = 1) AS paused,
+               (SELECT web_search_paused FROM site_settings WHERE id = 1) AS web_search_paused,
                (SELECT array_agg(DISTINCT context->>'provider') FROM error_events
                  WHERE source = ${ERROR_SOURCES.managedAi} AND kind = 'quota'
                    AND created_at > now() - interval '2 hours') AS dry
       `),
       managedPoolsSpent(new Date(now)),
     ]);
-    const [row] = rowsOf<{ paused: boolean | null; dry: string[] | null }>(result);
+    const [row] = rowsOf<{ paused: boolean | null; web_search_paused: boolean | null; dry: string[] | null }>(result);
     const spent = new Set<AiProvider>([
       ...(Object.keys(spentMicros) as AiProvider[]).filter((p) => (spentMicros[p] ?? 0) >= MANAGED_AI_POOLS[p]!.capMicros),
       ...((row?.dry ?? []) as AiProvider[]),
     ]);
-    pauseCache = { paused: row?.paused ?? managedAiPausedDefault(), spent, at: now };
+    pauseCache = {
+      paused: row?.paused ?? managedAiPausedDefault(),
+      spent,
+      webSearchPaused: row?.web_search_paused ?? false,
+      at: now,
+    };
     return pauseCache;
   } catch {
-    return pauseCache ?? { paused: true, spent: new Set() };
+    // Web search stays up on a read failure: its budget buckets are writes that fail closed.
+    return pauseCache ?? { paused: true, spent: new Set(), webSearchPaused: false };
   }
 }
 
@@ -262,6 +270,14 @@ export async function managedAiPaused(now = Date.now()): Promise<boolean> {
   if (state.paused) return true;
   const held = MANAGED_PROVIDER_ORDER.filter((p) => managedKey(p));
   return held.length > 0 && held.every((p) => state.spent.has(p));
+}
+
+/**
+ * The admin console's web-search switch (`site_settings.web_search_paused`), read in the same
+ * cached pass as the managed-AI switch. Applies to every key, the account's own included.
+ */
+export async function webSearchPaused(now = Date.now()): Promise<boolean> {
+  return (await managedPoolState(now)).webSearchPaused;
 }
 
 /** For the admin switch: forget the cached answer so this instance sees the change at once. */
@@ -716,9 +732,30 @@ export class AiAccess {
     // Below the background floor with credits left is not "you've used your credits".
     if (background) {
       const balance = await getCreditBalance(this.userId, this.plan, this.settings, undefined, { ensure: false });
-      if (balance.spendable > 0) throw this.refusal("managed_unavailable", BACKGROUND_RESERVE_MESSAGE);
+      if (balance.spendable > 0) {
+        await this.recordCreditWall("backgroundFloor", operation, background);
+        throw this.refusal("managed_unavailable", BACKGROUND_RESERVE_MESSAGE);
+      }
     }
+    await this.recordCreditWall("managedCredits", operation, background);
     throw this.refusal("managed_limit", refusalCopyFor("managed_limit", this.plan));
+  }
+
+  /**
+   * The pricing-v2 money moment, recorded as a gate hit: out of credits, or below the floor
+   * kept for what the person asks for. The refusal threw before anything was written, so
+   * neither `usage_events` nor `gate_events` saw it (audit D1). Throttled to one row per
+   * account, wall and hour, because a nightly job or a chat that makes several model calls
+   * would otherwise write one per attempt. Best effort and silent: the caller throws its own
+   * refusal, with its own text, whether or not this lands.
+   */
+  private async recordCreditWall(feature: "managedCredits" | "backgroundFloor", operation: string, background: boolean) {
+    await recordGateHitThrottled({
+      userId: this.userId,
+      feature,
+      plan: this.plan,
+      context: { surface: background ? "cron" : "web", route: operation },
+    });
   }
 
   /** A grant for "the user's model": chat, capture, drafts, briefs, OCR. */

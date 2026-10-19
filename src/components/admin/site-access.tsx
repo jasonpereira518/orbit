@@ -142,6 +142,7 @@ export function InviteForm({ clerkOn }: { clerkOn: boolean }) {
   const [pending, start] = useTransition();
   const [email, setEmail] = useState("");
   const [firstName, setFirstName] = useState("");
+  const [wave, setWave] = useState("");
   const [notify, setNotify] = useState(true);
   const [result, setResult] = useState<SiteInviteResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -153,7 +154,7 @@ export function InviteForm({ clerkOn }: { clerkOn: boolean }) {
     setResult(null);
     start(async () => {
       try {
-        const res = await inviteToSiteAction({ email, notify, firstName });
+        const res = await inviteToSiteAction({ email, notify, firstName, wave });
         if (res.kind === "error") {
           setError(res.message);
           return;
@@ -197,6 +198,17 @@ export function InviteForm({ clerkOn }: { clerkOn: boolean }) {
           maxLength={60}
           disabled={pending || !notify}
           className="h-8 w-44 max-w-full text-sm"
+        />
+        <Input
+          value={wave}
+          onChange={(e) => setWave(e.target.value)}
+          placeholder="Wave (w1)"
+          aria-label="Wave label for this invitation, like w1 or w2"
+          maxLength={4}
+          pattern="[Ww][0-9]{1,3}"
+          title="A wave looks like w1, w2, w12"
+          disabled={pending}
+          className="h-8 w-24 max-w-full text-sm"
         />
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <input

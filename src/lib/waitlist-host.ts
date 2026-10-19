@@ -119,7 +119,7 @@ export const BOTID_PROTECTED_POSTS = [
  *   `/interest/privacy` are NOT here — they redirect to `/` and `/privacy` first.
  * - `_next/`: the page's own chunks and fonts. The server action POSTs to `/`.
  * - `api/interest-list/unsubscribe`, `/ticket-image` and `/progress`: the email's leave
- *   link, the share image and the referral tracker's poll. `api/track`: the page-view beacon. `api/csp-report`: the waitlist
+ *   link, the share image and the referral tracker's poll. `api/p/v`: the page-view beacon (its old path `api/track` is kept as an alias for one release). `api/csp-report`: the waitlist
  *   CSP's report target. `_vercel/`: Vercel's analytics.
  * - `landing/planets/` and `waitlist/`: the planet art, the waitlist favicon / logo mark,
  *   and the email starfield GIF.
@@ -139,6 +139,8 @@ export const WAITLIST_ALLOWED_PATHS = [
   "api/interest-list/ticket-image$",
   "api/interest-list/progress$",
   "api/waitlist-poll/results$",
+  "api/p/v$",
+  // The beacon's old path, kept for one release so a cached client still reports. Remove with `/api/track`.
   "api/track$",
   "api/csp-report$",
   "_vercel/",

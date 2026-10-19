@@ -14,6 +14,7 @@ import { loadRunwayMetrics } from "@/lib/admin-yc-metrics";
 export const metadata = { title: "Admin · Runway" };
 
 const usd = (value: number) => `$${Math.round(value).toLocaleString()}`;
+const MONTH = new Intl.DateTimeFormat("en", { month: "short", year: "numeric", timeZone: "UTC" });
 
 export default async function RunwayPage() {
   const {
@@ -22,6 +23,9 @@ export default async function RunwayPage() {
     expenseBurnUsd,
     infraMonthlyUsd,
     managedAiMonthlyUsd,
+    deepgramMonthlyUsd,
+    acquisitionMonthlyUsd,
+    acquisitionMonth,
     infraEntered,
     recentExpenses,
     runwayMonths,
@@ -40,7 +44,7 @@ export default async function RunwayPage() {
           <MetricTile
             label="Monthly burn"
             value={usd(monthlyBurnUsd)}
-            hint="expenses + infrastructure + included AI"
+            hint="expenses + infrastructure + included AI + Deepgram + acquisition"
             tone={infraEntered ? "default" : "danger"}
           />
           <MetricTile
@@ -72,6 +76,20 @@ export default async function RunwayPage() {
             <DefinitionRow label="Included AI (Pro and Max)">
               {usd(managedAiMonthlyUsd)} · model cost on Orbit&apos;s keys, trailing 30 days
             </DefinitionRow>
+            <DefinitionRow label="Deepgram (voice)">
+              {usd(deepgramMonthlyUsd)} · priced from recorded seconds, trailing 30 days. Drawn from the
+              prepaid credit until it runs out, but it is what voice costs to run.
+            </DefinitionRow>
+            <DefinitionRow label="Acquisition">
+              {acquisitionMonth ? (
+                <>
+                  {usd(acquisitionMonthlyUsd)} · marketing spend logged for{" "}
+                  {MONTH.format(acquisitionMonth)}, the latest month with any
+                </>
+              ) : (
+                "none logged"
+              )}
+            </DefinitionRow>
             <DefinitionRow label="= Monthly burn">
               <span className="font-medium text-foreground">{usd(monthlyBurnUsd)}</span>
             </DefinitionRow>
@@ -81,6 +99,10 @@ export default async function RunwayPage() {
               Provider bills are recorded in the Money section, under Costs.
             </p>
           )}
+          <p className="mt-3 text-xs text-muted-foreground">
+            Burn = ad-hoc expenses + infrastructure + included AI + Deepgram + acquisition. The AI and
+            Deepgram lines include your own accounts: burn is cash, whoever spent it.
+          </p>
         </AdminPanel>
 
         <AdminPanel title="Update">

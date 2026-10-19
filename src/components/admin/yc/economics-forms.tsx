@@ -7,24 +7,29 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+/** `YYYY-MM` for the current UTC month: the default, and the latest a spend row can be for. */
+function thisMonthValue() {
+  const now = new Date();
+  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+/**
+ * One month of acquisition spend. A row belongs to exactly one calendar month — the month
+ * picked here — so logging September twice in September, or September's bill in October,
+ * lands in September both times and is never counted in two months.
+ */
 export function LogAcquisitionSpendForm() {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [channel, setChannel] = useState("");
   const [amountUsd, setAmountUsd] = useState("");
+  const [month, setMonth] = useState(thisMonthValue());
 
   function submit() {
     const amount = Number(amountUsd);
-    if (!channel.trim() || !Number.isFinite(amount) || amount <= 0) return;
-    const now = new Date();
-    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    if (!channel.trim() || !month || !Number.isFinite(amount) || amount <= 0) return;
     start(async () => {
-      await addAcquisitionSpendAction({
-        channel: channel.trim(),
-        amountUsd: amount,
-        periodStart: thirtyDaysAgo.toISOString(),
-        periodEnd: now.toISOString(),
-      });
+      await addAcquisitionSpendAction({ channel: channel.trim(), amountUsd: amount, month });
       setChannel("");
       setAmountUsd("");
       router.refresh();
@@ -44,7 +49,18 @@ export function LogAcquisitionSpendForm() {
         />
       </div>
       <div className="space-y-1.5">
-        <Label htmlFor="spend-amount">Amount (USD, this period)</Label>
+        <Label htmlFor="spend-month">Month</Label>
+        <Input
+          id="spend-month"
+          type="month"
+          value={month}
+          max={thisMonthValue()}
+          onChange={(e) => setMonth(e.target.value)}
+          className="w-36"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="spend-amount">Amount (USD, that month)</Label>
         <Input
           id="spend-amount"
           type="number"

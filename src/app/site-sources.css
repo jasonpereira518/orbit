@@ -129,6 +129,7 @@
 @source "../lib/ai-result-cache.ts";
 @source "../lib/ai-security.ts";
 @source "../lib/ai.ts";
+@source "../lib/analytics-internal.ts";
 @source "../lib/analytics-redact.ts";
 @source "../lib/api/keys.ts";
 @source "../lib/app-url.ts";
@@ -233,6 +234,7 @@
 @source "../lib/onboarding-examples/sql.ts";
 @source "../lib/onboarding.ts";
 @source "../lib/opportunity-kinds.ts";
+@source "../lib/pageview-session.ts";
 @source "../lib/pass-invites.ts";
 @source "../lib/pass-seen.ts";
 @source "../lib/pgvector.ts";
@@ -240,6 +242,8 @@
 @source "../lib/plan-limits.ts";
 @source "../lib/plan-upgrade-events.ts";
 @source "../lib/plans/plan-config.ts";
+@source "../lib/product-event-schemas.ts";
+@source "../lib/product-events.ts";
 @source "../lib/provider-connections.ts";
 @source "../lib/query-counter.ts";
 @source "../lib/rate-limit.ts";
@@ -288,8 +292,10 @@
 @source "../lib/waitlist-pass-events.ts";
 @source "../lib/waitlist-poll-votes.ts";
 @source "../lib/waitlist-poll.ts";
+@source "../lib/waitlist-share.ts";
 @source "../lib/warp/choreography.ts";
 @source "../lib/warp/chrono.ts";
 @source "../lib/warp/journeys.ts";
+@source "../lib/web-search-budget.ts";
 @source "../lib/welcome-planets.ts";
 @source "../lib/writing-instructions.ts";

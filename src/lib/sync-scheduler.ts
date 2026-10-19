@@ -61,6 +61,7 @@ import {
   getValidAccessToken as getValidOutlookAccessToken,
 } from "@/lib/outlook";
 import {
+  MAX_SYNC_FAILURES,
   claimDueConnections,
   disarmSync,
   markSyncResult,
@@ -112,6 +113,38 @@ import { backfillPersonKeys } from "@/lib/events/people-store";
 import { calendarEventsToCandidates } from "@/lib/events/discovery/from-calendar";
 import { recordDiscoveryCandidates } from "@/lib/events/discovery/record";
 import { reportAndContinue, reportError } from "@/lib/report-error";
+import { track } from "@/lib/product-events";
+import { eventId } from "@/lib/product-event-ids";
+import { eventErrorKind } from "@/lib/event-error-kind";
+
+const SYNC_FAILED_PROVIDER = {
+  google: "google_calendar",
+  microsoft: "microsoft_calendar",
+  apple: "icloud",
+} as const satisfies Record<ClaimedConnection["provider"], string>;
+
+/**
+ * `sync_failed`: a connection's sync has stopped for good. Only the TERMINAL failure counts: a
+ * dead grant (`retryable` false, disarmed at once) or the failure that spends the last retry
+ * (`MAX_SYNC_FAILURES`, the same arithmetic `markSyncResult` applies). A run that fails and
+ * recovers on a later attempt is the ladder doing its job and records nothing.
+ *
+ * One per connection per day and failure count, so a replayed pass cannot count a streak twice.
+ * `error_kind` is a machine code; the error text stays in `sync_error`.
+ */
+function trackSyncGaveUp(conn: ClaimedConnection, err: unknown, retryable: boolean, now: Date): void {
+  if (retryable && conn.syncFailures + 1 < MAX_SYNC_FAILURES) return;
+  track(
+    "sync_failed",
+    { provider: SYNC_FAILED_PROVIDER[conn.provider], error_kind: eventErrorKind(err) },
+    {
+      userId: conn.userId,
+      actor: "system",
+      surface: "cron",
+      id: eventId("sync_failed", conn.id, String(conn.syncFailures), now.toISOString().slice(0, 10)),
+    }
+  );
+}
 
 /** Matches the import engine's budget, and leaves headroom under the 300s function ceiling. */
 export const SYNC_TIME_BUDGET_MS = 4.5 * 60 * 1000;
@@ -1198,6 +1231,7 @@ export async function runSyncPass(
         error: err instanceof Error ? err.message : String(err),
         retryable,
       }).catch(reportAndContinue({ where: "job.sync.mark-result", userId: conn.userId }, null));
+      trackSyncGaveUp(conn, err, retryable, now);
     }
   });
 
@@ -1252,6 +1286,7 @@ export async function runSyncPass(
         error: err instanceof Error ? err.message : String(err),
         retryable,
       }).catch(reportAndContinue({ where: "job.sync.mark-result", userId: conn.userId }, null));
+      trackSyncGaveUp(conn, err, retryable, now);
     }
   });
 
@@ -1294,6 +1329,7 @@ export async function runSyncPass(
         error: err instanceof Error ? err.message : String(err),
         retryable,
       }).catch(reportAndContinue({ where: "job.sync.mark-result", userId: conn.userId }, null));
+      trackSyncGaveUp(conn, err, retryable, now);
     }
   });
 

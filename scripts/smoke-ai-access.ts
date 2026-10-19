@@ -47,6 +47,7 @@ import {
   creditGrants,
   creditHolds,
   errorEvents,
+  gateEvents,
   rateLimitBuckets,
   siteSettings,
   usageEvents,
@@ -680,6 +681,16 @@ async function realGate() {
   await settle();
   r = await lastSent(() => json(U.freeNone, "radar.why"));
   check("…while the nightly radar.why is refused", isAiAccessError(r.err) && r.count === 0, r.err);
+  {
+    // Audit D1: the refusal threw before anything was written, so the money moment left no trace.
+    const floor = await db.select().from(gateEvents).where(and(eq(gateEvents.userId, U.freeNone), eq(gateEvents.feature, "backgroundFloor")));
+    check("the background-floor refusal is recorded as a gate hit — one row though two operations were refused (throttled)",
+      floor.length === 1 && floor[0]!.plan === "free" && floor[0]!.unlockPlan === "orbit", floor);
+    check("…located by surface and operation",
+      (floor[0]!.context as { surface?: string; route?: string }).surface === "cron" && (floor[0]!.context as { route?: string }).route === "radar.rerank", floor[0]?.context);
+    check("…and a foreground request that ran fine recorded no wall",
+      (await db.select().from(gateEvents).where(and(eq(gateEvents.userId, U.freeNone), eq(gateEvents.feature, "managedCredits")))).length === 0);
+  }
 
   console.log("\nFree at zero");
   await db.update(creditGrants).set({ microsRemaining: 0 }).where(eq(creditGrants.userId, U.freeNone));
@@ -689,6 +700,15 @@ async function realGate() {
       (r.err as Error).message === FREE_LIMIT_MESSAGE && r.count === 0, r.err);
   check("…which the client reads back as managed_limit", aiDenialFromMessage(FREE_LIMIT_MESSAGE) === "managed_limit");
   check("…and the status agrees", (await status(U.freeNone)) === "false:managed_limit:managed");
+  {
+    const walls = async (u: string) => db.select().from(gateEvents).where(and(eq(gateEvents.userId, u), eq(gateEvents.feature, "managedCredits")));
+    const first = await walls(U.freeNone);
+    check("out-of-credits is recorded as a gate hit, with the operation that hit it",
+      first.length === 1 && first[0]!.plan === "free" && (first[0]!.context as { surface?: string; route?: string }).route === "chat.answer" &&
+        (first[0]!.context as { surface?: string }).surface === "web", first);
+    await lastSent(() => json(U.freeNone, "chat.answer"));
+    check("…a second refusal in the same hour is still one row, and the refusal text did not change", (await walls(U.freeNone)).length === 1);
+  }
 
   console.log("\nMax and Lifetime at zero: each hears only what its plan can do");
   for (const [user, plan] of [[U.maxNone, "max"], [U.lifetimeNone, "lifetime"]] as const) {
@@ -697,6 +717,10 @@ async function realGate() {
     check(`${plan}: refused with its own plan's out-of-credits words, nothing sent`,
       isAiAccessError(r.err) && (r.err as AiAccessError).reason === "managed_limit" &&
         (r.err as Error).message === MANAGED_LIMIT_MESSAGES[plan] && r.count === 0, r.err);
+  }
+  for (const [user, plan] of [[U.maxNone, "max"], [U.lifetimeNone, "lifetime"]] as const) {
+    const rows = await db.select().from(gateEvents).where(and(eq(gateEvents.userId, user), eq(gateEvents.feature, "managedCredits")));
+    check(`${plan}: out-of-credits is recorded on its own plan, with no plan above it to unlock`, rows.length === 1 && rows[0]!.plan === plan && rows[0]!.unlockPlan === null, rows);
   }
   check("…Max is offered a pack and never Max", /pack/.test(MANAGED_LIMIT_MESSAGES.max) && !/move to Max/.test(MANAGED_LIMIT_MESSAGES.max));
   check("…Lifetime is offered no pack", !/pack/i.test(MANAGED_LIMIT_MESSAGES.lifetime));
