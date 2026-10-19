@@ -40,6 +40,7 @@ import {
   executorFor,
   pastTense,
 } from "@/lib/tools/chat-executor";
+import { ANSWER_ENDS_BY_MS } from "@/lib/chat-gather";
 
 /**
  * Whether chat answers through this loop. Off unless `CHAT_LOOP_V2=1` until the chat and
@@ -107,6 +108,12 @@ export async function runChatAgent(input: {
   onRound?: () => void;
   /** Absolute epoch ms: no lookup round starts after it. */
   lookupDeadline: number;
+  /**
+   * Absolute epoch ms a round under way may run to — the answer's own deadline. A round that
+   * is writing the answer is never cut at `lookupDeadline`: cut there, its half-written prose
+   * would be followed by the tools-off round's whole second answer.
+   */
+  answerDeadline: number;
   /** The request's own signal and the answer deadline, combined. */
   signal: AbortSignal;
   bounds?: { maxRounds: number; maxCalls: number; maxResultChars: number };
@@ -126,6 +133,7 @@ export async function runChatAgent(input: {
     maxRounds: Math.max(1, bounds.maxRounds - 1),
     maxCalls: bounds.maxCalls,
     deadline: input.lookupDeadline,
+    roundDeadline: input.answerDeadline,
     signal: input.signal,
     maxResultChars: bounds.maxResultChars,
     now: input.now,
@@ -264,6 +272,7 @@ export async function answerWithLookups(
     execute,
     onRound: () => joiner.newRound(),
     lookupDeadline: options.requestStartedAt + LOOKUPS_END_BY_MS,
+    answerDeadline: options.requestStartedAt + ANSWER_ENDS_BY_MS,
     signal,
     now,
   });

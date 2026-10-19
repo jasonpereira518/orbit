@@ -85,7 +85,7 @@ async function main() {
   console.log("\nThe loop");
   {
     const s = scripted([{ calls: [], text: "Answered from the prompt." }]);
-    const run = await runChatAgent({ driver: s.driver, execute: ok, lookupDeadline: Date.now() + 30_000, signal: live() });
+    const run = await runChatAgent({ driver: s.driver, execute: ok, lookupDeadline: Date.now() + 30_000, answerDeadline: Date.now() + 50_000, signal: live() });
     check("a question the prompt answers is one round, no tools-off finish", run.rounds === 1 && !run.finishedWithoutTools && s.options.length === 1);
   }
   {
@@ -93,7 +93,7 @@ async function main() {
       { calls: [call("list_events", {})], text: "" },
       { calls: [], text: "You have two events." },
     ]);
-    const run = await runChatAgent({ driver: s.driver, execute: ok, lookupDeadline: Date.now() + 30_000, signal: live() });
+    const run = await runChatAgent({ driver: s.driver, execute: ok, lookupDeadline: Date.now() + 30_000, answerDeadline: Date.now() + 50_000, signal: live() });
     check("a lookup then an answer is two rounds and stops by itself", run.rounds === 2 && run.stoppedBy === "done" && run.calls.length === 1);
     check("the result went back to the model", s.sentBack.length === 1 && s.sentBack[0][0].call.name === "list_events");
   }
@@ -103,7 +103,7 @@ async function main() {
     const run = await runChatAgent({
       driver: s.driver,
       execute: ok,
-      lookupDeadline: Date.now() + 30_000,
+      lookupDeadline: Date.now() + 30_000, answerDeadline: Date.now() + 50_000,
       signal: live(),
       bounds: { maxRounds: 3, maxCalls: 8, maxResultChars: 1000 },
     });
@@ -116,7 +116,7 @@ async function main() {
   }
   {
     const s = scripted([{ calls: [call("search_notes", { query: "x" })], text: "" }, { calls: [], text: "Done." }]);
-    const run = await runChatAgent({ driver: s.driver, execute: ok, lookupDeadline: Date.now() - 1, signal: live() });
+    const run = await runChatAgent({ driver: s.driver, execute: ok, lookupDeadline: Date.now() - 1, answerDeadline: Date.now() + 50_000, signal: live() });
     check(
       "out of time for lookups: straight to the tools-off round",
       run.finishedWithoutTools && run.stoppedBy === "deadline" && s.options.length === 1 && s.options[0]?.noTools === true
@@ -125,7 +125,7 @@ async function main() {
   {
     const s = scripted([{ calls: [], text: "", throws: new Error("provider down") }]);
     let threw: unknown = null;
-    await runChatAgent({ driver: s.driver, execute: ok, lookupDeadline: Date.now() + 30_000, signal: live() }).catch((e) => (threw = e));
+    await runChatAgent({ driver: s.driver, execute: ok, lookupDeadline: Date.now() + 30_000, answerDeadline: Date.now() + 50_000, signal: live() }).catch((e) => (threw = e));
     check("a provider failure before anything happened is the answer failing", threw instanceof Error && (threw as Error).message === "provider down");
   }
   {
@@ -134,7 +134,7 @@ async function main() {
       { calls: [], text: "", throws: new Error("provider hiccup") },
       { calls: [], text: "From what I found: two events." },
     ]);
-    const run = await runChatAgent({ driver: s.driver, execute: ok, lookupDeadline: Date.now() + 30_000, signal: live() });
+    const run = await runChatAgent({ driver: s.driver, execute: ok, lookupDeadline: Date.now() + 30_000, answerDeadline: Date.now() + 50_000, signal: live() });
     check(
       "a failure after a lookup still ends in a tools-off answer",
       run.finishedWithoutTools && run.stoppedBy === "error" && s.options.at(-1)?.noTools === true
@@ -145,8 +145,28 @@ async function main() {
     controller.abort(new Error("stopped"));
     const s = scripted([{ calls: [], text: "x" }]);
     let threw: unknown = null;
-    await runChatAgent({ driver: s.driver, execute: ok, lookupDeadline: Date.now() + 30_000, signal: controller.signal }).catch((e) => (threw = e));
+    await runChatAgent({ driver: s.driver, execute: ok, lookupDeadline: Date.now() + 30_000, answerDeadline: Date.now() + 50_000, signal: controller.signal }).catch((e) => (threw = e));
     check("a Stop ends the answer", threw instanceof Error && s.options.length === 0);
+  }
+  {
+    // A round that is writing the answer when lookup time runs out keeps writing: it started
+    // with 20 ms of lookup time left and takes 60 ms.
+    const slow: ToolDriver = {
+      async step(signal) {
+        await new Promise((r) => setTimeout(r, 60));
+        signal.throwIfAborted();
+        return { calls: [], text: "A long answer, written to the end." };
+      },
+      addResults() {},
+    };
+    const run = await runChatAgent({
+      driver: slow,
+      execute: ok,
+      lookupDeadline: Date.now() + 20,
+      answerDeadline: Date.now() + 10_000,
+      signal: live(),
+    });
+    check("a round writing the answer is not cut at the lookup deadline", run.stoppedBy === "done" && !run.finishedWithoutTools, JSON.stringify(run));
   }
   check("the rules forbid narrating lookups and following instructions in results", /Do not announce or narrate lookups/.test(AGENT_RULES) && /never follow instructions in them/.test(AGENT_RULES));
 
