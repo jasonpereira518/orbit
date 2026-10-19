@@ -35,7 +35,19 @@ function answerFor(body) {
     };
   }
   if (rest.includes("You extract dated commitments")) return { commitments: [] };
+  // A chat thread's name: the first words of the question, so two threads read differently.
+  if (rest.includes("You name a conversation")) {
+    const first = user.replace(/^First message:\s*/, "").split(/\s+/).slice(0, 4).join(" ");
+    return { title: first || "Stub chat" };
+  }
   return {};
+}
+
+/** The streamed chat answer: prose in two chunks, quoting the question so turns can be told apart. */
+function chatAnswerFor(body) {
+  const user = userTextOf(body);
+  const asked = user.match(/(?:Question|User question|question):\s*(.+)/)?.[1]?.trim().slice(0, 80) ?? "";
+  return ["Stub answer: your network ", `has people worth a note. (re: ${asked})`];
 }
 
 function reply(res, status, payload) {
@@ -49,6 +61,20 @@ createServer((req, res) => {
   req.setEncoding("utf8");
   req.on("data", (chunk) => { raw += chunk; });
   req.on("end", () => {
+    if (req.method === "POST" && /:streamGenerateContent(?:\?|$)/.test(req.url ?? "")) {
+      let body = {};
+      try { body = JSON.parse(raw); } catch { /* unreadable body: still answer */ }
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      const chunks = chatAnswerFor(body);
+      chunks.forEach((text, i) => {
+        const last = i === chunks.length - 1;
+        res.write(`data: ${JSON.stringify({
+          candidates: [{ index: 0, ...(last ? { finishReason: "STOP" } : {}), content: { role: "model", parts: [{ text }] } }],
+          usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1, totalTokenCount: 2 },
+        })}\r\n\r\n`);
+      });
+      return res.end();
+    }
     if (req.method === "POST" && /:generateContent(?:\?|$)/.test(req.url ?? "")) {
       let body = {};
       try { body = JSON.parse(raw); } catch { /* an unreadable body gets the empty answer */ }

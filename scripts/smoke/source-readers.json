@@ -1,0 +1,399 @@
+{
+  "smoke-a11y-patterns.ts": [
+    "src/app",
+    "src/components"
+  ],
+  "smoke-action-user-scope.ts": [
+    "src/actions",
+    "src/actions/",
+    "src/actions/apple.ts",
+    "src/lib/",
+    "src/lib/apple.ts"
+  ],
+  "smoke-admin-analytics.ts": [
+    "scripts/run-smoke.ts",
+    "src/app",
+    "src/components/analytics/pageview-beacon.tsx",
+    "src/components/analytics/vercel-telemetry.tsx",
+    "src/lib/analytics-redact.ts"
+  ],
+  "smoke-admin-export.ts": [
+    "src/app/api/admin/export/route.ts"
+  ],
+  "smoke-agent-sends.ts": [
+    "src/lib/agent-sends.ts",
+    "src/lib/mcp/server.ts",
+    "src/lib/tools/definitions.ts"
+  ],
+  "smoke-ai-access.ts": [
+    "scripts/eval-ai.ts",
+    "scripts/smoke-ai-access.ts",
+    "scripts/smoke-contact-brief.ts",
+    "scripts/smoke-jev-client.ts",
+    "src/lib/ai-access.ts",
+    "src/lib/ai-key-check.ts",
+    "src/lib/ai.ts",
+    "src/lib/deepgram-live.ts",
+    "src/lib/deepgram.ts",
+    "src/lib/security-headers.ts",
+    "src/lib/typesafe-api.ts"
+  ],
+  "smoke-ai-notice-copy.ts": [
+    "src/actions/events.ts",
+    "src/components/contacts/log-interaction-sheet.tsx",
+    "src/components/graph/network-graph.tsx",
+    "src/components/settings/ai-settings.tsx"
+  ],
+  "smoke-ai-operations.ts": [
+    "src/lib/ai-operations.ts"
+  ],
+  "smoke-ai-providers.ts": [
+    "src/components/settings/ai-settings.tsx"
+  ],
+  "smoke-behavior-golden.ts": [
+    "scripts/fixtures/behavior-golden.json"
+  ],
+  "smoke-chat-answer-landed.ts": [
+    "src/app/api/chat/route.ts",
+    "src/components/chat/chat-history-rail.tsx",
+    "src/components/chat/chat-panel.tsx",
+    "src/lib/chat-answer-landed.ts"
+  ],
+  "smoke-chat-limits.ts": [
+    "src/app/api/chat/route.ts",
+    "src/components/chat/chat-panel.tsx",
+    "src/components/layout/floating-ask-bar.tsx",
+    "src/lib/ai.ts"
+  ],
+  "smoke-chat-pipeline.ts": [
+    "src/actions/chat.ts",
+    "src/app/api/chat/route.ts",
+    "src/lib/chat-context.ts"
+  ],
+  "smoke-chat-send.ts": [
+    "src/actions/chat-send.ts",
+    "src/lib/chat-send.ts"
+  ],
+  "smoke-clerk-free-site.ts": [
+    "src/app/(clerk)/layout.tsx",
+    "src/app/(site)",
+    "src/components/landing/landing-auth-controls.tsx",
+    "src/components/landing/landing-page.tsx",
+    "src/lib/clerk-session-hint.ts"
+  ],
+  "smoke-connect-gates.ts": [
+    "src/lib/entitlements"
+  ],
+  "smoke-connector-outbox.ts": [
+    "src/lib/connectors/outbox.ts"
+  ],
+  "smoke-consume-bucket-args.ts": [
+    "src/actions/events.ts",
+    "src/lib/rate-limit.ts"
+  ],
+  "smoke-contact-profile.ts": [
+    "src/lib/contact-profile.ts"
+  ],
+  "smoke-dashboard-search.ts": [
+    "src/actions/search.ts"
+  ],
+  "smoke-dictation-deepgram.ts": [
+    "src/lib/use-dictation.ts"
+  ],
+  "smoke-draft-prompts.ts": [
+    "scripts/fixtures/draft-prompt-goldens.json"
+  ],
+  "smoke-drive-picker-token.ts": [
+    "src/actions/drive.ts",
+    "src/actions/imports.ts",
+    "src/lib/imports/google-picker.ts"
+  ],
+  "smoke-email-actions.ts": [
+    "src/actions/email-sends.ts",
+    "src/lib/email"
+  ],
+  "smoke-email-activity.ts": [
+    "src/lib/email-activity.ts",
+    "src/lib/gmail.ts"
+  ],
+  "smoke-email-attachments.ts": [
+    "src/app/api/email/attachments/upload/route.ts",
+    "src/lib/public-routes.ts"
+  ],
+  "smoke-email-no-resend.ts": [
+    "src/actions/outreach.ts",
+    "src/lib/email/providers/gmail.ts",
+    "src/lib/outreach-readiness-server.ts",
+    "src/lib/outreach-send.ts"
+  ],
+  "smoke-email-origins.ts": [
+    "src/actions/recruiter-messages.ts"
+  ],
+  "smoke-email-sends.ts": [
+    "src/lib/email/outbox.ts"
+  ],
+  "smoke-env-documented.ts": [
+    "docs/DEVELOPMENT.md",
+    "docs/RUNBOOK.md",
+    "docs/performance.md",
+    "src/actions/billing.ts",
+    "src/components/celebration/plan-celebration-watcher.tsx",
+    "src/lib/env.ts"
+  ],
+  "smoke-event-connectors.ts": [
+    "src/lib/connectors/google-calendar.ts",
+    "src/lib/events/connectors/eventbrite.ts",
+    "src/lib/events/connectors/luma.ts"
+  ],
+  "smoke-events-page.ts": [
+    "src/components/events/attendee-roster.tsx",
+    "src/components/events/cover-palette-probe.tsx",
+    "src/components/events/event-connections-card.tsx",
+    "src/components/events/events-header.tsx",
+    "src/components/events/roster-import-panel.tsx",
+    "src/lib/events/sync.ts",
+    "src/lib/events/theme.ts",
+    "src/lib/surfaces.ts"
+  ],
+  "smoke-export-limit.ts": [
+    "src/components/settings/data-settings.tsx"
+  ],
+  "smoke-fast-model.ts": [
+    "src/lib/ai.ts"
+  ],
+  "smoke-font-preload.ts": [
+    "src/app/layout.tsx",
+    "src/app/theme.css"
+  ],
+  "smoke-free-ai-copy.ts": [
+    "src/app/(clerk)/(marketing)/pricing/page.tsx",
+    "src/app/(site)/(docs)/contact/page.tsx",
+    "src/app/(site)/(docs)/privacy/page.tsx",
+    "src/app/(site)/(docs)/terms/page.tsx",
+    "src/components/notifications/extension-promo.tsx",
+    "src/components/onboarding/highlights/chapters.ts",
+    "src/components/pricing/plan-comparison.tsx",
+    "src/components/pricing/pricing-faq.tsx",
+    "src/lib/entitlements.ts",
+    "src/lib/plan-copy.ts",
+    "src/lib/tour/tour-stops.ts"
+  ],
+  "smoke-friendly-error.ts": [
+    "src/lib/ai.ts"
+  ],
+  "smoke-housekeeping-sweeps.ts": [
+    "src/app/api/imports/process-stalled/route.ts"
+  ],
+  "smoke-icon-button-names.ts": [
+    "src/components"
+  ],
+  "smoke-import-row-staging.ts": [
+    "src/actions/imports.ts",
+    "src/lib/drive-import-processor.ts",
+    "src/lib/import-job-rows.ts"
+  ],
+  "smoke-import-size-guard.ts": [
+    "src/app/api/imports/[id]/continue/route.ts",
+    "src/lib/import-job-runner.ts",
+    "src/lib/import-stall.ts"
+  ],
+  "smoke-import-sources.ts": [
+    "src/components/imports/import-history.tsx",
+    "src/lib/drive-import-type.ts",
+    "src/lib/gmail-scan-type.ts",
+    "src/lib/import-adapters",
+    "src/lib/linkedin-export-type.ts",
+    "src/lib/outlook-scan-type.ts"
+  ],
+  "smoke-import-stall.ts": [
+    "src/app/api/imports/process-stalled/route.ts",
+    "src/lib/import-stall.ts"
+  ],
+  "smoke-instrumentation.ts": [
+    "scripts/smoke-purge-selective.ts"
+  ],
+  "smoke-interaction-edit.ts": [
+    "src/components/contacts/interaction-detail-sheet.tsx"
+  ],
+  "smoke-landing-anchors.ts": [
+    "src/app/theme.css",
+    "src/components/landing/landing-page.tsx"
+  ],
+  "smoke-landing-cards.ts": [
+    "src/components/landing"
+  ],
+  "smoke-legal-pages.ts": [
+    "src/app/(site)/(docs)/privacy/page.tsx",
+    "src/app/(site)/(docs)/terms/page.tsx"
+  ],
+  "smoke-log-hygiene.ts": [
+    "src/lib/extension/parse-profile.ts",
+    "src/lib/interest-list-join.ts"
+  ],
+  "smoke-marketing-footer.ts": [
+    "src/app/(clerk)/(marketing)/pricing/page.tsx",
+    "src/app/(site)/interest/page.tsx",
+    "src/components/landing/landing-auth-controls.tsx",
+    "src/components/landing/landing-scenes.tsx"
+  ],
+  "smoke-meeting-gate.ts": [
+    "src/actions/meetings.ts"
+  ],
+  "smoke-migration-guards.ts": [
+    "scripts/migrate.ts",
+    "src/db/index.ts"
+  ],
+  "smoke-no-double-render.ts": [
+    "src/actions/capture.ts",
+    "src/app/(clerk)/(app)/(main)/contacts/page.tsx",
+    "src/components/contacts/contact-form.tsx",
+    "src/components/contacts/contacts-filters.tsx",
+    "src/components/contacts/log-interaction-sheet.tsx",
+    "src/lib/contact-writes.ts"
+  ],
+  "smoke-onboarding-copy.ts": [
+    "src/app/(clerk)/(app)/onboarding/page.tsx",
+    "src/components/capture/capture-flow.tsx",
+    "src/components/onboarding/highlights/chapters.ts",
+    "src/components/onboarding/steps/capture-step.tsx",
+    "src/components/onboarding/steps/highlights-step.tsx",
+    "src/components/onboarding/steps/people-step.tsx"
+  ],
+  "smoke-onboarding-steps.ts": [
+    "src/components/onboarding/onboarding-flow.tsx"
+  ],
+  "smoke-pcm-worklet.ts": [
+    "public/orbit-pcm-worklet.js"
+  ],
+  "smoke-provider-exhaustive.ts": [
+    "scripts/smoke-admin-health.ts",
+    "scripts/smoke-admin-roster.ts",
+    "scripts/smoke-connect-gates.ts",
+    "scripts/smoke-settings-layout.ts",
+    "src/actions",
+    "src/app",
+    "src/components",
+    "src/lib",
+    "src/lib/admin-health.ts",
+    "src/lib/admin-roster.ts",
+    "src/lib/ai.ts"
+  ],
+  "smoke-public-routes.ts": [
+    "src/app/(clerk)/(marketing)",
+    "src/app/(clerk)/(marketing)/",
+    "src/app/(site)",
+    "src/app/(site)/"
+  ],
+  "smoke-report-error.ts": [
+    "src/app/global-error.tsx",
+    "src/components/error-fallback.tsx",
+    "src/instrumentation-client.ts"
+  ],
+  "smoke-schedules.ts": [
+    "docs/RUNBOOK.md",
+    "src/app/api/imports/process-stalled/route.ts"
+  ],
+  "smoke-schema-ddl.ts": [
+    "src/db/index.ts"
+  ],
+  "smoke-security-headers.ts": [
+    "src/lib/security-headers.ts"
+  ],
+  "smoke-server-graph.ts": [
+    "src/app/(clerk)/(app)",
+    "src/app/(clerk)/(app)/layout.tsx",
+    "src/lib/admin-operations.ts",
+    "src/lib/ai.ts",
+    "src/lib/caldav/",
+    "src/lib/import-engine.ts",
+    "src/lib/linkedin-timeline-backfill.ts",
+    "src/lib/relationship-engine/"
+  ],
+  "smoke-settings-layout.ts": [
+    "src/app/(clerk)/(app)/settings/page.tsx",
+    "src/components/settings/integrations-dialog.tsx",
+    "src/lib/import-job-runner.ts"
+  ],
+  "smoke-site-css-sources.ts": [
+    "src/app/(clerk)/layout.tsx",
+    "src/app/(site)/layout.tsx",
+    "src/app/global-error.tsx",
+    "src/app/layout.tsx",
+    "src/app/not-found.tsx",
+    "src/app/scan/[token]/page.tsx"
+  ],
+  "smoke-speech-quota.ts": [
+    "src/lib/ai.ts"
+  ],
+  "smoke-speech-usage-tag.ts": [
+    "src/app/api/ops/speech-usage/route.ts",
+    "src/app/api/speech/token/route.ts",
+    "src/lib/ai.ts",
+    "src/lib/speech-usage-tag.ts"
+  ],
+  "smoke-surface-visibility.ts": [
+    "src/actions/email-compose.ts",
+    "src/actions/events.ts",
+    "src/actions/radar.ts",
+    "src/app/(clerk)/(app)/(main)",
+    "src/lib/plan-guards.ts"
+  ],
+  "smoke-sync-scheduler.ts": [
+    "src/app/api/sync/run/route.ts"
+  ],
+  "smoke-tap-targets.ts": [
+    "src/app/theme.css",
+    "src/components/capture/capture-source-card.tsx",
+    "src/components/capture/capture-summary.tsx",
+    "src/components/capture/ignored-people-section.tsx",
+    "src/components/contacts/contacts-list.tsx",
+    "src/components/reminders/reminder-bulk-bar.tsx",
+    "src/components/reminders/reminder-card.tsx",
+    "src/components/reminders/reminder-detail-pane.tsx",
+    "src/components/reminders/reminder-done-snooze.tsx",
+    "src/components/reminders/reminder-filters.tsx",
+    "src/components/reminders/reminder-form-dialog.tsx",
+    "src/components/reminders/reminder-rail.tsx",
+    "src/components/reminders/reminder-row.tsx",
+    "src/components/reminders/suggested-reminders-panel.tsx"
+  ],
+  "smoke-tier-contrast.ts": [
+    "src/app/theme.css"
+  ],
+  "smoke-toast-copy.ts": [
+    "src/lib/import-errors.ts",
+    "src/lib/imports/import-copy.ts",
+    "src/lib/toast-copy.ts"
+  ],
+  "smoke-tour-stops.ts": [
+    "src/app/(clerk)/(app)/(main)"
+  ],
+  "smoke-vercel-ignore-build.ts": [
+    "scripts/vercel-ignore-build.sh"
+  ],
+  "smoke-waitlist-copy.ts": [
+    "src/app/(site)/interest/loading.tsx",
+    "src/app/(site)/interest/page.tsx",
+    "src/app/(site)/interest/privacy/page.tsx",
+    "src/app/api/interest-list/ticket-image/route.tsx",
+    "src/app/api/interest-list/unsubscribe/route.ts",
+    "src/components/interest/app-demo",
+    "src/components/interest/boarding-pass.tsx",
+    "src/components/interest/interest-hero.tsx",
+    "src/components/interest/proof-line.tsx",
+    "src/components/interest/referral-tracker.tsx",
+    "src/components/interest/share-row.tsx",
+    "src/components/interest/waitlist-skeleton.tsx",
+    "src/lib/interest-list.ts"
+  ],
+  "smoke-waitlist-demo-fidelity.ts": [
+    "src/components/interest/app-demo/"
+  ],
+  "smoke-writing-instructions.ts": [
+    "scripts/fixtures/draft-prompt-goldens.json",
+    "src/lib/chat-title.ts",
+    "src/lib/mcp",
+    "src/lib/tools",
+    "src/lib/writing-instructions.ts"
+  ]
+}

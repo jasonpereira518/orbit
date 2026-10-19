@@ -1,0 +1,38 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "src/app/**/{page,layout,route,template,default,error,global-error,not-found,loading,opengraph-image,twitter-image,icon,apple-icon,sitemap,robots,manifest}.{ts,tsx}",
+    "src/proxy.ts",
+    "src/instrumentation*.ts",
+    "next.config.ts",
+    "sentry.*.config.ts",
+    "scripts/**/*.{ts,mjs}",
+    "e2e/**/*.{ts,mjs}",
+    "playwright.config.ts",
+    "eslint.config.mjs",
+    "postcss.config.mjs",
+    "src/**/*.test.ts"
+  ],
+  "project": [
+    "src/**/*.{ts,tsx}",
+    "scripts/**/*.{ts,mjs}",
+    "e2e/**/*.{ts,mjs}",
+    "*.ts"
+  ],
+  "ignore": [
+    "drizzle.config.ts",
+    "src/app/bench/**"
+  ],
+  "drizzle": false,
+  "next": false,
+  "playwright": false,
+  "eslint": false,
+  "postcss": false,
+  "ignoreDependencies": [
+    "tw-animate-css",
+    "shadcn",
+    "tailwindcss",
+    "@tailwindcss/postcss",
+    "@clerk/shared"
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "liveUserIdTables": 86,
+  "missing": [
+    "contact_opportunities",
+    "job_posting_matches"
+  ],
+  "missingFromCountsAndExports": [
+    "billing_events",
+    "cloud_note_sources",
+    "contact_opportunities",
+    "credit_accounts",
+    "credit_grants",
+    "credit_holds",
+    "embedding_failures",
+    "job_posting_matches",
+    "plan_meter_usage"
+  ],
+  "note": "user_id tables missing from the user-data.ts registry; P9.2 drives `missing` to empty. `missing` = no count, export or mention in user-data.ts; the two left rely on FK cascade from contacts (documented in user-data.ts, verified by scripts/smoke-purge.ts).",
+  "registeredWithoutUserId": [
+    "contact_tags",
+    "outreach_messages",
+    "outreach_prospects"
+  ],
+  "registryTables": 80
+}

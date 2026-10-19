@@ -1,0 +1,480 @@
+[
+  {
+    "conditions": [],
+    "name": "healthy"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "No run has ever been recorded; stalled imports and housekeeping are not being picked up.",
+        "href": "/admin/health",
+        "id": "cron.missed",
+        "severity": "warning",
+        "title": "Nightly job has not run"
+      }
+    ],
+    "name": "cron: process-stalled never ran"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "Last run 2026-09-15T11:00:00.000Z ended failed.",
+        "href": "/admin/health",
+        "id": "cron.failed",
+        "severity": "warning",
+        "title": "Nightly job failed"
+      }
+    ],
+    "name": "cron: process-stalled last run failed"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "The last 3 runs ended partial — one housekeeping step is failing every time. The run stats on /admin/health show which counter stopped moving.",
+        "href": "/admin/health",
+        "id": "cron.partial_streak",
+        "severity": "warning",
+        "title": "Nightly job keeps finishing partial"
+      }
+    ],
+    "name": "cron: process-stalled partial streak"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "Last run 2026-09-15T11:55:00.000Z ended failed; customer webhooks are not being retried.",
+        "href": "/admin/health",
+        "id": "drain.failed",
+        "severity": "warning",
+        "title": "Outbound webhook drain failed"
+      }
+    ],
+    "name": "cron: drain failed"
+  },
+  {
+    "conditions": [],
+    "name": "cron: drain silent for 3h"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "Last started 2026-09-15T03:00:00.000Z; mailboxes and calendars are not being synced.",
+        "href": "/admin/health",
+        "id": "sync.schedule_missed",
+        "severity": "warning",
+        "title": "Connector sync has stopped running"
+      }
+    ],
+    "name": "cron: sync missed and failed"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "Last started 2026-09-15T04:00:00.000Z; nobody is being told when a role opens at a company they know somebody at.",
+        "href": "/admin/health",
+        "id": "jobfeed.schedule_missed",
+        "severity": "warning",
+        "title": "Job feed sweep has stopped running"
+      }
+    ],
+    "name": "cron: job feed missed"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "Last run 2026-09-15T02:00:00.000Z ended failed.",
+        "href": "/admin/health",
+        "id": "radar.run_failed",
+        "severity": "warning",
+        "title": "Radar's nightly pass failed"
+      }
+    ],
+    "name": "cron: radar nightly failed"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "Last started 2026-09-15T00:00:00.000Z; headlines about people's companies are not arriving.",
+        "href": "/admin/health",
+        "id": "radarfeeds.schedule_missed",
+        "severity": "warning",
+        "title": "Radar's news sweep has stopped running"
+      },
+      {
+        "detail": "Last started 2026-09-13T20:00:00.000Z; contacts' job moves are not being noticed.",
+        "href": "/admin/health",
+        "id": "workhistory.schedule_missed",
+        "severity": "warning",
+        "title": "Work-history sweep has stopped running"
+      }
+    ],
+    "name": "cron: radar feeds / digest / work history missed"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "3 checkout attempt(s) errored in the last hour — nobody can pay.",
+        "href": "/admin/health",
+        "id": "stripe.checkout_error",
+        "severity": "critical",
+        "title": "Stripe checkout is failing"
+      }
+    ],
+    "name": "stripe: checkout errors"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "1 checkout fulfilment(s) and 0 other Stripe event(s) in the last day matched no Orbit account. error_events (source stripe.unattributed) holds each event id.",
+        "href": "/admin/health",
+        "id": "stripe.unattributed",
+        "severity": "critical",
+        "title": "Someone paid and has no plan"
+      }
+    ],
+    "name": "stripe: unattributed fulfilment"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "0 checkout fulfilment(s) and 4 other Stripe event(s) in the last day matched no Orbit account. error_events (source stripe.unattributed) holds each event id.",
+        "href": "/admin/health",
+        "id": "stripe.unattributed",
+        "severity": "warning",
+        "title": "Stripe events match no account"
+      }
+    ],
+    "name": "stripe: unattributed other"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "6 AI security event(s) across 2 account(s) in the last hour — refused tool calls, oversized MCP batches, draft floods or scrubbed answers. error_events (source ai.security) holds the kind and account of each.",
+        "href": "/admin/health",
+        "id": "ai.security",
+        "severity": "warning",
+        "title": "AI guardrails are tripping"
+      }
+    ],
+    "name": "ai security burst"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "2 email(s) refused in the last hour — usually RESEND_FROM_EMAIL is on a domain Resend has not verified, which refuses every send.",
+        "href": "/admin/health",
+        "id": "resend.rejected",
+        "severity": "warning",
+        "title": "Resend is refusing Orbit's email"
+      }
+    ],
+    "name": "resend rejected"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "The last 3 clerk deliveries failed verification or handling — usually a rolled signing secret.",
+        "href": "/admin/health",
+        "id": "webhook.invalid_streak:clerk",
+        "severity": "critical",
+        "title": "clerk webhooks are being rejected"
+      }
+    ],
+    "name": "webhooks: clerk errors"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "6 imports failed in the last 24 hours.",
+        "href": "/admin/health",
+        "id": "import.failed_burst",
+        "severity": "warning",
+        "title": "Imports are failing"
+      },
+      {
+        "detail": "2 import(s) have been 'processing' with no progress for over 10 minutes.",
+        "href": "/admin/health",
+        "id": "import.wedged",
+        "severity": "warning",
+        "title": "An import is wedged"
+      }
+    ],
+    "name": "imports: wedged and failed burst"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "2 connection(s) were disarmed after repeated sync failures and will not retry until the user reconnects.",
+        "href": "/admin/health",
+        "id": "sync.failing",
+        "severity": "warning",
+        "title": "Connector sync has given up on an account"
+      },
+      {
+        "detail": "The most overdue connection has waited 3.0 h — more accounts are due than a run can sync.",
+        "href": "/admin/health",
+        "id": "sync.lagging",
+        "severity": "warning",
+        "title": "Connector sync is falling behind"
+      },
+      {
+        "detail": "1 connection(s) have held a sync lease for over 15 minutes.",
+        "href": "/admin/health",
+        "id": "sync.wedged",
+        "severity": "warning",
+        "title": "A connector sync is wedged"
+      }
+    ],
+    "name": "sync: wedged, failing, lagging"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "6 Google calendar connections are disarmed with an error — check for a Google-side change before blaming users.",
+        "href": "/admin/health",
+        "id": "calendar.disarmed",
+        "severity": "info",
+        "title": "Many calendar syncs are disarmed"
+      }
+    ],
+    "name": "calendar disarmed"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "4 message(s) overdue; the oldest by 9.0 day(s).",
+        "href": "/admin/health",
+        "id": "outreach.overdue",
+        "severity": "warning",
+        "title": "Scheduled outreach is not sending"
+      }
+    ],
+    "name": "outreach overdue"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "embeddings and avatars backfill failed for 2 accounts in the last day — the provider or Orbit, not one user's key.",
+        "href": "/admin/health",
+        "id": "backfill.failed",
+        "severity": "warning",
+        "title": "Background backfills are failing"
+      }
+    ],
+    "name": "backfill failures"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "2 account(s) hit a quota or empty-balance error in the last day. Each already sees a \"top up\" alert; this is the count.",
+        "href": "/admin/health",
+        "id": "ai.quota_failures",
+        "severity": "info",
+        "title": "Accounts are out of AI provider credit"
+      },
+      {
+        "detail": "3 account(s) have contacts waiting over 6 h for search embeddings (oldest 9.0 h), so search and chat fall back to keywords for them.",
+        "href": "/admin/health",
+        "id": "embedding.backlog",
+        "severity": "warning",
+        "title": "Semantic search is falling behind"
+      },
+      {
+        "detail": "12 contacts or meetings were marked unembeddable in the last day — a spike means the provider started refusing a content shape, not one odd row.",
+        "href": "/admin/health",
+        "id": "embedding.unembeddable",
+        "severity": "warning",
+        "title": "The embedding provider is refusing content"
+      }
+    ],
+    "name": "embedding backlog and unembeddable"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "3 account budget(s) for hosted Apollo search or enrichment ran out today — demand against the Apollo plan.",
+        "href": "/admin/health",
+        "id": "apollo.hosted_cap_hits",
+        "severity": "info",
+        "title": "Accounts are hitting the hosted Apollo cap"
+      },
+      {
+        "detail": "unavatar used its whole daily allowance; photo lookups defer until the window resets.",
+        "href": "/admin/health",
+        "id": "avatar.source_exhausted",
+        "severity": "info",
+        "title": "A shared photo source is out for today"
+      }
+    ],
+    "name": "shared budgets exhausted"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "'auth' errors from 3 accounts in the last day — the provider, not one user's key.",
+        "href": "/admin/health",
+        "id": "ai.provider_outage:gemini",
+        "severity": "warning",
+        "title": "gemini is failing across accounts"
+      }
+    ],
+    "name": "ai outages"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "80 error events in the last hour (the table is throttled, so this is a real burst).",
+        "href": "/admin/health",
+        "id": "errors.burst",
+        "severity": "warning",
+        "title": "Error events are spiking"
+      },
+      {
+        "detail": "40 calls over 10 s in the last hour — check perf.slow rows for which one.",
+        "href": "/admin/health",
+        "id": "perf.slow_burst",
+        "severity": "warning",
+        "title": "Slow calls are piling up"
+      }
+    ],
+    "name": "error and perf bursts"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "SLACK_OPS_WEBHOOK_URL is unset in production, so every alert stays on /admin/health until someone looks.",
+        "href": "/admin/health",
+        "id": "config.alerts_undeliverable",
+        "severity": "warning",
+        "title": "Alerts are not reaching Slack"
+      },
+      {
+        "detail": "Unset: CLERK_SECRET_KEY.",
+        "href": null,
+        "id": "config.missing",
+        "severity": "warning",
+        "title": "Production is missing required configuration"
+      },
+      {
+        "detail": "The app role's statement_timeout is 0, so one runaway query can hold the shared compute for every user. Run the ALTER ROLE in docs/RUNBOOK.md → Neon one-time settings.",
+        "href": "/admin/health",
+        "id": "config.statement_timeout_unbounded",
+        "severity": "warning",
+        "title": "Database queries have no time limit"
+      }
+    ],
+    "name": "config: missing env, no slack, unbounded timeout"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "Production runs 1111111 but main has been at 2222222 since 2026-09-14T06:00:00.000Z — a failed build is probably pinning the last good deploy.",
+        "href": null,
+        "id": "deploy.drift",
+        "severity": "warning",
+        "title": "Production is behind main"
+      }
+    ],
+    "name": "deploy drift"
+  },
+  {
+    "conditions": [],
+    "name": "deploy behind but fresh"
+  },
+  {
+    "conditions": [],
+    "name": "deploy unknown"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "1 deletion run(s) stopped after 5 attempts — rows the user asked to delete are still in the database. See data_purge_runs.last_error.",
+        "href": "/admin/health",
+        "id": "purge.stuck",
+        "severity": "critical",
+        "title": "An account deletion is stuck"
+      },
+      {
+        "detail": "5 Gmail/Outlook connection(s) need the user to re-authorize.",
+        "href": "/admin/health",
+        "id": "reauth.needed",
+        "severity": "info",
+        "title": "Accounts need to reconnect a mailbox"
+      }
+    ],
+    "name": "reauth and stuck purges"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "The provider rejected or throttled Orbit's own gemini key in the last hour — every Pro and Max account on included AI has lost it. Check the key and its quota.",
+        "href": "/admin/health",
+        "id": "ai.managed_failing:gemini",
+        "severity": "critical",
+        "title": "Orbit's managed gemini key is being refused"
+      },
+      {
+        "detail": "The provider rejected or throttled Orbit's own openai key in the last hour — every Pro and Max account on included AI has lost it. Check the key and its quota.",
+        "href": "/admin/health",
+        "id": "ai.managed_failing:openai",
+        "severity": "critical",
+        "title": "Orbit's managed openai key is being refused"
+      },
+      {
+        "detail": "3 Pro and Max account(s) pay for included AI, but no ORBIT_MANAGED_*_API_KEY is set.",
+        "href": null,
+        "id": "ai.managed_unconfigured",
+        "severity": "warning",
+        "title": "No managed AI key is configured"
+      }
+    ],
+    "name": "managed ai: failing provider + unconfigured"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "ORBIT_MANAGED_AI=off, so 3 Pro and Max account(s) can only use AI with a key of their own.",
+        "href": null,
+        "id": "ai.managed_unconfigured",
+        "severity": "warning",
+        "title": "Managed AI is switched off"
+      }
+    ],
+    "name": "managed ai: switched off"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "Managed AI cost $10.00 in the last 30 days — 67% of the $15.00 of subscription and pack revenue booked in the same window (alarm above 50%). Revisit the allowances or the prices.",
+        "href": "/admin/billing/costs",
+        "id": "ai.managed_runway",
+        "severity": "warning",
+        "title": "Managed AI is outpacing revenue"
+      },
+      {
+        "detail": "$60.00 on Orbit's AI keys in the last 24 hours (threshold $10.00).",
+        "href": "/admin/billing/costs",
+        "id": "ai.managed_spend_spike",
+        "severity": "warning",
+        "title": "Managed AI spend is spiking"
+      }
+    ],
+    "name": "managed ai: spend spike and runway"
+  },
+  {
+    "conditions": [
+      {
+        "detail": "2 Pro or Max account(s) have used their whole allowance and hold no pack credits, so their included AI is paused until renewal. A rising count says the allowances are too tight for real use.",
+        "href": "/admin/billing/costs",
+        "id": "ai.managed_cap_hit",
+        "severity": "info",
+        "title": "Accounts are running out of AI credits"
+      }
+    ],
+    "name": "managed ai: accounts at cap"
+  },
+  {
+    "conditions": [],
+    "name": "managed ai: pool spend"
+  }
+]

@@ -9,7 +9,7 @@
     "css:site": "tsx scripts/gen-site-css-sources.ts",
     "check:env": "tsx scripts/check-env.ts",
     "start": "next start",
-    "lint": "eslint",
+    "lint": "eslint --max-warnings 49",
     "test": "tsx scripts/run-smoke.ts --ci",
     "test:e2e": "playwright test",
     "test:smoke": "tsx scripts/run-smoke.ts",
@@ -28,7 +28,12 @@
     "ext:dev": "npm --prefix extension run dev",
     "ext:build": "npm --prefix extension run build",
     "ext:zip": "npm --prefix extension run zip",
-    "eval:retrieval": "tsx scripts/eval-retrieval.ts"
+    "eval:retrieval": "tsx scripts/eval-retrieval.ts",
+    "test:unit": "node --import tsx --test \"src/**/*.test.ts\" \"scripts/**/*.test.ts\"",
+    "check:cycles": "node scripts/check-cycles.mjs",
+    "check:sources": "node scripts/list-source-readers.mjs",
+    "knip": "npx --yes knip@5.88.1 --no-exit-code",
+    "docs:mcp": "tsx scripts/gen-mcp-docs.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.3",
@@ -78,7 +83,7 @@
     "@axe-core/playwright": "4.13.0",
     "@playwright/test": "1.63.0",
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "^24",
     "@types/papaparse": "^5.5.2",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
@@ -95,6 +100,8 @@
     "typescript": "^5"
   },
   "engines": {
-    "node": "24.x"
-  }
+    "node": "24.x",
+    "npm": ">=11"
+  },
+  "packageManager": "npm@11.19.1"
 }

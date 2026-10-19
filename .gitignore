@@ -67,6 +67,9 @@ extension/public/inject/
 # constellation bench fixtures (scripts/bench/constellation-fixtures.ts)
 /.bench-data/
 
+# node:test golden mismatches (src/test-support/golden.ts writes <golden>.actual)
+*.actual
+
 # latency harness (latency/README.md): per-tier PGlite databases, API keys, and raw runs
 /latency/.data/
 /latency/results/*
