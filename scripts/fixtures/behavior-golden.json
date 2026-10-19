@@ -4997,6 +4997,8 @@
     "profileImageCheckedAt": null,
     "profileImageSource": null,
     "workHistoryDueAt": null,
+    "workHistoryMisses": 0,
+    "workHistoryMissSlug": null,
     "relationshipScore": 4,
     "statedCloseness": 4,
     "priorityLevel": 2,
@@ -6876,6 +6878,8 @@
       "profileImageCheckedAt": null,
       "profileImageSource": null,
       "workHistoryDueAt": null,
+      "workHistoryMisses": 0,
+      "workHistoryMissSlug": null,
       "relationshipScore": 4,
       "statedCloseness": 4,
       "priorityLevel": 2,
@@ -10760,9 +10764,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -10833,9 +10839,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -10904,9 +10912,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -10978,9 +10988,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -11049,9 +11061,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -11120,9 +11134,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -11193,9 +11209,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -11267,9 +11285,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -11341,9 +11361,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -11412,9 +11434,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -11483,9 +11507,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -11557,9 +11583,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -11630,9 +11658,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -11705,9 +11735,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -11776,9 +11808,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -11850,9 +11884,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -11927,9 +11963,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -12001,9 +12039,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -12075,9 +12115,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -12146,9 +12188,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -12223,9 +12267,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -12294,9 +12340,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -12372,9 +12420,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -12447,9 +12497,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -12522,9 +12574,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -12599,9 +12653,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -12673,9 +12729,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     }
   ],

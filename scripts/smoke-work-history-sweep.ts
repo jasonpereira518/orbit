@@ -254,6 +254,17 @@ async function sweep() {
   check("…and the cold one stays simply due, for the day it gains a tier", (await byId(cold)).workHistoryDueAt === null);
 
   await reset();
+  await addContact(LIGHT, "Given Up", 40, { closenessTier: "mid", workHistoryMisses: 2, workHistoryMissSlug: "given-up" });
+  await addContact(LIGHT, "Moved On", 40, { closenessTier: "mid", workHistoryMisses: 2, workHistoryMissSlug: "an-older-url" });
+  const gaveUp = recorder();
+  await runWorkHistorySweep({ researcher: gaveUp.researcher, canUseAi: aiFor });
+  check(
+    "two misses on the same URL stop the sweep; misses on an older URL do not",
+    gaveUp.asked.map((a) => a.name).join() === "Moved On",
+    JSON.stringify(gaveUp.asked)
+  );
+
+  await reset();
   await addContact(LIGHT, "Half Month", 40, { closenessTier: "mid" });
   const monthly = RATE_LIMITS.webSearchMonthly;
   await consumeBucket(WEB_SEARCH_SCOPE, webSearchMonthKey(LIGHT, new Date()), monthly, monthly.limit * WEB_SEARCH_BACKGROUND_SHARE);

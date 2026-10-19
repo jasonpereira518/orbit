@@ -18,6 +18,8 @@ import { ipBucketKey } from "../src/lib/client-ip";
 import { RATE_LIMITS, RateLimitedError, bucketCount, consumeBucket, pruneRateLimitBuckets } from "../src/lib/rate-limit";
 import { forgetManagedAiPause } from "../src/lib/ai-access";
 import { usageRow } from "../src/lib/usage-events";
+import { usageEvents } from "../src/db/schema";
+import { getWebSearchSwitchState } from "../src/lib/managed-ai-switch";
 import { estimateCostMicros } from "../src/lib/ai-pricing";
 import { utcDayKey } from "../src/lib/timeline-cost";
 import {
@@ -156,6 +158,20 @@ async function main() {
   const base = { userId: user, operation: "contact.work_history", provider: "anthropic" as const, model: "claude-haiku-5-5", kind: "completion" as const, keyOwner: "user" as const, success: true, inputTokens: 1000, outputTokens: 100 };
   const tokensOnly = estimateCostMicros({ model: base.model, inputTokens: 1000, outputTokens: 100 })!;
   check("two Anthropic searches add $0.02 to the row's cost", usageRow({ ...base, webSearches: 2 }).estimatedCostMicros === tokensOnly + 20_000);
+  check("…and the row keeps the count itself", usageRow({ ...base, webSearches: 2 }).webSearches === 2 && usageRow(base).webSearches === null);
+  const opKey = `smoke.op.${Date.now()}`;
+  await db.insert(usageEvents).values([
+    { ...usageRow({ ...base, operation: opKey, webSearches: 2 }) },
+    { ...usageRow({ ...base, operation: opKey, webSearches: 1 }) },
+    { ...usageRow({ ...base, operation: opKey, webSearches: 3, success: false }) },
+    { ...usageRow({ ...base, operation: opKey }) },
+  ]);
+  const breakdown = (await getWebSearchSwitchState()).byOperation.find((r) => r.operation === opKey);
+  check(
+    "the admin breakdown counts searches per feature, and searches per completed call",
+    breakdown?.searches30 === 6 && breakdown.searches7 === 6 && breakdown.calls30 === 3 && breakdown.perSuccess === 3,
+    JSON.stringify(breakdown)
+  );
   check(
     "an unpriced model stays unpriced even with searches",
     usageRow({ ...base, model: "claude-unknown-9", webSearches: 2 }).estimatedCostMicros === null

@@ -685,6 +685,17 @@ export const contacts = pgTable(
      * closeness-tiered, jittered interval — see `nextWorkHistoryDue`.
      */
     workHistoryDueAt: timestamp("work_history_due_at", { withTimezone: true }),
+    /**
+     * Automatic work-history checks in a row that found nobody (`not_found` / `unsure`).
+     * At `WORK_HISTORY_MAX_MISSES` the sweep and LinkedIn-pull kicks stop asking; the
+     * profile's own button still searches. Reset by a found history.
+     */
+    workHistoryMisses: integer("work_history_misses").default(0).notNull(),
+    /**
+     * The `linkedin_slug` those misses were against. A new LinkedIn URL is a new slug, so the
+     * streak stops applying by itself — no contact writer has to remember to reset it.
+     */
+    workHistoryMissSlug: text("work_history_miss_slug"),
     relationshipScore: integer("relationship_score").default(2).notNull(),
     /**
      * Closeness the user actually asserted, 1–5. NULL means never rated —
@@ -3642,6 +3653,8 @@ export const usageEvents = pgTable(
      * blank cell beats a confidently wrong dollar figure.
      */
     estimatedCostMicros: integer("estimated_cost_micros"),
+    /** Hosted web searches the call ran (`webSearchJson`); null for every other call. */
+    webSearches: integer("web_searches"),
     /**
      * Whether `estimated_cost_micros` is Orbit's own estimate from `ai-pricing.ts` or a
      * figure the provider reported. OpenRouter returns `usage.cost` on every response;

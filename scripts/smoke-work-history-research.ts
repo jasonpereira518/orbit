@@ -201,10 +201,30 @@ async function main() {
   // --- which contacts a pull hands to the route ---------------------------------------
   const due = await contactsNeedingWorkHistory(USER, [priya, namesake, captured, noUrl, brokenContact]);
   check(
-    "only contacts with a URL and no settled history are due",
-    due.sort().join() === [namesake, brokenContact].sort().join(),
+    "only contacts with a URL, no settled history and no recent miss are due",
+    due.sort().join() === [brokenContact].sort().join(),
     JSON.stringify(due)
   );
+
+  // --- the miss streak --------------------------------------------------------------------
+  const nobody: WorkHistoryResearcher = async () => ({ confident: false, headline: null, sources: [], experiences: [] });
+  const ghost = await makeContact("Ghost Person", "https://www.linkedin.com/in/ghost-person");
+  const streak = async () =>
+    (await (await getDb()).query.contacts.findFirst({ where: eq(contacts.id, ghost) }))!;
+  await researchContactWorkHistory(USER, ghost, { force: true, researcher: nobody });
+  await researchContactWorkHistory(USER, ghost, { force: true, researcher: nobody });
+  const twice = await streak();
+  check("two misses are counted against the slug", twice.workHistoryMisses === 2 && twice.workHistoryMissSlug === "ghost-person", JSON.stringify({ m: twice.workHistoryMisses, s: twice.workHistoryMissSlug }));
+  await (await getDb()).update(contacts).set({ workHistoryDueAt: new Date(Date.now() - 86_400_000) }).where(eq(contacts.id, ghost));
+  check("…and stop a pull from searching them, even once due", (await contactsNeedingWorkHistory(USER, [ghost])).length === 0);
+  await (await getDb()).update(contacts).set({ linkedinUrl: "https://www.linkedin.com/in/ghost-person-2" }).where(eq(contacts.id, ghost));
+  check("a new LinkedIn URL lifts the streak without anyone resetting it", (await contactsNeedingWorkHistory(USER, [ghost])).join() === ghost);
+  await researchContactWorkHistory(USER, ghost, { force: true, researcher: nobody });
+  check("a miss on the new slug starts the count over", (await streak()).workHistoryMisses === 1);
+  const found = fake({ experiences: [role("Linear", { isCurrent: true })] });
+  await researchContactWorkHistory(USER, ghost, { force: true, researcher: found.researcher });
+  const cleared = await streak();
+  check("a found history clears the streak", cleared.workHistoryMisses === 0 && cleared.workHistoryMissSlug === null);
 
   // --- the batch runner -----------------------------------------------------------------
   const batch = fake({ experiences: [role("Figma", { isCurrent: true })] });

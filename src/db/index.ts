@@ -183,6 +183,8 @@ CREATE TABLE IF NOT EXISTS contacts (
   notes text,
   embedding_stale_at timestamptz,
   work_history_due_at timestamptz,
+  work_history_misses integer NOT NULL DEFAULT 0,
+  work_history_miss_slug text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -1027,6 +1029,7 @@ CREATE TABLE IF NOT EXISTS usage_events (
   output_tokens integer,
   cached_input_tokens integer,
   estimated_cost_micros integer,
+  web_searches integer,
   cost_source text NOT NULL DEFAULT 'estimated',
   key_owner text NOT NULL DEFAULT 'user',
   success integer NOT NULL DEFAULT 1,
@@ -2726,7 +2729,13 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // search for every account). NOT 171-174: claude/serene-cerf-0is3sb holds 171 and
 // claude/trusting-wozniak-ebsks3 reaches 174. Rescanned every local and remote ref and every
 // worktree on Oct 17 2026: 174 was the highest claimed anywhere.
-export const SCHEMA_VERSION = 175;
+//
+// 178 = usage_events.web_searches (searches per call, for the per-operation breakdown) +
+// contacts.work_history_misses + work_history_miss_slug (two misses against the same LinkedIn
+// slug stop automatic work-history checks; a new URL lifts it without any writer resetting it).
+// NOT 176/177: claude/chat-agent-p0-prefetch and claude/sharp-ptolemy-pkfcqi hold 176,
+// claude/trusting-wozniak-ebsks3 reaches 177. Rescanned every remote ref on Oct 19 2026.
+export const SCHEMA_VERSION = 178;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3787,6 +3796,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   // existence check entirely when no `source_id` is supplied.
   await ensureColumn(client, "contacts", "embedding_stale_at", "timestamptz");
   await ensureColumn(client, "contacts", "work_history_due_at", "timestamptz");
+  await ensureColumn(client, "contacts", "work_history_misses", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "contacts", "work_history_miss_slug", "text");
+  await ensureColumn(client, "usage_events", "web_searches", "integer");
   await ensureColumn(client, "user_settings", "work_history_auto_enabled", "integer NOT NULL DEFAULT 1");
   await ensureColumn(client, "user_settings", "relationship_engine_enabled", "integer NOT NULL DEFAULT 1");
   await ensureColumn(client, "user_settings", "chat_self_names", "jsonb NOT NULL DEFAULT '[]'");
@@ -4300,6 +4312,10 @@ const alters = [
   `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS managed_ai_paused boolean`,
   // Schema v175: the admin console's web-search switch (null = never set = running).
   `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS web_search_paused boolean`,
+  // Schema v178: searches per call, and the work-history miss streak that stops auto checks.
+  `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS web_searches integer`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS work_history_misses integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS work_history_miss_slug text`,
   // Schema v139: the credit emails at 80% and 100% of the monthly allowance — the switch, and
   // which cycle and level were last sent (claimed in one UPDATE before each send).
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credit_email_enabled integer NOT NULL DEFAULT 1`,

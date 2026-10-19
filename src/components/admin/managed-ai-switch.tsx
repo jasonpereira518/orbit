@@ -158,6 +158,28 @@ export function WebSearchSwitch({ state }: { state: WebSearchSwitchState }) {
           work history, research and guest look-ups stop when paused. Changes reach every server within about
           thirty seconds.
         </p>
+        {state.byOperation.length > 0 && (
+          <table className="mt-2 w-full max-w-lg text-xs tabular-nums text-muted-foreground">
+            <thead>
+              <tr className="text-left">
+                <th className="font-medium">Searches by feature</th>
+                <th className="text-right font-medium">7 days</th>
+                <th className="text-right font-medium">30 days</th>
+                <th className="text-right font-medium">Per success</th>
+              </tr>
+            </thead>
+            <tbody>
+              {state.byOperation.map((row) => (
+                <tr key={row.operation}>
+                  <td>{row.label}</td>
+                  <td className="text-right">{row.searches7.toLocaleString()}</td>
+                  <td className="text-right">{row.searches30.toLocaleString()}</td>
+                  <td className="text-right">{row.perSuccess === null ? "—" : row.perSuccess.toFixed(1)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
       <button
         type="button"

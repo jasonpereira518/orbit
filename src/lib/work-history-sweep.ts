@@ -34,6 +34,7 @@ import { WEB_SEARCH_BACKGROUND_SHARE, WEB_SEARCH_SCOPE, webSearchMonthKey } from
 import { utcDayKey } from "@/lib/timeline-cost";
 import {
   researchContactWorkHistory,
+  WORK_HISTORY_MAX_MISSES,
   type CurrentRoleChecker,
   type WorkHistoryOutcome,
   type WorkHistoryResearcher,
@@ -83,6 +84,11 @@ const notCold = sql.raw(
   "(priority_level > 0 OR closeness_tier IS NOT NULL OR last_interaction_at IS NOT NULL OR stated_closeness IS NOT NULL)"
 );
 
+/** Not given up on: fewer than the max misses, or the misses were against an older URL. */
+const notGivenUp = sql.raw(
+  `(work_history_misses < ${WORK_HISTORY_MAX_MISSES} OR work_history_miss_slug IS DISTINCT FROM linkedin_slug)`
+);
+
 /** Accounts with at least one due contact and the sweep switched on, most overdue first. */
 async function usersWithDueContacts(now: Date, limit: number): Promise<string[]> {
   const db = await getDb();
@@ -94,6 +100,7 @@ async function usersWithDueContacts(now: Date, limit: number): Promise<string[]>
        WHERE s.work_history_auto_enabled = 1
          AND c.linkedin_url IS NOT NULL
          AND (c.priority_level > 0 OR c.closeness_tier IS NOT NULL OR c.last_interaction_at IS NOT NULL OR c.stated_closeness IS NOT NULL)
+         AND (c.work_history_misses < ${WORK_HISTORY_MAX_MISSES} OR c.work_history_miss_slug IS DISTINCT FROM c.linkedin_slug)
          AND (c.work_history_due_at IS NULL OR c.work_history_due_at <= ${now})
        GROUP BY c.user_id
        ORDER BY min(coalesce(c.work_history_due_at, '-infinity'::timestamptz)), random()
@@ -118,6 +125,7 @@ async function claimDueContacts(userId: string, limit: number, now: Date): Promi
             WHERE user_id = ${userId}
               AND linkedin_url IS NOT NULL
               AND ${notCold}
+              AND ${notGivenUp}
               AND (work_history_due_at IS NULL OR work_history_due_at <= ${now})
             ORDER BY work_history_due_at ASC NULLS FIRST, closeness DESC NULLS LAST, id
             LIMIT ${limit}

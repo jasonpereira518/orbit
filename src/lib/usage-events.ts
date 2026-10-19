@@ -43,8 +43,8 @@ export type TokenCounts = {
    */
   reportedCostMicros?: number | null;
   /**
-   * Hosted web searches the call ran (`webSearchJson`). Not stored: priced into the estimate
-   * by `webSearchFeeMicros`, since a search fee was most of the AI bill when this landed.
+   * Hosted web searches the call ran (`webSearchJson`). Stored, and priced into the estimate
+   * by `webSearchFeeMicros` — a search fee was most of the AI bill when this landed.
    */
   webSearches?: number | null;
 };
@@ -115,6 +115,7 @@ export function usageRow(rec: UsageRecord) {
     estimatedCostMicros:
       reported ?? (tokenEstimate === null ? null : tokenEstimate + webSearchFeeMicros(rec.provider, rec.webSearches)),
     costSource: (reported === null ? "estimated" : "reported") as "estimated" | "reported",
+    webSearches: rec.webSearches ?? null,
     success: rec.success ? 1 : 0,
     errorKind: rec.errorKind ?? null,
     durationMs: rec.durationMs ?? null,
