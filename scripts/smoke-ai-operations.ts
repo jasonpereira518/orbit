@@ -18,7 +18,7 @@ import {
 import { EMBEDDING_MODELS, FAST_MODELS, VISION_MODELS } from "../src/lib/ai";
 import { JEV_MODEL, modelForOperation } from "../src/lib/ai-models";
 import { AI_PROVIDERS, DEFAULT_MODELS, PROVIDER_MODELS } from "../src/lib/ai-providers";
-import { MANAGED_AI_ENABLED, MANAGED_DEFAULT_MODELS, MANAGED_MODELS } from "../src/lib/managed-ai-policy";
+import { MANAGED_DEFAULT_MODELS, MANAGED_MODELS } from "../src/lib/managed-ai-policy";
 import { priceFor } from "../src/lib/ai-pricing";
 
 let failures = 0;
@@ -84,17 +84,11 @@ console.log("\nThe registry's tier is what picks the model");
   // On Orbit's key a tier must not reach past the managed allowlist — vision used to, and
   // gpt-4o is 16x gpt-4o-mini. The account below is ON the vision tier's own model, so the
   // "keep the cheaper model" rule above cannot be what decides; only the allowlist can.
-  //
-  // With MANAGED_AI_ENABLED off (where it stands today) the only key behind this path is
-  // the developer's own on `next dev`, so there is no allowlist to enforce and the tier's
-  // own model runs.
   const onOrbit = { provider: "openai" as const, model: "gpt-4o", keyOwner: "orbit" as const };
   const visionOnOrbit = modelForOperation("capture.transcribe.page", onOrbit);
   check(
-    MANAGED_AI_ENABLED
-      ? `vision on Orbit's key stays on the allowlist (${visionOnOrbit})`
-      : `managed AI off: vision runs the tier's own model (${visionOnOrbit})`,
-    MANAGED_AI_ENABLED ? MANAGED_MODELS.openai.includes(visionOnOrbit) : visionOnOrbit === VISION_MODELS.openai,
+    `vision on Orbit's key stays on the allowlist (${visionOnOrbit})`,
+    MANAGED_MODELS.openai.includes(visionOnOrbit),
     visionOnOrbit
   );
   for (const id of AI_OPERATION_IDS) {
@@ -103,7 +97,7 @@ console.log("\nThe registry's tier is what picks the model");
     const chosen = modelForOperation(id, { provider: "gemini", model: "gemini-2.5-pro", keyOwner: "orbit" });
     check(
       `${id} on Orbit's key resolves to a priced model`,
-      priceFor(chosen) !== null && (!MANAGED_AI_ENABLED || MANAGED_MODELS.gemini.includes(chosen)),
+      priceFor(chosen) !== null && MANAGED_MODELS.gemini.includes(chosen),
       chosen
     );
   }

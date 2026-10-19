@@ -62,7 +62,7 @@ Prod = Vercel Production, GH = GitHub Actions.
 | Variable | Required | Default if unset | Envs | Validated |
 |---|---|---|---|---|
 | `ORBIT_MANAGED_ANTHROPIC_API_KEY`, `ORBIT_MANAGED_OPENAI_API_KEY`, `ORBIT_MANAGED_GEMINI_API_KEY` | needed for included AI on every plan | included AI refused (`managed_unavailable`); ops alert | P, Prod | presence warning, only when Stripe is configured |
-| `ORBIT_MANAGED_AI` | kill switch (`off`) | on. Managed AI itself is the code constant `MANAGED_AI_ENABLED = true` (`lib/managed-ai-policy.ts`), not a variable | P, Prod | — |
+| `ORBIT_MANAGED_AI` | kill switch (`off`) | on. Managed AI is always on in code (`lib/managed-ai-policy.ts`); there is no flag for it | P, Prod | — |
 | `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY` | dev | none. **The first three are honoured as Orbit-paid managed keys wherever `VERCEL` is unset** (`next dev`, `next start`, tsx scripts; `managedKey` in `lib/ai-access.ts`). OpenRouter is never a managed provider | L | — |
 | `TYPESAFE_API_KEY` | dev (TypeSafe is otherwise BYOK only) | none | L | — |
 | `ORBIT_EVAL_GEMINI_KEY`, `ORBIT_EVAL_OPENAI_KEY`, `ORBIT_EVAL_ANTHROPIC_KEY`, `ORBIT_EVAL_TYPESAFE_KEY`, `ORBIT_EVAL_NETWORK` | dev; keys used by `scripts/eval-ai.ts` only | none | L | — |

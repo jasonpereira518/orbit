@@ -55,7 +55,6 @@ import {
   nothingUsable,
   BACKGROUND_FLOOR_SHARE,
   BACKGROUND_OPERATIONS,
-  MANAGED_AI_ENABLED,
   MANAGED_AI_POOLS,
   earliestPoolWindowStart,
   poolWindowStart,
@@ -159,7 +158,6 @@ export function jevSwitchedOff(): boolean {
  * key". Wins over the admin console's runtime switch below.
  */
 export function managedAiSwitchedOff(): boolean {
-  if (!MANAGED_AI_ENABLED) return true;
   return process.env.ORBIT_MANAGED_AI?.trim().toLowerCase() === "off";
 }
 

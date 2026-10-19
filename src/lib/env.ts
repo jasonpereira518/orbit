@@ -13,7 +13,6 @@
  */
 
 // Relative, not `@/`: scripts load this file directly. The policy module is pure (type-only imports).
-import { MANAGED_AI_ENABLED } from "./managed-ai-policy";
 
 export type VercelEnv = "production" | "preview" | "development" | undefined;
 
@@ -210,7 +209,6 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
     // build, since the ops sweep pages on it (`ai.managed_unconfigured`) and a key must never
     // block a deploy.
     if (
-      MANAGED_AI_ENABLED &&
       has(env, "STRIPE_SECRET_KEY") &&
       !MANAGED_AI_KEYS.some((name) => has(env, name)) &&
       env.ORBIT_MANAGED_AI?.trim().toLowerCase() !== "off"

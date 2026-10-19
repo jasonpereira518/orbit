@@ -25,15 +25,11 @@ import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
 
 export type AiKeySource = "personal" | "managed";
 
-/**
- * MANAGED AI IS ON (pricing v2). A code constant rather than an env var, so no deployment
- * flips the model by accident. Two switches still stop it without a deploy: the
- * `ORBIT_MANAGED_AI=off` env kill switch and the admin console's runtime pause
- * (`site_settings.managed_ai_paused`; never set reads as running, now that the legal text
- * describing included AI has shipped).
+/*
+ * Managed AI is on for every plan (pricing v2); there is no code flag for it. Two switches
+ * stop it without a deploy: the `ORBIT_MANAGED_AI=off` env kill switch and the admin
+ * console's runtime pause (`site_settings.managed_ai_paused`).
  */
-export const MANAGED_AI_ENABLED: boolean = true;
-
 /**
  * The budgets Orbit's included AI draws on, one per provider that funds it: Orbit-paid spend
  * on that provider (`usage_events`, `key_owner = 'orbit'`) since the pool's window opened. A
@@ -99,7 +95,7 @@ export type ManagedEligibility = "plan" | "demo" | null;
 
 export function managedEligibility(plan: Plan, isDemo: boolean): ManagedEligibility {
   if (isDemo) return "demo";
-  if (MANAGED_AI_ENABLED && PLAN_CONFIG[plan].features.hostedAi) return "plan";
+  if (PLAN_CONFIG[plan].features.hostedAi) return "plan";
   return null;
 }
 
@@ -155,9 +151,7 @@ export const MANAGED_FAST_MODELS: Partial<Record<AiProvider, string>> = {
  * work. `requested` is honoured only when it is already on the allowlist (a tier's own pick).
  */
 export function managedModel(provider: AiProvider, requested: string | null | undefined, tier?: string): string {
-  // The allowlist protects Orbit's money. With managed AI off the only key behind this path
-  // is the developer's own, so `next dev` keeps running whatever model Settings asks for.
-  if (!MANAGED_AI_ENABLED) return requested || MANAGED_DEFAULT_MODELS[provider];
+  // The allowlist protects Orbit's money.
   if (tier === "fast" && MANAGED_FAST_MODELS[provider]) return MANAGED_FAST_MODELS[provider]!;
   if (requested && MANAGED_MODELS[provider].includes(requested)) return requested;
   return MANAGED_DEFAULT_MODELS[provider];

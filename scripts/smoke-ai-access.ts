@@ -12,12 +12,6 @@
  *      buying, refund/revoke mid-session, the allowance running out, the kill switch, a
  *      managed key the provider refuses, and a paid checkout whose webhook has not landed.
  *
- * While `MANAGED_AI_ENABLED` is false (managed AI has not shipped), 3 and 4 are replaced by
- * `byokOnly()`: with every managed AND local-dev key set, no account of any plan — Lifetime,
- * comped, showcase-demo — gets anything but its own key on the wire, and the one exception
- * (`next dev` on the developer's `.env.local`) is proved to need NODE_ENV=development and
- * no VERCEL, so no deployment can reach it.
- *
  * Run: npx tsx scripts/smoke-ai-access.ts
  */
 import "./smoke/_env";
@@ -81,7 +75,6 @@ import {
 import { getCreditBalance } from "../src/lib/credits/ledger";
 import { PLAN_CONFIG } from "../src/lib/plans/plan-config";
 import {
-  MANAGED_AI_ENABLED,
   MANAGED_AI_POOLS,
   poolWindowStart,
   MANAGED_DEFAULT_MODELS,
@@ -348,7 +341,6 @@ function purePolicy() {
     const c = chooseCompletionKey(f);
     return c.ok ? `${c.source}:${c.provider}:${c.model}` : `refused:${c.reason}`;
   };
-  check("managed AI is on (pricing v2)", MANAGED_AI_ENABLED === true);
   check("Pro and Max are eligible for included AI", managedEligibility("orbit", false) === "plan" && managedEligibility("max", false) === "plan");
   check("Free and Lifetime are eligible for their allowances too",
     managedEligibility("free", false) === "plan" && managedEligibility("lifetime", false) === "plan");
