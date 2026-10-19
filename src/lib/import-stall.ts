@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, lt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { imports } from "@/db/schema";
-import { failImport } from "@/lib/import-engine";
+import { MAX_STALL_RESUMES, failImport } from "@/lib/import-engine";
 import { RESUMABLE_IMPORT_TYPES } from "@/lib/import-job-dispatch";
 import { internalFetch } from "@/lib/internal-auth";
 import { reportError } from "@/lib/report-error";
@@ -33,7 +33,7 @@ import { reportError } from "@/lib/report-error";
 export const CRON_STALL_THRESHOLD_MS = 6 * 60 * 1000;
 
 /** Resumes allowed before giving up. The fourth stall marks the job failed. */
-export const MAX_STALL_RESUMES = 3;
+export { MAX_STALL_RESUMES };
 
 /**
  * Stalled jobs picked up per sweep, oldest first. The rest wait for the next sweep. A

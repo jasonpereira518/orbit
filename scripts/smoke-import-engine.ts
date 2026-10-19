@@ -43,6 +43,7 @@ import {
   PLAN_LIMIT_ROW_REASON,
 } from "../src/lib/import-job-processor";
 import { runImportJobById } from "../src/lib/import-job-dispatch";
+import { MAX_STALL_RESUMES, setImportTimeBudgetForTests } from "../src/lib/import-engine";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { previewUndo } from "../src/lib/imports/import-undo";
 
@@ -1353,6 +1354,38 @@ async function main() {
     (remindersAgain?.value ?? 0) === 1,
     `rows ${remindersAgain?.value}`
   );
+
+  console.log("\nA job that makes progress is not failed for stalling...");
+  await reset();
+  {
+    const dbx = await getDb();
+    const id = await seedJob(fixture(10));
+    // Three stalls already behind it: one more used to mean "stalled 3 times and gave up".
+    await dbx.update(imports).set({ stallResumes: 3 }).where(eq(imports.id, id));
+    await runJob(id);
+    const done = await dbx.query.imports.findFirst({ where: eq(imports.id, id) });
+    check("the run completes", done?.status === "completed", String(done?.status));
+    check("a committed chunk restarts the stall count", done?.stallResumes === 0, String(done?.stallResumes));
+  }
+
+  console.log("\nA job that cannot get started within its budget ends instead of looping forever...");
+  await reset();
+  {
+    const dbx = await getDb();
+    const id = await seedJob(fixture(10));
+    setImportTimeBudgetForTests(-1); // exhausted before the first chunk
+    try {
+      for (let i = 0; i <= MAX_STALL_RESUMES; i++) await runJob(id);
+    } finally {
+      setImportTimeBudgetForTests(null);
+    }
+    const stuck = await dbx.query.imports.findFirst({ where: eq(imports.id, id) });
+    check("zero-progress hand-offs are counted as stalls", (stuck?.stallResumes ?? 0) >= MAX_STALL_RESUMES, String(stuck?.stallResumes));
+    await runJob(id);
+    const ended = await dbx.query.imports.findFirst({ where: eq(imports.id, id) });
+    check("…and the job is failed with a message once the cap is passed",
+      ended?.status === "failed" && /get started/.test(ended.errorMessage ?? ""), `${ended?.status} ${ended?.errorMessage}`);
+  }
 
   await reset();
   const db = await getDb();

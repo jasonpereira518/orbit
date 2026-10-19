@@ -1,4 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
+
+/** Stalls allowed before a job is failed. Lives here (not import-stall.ts, which imports this file) so the engine can end a job that cannot start. */
+export const MAX_STALL_RESUMES = 3;
 import { revalidatePath } from "next/cache";
 import { recalibrateCloseness } from "@/lib/closeness-cohort";
 import { getDb, rowsOf } from "@/db";
@@ -57,7 +60,11 @@ export const CHUNK_SIZE = 250;
 /** Rows per interactions INSERT; see the chunk loop's interaction write. */
 export const INTERACTION_INSERT_ROWS = 1_000;
 /** Stay well under the 300s function ceiling, leaving room for the self-continuation call. */
-const TIME_BUDGET_MS = 4.5 * 60 * 1000;
+let TIME_BUDGET_MS = 4.5 * 60 * 1000;
+/** Test seam: shrink the per-invocation budget (a negative value is exhausted at once). */
+export function setImportTimeBudgetForTests(ms: number | null) {
+  TIME_BUDGET_MS = ms ?? 4.5 * 60 * 1000;
+}
 
 /**
  * Ceiling on how many rows a single chunk's narrowing (`writeWithNarrowing`, below) may mark
@@ -613,6 +620,7 @@ export async function runImportJob(importId: string): Promise<void> {
     let contactsUpdated = importRow.contactsUpdated ?? 0;
     let duplicatesFound = importRow.duplicatesFound ?? 0;
     let rowsProcessed = importRow.rowsProcessed ?? 0;
+    const rowsAtStart = rowsProcessed;
     const allTouchedContactIds = new Set<string>();
 
     try {
@@ -628,7 +636,12 @@ export async function runImportJob(importId: string): Promise<void> {
           // invocation never reaches the completion write below, and the next invocation's
           // own `startQueryCount()` resets the in-memory counter to zero. Without this write,
           // a job spanning N invocations would report only the cost of its last one.
-          await db
+          // An invocation that spent its whole budget before committing a single chunk (setup
+          // alone, a huge contact load) made no progress, and handing off again would repeat
+          // it forever with nothing in `stall_resumes` to end it. Count it as a stall so the
+          // same cap that ends a job dying without progress ends this one, with a message.
+          const noProgress = rowsProcessed === rowsAtStart;
+          const [persisted] = await db
             .update(imports)
             .set({
               stats: accumulatedStats(latestStats, jobStart, {
@@ -638,9 +651,18 @@ export async function runImportJob(importId: string): Promise<void> {
                 interactionsLogged: interactionsLoggedTotal,
                 remindersCreated: remindersCreatedTotal,
               }),
+              ...(noProgress ? { stallResumes: sql`${imports.stallResumes} + 1` } : {}),
               updatedAt: new Date(),
             })
-            .where(eq(imports.id, importId));
+            .where(eq(imports.id, importId))
+            .returning();
+          if (noProgress && (persisted?.stallResumes ?? 0) > MAX_STALL_RESUMES) {
+            await failImport(
+              importId,
+              new Error("Import couldn’t get started within its time budget and gave up — upload the file again to import the rest")
+            );
+            return;
+          }
           await scheduleContinuation(importId);
           return;
         }
@@ -1312,6 +1334,11 @@ export async function runImportJob(importId: string): Promise<void> {
               remindersCreated: remindersCreatedTotal,
             },
             errorMessage: null,
+            // A committed chunk is progress, so the stall count restarts: it is meant to
+            // catch a job that keeps dying WITHOUT advancing, not to fail a long import that
+            // loses a continuation now and then over its whole life (four lifetime stalls
+            // used to mark a moving import failed, with "upload the file again").
+            stallResumes: 0,
             updatedAt: new Date(),
           })
           .where(eq(imports.id, importId));
