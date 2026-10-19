@@ -195,15 +195,14 @@ export const CALENDAR_DISARM_BURST = 5;
  * How long the job-feed sweep may be silent before it is treated as dead.
  *
  * The schedule is hourly and this is six times that — the same loose multiple the connector
- * sync gets, for the same reason: GitHub Actions schedules lag under load and are disabled
- * outright after 60 days without a commit on a public repository.
+ * sync gets, for the same reason: a lost tick or two is not worth a Slack message; a dead schedule is.
  *
  * `warning`, never `critical`: nobody is paged because an internship notification is late.
  */
 const JOB_FEED_SILENT_MS = 6 * 60 * 60 * 1000;
 
 /**
- * Radar's nightly pass: daily, so a day and a quarter plus GitHub's lag.
+ * Radar's nightly pass: daily, so a day and a quarter plus slack.
  *
  * Unlike the job feed, a pass that has NEVER run is not an alert. The first run is up to a
  * day after the deploy that adds it, and a condition that opens on every deploy and closes
@@ -228,8 +227,8 @@ const RADAR_FEEDS_SILENT_MS = 6 * 60 * 60 * 1000;
 const RADAR_DIGEST_SILENT_MS = 6 * 24 * 60 * 60 * 1000;
 
 /**
- * The work-history sweep runs hourly (ops.yml, :37); six hours of silence is five missed
- * runs, not GitHub's ordinary lag. `warning`: a job move noticed a day late costs nothing.
+ * The work-history sweep runs hourly (QStash, :37); six hours of silence is five missed
+ * runs, not one lost tick. `warning`: a job move noticed a day late costs nothing.
  */
 const WORK_HISTORY_SILENT_MS = 6 * 60 * 60 * 1000;
 
@@ -364,7 +363,7 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
   // Freshness for the connector sync, with its OWN threshold rather than `hasMissedRun`.
   // That helper's 25-hour window is calibrated for the nightly job; applied to a job that is
   // supposed to run every fifteen minutes it would stay silent for a full day of no syncing.
-  // Three hours is deliberately loose — GitHub's scheduler routinely lags 5-30 minutes, and
+  // Three hours is deliberately loose — a lost tick or two is ordinary, and
   // this must alert on "the schedule is dead", not on "the schedule is late".
   const sync = s.cron.syncRun;
   const syncSilentFor = sync.lastStartedAt ? now.getTime() - sync.lastStartedAt.getTime() : null;

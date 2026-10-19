@@ -1,7 +1,7 @@
 /**
  * Radar's Monday email (`src/lib/radar/digest.ts`).
  *
- * Driven by GitHub Actions (.github/workflows/ops.yml) at :13 every hour of Sunday and Monday
+ * Driven by QStash (scripts/qstash-schedules.ts) at :13 every hour of Sunday and Monday
  * UTC, which covers every zone's Monday 06:00–09:00. Each run sends to the people whose
  * Monday morning it is now; the week claim makes a second run in the same window a no-op for
  * everyone already sent. A run that runs out of time posts back to itself once more; anyone

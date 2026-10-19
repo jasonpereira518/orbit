@@ -166,6 +166,23 @@ async function main() {
     sent.length === 0 && silent.recovered.includes("cron.missed"), JSON.stringify(sent));
 
   await db.delete(opsAlertState).where(eq(opsAlertState.id, "stripe.checkout_error"));
+
+  console.log("\nA sweep with no deploy facts keeps an open drift...");
+  await reset();
+  process.env.VERCEL_GIT_COMMIT_SHA = "a".repeat(40);
+  const stale = { mainSha: "b".repeat(40), mainCommittedAt: new Date(Date.now() - 7 * 60 * 60 * 1000) };
+  const drifted = await runOpsSweep({ trigger: "manual", deps, deploy: stale });
+  check("the GitHub sweep opens deploy.drift", drifted.opened.includes("deploy.drift"), JSON.stringify(drifted));
+  sent.length = 0;
+  const blind = await runOpsSweep({ trigger: "manual", deps });
+  check("a QStash sweep (no mainSha) does not recover it",
+    !blind.recovered.includes("deploy.drift") && sent.length === 0, JSON.stringify(blind));
+  const stillOpen = await db.query.opsAlertState.findFirst({ where: eq(opsAlertState.id, "deploy.drift") });
+  check("  and the row stays active", stillOpen?.active === true, JSON.stringify(stillOpen));
+  const caughtUp = await runOpsSweep({ trigger: "manual", deps, deploy: { ...stale, mainSha: "a".repeat(40) } });
+  check("a GitHub sweep that sees main deployed recovers it", caughtUp.recovered.includes("deploy.drift"), JSON.stringify(caughtUp));
+  delete process.env.VERCEL_GIT_COMMIT_SHA;
+
   await reset();
   console.log("\nA Resend rejection reaches the snapshot...");
   const [rejection] = await db
