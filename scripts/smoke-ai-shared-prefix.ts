@@ -133,7 +133,8 @@ async function main() {
   sent.length = 0;
   // More than DETAIL_BATCH_SIZE, so the notes are read by two calls and worth caching.
   const many = ["Ada Byron", "Grace Hopper", "Alan Turing", "Edsger Dijkstra", "Barbara Liskov", "Donald Knuth", "Karen Sparck Jones", "Tony Hoare"];
-  replies = [identify(many), details(many.slice(0, 6)), details(many.slice(6))];
+  // Each reply answers the people its batch asked about (DETAIL_BATCH_SIZE is 4): replies are matched by name.
+  replies = [identify(many), details(many.slice(0, 4)), details(many.slice(4))];
   const parsed = await parseMultiPersonNotesWithAI(USER, notes);
   const detailCalls = sent.slice(1);
   const blocks = detailCalls.map((s) => (s.body.messages as Array<{ content: Array<{ text: string; cache_control?: unknown }> | string }>)[0].content);

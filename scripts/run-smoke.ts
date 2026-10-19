@@ -301,6 +301,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-ai-finish": "pglite",
   "smoke-embedding-space": "pglite",
   "smoke-outreach-batch": "pglite",
+  "smoke-capture-detail-match": "pglite",
   "smoke-recruiter-scan-batch": "pglite",
   "smoke-api-keys": "pglite",
   "smoke-api-routes": "pglite",

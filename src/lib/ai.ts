@@ -1621,6 +1621,48 @@ Rules:
   return multiPersonIdentitySchema.parse(JSON.parse(identityRaw));
 }
 
+const DETAIL_CONCURRENCY = 2;
+
+const nameKey = (name: string | null | undefined) => (name ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+
+/**
+ * For each requested name, the index of the reply entry that answers it, or null. Exact name
+ * first; then the one unclaimed entry sharing first and last word (a reply that dropped a
+ * middle name), or for a one-word request the one unclaimed entry starting with it. Never by
+ * position, and an entry answers at most one request.
+ */
+export function matchDetailResults(
+  requested: readonly string[],
+  answered: ReadonlyArray<{ name?: string | null }>,
+): Array<number | null> {
+  const taken = new Set<number>();
+  const out: Array<number | null> = requested.map(() => null);
+  const claim = (j: number, matches: (a: string) => boolean) => {
+    const candidates = answered.flatMap((a, k) => (!taken.has(k) && matches(nameKey(a.name)) ? [k] : []));
+    if (candidates.length !== 1) return;
+    taken.add(candidates[0]!);
+    out[j] = candidates[0]!;
+  };
+  requested.forEach((name, j) => {
+    const want = nameKey(name);
+    const exact = answered.findIndex((a, k) => !taken.has(k) && nameKey(a.name) === want);
+    if (exact >= 0) {
+      taken.add(exact);
+      out[j] = exact;
+    }
+  });
+  requested.forEach((name, j) => {
+    if (out[j] !== null) return;
+    const words = nameKey(name).split(" ").filter(Boolean);
+    if (words.length === 0) return;
+    const first = words[0]!;
+    const last = words[words.length - 1]!;
+    if (words.length === 1) claim(j, (a) => a.split(" ")[0] === first);
+    else claim(j, (a) => a.split(" ")[0] === first && a.split(" ").pop() === last);
+  });
+  return out;
+}
+
 async function parseMultiPersonTwoPass(
   userId: string,
   notes: string,
@@ -1700,8 +1742,8 @@ async function parseMultiPersonTwoPass(
       ? { text: notesPrefix, cacheKey: `capture.details:${createHash("sha256").update(notesPrefix).digest("hex").slice(0, 32)}` }
       : undefined;
 
-  for (let i = 0; i < peopleIds.length; i += DETAIL_BATCH_SIZE) {
-    const batch = peopleIds.slice(i, i + DETAIL_BATCH_SIZE);
+  type Requested = (typeof peopleIds)[number];
+  const callDetails = async (batch: Requested[]) => {
     const batchRaw = await completeJson(userId, {
       operation: "capture.parse.details",
       temperature: 0.2,
@@ -1732,16 +1774,30 @@ ${PERSON_FIELD_RULES}`,
     });
 
     await beat(onProgress);
-    const batchParsed = personDetailBatchSchema.parse(JSON.parse(batchRaw));
-    for (let j = 0; j < batch.length; j++) {
-      const requested = batch[j]!;
-      const found =
-        batchParsed.people.find(
-          (p) =>
-            p.name?.trim().toLowerCase() ===
-            requested.name.trim().toLowerCase(),
-        ) || batchParsed.people[j];
+    return personDetailBatchSchema.parse(JSON.parse(batchRaw)).people;
+  };
 
+  /**
+   * One batch, matched back to the people it asked about BY NAME. It used to fall back to the
+   * array position, so a reply that reordered or dropped someone put one person's fields on
+   * another — under the right name, on a review card nobody can tell is wrong. A person the
+   * reply did not answer is asked about once more on their own; if that fails too they keep the
+   * identity pass's facts and nothing else, which is true if thin.
+   */
+  const detailBatch = async (batch: Requested[]): Promise<ParsedPersonNote[]> => {
+    const answered = await callDetails(batch);
+    const foundList = matchDetailResults(batch.map((p) => p.name), answered).map((m) =>
+      m === null ? undefined : answered[m],
+    );
+    const missing = foundList.flatMap((f, j) => (f ? [] : [j]));
+    if (missing.length > 0) {
+      const again = await callDetails(missing.map((j) => batch[j]!)).catch(() => []);
+      matchDetailResults(missing.map((j) => batch[j]!.name), again).forEach((m, k) => {
+        if (m !== null) foundList[missing[k]!] = again[m];
+      });
+    }
+    return batch.map((requested, j) => {
+      const found = foundList[j];
       const merged: ParsedPersonNote = {
         name: requested.name,
         presence: requested.presence,
@@ -1781,9 +1837,27 @@ ${PERSON_FIELD_RULES}`,
         source_excerpt: found?.source_excerpt || "",
       };
 
-      detailed.push(merged);
-    }
-  }
+      return merged;
+    });
+  };
+
+  // The first batch alone, so a provider that caches the shared notes has written them before
+  // the rest read them; the others two at a time, which is latency only (each call is
+  // independent) and stays under a BYOK key's per-minute limits.
+  const batches: Requested[][] = [];
+  for (let i = 0; i < peopleIds.length; i += DETAIL_BATCH_SIZE) batches.push(peopleIds.slice(i, i + DETAIL_BATCH_SIZE));
+  const detailedBatches: ParsedPersonNote[][] = new Array(batches.length);
+  if (batches.length > 0) detailedBatches[0] = await detailBatch(batches[0]!);
+  let nextBatch = 1;
+  await Promise.all(
+    Array.from({ length: Math.min(DETAIL_CONCURRENCY, Math.max(0, batches.length - 1)) }, async () => {
+      while (nextBatch < batches.length) {
+        const at = nextBatch++;
+        detailedBatches[at] = await detailBatch(batches[at]!);
+      }
+    }),
+  );
+  detailed.push(...detailedBatches.flat());
 
   // Excerpts that came back empty. The notes are already in hand, so look for the person's
   // own sentence first — free, and exact where the note names them. Only whoever is still
