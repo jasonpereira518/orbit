@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { withMediaResourcePolicy } from "@/lib/media-headers";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
@@ -100,7 +101,7 @@ async function persistProfileImage(
  * (legacy data URL or Blob), proxy/persist a usable remote image into
  * Blob storage, or resolve their LinkedIn OG image on demand.
  */
-export async function GET(req: Request, { params }: Params) {
+async function serve(req: Request, { params }: Params) {
   let userId: string;
   try {
     userId = await requireUserId();
@@ -203,4 +204,9 @@ export async function GET(req: Request, { params }: Params) {
   }
 
   return miss(404);
+}
+
+/** Every response, redirects and misses included, is same-origin only (audit L-09). */
+export async function GET(_req: Request, ctx: Params) {
+  return withMediaResourcePolicy(await serve(_req, ctx));
 }
