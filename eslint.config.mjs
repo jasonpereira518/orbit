@@ -22,6 +22,21 @@ const eslintConfig = defineConfig([
       ],
     },
   },
+  // Server code reports caught errors through `reportError` (src/lib/report-error.ts), which
+  // reaches Sentry and prints one greppable `[orbit:<where>] ref=<ref>` line. A bare
+  // `console.error` reaches only Vercel's runtime log, which keeps it about an hour (audit
+  // A5). `console.warn` stays allowed for expected-degradation notices. Client components,
+  // scripts and tests are out of scope; src/db and instrumentation are not matched.
+  {
+    files: ["src/actions/**/*.{ts,tsx}", "src/lib/**/*.{ts,tsx}", "src/app/**/*.{ts,tsx}"],
+    ignores: [
+      "**/*.test.{ts,tsx}",
+      // The reporter itself logs; the demo seeders are local-dev only.
+      "src/lib/report-error.ts",
+      "src/lib/demo-data/**",
+    ],
+    rules: { "no-console": ["error", { allow: ["warn"] }] },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:

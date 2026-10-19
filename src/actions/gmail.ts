@@ -167,12 +167,6 @@ export async function startGmailOAuth(input: {
     );
   }
 
-  // Safe diagnostic — redirect URI only, never secret/tokens
-  console.info("[gmail-oauth] starting auth", {
-    redirectUri: summary.redirectUri,
-    hasClientId: summary.hasClientId,
-  });
-
   // returnTo is a same-origin path only — never an absolute/external URL.
   const safeReturnTo = safeReturnPath(input.returnTo) ?? "";
   // The purposes ride in the state so the callback can check that Google granted the scopes

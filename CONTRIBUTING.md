@@ -32,7 +32,11 @@ Every export of a `"use server"` file is a public POST endpoint.
 5. `revalidatePath` what changed.
 6. Return `ActionResult` (`{ ok: true, value } | { ok: false, error }`, `src/lib/errors.ts`), not ad hoc shapes.
 7. In a `catch`, call `reportError` (`src/lib/report-error.ts`) so it reaches Sentry. If swallowing is
-   intentional, say why in a comment.
+   intentional, say why in a comment (`// best-effort: <why>`). ESLint enforces the rest:
+   `no-console` forbids `console.error`/`log`/`info` in `src/actions`, `src/lib` and `src/app`
+   (a bare `console.error` reaches only Vercel's runtime log, which keeps it about an hour);
+   `console.warn` is allowed for expected-degradation notices. Use `level: "warning"` for
+   best-effort paths with a backstop (throttled to one per minute per `where`).
 8. Every tenant query filters on `user_id`. There are no foreign keys or row-level security to catch a miss.
 
 ## Schema changes
