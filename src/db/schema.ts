@@ -3572,6 +3572,11 @@ export const chatMessages = pgTable(
     /** The optional note a thumbs-down can carry. */
     feedbackNote: text("feedback_note"),
     /**
+     * Whether this answer answered — see `labelAnswer` in `@/lib/chat-abstention`. Assistant
+     * rows only; null on user rows and on answers stored before v176.
+     */
+    answerOutcome: text("answer_outcome").$type<"answered" | "partial" | "abstained">(),
+    /**
      * Groups the versions of one turn — a user row and its assistant reply share a `slot`.
      * Every row created from SCHEMA_VERSION 80 onward gets one at insert; a row from before
      * that has `slot` null and is its own slot, backfilled the first time it is edited or

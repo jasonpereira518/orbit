@@ -828,6 +828,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   proposed_actions jsonb DEFAULT '[]',
   feedback text,
   feedback_note text,
+  answer_outcome text,
   slot uuid,
   version integer NOT NULL DEFAULT 1,
   is_active boolean NOT NULL DEFAULT true,
@@ -2720,7 +2721,12 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // and its briefs live in ai_result_cache, read back by key. The table was a day old (v169) and
 // held only cached web lookups. Rescanned every ref and worktree on Oct 15 2026: 169 was the
 // highest claimed anywhere.
-export const SCHEMA_VERSION = 170;
+//
+// 176 = chat_messages.answer_outcome: each chat answer labelled answered, partial or abstained
+// (`@/lib/chat-abstention`), so the share of "I don't know" answers is measured. Rescanned every
+// remote ref and worktree on Oct 19 2026: 175 (claude/sharp-ptolemy-pkfcqi and
+// claude/web-search-cost-reduction-3e2210) was the highest claimed anywhere.
+export const SCHEMA_VERSION = 176;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3519,6 +3525,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "meeting_sessions", "calendar_event_key", "text");
   await ensureColumn(client, "meeting_sessions", "calendar_series_id", "text");
   await ensureColumn(client, "calendar_events", "agenda", "text");
+  await ensureColumn(client, "chat_messages", "answer_outcome", "text");
   await ensureColumn(client, "user_settings", "email_activity_sync", "integer NOT NULL DEFAULT 0");
   await ensureColumn(
     client,
@@ -4338,6 +4345,8 @@ const alters = [
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS proposed_actions jsonb DEFAULT '[]'`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback text`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback_note text`,
+  // Schema v176: whether a chat answer answered (`@/lib/chat-abstention`).
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS answer_outcome text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS writing_instructions text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_path text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS tour_started_at timestamptz`,
