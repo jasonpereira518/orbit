@@ -35,6 +35,8 @@ export async function GET() {
       // Clerk's metadata changes about never; a short cache keeps a burst of connecting
       // clients from turning into a burst of outbound requests.
       next: { revalidate: 3600 },
+      // Bounded so a slow Clerk answer fails the discovery request instead of holding it.
+      signal: AbortSignal.timeout(10_000),
     });
     if (!upstream.ok) {
       return new Response(

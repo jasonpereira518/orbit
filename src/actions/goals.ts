@@ -9,6 +9,7 @@ import { asActionResult, UserFacingError } from "@/lib/errors";
 import { z } from "zod";
 import { defineAction, failResult } from "@/lib/input/action";
 import { anyNumber } from "@/lib/input/schemas";
+import { parseClientDate } from "@/lib/input/dates";
 
 export const listGoals = defineAction(
   {},
@@ -106,13 +107,8 @@ export const restoreGoal = defineAction(
     createdAt: string;
   }) => {
     const text = typeof snapshot?.text === "string" ? snapshot.text.trim() : "";
-    const createdAt = new Date(snapshot?.createdAt);
-    if (
-      typeof snapshot?.id !== "string" ||
-      !text ||
-      text.length > 200 ||
-      Number.isNaN(createdAt.getTime())
-    ) {
+    const createdAt = parseClientDate(snapshot?.createdAt);
+    if (typeof snapshot?.id !== "string" || !text || text.length > 200 || !createdAt) {
       return { restored: false };
     }
 

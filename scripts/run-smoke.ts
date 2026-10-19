@@ -298,6 +298,7 @@ const MANIFEST: Record<string, Tier> = {
   // pglite ----------------------------------------------------------------------------
   "smoke-contact-create-race": "pglite",
   "smoke-mcp-body-cap": "pglite",
+  "smoke-security-lint": "pure", // Phase 4.2 source rules
   "smoke-stress-input-extremes": "pglite", // stress-tests/input-extremes.ts under STRESS_STRICT (Phase 4.1)
   "smoke-stress-concurrency-races": "pglite", // stress-tests/concurrency-races.ts under STRESS_STRICT (Phase 4.1)
   "smoke-stress-resilience-repros": "pglite", // stress-tests/resilience-repros.ts under STRESS_STRICT (Phase 4.1)
