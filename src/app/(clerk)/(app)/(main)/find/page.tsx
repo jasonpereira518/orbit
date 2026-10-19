@@ -6,6 +6,8 @@ import { userCanUseAi } from "@/lib/ai";
 import { requireUserId } from "@/lib/auth";
 import { listRecentResearch } from "@/lib/web-research";
 
+export const metadata = { title: "Find people" };
+
 export default async function FindPage() {
   // The gate first, and only then any load. See `pageVisibilityGate`.
   const gate = await pageVisibilityGate("page.find");

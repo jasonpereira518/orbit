@@ -72,7 +72,7 @@ export function ContactNextSteps({ items }: { items: OpenActionItem[] }) {
                 {format(new Date(item.interactionDate), "MMM d")}
               </p>
               {item.reminderId ? (
-                <Badge variant="outline" className="text-[10px]">
+                <Badge variant="outline" className="text-3xs">
                   reminder set
                 </Badge>
               ) : null}

@@ -12,10 +12,14 @@
 import { Plus, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Field as FormField } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+
+/** Shown under a field the model guessed at, in words rather than a bare asterisk. */
+const GUESSED_HINT = "Check this — guessed from the note";
 
 export type PersonFieldValues = {
   name: string;
@@ -74,7 +78,7 @@ export function PersonFields({
   return (
     <div className={cn("space-y-3", !compact && "space-y-4")}>
       {guessed && (
-        <p className="text-xs text-amber-700 dark:text-warning">Fields marked * were guessed — worth a glance.</p>
+        <p className="text-xs text-amber-700 dark:text-warning">Some fields were guessed — they say “check this”.</p>
       )}
       <div className="grid gap-3 sm:grid-cols-2">
         <Field id={`${idPrefix}-name`} label="Name" low={lowConfidence.has("name")}>
@@ -165,7 +169,7 @@ export function PersonFields({
           <ul className="flex flex-wrap gap-1.5">
             {connections.map((c) => (
               <li key={c.name}>
-                <Badge variant="outline" className="text-[11px] font-normal">
+                <Badge variant="outline" className="text-2xs font-normal">
                   <span className="font-medium text-foreground">{c.name}</span>
                   {c.relation && <span className="ml-1 text-muted-foreground">· {c.relation}</span>}
                 </Badge>
@@ -177,7 +181,7 @@ export function PersonFields({
       {topics.length > 0 && (
         <div className="flex flex-wrap gap-1.5" aria-label="Topics">
           {topics.map((t) => (
-            <Badge key={t} variant="secondary" className="text-[10px]">
+            <Badge key={t} variant="secondary" className="text-3xs">
               {t}
             </Badge>
           ))}
@@ -246,12 +250,17 @@ function BulletList({
 }) {
   const focusRow = (i: number) =>
     requestAnimationFrame(() => document.getElementById(`${id}-${i}`)?.focus());
+  const hintId = low ? `${id}-hint` : undefined;
   return (
     <div className="space-y-1.5">
       <Label htmlFor={items.length ? `${id}-0` : `${id}-add`} className={cn("text-xs", low && "text-amber-700 dark:text-warning")}>
         {label}
-        {low ? " *" : ""}
       </Label>
+      {low && (
+        <p id={hintId} className="text-xs text-muted-foreground">
+          {GUESSED_HINT}
+        </p>
+      )}
       {items.length > 0 && (
         <ul className="space-y-1.5">
           {items.map((item, i) => (
@@ -262,6 +271,7 @@ function BulletList({
                 value={item}
                 rows={1}
                 aria-label={`${label} ${i + 1}`}
+                aria-describedby={hintId}
                 placeholder={placeholder}
                 onChange={(e) => onChange(items.map((v, j) => (j === i ? e.target.value.replace(/\n/g, " ") : v)))}
                 onKeyDown={(e) => {
@@ -294,6 +304,7 @@ function BulletList({
       <Button
         id={`${id}-add`}
         type="button"
+        aria-describedby={hintId}
         variant="ghost"
         size="sm"
         className="h-7 px-2 text-xs text-muted-foreground"
@@ -324,13 +335,19 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <div className={cn("space-y-1", className)}>
-      <Label htmlFor={id} className={cn("text-xs", low && "text-amber-700 dark:text-warning")}>
-        {label}
-        {low ? " *" : ""}
-        {hint && <span className="ml-1 font-normal text-muted-foreground">· {hint}</span>}
-      </Label>
+    <FormField
+      htmlFor={id}
+      label={
+        <>
+          {label}
+          {hint && <span className="ml-1 font-normal text-muted-foreground">· {hint}</span>}
+        </>
+      }
+      description={low ? GUESSED_HINT : undefined}
+      className={cn("space-y-1", className)}
+      labelClassName={cn("text-xs", low && "text-amber-700 dark:text-warning")}
+    >
       <div className={cn(low && "rounded-md ring-1 ring-amber-500/50 ring-offset-1 ring-offset-background")}>{children}</div>
-    </div>
+    </FormField>
   );
 }

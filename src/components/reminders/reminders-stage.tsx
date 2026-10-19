@@ -195,6 +195,7 @@ export function RemindersStage({
   }, []);
   const searchRef = useRef<HTMLInputElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
 
   // A new view or filter set starts clean. Keyed on what is SHOWN, so a refresh of the
   // same view (after a mutation) keeps selection and focus.
@@ -597,7 +598,7 @@ export function RemindersStage({
         setHelpOpen(true);
         break;
     }
-  });
+  }, stageRef);
 
   // ── Render. ──
   const title =
@@ -632,7 +633,7 @@ export function RemindersStage({
   ) : null;
 
   return (
-    <div data-fill-route className="flex min-h-0 flex-1 flex-col gap-4">
+    <div ref={stageRef} data-fill-route className="flex min-h-0 flex-1 flex-col gap-4">
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2">
         {/* Calendar sync lives at the foot of the rail now, with its status. */}
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">Reminders</h1>
@@ -667,7 +668,9 @@ export function RemindersStage({
               </Button>
               <h2
                 id="reminders-queue-title"
-                className="hidden min-w-0 flex-1 items-center gap-2 font-heading text-lg font-medium lg:flex"
+                // Visually hidden below lg (the list picker shows the title there), but kept in
+                // the outline so the h3 bucket headings never follow the h1 directly.
+                className="min-w-0 flex-1 items-center gap-2 font-heading text-lg font-medium max-lg:sr-only lg:flex"
               >
                 {currentList && <ListGlyph list={currentList} className="size-4.5 shrink-0" />}
                 <span className="truncate">{title}</span>
@@ -766,7 +769,7 @@ export function RemindersStage({
                         <h3
                           id={`bucket-${group.bucket}`}
                           className={cn(
-                            "sticky top-0 z-10 flex items-center gap-2 border-b border-border/50 bg-card/95 px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide backdrop-blur-sm sm:px-4",
+                            "sticky top-0 z-10 flex items-center gap-2 border-b border-border/50 bg-card/95 px-3 py-1.5 text-2xs font-medium uppercase tracking-wide backdrop-blur-sm sm:px-4",
                             group.bucket === "overdue" ? "text-amber-700 dark:text-warning" : "text-muted-foreground"
                           )}
                         >

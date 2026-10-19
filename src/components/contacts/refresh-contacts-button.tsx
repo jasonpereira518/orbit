@@ -131,17 +131,26 @@ export function RefreshContactsButton() {
     }
   }
 
+  // Progress is spoken from a live region beside the button, not from the button itself: a
+  // button can't carry aria-value* (and turning it into a progressbar mid-run took its role
+  // away). Quarter steps, so a 300-contact run doesn't announce every photo.
+  const spokenProgress = pending
+    ? progress && progress.total > 0
+      ? `Refreshing contacts, ${Math.floor(pct / 25) * 25}% done`
+      : "Refreshing contacts"
+    : "";
+
   return (
+    <>
+    <span role="status" className="sr-only">
+      {spokenProgress}
+    </span>
     <Button
       type="button"
       variant="outline"
       disabled={pending}
       className="relative gap-1.5 overflow-hidden pl-3.5"
       aria-busy={pending}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={pending ? pct : undefined}
-      role={pending ? "progressbar" : undefined}
       onClick={() => void handleRefresh()}
     >
       {pending ? (
@@ -168,5 +177,6 @@ export function RefreshContactsButton() {
           ? "Refreshing…"
           : "Refresh"}
     </Button>
+    </>
   );
 }

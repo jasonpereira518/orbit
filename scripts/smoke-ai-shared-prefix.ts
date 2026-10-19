@@ -32,6 +32,12 @@ const sent: Sent[] = [];
 /** What the stubbed model answers next, by call order within a test. */
 let replies: string[] = [];
 
+/** When set, answers by request content (for calls that run concurrently), after `delayMs`. */
+let replyFor: ((userText: string) => string) | null = null;
+let delayMs = 0;
+let inFlight = 0;
+let maxInFlight = 0;
+
 function nextReply(): string {
   return replies.shift() ?? '{"ok":true}';
 }
@@ -57,10 +63,16 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     });
   }
   if (/api\.anthropic\.com/.test(url)) {
-    sent.push({ host: "anthropic", body });
+    const mine: Sent = { host: "anthropic", body };
+    sent.push(mine);
+    inFlight++;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+    inFlight--;
+    const text = replyFor ? replyFor(userText(mine)) : nextReply();
     return Response.json({
       id: "m1", type: "message", role: "assistant", model: "claude-sonnet-4-5", stop_reason: "end_turn",
-      content: [{ type: "text", text: nextReply() }],
+      content: [{ type: "text", text }],
       usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
     });
   }
@@ -148,6 +160,32 @@ async function main() {
   const single = sent[1];
   check("three people → one batch, no cache write it would never read", JSON.stringify(single.body).indexOf("cache_control") < 0);
   check("  and the notes are still in the prompt", userText(single).startsWith("FULL NOTES:\n"));
+
+  console.log("\nDetail batches run concurrently and merge back in order");
+  {
+    // LATENCY_PLAN AI-5: the batches used to run one after another. Each reply here is keyed
+    // to the people the request asked for, so the order the calls finish in cannot leak
+    // into the result.
+    const twelve = [...many, "Frances Allen", "John Backus", "Adele Goldberg", "Niklaus Wirth"];
+    sent.length = 0;
+    replies = [identify(twelve)];
+    replyFor = (text) => {
+      if (!text.includes("EXTRACT FULL DETAILS")) return nextReply();
+      const asked = [...text.matchAll(/^\d+\. ([^<@—\n]+?)\s*$/gm)].map((m) => m[1]!.trim());
+      return JSON.stringify({ people: asked.map((name) => ({ name, company: `${name} Co`, source_excerpt: `${name} said hello.` })) });
+    };
+    delayMs = 50;
+    maxInFlight = 0;
+    const out = await parseMultiPersonNotesWithAI(USER, notes);
+    replyFor = null;
+    delayMs = 0;
+    check("three detail batches were in flight at once", maxInFlight >= 3, String(maxInFlight));
+    check(
+      "  everyone, in the identified order, each with their own fields",
+      JSON.stringify(out.people.map((p) => [p.name, p.company])) === JSON.stringify(twelve.map((n) => [n, `${n} Co`])),
+      JSON.stringify(out.people.map((p) => [p.name, p.company]))
+    );
+  }
 
   console.log("\nThinking levels reach the wire only when the registry sets one");
   {

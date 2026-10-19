@@ -253,7 +253,7 @@ export async function GrowthMoreMetrics() {
           ) : aiOps.length === 0 ? (
             <EmptyState>No AI operations recorded.</EmptyState>
           ) : (
-            <AdminTable
+            <AdminTable label="AI calls and estimated cost"
               minWidth="sm"
               head={
                 <>

@@ -65,7 +65,7 @@ function TierTag({ plans }: { plans: readonly Plan[] | undefined }) {
   return (
     <span
       data-plan={plan}
-      className="inline-flex items-center gap-1 rounded-full border border-tier-border px-1.5 py-px text-[10px] uppercase tracking-wide text-tier-accent"
+      className="inline-flex items-center gap-1 rounded-full border border-tier-border px-1.5 py-px text-3xs uppercase tracking-wide text-tier-accent"
     >
       <Lock aria-hidden className="size-2.5" />
       {PLAN_SHORT_LABELS[plan]}
@@ -556,6 +556,7 @@ export function MobileNav({
                     href={navItem.href}
                     // Touch-start upgrades it to a full prefetch ~100 ms before the tap's click.
                     prefetch={fullPrefetch(navItem, isNavActive(pathname, navItem.href))}
+                    aria-current={isNavActive(pathname, navItem.href) ? "page" : undefined}
                     ref={(el) => {
                       itemRefs.current[myIndex] = el;
                     }}
@@ -648,7 +649,7 @@ export function MobileNav({
             <SheetTitle>More</SheetTitle>
           </SheetHeader>
 
-          <nav className="flex flex-col gap-1 px-1 py-2">
+          <nav aria-label="More" className="flex flex-col gap-1 px-1 py-2">
             <button
               type="button"
               onClick={() => {
@@ -687,6 +688,7 @@ export function MobileNav({
                   key={item.href}
                   href={item.href}
                   prefetch={fullPrefetch(item, active)}
+                  aria-current={active ? "page" : undefined}
                   onClick={() => setMoreOpen(false)}
                   className={cn(
                     "relative flex items-center gap-3 rounded-xl px-3 py-3 text-sm transition-colors",
@@ -698,7 +700,7 @@ export function MobileNav({
                   <Icon className="h-5 w-5 shrink-0" />
                   {item.label}
                   {isHrefComingSoon(item.href, comingSoon) ? (
-                    <span className="rounded-full border border-warning/40 px-1.5 py-px text-[10px] uppercase tracking-wide text-warning">
+                    <span className="rounded-full border border-warning/40 px-1.5 py-px text-3xs uppercase tracking-wide text-warning">
                       Soon
                     </span>
                   ) : (

@@ -34,10 +34,20 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  */
 export const AVATAR_RECHECK_DAYS = 30;
 
-/** What the stored `profile_image_url` is, decided in SQL so the value never leaves Postgres. */
+/**
+ * What the stored `profile_image_url` is, decided in SQL so the value never leaves Postgres.
+ *
+ * The inline-photo test comes first and reads an 11-character `substr`: Postgres then
+ * decompresses only that prefix of a toasted value instead of the whole base64 photo (up to
+ * 120 KB). Testing `btrim(...)` or `LIKE 'data:image/%'` first decompressed every inline
+ * photo on every probe, which made this the slowest call on every page load (LATENCY_PLAN
+ * SRV-16: 835 ms at 5,000 contacts). Same answers: a data URL is never blank, so the order
+ * of the first three branches does not change any result.
+ */
 const storedKind = sql<"none" | "durable" | "unusable" | "remote">`CASE
-  WHEN ${contacts.profileImageUrl} IS NULL OR btrim(${contacts.profileImageUrl}) = '' THEN 'none'
-  WHEN ${contacts.profileImageUrl} LIKE 'data:image/%' THEN 'durable'
+  WHEN ${contacts.profileImageUrl} IS NULL THEN 'none'
+  WHEN substr(${contacts.profileImageUrl}, 1, 11) = 'data:image/' THEN 'durable'
+  WHEN btrim(${contacts.profileImageUrl}) = '' THEN 'none'
   WHEN ${contacts.profileImageUrl} LIKE '%.public.blob.vercel-storage.com%' THEN 'durable'
   WHEN ${contacts.profileImageUrl} LIKE '%unavatar.io%'
     OR ${contacts.profileImageUrl} LIKE '%static.licdn.com/aero%' THEN 'unusable'

@@ -66,7 +66,7 @@ export function ContactsExportGuide() {
         How to export
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-h-[min(90vh,40rem)] overflow-y-auto sm:max-w-lg">
+        <DialogContent className="max-h-[min(90dvh,40rem)] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Export your contacts</DialogTitle>
             <DialogDescription>

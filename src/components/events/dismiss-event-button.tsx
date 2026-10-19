@@ -50,7 +50,7 @@ export function DismissEventButton({
       disabled={pending}
       // Always reachable, not hover-only: a touch device has no hover, and this is the
       // control that makes an unwanted suggestion go away.
-      className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/55 px-2 py-1 text-[11px] font-medium text-white opacity-80 transition-opacity hover:opacity-100 focus-visible:opacity-100"
+      className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/55 px-2 py-1 text-2xs font-medium text-white opacity-80 transition-opacity hover:opacity-100 focus-visible:opacity-100"
       aria-label={hidden ? `Restore ${title}` : `Hide ${title} — not mine`}
     >
       {pending ? (

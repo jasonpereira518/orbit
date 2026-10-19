@@ -88,7 +88,7 @@ export function ChatActivity({ steps, state, variant = "full", answerStarted = f
           <span className="t-shimmer max-w-full truncate align-bottom" data-text={label}>
             {label}
           </span>
-          {current?.detail ? <span className="text-muted-foreground/70"> · {current.detail}</span> : null}
+          {current?.detail ? <span className="text-muted-foreground-subtle"> · {current.detail}</span> : null}
         </span>
       </>
     );
@@ -197,10 +197,10 @@ export function ChatActivity({ steps, state, variant = "full", answerStarted = f
                 <li key={step.id} className="text-xs text-muted-foreground">
                   <span className="text-foreground/80">{step.label}</span>
                   {typeof step.ms === "number" && (
-                    <span className="text-muted-foreground/70"> · {formatMs(step.ms)}</span>
+                    <span className="text-muted-foreground-subtle"> · {formatMs(step.ms)}</span>
                   )}
                   {step.detail && (
-                    <span className="block text-muted-foreground/70">{step.detail}</span>
+                    <span className="block text-muted-foreground-subtle">{step.detail}</span>
                   )}
                   {step.kind !== "search" && step.refs && step.refs.length > 0 && (
                     <span className="mt-1 flex flex-wrap gap-1">
@@ -209,14 +209,14 @@ export function ChatActivity({ steps, state, variant = "full", answerStarted = f
                           <IntentLink
                             key={`${step.id}-${ref.id}`}
                             href={`/contacts/${ref.id}`}
-                            className="rounded-full bg-muted/60 px-2 py-0.5 text-[11px] text-foreground/80 transition-colors hover:bg-muted hover:text-foreground"
+                            className="rounded-full bg-muted/60 px-2 py-0.5 text-2xs text-foreground/80 transition-colors hover:bg-muted hover:text-foreground"
                           >
                             {ref.name}
                           </IntentLink>
                         ) : (
                           <span
                             key={`${step.id}-${ref.id}`}
-                            className="rounded-full bg-muted/60 px-2 py-0.5 text-[11px] text-foreground/80"
+                            className="rounded-full bg-muted/60 px-2 py-0.5 text-2xs text-foreground/80"
                           >
                             {ref.name}
                           </span>

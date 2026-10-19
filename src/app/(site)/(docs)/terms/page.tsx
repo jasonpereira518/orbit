@@ -18,7 +18,7 @@ import { LEGAL_LAST_UPDATED } from "@/lib/legal";
 import { TIMELINE_DAILY_CONTACT_CAP } from "@/lib/timeline-cost";
 
 export const metadata: Metadata = {
-  title: "Terms of Service — Orbit",
+  title: "Terms of Service",
   description:
     "The agreement covering your use of Orbit: what you can expect from the product, and what it expects from you.",
 };

@@ -1,0 +1,74 @@
+{
+  "tier": "50000",
+  "rows": 20000,
+  "csv_kb": 1965,
+  "network_before": 50025,
+  "network_after": 50025,
+  "stage": {
+    "jobId": "82d0513a-94b8-47dc-9295-679ef0cc8cd1",
+    "rows": 20000,
+    "parse_ms": 37,
+    "stage_ms": 1576,
+    "statements": 20
+  },
+  "create": {
+    "run_ms": 114448,
+    "first_progress_ms": 114435,
+    "progress_samples": [
+      {
+        "at": 114435,
+        "rows": 20000,
+        "poll_ms": 1
+      }
+    ],
+    "status": "completed",
+    "processed": 20000,
+    "stats": {
+      "skipped": 0,
+      "durationMs": 86073,
+      "failedRows": 0,
+      "runEndedAt": "2026-10-17T12:26:59.558Z",
+      "statements": 823,
+      "blockedByPlan": 0,
+      "remindersCreated": 0,
+      "interactionsLogged": 0
+    },
+    "statements": 823,
+    "chunk_size": 250,
+    "rows_per_s": 175
+  },
+  "stage_again": {
+    "jobId": "a2e09930-35a0-4a85-9926-a61f1f1ca5fc",
+    "rows": 20000,
+    "parse_ms": 36,
+    "stage_ms": 1702,
+    "statements": 20
+  },
+  "merge": {
+    "run_ms": 167119,
+    "first_progress_ms": 167115,
+    "progress_samples": [
+      {
+        "at": 167115,
+        "rows": 20000,
+        "poll_ms": 1
+      }
+    ],
+    "status": "completed",
+    "processed": 20000,
+    "stats": {
+      "skipped": 0,
+      "durationMs": 137986,
+      "failedRows": 0,
+      "runEndedAt": "2026-10-17T12:29:47.629Z",
+      "statements": 567,
+      "blockedByPlan": 0,
+      "remindersCreated": 0,
+      "interactionsLogged": 0
+    },
+    "statements": 567,
+    "chunk_size": 250,
+    "rows_per_s": 120
+  },
+  "at": "2026-10-17T12:30:21.093Z"
+}

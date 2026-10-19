@@ -275,6 +275,21 @@ export const MeetingEngine = memo(function MeetingEngine({ form }: { form: Meeti
     [setSegment]
   );
 
+  /** The server relabels these sentences "you" when the claim lands; mirror it on screen. */
+  const handleLiveYou = useCallback((label: string, fromSeq: number) => {
+    setSegments((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const view of Object.values(prev)) {
+        if (view.seq >= fromSeq && view.speaker === label) {
+          next[view.seq] = { ...view, speaker: "you" };
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, []);
+
   /** The month's meeting minutes, and the day they come back. */
   const quotaResetLabel = useMemo(
     () =>
@@ -317,6 +332,7 @@ export const MeetingEngine = memo(function MeetingEngine({ form }: { form: Meeti
     loudness: () => recorderRef.current?.loudness ?? NO_LOUDNESS,
     recorderId: () => recorderIdRef.current,
     onSegment: handleLiveSegment,
+    onYou: handleLiveYou,
     onChunksNeeded: uploadChunks,
     onUnavailable: handleLiveUnavailable,
     onQuotaWarning: (remainingSeconds) => setQuotaWarnMinutes(Math.max(1, Math.round(remainingSeconds / 60))),

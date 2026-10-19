@@ -120,7 +120,7 @@ export function ShareRow({
           value={url}
           onFocus={(e) => e.currentTarget.select()}
           className={cn(
-            "h-10 min-w-0 flex-1 rounded-lg border bg-[#05070f]/50 px-3 font-mono text-xs text-[#9aada8] transition-colors focus:outline-none",
+            "h-10 min-w-0 flex-1 rounded-lg border bg-[#05070f]/50 px-3 font-mono text-xs text-[#9aada8] transition-colors focus:outline-none focus-visible:ring-3 focus-visible:ring-[#f2c14e]/70",
             copied ? "border-[#f2c14e]/70" : "border-[#e8f3f1]/[0.14]"
           )}
         />

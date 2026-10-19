@@ -76,6 +76,9 @@ export async function mrrMovementSeries(
 export type CashFlowPoint = {
   month: Date;
   cashInCents: number;
+  /** The recurring part of `cashInCents` (subscription invoices) — what Stripe Billing takes its cut of. */
+  recurringCents: number;
+  chargeCount: number;
   refundedCents: number;
   costs: MonthlyCosts;
   /** Cash in, less refunds, less every cost. Negative is a loss, and is shown as one. */
@@ -105,6 +108,8 @@ export async function cashFlowSeries(
     return {
       month: cost.month,
       cashInCents,
+      recurringCents: movement?.paymentCents ?? 0,
+      chargeCount: movement?.chargeCount ?? 0,
       refundedCents,
       costs: cost,
       contributionCents: cashInCents - refundedCents - cost.totalCents,

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { joinInterestList } from "@/actions/interest-list";
 
 const inputClass =
-  "w-full rounded-xl border border-[#e8f3f1]/[0.14] bg-[#05070f]/50 px-4.5 py-3.5 text-[#e8f3f1] placeholder:text-[#6d807c] focus:border-[#f2c14e]/50 focus:outline-none";
+  "w-full rounded-xl border border-[#e8f3f1]/[0.14] bg-[#05070f]/50 px-4.5 py-3.5 text-[#e8f3f1] placeholder:text-[#6d807c] focus:border-[#f2c14e]/50 focus:outline-none focus-visible:ring-3 focus-visible:ring-[#f2c14e]/70";
 
 const buttonClass =
   "w-full whitespace-nowrap rounded-xl bg-landing-button-surface px-4.5 py-3.5 font-medium text-landing-button-label transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60";
@@ -27,6 +27,13 @@ export function WaitlistForm() {
     readyAt.current = Date.now();
   }, []);
 
+  // The form, and the button that had focus, are gone once this succeeds. Move focus to the
+  // confirmation so it is read out and keyboard users aren't dropped back at the page top.
+  const successRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (status === "success") successRef.current?.focus();
+  }, [status]);
+
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!email) return;
@@ -46,7 +53,12 @@ export function WaitlistForm() {
 
   if (status === "success") {
     return (
-      <p className="text-sm text-[#e8f3f1]">
+      <p
+        ref={successRef}
+        role="status"
+        tabIndex={-1}
+        className="text-sm text-[#e8f3f1] outline-none"
+      >
         You&apos;re in — we&apos;ll email you when there&apos;s news.
       </p>
     );
@@ -61,6 +73,9 @@ export function WaitlistForm() {
         id="waitlist-email"
         type="email"
         required
+        autoComplete="email"
+        aria-invalid={status === "error" || undefined}
+        aria-describedby={status === "error" ? "waitlist-error" : undefined}
         placeholder="you@company.com"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
@@ -76,7 +91,7 @@ export function WaitlistForm() {
         {status === "loading" ? "Signing up…" : "Get updates"}
       </button>
       {status === "error" && (
-        <p className="text-sm text-[#e8a84e]">
+        <p id="waitlist-error" role="alert" className="text-sm text-[#e8a84e]">
           Something went wrong — please try again.
         </p>
       )}

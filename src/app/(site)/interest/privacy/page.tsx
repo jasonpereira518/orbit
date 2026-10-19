@@ -15,7 +15,8 @@ import { isWaitlistHostHeader } from "@/lib/waitlist-host";
  * waitlist is sent out.
  */
 export const metadata: Metadata = {
-  title: "Privacy — early access waitlist",
+  // Absolute: the waitlist is its own surface and does not carry the app's "· Orbit" suffix.
+  title: { absolute: "Privacy — early access waitlist" },
   description: "What the early access waitlist collects, why, and how to leave.",
   metadataBase: new URL(getWaitlistOrigin()),
   icons: { icon: "/waitlist/icon.png", apple: "/waitlist/icon.png" },
@@ -72,7 +73,7 @@ export default async function WaitlistPrivacyPage() {
 
   return (
     <div className="landing-root relative min-h-dvh bg-[#03050c] text-[#e8f3f1]">
-      <main className="mx-auto w-full max-w-2xl px-6 pb-20 pt-16 md:pt-24">
+      <main id="main-content" className="mx-auto w-full max-w-2xl px-6 pb-20 pt-16 md:pt-24">
         <p className="text-xs uppercase tracking-[0.16em] text-landing-accent">
           Early access waitlist
         </p>
