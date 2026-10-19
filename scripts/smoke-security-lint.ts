@@ -22,6 +22,20 @@ const SRC = join(ROOT, "src");
 
 /** Reviewed `sql.raw` sites with a non-literal argument, keyed `file :: argument`. */
 const SQL_RAW_ALLOWLIST: Record<string, string> = {
+  "src/lib/closeness-cohort.ts :: sqlList(EXCHANGE_TOUCH_TYPES)":
+    "quoted lists built from the constant NOTE/MEETING/EXCHANGE_TOUCH_TYPES arrays.",
+  "src/lib/closeness-cohort.ts :: sqlList(MEETING_TOUCH_TYPES)":
+    "quoted lists built from the constant NOTE/MEETING/EXCHANGE_TOUCH_TYPES arrays.",
+  "src/lib/closeness-cohort.ts :: sqlList(NOTE_TOUCH_TYPES)":
+    "quoted lists built from the constant NOTE/MEETING/EXCHANGE_TOUCH_TYPES arrays.",
+  "src/lib/dashboard-network.ts :: `${opts.byOrbitScore ? \"contacts.sort_key desc, \" : \"\"}contacts.updated_at desc, contacts.id desc`":
+    "`key` is the closed \"raw\" | \"closeness\" | \"orbitScore\" union, `column` names come from code (touch-count columns), and the order fragments switch on a boolean.",
+  "src/lib/dashboard-network.ts :: `${opts.byOrbitScore ? \"sort_key desc, \" : \"\"}updated_at desc, id desc`":
+    "`key` is the closed \"raw\" | \"closeness\" | \"orbitScore\" union, `column` names come from code (touch-count columns), and the order fragments switch on a boolean.",
+  "src/lib/dashboard-network.ts :: `(case when jsonb_typeof(contacts.closeness_breakdown->'${key}') = 'number' then (contacts.closeness_breakdown->>'${key}')::float8 end)`":
+    "`key` is the closed \"raw\" | \"closeness\" | \"orbitScore\" union, `column` names come from code (touch-count columns), and the order fragments switch on a boolean.",
+  "src/lib/dashboard-network.ts :: `coalesce(touch.${column}, 0)`":
+    "`key` is the closed \"raw\" | \"closeness\" | \"orbitScore\" union, `column` names come from code (touch-count columns), and the order fragments switch on a boolean.",
   "src/lib/admin-interest-list.ts :: unit":
     "`unit` is one of two literals picked from the closed `grain` union.",
   "src/lib/admin-roster.ts :: HAS_PROVIDER_KEY_SQL":
