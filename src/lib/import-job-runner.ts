@@ -7,7 +7,6 @@ import {
   confirmContactsFileImport,
   confirmGoogleContactsImport,
   confirmOutlookContactsImport,
-  startLinkedInImport,
   startLinkedInMessagesImport,
   type ImportJobStatus,
 } from "@/actions/imports";
@@ -714,8 +713,9 @@ function importStarter(
     // The preview already refused anything this big; this covers the cards, which hold their
     // own copy of the text, and keeps every kind from reaching a 413. Measured as the whole
     // payload: the text plus the selected ids that ride in the same action argument.
+    // Connections go up in chunks (`stageAndStartConnections`), so only the others are bounded.
     const text =
-      job.kind === "connections" || job.kind === "messages"
+      job.kind === "messages"
         ? job.csvText
         : job.kind === "contacts_file" || job.kind === "calendar"
           ? job.text
@@ -725,7 +725,11 @@ function importStarter(
     }
     switch (job.kind) {
       case "connections":
-        return startLinkedInImport(job.csvText, job.fileName, job.ids);
+        // Loaded when a connections import starts: it brings the CSV parser, and this module
+        // is in every signed-in page's first load (the import progress watcher).
+        return import("@/lib/imports/linkedin-connections-client").then(({ stageAndStartConnections }) =>
+          stageAndStartConnections(job.csvText, job.fileName, job.ids),
+        );
       case "google_contacts":
         return confirmGoogleContactsImport(job.ids);
       case "outlook_contacts":

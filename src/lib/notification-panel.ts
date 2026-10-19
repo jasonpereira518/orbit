@@ -11,6 +11,9 @@ import type { AccountAlert } from "@/lib/account-alerts";
 import { isDateOnlyDue } from "@/lib/reminder-due-bucket";
 import { viewerTimeZone } from "@/lib/viewer-time-zone";
 
+/** A canonical (lower-case) uuid, the only text `id = x::uuid` matches as the JS compare would (as in reminders.ts). */
+const CANONICAL_UUID_RE = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
+
 /** Upcoming follow-ups are shown this far ahead; further out is noise. */
 const UPCOMING_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
 
@@ -83,10 +86,24 @@ export async function loadNotificationPanel(
       orderBy: (c, { asc: ascOrder }) => [ascOrder(c.nextFollowUpAt)],
       limit: 100,
     }),
+    // A suggestion about a contact that no longer exists in this account is dropped, as the
+    // dashboard (`loadDashboardSuggestions`) and the chat attention brief already do:
+    // `related_contact_ids` is jsonb with no foreign key, so deleting the contact leaves the
+    // suggestion behind, and the panel would keep naming them with a link that 404s. Filtered
+    // in SQL so ghosts do not use up the 30 rows.
     db.query.aiSuggestions.findMany({
       where: and(
         eq(aiSuggestions.userId, userId),
-        eq(aiSuggestions.status, "pending")
+        eq(aiSuggestions.status, "pending"),
+        sql`(
+          coalesce(${aiSuggestions.relatedContactIds} ->> 0, '') = ''
+          or exists (
+            select 1 from ${contacts} live
+            where live.user_id = ${userId}
+              and live.id = case when (${aiSuggestions.relatedContactIds} ->> 0) ~ ${CANONICAL_UUID_RE}
+                                 then (${aiSuggestions.relatedContactIds} ->> 0)::uuid end
+          )
+        )`
       ),
       orderBy: (s, { desc: descOrder }) => [descOrder(s.confidenceScore)],
       limit: 30,

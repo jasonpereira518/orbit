@@ -42,8 +42,7 @@ export function stripTracking(rawUrl: string): string {
 
 /**
  * Mirrors `linkedinSlug` in the app. Returns "" when there is no /in/ segment
- * (the app falls back to the whole string there; we treat it as "no signal"
- * and let the caller decide).
+ * ("no signal"; the app does the same, matching its `linkedin_slug` column).
  *
  * Deliberately does NOT percent-decode. The app compares raw captures, so
  * decoding here would turn a stored `/in/jos%C3%A9` and a live `/in/josé` into

@@ -538,12 +538,19 @@ export async function runLinkedInTimelineBackfill(
     // way, one thread at a time, exactly as before. The threads are read together; the
     // writes stay per contact, each right after its own model call, so a failure partway
     // through keeps the answers already paid for.
+    //
+    // Inside the same budget as the claim loop: up to `MAX_BATCH_REQUESTS` sequential model
+    // calls per slice outran the route's `maxDuration`, killing the invocation before it
+    // could report `remaining`. A thread not reached keeps no `li-event:` rows, so it stays
+    // pending and the next invocation takes it. Later slices may still go out as batches.
+    if (Date.now() - start >= budgetMs) continue;
     const sliceThreads = await loadLinkedInThreads(
       userId,
       slice.map((q) => q.contactId),
       { order: "asc", limit: MESSAGE_LIMIT }
     );
     for (const q of slice) {
+      if (Date.now() - start >= budgetMs) break;
       const events = await extract(
         userId,
         q.contactId,

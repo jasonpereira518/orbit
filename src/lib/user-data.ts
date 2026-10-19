@@ -1,6 +1,7 @@
 import { cancelBatchJobsFor } from "@/lib/ai-batch";
 import { reportError } from "@/lib/report-error";
 import { retireStripeCustomer } from "@/lib/stripe-customer-retire";
+import { forgetDuplicateCount } from "@/lib/duplicate-count-memo";
 import { del } from "@/lib/blob-lazy";
 import { revokeGoogleGrant } from "@/lib/oauth-revoke";
 import { OUTLOOK_SCAN_IMPORT_TYPE } from "@/lib/outlook-scan-type";
@@ -694,6 +695,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // field of a person the user knew, surviving the deletion of the contact it came from.
       await db.delete(contactIdentities).where(eq(contactIdentities.userId, userId));
       await db.delete(duplicateSuggestions).where(eq(duplicateSuggestions.userId, userId));
+      forgetDuplicateCount(userId);
       await db.delete(contactMerges).where(eq(contactMerges.userId, userId));
       // `contact_tags` has no `user_id` of its own, so it is deleted through its contacts.
       // One statement with a subquery, not a query for every contact followed by a delete

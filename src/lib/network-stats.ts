@@ -4,6 +4,7 @@ import { companies, interactions } from "@/db/schema";
 import { closenessTier } from "@/lib/closeness";
 import {
   getClosenessCohortSlim,
+  storedCohortSummary,
   type ClosenessCohortSlimResult,
 } from "@/lib/closeness-cohort";
 import { getNetworkStatsCounts } from "@/lib/dashboard-aggregates";
@@ -77,6 +78,20 @@ function pickHeadline(input: {
   };
 }
 
+/**
+ * The one figure that is not a column predicate: inner circle is counted by ABSOLUTE score
+ * rather than the displayed tier, because inner/mid/outer are quota shares — a fixed
+ * fraction of the network would be reported as "closest ties" however cold everything got.
+ * `storedCohortSummary` is the same count in SQL.
+ */
+function summarizeCohort(cohort: ClosenessCohortSlimResult) {
+  let innerCircle = 0;
+  for (const breakdown of cohort.byId.values()) {
+    if (closenessTier(breakdown.raw) === "inner") innerCircle++;
+  }
+  return { innerCircle, averageRaw: cohort.averageRaw };
+}
+
 export async function getNetworkStats(
   userId: string,
   preloaded?: {
@@ -92,7 +107,7 @@ export async function getNetworkStats(
     aggregates,
     interactionCountRows,
     companyCountRows,
-    closenessCohort,
+    cohortSummary,
     timeZone,
   ] = await Promise.all([
     // Four integers from one statement, where this used to loop every contact in the
@@ -112,7 +127,14 @@ export async function getNetworkStats(
           .from(companies)
           .where(eq(companies.userId, userId)),
     // Slim, and shared with the dashboard load on the same request: this reads `raw` only.
-    preloaded?.cohort ?? getClosenessCohortSlim(userId),
+    // Without one to share (MCP get_network_overview, radar) the two figures come from
+    // stored scores in SQL, and the whole cohort is loaded only when those are not current:
+    // 2.5 s -> a count at 100k contacts.
+    preloaded?.cohort
+      ? preloaded.cohort.then(summarizeCohort)
+      : storedCohortSummary(userId).then(
+          (stored) => stored ?? getClosenessCohortSlim(userId).then(summarizeCohort)
+        ),
     // "Since <date>" is written here, on the server: in the viewer's zone (audit L-17).
     viewerTimeZone(),
   ]);
@@ -121,14 +143,7 @@ export async function getNetworkStats(
   const companyCount = companyCountRows[0]?.value ?? 0;
 
   const now = new Date();
-  // The one figure that is not a column predicate: inner circle is counted by ABSOLUTE
-  // score rather than the displayed tier, because inner/mid/outer are quota shares — a
-  // fixed fraction of the network would be reported as "closest ties" however cold
-  // everything got. The cohort is already loaded above, so this costs nothing.
-  let innerCircle = 0;
-  for (const breakdown of closenessCohort.byId.values()) {
-    if (closenessTier(breakdown.raw) === "inner") innerCircle++;
-  }
+  const { innerCircle } = cohortSummary;
 
   const dormant30 = aggregates.dormant30;
   const overdueFollowUps = aggregates.overdueFollowUps;
@@ -144,7 +159,7 @@ export async function getNetworkStats(
   // Deliberately the mean of the *absolute* scores. The blended score is half
   // percentile, whose mean is 0.5 by construction, so averaging that would park
   // this stat near 50% and stop it reacting to the network going cold.
-  const avgCloseness = Math.round(closenessCohort.averageRaw * 100);
+  const avgCloseness = Math.round(cohortSummary.averageRaw * 100);
 
   const { headline, subheadline } = pickHeadline({
     contacts: aggregates.totalContacts,

@@ -129,6 +129,8 @@ async function main() {
   const failing = {
     deliver: async () => { throw new Error("Slack webhook answered 500"); },
     heartbeat: async () => {},
+    // As in `deps`: otherwise on a Monday the weekly report is due too and fails alongside.
+    weeklyReportDue: () => false,
   };
   const down = await runOpsSweep({ trigger: "manual", deps: failing });
   check("a failed delivery marks the sweep partial", down.status === "partial" && down.deliveryFailures === 1, JSON.stringify(down));
