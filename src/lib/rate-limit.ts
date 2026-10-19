@@ -56,6 +56,7 @@ const BUCKET_LABELS: Record<string, string> = {
   avatarResolve: "photo lookup",
   avatarFill: "photo fill",
   feedback: "feedback",
+  survey: "survey",
   radarRefresh: "Radar refresh",
   knowledgeRefresh: "refresh",
   interestJoin: "sign-up",
@@ -98,12 +99,16 @@ const BUCKET_LABELS: Record<string, string> = {
   chatThreadDaily: "daily new-conversation",
   reminderDaily: "daily reminder",
   importDaily: "daily import",
+  "web-search": "monthly web search",
+  "web-search-all": "Orbit-wide web search",
 };
 
 function formatRetryAfter(sec: number): string {
   if (sec < 60) return `${sec}s`;
-  const min = Math.round(sec / 60);
-  return `${min} minute${min === 1 ? "" : "s"}`;
+  const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+  if (sec < 3_600) return plural(Math.round(sec / 60), "minute");
+  if (sec < 2 * 86_400) return plural(Math.round(sec / 3_600), "hour");
+  return plural(Math.round(sec / 86_400), "day");
 }
 
 export class RateLimitedError extends Error {
@@ -223,9 +228,21 @@ export const RATE_LIMITS = {
    * The hourly sweep's own daily allowance per account (lib/work-history-sweep.ts), keyed
    * per UTC day. Separate from `workHistoryResearch` so background re-checks can never use
    * up the lookups a person clicks for; every sweep search also counts against that one,
-   * so the two together still stop at its 60.
+   * so the two together still stop at its 60. Was 20: at two searches each that was most of
+   * the web-search bill (Oct 2026), spent on contacts nobody had opened.
    */
-  workHistoryBackground: { limit: 20, windowSec: 86_400 },
+  workHistoryBackground: { limit: 4, windowSec: 86_400 },
+  /**
+   * Web SEARCHES (not calls) per account per calendar month, every feature and key together
+   * (`src/lib/web-search-budget.ts`). Keyed by month, so the window only has to outlast one.
+   */
+  webSearchMonthly: { limit: 300, windowSec: 31 * 86_400 },
+  /**
+   * Web searches across every account per UTC day: half of Anthropic's $190 monthly pool
+   * ($95) at $10 per 1,000, paced so a burst cannot spend the month early. See
+   * `WEB_SEARCH_DAILY_CEILING`, which smoke-rate-limit keeps this equal to.
+   */
+  webSearchDaily: { limit: 306, windowSec: 86_400 },
   /** `/contact`: sends on Orbit's own Resend key. Per IP, shared across instances. */
   contactForm: { limit: 3, windowSec: 600 },
   /**
@@ -234,6 +251,8 @@ export const RATE_LIMITS = {
    * and nobody has anything to say five times in five minutes.
    */
   feedback: { limit: 5, windowSec: 300 },
+  /** The micro-survey prompt: a handful of tiny writes per person, once in a long while. */
+  survey: { limit: 20, windowSec: 3600 },
   // Each refresh re-scores the whole network and may write up to five AI lines on the
   // account's own key. The nightly pass does this anyway; three an hour is plenty by hand.
   radarRefresh: { limit: 3, windowSec: 600 },
@@ -562,11 +581,27 @@ export async function consumeIpBucket(scope: string, ip: string, policy: BucketP
 }
 
 /**
+ * What `scope:key` has counted in its live window, without counting anything. Zero for a
+ * bucket never hit or whose window has expired — the same reset `consumeBucket` applies.
+ */
+export async function bucketCount(scope: string, key: string, policy: BucketPolicy): Promise<number> {
+  const db = await getDb();
+  const [row] = await db
+    .select({ count: rateLimitBuckets.count, startedAt: rateLimitBuckets.windowStartedAt })
+    .from(rateLimitBuckets)
+    .where(eq(rateLimitBuckets.bucket, `${scope}:${key}`))
+    .limit(1);
+  if (!row || Date.now() - row.startedAt.getTime() > policy.windowSec * 1000) return 0;
+  return row.count;
+}
+
+/**
  * A bucket idle this long is dead weight: `consumeBucket` resets an expired window on the
  * next hit anyway, so deleting one loses nothing. Twice the longest window in `RATE_LIMITS`
- * (a day), which `smoke-housekeeping-sweeps` asserts.
+ * (the monthly web-search one, 31 days), which `smoke-housekeeping-sweeps` asserts — at the
+ * old two days the prune deleted a monthly bucket mid-month and zeroed its count.
  */
-export const RATE_LIMIT_BUCKET_RETENTION_MS = 2 * 24 * 60 * 60 * 1000;
+export const RATE_LIMIT_BUCKET_RETENTION_MS = 62 * 24 * 60 * 60 * 1000;
 
 /**
  * Drops long-expired buckets; nothing else ever does, so the table grows by one row per

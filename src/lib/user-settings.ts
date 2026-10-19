@@ -504,7 +504,11 @@ export async function clearPendingLifetimeCheckout(userId: string, sessionId: st
     );
 }
 
-/** How many one-time Lifetime purchases have been made. Reported in /admin. */
+/**
+ * How many accounts HOLD a Lifetime purchase right now ("Lifetime holders" in /admin). Not
+ * "Lifetime sold": a refund or a deleted account lowers this, while a sale stays a sale. The
+ * sales count is the ledger's (`lifetimeSales` in `money-metrics.ts`).
+ */
 export async function countLifetimePurchases() {
   const db = await getDb();
   const [row] = await db

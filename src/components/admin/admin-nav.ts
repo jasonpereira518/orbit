@@ -3,12 +3,15 @@ import {
   Activity,
   DoorOpen,
   Flame,
+  FlaskConical,
   Gauge,
   Globe,
   HandCoins,
   ImageOff,
   LayoutTemplate,
   MessageSquareText,
+  Repeat2,
+  Rocket,
   Scale,
   ScrollText,
   TrendingUp,
@@ -44,6 +47,11 @@ export const ADMIN_NAV: AdminNavItem[] = [
   // "Signed up", and this is the only place the console can see what happened before that.
   { href: "/admin/analytics", label: "Traffic", icon: Globe },
   { href: "/admin/growth", label: "Growth", icon: TrendingUp },
+  // One screen per phase of the launch, each answering one question: is the next wave safe to
+  // send (Beta), is acquisition working (Launch), do people stay and does it pay (Retain).
+  { href: "/admin/beta", label: "Beta", icon: FlaskConical },
+  { href: "/admin/launch", label: "Launch", icon: Rocket },
+  { href: "/admin/retain", label: "Retain", icon: Repeat2 },
   // Stealth on/off and the invitations that get new people past it.
   { href: "/admin/access", label: "Access", icon: DoorOpen },
   // Route is /admin/billing, but the screen covers money in AND money out — "Billing"

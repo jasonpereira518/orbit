@@ -28,6 +28,7 @@ import { getAppBaseUrl } from "@/lib/app-url";
 import { recordAccountAudit } from "@/lib/account-audit";
 import { z } from "zod";
 import { defineAction } from "@/lib/input/action";
+import { trackMcpConnected } from "@/lib/mcp/events";
 
 export type ApiKeySummary = {
   id: string;
@@ -96,7 +97,7 @@ export const createApiKey = defineAction(
   { schema: z.tuple([z.string(), z.array(z.enum(["read", "write"])), z.enum(["api", "mcp_url"]).optional()]) },
   async (userId, name: string, scopes: ApiKeyScope[], kind: ApiKeyKind = "api"): Promise<CreatedApiKey | ApiKeyRefusal> => {
     try {
-      await requireEntitlement(userId, "api");
+      await requireEntitlement(userId, "api", { route: "action.api-keys.create" });
     } catch (err) {
       if (isPaywallError(err)) {
         return { ok: false, reason: "payment_required", message: err.message };
@@ -127,6 +128,8 @@ export const createApiKey = defineAction(
     await recordAccountAudit({ userId, action: "api_key.create", resourceType: "api_key", resourceId: row.id, detail: { kind, prefix: key.prefix, scopes: resolved } });
 
     revalidatePath("/settings");
+    if (kind === "mcp_url") trackMcpConnected({ userId, client: "other", via: "api_key" });
+
     return {
       ok: true,
       summary: {

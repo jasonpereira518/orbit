@@ -16,8 +16,12 @@ import { join } from "node:path";
 import { chainTo, serverImportGraph } from "./lib/import-graph";
 
 const LAYOUT = "src/app/(clerk)/(app)/layout.tsx";
-/** Room to grow from 68 (Oct 2026), but not another tripling. */
-const LAYOUT_MAX_FILES = 90;
+/**
+ * Room to grow from 68 (Oct 2026), but not another tripling. 93 since the security audit:
+ * key rotation (`secrets.ts`, `crypto-rewrap.ts`) and server-side dictation accounting
+ * (`dictation.ts`) sit under `crypto.ts`, `ai-access.ts` and `speech-quota.ts`.
+ */
+const LAYOUT_MAX_FILES = 93;
 /** Modules that must never load on every page: heavy, and needed only by specific actions. */
 const LAYOUT_BANNED = [
   "src/lib/ai.ts",

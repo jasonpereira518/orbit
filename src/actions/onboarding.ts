@@ -11,6 +11,7 @@ import { isOnboardingPath, isOnboardingStep, stepAllowedOnPath, type OnboardingP
 import { ensureUserSettings, recordTermsAcceptance } from "@/lib/user-settings";
 import { z } from "zod";
 import { defineAction } from "@/lib/input/action";
+import { trackOnboardingPathChosen, trackOnboardingStepAdvance } from "@/lib/onboarding-events";
 
 function revalidateOnboarding() {
   for (const path of ["/onboarding", "/dashboard", "/settings", "/contacts", "/capture", "/imports"]) {
@@ -49,6 +50,7 @@ export const startOnboardingPath = defineAction(
         updatedAt: new Date(),
       })
       .where(eq(userSettings.userId, userId));
+    trackOnboardingPathChosen(userId, path);
     return { ok: true as const };
   }
 );
@@ -59,11 +61,13 @@ export const saveOnboardingStep = defineAction(
   async (userId, step: string) => {
     if (!isOnboardingStep(step)) return { ok: false as const };
     const db = await getDb();
-    await ensureUserSettings(userId);
+    // `ensureUserSettings` already reads the row: its step is the one being left.
+    const before = await ensureUserSettings(userId);
     await db
       .update(userSettings)
       .set({ onboardingStep: step, updatedAt: new Date() })
       .where(eq(userSettings.userId, userId));
+    trackOnboardingStepAdvance(userId, before.onboardingPath, before.onboardingStep, step);
 
     return { ok: true as const };
   }

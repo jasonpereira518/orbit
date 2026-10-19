@@ -162,7 +162,10 @@ export const getCaptureJob = defineAction(
       if (captureJobLooksStuck(row)) {
         const resumes = await bumpCaptureStallResumes(row.id);
         if (resumes > MAX_CAPTURE_STALL_RESUMES) {
-          await failCaptureJob(row.id, "Reading those notes stalled a few times and gave up — try extracting again.");
+          await failCaptureJob(row.id, "Reading those notes stalled a few times and gave up — try extracting again.", {
+            stage: "parse",
+            errorKind: "stalled",
+          });
         } else {
           kick(row.id);
         }
@@ -385,7 +388,7 @@ export const saveCaptureJob = defineAction(
       if (!row) return { ok: false, error: "That capture no longer exists" };
       if (moved) {
         if (!moved.result) {
-          await failCaptureJob(moved.id, "Extract people before saving");
+          await failCaptureJob(moved.id, "Extract people before saving", { stage: "save", errorKind: "not_extracted" });
           return { ok: false, error: "Extract people before saving" };
         }
         kick(moved.id);

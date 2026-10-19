@@ -180,8 +180,9 @@ export async function recordErrorEvent(input: ErrorEventInput): Promise<void> {
       source: input.source,
       kind: input.kind,
       userId: input.userId ?? null,
-      // Scrubbed before it is stored (audit L-14): a parse failure quotes the model's answer
-      // and a provider error its raw body; both can repeat a person's notes back.
+      // Scrubbed before it is stored (audit L-14), like a Sentry event is: a parse failure quotes
+      // the model's answer, a provider error its raw body, and a failure thrown over a contact or a
+      // send names an email address. This row is read verbatim on /admin/health and kept 30 days.
       message: input.message
         ? scrubText(toUserFacingError(input.message, "Unknown error").message).slice(0, 500)
         : null,

@@ -68,7 +68,7 @@ export const createWebhookEndpoint = defineAction(
   { schema: z.tuple([z.string(), z.array(z.string())]), invalid: failMessage },
   async (userId, url: string, eventTypes: string[]): Promise<WebhookCreateResult> => {
     try {
-      await requireEntitlement(userId, "api");
+      await requireEntitlement(userId, "api", { route: "action.webhook-endpoints.create" });
     } catch (err) {
       // Returned rather than thrown — Next redacts a thrown action's message, and "something
       // went wrong" is the least useful thing to say to someone who needs to upgrade.

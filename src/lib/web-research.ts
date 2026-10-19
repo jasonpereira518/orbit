@@ -303,7 +303,9 @@ function expectedFailure(err: unknown): { ok: false; reason: "no_ai" | "rate_lim
     return { ok: false, reason: "no_ai", message: "Research needs AI — add a key in Settings → AI" };
   }
   if (isRateLimitedError(err)) {
-    return { ok: false, reason: "rate_limited", message: "You’ve used today’s research lookups — try again tomorrow" };
+    // The web-search budget's own refusals (month, Orbit-wide day, paused) say when to retry.
+    const message = err.scope === "web-research" ? "You’ve used today’s research lookups — try again tomorrow" : err.message;
+    return { ok: false, reason: "rate_limited", message };
   }
   return null;
 }

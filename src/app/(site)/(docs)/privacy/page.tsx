@@ -55,10 +55,10 @@ const TOC: readonly TocItem[] = [
 /** Every service that receives personal data, verified against the code on 2026-10-13. */
 const PROCESSORS = [
   { name: "Clerk", badge: "Required", body: "Sign-in, sessions and account lifecycle. Holds your sign-in identity and records when you accepted these terms." },
-  { name: "Vercel", badge: "Required", body: "Hosting, and file storage for contact photos, capture photos, feedback screenshots and files you attach to email. Also runs Web Analytics and Speed Insights, which receive page addresses with ids and tokens removed." },
+  { name: "Vercel", badge: "Required", body: "Hosting, and file storage for contact photos, capture photos, feedback screenshots and files you attach to email. Also runs Web Analytics and Speed Insights, which receive page addresses with ids and tokens removed, and BotID, which checks forms for automated traffic." },
   { name: "Neon", badge: "Required", body: "The Postgres database that holds your Orbit data." },
   { name: "Sentry", badge: "Required", body: "Error reports: the error, where in the code it happened, the page and browser. Configured not to attach IP addresses or cookies, and with session replay off." },
-  { name: "Slack", badge: "Required", body: "Operational alerts to the operator: job status, route names and error messages. An error message can occasionally include a value it was processing." },
+  { name: "Slack", badge: "Required", body: "Operational alerts to the operator: job status, route names, error messages with email addresses and keys removed, and a short excerpt of any feedback you send. An error message can occasionally include a value it was processing." },
   { name: "Better Stack", badge: "Required", body: "Uptime heartbeat. Receives a ping, no personal data." },
   { name: "unavatar.io", badge: "Automatic", body: "Looks up a public profile photo for contacts with a LinkedIn URL. Receives the LinkedIn username only." },
   { name: "Microlink", badge: "Automatic", body: "When unavatar.io has no photo, fetches the public preview image of the contact's LinkedIn profile URL." },
@@ -488,6 +488,18 @@ export default function PrivacyPage() {
             they are never sold, shared, or used for advertising.
           </p>
           <p>
+            Some things you do leave no record of their own, so Orbit writes a small{" "}
+            <strong>product event</strong> for them: using a connected assistant or the browser
+            extension, hitting a plan limit, seeing a failure, answering a question. An event is a
+            name, the time, your account, and counts or categories from a fixed list. It never
+            contains anything you wrote, named, said or received. Occasionally a one-tap question
+            appears at a natural moment, such as after your first capture or when you cancel; your
+            answer is one choice from a short list, and you can dismiss it. The random per-tab id
+            described above is also saved once with your waitlist entry when you join, and with
+            your account on your first visit after signing up, so Orbit can tell which page a
+            sign-up came from; it is not a cookie, and on its own it identifies no one.
+          </p>
+          <p>
             Orbit also runs two of its host&apos;s tools:{" "}
             <strong>Vercel Web Analytics</strong>, which counts page views and
             visitors in aggregate, and <strong>Vercel Speed Insights</strong>,
@@ -548,6 +560,14 @@ export default function PrivacyPage() {
             you were signed in, keeping only the anonymous count.
           </p>
           <p>
+            Records of AI calls (which operation ran, on which model, whether it worked, never what
+            you sent or got back) are deleted after 180 days, and error records after 30. Product
+            events, described under cookies and analytics, are deleted after 400 days and with your
+            account, as are the records of limits you hit. Logs of scheduled jobs and incoming
+            webhooks are deleted after 90 days, and the recipient address in an email-delivery log
+            after 30. If you joined the waitlist before creating an account, your email address and
+            name leave that entry 30 days after you accept your invite, and at once if you delete
+            your account.
             Some records are kept for a fixed time and then removed automatically: screenshots
             attached to feedback 90 days after the feedback is resolved;
             the email addresses in delivery reports after 30 days, and the reports after 90; the
@@ -571,10 +591,12 @@ export default function PrivacyPage() {
             email address. What remains: Stripe&rsquo;s own records of your payments, held by
             Stripe, with the Stripe customer marked as deleted rather than removed; Orbit&rsquo;s
             accounting record of charges, refunds and credit packs, with your account id removed;
-            the operator&rsquo;s audit log of actions taken on your account, and the log of security
-            events on it (keys created and revoked, exports, connected accounts, plan changes and
-            the deletion itself), both of which refer to an account id that no longer exists; and
-            a few operational counters keyed by that same id. Encrypted database backups are kept for 90 days, so deleted data
+            the operator&rsquo;s audit log of actions taken on your account, which can keep a short
+            excerpt of feedback you sent, and the log of security events on it (keys created and
+            revoked, exports, connected accounts, plan changes and the deletion itself), both of
+            which refer to an account id that no longer exists; a few operational counters keyed by
+            that same id; and operational logs of up to 90 days that can name an account id.
+            Encrypted database backups are kept for 90 days, so deleted data
             leaves the last backup within 90 days.
           </p>
         </DocSection>

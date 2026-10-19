@@ -3,6 +3,7 @@ import { TOUR_EXAMPLE_SOURCE } from "@/lib/onboarding-examples/marker";
 import { getDb, rowsOf } from "@/db";
 import { USAGE_EVENT_RETENTION_DAYS } from "@/lib/admin-health";
 import { internalAccountSql } from "@/lib/analytics-internal";
+import { ACTIVATION_WINDOW_DAYS, activatedSql, intentionalActionsSince } from "@/lib/activity";
 
 /**
  * Time-bucketed growth and activation, for `/admin/growth`.
@@ -47,6 +48,10 @@ export type ActivationPoint = {
   signed: number;
   onboarded: number;
   firstContact: number;
+  /** Accounts in the bucket old enough to have had the whole activation window. */
+  matured: number;
+  /** Of those, the ones that captured and acted within the window (`activatedSql`). */
+  activated: number;
 };
 
 export type UserTotalsPoint = { bucketStart: Date; added: number; total: number };
@@ -136,13 +141,24 @@ export type FeatureAdoptionRow = { key: FeatureKey; label: string; count: number
  * are both built from this list.
  */
 const FEATURES = [
-  { key: "capture", label: "Capture", table: "capture_jobs" },
-  { key: "chat", label: "Chat", table: "chat_messages" },
-  { key: "meetings", label: "Meetings", table: "meeting_sessions" },
-  { key: "reminders", label: "Reminders", table: "reminders" },
-  { key: "imports", label: "Imports", table: "imports" },
-  { key: "goals", label: "Goals", table: "user_goals" },
-  { key: "extension", label: "Extension", table: "extension_usage" },
+  // Each entry is the rows that prove an account COMPLETED the thing, not that it started it:
+  // a capture job exists from the moment it is queued and an import row even if it failed, so
+  // "any row in the table" counted abandoned and failed attempts as adoption.
+  { key: "capture", label: "Capture", table: "capture_jobs", where: "status = 'saved'" },
+  { key: "chat", label: "Chat", table: "chat_messages", where: "role = 'user'" },
+  { key: "meetings", label: "Meetings", table: "meeting_sessions", where: "status IN ('ended', 'analyzed', 'saved')" },
+  { key: "reminders", label: "Reminders", table: "reminders", where: "created_by IN ('user', 'extension')" },
+  { key: "imports", label: "Imports", table: "imports", where: "status = 'completed'" },
+  { key: "goals", label: "Goals", table: "user_goals", where: "true" },
+  // The extension has no rows of its own that mean "used it": `extension_usage` is a rate-limit
+  // counter touched by every session probe. A person did something through it when a follow-up
+  // carries its mark or it recorded an action event.
+  {
+    key: "extension",
+    label: "Extension",
+    table: "(SELECT user_id FROM reminders WHERE created_by = 'extension' UNION ALL SELECT user_id FROM product_events WHERE name = 'extension_action' AND user_id IS NOT NULL)",
+    where: "true",
+  },
 ] as const;
 
 type FeatureKey = (typeof FEATURES)[number]["key"] | "calendar";
@@ -176,36 +192,39 @@ function grainInterval(grain: Grain): string {
  */
 export function series(grain: Grain, buckets: number) {
   const step = grainInterval(grain);
+  // Generated on a zone-less timestamp in UTC and converted back, so a bucket boundary is a
+  // UTC boundary whatever the database session's time zone is, and every join below
+  // (`bucketOf`) lands on the same instants.
   return sql`
-    SELECT gs.bucket_start
+    SELECT (gs.bucket_start AT TIME ZONE 'UTC') AS bucket_start
     FROM generate_series(
-      date_trunc(${grain}, now()) - (${sql.raw(`interval '${step}'`)} * ${buckets - 1}),
-      date_trunc(${grain}, now()),
+      date_trunc(${grain}, now() AT TIME ZONE 'UTC') - (${sql.raw(`interval '${step}'`)} * ${buckets - 1}),
+      date_trunc(${grain}, now() AT TIME ZONE 'UTC'),
       ${sql.raw(`interval '${step}'`)}
     ) AS gs(bucket_start)
   `;
 }
 
 /**
- * What counts as "did something": a row written to any of these five tables.
+ * The UTC bucket a timestamptz column falls in, as a timestamptz comparable with `series()`.
+ * `date_trunc` on a bare timestamptz uses the SESSION's zone, which put a late-evening row in
+ * a different "day" than the traffic page's visitor-days.
+ */
+export function bucketOf(grain: Grain | SQL, column: SQL | string) {
+  const col = typeof column === "string" ? sql.raw(column) : column;
+  return sql`(date_trunc(${grain}, ${col} AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')`;
+}
+
+/**
+ * What counts as "did something": the intentional-action set in `src/lib/activity.ts`.
  *
  * One fragment, shared by every activity query below, so the active-accounts chart, the
- * retention curves and the depth denominator can never disagree about who was active.
- * Counted from writes rather than from `last_active_at`, which is a throttled stamp of the
- * most recent session and carries no history — it can answer "who is active now" but not
- * "who was active in March".
- *
- * Takes a lower bound so each query scans only the window it draws, not every row ever.
+ * retention curves and the depth denominator can never disagree about who was active. It
+ * used to be "a row written to any of five tables", which counted background AI calls and
+ * synced interactions as a person using Orbit, and counted Orbit's own accounts; see
+ * `activity.ts` for what is in and out now.
  */
-function writesSince(since: SQL) {
-  return sql`
-    SELECT user_id, created_at FROM contacts WHERE created_at >= ${since}
-    UNION ALL SELECT user_id, created_at FROM interactions WHERE created_at >= ${since}
-    UNION ALL SELECT user_id, created_at FROM chat_messages WHERE created_at >= ${since}
-    UNION ALL SELECT user_id, created_at FROM imports WHERE created_at >= ${since}
-    UNION ALL SELECT user_id, created_at FROM usage_events WHERE created_at >= ${since}
-  `;
-}
+const writesSince = intentionalActionsSince;
 
 /** The first bucket on a spine CTE named `spine` — the lower bound every query scans from. */
 const SPINE_START = sql`(SELECT min(bucket_start) FROM spine)`;
@@ -213,7 +232,7 @@ const SPINE_START = sql`(SELECT min(bucket_start) FROM spine)`;
 /** The earliest signup, which is where the "All time" range starts. */
 export async function firstSignupAt(): Promise<Date | null> {
   const db = await getDb();
-  const result = await db.execute(sql`SELECT min(created_at) AS first FROM user_settings`);
+  const result = await db.execute(sql`SELECT min(created_at) AS first FROM user_settings WHERE NOT ${internalAccountSql(sql`user_id`)}`);
   const first = rowsOf<{ first: string | null }>(result)[0]?.first;
   return first ? toDate(first) : null;
 }
@@ -234,7 +253,7 @@ export async function userTotalsTrend(
   const result = await db.execute(sql`
     WITH spine AS (${series(grain, buckets)}),
     before_window AS (
-      SELECT count(*)::int AS n FROM user_settings WHERE created_at < ${SPINE_START}
+      SELECT count(*)::int AS n FROM user_settings WHERE created_at < ${SPINE_START} AND NOT ${internalAccountSql(sql`user_id`)}
     )
     SELECT spine.bucket_start,
            count(s.user_id)::int AS added,
@@ -242,7 +261,8 @@ export async function userTotalsTrend(
              + sum(count(s.user_id)) OVER (ORDER BY spine.bucket_start))::int AS total
     FROM spine
     LEFT JOIN user_settings s
-      ON date_trunc(${grain}, s.created_at) = spine.bucket_start
+      ON ${bucketOf(grain, sql`s.created_at`)} = spine.bucket_start
+     AND NOT ${internalAccountSql(sql`s.user_id`)}
     GROUP BY spine.bucket_start
     ORDER BY spine.bucket_start
   `);
@@ -284,7 +304,7 @@ export async function viewersTrend(
            count(DISTINCT v.user_id)::int AS viewers,
            count(v.user_id)::int AS views
     FROM spine
-    LEFT JOIN v ON date_trunc(${grain}, v.created_at) = spine.bucket_start
+    LEFT JOIN v ON ${bucketOf(grain, sql`v.created_at`)} = spine.bucket_start
     GROUP BY spine.bucket_start
     ORDER BY spine.bucket_start
   `);
@@ -355,11 +375,12 @@ export async function growthSnapshot(spanDays: number): Promise<GrowthSnapshot> 
   const result = await db.execute(sql`
     WITH w AS (${writesSince(sql`now() - interval '60 days'`)})
     SELECT
-      (SELECT count(*) FROM user_settings)::int AS total,
-      (SELECT count(*) FROM user_settings WHERE created_at >= now() - ${span})::int AS new_now,
+      (SELECT count(*) FROM user_settings WHERE NOT ${internalAccountSql(sql`user_id`)})::int AS total,
+      (SELECT count(*) FROM user_settings WHERE created_at >= now() - ${span} AND NOT ${internalAccountSql(sql`user_id`)})::int AS new_now,
       (SELECT count(*) FROM user_settings
         WHERE created_at >= now() - ${span} * 2
-          AND created_at < now() - ${span})::int AS new_prev,
+          AND created_at < now() - ${span}
+          AND NOT ${internalAccountSql(sql`user_id`)})::int AS new_prev,
       count(DISTINCT user_id) FILTER (WHERE created_at >= now() - interval '1 day')::int AS dau,
       count(DISTINCT user_id) FILTER (
         WHERE created_at >= now() - interval '2 days'
@@ -410,15 +431,16 @@ export async function retentionCurves(
     WITH cohorts AS (
       SELECT gs.cohort_start
       FROM generate_series(
-        date_trunc('month', now()) - (interval '1 month' * ${months - 1}),
-        date_trunc('month', now()),
+        (date_trunc('month', now() AT TIME ZONE 'UTC') - (interval '1 month' * ${months - 1})) AT TIME ZONE 'UTC',
+        (date_trunc('month', now() AT TIME ZONE 'UTC')) AT TIME ZONE 'UTC',
         interval '1 month'
       ) AS gs(cohort_start)
     ),
     members AS (
-      SELECT user_id, created_at AS signed_at, date_trunc('month', created_at) AS cohort_start
+      SELECT user_id, created_at AS signed_at, (date_trunc('month', created_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') AS cohort_start
       FROM user_settings
       WHERE created_at >= (SELECT min(cohort_start) FROM cohorts)
+        AND NOT ${internalAccountSql(sql`user_id`)}
     ),
     -- One row per (account, week it was active in). A write a moment before the settings
     -- row exists (sign-up races the first import) still lands in week 0.
@@ -489,23 +511,24 @@ export async function depthTrend(
   buckets = 12
 ): Promise<DepthPoint[]> {
   const db = await getDb();
-  const bucketOf = (table: SQL, where: SQL) => sql`
-    SELECT date_trunc(${grain}, created_at) AS b, count(*)::int AS n
+  const countsPerBucket = (table: SQL, where: SQL) => sql`
+    SELECT ${bucketOf(grain, sql`created_at`)} AS b, count(*)::int AS n
     FROM ${table}
     WHERE created_at >= ${SPINE_START} AND ${where}
+      AND NOT ${internalAccountSql(sql`user_id`)}
     GROUP BY 1
   `;
   const result = await db.execute(sql`
     WITH spine AS (${series(grain, buckets)}),
-    captures AS (${bucketOf(sql`capture_jobs`, sql`status = 'saved'`)}),
-    notes AS (${bucketOf(
+    captures AS (${countsPerBucket(sql`capture_jobs`, sql`status = 'saved'`)}),
+    notes AS (${countsPerBucket(
       sql`interactions`,
-      sql`note_batch_id IS NULL AND external_id IS NULL`
+      sql`note_batch_id IS NULL AND external_id IS NULL AND import_id IS NULL AND source IS DISTINCT FROM ${TOUR_EXAMPLE_SOURCE}`
     )}),
-    chats AS (${bucketOf(sql`chat_messages`, sql`role = 'user'`)}),
-    imps AS (${bucketOf(sql`imports`, sql`true`)}),
+    chats AS (${countsPerBucket(sql`chat_messages`, sql`role = 'user'`)}),
+    imps AS (${countsPerBucket(sql`imports`, sql`true`)}),
     active AS (
-      SELECT date_trunc(${grain}, created_at) AS b, count(DISTINCT user_id)::int AS n
+      SELECT ${bucketOf(grain, sql`created_at`)} AS b, count(DISTINCT user_id)::int AS n
       FROM (${writesSince(SPINE_START)}) w
       GROUP BY 1
     )
@@ -562,7 +585,7 @@ export async function workflowStagesTrend(
   const result = await db.execute(sql`
     WITH spine AS (${series(grain, buckets)}),
     per_user AS (
-      SELECT date_trunc(${grain}, s.created_at) AS b,
+      SELECT ${bucketOf(grain, sql`s.created_at`)} AS b,
              CASE
                WHEN EXISTS (
                  SELECT 1 FROM (${writesSince(sql`s.created_at + interval '7 days'`)}) w
@@ -570,7 +593,8 @@ export async function workflowStagesTrend(
                ) THEN 5
                WHEN EXISTS (SELECT 1 FROM capture_jobs j WHERE j.user_id = s.user_id AND j.status = 'saved')
                  OR EXISTS (SELECT 1 FROM interactions x WHERE x.user_id = s.user_id
-                              AND x.note_batch_id IS NULL AND x.external_id IS NULL)
+                              AND x.note_batch_id IS NULL AND x.external_id IS NULL AND x.import_id IS NULL
+                              AND x.source IS DISTINCT FROM ${TOUR_EXAMPLE_SOURCE})
                  OR EXISTS (SELECT 1 FROM chat_messages m WHERE m.user_id = s.user_id AND m.role = 'user')
                  THEN 4
                WHEN EXISTS (SELECT 1 FROM contacts c WHERE c.user_id = s.user_id AND c.source IS DISTINCT FROM ${TOUR_EXAMPLE_SOURCE}) THEN 3
@@ -580,6 +604,7 @@ export async function workflowStagesTrend(
              END AS stage
       FROM user_settings s
       WHERE s.created_at >= ${SPINE_START}
+        AND NOT ${internalAccountSql(sql`s.user_id`)}
     )
     SELECT spine.bucket_start,
            count(p.b) FILTER (WHERE p.stage = 1)::int AS signed_up,
@@ -615,7 +640,7 @@ export async function consistentUsersTrend(buckets = 12): Promise<ConsistencyPoi
   const result = await db.execute(sql`
     WITH spine AS (${series("week", buckets)}),
     wk AS (
-      SELECT DISTINCT user_id, date_trunc('week', created_at) AS week
+      SELECT DISTINCT user_id, ${bucketOf('week', sql`created_at`)} AS week
       FROM (${writesSince(sql`${SPINE_START} - interval '21 days'`)}) w
     )
     SELECT spine.bucket_start,
@@ -657,7 +682,7 @@ export async function aiWeeklyUsage(buckets = 12): Promise<AiWeekPoint[]> {
   const result = await db.execute(sql`
     WITH spine AS (${series("week", bounded)}),
     u AS (
-      SELECT date_trunc('week', created_at) AS b, success, key_owner, estimated_cost_micros
+      SELECT ${bucketOf('week', sql`created_at`)} AS b, success, key_owner, estimated_cost_micros
       FROM usage_events
       WHERE created_at >= ${SPINE_START}
     )
@@ -724,15 +749,18 @@ export async function activationTrend(
     WITH spine AS (${series(grain, buckets)}),
     per_user AS (
       SELECT s.user_id,
-             date_trunc(${grain}, s.created_at) AS bucket_start,
+             ${bucketOf(grain, sql`s.created_at`)} AS bucket_start,
              s.onboarding_completed_at,
              EXISTS (SELECT 1 FROM contacts c WHERE c.user_id = s.user_id AND c.source IS DISTINCT FROM ${TOUR_EXAMPLE_SOURCE}) AS has_contact,
-             EXISTS (SELECT 1 FROM imports i WHERE i.user_id = s.user_id) AS has_import
+             EXISTS (SELECT 1 FROM imports i WHERE i.user_id = s.user_id) AS has_import,
+             s.created_at < now() - ${sql.raw(`interval '${ACTIVATION_WINDOW_DAYS} days'`)} AS mature,
+             ${activatedSql(sql`s.user_id`, sql`s.created_at`)} AS activated
       FROM user_settings s
       -- Only cohorts the spine draws: an older signup joins no bucket, so probing its
       -- contacts was a walk of every account's rows for nothing. EXISTS, not count(*):
       -- only "any at all" is ever asked, and that is one index probe per account.
       WHERE s.created_at >= ${SPINE_START}
+        AND NOT ${internalAccountSql(sql`s.user_id`)}
     )
     SELECT spine.bucket_start,
            count(p.user_id)::int AS signed,
@@ -741,7 +769,9 @@ export async function activationTrend(
                OR p.has_contact
                OR p.has_import
              THEN 1 ELSE 0 END), 0)::int AS onboarded,
-           coalesce(sum(CASE WHEN p.has_contact THEN 1 ELSE 0 END), 0)::int AS first_contact
+           coalesce(sum(CASE WHEN p.has_contact THEN 1 ELSE 0 END), 0)::int AS first_contact,
+           coalesce(sum(CASE WHEN p.mature THEN 1 ELSE 0 END), 0)::int AS matured,
+           coalesce(sum(CASE WHEN p.mature AND p.activated THEN 1 ELSE 0 END), 0)::int AS activated
     FROM spine
     LEFT JOIN per_user p ON p.bucket_start = spine.bucket_start
     GROUP BY spine.bucket_start
@@ -752,11 +782,15 @@ export async function activationTrend(
     signed: number;
     onboarded: number;
     first_contact: number;
+    matured: number;
+    activated: number;
   }>(result).map((r) => ({
     bucketStart: toDate(r.bucket_start),
     signed: num(r.signed),
     onboarded: num(r.onboarded),
     firstContact: num(r.first_contact),
+    matured: num(r.matured),
+    activated: num(r.activated),
   }));
 }
 
@@ -773,18 +807,23 @@ export async function activationTrend(
  */
 export async function featureAdoption(): Promise<FeatureAdoptionRow[]> {
   const db = await getDb();
-  // Table names come from the constant list above, never from input, so sql.raw is safe.
-  const columns = FEATURES.map(
-    (f) => `(SELECT count(DISTINCT user_id) FROM ${f.table}) AS "${f.key}"`
-  ).join(",\n      ");
+  // Tables and predicates come from the constant list above, never from input, so sql.raw is
+  // safe. Internal and tester accounts are excluded, and a demo account's seeded chat and
+  // meetings no longer make the showcase "adopt" them.
+  const internal = internalAccountSql(sql`f.user_id`);
+  const columns = FEATURES.map((f) =>
+    f.table.startsWith("(")
+      ? sql`(SELECT count(DISTINCT f.user_id) FROM ${sql.raw(f.table)} f WHERE NOT ${internal}) AS ${sql.raw(`"${f.key}"`)}`
+      : sql`(SELECT count(DISTINCT f.user_id) FROM ${sql.raw(f.table)} f WHERE ${sql.raw(f.where)} AND NOT ${internal}) AS ${sql.raw(`"${f.key}"`)}`
+  );
   const result = await db.execute(sql`
     SELECT
-      ${sql.raw(columns)},
+      ${sql.join(columns, sql`,\n      `)},
       (SELECT count(*) FROM (
         SELECT user_id FROM calendar_subscriptions
         UNION
         SELECT user_id FROM calendar_sources
-      ) AS c) AS "calendar"
+      ) AS c WHERE NOT ${internalAccountSql(sql`c.user_id`)}) AS "calendar"
   `);
   const row = rowsOf<Record<string, string | number>>(result)[0] ?? {};
   const rows: FeatureAdoptionRow[] = [
@@ -813,7 +852,7 @@ export async function aiVolumeTrend(
            coalesce(sum(CASE WHEN u.success = 0 THEN 1 ELSE 0 END), 0)::int AS failures
     FROM spine
     LEFT JOIN usage_events u
-      ON date_trunc(${grain}, u.created_at) = spine.bucket_start
+      ON ${bucketOf(grain, sql`u.created_at`)} = spine.bucket_start
      -- A sargable lower bound, so the scan covers the drawn window rather than every
      -- retained row (the join condition alone is an expression no index can serve).
      AND u.created_at >= ${SPINE_START}

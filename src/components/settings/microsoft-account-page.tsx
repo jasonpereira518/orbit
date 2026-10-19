@@ -408,7 +408,7 @@ function InboxRow({
       control={control}
       disabled={disabled}
       onAction={() => {
-        if (control.kind === "locked") router.push("/upgrade");
+        if (control.kind === "locked") router.push("/upgrade?gate=recruiters");
         else if (isAllow) onAllow();
         else {
           onScanStarted();

@@ -17,6 +17,7 @@ import { requireClientDate } from "@/lib/input/dates";
 import { z } from "zod";
 import { defineAction } from "@/lib/input/action";
 import { anyNumber } from "@/lib/input/schemas";
+import { churnOverrideOwner } from "@/lib/admin-yc-metrics";
 
 /**
  * Every write below used to trust its input outright — fine for the forms, which already
@@ -139,28 +140,55 @@ export const setCashSnapshotAction = defineAction(
   }
 );
 
+/**
+ * Log one month of acquisition spend.
+ *
+ * The row belongs to exactly ONE calendar month: `created_at` is stamped at that month's
+ * first instant, which is what `monthlyCosts` and `cacFor` attribute by. (The form used to
+ * write "the 30 days ending now" for every entry, so a row logged on the 10th overlapped two
+ * months and was counted in both.) `period_start` / `period_end` are still filled — with the
+ * month's bounds — so anything reading them keeps working.
+ */
 export const addAcquisitionSpendAction = defineAction(
-  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ channel: z.string(), amountUsd: anyNumber, periodStart: z.string(), periodEnd: z.string() })]) },
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ channel: z.string(), amountUsd: anyNumber, month: z.string() })]) },
   async (_caller, input: {
     channel: string;
     amountUsd: number;
-    periodStart: string;
-    periodEnd: string;
+    /** `YYYY-MM`, a month that has started (UTC). */
+    month: string;
   }): Promise<{ ok: true }> => {
     const db = await getDb();
+
+    const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(input.month ?? "");
+    if (!match) throw new Error("Month must look like 2026-09.");
+    const monthStartAt = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, 1));
+    const nextMonthAt = new Date(Date.UTC(Number(match[1]), Number(match[2]), 1));
+    if (monthStartAt.getTime() > Date.now()) throw new Error("That month hasn’t started yet.");
 
     await db.insert(acquisitionSpend).values({
       channel: requireNonEmpty(input.channel, "Channel"),
       amountUsd: requirePositiveAmount(input.amountUsd, "Amount"),
-      periodStart: requireClientDate(input.periodStart, "period start"),
-      periodEnd: requireClientDate(input.periodEnd, "period end"),
+      periodStart: monthStartAt,
+      periodEnd: new Date(nextMonthAt.getTime() - 1),
+      createdAt: monthStartAt,
     });
 
     revalidatePath("/admin/yc/economics");
+    revalidatePath("/admin/yc/runway");
+    revalidatePath("/admin/billing/costs");
+    revalidatePath("/admin/billing");
     return { ok: true };
   }
 );
 
+/**
+ * Set the typed monthly-churn estimate.
+ *
+ * The column is per-admin (no `site_settings` column without a schema change), so the value
+ * is written to the row that currently OWNS it — the first admin in `ADMIN_USER_IDS` order
+ * with a value set, else the caller — which is also the row `loadChurnOverride` reads. Every
+ * admin therefore sees and edits one number.
+ */
 export const setEstimatedChurnAction = defineAction(
   { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ monthlyChurnPct: anyNumber })]) },
   async (adminUserId, input: {
@@ -168,10 +196,11 @@ export const setEstimatedChurnAction = defineAction(
   }): Promise<{ ok: true }> => {
     const db = await getDb();
     const monthlyChurnPct = requirePercent(input.monthlyChurnPct, "Estimated monthly churn");
+    const ownerId = await churnOverrideOwner(adminUserId);
 
     await db
       .insert(userSettings)
-      .values({ userId: adminUserId, estimatedMonthlyChurnPct: monthlyChurnPct })
+      .values({ userId: ownerId, estimatedMonthlyChurnPct: monthlyChurnPct })
       .onConflictDoUpdate({
         target: userSettings.userId,
         set: { estimatedMonthlyChurnPct: monthlyChurnPct, updatedAt: new Date() },

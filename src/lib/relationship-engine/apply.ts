@@ -293,7 +293,9 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
     if (reminderIds.length) {
       await db
         .update(reminders)
-        .set({ status: "done" })
+        // Dated like every other completion path; no `followup_completed` event, because a
+        // note saying it was done is the engine inferring, not the person completing it.
+        .set({ status: "done", completedAt: now })
         .where(and(eq(reminders.userId, userId), inArray(reminders.id, reminderIds), eq(reminders.status, "pending")));
     }
   }

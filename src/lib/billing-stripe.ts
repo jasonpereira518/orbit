@@ -4,7 +4,9 @@ import {
   ANNUAL_MONTHLY_EQUIVALENT_CENTS,
   MONTHLY_CENTS,
   classifyMovement,
+  fallbackMonthlyCents,
 } from "@/lib/billing-events";
+import { LIFETIME_INTRO_PRICE, LIFETIME_STANDARD_PRICE } from "@/lib/plan-limits";
 import {
   CREDIT_PACK_CREDITS,
   CREDIT_PACK_METADATA_VALUE,
@@ -387,6 +389,54 @@ export function intervalFromAmountTotal(
 
 const ANNUAL_CENTS_TOTAL = 5000;
 
+/** Which Lifetime offer a purchase was: the first 100 buyers paid the intro price. */
+export type LifetimeTier = "intro" | "standard" | "unknown";
+
+/**
+ * Classify a Lifetime Checkout Session by what the buyer paid, tolerant of tax.
+ *
+ * `amount_total` includes sales tax, so a $25 intro purchase can read $27 and a $75 standard
+ * one $81 — comparing it to the list price exactly would call every taxed sale "unknown".
+ * Preference order: `amount_subtotal` (before tax and shipping; exact match), then the total
+ * less `total_details.amount_tax` (exact), then the bare total inside a +25% tolerance band
+ * (tax only ever adds). A discounted or unrecognised amount is "unknown" rather than a guess.
+ *
+ * Read from the session because the price OBJECT is not on the event unless expanded: the
+ * amount is what the buyer actually paid and survives a re-priced Stripe object.
+ */
+export function lifetimeTierFor(session: {
+  amount_total?: number | null;
+  amount_subtotal?: number | null;
+  total_details?: { amount_tax?: number | null } | null;
+}): LifetimeTier {
+  const intro = LIFETIME_INTRO_PRICE * 100;
+  const standard = LIFETIME_STANDARD_PRICE * 100;
+  const exact = (cents: number): LifetimeTier =>
+    cents === intro ? "intro" : cents === standard ? "standard" : "unknown";
+
+  if (typeof session.amount_subtotal === "number" && session.amount_subtotal > 0) {
+    return exact(session.amount_subtotal);
+  }
+  const total = session.amount_total;
+  if (typeof total !== "number" || total <= 0) return "unknown";
+  const tax = session.total_details?.amount_tax;
+  if (typeof tax === "number" && tax >= 0) return exact(total - tax);
+  const within = (list: number) => total >= list && total <= Math.round(list * 1.25);
+  if (within(intro)) return "intro";
+  if (within(standard)) return "standard";
+  return "unknown";
+}
+
+/** The Stripe price id behind a Checkout Session, when the payload (or an expansion) carries it. */
+function checkoutPriceId(session: Stripe.Checkout.Session): string | null {
+  const fromLines = (
+    session as unknown as { line_items?: { data?: Array<{ price?: { id?: string } | null }> } }
+  ).line_items?.data?.[0]?.price?.id;
+  if (typeof fromLines === "string") return fromLines;
+  const meta = session.metadata?.orbit_price_id ?? session.metadata?.price_id;
+  return typeof meta === "string" && meta ? meta : null;
+}
+
 function monthlyCentsForInterval(interval: BillingInterval | null): number {
   return interval === "year" ? ANNUAL_MONTHLY_EQUIVALENT_CENTS : MONTHLY_CENTS;
 }
@@ -635,6 +685,11 @@ export function decideStripeEvent(
                 // How a later refund or dispute is tied back to THIS purchase: charges carry
                 // a payment intent, never a session id. See `src/lib/stripe-charge-purpose.ts`.
                 paymentIntentId: paymentIntentIdOf(session),
+                // Which offer this was (intro $25 vs standard $75), so the price step can be
+                // analysed without inferring it from a tax-inclusive `amount_cents`. `priceId`
+                // is null unless the payload carries or expands the line items.
+                priceId: checkoutPriceId(session),
+                tier: lifetimeTierFor(session),
               },
             },
           ],
@@ -828,7 +883,9 @@ export function decideStripeEvent(
         subscription.metadata,
         (subscription as { start_date?: number }).start_date ?? null
       );
-      const listCents = shape.monthlyCents ?? MONTHLY_CENTS;
+      // Unknown price: the tier's own fallback (a Max subscription is not worth a legacy $5),
+      // the same one `monthlyValueCents` and `revenueAtRiskCents` use.
+      const listCents = shape.monthlyCents ?? fallbackMonthlyCents(tier);
       const offCents = foundingOffNow(terms, subscription, Math.floor(eventAt.getTime() / 1000));
       const monthlyCents = Math.max(0, listCents - offCents);
 

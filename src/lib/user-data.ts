@@ -8,7 +8,7 @@ import { OUTLOOK_SCAN_IMPORT_TYPE } from "@/lib/outlook-scan-type";
 import { deleteAvatarBlobs } from "@/lib/avatar-blob";
 import { hasBlobStorage } from "@/lib/contact-avatar";
 import { purgeEmailAttachmentsForUser } from "@/lib/email/attachments";
-import { and, asc, eq, getTableName, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, eq, getTableName, inArray, lt, or, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
 import { getDb, rowsOf } from "@/db";
@@ -66,6 +66,8 @@ import {
   feedback,
   feedbackScreenshots,
   gateEvents,
+  productEvents,
+  siteInvites,
   gmailConnections,
   ignoredPeople,
   importFiles,
@@ -576,8 +578,8 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   activity: {
-    exports: [own(usageEvents), own(extensionUsage, "user_id"), own(errorEvents), own(gateEvents), own(planUpgradeEvents), own(pageViews), own(speechUsage)],
-    counts: [usageEvents, extensionUsage, errorEvents, gateEvents, planUpgradeEvents, speechUsage],
+    exports: [own(usageEvents), own(extensionUsage, "user_id"), own(errorEvents), own(gateEvents), own(planUpgradeEvents), own(pageViews), own(speechUsage), own(productEvents)],
+    counts: [usageEvents, extensionUsage, errorEvents, gateEvents, planUpgradeEvents, speechUsage, productEvents],
     run: async (db, userId) => {
       await db.delete(usageEvents).where(eq(usageEvents.userId, userId));
       // Deepgram usage meter (v89) — same reasoning as `usage_events` above: it is a record
@@ -591,6 +593,8 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       await db.delete(extensionUsage).where(eq(extensionUsage.userId, userId));
       await db.delete(errorEvents).where(eq(errorEvents.userId, userId));
       await db.delete(gateEvents).where(eq(gateEvents.userId, userId));
+      // Product telemetry (v181): ids, enums and counts keyed on the person — deleted outright.
+      await db.delete(productEvents).where(eq(productEvents.userId, userId));
       // The account's own upgrade-celebration queue. Nothing outside this user reads it and
       // it carries no operational or financial value, so it is deleted outright rather than
       // anonymised the way `billing_events` is.
@@ -940,6 +944,21 @@ async function runPurgeStep(db: Db, userId: string, key: PurgeStepKey, keepSetti
       .update(billingEvents)
       .set({ userId: null, detail: sql`${billingEvents.detail} - ${sql.raw(BILLING_DETAIL_PERSONAL_KEYS.map((k) => `'${k}'`).join(" - "))}` })
       .where(eq(billingEvents.userId, userId));
+    // The invitation ledger and the waitlist are identity, not finance. The invite row is kept
+    // so a wave's counts do not change retroactively, but it stops naming the person; a waitlist
+    // row linked to this account (email, name, UTMs) is deleted, through deleteInterestListRow so
+    // referrals pointing at it and its poll votes go too. Deleting the account also drops a row
+    // that only shares its email address (`retireDeletedAccount`); deleting data alone does not.
+    await db
+      .update(siteInvites)
+      .set({ acceptedUserId: null, email: sql`'deleted-' || ${siteInvites.id}::text` })
+      .where(eq(siteInvites.acceptedUserId, userId));
+    const { deleteInterestListRow } = await import("@/lib/admin-interest-list");
+    const waitlistRows = await db
+      .select({ id: interestListSignups.id })
+      .from(interestListSignups)
+      .where(eq(interestListSignups.userId, userId));
+    for (const row of waitlistRows) await deleteInterestListRow(row.id);
     if (!keepSettings) {
       await retireDeletedAccount(db, userId);
       return;

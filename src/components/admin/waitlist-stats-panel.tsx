@@ -46,7 +46,9 @@ export function WaitlistStatsPanel({
               value={stats.active.toLocaleString("en-US")}
               icon={Users}
               accent
-              hint={`${stats.total.toLocaleString("en-US")} joined in all`}
+              hint={`${stats.total.toLocaleString("en-US")} joined in all${
+                stats.operatorTestJoins > 0 ? ` (${stats.operatorTestJoins} of yours not counted)` : ""
+              }`}
             />
             <Tile
               label="Early access"
@@ -61,12 +63,12 @@ export function WaitlistStatsPanel({
             />
             <Tile
               label="Referral rate"
-              value={referralRate(stats.referred, stats.total)}
+              value={referralRate(stats.referred, stats.referralBase)}
               icon={Share2}
               hint={
-                stats.total >= MIN_RATE_DENOMINATOR
-                  ? `${stats.referred.toLocaleString("en-US")} via invite link`
-                  : `% shows at ${MIN_RATE_DENOMINATOR} signups`
+                stats.referralBase >= MIN_RATE_DENOMINATOR
+                  ? `${stats.referred.toLocaleString("en-US")} of ${stats.referralBase.toLocaleString("en-US")} waiting, via a link`
+                  : `% shows at ${MIN_RATE_DENOMINATOR} waiting`
               }
             />
           </div>
@@ -152,7 +154,9 @@ function Tile({
 }
 
 /**
- * Share of signups that came through an invite link. The console's rate rule applies
+ * Share of the people STILL WAITING who came through an invite link: live referrals over
+ * everyone waiting (`WaitlistStats.referred` / `referralBase`), the same condition the roster's
+ * per-row referral count uses. The console's rate rule applies
  * (`lib/format-rate.ts`): below MIN_RATE_DENOMINATOR the fraction is shown, never a
  * percentage that would dress a handful of people up as a trend.
  */
