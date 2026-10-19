@@ -5,6 +5,10 @@
  *   ORBIT_PGLITE_DIR=$(mktemp -d) npx tsx scripts/dev/perf/import-bench.ts 10000
  * Add NODE_OPTIONS=--cpu-prof to see where the engine's time goes.
  */
+// A module, not a global script: with only dynamic imports its top-level names would
+// collide with other scripts' (`main` did, with scripts/post-deploy-smoke.ts).
+export {};
+
 process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||= "pk_test_perf-import";
 process.env.CLERK_SECRET_KEY ||= "sk_test_perf-import";
 

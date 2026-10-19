@@ -3,6 +3,10 @@
  *
  *   ORBIT_PGLITE_DIR=<seeded copy> npx tsx scripts/dev/perf/cohort-bench.ts
  */
+// A module, not a global script: with only dynamic imports its top-level names would
+// collide with other scripts' (`main` did, with scripts/post-deploy-smoke.ts).
+export {};
+
 const env = process.env as Record<string, string | undefined>;
 env.NODE_ENV = "development";
 env.ORBIT_DEMO_DATA = "off";
