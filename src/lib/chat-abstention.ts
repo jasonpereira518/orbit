@@ -71,12 +71,21 @@ function hasAbstainPhrase(text: string): boolean {
  * Label one answer.
  *
  * - No abstain phrase anywhere → `answered`.
- * - An abstain phrase, but the answer also cites a record or shows people or a list →
+ * - An abstain phrase, but the answer also cites a record, shows people or a list, or comes
+ *   with recommendation cards →
  *   `partial`: it answered some of it from the records and said what was missing.
  * - An abstain phrase in the first two sentences of an ungrounded answer → `abstained`.
  * - An abstain phrase later in an ungrounded answer → `partial`: it gave something first.
  */
-export function labelAnswer(answer: string, meta: { citedCount: number }): AnswerOutcome {
+export function labelAnswer(
+  answer: string,
+  meta: {
+    /** Citation markers that survived validation. */
+    citedCount: number;
+    /** Recommendation cards stored with the answer (people placed, recruiters listed). */
+    recommendedCount?: number;
+  }
+): AnswerOutcome {
   const segments = splitDirectives(answer);
   let blocks = 0;
   const prose: string[] = [];
@@ -86,6 +95,6 @@ export function labelAnswer(answer: string, meta: { citedCount: number }): Answe
   }
   const sentences = sentencesOf(prose.join("\n"));
   if (!sentences.some(hasAbstainPhrase)) return "answered";
-  if (meta.citedCount > 0 || blocks > 0) return "partial";
+  if (meta.citedCount > 0 || (meta.recommendedCount ?? 0) > 0 || blocks > 0) return "partial";
   return sentences.slice(0, 2).some(hasAbstainPhrase) ? "abstained" : "partial";
 }

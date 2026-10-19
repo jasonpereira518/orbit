@@ -1,6 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { chatMessages, chatThreads, type ChatRecommendation } from "@/db/schema";
+import type { AnswerOutcome } from "@/lib/chat-abstention";
 import type { EvidenceSource } from "@/lib/chat-evidence";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 import type { ChatStep } from "@/lib/chat-stream-protocol";
@@ -51,6 +52,8 @@ export async function persistAssistantTurn(
     evidence?: Record<string, EvidenceSource>;
     /** Actions this answer proposed — see `@/lib/chat-proposed-actions`. */
     proposedActions?: StoredProposedAction[];
+    /** Whether the answer answered — see `labelAnswer` in `@/lib/chat-abstention`. */
+    answerOutcome?: AnswerOutcome | null;
     /**
      * Set for a version request: writes the assistant row into this slot/version, inactive,
      * and flips exactly it and its paired user row active once it lands — see
@@ -76,6 +79,7 @@ export async function persistAssistantTurn(
       activity: turn.activity ?? [],
       evidence: turn.evidence ?? {},
       proposedActions: turn.proposedActions ?? [],
+      answerOutcome: turn.answerOutcome ?? null,
       ...(turn.version
         ? { slot: turn.version.slot, version: turn.version.version, isActive: false }
         : {}),

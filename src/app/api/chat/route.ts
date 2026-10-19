@@ -14,6 +14,7 @@ import { discardEmptyThread, discardUnansweredQuestion, persistAssistantTurn } f
 import { createStepEmitter, deriveFollowUps, plural } from "@/lib/chat-steps";
 import { generateChatTitle, settleWithin, TITLE_GRACE_MS } from "@/lib/chat-title";
 import { formatSse, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
+import { labelAnswer } from "@/lib/chat-abstention";
 import { citedIds, stripUnresolvedMarkers } from "@/lib/chat-evidence";
 import { validateProposedActions } from "@/lib/chat-proposed-actions";
 import { friendlyError } from "@/lib/errors";
@@ -353,6 +354,12 @@ export async function POST(request: Request) {
           title,
           evidence: citedEvidence,
           proposedActions,
+          // Labelled on the text with its blocks still as directives, so a people or list
+          // block counts as grounding — `expandLists` above has turned lists into tables.
+          answerOutcome: labelAnswer(cleanAnswer, {
+            citedCount: cited.length,
+            recommendedCount: recommendations.length,
+          }),
           version:
             versionTarget && persistedUserMessageId
               ? { slot: versionTarget.slot, version: versionTarget.nextVersion, userMessageId: persistedUserMessageId }

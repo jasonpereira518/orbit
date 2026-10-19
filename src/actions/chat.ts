@@ -16,6 +16,7 @@ import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { requireUserId } from "@/lib/auth";
 import { prepareChatContext } from "@/lib/chat-context";
 import { maybeGather } from "@/lib/chat-gather";
+import { labelAnswer } from "@/lib/chat-abstention";
 import { citedIds, stripUnresolvedMarkers } from "@/lib/chat-evidence";
 import { validateProposedActions } from "@/lib/chat-proposed-actions";
 import {
@@ -447,6 +448,10 @@ async function askNetworkInner(
       recommendations,
       evidence: citedEvidence,
       proposedActions,
+      answerOutcome: labelAnswer(cleanAnswer, {
+        citedCount: Object.keys(citedEvidence).length,
+        recommendedCount: recommendations.length,
+      }),
     });
 
     return {
