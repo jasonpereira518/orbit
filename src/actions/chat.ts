@@ -426,7 +426,8 @@ async function askNetworkInner(
       notePassages,
       ctx.writingInstructions,
       ctx.openReminders ?? null,
-      ctx.calendar?.text ?? null
+      ctx.calendar?.text ?? null,
+      { commitments: ctx.commitments ?? null, events: ctx.events ?? null }
     );
     const recommendations = ctx.filterRecommendations(
       (result.recommendations || []) as ChatRecommendation[]

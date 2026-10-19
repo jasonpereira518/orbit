@@ -715,7 +715,7 @@ check(
   withReminders.user.includes("about Grace Hopper [id=c9]: Hiring SREs in Paris."),
   withReminders.user
 );
-check("no reminders, no reminder block or rule", !buildChatPrompt({ ...baseChatPromptArgs(), question: "x", focusProfile: null, contactsContext: [] }).systemCore.includes("Open reminders"));
+check("no reminders, no reminder block or rule", !buildChatPrompt({ ...baseChatPromptArgs(), question: "x", focusProfile: null, contactsContext: [] }).systemCore.includes("\"Reminders\" section"));
 // --- the shape lanes: a filtered roster, and a passage that says who it is about ---------
 
 const laned = buildChatPrompt({

@@ -253,6 +253,8 @@ export async function POST(request: Request) {
                 writingPreferences: ctx.writingInstructions,
                 calendar: ctx.calendar?.text ?? null,
                 openReminders: ctx.openReminders,
+                commitments: ctx.commitments ?? null,
+                events: ctx.events ?? null,
                 userSchools: ctx.userSchools,
                 access: ctx.access,
                 // Every id the prompt minted, so `[eN]` becomes a chip as it streams. The cited
