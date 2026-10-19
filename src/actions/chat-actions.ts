@@ -18,7 +18,6 @@
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { chatMessages } from "@/db/schema";
-import { requireUserForSurface } from "@/lib/plan-guards";
 import { createReminderForUser, scheduleContactFollowUpForUser } from "@/lib/reminder-writes";
 import { createContactForUser, logNoteInteractionForUser, updateContactForUser } from "@/lib/contact-writes";
 import { findConfidentDuplicate } from "@/lib/contact-resolve";
@@ -28,6 +27,8 @@ import { UserFacingError } from "@/lib/errors";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 import { EMAIL_CHANGE_NOT_APPLIED, updateFieldsForCommit } from "@/lib/chat-proposed-actions";
 import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
+import { z } from "zod";
+import { defineAction } from "@/lib/input/action";
 
 type ClaimOk = { ok: true; actions: StoredProposedAction[]; index: number; action: StoredProposedAction };
 type ClaimFail = { ok: false; reason: "not_found" | "already_done" | "already_dismissed" | "conflict" };
@@ -120,92 +121,96 @@ export type CommitResult =
  * when the answer was created, re-validated here exactly as `chat-versions.ts`'s slot resolve
  * re-validates a version target, never taken from whatever the client happens to send.
  */
-export async function commitProposedAction(messageId: string, actionId: string): Promise<CommitResult> {
-  const userId = await requireUserForSurface("page.chat");
-  const claimed = await claim(userId, messageId, actionId, "committing");
-  if (!claimed.ok) return { ok: false, reason: REASON_COPY[claimed.reason] };
+export const commitProposedAction = defineAction(
+  { auth: { surface: "page.chat" }, schema: z.tuple([z.string(), z.string()]) },
+  async (userId, messageId: string, actionId: string): Promise<CommitResult> => {
+    const claimed = await claim(userId, messageId, actionId, "committing");
+    if (!claimed.ok) return { ok: false, reason: REASON_COPY[claimed.reason] };
 
-  const { args } = claimed.action;
-  try {
-    let resultId: string | null = null;
-    if (args.kind === "log_interaction") {
-      // `skipRevalidate`: the lib function's own `revalidatePath` calls are unguarded and
-      // throw outside a request (a script exercising this action directly); this action
-      // does its own revalidation right after, through the safe wrapper.
-      const { row } = await logNoteInteractionForUser(
-        userId,
-        {
-          contactId: args.contactId,
-          rawNotes: args.text,
-          source: "chat_proposed",
-          externalId: `chat:${messageId}:${actionId}`,
-          direction: "out",
-        },
-        { skipRevalidate: true }
-      );
-      resultId = row.id;
-      revalidatePathIfRequestScoped(`/contacts/${args.contactId}`);
-      revalidatePathIfRequestScoped("/");
-      revalidatePathIfRequestScoped("/graph");
-    } else if (args.kind === "create_reminder") {
-      const row = await createReminderForUser(userId, {
-        contactId: args.contactId ?? undefined,
-        title: args.title,
-        description: args.description ?? undefined,
-        dueDate: args.dueDate ?? undefined,
-        reminderType: "manual",
-      });
-      resultId = row?.id ?? null;
-      revalidatePathIfRequestScoped("/reminders");
-    } else if (args.kind === "schedule_follow_up") {
-      const result = await scheduleContactFollowUpForUser(userId, args.contactId, args.days);
-      resultId = result.reminder?.id ?? null;
-      revalidatePathIfRequestScoped(`/contacts/${args.contactId}`);
-    } else if (args.kind === "update_contact") {
-      // Scoped by userId inside; the id was on the allowlist when the answer was written.
-      // A legacy proposal's `email` is never applied (audit M-10).
-      const fields = updateFieldsForCommit(args.fields);
-      if (!fields) throw new UserFacingError(EMAIL_CHANGE_NOT_APPLIED);
-      await updateContactForUser(userId, args.contactId, fields, { skipRevalidate: true });
-      resultId = args.contactId;
-      revalidatePathIfRequestScoped(`/contacts/${args.contactId}`);
-    } else if (args.kind === "create_contact") {
-      // The same duplicate line MCP's create_contact draws: a confident identity match is
-      // refused rather than doubled. A bare name match is not confident, so it still creates.
-      const best = await findConfidentDuplicate(userId, { fullName: args.fullName, ...args.fields });
-      if (best && best.confidence >= DUPLICATE_MERGE_CONFIDENCE) {
-        throw new UserFacingError(`${best.contact.fullName} is already in your contacts`);
+    const { args } = claimed.action;
+    try {
+      let resultId: string | null = null;
+      if (args.kind === "log_interaction") {
+        // `skipRevalidate`: the lib function's own `revalidatePath` calls are unguarded and
+        // throw outside a request (a script exercising this action directly); this action
+        // does its own revalidation right after, through the safe wrapper.
+        const { row } = await logNoteInteractionForUser(
+          userId,
+          {
+            contactId: args.contactId,
+            rawNotes: args.text,
+            source: "chat_proposed",
+            externalId: `chat:${messageId}:${actionId}`,
+            direction: "out",
+          },
+          { skipRevalidate: true }
+        );
+        resultId = row.id;
+        revalidatePathIfRequestScoped(`/contacts/${args.contactId}`);
+        revalidatePathIfRequestScoped("/");
+        revalidatePathIfRequestScoped("/graph");
+      } else if (args.kind === "create_reminder") {
+        const row = await createReminderForUser(userId, {
+          contactId: args.contactId ?? undefined,
+          title: args.title,
+          description: args.description ?? undefined,
+          dueDate: args.dueDate ?? undefined,
+          reminderType: "manual",
+        });
+        resultId = row?.id ?? null;
+        revalidatePathIfRequestScoped("/reminders");
+      } else if (args.kind === "schedule_follow_up") {
+        const result = await scheduleContactFollowUpForUser(userId, args.contactId, args.days);
+        resultId = result.reminder?.id ?? null;
+        revalidatePathIfRequestScoped(`/contacts/${args.contactId}`);
+      } else if (args.kind === "update_contact") {
+        // Scoped by userId inside; the id was on the allowlist when the answer was written.
+        // A legacy proposal's `email` is never applied (audit M-10).
+        const fields = updateFieldsForCommit(args.fields);
+        if (!fields) throw new UserFacingError(EMAIL_CHANGE_NOT_APPLIED);
+        await updateContactForUser(userId, args.contactId, fields, { skipRevalidate: true });
+        resultId = args.contactId;
+        revalidatePathIfRequestScoped(`/contacts/${args.contactId}`);
+      } else if (args.kind === "create_contact") {
+        // The same duplicate line MCP's create_contact draws: a confident identity match is
+        // refused rather than doubled. A bare name match is not confident, so it still creates.
+        const best = await findConfidentDuplicate(userId, { fullName: args.fullName, ...args.fields });
+        if (best && best.confidence >= DUPLICATE_MERGE_CONFIDENCE) {
+          throw new UserFacingError(`${best.contact.fullName} is already in your contacts`);
+        }
+        const created = await createContactForUser(
+          userId,
+          { fullName: args.fullName, ...args.fields, source: "chat_proposed" },
+          { skipRevalidate: true }
+        );
+        resultId = created.id;
+        revalidatePathIfRequestScoped("/contacts");
+      } else {
+        const done =
+          args.kind === "complete_reminder"
+            ? await completeReminder(userId, args.reminderId)
+            : await snoozeReminder(userId, args.reminderId, args.days);
+        if (!done) throw new UserFacingError("That reminder is gone — it may have been deleted");
+        resultId = args.reminderId;
+        revalidatePathIfRequestScoped("/reminders");
       }
-      const created = await createContactForUser(
-        userId,
-        { fullName: args.fullName, ...args.fields, source: "chat_proposed" },
-        { skipRevalidate: true }
-      );
-      resultId = created.id;
-      revalidatePathIfRequestScoped("/contacts");
-    } else {
-      const done =
-        args.kind === "complete_reminder"
-          ? await completeReminder(userId, args.reminderId)
-          : await snoozeReminder(userId, args.reminderId, args.days);
-      if (!done) throw new UserFacingError("That reminder is gone — it may have been deleted");
-      resultId = args.reminderId;
-      revalidatePathIfRequestScoped("/reminders");
+
+      await settle(userId, messageId, claimed.actions, claimed.index, { status: "done", resultId });
+      return { ok: true, resultId };
+    } catch (err) {
+      // Release the claim so a retry is possible — a transient failure (the contact was
+      // deleted between propose and click, a DB hiccup) must not permanently strand the card.
+      await settle(userId, messageId, claimed.actions, claimed.index, { status: "proposed" });
+      return { ok: false, reason: err instanceof Error ? err.message : "Couldn’t do that — try again?" };
     }
-
-    await settle(userId, messageId, claimed.actions, claimed.index, { status: "done", resultId });
-    return { ok: true, resultId };
-  } catch (err) {
-    // Release the claim so a retry is possible — a transient failure (the contact was
-    // deleted between propose and click, a DB hiccup) must not permanently strand the card.
-    await settle(userId, messageId, claimed.actions, claimed.index, { status: "proposed" });
-    return { ok: false, reason: err instanceof Error ? err.message : "Couldn’t do that — try again?" };
   }
-}
+);
 
-export async function dismissProposedAction(messageId: string, actionId: string): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const userId = await requireUserForSurface("page.chat");
-  const claimed = await claim(userId, messageId, actionId, "dismissed");
-  if (!claimed.ok) return { ok: false, reason: REASON_COPY[claimed.reason] };
-  return { ok: true };
-}
+export const dismissProposedAction = defineAction(
+  { auth: { surface: "page.chat" }, schema: z.tuple([z.string(), z.string()]), invalid: (reason) => ({ ok: false as const, reason }) },
+  async (userId, messageId: string, actionId: string): Promise<{ ok: true } | { ok: false; reason: string }> => {
+    const claimed = await claim(userId, messageId, actionId, "dismissed");
+    if (!claimed.ok) return { ok: false, reason: REASON_COPY[claimed.reason] };
+    return { ok: true };
+  }
+);

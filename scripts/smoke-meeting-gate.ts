@@ -27,12 +27,18 @@ function check(label: string, ok: boolean, detail?: string) {
  * real file (same shape as the sample checks in scripts/smoke-ai-access.ts).
  */
 function extractFunction(source: string, name: string): string {
-  const marker = new RegExp(String.raw`export\s+async\s+function\s+${name}\s*\(`);
+  // Either form: a plain `export async function`, or the house `export const x =
+  // defineAction({ auth, ... }, handler)` (FIX_PLAN 3.1), whose gate is its `auth`.
+  const marker = new RegExp(String.raw`export\s+(?:async\s+function\s+${name}\s*\(|const\s+${name}\s*=\s*defineAction\s*\()`);
   const m = marker.exec(source);
   if (!m) throw new Error(`function ${name} not found`);
   const rest = source.slice(m.index + m[0].length);
-  const next = rest.search(/\n\s*export\s+async\s+function\s+/);
-  return next === -1 ? rest : rest.slice(0, next);
+  const next = rest.search(/\n\s*export\s+(?:async\s+function\s+|const\s+\w+\s*=\s*defineAction\s*\()/);
+  const body = next === -1 ? rest : rest.slice(0, next);
+  // No `auth:` in a defineAction config means the default gate, `requireUserId()`.
+  const config = body.slice(0, Math.max(0, body.search(/\n\s*async\s*\(/)));
+  if (/defineAction\s*\($/.test(m[0]) && !/\bauth:/.test(config)) return `requireUserId(); ${body}`;
+  return body;
 }
 
 const MEETINGS_ACTIONS = "src/actions/meetings.ts";

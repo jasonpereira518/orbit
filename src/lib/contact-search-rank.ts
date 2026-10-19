@@ -56,7 +56,7 @@ export function nameMatchTierSql(query: string): SQL<number> {
  * no tsvector column type; the query selects `from contacts` unaliased, so it resolves.
  */
 export function contactSearchCondition(q: string) {
-  const like = `${q.toLowerCase()}%`;
+  const like = `${escapeLike(q.toLowerCase())}%`;
   const lowered = q.toLowerCase();
   const fuzzy =
     lowered.length >= 4

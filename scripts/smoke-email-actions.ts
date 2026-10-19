@@ -13,8 +13,13 @@ function check(label: string, ok: boolean, detail?: string) {
 
 const actions = readFileSync("src/actions/email-sends.ts", "utf8");
 check("use server file", actions.startsWith('"use server"'));
-const runtimeExports = [...actions.matchAll(/^export (?!type )(\w+(?: \w+)?)/gm)].map((m) => m[1]);
-check("every runtime export is an async function", runtimeExports.every((e) => e === "async function"), runtimeExports.join());
+// `export const x = defineAction(...)` is the house form (FIX_PLAN 3.1) and an async function.
+const runtimeExports = [...actions.matchAll(/^export (?!type )(\w+(?: \w+)?(?: = defineAction\()?)/gm)].map((m) => m[1]);
+check(
+  "every runtime export is an async function",
+  runtimeExports.every((e) => e === "async function" || /^const \w+ = defineAction\($/.test(e)),
+  runtimeExports.join()
+);
 check("cancel is scoped to the caller", /cancelEmailSend\(\s*userId/.test(actions));
 
 const libFiles = (readdirSync("src/lib/email", { recursive: true }) as string[]).filter((f) => f.endsWith(".ts"));

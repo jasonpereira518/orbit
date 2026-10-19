@@ -36,7 +36,6 @@ import {
   type CalendarEventRowPayload,
   type ImportStats,
 } from "@/db/schema";
-import { requireUserId } from "@/lib/auth";
 import { patchYou, previewYou } from "@/lib/career-profile";
 import { clearCareerProfile, loadYouCurrent, saveCareerPatch } from "@/lib/career-profile-server";
 import { isYouTarget, type YouTarget } from "@/lib/linkedin-you-shape";
@@ -97,6 +96,9 @@ import { lastCompletedImportAt } from "@/lib/import-history";
 import { UserFacingError } from "@/lib/errors";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
 import { demoAddressBookPreview, recordDemoContactsImport } from "@/lib/demo-workspace-actions";
+import { z } from "zod";
+import { defineAction, failMessage, errorResult } from "@/lib/input/action";
+import { anyNumber } from "@/lib/input/schemas";
 
 function simpleHash(input: string) {
   let h = 0;
@@ -180,191 +182,197 @@ const MAX_YOU_FILE_CHARS = 2_000_000;
  * to what Orbit holds now. Read-only. Refusals come back as data for the same reason as the
  * other previews: a thrown message is stripped in production.
  */
-export async function previewLinkedInYou(target: YouTarget, text: string) {
-  const userId = await requireUserId();
-  if (!isYouTarget(target) || text.length > MAX_YOU_FILE_CHARS) {
-    return refusal("That file isn’t one Orbit can read for your profile.");
+export const previewLinkedInYou = defineAction(
+  { schema: z.tuple([z.enum(["linkedin_profile", "linkedin_positions", "linkedin_skills", "linkedin_alerts", "linkedin_education"]), z.string()]), invalid: errorResult },
+  async (userId, target: YouTarget, text: string) => {
+    if (!isYouTarget(target) || text.length > MAX_YOU_FILE_CHARS) {
+      return refusal("That file isn’t one Orbit can read for your profile.");
+    }
+    try {
+      return { fields: previewYou(target, text, await loadYouCurrent(userId)) };
+    } catch (err) {
+      return refusal(await linkedInExportErrorMessage(err, "imports.preview-linkedin-you"));
+    }
   }
-  try {
-    return { fields: previewYou(target, text, await loadYouCurrent(userId)) };
-  } catch (err) {
-    return refusal(await linkedInExportErrorMessage(err, "imports.preview-linkedin-you"));
-  }
-}
+);
 
 /**
  * Save the fields the person kept ticked. Re-parses the text server-side; the browser only
  * says which keys. Merges into `career_profile` one top-level key at a time, so importing
  * Skills never disturbs the headline, and writes `sender_bio` only when the patch carries one.
  */
-export async function applyLinkedInYou(input: { target: YouTarget; text: string; keys: string[] }) {
-  const userId = await requireUserId();
-  if (!isYouTarget(input.target) || input.text.length > MAX_YOU_FILE_CHARS) {
-    return refusal("That file isn’t one Orbit can read for your profile.");
-  }
-  let patch: ReturnType<typeof patchYou>;
-  try {
-    patch = patchYou(input.target, input.text, input.keys, await loadYouCurrent(userId), new Date());
-  } catch (err) {
-    return refusal(await linkedInExportErrorMessage(err, "imports.apply-linkedin-you"));
-  }
-  if (!patch) return refusal("Nothing was selected to save.");
+export const applyLinkedInYou = defineAction(
+  { schema: z.tuple([z.looseObject({ target: z.enum(["linkedin_profile", "linkedin_positions", "linkedin_skills", "linkedin_alerts", "linkedin_education"]), text: z.string(), keys: z.array(z.string()) })]), invalid: errorResult },
+  async (userId, input: { target: YouTarget; text: string; keys: string[] }) => {
+    if (!isYouTarget(input.target) || input.text.length > MAX_YOU_FILE_CHARS) {
+      return refusal("That file isn’t one Orbit can read for your profile.");
+    }
+    let patch: ReturnType<typeof patchYou>;
+    try {
+      patch = patchYou(input.target, input.text, input.keys, await loadYouCurrent(userId), new Date());
+    } catch (err) {
+      return refusal(await linkedInExportErrorMessage(err, "imports.apply-linkedin-you"));
+    }
+    if (!patch) return refusal("Nothing was selected to save.");
 
-  await saveCareerPatch(userId, patch);
-  revalidatePath("/settings");
-  return { message: patch.message };
-}
+    await saveCareerPatch(userId, patch);
+    revalidatePath("/settings");
+    return { message: patch.message };
+  }
+);
 
 /** Forget everything imported from the user's LinkedIn export. Leaves what they typed alone. */
-export async function clearLinkedInYou() {
-  const userId = await requireUserId();
-  await clearCareerProfile(userId);
-  revalidatePath("/settings");
-  return { ok: true as const };
-}
-
-export async function previewLinkedInCsv(csvText: string) {
-  const userId = await requireUserId();
-  // parseLinkedInConnectionsCsv throws for expected validation failures (empty
-  // file, wrong export type, no rows found). Server Actions strip thrown error
-  // messages in production, replacing them with a generic digest — so those
-  // failures must come back as data, not a throw, to reach the client's toast.
-  let parsed: ReturnType<typeof parseLinkedInConnectionsCsv>;
-  try {
-    parsed = parseLinkedInConnectionsCsv(csvText);
-  } catch (err) {
-    return refusal(
-      await linkedInExportErrorMessage(err, "imports.preview-linkedin"),
-    );
+export const clearLinkedInYou = defineAction(
+  {},
+  async (userId) => {
+    await clearCareerProfile(userId);
+    revalidatePath("/settings");
+    return { ok: true as const };
   }
-  const { columns, rows, warnings } = parsed;
-  if (hasEncodingArtifacts(rows)) {
-    warnings.push(
-      "Some characters may not have decoded correctly — if names look garbled, re-export the CSV with UTF-8 encoding.",
-    );
-  }
-  const db = await getDb();
-  const existing = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    columns: {
-      id: true,
-      fullName: true,
-      email: true,
-      linkedinUrl: true,
-      xHandle: true,
-      company: true,
-      title: true,
-    },
-  });
+);
 
-  // One index for the whole preview. Scanning `existing` per row made this an all-pairs
-  // comparison with a Levenshtein in the inner loop — ~8s for a 3,000-row export against
-  // 3,000 contacts, which is the everyday case once you have imported once already.
-  const duplicateIndex = buildDuplicateIndex(existing);
-
-  const people = rows.map((row, index) => {
-    const fullName = `${row.firstName} ${row.lastName}`.trim();
-    const dups = findDuplicateCandidatesIndexed(duplicateIndex, {
-      fullName,
-      email: row.email,
-      linkedinUrl: row.url,
-      company: row.company,
-      title: row.position,
+export const previewLinkedInCsv = defineAction(
+  { schema: z.tuple([z.string()]), invalid: errorResult },
+  async (userId, csvText: string) => {
+    // parseLinkedInConnectionsCsv throws for expected validation failures (empty
+    // file, wrong export type, no rows found). Server Actions strip thrown error
+    // messages in production, replacing them with a generic digest — so those
+    // failures must come back as data, not a throw, to reach the client's toast.
+    let parsed: ReturnType<typeof parseLinkedInConnectionsCsv>;
+    try {
+      parsed = parseLinkedInConnectionsCsv(csvText);
+    } catch (err) {
+      return refusal(
+        await linkedInExportErrorMessage(err, "imports.preview-linkedin"),
+      );
+    }
+    const { columns, rows, warnings } = parsed;
+    if (hasEncodingArtifacts(rows)) {
+      warnings.push(
+        "Some characters may not have decoded correctly — if names look garbled, re-export the CSV with UTF-8 encoding.",
+      );
+    }
+    const db = await getDb();
+    const existing = await db.query.contacts.findMany({
+      where: eq(contacts.userId, userId),
+      columns: {
+        id: true,
+        fullName: true,
+        email: true,
+        linkedinUrl: true,
+        xHandle: true,
+        company: true,
+        title: true,
+      },
     });
-    const top = dups[0];
-    return {
-      id: String(index),
-      index,
-      ...row,
-      fullName,
-      isRepeat: Boolean(top && top.confidence >= DUPLICATE_MERGE_CONFIDENCE),
-      duplicate: top
-        ? {
-            id: top.contact.id,
-            fullName: top.contact.fullName,
-            reason: top.reason,
-            confidence: top.confidence,
-          }
-        : null,
-    };
-  });
 
-  return {
-    columns,
-    totalRows: people.length,
-    people,
-    duplicateCount: people.filter((p) => p.isRepeat).length,
-    warnings,
-    // keep legacy key for any callers
-    preview: people,
-  };
-}
+    // One index for the whole preview. Scanning `existing` per row made this an all-pairs
+    // comparison with a Levenshtein in the inner loop — ~8s for a 3,000-row export against
+    // 3,000 contacts, which is the everyday case once you have imported once already.
+    const duplicateIndex = buildDuplicateIndex(existing);
+
+    const people = rows.map((row, index) => {
+      const fullName = `${row.firstName} ${row.lastName}`.trim();
+      const dups = findDuplicateCandidatesIndexed(duplicateIndex, {
+        fullName,
+        email: row.email,
+        linkedinUrl: row.url,
+        company: row.company,
+        title: row.position,
+      });
+      const top = dups[0];
+      return {
+        id: String(index),
+        index,
+        ...row,
+        fullName,
+        isRepeat: Boolean(top && top.confidence >= DUPLICATE_MERGE_CONFIDENCE),
+        duplicate: top
+          ? {
+              id: top.contact.id,
+              fullName: top.contact.fullName,
+              reason: top.reason,
+              confidence: top.confidence,
+            }
+          : null,
+      };
+    });
+
+    return {
+      columns,
+      totalRows: people.length,
+      people,
+      duplicateCount: people.filter((p) => p.isRepeat).length,
+      warnings,
+      // keep legacy key for any callers
+      preview: people,
+    };
+  }
+);
 
 /**
  * Starts a server-owned LinkedIn connections import: persists the selected
  * rows once, then processes them in the background via `after()`. Survives
  * tab close/navigation — the client should poll `getImportJobStatus`.
  */
-export async function startLinkedInImport(
-  csvText: string,
-  fileName: string,
-  selectedIds?: string[],
-): Promise<{ importId: string; totalRows: number }> {
-  const userId = await requireUserId();
-  await consumeDailyCap("importDaily", userId);
-  const db = await getDb();
+export const startLinkedInImport = defineAction(
+  { schema: z.tuple([z.string(), z.string(), z.array(z.string()).optional()]) },
+  async (userId, csvText: string, fileName: string, selectedIds?: string[]): Promise<{ importId: string; totalRows: number }> => {
+    await consumeDailyCap("importDaily", userId);
+    const db = await getDb();
 
-  const { rows } = parseLinkedInConnectionsCsv(csvText);
-  const selectedIndexes =
-    selectedIds === undefined
-      ? rows.map((_, i) => i)
-      : selectedIds
-          .map((id) => Number(id))
-          .filter((i) => Number.isInteger(i) && i >= 0 && i < rows.length);
+    const { rows } = parseLinkedInConnectionsCsv(csvText);
+    const selectedIndexes =
+      selectedIds === undefined
+        ? rows.map((_, i) => i)
+        : selectedIds
+            .map((id) => Number(id))
+            .filter((i) => Number.isInteger(i) && i >= 0 && i < rows.length);
 
-  if (selectedIndexes.length === 0) {
-    throw new Error("No rows selected to import");
-  }
+    if (selectedIndexes.length === 0) {
+      throw new Error("No rows selected to import");
+    }
 
-  const [importRow] = await db
-    .insert(imports)
-    .values({
-      userId,
-      importType: "linkedin_connections",
-      fileName,
-      status: "processing",
-      totalRows: selectedIndexes.length,
-      stats: {},
-    })
-    .returning();
-
-  await stageImportRows(
-    selectedIndexes.map((index) => {
-      const row = rows[index];
-      return {
-        importId: importRow.id,
+    const [importRow] = await db
+      .insert(imports)
+      .values({
         userId,
-        rowIndex: index,
-        payload: {
-          index,
-          firstName: row.firstName,
-          lastName: row.lastName,
-          email: row.email,
-          company: row.company,
-          position: row.position,
-          connectedOn: row.connectedOn,
-          url: row.url,
-        },
-      };
-    }),
-  );
+        importType: "linkedin_connections",
+        fileName,
+        status: "processing",
+        totalRows: selectedIndexes.length,
+        stats: {},
+      })
+      .returning();
 
-  after(() => runLinkedInImportJob(importRow.id).catch(() => {}));
+    await stageImportRows(
+      selectedIndexes.map((index) => {
+        const row = rows[index];
+        return {
+          importId: importRow.id,
+          userId,
+          rowIndex: index,
+          payload: {
+            index,
+            firstName: row.firstName,
+            lastName: row.lastName,
+            email: row.email,
+            company: row.company,
+            position: row.position,
+            connectedOn: row.connectedOn,
+            url: row.url,
+          },
+        };
+      }),
+    );
 
-  revalidatePath("/imports");
+    after(() => runLinkedInImportJob(importRow.id).catch(() => {}));
 
-  return { importId: importRow.id, totalRows: selectedIndexes.length };
-}
+    revalidatePath("/imports");
+
+    return { importId: importRow.id, totalRows: selectedIndexes.length };
+  }
+);
 
 export type ImportJobStatus = {
   id: string;
@@ -431,137 +439,135 @@ const IMPORT_PROBLEM_SAMPLE = 25;
  * Rows survive as long as the import does (they cascade with it, and `purgeUserData` covers
  * them), so this works for old imports too.
  */
-export async function getImportDetail(
-  importId: string,
-): Promise<ImportDetail | null> {
-  const userId = await requireUserId();
-  // Not a uuid, so not an import: "no such import" is the true answer, not a failed cast.
-  if (!isImportId(importId)) return null;
-  const db = await getDb();
+export const getImportDetail = defineAction(
+  { schema: z.tuple([z.string()]) },
+  async (userId, importId: string): Promise<ImportDetail | null> => {
+    // Not a uuid, so not an import: "no such import" is the true answer, not a failed cast.
+    if (!isImportId(importId)) return null;
+    const db = await getDb();
 
-  // The import row and both row reads go out together: none needs another's result, and
-  // each is scoped to `userId` on its own, so for an import that is missing or someone
-  // else's they read nothing and the answer is still null below. Only the people count waits,
-  // because it needs the import's `created_at`.
-  const [row, groupedResult, problemResult] = await Promise.all([
-    db.query.imports.findFirst({
-      where: and(eq(imports.id, importId), eq(imports.userId, userId)),
-    }),
-    // One grouped count, served by `import_job_rows_import_status_idx`.
-    db
-      .select({ status: importJobRows.status, n: sql<number>`count(*)::int` })
-      .from(importJobRows)
-      .where(
-        and(
-          eq(importJobRows.importId, importId),
-          eq(importJobRows.userId, userId),
-        ),
-      )
-      .groupBy(importJobRows.status),
-    db
-      .select({
-        status: importJobRows.status,
-        payload: importJobRows.payload,
-        errorMessage: importJobRows.errorMessage,
-      })
-      .from(importJobRows)
-      .where(
-        and(
-          eq(importJobRows.importId, importId),
-          eq(importJobRows.userId, userId),
-          inArray(importJobRows.status, ["failed", "skipped"]),
-        ),
-      )
-      .orderBy(importJobRows.rowIndex)
-      .limit(IMPORT_PROBLEM_SAMPLE),
-  ]);
-  if (!row) return null;
+    // The import row and both row reads go out together: none needs another's result, and
+    // each is scoped to `userId` on its own, so for an import that is missing or someone
+    // else's they read nothing and the answer is still null below. Only the people count waits,
+    // because it needs the import's `created_at`.
+    const [row, groupedResult, problemResult] = await Promise.all([
+      db.query.imports.findFirst({
+        where: and(eq(imports.id, importId), eq(imports.userId, userId)),
+      }),
+      // One grouped count, served by `import_job_rows_import_status_idx`.
+      db
+        .select({ status: importJobRows.status, n: sql<number>`count(*)::int` })
+        .from(importJobRows)
+        .where(
+          and(
+            eq(importJobRows.importId, importId),
+            eq(importJobRows.userId, userId),
+          ),
+        )
+        .groupBy(importJobRows.status),
+      db
+        .select({
+          status: importJobRows.status,
+          payload: importJobRows.payload,
+          errorMessage: importJobRows.errorMessage,
+        })
+        .from(importJobRows)
+        .where(
+          and(
+            eq(importJobRows.importId, importId),
+            eq(importJobRows.userId, userId),
+            inArray(importJobRows.status, ["failed", "skipped"]),
+          ),
+        )
+        .orderBy(importJobRows.rowIndex)
+        .limit(IMPORT_PROBLEM_SAMPLE),
+    ]);
+    if (!row) return null;
 
-  const grouped = rowsOf<{ status: string; n: number }>(groupedResult);
+    const grouped = rowsOf<{ status: string; n: number }>(groupedResult);
 
-  const counts = { done: 0, skipped: 0, failed: 0, pending: 0 };
-  for (const g of grouped) {
-    if (g.status === "done") counts.done += g.n;
-    else if (g.status === "skipped") counts.skipped += g.n;
-    else if (g.status === "failed") counts.failed += g.n;
-    else counts.pending += g.n;
-  }
+    const counts = { done: 0, skipped: 0, failed: 0, pending: 0 };
+    for (const g of grouped) {
+      if (g.status === "done") counts.done += g.n;
+      else if (g.status === "skipped") counts.skipped += g.n;
+      else if (g.status === "failed") counts.failed += g.n;
+      else counts.pending += g.n;
+    }
 
-  const problemRows = rowsOf<{
-    status: string;
-    payload: unknown;
-    errorMessage: string | null;
-  }>(problemResult);
+    const problemRows = rowsOf<{
+      status: string;
+      payload: unknown;
+      errorMessage: string | null;
+    }>(problemResult);
 
-  const problems: ImportRowProblem[] = problemRows.map((r) => ({
-    status: r.status === "failed" ? "failed" : "skipped",
-    who: nameFromRowPayload(r.payload),
-    // Mapped here rather than in the client so a raw driver string never crosses the wire.
-    // Orbit's own row copy (a Drive doc's skip reason) passes through as written.
-    reason: importRowProblemLine(
-      r.status === "failed" ? "failed" : "skipped",
-      r.errorMessage,
-    ),
-  }));
+    const problems: ImportRowProblem[] = problemRows.map((r) => ({
+      status: r.status === "failed" ? "failed" : "skipped",
+      who: nameFromRowPayload(r.payload),
+      // Mapped here rather than in the client so a raw driver string never crosses the wire.
+      // Orbit's own row copy (a Drive doc's skip reason) passes through as written.
+      reason: importRowProblemLine(
+        r.status === "failed" ? "failed" : "skipped",
+        r.errorMessage,
+      ),
+    }));
 
-  const totalProblems = counts.failed + counts.skipped;
-  const people = await countImportPeople(userId, importId, row.createdAt);
+    const totalProblems = counts.failed + counts.skipped;
+    const people = await countImportPeople(userId, importId, row.createdAt);
 
-  return {
-    item: {
-      id: row.id,
-      importType: row.importType,
-      fileName: row.fileName,
-      status: row.status,
-      totalRows: row.totalRows,
-      rowsProcessed: row.rowsProcessed,
-      contactsCreated: row.contactsCreated,
-      contactsUpdated: row.contactsUpdated,
-      duplicatesFound: row.duplicatesFound,
-      errorMessage: row.errorMessage,
-      createdAt: row.createdAt,
-      stats: {
-        skipped: row.stats?.skipped,
-        blockedByPlan: row.stats?.blockedByPlan,
-        failedRows: row.stats?.failedRows,
-        interactionsLogged: row.stats?.interactionsLogged,
-        remindersCreated: row.stats?.remindersCreated,
-        messagesImported: row.stats?.messagesImported,
-        meetingsLogged: row.stats?.meetingsLogged,
-        errorCode: row.stats?.errorCode,
-        docsRead: row.stats?.docsRead,
-        docsAlreadyImported: row.stats?.docsAlreadyImported,
-        flaggedCommitments: row.stats?.flaggedCommitments,
-        // Without these the sheet goes on offering an undo for an import that has already
-        // had one — the row beside it, which reads the same fields through `listImports`,
-        // would say "Undone" at the same moment.
-        undoneAt: row.stats?.undoneAt,
-        undoneRemoved: row.stats?.undoneRemoved,
-        undoneKept: row.stats?.undoneKept,
-        filesSaved: row.stats?.filesSaved,
-        filesTooLarge: row.stats?.filesTooLarge,
-        filesPrivate: row.stats?.filesPrivate,
-        targetsAdded: row.stats?.targetsAdded,
-        backgroundAdded: row.stats?.backgroundAdded,
+    return {
+      item: {
+        id: row.id,
+        importType: row.importType,
+        fileName: row.fileName,
+        status: row.status,
+        totalRows: row.totalRows,
+        rowsProcessed: row.rowsProcessed,
+        contactsCreated: row.contactsCreated,
+        contactsUpdated: row.contactsUpdated,
+        duplicatesFound: row.duplicatesFound,
+        errorMessage: row.errorMessage,
+        createdAt: row.createdAt,
+        stats: {
+          skipped: row.stats?.skipped,
+          blockedByPlan: row.stats?.blockedByPlan,
+          failedRows: row.stats?.failedRows,
+          interactionsLogged: row.stats?.interactionsLogged,
+          remindersCreated: row.stats?.remindersCreated,
+          messagesImported: row.stats?.messagesImported,
+          meetingsLogged: row.stats?.meetingsLogged,
+          errorCode: row.stats?.errorCode,
+          docsRead: row.stats?.docsRead,
+          docsAlreadyImported: row.stats?.docsAlreadyImported,
+          flaggedCommitments: row.stats?.flaggedCommitments,
+          // Without these the sheet goes on offering an undo for an import that has already
+          // had one — the row beside it, which reads the same fields through `listImports`,
+          // would say "Undone" at the same moment.
+          undoneAt: row.stats?.undoneAt,
+          undoneRemoved: row.stats?.undoneRemoved,
+          undoneKept: row.stats?.undoneKept,
+          filesSaved: row.stats?.filesSaved,
+          filesTooLarge: row.stats?.filesTooLarge,
+          filesPrivate: row.stats?.filesPrivate,
+          targetsAdded: row.stats?.targetsAdded,
+          backgroundAdded: row.stats?.backgroundAdded,
+        },
       },
-    },
-    counts,
-    problems,
-    moreProblems: Math.max(0, totalProblems - problems.length),
-    people,
-  };
-}
+      counts,
+      problems,
+      moreProblems: Math.max(0, totalProblems - problems.length),
+      people,
+    };
+  }
+);
 
 /** One page of the people an import added, or matched to someone already here. */
-export async function getImportPeople(
-  importId: string,
-  outcome: ImportPersonOutcome,
-  offset = 0,
-): Promise<ImportPeoplePage> {
-  const userId = await requireUserId();
-  if (!isImportId(importId)) return { people: [], hasMore: false };
-  return listImportPeople(userId, importId, outcome, offset);
-}
+export const getImportPeople = defineAction(
+  { schema: z.tuple([z.string(), z.enum(["added", "existing"]), anyNumber.optional()]) },
+  async (userId, importId: string, outcome: ImportPersonOutcome, offset: number = 0): Promise<ImportPeoplePage> => {
+    if (!isImportId(importId)) return { people: [], hasMore: false };
+    return listImportPeople(userId, importId, outcome, offset);
+  }
+);
 
 /** What the done card shows for the most recent completed import. See `finishCopy` in
  *  `import-finish.ts` for how these numbers become words. */
@@ -608,16 +614,18 @@ async function finishForImport(
  * a drop of unreadable files, or a run whose every step broke, would otherwise celebrate
  * somebody else's import and offer a button into its people.
  */
-export async function getLatestFinishedImport(): Promise<LatestFinishedImport | null> {
-  const userId = await requireUserId();
-  const db = await getDb();
-  const row = await db.query.imports.findFirst({
-    where: and(eq(imports.userId, userId), eq(imports.status, "completed")),
-    orderBy: [desc(imports.createdAt)],
-  });
-  if (!row) return null;
-  return finishForImport(userId, row);
-}
+export const getLatestFinishedImport = defineAction(
+  {},
+  async (userId): Promise<LatestFinishedImport | null> => {
+    const db = await getDb();
+    const row = await db.query.imports.findFirst({
+      where: and(eq(imports.userId, userId), eq(imports.status, "completed")),
+      orderBy: [desc(imports.createdAt)],
+    });
+    if (!row) return null;
+    return finishForImport(userId, row);
+  }
+);
 
 /** A run's ids are one per queued step, and a drop is capped well below this. */
 const MAX_RUN_IMPORTS = 12;
@@ -630,39 +638,41 @@ const MAX_RUN_IMPORTS = 12;
  * not this user's, not completed, or already undone simply do not come back — an empty array
  * is a run with nothing to celebrate, and the caller draws no card.
  */
-export async function getFinishedImportsFor(
-  importIds: string[],
-): Promise<LatestFinishedImport[]> {
-  // Only uuid-shaped ids reach `inArray` on a uuid column: one forged id would otherwise fail
-  // the cast and take the whole run's card down with it.
-  const wanted = importIdsFrom(importIds).slice(0, MAX_RUN_IMPORTS);
-  if (!wanted.length) return [];
-  const userId = await requireUserId();
-  const db = await getDb();
-  const rows = await db.query.imports.findMany({
-    where: and(
-      eq(imports.userId, userId),
-      eq(imports.status, "completed"),
-      inArray(imports.id, wanted),
-    ),
-  });
-  // Back into the order the steps ran in — `findMany` has no reason to preserve it, and the
-  // sources line is "From Connections.csv and messages.csv", not whatever Postgres returned.
-  const byId = new Map(rows.map((row) => [row.id, row]));
-  const ordered = wanted
-    .map((id) => byId.get(id))
-    .filter((row): row is NonNullable<typeof row> => Boolean(row))
-    .filter((row) => !row.stats?.undoneAt);
-  return Promise.all(ordered.map((row) => finishForImport(userId, row)));
-}
+export const getFinishedImportsFor = defineAction(
+  { schema: z.tuple([z.array(z.string())]) },
+  async (userId, importIds: string[]): Promise<LatestFinishedImport[]> => {
+    // Only uuid-shaped ids reach `inArray` on a uuid column: one forged id would otherwise fail
+    // the cast and take the whole run's card down with it.
+    const wanted = importIdsFrom(importIds).slice(0, MAX_RUN_IMPORTS);
+    if (!wanted.length) return [];
+    const db = await getDb();
+    const rows = await db.query.imports.findMany({
+      where: and(
+        eq(imports.userId, userId),
+        eq(imports.status, "completed"),
+        inArray(imports.id, wanted),
+      ),
+    });
+    // Back into the order the steps ran in — `findMany` has no reason to preserve it, and the
+    // sources line is "From Connections.csv and messages.csv", not whatever Postgres returned.
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const ordered = wanted
+      .map((id) => byId.get(id))
+      .filter((row): row is NonNullable<typeof row> => Boolean(row))
+      .filter((row) => !row.stats?.undoneAt);
+    return Promise.all(ordered.map((row) => finishForImport(userId, row)));
+  }
+);
 
 /** Preview of what undoing this import would remove — see `previewUndo` in `import-undo.ts`. */
-export async function previewImportUndo(importId: string): Promise<UndoPreview | null> {
-  const userId = await requireUserId();
-  // The same answer as an import that does not exist, which the dialog already handles.
-  if (!isImportId(importId)) return null;
-  return previewUndo(userId, importId);
-}
+export const previewImportUndo = defineAction(
+  { schema: z.tuple([z.string()]) },
+  async (userId, importId: string): Promise<UndoPreview | null> => {
+    // The same answer as an import that does not exist, which the dialog already handles.
+    if (!isImportId(importId)) return null;
+    return previewUndo(userId, importId);
+  }
+);
 
 /**
  * Wall-clock ceiling on the whole undo, across every `performUndo` call this action makes —
@@ -682,23 +692,25 @@ const UNDO_ACTION_BUDGET_MS = 120_000;
  * finished one — see `UNDO_ACTION_BUDGET_MS` above), accumulating `removed` across calls, so
  * a caller only needs to retry when even 120s wasn't enough to finish a very large import.
  */
-export async function undoImport(importId: string): Promise<UndoResult> {
-  const userId = await requireUserId();
-  // What `performUndo` answers for an import it cannot find: nothing removed, nothing left.
-  if (!isImportId(importId)) return { removed: 0, kept: 0, done: true, remaining: 0 };
-  const startedAt = Date.now();
-  let removed = 0;
-  let result: UndoResult = { removed: 0, kept: 0, done: true, remaining: 0 };
-  do {
-    result = await performUndo(userId, importId);
-    removed += result.removed;
-  } while (!result.done && Date.now() - startedAt < UNDO_ACTION_BUDGET_MS);
-  revalidatePath("/imports");
-  // The people just removed were on the People list too — and the done card's own button
-  // links there, filtered to this import.
-  revalidatePath("/contacts");
-  return { ...result, removed };
-}
+export const undoImport = defineAction(
+  { schema: z.tuple([z.string()]) },
+  async (userId, importId: string): Promise<UndoResult> => {
+    // What `performUndo` answers for an import it cannot find: nothing removed, nothing left.
+    if (!isImportId(importId)) return { removed: 0, kept: 0, done: true, remaining: 0 };
+    const startedAt = Date.now();
+    let removed = 0;
+    let result: UndoResult = { removed: 0, kept: 0, done: true, remaining: 0 };
+    do {
+      result = await performUndo(userId, importId);
+      removed += result.removed;
+    } while (!result.done && Date.now() - startedAt < UNDO_ACTION_BUDGET_MS);
+    revalidatePath("/imports");
+    // The people just removed were on the People list too — and the done card's own button
+    // links there, filtered to this import.
+    revalidatePath("/contacts");
+    return { ...result, removed };
+  }
+);
 
 /** A person's name out of whichever row payload this import type stages. */
 function nameFromRowPayload(payload: unknown): string | null {
@@ -723,63 +735,65 @@ function nameFromRowPayload(payload: unknown): string | null {
 }
 
 /** Read-only status poll for a server-owned import job (see `startLinkedInImport`). */
-export async function getImportJobStatus(
-  importId: string,
-): Promise<ImportJobStatus> {
-  const userId = await requireUserId();
-  if (!isImportId(importId)) throw new Error("Import session not found");
-  const db = await getDb();
-  const row = await db.query.imports.findFirst({
-    where: and(eq(imports.id, importId), eq(imports.userId, userId)),
-  });
-  if (!row) throw new Error("Import session not found");
+export const getImportJobStatus = defineAction(
+  { schema: z.tuple([z.string()]) },
+  async (userId, importId: string): Promise<ImportJobStatus> => {
+    if (!isImportId(importId)) throw new Error("Import session not found");
+    const db = await getDb();
+    const row = await db.query.imports.findFirst({
+      where: and(eq(imports.id, importId), eq(imports.userId, userId)),
+    });
+    if (!row) throw new Error("Import session not found");
 
-  return {
-    id: row.id,
-    status: row.status,
-    totalRows: row.totalRows ?? 0,
-    rowsProcessed: row.rowsProcessed ?? 0,
-    contactsCreated: row.contactsCreated ?? 0,
-    contactsUpdated: row.contactsUpdated ?? 0,
-    duplicatesFound: row.duplicatesFound ?? 0,
-    errorMessage: row.errorMessage,
-    interactionsLogged: row.stats?.interactionsLogged ?? 0,
-    remindersCreated: row.stats?.remindersCreated ?? 0,
-    failedRows: row.stats?.failedRows ?? 0,
-    docsRead: row.stats?.docsRead ?? 0,
-    filesSaved: row.stats?.filesSaved ?? 0,
-    targetsAdded: row.stats?.targetsAdded ?? 0,
-    backgroundAdded: row.stats?.backgroundAdded ?? 0,
-  };
-}
+    return {
+      id: row.id,
+      status: row.status,
+      totalRows: row.totalRows ?? 0,
+      rowsProcessed: row.rowsProcessed ?? 0,
+      contactsCreated: row.contactsCreated ?? 0,
+      contactsUpdated: row.contactsUpdated ?? 0,
+      duplicatesFound: row.duplicatesFound ?? 0,
+      errorMessage: row.errorMessage,
+      interactionsLogged: row.stats?.interactionsLogged ?? 0,
+      remindersCreated: row.stats?.remindersCreated ?? 0,
+      failedRows: row.stats?.failedRows ?? 0,
+      docsRead: row.stats?.docsRead ?? 0,
+      filesSaved: row.stats?.filesSaved ?? 0,
+      targetsAdded: row.stats?.targetsAdded ?? 0,
+      backgroundAdded: row.stats?.backgroundAdded ?? 0,
+    };
+  }
+);
 
 /** Stop a processing import; rows already written are kept. */
-export async function cancelImportSession(importId: string) {
-  const userId = await requireUserId();
-  if (!isImportId(importId)) throw new Error("Import session not found");
-  const db = await getDb();
-  const existing = await db.query.imports.findFirst({
-    where: and(eq(imports.id, importId), eq(imports.userId, userId)),
-  });
-  if (!existing) throw new Error("Import session not found");
-  if (existing.status !== "processing") return existing;
+export const cancelImportSession = defineAction(
+  { schema: z.tuple([z.string()]) },
+  async (userId, importId: string) => {
+    if (!isImportId(importId)) throw new Error("Import session not found");
+    const db = await getDb();
+    const existing = await db.query.imports.findFirst({
+      where: and(eq(imports.id, importId), eq(imports.userId, userId)),
+    });
+    if (!existing) throw new Error("Import session not found");
+    if (existing.status !== "processing") return existing;
 
-  const [updated] = await db
-    .update(imports)
-    .set({
-      status: "cancelled",
-      updatedAt: new Date(),
-    })
-    .where(and(eq(imports.id, importId), eq(imports.userId, userId)))
-    .returning();
+    const [updated] = await db
+      .update(imports)
+      .set({
+        status: "cancelled",
+        updatedAt: new Date(),
+      })
+      .where(and(eq(imports.id, importId), eq(imports.userId, userId)))
+      .returning();
 
-  revalidatePath("/");
-  revalidatePath("/contacts");
-  revalidatePath("/imports");
-  revalidatePath("/graph");
-  revalidatePath("/chat");
-  return updated;
-}
+    revalidatePath("/");
+    revalidatePath("/contacts");
+    revalidatePath("/imports");
+    revalidatePath("/graph");
+    revalidatePath("/chat");
+    return updated;
+  }
+);
 
 /**
  * The user's own LinkedIn URL, as they entered it in settings.
@@ -802,102 +816,104 @@ async function storedSelfLinkedInUrl(userId: string): Promise<string | null> {
  * `previewLinkedInCsv` gives: a thrown message never survives production, and "This looks
  * like a Connections export" is only worth writing if it reaches the person.
  */
-export async function previewLinkedInMessagesCsv(csvText: string) {
-  const userId = await requireUserId();
-  let parsed: ReturnType<typeof parseLinkedInMessagesCsv>;
-  try {
-    parsed = parseLinkedInMessagesCsv(csvText);
-  } catch (err) {
-    return refusal(
-      await linkedInExportErrorMessage(
-        err,
-        "imports.preview-linkedin-messages",
-      ),
+export const previewLinkedInMessagesCsv = defineAction(
+  { schema: z.tuple([z.string()]), invalid: errorResult },
+  async (userId, csvText: string) => {
+    let parsed: ReturnType<typeof parseLinkedInMessagesCsv>;
+    try {
+      parsed = parseLinkedInMessagesCsv(csvText);
+    } catch (err) {
+      return refusal(
+        await linkedInExportErrorMessage(
+          err,
+          "imports.preview-linkedin-messages",
+        ),
+      );
+    }
+    const { columns, messages } = parsed;
+    if (!messages.length) {
+      return refusal(
+        "No messages found in that file — upload messages.csv from your LinkedIn data download",
+      );
+    }
+
+    const db = await getDb();
+    const [existing, storedSelfUrl] = await Promise.all([
+      db.query.contacts.findMany({
+        where: eq(contacts.userId, userId),
+        columns: {
+          id: true,
+          fullName: true,
+          email: true,
+          linkedinUrl: true,
+          xHandle: true,
+          company: true,
+          title: true,
+        },
+      }),
+      storedSelfLinkedInUrl(userId),
+    ]);
+
+    const self = resolveSelfIdentity(messages, storedSelfUrl);
+    const conversations = resolveConversations(
+      messages,
+      existing,
+      self.url || null,
     );
-  }
-  const { columns, messages } = parsed;
-  if (!messages.length) {
-    return refusal(
-      "No messages found in that file — upload messages.csv from your LinkedIn data download",
-    );
-  }
 
-  const db = await getDb();
-  const [existing, storedSelfUrl] = await Promise.all([
-    db.query.contacts.findMany({
-      where: eq(contacts.userId, userId),
-      columns: {
-        id: true,
-        fullName: true,
-        email: true,
-        linkedinUrl: true,
-        xHandle: true,
-        company: true,
-        title: true,
-      },
-    }),
-    storedSelfLinkedInUrl(userId),
-  ]);
+    // Per-thread sent/received split, so an inverted owner guess is visible on the review
+    // screen rather than discovered later in twenty thousand mislabelled rows.
+    const directionByConversation = new Map<
+      string,
+      { sent: number; received: number }
+    >();
+    for (const m of messages) {
+      const direction = messageDirection(m, self);
+      if (!direction || !m.conversationId) continue;
+      const split = directionByConversation.get(m.conversationId) || {
+        sent: 0,
+        received: 0,
+      };
+      if (direction === "out") split.sent += 1;
+      else split.received += 1;
+      directionByConversation.set(m.conversationId, split);
+    }
 
-  const self = resolveSelfIdentity(messages, storedSelfUrl);
-  const conversations = resolveConversations(
-    messages,
-    existing,
-    self.url || null,
-  );
+    const people = conversations.map((c) => ({
+      id: c.conversationId,
+      conversationId: c.conversationId,
+      title: c.conversationTitle,
+      messageCount: c.messageCount,
+      sentByYou: directionByConversation.get(c.conversationId)?.sent ?? null,
+      receivedFromThem:
+        directionByConversation.get(c.conversationId)?.received ?? null,
+      latestDate: c.latestDate?.toISOString() ?? null,
+      sampleContent: c.sampleContent,
+      match: c.match,
+      willCreate: !c.match && !!c.primaryUrl,
+      isRepeat: Boolean(c.match),
+      displayName:
+        c.match?.fullName ||
+        c.primaryName ||
+        (c.primaryUrl ? nameFromLinkedInSlug(c.primaryUrl) : "Unknown"),
+      linkedinUrl: c.primaryUrl,
+    }));
 
-  // Per-thread sent/received split, so an inverted owner guess is visible on the review
-  // screen rather than discovered later in twenty thousand mislabelled rows.
-  const directionByConversation = new Map<
-    string,
-    { sent: number; received: number }
-  >();
-  for (const m of messages) {
-    const direction = messageDirection(m, self);
-    if (!direction || !m.conversationId) continue;
-    const split = directionByConversation.get(m.conversationId) || {
-      sent: 0,
-      received: 0,
+    const matched = people.filter((c) => c.isRepeat);
+    const unmatched = people.filter((c) => !c.isRepeat);
+
+    return {
+      columns,
+      totalMessages: messages.length,
+      totalConversations: people.length,
+      matchedCount: matched.length,
+      unmatchedCount: unmatched.length,
+      people,
+      // keep legacy key
+      preview: people,
     };
-    if (direction === "out") split.sent += 1;
-    else split.received += 1;
-    directionByConversation.set(m.conversationId, split);
   }
-
-  const people = conversations.map((c) => ({
-    id: c.conversationId,
-    conversationId: c.conversationId,
-    title: c.conversationTitle,
-    messageCount: c.messageCount,
-    sentByYou: directionByConversation.get(c.conversationId)?.sent ?? null,
-    receivedFromThem:
-      directionByConversation.get(c.conversationId)?.received ?? null,
-    latestDate: c.latestDate?.toISOString() ?? null,
-    sampleContent: c.sampleContent,
-    match: c.match,
-    willCreate: !c.match && !!c.primaryUrl,
-    isRepeat: Boolean(c.match),
-    displayName:
-      c.match?.fullName ||
-      c.primaryName ||
-      (c.primaryUrl ? nameFromLinkedInSlug(c.primaryUrl) : "Unknown"),
-    linkedinUrl: c.primaryUrl,
-  }));
-
-  const matched = people.filter((c) => c.isRepeat);
-  const unmatched = people.filter((c) => !c.isRepeat);
-
-  return {
-    columns,
-    totalMessages: messages.length,
-    totalConversations: people.length,
-    matchedCount: matched.length,
-    unmatchedCount: unmatched.length,
-    people,
-    // keep legacy key
-    preview: people,
-  };
-}
+);
 
 /**
  * Starts a server-owned LinkedIn messages import: parses the CSV and resolves every
@@ -918,99 +934,97 @@ export async function previewLinkedInMessagesCsv(csvText: string) {
  * Everything else `resolveConversations` computes (primary participant, display name,
  * per-conversation message grouping) is still needed and is CPU-only, not a DB round trip.
  */
-export async function startLinkedInMessagesImport(
-  csvText: string,
-  fileName: string,
-  selectedConversationIds?: string[],
-): Promise<{ importId: string; totalRows: number }> {
-  const userId = await requireUserId();
-  await consumeDailyCap("importDaily", userId);
-  const db = await getDb();
+export const startLinkedInMessagesImport = defineAction(
+  { schema: z.tuple([z.string(), z.string(), z.array(z.string()).optional()]) },
+  async (userId, csvText: string, fileName: string, selectedConversationIds?: string[]): Promise<{ importId: string; totalRows: number }> => {
+    await consumeDailyCap("importDaily", userId);
+    const db = await getDb();
 
-  const { messages } = parseLinkedInMessagesCsv(csvText);
-  // Same owner the preview resolved, from the same stored URL — see `storedSelfLinkedInUrl`.
-  const self = resolveSelfIdentity(
-    messages,
-    await storedSelfLinkedInUrl(userId),
-  );
-  const conversations = resolveConversations(messages, [], self.url || null);
-  const selected =
-    selectedConversationIds === undefined
-      ? null
-      : new Set(selectedConversationIds);
-  const selectedConversations = selected
-    ? conversations.filter((c) => selected.has(c.conversationId))
-    : conversations;
+    const { messages } = parseLinkedInMessagesCsv(csvText);
+    // Same owner the preview resolved, from the same stored URL — see `storedSelfLinkedInUrl`.
+    const self = resolveSelfIdentity(
+      messages,
+      await storedSelfLinkedInUrl(userId),
+    );
+    const conversations = resolveConversations(messages, [], self.url || null);
+    const selected =
+      selectedConversationIds === undefined
+        ? null
+        : new Set(selectedConversationIds);
+    const selectedConversations = selected
+      ? conversations.filter((c) => selected.has(c.conversationId))
+      : conversations;
 
-  if (selectedConversations.length === 0) {
-    throw new Error("No conversations selected to import");
-  }
+    if (selectedConversations.length === 0) {
+      throw new Error("No conversations selected to import");
+    }
 
-  const byConv = new Map<string, ParsedLinkedInMessage[]>();
-  for (const m of messages) {
-    const list = byConv.get(m.conversationId) || [];
-    list.push(m);
-    byConv.set(m.conversationId, list);
-  }
+    const byConv = new Map<string, ParsedLinkedInMessage[]>();
+    for (const m of messages) {
+      const list = byConv.get(m.conversationId) || [];
+      list.push(m);
+      byConv.set(m.conversationId, list);
+    }
 
-  const [importRow] = await db
-    .insert(imports)
-    .values({
-      userId,
-      importType: LINKEDIN_MESSAGES_IMPORT_TYPE,
-      fileName,
-      status: "processing",
-      totalRows: selectedConversations.length,
-      stats: {},
-    })
-    .returning();
-
-  await stageImportRows(
-    selectedConversations.map((conv, index) => {
-      const identity = participantIdentity(conv);
-      const msgs = byConv.get(conv.conversationId) || [];
-      return {
-        importId: importRow.id,
+    const [importRow] = await db
+      .insert(imports)
+      .values({
         userId,
-        rowIndex: index,
-        payload: {
-          kind: "linkedin_message_thread" as const,
-          conversationId: conv.conversationId,
-          fullName: identity?.fullName ?? "",
-          firstName: identity?.firstName ?? "",
-          lastName: identity?.lastName ?? "",
-          linkedinUrl: identity?.linkedinUrl ?? "",
-          messages: msgs
-            .filter((m) => m.content.trim())
-            .map((m) => ({
-              id: linkedInMessageExternalId(
-                conv.conversationId,
-                m.parsedDate,
-                m.content,
-              ),
-              body: m.content,
-              // `null`, not an epoch sentinel: an unparseable date must be excluded from
-              // the conversation's date range, not silently reported as 1970 (see
-              // `LinkedInMessageThreadRowPayload.messages`).
-              sentAt: m.parsedDate ? m.parsedDate.toISOString() : null,
-              // Deliberately NOT part of `linkedInMessageExternalId` above. That id hashes
-              // (conversation, date, content), so a re-upload reproduces it exactly and the
-              // engine's ON CONFLICT DO UPDATE writes direction onto rows imported before
-              // this column existed. Hashing direction would make those inserts instead,
-              // duplicating every message rather than backfilling it.
-              direction: messageDirection(m, self),
-            })),
-        },
-      };
-    }),
-  );
+        importType: LINKEDIN_MESSAGES_IMPORT_TYPE,
+        fileName,
+        status: "processing",
+        totalRows: selectedConversations.length,
+        stats: {},
+      })
+      .returning();
 
-  after(() => runImportJobById(importRow.id).catch(() => {}));
+    await stageImportRows(
+      selectedConversations.map((conv, index) => {
+        const identity = participantIdentity(conv);
+        const msgs = byConv.get(conv.conversationId) || [];
+        return {
+          importId: importRow.id,
+          userId,
+          rowIndex: index,
+          payload: {
+            kind: "linkedin_message_thread" as const,
+            conversationId: conv.conversationId,
+            fullName: identity?.fullName ?? "",
+            firstName: identity?.firstName ?? "",
+            lastName: identity?.lastName ?? "",
+            linkedinUrl: identity?.linkedinUrl ?? "",
+            messages: msgs
+              .filter((m) => m.content.trim())
+              .map((m) => ({
+                id: linkedInMessageExternalId(
+                  conv.conversationId,
+                  m.parsedDate,
+                  m.content,
+                ),
+                body: m.content,
+                // `null`, not an epoch sentinel: an unparseable date must be excluded from
+                // the conversation's date range, not silently reported as 1970 (see
+                // `LinkedInMessageThreadRowPayload.messages`).
+                sentAt: m.parsedDate ? m.parsedDate.toISOString() : null,
+                // Deliberately NOT part of `linkedInMessageExternalId` above. That id hashes
+                // (conversation, date, content), so a re-upload reproduces it exactly and the
+                // engine's ON CONFLICT DO UPDATE writes direction onto rows imported before
+                // this column existed. Hashing direction would make those inserts instead,
+                // duplicating every message rather than backfilling it.
+                direction: messageDirection(m, self),
+              })),
+          },
+        };
+      }),
+    );
 
-  revalidatePath("/imports");
+    after(() => runImportJobById(importRow.id).catch(() => {}));
 
-  return { importId: importRow.id, totalRows: selectedConversations.length };
-}
+    revalidatePath("/imports");
+
+    return { importId: importRow.id, totalRows: selectedConversations.length };
+  }
+);
 
 /** What the history list actually renders. Everything else stays on the server. */
 export type ImportHistoryItem = {
@@ -1066,162 +1080,166 @@ const IMPORT_HISTORY_PAGE = 25;
  * an array of every contact UUID the job touched. Those went straight into the RSC payload of
  * a page that never reads them. The `(user_id, created_at)` index already backs the ordering.
  */
-export async function listImports(
-  options: { limit?: number; offset?: number } = {},
-): Promise<ImportHistoryItem[]> {
-  const userId = await requireUserId();
-  const db = await getDb();
-  const rows = await db.query.imports.findMany({
-    // A `staging` chat import is an upload still in flight (or abandoned, and swept in a
-    // day): nothing has been imported yet, so it is not history.
-    where: and(eq(imports.userId, userId), ne(imports.status, "staging")),
-    orderBy: (i, { desc }) => [desc(i.createdAt)],
-    // Arguments to a server action come from any client: bounded, so one call can't page the table.
-    limit: Math.min(Math.max(Math.trunc(Number(options.limit) || IMPORT_HISTORY_PAGE), 1), 200),
-    offset: Math.max(Math.trunc(Number(options.offset) || 0), 0),
-    columns: {
-      id: true,
-      importType: true,
-      fileName: true,
-      status: true,
-      totalRows: true,
-      rowsProcessed: true,
-      contactsCreated: true,
-      contactsUpdated: true,
-      duplicatesFound: true,
-      errorMessage: true,
-      createdAt: true,
-      stats: true,
-    },
-  });
+export const listImports = defineAction(
+  { schema: z.tuple([z.looseObject({ limit: anyNumber.optional(), offset: anyNumber.optional() }).optional()]) },
+  async (userId, options: { limit?: number; offset?: number } = {}): Promise<ImportHistoryItem[]> => {
+    const db = await getDb();
+    const rows = await db.query.imports.findMany({
+      // A `staging` chat import is an upload still in flight (or abandoned, and swept in a
+      // day): nothing has been imported yet, so it is not history.
+      where: and(eq(imports.userId, userId), ne(imports.status, "staging")),
+      orderBy: (i, { desc }) => [desc(i.createdAt)],
+      // Arguments to a server action come from any client: bounded, so one call can't page the table.
+      limit: Math.min(Math.max(Math.trunc(Number(options.limit) || IMPORT_HISTORY_PAGE), 1), 200),
+      offset: Math.max(Math.trunc(Number(options.offset) || 0), 0),
+      columns: {
+        id: true,
+        importType: true,
+        fileName: true,
+        status: true,
+        totalRows: true,
+        rowsProcessed: true,
+        contactsCreated: true,
+        contactsUpdated: true,
+        duplicatesFound: true,
+        errorMessage: true,
+        createdAt: true,
+        stats: true,
+      },
+    });
 
-  return rows.map((r) => ({
-    ...r,
-    // Picked field by field rather than spread: `stats` is where `touchedContactIds` lives.
-    stats: {
-      skipped: r.stats?.skipped,
-      blockedByPlan: r.stats?.blockedByPlan,
-      failedRows: r.stats?.failedRows,
-      interactionsLogged: r.stats?.interactionsLogged,
-      remindersCreated: r.stats?.remindersCreated,
-      messagesImported: r.stats?.messagesImported,
-      meetingsLogged: r.stats?.meetingsLogged,
-      errorCode: r.stats?.errorCode,
-      docsRead: r.stats?.docsRead,
-      docsAlreadyImported: r.stats?.docsAlreadyImported,
-      flaggedCommitments: r.stats?.flaggedCommitments,
-      undoneAt: r.stats?.undoneAt,
-      undoneRemoved: r.stats?.undoneRemoved,
-      undoneKept: r.stats?.undoneKept,
-      filesSaved: r.stats?.filesSaved,
-      filesTooLarge: r.stats?.filesTooLarge,
-      filesPrivate: r.stats?.filesPrivate,
-      targetsAdded: r.stats?.targetsAdded,
-      backgroundAdded: r.stats?.backgroundAdded,
-    },
-  }));
-}
+    return rows.map((r) => ({
+      ...r,
+      // Picked field by field rather than spread: `stats` is where `touchedContactIds` lives.
+      stats: {
+        skipped: r.stats?.skipped,
+        blockedByPlan: r.stats?.blockedByPlan,
+        failedRows: r.stats?.failedRows,
+        interactionsLogged: r.stats?.interactionsLogged,
+        remindersCreated: r.stats?.remindersCreated,
+        messagesImported: r.stats?.messagesImported,
+        meetingsLogged: r.stats?.meetingsLogged,
+        errorCode: r.stats?.errorCode,
+        docsRead: r.stats?.docsRead,
+        docsAlreadyImported: r.stats?.docsAlreadyImported,
+        flaggedCommitments: r.stats?.flaggedCommitments,
+        undoneAt: r.stats?.undoneAt,
+        undoneRemoved: r.stats?.undoneRemoved,
+        undoneKept: r.stats?.undoneKept,
+        filesSaved: r.stats?.filesSaved,
+        filesTooLarge: r.stats?.filesTooLarge,
+        filesPrivate: r.stats?.filesPrivate,
+        targetsAdded: r.stats?.targetsAdded,
+        backgroundAdded: r.stats?.backgroundAdded,
+      },
+    }));
+  }
+);
 
 /** When the last LinkedIn import finished — the LinkedIn line on the Integrations overview. */
-export async function getLastLinkedInImportAt(): Promise<Date | null> {
-  const userId = await requireUserId();
-  return lastCompletedImportAt(userId, ["linkedin_connections", LINKEDIN_MESSAGES_IMPORT_TYPE]);
-}
-
-export async function previewCalendarImport(payload: {
-  kind: "ics" | "csv";
-  text: string;
-}) {
-  const userId = await requireUserId();
-  const db = await getDb();
-  const existing = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    columns: {
-      id: true,
-      fullName: true,
-      email: true,
-      linkedinUrl: true,
-      xHandle: true,
-      company: true,
-      title: true,
-    },
-  });
-
-  let events: ParsedCalendarEvent[] = [];
-
-  if (payload.kind === "ics") {
-    events = parseIcsEvents(payload.text);
-  } else {
-    const parsed = Papa.parse<Record<string, string>>(payload.text, {
-      header: true,
-      skipEmptyLines: true,
-    });
-    events = parsed.data.map((row, i) => {
-      const mapped = mapCalendarCsvRow(row);
-      const attendees = mapped.attendees
-        .split(/[,;]/)
-        .map((part) => {
-          const emailMatch = part.match(/([\w.+-]+@[\w.-]+)/);
-          return {
-            name: part.replace(/<[^>]+>/, "").trim(),
-            email: (emailMatch?.[1] || "").toLowerCase(),
-          };
-        })
-        .filter((p) => p.email || p.name);
-      return {
-        uid: `csv-${i}-${mapped.summary}`,
-        summary: mapped.summary,
-        description: mapped.description,
-        location: mapped.location,
-        start: mapped.start,
-        end: mapped.end,
-        attendees,
-        organizer: null,
-      } satisfies ParsedCalendarEvent;
-    });
+export const getLastLinkedInImportAt = defineAction(
+  {},
+  async (userId): Promise<Date | null> => {
+    return lastCompletedImportAt(userId, ["linkedin_connections", LINKEDIN_MESSAGES_IMPORT_TYPE]);
   }
+);
 
-  // One-time calendar upload: reach back CALENDAR_BACKFILL_DAYS.
-  const windowed = windowCalendarEvents(events);
+export const previewCalendarImport = defineAction(
+  { schema: z.tuple([z.looseObject({ kind: z.enum(["ics", "csv"]), text: z.string() })]) },
+  async (userId, payload: {
+    kind: "ics" | "csv";
+    text: string;
+  }) => {
+    const db = await getDb();
+    const existing = await db.query.contacts.findMany({
+      where: eq(contacts.userId, userId),
+      columns: {
+        id: true,
+        fullName: true,
+        email: true,
+        linkedinUrl: true,
+        xHandle: true,
+        company: true,
+        title: true,
+      },
+    });
 
-  const duplicateIndex = buildDuplicateIndex(existing);
+    let events: ParsedCalendarEvent[] = [];
 
-  const preview = windowed.slice(0, 40).map((event) => {
-    const people = peopleFromEvent(event);
-    const matches = people
-      .map((person) => {
-        const dups = findDuplicateCandidatesIndexed(duplicateIndex, {
-          fullName: person.name || undefined,
-          email: person.email || undefined,
-        });
-        return dups[0]
-          ? {
-              person,
-              contactId: dups[0].contact.id,
-              fullName: dups[0].contact.fullName,
-              reason: dups[0].reason,
-            }
-          : { person, contactId: null, fullName: null, reason: null };
-      })
-      .filter((m) => m.contactId || m.person.email || m.person.name);
+    if (payload.kind === "ics") {
+      events = parseIcsEvents(payload.text);
+    } else {
+      const parsed = Papa.parse<Record<string, string>>(payload.text, {
+        header: true,
+        skipEmptyLines: true,
+      });
+      events = parsed.data.map((row, i) => {
+        const mapped = mapCalendarCsvRow(row);
+        const attendees = mapped.attendees
+          .split(/[,;]/)
+          .map((part) => {
+            const emailMatch = part.match(/([\w.+-]+@[\w.-]+)/);
+            return {
+              name: part.replace(/<[^>]+>/, "").trim(),
+              email: (emailMatch?.[1] || "").toLowerCase(),
+            };
+          })
+          .filter((p) => p.email || p.name);
+        return {
+          uid: `csv-${i}-${mapped.summary}`,
+          summary: mapped.summary,
+          description: mapped.description,
+          location: mapped.location,
+          start: mapped.start,
+          end: mapped.end,
+          attendees,
+          organizer: null,
+        } satisfies ParsedCalendarEvent;
+      });
+    }
+
+    // One-time calendar upload: reach back CALENDAR_BACKFILL_DAYS.
+    const windowed = windowCalendarEvents(events);
+
+    const duplicateIndex = buildDuplicateIndex(existing);
+
+    const preview = windowed.slice(0, 40).map((event) => {
+      const people = peopleFromEvent(event);
+      const matches = people
+        .map((person) => {
+          const dups = findDuplicateCandidatesIndexed(duplicateIndex, {
+            fullName: person.name || undefined,
+            email: person.email || undefined,
+          });
+          return dups[0]
+            ? {
+                person,
+                contactId: dups[0].contact.id,
+                fullName: dups[0].contact.fullName,
+                reason: dups[0].reason,
+              }
+            : { person, contactId: null, fullName: null, reason: null };
+        })
+        .filter((m) => m.contactId || m.person.email || m.person.name);
+
+      return {
+        uid: event.uid,
+        summary: event.summary || "(untitled event)",
+        start: event.start?.toISOString() ?? null,
+        attendeeCount: people.length,
+        matchedContacts: matches.filter((m) => m.contactId).length,
+        matches: matches.slice(0, 6),
+      };
+    });
 
     return {
-      uid: event.uid,
-      summary: event.summary || "(untitled event)",
-      start: event.start?.toISOString() ?? null,
-      attendeeCount: people.length,
-      matchedContacts: matches.filter((m) => m.contactId).length,
-      matches: matches.slice(0, 6),
+      totalEvents: events.length,
+      windowedEvents: windowed.length,
+      matchedEventCount: preview.filter((p) => p.matchedContacts > 0).length,
+      preview,
     };
-  });
-
-  return {
-    totalEvents: events.length,
-    windowedEvents: windowed.length,
-    matchedEventCount: preview.filter((p) => p.matchedContacts > 0).length,
-    preview,
-  };
-}
+  }
+);
 
 /**
  * Starts a server-owned calendar import: parses and windows the file once, explodes every
@@ -1238,106 +1256,108 @@ export async function previewCalendarImport(payload: {
  * `bulkMergeContactsForUser`-based widening (see that adapter's comments) replace both of
  * those, the same shape as `confirmGoogleContactsImport` and `startLinkedInMessagesImport`.
  */
-export async function confirmCalendarImport(payload: {
-  kind: "ics" | "csv";
-  text: string;
-  fileName: string;
-  createFollowUps?: boolean;
-}): Promise<{ importId: string; totalRows: number }> {
-  const userId = await requireUserId();
-  await consumeDailyCap("importDaily", userId);
-  const db = await getDb();
-  const createFollowUps = payload.createFollowUps !== false;
+export const confirmCalendarImport = defineAction(
+  { schema: z.tuple([z.looseObject({ kind: z.enum(["ics", "csv"]), text: z.string(), fileName: z.string(), createFollowUps: z.boolean().optional() })]) },
+  async (userId, payload: {
+    kind: "ics" | "csv";
+    text: string;
+    fileName: string;
+    createFollowUps?: boolean;
+  }): Promise<{ importId: string; totalRows: number }> => {
+    await consumeDailyCap("importDaily", userId);
+    const db = await getDb();
+    const createFollowUps = payload.createFollowUps !== false;
 
-  let events: ParsedCalendarEvent[] = [];
-  if (payload.kind === "ics") {
-    events = parseIcsEvents(payload.text);
-  } else {
-    const parsed = Papa.parse<Record<string, string>>(payload.text, {
-      header: true,
-      skipEmptyLines: true,
-    });
-    events = parsed.data.map((row, i) => {
-      const mapped = mapCalendarCsvRow(row);
-      const attendees = mapped.attendees
-        .split(/[,;]/)
-        .map((part) => {
-          const emailMatch = part.match(/([\w.+-]+@[\w.-]+)/);
-          return {
-            name: part.replace(/<[^>]+>/, "").trim(),
-            email: (emailMatch?.[1] || "").toLowerCase(),
-          };
-        })
-        .filter((p) => p.email || p.name);
-      return {
-        uid: `csv-${i}-${mapped.summary}`,
-        summary: mapped.summary,
-        description: mapped.description,
-        location: mapped.location,
-        start: mapped.start,
-        end: mapped.end,
-        attendees,
-        organizer: null,
-      } satisfies ParsedCalendarEvent;
-    });
-  }
-
-  // Same one-time-upload backfill window as previewCalendarImport, so a confirm always
-  // processes exactly what the preview showed.
-  const windowed = windowCalendarEvents(events);
-
-  // One row per (event, attendee) pair — see `CalendarEventRowPayload`'s doc comment. An
-  // event with no attendees and no organizer contributes no rows at all, same as it
-  // contributed nothing for the old importer's per-event `people.length === 0` skip.
-  const rowPayloads: CalendarEventRowPayload[] = [];
-  for (const event of windowed) {
-    for (const person of peopleFromEvent(event)) {
-      rowPayloads.push({
-        kind: "calendar_event",
-        eventUid: event.uid,
-        summary: event.summary,
-        description: event.description,
-        location: event.location,
-        start: event.start ? event.start.toISOString() : null,
-        end: event.end ? event.end.toISOString() : null,
-        attendeeName: person.name,
-        attendeeEmail: person.email,
-        createFollowUps,
+    let events: ParsedCalendarEvent[] = [];
+    if (payload.kind === "ics") {
+      events = parseIcsEvents(payload.text);
+    } else {
+      const parsed = Papa.parse<Record<string, string>>(payload.text, {
+        header: true,
+        skipEmptyLines: true,
+      });
+      events = parsed.data.map((row, i) => {
+        const mapped = mapCalendarCsvRow(row);
+        const attendees = mapped.attendees
+          .split(/[,;]/)
+          .map((part) => {
+            const emailMatch = part.match(/([\w.+-]+@[\w.-]+)/);
+            return {
+              name: part.replace(/<[^>]+>/, "").trim(),
+              email: (emailMatch?.[1] || "").toLowerCase(),
+            };
+          })
+          .filter((p) => p.email || p.name);
+        return {
+          uid: `csv-${i}-${mapped.summary}`,
+          summary: mapped.summary,
+          description: mapped.description,
+          location: mapped.location,
+          start: mapped.start,
+          end: mapped.end,
+          attendees,
+          organizer: null,
+        } satisfies ParsedCalendarEvent;
       });
     }
-  }
 
-  const [importRow] = await db
-    .insert(imports)
-    .values({
-      userId,
-      importType:
-        payload.kind === "ics"
-          ? CALENDAR_ICS_IMPORT_TYPE
-          : CALENDAR_CSV_IMPORT_TYPE,
-      fileName: payload.fileName,
-      status: "processing",
-      totalRows: rowPayloads.length,
-      stats: {},
-    })
-    .returning();
+    // Same one-time-upload backfill window as previewCalendarImport, so a confirm always
+    // processes exactly what the preview showed.
+    const windowed = windowCalendarEvents(events);
 
-  if (rowPayloads.length > 0) {
-    await stageImportRows(
-      rowPayloads.map((rowPayload, index) => ({
-        importId: importRow.id,
+    // One row per (event, attendee) pair — see `CalendarEventRowPayload`'s doc comment. An
+    // event with no attendees and no organizer contributes no rows at all, same as it
+    // contributed nothing for the old importer's per-event `people.length === 0` skip.
+    const rowPayloads: CalendarEventRowPayload[] = [];
+    for (const event of windowed) {
+      for (const person of peopleFromEvent(event)) {
+        rowPayloads.push({
+          kind: "calendar_event",
+          eventUid: event.uid,
+          summary: event.summary,
+          description: event.description,
+          location: event.location,
+          start: event.start ? event.start.toISOString() : null,
+          end: event.end ? event.end.toISOString() : null,
+          attendeeName: person.name,
+          attendeeEmail: person.email,
+          createFollowUps,
+        });
+      }
+    }
+
+    const [importRow] = await db
+      .insert(imports)
+      .values({
         userId,
-        rowIndex: index,
-        payload: rowPayload,
-      })),
-    );
+        importType:
+          payload.kind === "ics"
+            ? CALENDAR_ICS_IMPORT_TYPE
+            : CALENDAR_CSV_IMPORT_TYPE,
+        fileName: payload.fileName,
+        status: "processing",
+        totalRows: rowPayloads.length,
+        stats: {},
+      })
+      .returning();
+
+    if (rowPayloads.length > 0) {
+      await stageImportRows(
+        rowPayloads.map((rowPayload, index) => ({
+          importId: importRow.id,
+          userId,
+          rowIndex: index,
+          payload: rowPayload,
+        })),
+      );
+    }
+
+    after(() => runImportJobById(importRow.id).catch(() => {}));
+    revalidatePath("/imports");
+
+    return { importId: importRow.id, totalRows: rowPayloads.length };
   }
-
-  after(() => runImportJobById(importRow.id).catch(() => {}));
-  revalidatePath("/imports");
-
-  return { importId: importRow.id, totalRows: rowPayloads.length };
-}
+);
 
 export type GoogleContactPerson = {
   id: string;
@@ -1356,77 +1376,79 @@ export type GoogleContactPerson = {
   } | null;
 };
 
-export async function previewGoogleContacts(): Promise<{
-  connected: boolean;
-  contactsScopeGranted: boolean;
-  people: GoogleContactPerson[];
-}> {
-  const userId = await requireUserId();
-  if (await isDemoWorkspace(userId)) {
-    return { connected: true, contactsScopeGranted: true, people: await demoAddressBookPreview(userId) };
-  }
-  const db = await getDb();
-  const conn = await db.query.gmailConnections.findFirst({
-    where: and(
-      eq(gmailConnections.userId, userId),
-      eq(gmailConnections.status, "active"),
-    ),
-  });
-  if (!conn) {
-    return { connected: false, contactsScopeGranted: false, people: [] };
-  }
-  if (!hasContactsScope(conn.scopes)) {
-    return { connected: true, contactsScopeGranted: false, people: [] };
-  }
-
-  const accessToken = await getValidAccessToken(userId);
-  const googleContacts = await fetchGooglePeopleContacts(accessToken);
-
-  const existing = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    columns: {
-      id: true,
-      fullName: true,
-      email: true,
-      linkedinUrl: true,
-      xHandle: true,
-      company: true,
-      title: true,
-    },
-  });
-
-  const duplicateIndex = buildDuplicateIndex(existing);
-
-  const people = googleContacts.map((p) => {
-    const dups = findDuplicateCandidatesIndexed(duplicateIndex, {
-      fullName: p.fullName,
-      email: p.email,
-      company: p.company,
-      title: p.title,
+export const previewGoogleContacts = defineAction(
+  {},
+  async (userId): Promise<{
+    connected: boolean;
+    contactsScopeGranted: boolean;
+    people: GoogleContactPerson[];
+  }> => {
+    if (await isDemoWorkspace(userId)) {
+      return { connected: true, contactsScopeGranted: true, people: await demoAddressBookPreview(userId) };
+    }
+    const db = await getDb();
+    const conn = await db.query.gmailConnections.findFirst({
+      where: and(
+        eq(gmailConnections.userId, userId),
+        eq(gmailConnections.status, "active"),
+      ),
     });
-    const top = dups[0];
-    return {
-      id: p.resourceName,
-      fullName: p.fullName,
-      company: p.company,
-      title: p.title,
-      email: p.email,
-      phone: p.phone,
-      photoUrl: p.photoUrl,
-      isRepeat: Boolean(top && top.confidence >= DUPLICATE_MERGE_CONFIDENCE),
-      duplicate: top
-        ? {
-            id: top.contact.id,
-            fullName: top.contact.fullName,
-            reason: top.reason,
-            confidence: top.confidence,
-          }
-        : null,
-    };
-  });
+    if (!conn) {
+      return { connected: false, contactsScopeGranted: false, people: [] };
+    }
+    if (!hasContactsScope(conn.scopes)) {
+      return { connected: true, contactsScopeGranted: false, people: [] };
+    }
 
-  return { connected: true, contactsScopeGranted: true, people };
-}
+    const accessToken = await getValidAccessToken(userId);
+    const googleContacts = await fetchGooglePeopleContacts(accessToken);
+
+    const existing = await db.query.contacts.findMany({
+      where: eq(contacts.userId, userId),
+      columns: {
+        id: true,
+        fullName: true,
+        email: true,
+        linkedinUrl: true,
+        xHandle: true,
+        company: true,
+        title: true,
+      },
+    });
+
+    const duplicateIndex = buildDuplicateIndex(existing);
+
+    const people = googleContacts.map((p) => {
+      const dups = findDuplicateCandidatesIndexed(duplicateIndex, {
+        fullName: p.fullName,
+        email: p.email,
+        company: p.company,
+        title: p.title,
+      });
+      const top = dups[0];
+      return {
+        id: p.resourceName,
+        fullName: p.fullName,
+        company: p.company,
+        title: p.title,
+        email: p.email,
+        phone: p.phone,
+        photoUrl: p.photoUrl,
+        isRepeat: Boolean(top && top.confidence >= DUPLICATE_MERGE_CONFIDENCE),
+        duplicate: top
+          ? {
+              id: top.contact.id,
+              fullName: top.contact.fullName,
+              reason: top.reason,
+              confidence: top.confidence,
+            }
+          : null,
+      };
+    });
+
+    return { connected: true, contactsScopeGranted: true, people };
+  }
+);
 
 /**
  * Starts a server-owned Google Contacts import: snapshots the selected contacts once, then
@@ -1439,59 +1461,59 @@ export async function previewGoogleContacts(): Promise<{
  * into `import_job_rows` and letting the engine's own chunked, resumable loop (Tasks 10-12)
  * own the writes is what fixes that.
  */
-export async function confirmGoogleContactsImport(
-  selectedIds: string[],
-): Promise<{ importId: string; totalRows: number }> {
-  const userId = await requireUserId();
-  await consumeDailyCap("importDaily", userId);
-  if (await isDemoWorkspace(userId)) {
-    return recordDemoContactsImport(userId, "google_contacts", selectedIds.length);
+export const confirmGoogleContactsImport = defineAction(
+  { schema: z.tuple([z.array(z.string())]) },
+  async (userId, selectedIds: string[]): Promise<{ importId: string; totalRows: number }> => {
+    await consumeDailyCap("importDaily", userId);
+    if (await isDemoWorkspace(userId)) {
+      return recordDemoContactsImport(userId, "google_contacts", selectedIds.length);
+    }
+    const db = await getDb();
+
+    const accessToken = await getValidAccessToken(userId);
+    const googleContacts = await fetchGooglePeopleContacts(accessToken);
+    const selected = new Set(selectedIds);
+    const rows = googleContacts.filter((p) => selected.has(p.resourceName));
+    if (rows.length === 0) throw new Error("No contacts selected to import");
+
+    const [importRow] = await db
+      .insert(imports)
+      .values({
+        userId,
+        importType: GOOGLE_CONTACTS_IMPORT_TYPE,
+        fileName: "Google Contacts",
+        status: "processing",
+        totalRows: rows.length,
+        stats: {},
+      })
+      .returning();
+
+    await stageImportRows(
+      rows.map((row, index) => ({
+        importId: importRow.id,
+        userId,
+        rowIndex: index,
+        payload: {
+          kind: "google_contact" as const,
+          resourceName: row.resourceName,
+          fullName: row.fullName,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          company: row.company,
+          title: row.title,
+          email: row.email,
+          phone: row.phone,
+          photoUrl: row.photoUrl ?? "",
+        },
+      })),
+    );
+
+    after(() => runImportJobById(importRow.id).catch(() => {}));
+    revalidatePath("/imports");
+
+    return { importId: importRow.id, totalRows: rows.length };
   }
-  const db = await getDb();
-
-  const accessToken = await getValidAccessToken(userId);
-  const googleContacts = await fetchGooglePeopleContacts(accessToken);
-  const selected = new Set(selectedIds);
-  const rows = googleContacts.filter((p) => selected.has(p.resourceName));
-  if (rows.length === 0) throw new Error("No contacts selected to import");
-
-  const [importRow] = await db
-    .insert(imports)
-    .values({
-      userId,
-      importType: GOOGLE_CONTACTS_IMPORT_TYPE,
-      fileName: "Google Contacts",
-      status: "processing",
-      totalRows: rows.length,
-      stats: {},
-    })
-    .returning();
-
-  await stageImportRows(
-    rows.map((row, index) => ({
-      importId: importRow.id,
-      userId,
-      rowIndex: index,
-      payload: {
-        kind: "google_contact" as const,
-        resourceName: row.resourceName,
-        fullName: row.fullName,
-        firstName: row.firstName,
-        lastName: row.lastName,
-        company: row.company,
-        title: row.title,
-        email: row.email,
-        phone: row.phone,
-        photoUrl: row.photoUrl ?? "",
-      },
-    })),
-  );
-
-  after(() => runImportJobById(importRow.id).catch(() => {}));
-  revalidatePath("/imports");
-
-  return { importId: importRow.id, totalRows: rows.length };
-}
+);
 
 export type OutlookContactPerson = {
   id: string;
@@ -1509,79 +1531,81 @@ export type OutlookContactPerson = {
   } | null;
 };
 
-export async function previewOutlookContacts(): Promise<{
-  connected: boolean;
-  contactsScopeGranted: boolean;
-  people: OutlookContactPerson[];
-}> {
-  const userId = await requireUserId();
-  if (await isDemoWorkspace(userId)) {
-    const people = await demoAddressBookPreview(userId);
-    return {
-      connected: true,
-      contactsScopeGranted: true,
-      people: people.map(({ photoUrl: _photo, ...p }) => p),
-    };
-  }
-  const db = await getDb();
-  const conn = await db.query.outlookConnections.findFirst({
-    where: and(
-      eq(outlookConnections.userId, userId),
-      eq(outlookConnections.status, "active"),
-    ),
-  });
-  if (!conn) return { connected: false, contactsScopeGranted: false, people: [] };
-  if (!hasOutlookContactsScope(conn.scopes)) {
-    return { connected: true, contactsScopeGranted: false, people: [] };
-  }
-
-  const accessToken = await getValidOutlookAccessToken(userId);
-  const outlookContacts = await fetchOutlookContacts(accessToken);
-
-  const existing = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    columns: {
-      id: true,
-      fullName: true,
-      email: true,
-      linkedinUrl: true,
-      xHandle: true,
-      company: true,
-      title: true,
-    },
-  });
-
-  const duplicateIndex = buildDuplicateIndex(existing);
-
-  const people = outlookContacts.map((p) => {
-    const dups = findDuplicateCandidatesIndexed(duplicateIndex, {
-      fullName: p.fullName,
-      email: p.email,
-      company: p.company,
-      title: p.title,
+export const previewOutlookContacts = defineAction(
+  {},
+  async (userId): Promise<{
+    connected: boolean;
+    contactsScopeGranted: boolean;
+    people: OutlookContactPerson[];
+  }> => {
+    if (await isDemoWorkspace(userId)) {
+      const people = await demoAddressBookPreview(userId);
+      return {
+        connected: true,
+        contactsScopeGranted: true,
+        people: people.map(({ photoUrl: _photo, ...p }) => p),
+      };
+    }
+    const db = await getDb();
+    const conn = await db.query.outlookConnections.findFirst({
+      where: and(
+        eq(outlookConnections.userId, userId),
+        eq(outlookConnections.status, "active"),
+      ),
     });
-    const top = dups[0];
-    return {
-      id: p.id,
-      fullName: p.fullName,
-      company: p.company,
-      title: p.title,
-      email: p.email,
-      phone: p.phone,
-      isRepeat: Boolean(top && top.confidence >= DUPLICATE_MERGE_CONFIDENCE),
-      duplicate: top
-        ? {
-            id: top.contact.id,
-            fullName: top.contact.fullName,
-            reason: top.reason,
-            confidence: top.confidence,
-          }
-        : null,
-    };
-  });
+    if (!conn) return { connected: false, contactsScopeGranted: false, people: [] };
+    if (!hasOutlookContactsScope(conn.scopes)) {
+      return { connected: true, contactsScopeGranted: false, people: [] };
+    }
 
-  return { connected: true, contactsScopeGranted: true, people };
-}
+    const accessToken = await getValidOutlookAccessToken(userId);
+    const outlookContacts = await fetchOutlookContacts(accessToken);
+
+    const existing = await db.query.contacts.findMany({
+      where: eq(contacts.userId, userId),
+      columns: {
+        id: true,
+        fullName: true,
+        email: true,
+        linkedinUrl: true,
+        xHandle: true,
+        company: true,
+        title: true,
+      },
+    });
+
+    const duplicateIndex = buildDuplicateIndex(existing);
+
+    const people = outlookContacts.map((p) => {
+      const dups = findDuplicateCandidatesIndexed(duplicateIndex, {
+        fullName: p.fullName,
+        email: p.email,
+        company: p.company,
+        title: p.title,
+      });
+      const top = dups[0];
+      return {
+        id: p.id,
+        fullName: p.fullName,
+        company: p.company,
+        title: p.title,
+        email: p.email,
+        phone: p.phone,
+        isRepeat: Boolean(top && top.confidence >= DUPLICATE_MERGE_CONFIDENCE),
+        duplicate: top
+          ? {
+              id: top.contact.id,
+              fullName: top.contact.fullName,
+              reason: top.reason,
+              confidence: top.confidence,
+            }
+          : null,
+      };
+    });
+
+    return { connected: true, contactsScopeGranted: true, people };
+  }
+);
 
 /**
  * Starts a server-owned Outlook Contacts import: snapshots the selected contacts once, then
@@ -1589,65 +1613,65 @@ export async function previewOutlookContacts(): Promise<{
  * `confirmGoogleContactsImport` — see its comment for why this collapsed from a per-row loop
  * to a snapshot-and-handoff.
  */
-export async function confirmOutlookContactsImport(
-  selectedIds: string[],
-): Promise<{ importId: string; totalRows: number }> {
-  const userId = await requireUserId();
-  await consumeDailyCap("importDaily", userId);
-  if (await isDemoWorkspace(userId)) {
-    return recordDemoContactsImport(userId, "outlook_contacts", selectedIds.length);
+export const confirmOutlookContactsImport = defineAction(
+  { schema: z.tuple([z.array(z.string())]) },
+  async (userId, selectedIds: string[]): Promise<{ importId: string; totalRows: number }> => {
+    await consumeDailyCap("importDaily", userId);
+    if (await isDemoWorkspace(userId)) {
+      return recordDemoContactsImport(userId, "outlook_contacts", selectedIds.length);
+    }
+    const db = await getDb();
+
+    const conn = await db.query.outlookConnections.findFirst({
+      where: and(eq(outlookConnections.userId, userId), eq(outlookConnections.status, "active")),
+    });
+    if (!hasOutlookContactsScope(conn?.scopes)) {
+      throw new UserFacingError("Allow Orbit to read your contacts first — reconnect Outlook and tick contacts access");
+    }
+
+    const accessToken = await getValidOutlookAccessToken(userId);
+    const outlookContacts = await fetchOutlookContacts(accessToken);
+    const selected = new Set(selectedIds);
+    const rows = outlookContacts.filter((p) => selected.has(p.id));
+    if (rows.length === 0) throw new Error("No contacts selected to import");
+
+    const [importRow] = await db
+      .insert(imports)
+      .values({
+        userId,
+        importType: OUTLOOK_CONTACTS_IMPORT_TYPE,
+        fileName: "Outlook Contacts",
+        status: "processing",
+        totalRows: rows.length,
+        stats: {},
+      })
+      .returning();
+
+    await stageImportRows(
+      rows.map((row, index) => ({
+        importId: importRow.id,
+        userId,
+        rowIndex: index,
+        payload: {
+          kind: "outlook_contact" as const,
+          id: row.id,
+          fullName: row.fullName,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          company: row.company,
+          title: row.title,
+          email: row.email,
+          phone: row.phone,
+        },
+      })),
+    );
+
+    after(() => runImportJobById(importRow.id).catch(() => {}));
+    revalidatePath("/imports");
+
+    return { importId: importRow.id, totalRows: rows.length };
   }
-  const db = await getDb();
-
-  const conn = await db.query.outlookConnections.findFirst({
-    where: and(eq(outlookConnections.userId, userId), eq(outlookConnections.status, "active")),
-  });
-  if (!hasOutlookContactsScope(conn?.scopes)) {
-    throw new UserFacingError("Allow Orbit to read your contacts first — reconnect Outlook and tick contacts access");
-  }
-
-  const accessToken = await getValidOutlookAccessToken(userId);
-  const outlookContacts = await fetchOutlookContacts(accessToken);
-  const selected = new Set(selectedIds);
-  const rows = outlookContacts.filter((p) => selected.has(p.id));
-  if (rows.length === 0) throw new Error("No contacts selected to import");
-
-  const [importRow] = await db
-    .insert(imports)
-    .values({
-      userId,
-      importType: OUTLOOK_CONTACTS_IMPORT_TYPE,
-      fileName: "Outlook Contacts",
-      status: "processing",
-      totalRows: rows.length,
-      stats: {},
-    })
-    .returning();
-
-  await stageImportRows(
-    rows.map((row, index) => ({
-      importId: importRow.id,
-      userId,
-      rowIndex: index,
-      payload: {
-        kind: "outlook_contact" as const,
-        id: row.id,
-        fullName: row.fullName,
-        firstName: row.firstName,
-        lastName: row.lastName,
-        company: row.company,
-        title: row.title,
-        email: row.email,
-        phone: row.phone,
-      },
-    })),
-  );
-
-  after(() => runImportJobById(importRow.id).catch(() => {}));
-  revalidatePath("/imports");
-
-  return { importId: importRow.id, totalRows: rows.length };
-}
+);
 
 export type ContactsFilePerson = {
   id: string;
@@ -1679,93 +1703,92 @@ export type ContactsFilePerson = {
  * Returns only what the review list renders. The parsed rows also carry notes, which can run
  * to paragraphs each and which the confirm step re-derives from the file anyway.
  */
-export async function previewContactsFile(
-  text: string,
-  fileName: string,
-): Promise<
-  | { error: string }
-  | {
-      format: ContactsFileFormat;
-      totalRows: number;
-      people: ContactsFilePerson[];
-      duplicateCount: number;
-      warnings: string[];
+export const previewContactsFile = defineAction(
+  { schema: z.tuple([z.string(), z.string()]), invalid: errorResult },
+  async (userId, text: string, fileName: string): Promise<
+    | { error: string }
+    | {
+        format: ContactsFileFormat;
+        totalRows: number;
+        people: ContactsFilePerson[];
+        duplicateCount: number;
+        warnings: string[];
+      }
+  > => {
+    let parsed: ReturnType<typeof parseContactsFile>;
+    try {
+      parsed = parseContactsFile(text, fileName);
+    } catch (err) {
+      return {
+        error:
+          err instanceof ContactsFileError
+            ? err.message
+            : await actionFailure(
+                err,
+                "Couldn’t read that file — export your contacts again as a vCard (.vcf) and try that",
+                "imports.preview-contacts-file",
+                { fileName },
+              ),
+      };
     }
-> {
-  const userId = await requireUserId();
-  let parsed: ReturnType<typeof parseContactsFile>;
-  try {
-    parsed = parseContactsFile(text, fileName);
-  } catch (err) {
+
+    const db = await getDb();
+    const existing = await db.query.contacts.findMany({
+      where: eq(contacts.userId, userId),
+      columns: {
+        id: true,
+        fullName: true,
+        email: true,
+        linkedinUrl: true,
+        xHandle: true,
+        company: true,
+        title: true,
+      },
+    });
+
+    // Hoisted for the same reason as `previewLinkedInCsv`: an address book is thousands of
+    // rows, and matching each one by scanning every existing contact is all-pairs.
+    const duplicateIndex = buildDuplicateIndex(existing);
+
+    const people = parsed.rows.map((row, index): ContactsFilePerson => {
+      const dups = findDuplicateCandidatesIndexed(duplicateIndex, {
+        fullName: row.fullName,
+        email: row.email,
+        linkedinUrl: row.linkedinUrl,
+        company: row.company,
+        title: row.title,
+      });
+      const top = dups[0];
+      return {
+        // Row position, which the confirm step re-derives by parsing the same text again —
+        // the same contract as `startLinkedInImport`'s `selectedIds`.
+        id: String(index),
+        fullName: row.fullName,
+        company: row.company,
+        title: row.title,
+        email: row.email,
+        phone: row.phone,
+        isRepeat: Boolean(top && top.confidence >= DUPLICATE_MERGE_CONFIDENCE),
+        duplicate: top
+          ? {
+              id: top.contact.id,
+              fullName: top.contact.fullName,
+              reason: top.reason,
+              confidence: top.confidence,
+            }
+          : null,
+      };
+    });
+
     return {
-      error:
-        err instanceof ContactsFileError
-          ? err.message
-          : await actionFailure(
-              err,
-              "Couldn’t read that file — export your contacts again as a vCard (.vcf) and try that",
-              "imports.preview-contacts-file",
-              { fileName },
-            ),
+      format: parsed.format,
+      totalRows: people.length,
+      people,
+      duplicateCount: people.filter((p) => p.isRepeat).length,
+      warnings: parsed.warnings,
     };
   }
-
-  const db = await getDb();
-  const existing = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    columns: {
-      id: true,
-      fullName: true,
-      email: true,
-      linkedinUrl: true,
-      xHandle: true,
-      company: true,
-      title: true,
-    },
-  });
-
-  // Hoisted for the same reason as `previewLinkedInCsv`: an address book is thousands of
-  // rows, and matching each one by scanning every existing contact is all-pairs.
-  const duplicateIndex = buildDuplicateIndex(existing);
-
-  const people = parsed.rows.map((row, index): ContactsFilePerson => {
-    const dups = findDuplicateCandidatesIndexed(duplicateIndex, {
-      fullName: row.fullName,
-      email: row.email,
-      linkedinUrl: row.linkedinUrl,
-      company: row.company,
-      title: row.title,
-    });
-    const top = dups[0];
-    return {
-      // Row position, which the confirm step re-derives by parsing the same text again —
-      // the same contract as `startLinkedInImport`'s `selectedIds`.
-      id: String(index),
-      fullName: row.fullName,
-      company: row.company,
-      title: row.title,
-      email: row.email,
-      phone: row.phone,
-      isRepeat: Boolean(top && top.confidence >= DUPLICATE_MERGE_CONFIDENCE),
-      duplicate: top
-        ? {
-            id: top.contact.id,
-            fullName: top.contact.fullName,
-            reason: top.reason,
-            confidence: top.confidence,
-          }
-        : null,
-    };
-  });
-
-  return {
-    format: parsed.format,
-    totalRows: people.length,
-    people,
-    duplicateCount: people.filter((p) => p.isRepeat).length,
-    warnings: parsed.warnings,
-  };
-}
+);
 
 /**
  * Starts a server-owned address-book file import: re-parses the file text the client sends
@@ -1781,68 +1804,66 @@ export async function previewContactsFile(
  * address book gets its first rows up to the limit, exactly as a LinkedIn or Google import
  * would, rather than a refusal up front.
  */
-export async function confirmContactsFileImport(
-  text: string,
-  fileName: string,
-  selectedIds: string[],
-): Promise<{ importId: string; totalRows: number }> {
-  const userId = await requireUserId();
-  await consumeDailyCap("importDaily", userId);
-  const db = await getDb();
+export const confirmContactsFileImport = defineAction(
+  { schema: z.tuple([z.string(), z.string(), z.array(z.string())]) },
+  async (userId, text: string, fileName: string, selectedIds: string[]): Promise<{ importId: string; totalRows: number }> => {
+    await consumeDailyCap("importDaily", userId);
+    const db = await getDb();
 
-  // Throws on a file the preview would have refused — the client only gets here from a
-  // successful preview of this same text, so reaching the throw means the text changed.
-  const { rows } = parseContactsFile(text, fileName);
-  const selectedIndexes = [
-    ...new Set(
-      selectedIds
-        .map((id) => Number(id))
-        .filter((i) => Number.isInteger(i) && i >= 0 && i < rows.length),
-    ),
-  ].sort((a, b) => a - b);
-  if (selectedIndexes.length === 0)
-    throw new Error("No contacts selected to import");
+    // Throws on a file the preview would have refused — the client only gets here from a
+    // successful preview of this same text, so reaching the throw means the text changed.
+    const { rows } = parseContactsFile(text, fileName);
+    const selectedIndexes = [
+      ...new Set(
+        selectedIds
+          .map((id) => Number(id))
+          .filter((i) => Number.isInteger(i) && i >= 0 && i < rows.length),
+      ),
+    ].sort((a, b) => a - b);
+    if (selectedIndexes.length === 0)
+      throw new Error("No contacts selected to import");
 
-  const [importRow] = await db
-    .insert(imports)
-    .values({
-      userId,
-      importType: CONTACTS_FILE_IMPORT_TYPE,
-      fileName: fileName || "Contacts file",
-      status: "processing",
-      totalRows: selectedIndexes.length,
-      stats: {},
-    })
-    .returning();
-
-  await stageImportRows(
-    selectedIndexes.map((index) => {
-      const row = rows[index];
-      return {
-        importId: importRow.id,
+    const [importRow] = await db
+      .insert(imports)
+      .values({
         userId,
-        rowIndex: index,
-        payload: {
-          kind: "contacts_file_contact" as const,
-          fullName: row.fullName,
-          firstName: row.firstName,
-          lastName: row.lastName,
-          company: row.company,
-          title: row.title,
-          email: row.email,
-          phone: row.phone,
-          linkedinUrl: row.linkedinUrl,
-          notes: row.notes,
-        },
-      };
-    }),
-  );
+        importType: CONTACTS_FILE_IMPORT_TYPE,
+        fileName: fileName || "Contacts file",
+        status: "processing",
+        totalRows: selectedIndexes.length,
+        stats: {},
+      })
+      .returning();
 
-  after(() => runImportJobById(importRow.id).catch(() => {}));
-  revalidatePath("/imports");
+    await stageImportRows(
+      selectedIndexes.map((index) => {
+        const row = rows[index];
+        return {
+          importId: importRow.id,
+          userId,
+          rowIndex: index,
+          payload: {
+            kind: "contacts_file_contact" as const,
+            fullName: row.fullName,
+            firstName: row.firstName,
+            lastName: row.lastName,
+            company: row.company,
+            title: row.title,
+            email: row.email,
+            phone: row.phone,
+            linkedinUrl: row.linkedinUrl,
+            notes: row.notes,
+          },
+        };
+      }),
+    );
 
-  return { importId: importRow.id, totalRows: selectedIndexes.length };
-}
+    after(() => runImportJobById(importRow.id).catch(() => {}));
+    revalidatePath("/imports");
+
+    return { importId: importRow.id, totalRows: selectedIndexes.length };
+  }
+);
 
 export type GooglePhotoMatchResult = {
   connected: boolean;
@@ -1871,79 +1892,80 @@ const PHOTO_MATCH_CHUNK = 500;
  * The remote Google URL is what gets stored; the avatar backfill caches it durably on
  * its next tick, the same as any other remote photo.
  */
-export async function matchGooglePhotos(): Promise<GooglePhotoMatchResult> {
-  const userId = await requireUserId();
-  if (await isDemoWorkspace(userId)) {
-    return { connected: true, contactsScopeGranted: true, matched: 0, remaining: 0 };
-  }
-  const db = await getDb();
+export const matchGooglePhotos = defineAction(
+  {},
+  async (userId): Promise<GooglePhotoMatchResult> => {
+    if (await isDemoWorkspace(userId)) {
+      return { connected: true, contactsScopeGranted: true, matched: 0, remaining: 0 };
+    }
+    const db = await getDb();
 
-  const conn = await db.query.gmailConnections.findFirst({
-    where: and(
-      eq(gmailConnections.userId, userId),
-      eq(gmailConnections.status, "active"),
-    ),
-  });
-  if (!conn) {
-    return {
-      connected: false,
-      contactsScopeGranted: false,
-      matched: 0,
-      remaining: 0,
-    };
-  }
-  if (!hasContactsScope(conn.scopes)) {
-    return {
-      connected: true,
-      contactsScopeGranted: false,
-      matched: 0,
-      remaining: 0,
-    };
-  }
+    const conn = await db.query.gmailConnections.findFirst({
+      where: and(
+        eq(gmailConnections.userId, userId),
+        eq(gmailConnections.status, "active"),
+      ),
+    });
+    if (!conn) {
+      return {
+        connected: false,
+        contactsScopeGranted: false,
+        matched: 0,
+        remaining: 0,
+      };
+    }
+    if (!hasContactsScope(conn.scopes)) {
+      return {
+        connected: true,
+        contactsScopeGranted: false,
+        matched: 0,
+        remaining: 0,
+      };
+    }
 
-  const accessToken = await getValidAccessToken(userId);
-  const googleContacts = await fetchGooglePeopleContacts(accessToken);
+    const accessToken = await getValidAccessToken(userId);
+    const googleContacts = await fetchGooglePeopleContacts(accessToken);
 
-  // One lookup table keyed by lowercased email, so the pass is O(people + contacts)
-  // rather than running the duplicate matcher for every pair.
-  const photoByEmail = new Map<string, string>();
-  for (const person of googleContacts) {
-    const email = person.email?.trim().toLowerCase();
-    const photo = person.photoUrl?.trim();
-    if (!email || !photo) continue;
-    if (!photoByEmail.has(email)) photoByEmail.set(email, photo);
-  }
+    // One lookup table keyed by lowercased email, so the pass is O(people + contacts)
+    // rather than running the duplicate matcher for every pair.
+    const photoByEmail = new Map<string, string>();
+    for (const person of googleContacts) {
+      const email = person.email?.trim().toLowerCase();
+      const photo = person.photoUrl?.trim();
+      if (!email || !photo) continue;
+      if (!photoByEmail.has(email)) photoByEmail.set(email, photo);
+    }
 
-  const needPhoto = await db
-    .select({ id: contacts.id, email: contacts.email })
-    .from(contacts)
-    .where(
-      and(
-        eq(contacts.userId, userId),
-        sql`${contacts.email} IS NOT NULL AND btrim(${contacts.email}) <> ''`,
-        // Same "nothing usable stored" test the backfill uses.
-        sql`(${contacts.profileImageUrl} IS NULL
+    const needPhoto = await db
+      .select({ id: contacts.id, email: contacts.email })
+      .from(contacts)
+      .where(
+        and(
+          eq(contacts.userId, userId),
+          sql`${contacts.email} IS NOT NULL AND btrim(${contacts.email}) <> ''`,
+          // Same "nothing usable stored" test the backfill uses.
+          sql`(${contacts.profileImageUrl} IS NULL
              OR btrim(${contacts.profileImageUrl}) = ''
              OR ${contacts.profileImageUrl} LIKE '%unavatar.io%'
              OR ${contacts.profileImageUrl} LIKE '%static.licdn.com/aero%')`,
-      ),
-    );
+        ),
+      );
 
-  const matches: Array<{ id: string; photo: string }> = [];
-  for (const row of needPhoto) {
-    const photo = photoByEmail.get(row.email!.trim().toLowerCase());
-    if (photo) matches.push({ id: row.id, photo });
-  }
-  const matched = matches.length;
+    const matches: Array<{ id: string; photo: string }> = [];
+    for (const row of needPhoto) {
+      const photo = photoByEmail.get(row.email!.trim().toLowerCase());
+      if (photo) matches.push({ id: row.id, photo });
+    }
+    const matched = matches.length;
 
-  // One `UPDATE ... FROM (VALUES ...)` per chunk rather than one UPDATE per contact: on
-  // neon-http each statement is its own HTTPS request. Same columns as a per-row write.
-  const updatedAt = new Date().toISOString();
-  for (let i = 0; i < matches.length; i += PHOTO_MATCH_CHUNK) {
-    const tuples = matches
-      .slice(i, i + PHOTO_MATCH_CHUNK)
-      .map(({ id, photo }) => sql`(${id}::uuid, ${photo}::text)`);
-    await db.execute(sql`
+    // One `UPDATE ... FROM (VALUES ...)` per chunk rather than one UPDATE per contact: on
+    // neon-http each statement is its own HTTPS request. Same columns as a per-row write.
+    const updatedAt = new Date().toISOString();
+    for (let i = 0; i < matches.length; i += PHOTO_MATCH_CHUNK) {
+      const tuples = matches
+        .slice(i, i + PHOTO_MATCH_CHUNK)
+        .map(({ id, photo }) => sql`(${id}::uuid, ${photo}::text)`);
+      await db.execute(sql`
       UPDATE contacts AS c
          SET profile_image_url = v.url,
              profile_image_source = 'google',
@@ -1953,36 +1975,39 @@ export async function matchGooglePhotos(): Promise<GooglePhotoMatchResult> {
         FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(id, url)
        WHERE c.id = v.id AND c.user_id = ${userId}
     `);
-  }
+    }
 
-  if (matched > 0) {
+    if (matched > 0) {
+      revalidatePath("/contacts");
+      revalidatePath("/graph");
+    }
+
+    return {
+      connected: true,
+      contactsScopeGranted: true,
+      matched,
+      remaining: needPhoto.length - matched,
+    };
+  }
+);
+
+export const revertImportAction = defineAction(
+  { schema: z.tuple([z.string()]), invalid: failMessage },
+  async (userId, importId: string) => {
+    const result = await revertImport(userId, importId);
+
+    if (!result.ok) {
+      return { ok: false as const, message: REVERT_REFUSAL_MESSAGE[result.reason] };
+    }
+
+    // Everything an import touches, in reverse.
+    revalidatePath("/");
     revalidatePath("/contacts");
+    revalidatePath("/imports");
     revalidatePath("/graph");
+    revalidatePath("/chat");
+    revalidatePath("/reminders");
+
+    return { ok: true as const, message: describeRevert(result.stats), stats: result.stats };
   }
-
-  return {
-    connected: true,
-    contactsScopeGranted: true,
-    matched,
-    remaining: needPhoto.length - matched,
-  };
-}
-
-export async function revertImportAction(importId: string) {
-  const userId = await requireUserId();
-  const result = await revertImport(userId, importId);
-
-  if (!result.ok) {
-    return { ok: false as const, message: REVERT_REFUSAL_MESSAGE[result.reason] };
-  }
-
-  // Everything an import touches, in reverse.
-  revalidatePath("/");
-  revalidatePath("/contacts");
-  revalidatePath("/imports");
-  revalidatePath("/graph");
-  revalidatePath("/chat");
-  revalidatePath("/reminders");
-
-  return { ok: true as const, message: describeRevert(result.stats), stats: result.stats };
-}
+);

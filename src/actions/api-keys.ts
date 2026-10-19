@@ -21,12 +21,13 @@ import { and, desc, eq, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { apiKeys } from "@/db/schema";
-import { requireUserId } from "@/lib/auth";
 import { isPaywallError, requireEntitlement } from "@/lib/entitlements";
 import { generateApiKey, type ApiKeyKind, type ApiKeyScope } from "@/lib/api/keys";
 import { apiKeyCapRefusal } from "@/lib/api/key-cap";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { recordAccountAudit } from "@/lib/account-audit";
+import { z } from "zod";
+import { defineAction } from "@/lib/input/action";
 
 export type ApiKeySummary = {
   id: string;
@@ -39,32 +40,34 @@ export type ApiKeySummary = {
   createdAt: Date;
 };
 
-export async function listApiKeys(): Promise<ApiKeySummary[]> {
-  const userId = await requireUserId();
-  const db = await getDb();
-  const rows = await db.query.apiKeys.findMany({
-    where: and(eq(apiKeys.userId, userId), isNull(apiKeys.revokedAt)),
-    orderBy: [desc(apiKeys.createdAt)],
-    columns: {
-      id: true,
-      name: true,
-      kind: true,
-      prefix: true,
-      scopes: true,
-      lastUsedAt: true,
-      createdAt: true,
-    },
-  });
-  return rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    kind: r.kind,
-    prefix: r.prefix,
-    scopes: (r.scopes ?? ["read"]) as ApiKeyScope[],
-    lastUsedAt: r.lastUsedAt,
-    createdAt: r.createdAt,
-  }));
-}
+export const listApiKeys = defineAction(
+  {},
+  async (userId): Promise<ApiKeySummary[]> => {
+    const db = await getDb();
+    const rows = await db.query.apiKeys.findMany({
+      where: and(eq(apiKeys.userId, userId), isNull(apiKeys.revokedAt)),
+      orderBy: [desc(apiKeys.createdAt)],
+      columns: {
+        id: true,
+        name: true,
+        kind: true,
+        prefix: true,
+        scopes: true,
+        lastUsedAt: true,
+        createdAt: true,
+      },
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      kind: r.kind,
+      prefix: r.prefix,
+      scopes: (r.scopes ?? ["read"]) as ApiKeyScope[],
+      lastUsedAt: r.lastUsedAt,
+      createdAt: r.createdAt,
+    }));
+  }
+);
 
 /**
  * A refusal the UI can act on.
@@ -89,59 +92,57 @@ export type CreatedApiKey = {
   mcpUrl: string | null;
 };
 
-export async function createApiKey(
-  name: string,
-  scopes: ApiKeyScope[],
-  kind: ApiKeyKind = "api"
-): Promise<CreatedApiKey | ApiKeyRefusal> {
-  const userId = await requireUserId();
-  try {
-    await requireEntitlement(userId, "api");
-  } catch (err) {
-    if (isPaywallError(err)) {
-      return { ok: false, reason: "payment_required", message: err.message };
+export const createApiKey = defineAction(
+  { schema: z.tuple([z.string(), z.array(z.enum(["read", "write"])), z.enum(["api", "mcp_url"]).optional()]) },
+  async (userId, name: string, scopes: ApiKeyScope[], kind: ApiKeyKind = "api"): Promise<CreatedApiKey | ApiKeyRefusal> => {
+    try {
+      await requireEntitlement(userId, "api");
+    } catch (err) {
+      if (isPaywallError(err)) {
+        return { ok: false, reason: "payment_required", message: err.message };
+      }
+      throw err;
     }
-    throw err;
+    const atCap = await apiKeyCapRefusal(userId);
+    if (atCap) return { ok: false, reason: "limit_reached", message: atCap };
+
+    const trimmed = name.trim().slice(0, 80) || "Untitled key";
+    // Always include read: a write-only key is not a distinction anything here honours, and
+    // pretending otherwise would produce a key that fails in confusing ways.
+    const resolved: ApiKeyScope[] = scopes.includes("write") ? ["read", "write"] : ["read"];
+
+    const key = generateApiKey(kind);
+    const db = await getDb();
+    const [row] = await db
+      .insert(apiKeys)
+      .values({
+        userId,
+        name: trimmed,
+        kind,
+        prefix: key.prefix,
+        keyHash: key.keyHash,
+        scopes: resolved,
+      })
+      .returning();
+    await recordAccountAudit({ userId, action: "api_key.create", resourceType: "api_key", resourceId: row.id, detail: { kind, prefix: key.prefix, scopes: resolved } });
+
+    revalidatePath("/settings");
+    return {
+      ok: true,
+      summary: {
+        id: row.id,
+        name: row.name,
+        kind: row.kind,
+        prefix: row.prefix,
+        scopes: resolved,
+        lastUsedAt: null,
+        createdAt: row.createdAt,
+      },
+      token: key.token,
+      mcpUrl: kind === "mcp_url" ? `${getAppBaseUrl()}/api/mcp/${key.token}` : null,
+    };
   }
-  const atCap = await apiKeyCapRefusal(userId);
-  if (atCap) return { ok: false, reason: "limit_reached", message: atCap };
-
-  const trimmed = name.trim().slice(0, 80) || "Untitled key";
-  // Always include read: a write-only key is not a distinction anything here honours, and
-  // pretending otherwise would produce a key that fails in confusing ways.
-  const resolved: ApiKeyScope[] = scopes.includes("write") ? ["read", "write"] : ["read"];
-
-  const key = generateApiKey(kind);
-  const db = await getDb();
-  const [row] = await db
-    .insert(apiKeys)
-    .values({
-      userId,
-      name: trimmed,
-      kind,
-      prefix: key.prefix,
-      keyHash: key.keyHash,
-      scopes: resolved,
-    })
-    .returning();
-  await recordAccountAudit({ userId, action: "api_key.create", resourceType: "api_key", resourceId: row.id, detail: { kind, prefix: key.prefix, scopes: resolved } });
-
-  revalidatePath("/settings");
-  return {
-    ok: true,
-    summary: {
-      id: row.id,
-      name: row.name,
-      kind: row.kind,
-      prefix: row.prefix,
-      scopes: resolved,
-      lastUsedAt: null,
-      createdAt: row.createdAt,
-    },
-    token: key.token,
-    mcpUrl: kind === "mcp_url" ? `${getAppBaseUrl()}/api/mcp/${key.token}` : null,
-  };
-}
+);
 
 /**
  * Revoke a key.
@@ -151,15 +152,17 @@ export async function createApiKey(
  * wants to see. The verifier rejects any row with `revoked_at` set, so revocation is immediate
  * regardless.
  */
-export async function revokeApiKey(id: string): Promise<{ ok: true }> {
-  const userId = await requireUserId();
-  const db = await getDb();
-  await db
-    .update(apiKeys)
-    // Scoped by userId as well as id, so one user can never revoke another's key.
-    .set({ revokedAt: new Date(), revokedReason: "revoked by user" })
-    .where(and(eq(apiKeys.id, id), eq(apiKeys.userId, userId)));
-  await recordAccountAudit({ userId, action: "api_key.revoke", resourceType: "api_key", resourceId: id });
-  revalidatePath("/settings");
-  return { ok: true };
-}
+export const revokeApiKey = defineAction(
+  { schema: z.tuple([z.string()]) },
+  async (userId, id: string): Promise<{ ok: true }> => {
+    const db = await getDb();
+    await db
+      .update(apiKeys)
+      // Scoped by userId as well as id, so one user can never revoke another's key.
+      .set({ revokedAt: new Date(), revokedReason: "revoked by user" })
+      .where(and(eq(apiKeys.id, id), eq(apiKeys.userId, userId)));
+    await recordAccountAudit({ userId, action: "api_key.revoke", resourceType: "api_key", resourceId: id });
+    revalidatePath("/settings");
+    return { ok: true };
+  }
+);

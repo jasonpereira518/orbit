@@ -4,80 +4,89 @@ import { and, eq, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { contacts, noteBatches, reminders } from "@/db/schema";
-import { requireUserId } from "@/lib/auth";
 import { CAPTURE_BATCH_SQL, isCaptureBatchFor } from "@/lib/capture-history";
 import { listCapturePhotosForBatches } from "@/lib/capture-photos";
 import { deleteNoteBatchForUser, dismissNoteReminderForUser, undoNoteBatchForUser } from "@/lib/note-batch-save";
 import { revalidateReminderPaths } from "@/lib/reminder-paths";
+import { z } from "zod";
+import { defineAction } from "@/lib/input/action";
 
-export async function getNoteBatch(batchId: string) {
-  const userId = await requireUserId();
-  const db = await getDb();
-  const batch = await db.query.noteBatches.findFirst({
-    where: and(eq(noteBatches.id, batchId), eq(noteBatches.userId, userId), CAPTURE_BATCH_SQL),
-  });
-  if (!batch) return null;
+export const getNoteBatch = defineAction(
+  { schema: z.tuple([z.string()]) },
+  async (userId, batchId: string) => {
+    const db = await getDb();
+    const batch = await db.query.noteBatches.findFirst({
+      where: and(eq(noteBatches.id, batchId), eq(noteBatches.userId, userId), CAPTURE_BATCH_SQL),
+    });
+    if (!batch) return null;
 
-  const reminderIds = batch.result.reminders.map((r) => r.id);
-  const contactIds = [
-    ...new Set([
-      ...batch.result.participants.map((p) => p.contactId),
-      ...batch.result.mentions.map((m) => m.contactId),
-      ...batch.result.reminders.map((r) => r.contactId).filter((id): id is string => Boolean(id)),
-    ]),
-  ];
-  // `description`, `actionKind` and `listId` are not in the result snapshot but the inline
-  // edit dialog needs them: seeding it from the snapshot alone would blank the reminder's
-  // notes and reset its action kind the moment the user hit Save.
-  const [reminderRows, contactRows, photos] = await Promise.all([
-    reminderIds.length
-      ? db
-          .select({ id: reminders.id, status: reminders.status, description: reminders.description, actionKind: reminders.actionKind, listId: reminders.listId })
-          .from(reminders)
-          .where(and(eq(reminders.userId, userId), inArray(reminders.id, reminderIds)))
-      : Promise.resolve([]),
-    contactIds.length
-      ? db.select({ id: contacts.id, fullName: contacts.fullName }).from(contacts).where(and(eq(contacts.userId, userId), inArray(contacts.id, contactIds)))
-      : Promise.resolve([]),
-    // Metadata only; the page renders each through `/api/capture/photos/[id]`.
-    listCapturePhotosForBatches(userId, [batch.id]),
-  ]);
-  return {
-    ...batch,
-    photos,
-    reminderStatus: Object.fromEntries(reminderRows.map((r) => [r.id, r.status])),
-    reminderDetails: Object.fromEntries(
-      reminderRows.map((r) => [r.id, { description: r.description, actionKind: r.actionKind, listId: r.listId }])
-    ),
-    contactNames: Object.fromEntries(contactRows.map((c) => [c.id, c.fullName])),
-  };
-}
+    const reminderIds = batch.result.reminders.map((r) => r.id);
+    const contactIds = [
+      ...new Set([
+        ...batch.result.participants.map((p) => p.contactId),
+        ...batch.result.mentions.map((m) => m.contactId),
+        ...batch.result.reminders.map((r) => r.contactId).filter((id): id is string => Boolean(id)),
+      ]),
+    ];
+    // `description`, `actionKind` and `listId` are not in the result snapshot but the inline
+    // edit dialog needs them: seeding it from the snapshot alone would blank the reminder's
+    // notes and reset its action kind the moment the user hit Save.
+    const [reminderRows, contactRows, photos] = await Promise.all([
+      reminderIds.length
+        ? db
+            .select({ id: reminders.id, status: reminders.status, description: reminders.description, actionKind: reminders.actionKind, listId: reminders.listId })
+            .from(reminders)
+            .where(and(eq(reminders.userId, userId), inArray(reminders.id, reminderIds)))
+        : Promise.resolve([]),
+      contactIds.length
+        ? db.select({ id: contacts.id, fullName: contacts.fullName }).from(contacts).where(and(eq(contacts.userId, userId), inArray(contacts.id, contactIds)))
+        : Promise.resolve([]),
+      // Metadata only; the page renders each through `/api/capture/photos/[id]`.
+      listCapturePhotosForBatches(userId, [batch.id]),
+    ]);
+    return {
+      ...batch,
+      photos,
+      reminderStatus: Object.fromEntries(reminderRows.map((r) => [r.id, r.status])),
+      reminderDetails: Object.fromEntries(
+        reminderRows.map((r) => [r.id, { description: r.description, actionKind: r.actionKind, listId: r.listId }])
+      ),
+      contactNames: Object.fromEntries(contactRows.map((c) => [c.id, c.fullName])),
+    };
+  }
+);
 
-export async function undoNoteBatch(batchId: string) {
-  const userId = await requireUserId();
-  // A relationship run's batch is undone through the run, never as a capture.
-  if (!(await isCaptureBatchFor(userId, batchId))) throw new Error("Batch not found");
-  const out = await undoNoteBatchForUser(userId, batchId);
-  revalidateReminderPaths();
-  revalidatePath(`/capture/${batchId}`);
-  revalidatePath("/contacts");
-  return out;
-}
+export const undoNoteBatch = defineAction(
+  { schema: z.tuple([z.string()]) },
+  async (userId, batchId: string) => {
+    // A relationship run's batch is undone through the run, never as a capture.
+    if (!(await isCaptureBatchFor(userId, batchId))) throw new Error("Batch not found");
+    const out = await undoNoteBatchForUser(userId, batchId);
+    revalidateReminderPaths();
+    revalidatePath(`/capture/${batchId}`);
+    revalidatePath("/contacts");
+    return out;
+  }
+);
 
 /** Delete a capture from the history. The people and interactions it saved stay. */
-export async function deleteNoteBatch(batchId: string) {
-  const userId = await requireUserId();
-  if (!(await isCaptureBatchFor(userId, batchId))) return { deleted: false };
-  const deleted = await deleteNoteBatchForUser(userId, batchId);
-  revalidateReminderPaths();
-  revalidatePath("/capture");
-  revalidatePath(`/capture/${batchId}`);
-  revalidatePath("/contacts");
-  return { deleted };
-}
+export const deleteNoteBatch = defineAction(
+  { schema: z.tuple([z.string()]) },
+  async (userId, batchId: string) => {
+    if (!(await isCaptureBatchFor(userId, batchId))) return { deleted: false };
+    const deleted = await deleteNoteBatchForUser(userId, batchId);
+    revalidateReminderPaths();
+    revalidatePath("/capture");
+    revalidatePath(`/capture/${batchId}`);
+    revalidatePath("/contacts");
+    return { deleted };
+  }
+);
 
-export async function dismissNoteReminder(reminderId: string) {
-  const userId = await requireUserId();
-  await dismissNoteReminderForUser(userId, reminderId);
-  revalidateReminderPaths();
-}
+export const dismissNoteReminder = defineAction(
+  { schema: z.tuple([z.string()]) },
+  async (userId, reminderId: string) => {
+    await dismissNoteReminderForUser(userId, reminderId);
+    revalidateReminderPaths();
+  }
+);
