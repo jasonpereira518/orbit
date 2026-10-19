@@ -261,23 +261,6 @@ export async function listPendingAgentSends(userId: string): Promise<AgentSendSu
     toSummary({ ...row, contactName, recipientTrust: classifyRecipient(row.toEmail, contactEmail, known) })
   );
 }
-
-/** Count of pending drafts, for a badge. */
-export async function countPendingAgentSends(userId: string): Promise<number> {
-  const db = await getDb();
-  const [row] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(agentSendRequests)
-    .where(
-      and(
-        eq(agentSendRequests.userId, userId),
-        eq(agentSendRequests.status, "pending"),
-        sql`${agentSendRequests.expiresAt} > now()`
-      )
-    );
-  return row?.count ?? 0;
-}
-
 /** Mark anything past its date, so a stale row can never be approved by a late click. */
 export async function expireStale(userId: string): Promise<void> {
   const db = await getDb();

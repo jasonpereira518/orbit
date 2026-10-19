@@ -26,7 +26,6 @@ import {
 } from "@/lib/credits/ledger";
 import { creditsToMicros } from "@/lib/credits/grants";
 import {
-  AI_PROVIDERS,
   resolveAiModel,
   resolveAiProvider,
   type AiProvider,
@@ -180,25 +179,6 @@ let pauseCache: (PoolState & { at: number }) | null = null;
 export function managedAiPausedDefault(): boolean {
   return false;
 }
-
-/** Orbit-paid spend on one provider since its pool's window opened, in micros. */
-export async function managedPoolSpentMicros(provider: AiProvider, now = new Date()): Promise<number> {
-  const pool = MANAGED_AI_POOLS[provider];
-  if (!pool) return 0;
-  const db = await getDb();
-  const [row] = await db
-    .select({ micros: sql<string>`coalesce(sum(${managedCostSql()}), 0)::bigint` })
-    .from(usageEvents)
-    .where(
-      and(
-        eq(usageEvents.keyOwner, "orbit"),
-        eq(usageEvents.provider, provider),
-        gte(usageEvents.createdAt, poolWindowStart(pool, now))
-      )
-    );
-  return Number(row?.micros ?? 0);
-}
-
 /**
  * Every pooled provider's spend in its current window — ONE statement (a `FILTER` per
  * provider), because this runs inside the gate on every page that asks about AI and pages
@@ -283,12 +263,6 @@ export function managedKeysConfigured(): Record<AiProvider, boolean> {
     openrouter: false,
   };
 }
-
-/** The env var an operator sets for a provider's managed key — for Settings and the runbook. */
-export function managedEnvVar(provider: AiProvider): string {
-  return MANAGED_ENV[provider];
-}
-
 /**
  * LOCALHOST ONLY — `next dev` runs AI on the keys in the developer's own `.env.local`, the
  * way local development always worked, unmetered. Two conditions, neither settable by a
@@ -902,10 +876,4 @@ export function aiDenialFromSettings(userId: string, row: AiSettingsRow | null):
 /** The presence-only yes/no, for the notifications panel's 120-second poll. */
 export function aiReadyFromSettings(userId: string, row: AiSettingsRow | null): boolean {
   return aiDenialFromSettings(userId, row) === null;
-}
-
-/** For Settings copy: the label of each provider Orbit can pay for. */
-export function managedProviderLabels(): string[] {
-  const configured = managedKeysConfigured();
-  return AI_PROVIDERS.filter((p) => configured[p.id]).map((p) => p.label);
 }

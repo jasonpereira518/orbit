@@ -46,17 +46,7 @@ export const FONT_STACK =
 
 /** Pass chrome — same wallet-card colours as the site-invite still pass. */
 const PASS_BG = "#0e1524";
-const PASS_BORDER = "#333f5a";
-
-/**
- * Former cream-letter tokens. Kept as named exports so older imports compile; the waitlist
- * shell itself is the night sky (`BG` / `TEXT` / `MUTED`) — do not use these for new markup.
- */
-export const PAPER = BG;
-export const INK = TEXT;
-export const INK_MUTED = MUTED;
-export const INK_FAINT = FAINT;
-export const RULE = "rgba(232,243,241,0.14)";
+const PASS_BORDER = "#333f5a";export const INK = TEXT;export const RULE = "rgba(232,243,241,0.14)";
 export const LINK = ACCENT;
 export const SERIF_STACK = "'Fraunces', Georgia, 'Times New Roman', serif";
 

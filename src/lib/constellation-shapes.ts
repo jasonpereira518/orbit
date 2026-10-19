@@ -728,13 +728,6 @@ export const FIGURE_STAR_MAX = 9;
 export function figureStarCount(memberCount: number) {
   return Math.max(1, Math.min(memberCount, FIGURE_STAR_MAX));
 }
-
-/** Scatter-field growth as members overflow the figure cap. */
-export function scatterFieldFactor(memberCount: number) {
-  const overflow = Math.min(Math.max(0, memberCount - FIGURE_STAR_MAX), 24);
-  return 1 + overflow * 0.012;
-}
-
 /**
  * Assign classic constellation figures across clusters (same order → same shapes).
  * Figures are capped at FIGURE_STAR_MAX stars — the cluster's top members trace

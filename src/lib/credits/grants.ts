@@ -17,11 +17,6 @@ export const MICROS_PER_CREDIT = 10_000;
 export function creditsToMicros(credits: number): number {
   return Math.round(credits * MICROS_PER_CREDIT);
 }
-
-export function microsToCredits(micros: number): number {
-  return micros / MICROS_PER_CREDIT;
-}
-
 /**
  * Grant a purchased pack, exactly once. `grantKey` is `pack:cs:<checkout session>`, so the
  * webhook, its retries and the verify-on-return path all collapse onto one row.

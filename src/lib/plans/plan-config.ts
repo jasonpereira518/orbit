@@ -204,18 +204,10 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
  * arrives MONTHLY on an annual plan (see `creditPeriodFor`), never as one yearly lump.
  */
 export type BillingPeriod = "monthly" | "annual";
-export const BILLING_PERIODS: readonly BillingPeriod[] = ["monthly", "annual"];
-
 /** The recurring value of an annual plan per month, as MRR books it (Stripe's own rounding). */
 export function annualMonthlyEquivalentCents(plan: PurchasablePlan): number {
   return Math.round((PLAN_CONFIG[plan].annualPriceCents ?? 0) / 12);
 }
-
-/** What a year of the plan costs, in cents, for the period chosen. */
-export function planPriceCents(plan: PurchasablePlan, period: BillingPeriod): number {
-  return (period === "annual" ? PLAN_CONFIG[plan].annualPriceCents : PLAN_CONFIG[plan].monthlyPriceCents) ?? 0;
-}
-
 /** Whole percent saved by paying yearly, from Pro's prices (Max rounds to the same). */
 export const ANNUAL_SAVING_PERCENT = Math.round(
   (1 - (PLAN_CONFIG.orbit.annualPriceCents ?? 0) / ((PLAN_CONFIG.orbit.monthlyPriceCents ?? 1) * 12)) * 100

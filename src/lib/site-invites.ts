@@ -39,13 +39,7 @@ import {
   type SiteInviteEmailKind,
 } from "@/lib/site-invite-email";
 
-const INVITE_EXPIRES_DAYS = 30;
-/**
- * The note invitations wrote on the comp they granted before pricing v2 — kept because
- * existing comps carry it, and the v130 backfill uses it to find those accounts.
- */
-export const LEGACY_INVITE_COMP_NOTE = "Invited by an admin";
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const INVITE_EXPIRES_DAYS = 30;const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export type SiteInviteResult =
   | { kind: "invited"; email: string; url: string | null; emailed: boolean }

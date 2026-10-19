@@ -163,14 +163,7 @@ export type SuggestionSignals = {
 export const MAX_CARDS = 6;
 export const MAX_PER_KIND = 2;
 /** The first pass takes one card per category; the second fills up to `MAX_PER_KIND`. */
-export const MAX_PER_CATEGORY = 1;
-/**
- * The load-bearing cap. An overdue contact you also had coffee with last week fires the
- * overdue, recent-interaction and gone-quiet rungs at once; without this the row is three
- * cards about one person.
- */
-export const MAX_PER_PERSON = 1;
-/** Grounded but not recent — the cold-start tier, below every windowed rung. */
+export const MAX_PER_CATEGORY = 1;/** Grounded but not recent — the cold-start tier, below every windowed rung. */
 export const STARTER_RANK = 20;
 export const GENERIC_RANK = 30;
 /** "Who else do I know at X" needs at least one else. */

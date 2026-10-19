@@ -16,13 +16,6 @@ export const PRICE_LOOKUP_KEYS = {
   maxAnnual: "orbit_max_annual_v2",
   creditPack: "orbit_credit_pack_250",
 } as const;
-
-/** The lookup key that sells `plan` billed `period`. */
-export function subscriptionLookupKey(plan: "orbit" | "max", period: "monthly" | "annual"): string {
-  if (plan === "max") return period === "annual" ? PRICE_LOOKUP_KEYS.maxAnnual : PRICE_LOOKUP_KEYS.max;
-  return period === "annual" ? PRICE_LOOKUP_KEYS.orbitAnnual : PRICE_LOOKUP_KEYS.orbit;
-}
-
 /** Credits in one $5 pack. */
 export const CREDIT_PACK_CREDITS = 250;
 export const CREDIT_PACK_PRICE_CENTS = 500;

@@ -544,10 +544,6 @@ const OUTLOOK_RECRUITER_TERMS = [
   '\\"your background\\"',
   '\\"role at\\"',
 ].join(" OR ");
-
-/** Kept for callers that want the unbounded whole-mailbox query. */
-export const OUTLOOK_RECRUITER_SEARCH_QUERY = `"${OUTLOOK_RECRUITER_TERMS}"`;
-
 /** KQL wants a plain `YYYY-MM-DD`. */
 function kqlDate(d: Date): string {
   return d.toISOString().slice(0, 10);

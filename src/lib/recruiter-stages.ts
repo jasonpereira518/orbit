@@ -45,11 +45,6 @@ const TERMINAL_STAGES = new Set<RecruiterStage>(["rejected", "withdrawn"]);
 export function isTerminalStage(stage: RecruiterStage): boolean {
   return TERMINAL_STAGES.has(stage);
 }
-
-export function isRecruiterStage(value: string): value is RecruiterStage {
-  return (RECRUITER_STAGES as readonly string[]).includes(value);
-}
-
 export type StageObservation = {
   stage: RecruiterStage;
   /** When the evidence for this stage was written, not when it was read. */

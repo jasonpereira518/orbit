@@ -43,14 +43,6 @@ export const DEFAULT_JOB_FEEDS = [
     enabled: true,
   },
 ] as const satisfies readonly JobFeedSeed[];
-
-/**
- * A feed whose file has not changed in this long has almost certainly ended its season — the
- * repo stops updating once hiring closes. The same alert is both "time to roll forward" and
- * "somebody renamed the branch", which is why it is one condition rather than two.
- */
-export const FEED_STALE_DAYS = 7;
-
 /** Refuse a body larger than this rather than truncating it. See `feed-fetch.ts`. */
 export const MAX_FEED_BYTES = 24 * 1024 * 1024;
 

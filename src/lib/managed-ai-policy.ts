@@ -217,14 +217,6 @@ export const MANAGED_AI_ALERTS = {
   /** Below this 30-day spend the margin figure is noise, not a trend. */
   runwayMinSpendMicros: 1_000_000,
 } as const;
-
-/** A calendar month in UTC — the window the ops sweep reports managed spend over. */
-export function managedWindow(now: Date): { start: Date; resetsAt: Date } {
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const resetsAt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-  return { start, resetsAt };
-}
-
 /* ------------------------------------------------------------------ key selection ------ */
 
 /**
@@ -327,12 +319,4 @@ export function chooseEmbeddingKey(facts: KeyFacts): KeyChoice<EmbeddingBackend>
   const managed = managedOrder.find((p) => facts.managed[p]);
   if (managed) return { ok: true, provider: managed, source: "managed", model: "" };
   return denied(facts);
-}
-
-/**
- * Whether AI would run at all, before any allowance is consulted — the question every
- * "add your key" notice asks. Presence only; never needs a decrypted key.
- */
-export function aiReadyFromFacts(facts: KeyFacts): boolean {
-  return chooseCompletionKey(facts).ok;
 }

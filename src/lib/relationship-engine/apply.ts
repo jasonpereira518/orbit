@@ -10,7 +10,7 @@
  *   digest        — upsert on contact_id; watermark advanced in the same statement, last
  */
 // Bare `.returning()` throughout: a partial selector breaks on this repo's neon-http/PGlite split.
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import {
@@ -448,9 +448,4 @@ export async function undoRelationshipRun(
 /** Exported for tests that need a run without the runner. */
 export function newClaimToken(): string {
   return randomUUID();
-}
-
-/** Stable hash of a string — used by the runner for batch custom ids. */
-export function shortHash(s: string): string {
-  return createHash("sha256").update(s).digest("hex").slice(0, 12);
 }

@@ -10,7 +10,6 @@
  */
 import type { NebulaData, buildHybridGraphLayout } from "@/lib/graph-layout";
 
-
 export type Vec2 = { x: number; y: number };
 export type WorldRect = { minX: number; minY: number; maxX: number; maxY: number };
 export type Camera = { x: number; y: number; k: number };
@@ -312,15 +311,6 @@ export function clampPan(
     y: Math.min(slackY - top, Math.max(pane.height - slackY - bottom, cam.y)),
   };
 }
-
-export function camerasEqual(a: Camera, b: Camera, epsilon = 1e-6): boolean {
-  return (
-    Math.abs(a.x - b.x) < epsilon &&
-    Math.abs(a.y - b.y) < epsilon &&
-    Math.abs(a.k - b.k) < epsilon
-  );
-}
-
 /** Cubic ease-out — the curve React Flow uses for its own camera tweens. */
 export function easeOutCubic(t: number): number {
   return 1 - (1 - t) ** 3;

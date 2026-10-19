@@ -165,20 +165,3 @@ export async function markScanCompleted(
       },
     });
 }
-
-/** Persists a user's chosen reach for full scans. */
-export async function setScanWindowMonths(
-  userId: string,
-  windowMonths: number
-): Promise<void> {
-  const db = await getDb();
-  const months = Math.max(1, Math.min(120, Math.round(windowMonths)));
-  const now = new Date();
-  await db
-    .insert(recruiterScanState)
-    .values({ userId, windowMonths: months, createdAt: now, updatedAt: now })
-    .onConflictDoUpdate({
-      target: recruiterScanState.userId,
-      set: { windowMonths: months, updatedAt: now },
-    });
-}

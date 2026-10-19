@@ -36,6 +36,4 @@ export {
  * price object chosen in `src/lib/lifetime-offer.ts`, which reads these to stay in step —
  * a number changed here alone would make the page advertise a price nobody is charged.
  */
-export const LIFETIME_INTRO_PRICE = 25;
-export const LIFETIME_STANDARD_PRICE = 75;
-export const LIFETIME_INTRO_SEATS = 100;
+export const LIFETIME_INTRO_PRICE = 25;export const LIFETIME_INTRO_SEATS = 100;

@@ -28,17 +28,6 @@ export type DueBucket = "overdue" | "today" | "tomorrow" | "week" | "later" | "n
 /** Cookie carrying the viewer's IANA timezone. Written by the reminders stage. */
 export const TZ_COOKIE = "orbit-tz";
 export const DEFAULT_TZ = "UTC";
-
-/** Bucket order, for grouping headers. */
-export const DUE_BUCKETS: readonly DueBucket[] = [
-  "overdue",
-  "today",
-  "tomorrow",
-  "week",
-  "later",
-  "none",
-];
-
 export const DUE_BUCKET_LABELS: Record<DueBucket, string> = {
   overdue: "Overdue",
   today: "Today",
