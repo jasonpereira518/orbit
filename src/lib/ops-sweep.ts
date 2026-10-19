@@ -25,6 +25,7 @@ import {
 import { loadManagedAiOpsFacts } from "@/lib/managed-ai-ops";
 import { deliverToSlack, type OpsDelivery } from "@/lib/ops-notify";
 import { prunePageViews } from "@/lib/page-views";
+import { loadProductOpsFacts } from "@/lib/product-ops";
 import { formatWeeklyCostReport, isoWeekKey, loadSpendOpsFacts, loadWeeklyCostReport, weeklyReportDue } from "@/lib/spend-ops";
 import { reportError } from "@/lib/report-error";
 
@@ -78,6 +79,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     syncOldestDueAgeMs,
     [aiSecurityRow],
     spend,
+    product,
   ] = await Promise.all([
       db
         .select()
@@ -206,6 +208,10 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         reportError(err, { where: "job.ops-sweep.spend", level: "warning" });
         return undefined;
       }),
+      loadProductOpsFacts(now).catch((err) => {
+        reportError(err, { where: "job.ops-sweep.product", level: "warning" });
+        return undefined;
+      }),
     ]);
 
   const bySource = new Map(errorsLastHour.map((r) => [r.source, r.n]));
@@ -330,6 +336,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     stuckPurges: stuckPurgeRow?.n ?? 0,
     managedAi,
     spend,
+    product,
   };
 }
 

@@ -24,6 +24,9 @@ import {
 import {
   FEEDBACK_PAGE_SIZE,
   getFeedbackSummary,
+  getFeedbackThemes,
+  isFeedbackArea,
+  isFeedbackCategory,
   isFeedbackFilter,
   loadFeedbackList,
   type FeedbackFilter,
@@ -62,26 +65,31 @@ const STATUS_CLASS: Record<string, string> = {
 export default async function AdminFeedbackPage({
   searchParams,
 }: {
-  searchParams: Promise<{ filter?: string; page?: string; q?: string; chatPage?: string }>;
+  searchParams: Promise<{ filter?: string; page?: string; q?: string; chatPage?: string; area?: string; category?: string }>;
 }) {
   const params = await searchParams;
   const filter: FeedbackFilter = isFeedbackFilter(params.filter) ? params.filter : "all";
   const q = (params.q ?? "").trim();
+  const area = isFeedbackArea(params.area) ? params.area : null;
+  const category = isFeedbackCategory(params.category) ? params.category : null;
   const requestedPage = Number.parseInt(params.page ?? "1", 10);
   const requestedChatPage = Number.parseInt(params.chatPage ?? "1", 10);
 
-  const [summary, listing, chatSummary, chatListing, outcomes] = await Promise.all([
+  const [summary, listing, chatSummary, chatListing, outcomes, themes] = await Promise.all([
     getFeedbackSummary(),
     loadFeedbackList({
       page: Number.isFinite(requestedPage) ? requestedPage : 1,
       filter,
       q,
+      area,
+      category,
     }),
     getChatFeedbackSummary(),
     loadChatFeedbackList({
       page: Number.isFinite(requestedChatPage) ? requestedChatPage : 1,
     }),
     getChatOutcomeSummary(),
+    getFeedbackThemes(28),
   ]);
   const share = (n: number) =>
     outcomes.labelled > 0 ? `${Math.round((n / outcomes.labelled) * 100)}%` : "—";
@@ -90,10 +98,20 @@ export default async function AdminFeedbackPage({
     const sp = new URLSearchParams();
     if (filter !== "all") sp.set("filter", filter);
     if (q) sp.set("q", q);
+    if (area) sp.set("area", area);
+    if (category) sp.set("category", category);
     for (const [k, v] of Object.entries(over)) sp.set(k, String(v));
     const s = sp.toString();
     return `/admin/feedback${s ? `?${s}` : ""}`;
   };
+
+  const clearFacetsHref = (() => {
+    const sp = new URLSearchParams();
+    if (filter !== "all") sp.set("filter", filter);
+    if (q) sp.set("q", q);
+    const s = sp.toString();
+    return `/admin/feedback${s ? `?${s}` : ""}`;
+  })();
 
   const chatQuery = (over: Record<string, string | number>) => {
     const sp = new URLSearchParams();
@@ -138,7 +156,65 @@ export default async function AdminFeedbackPage({
         />
       </div>
 
+      <AdminPanel title={`What people are saying · last ${themes.days} days`}>
+        {themes.byCategory.length === 0 ? (
+          <EmptyState>No feedback in this window.</EmptyState>
+        ) : (
+          <div className="grid gap-6 py-1 sm:grid-cols-2">
+            <div>
+              <div className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">By kind</div>
+              <ul className="space-y-1 text-sm">
+                {themes.byCategory.map((c) => (
+                  <li key={c.category} className="flex items-center justify-between gap-3">
+                    <Link
+                      href={isFeedbackCategory(c.category) ? query({ category: c.category, page: 1 }) : query({ page: 1 })}
+                      className={cn("underline-offset-2 hover:underline", category === c.category && "text-primary")}
+                    >
+                      {c.category}
+                      {c.sentiment && <span className="ml-2 text-xs text-muted-foreground">{c.sentiment}</span>}
+                    </Link>
+                    <span className="tabular-nums">{c.count}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <div className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">By area</div>
+              <ul className="space-y-1 text-sm">
+                {themes.byArea.slice(0, 8).map((a) => (
+                  <li key={a.area} className="flex items-center justify-between gap-3">
+                    <Link
+                      href={isFeedbackArea(a.area) ? query({ area: a.area, page: 1 }) : query({ page: 1 })}
+                      className={cn("underline-offset-2 hover:underline", area === a.area && "text-primary")}
+                    >
+                      {a.area}
+                    </Link>
+                    <span className="tabular-nums">
+                      {a.count}
+                      {a.negative > 0 && <span className="ml-1 text-xs text-destructive">{a.negative} negative</span>}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
+        <p className="mt-3 border-t border-border/40 pt-2 text-xs text-muted-foreground">
+          {themes.contactableOpen} unresolved {themes.contactableOpen === 1 ? "entry" : "entries"} where the person said we may contact them.
+          {(area || category) && (
+            <>
+              {" "}
+              Filtering by {[category, area].filter(Boolean).join(" · ")}.{" "}
+              <Link href={clearFacetsHref} className="underline underline-offset-2">
+                Clear
+              </Link>
+            </>
+          )}
+        </p>
+      </AdminPanel>
+
       <AdminPanel
+        className="mt-6"
         action={
           <div className="flex flex-wrap items-center gap-3">
             {/* A GET form, so a search is linkable and survives a reload — same reasoning
@@ -225,6 +301,7 @@ export default async function AdminFeedbackPage({
                   <Td className="text-muted-foreground">{row.area ?? "—"}</Td>
                   <Td className="text-muted-foreground">
                     {row.category ?? (row.kind === "freeform" ? "—" : row.kind)}
+                    {row.contactOk && <span className="ml-1 text-[0.625rem] text-accent-foreground" title="Said we may contact them">✉</span>}
                   </Td>
                   <Td>
                     <Link

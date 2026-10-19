@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { FeedbackWidgetLazy } from "@/components/feedback/feedback-widget-lazy";
+import { SurveyPromptLazy } from "@/components/surveys/survey-prompt-lazy";
 import { FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
 import { shouldShowTermsNotice } from "@/lib/legal";
 import { AppShell } from "@/components/layout/app-shell";
@@ -228,6 +229,13 @@ export default async function AppLayout({
           them into buttons that do nothing. */}
       {!visibility.hidden.has(FEEDBACK_SURFACE_KEY) && (
         <FeedbackWidgetLazy viewingAsUser={visibility.viewingAsUser} />
+      )}
+
+      {/* The micro-survey: renders nothing unless one is due, which is almost always. Not
+          shown while an operator is viewing as someone else, so a prompt is never answered on
+          a person's behalf. */}
+      {!visibility.viewingAsUser && (
+        <SurveyPromptLazy canSendFeedback={!visibility.hidden.has(FEEDBACK_SURFACE_KEY)} />
       )}
     </ViewerPlanProvider>
   );

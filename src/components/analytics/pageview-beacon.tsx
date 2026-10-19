@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { isInternalBrowser, isTrackedPath } from "@/lib/analytics-redact";
 import { readNavStart, waitForContent } from "@/lib/nav-timing";
+import { PV_SESSION_KEY } from "@/lib/pageview-session";
 
 /**
  * Sends one page view per navigation, how long its content took to appear, and the time
@@ -24,8 +25,8 @@ import { readNavStart, waitForContent } from "@/lib/nav-timing";
  * no analytics.
  */
 
-/** Neutral on purpose: storage keys are visible to anyone who opens devtools on the waitlist. */
-const SESSION_KEY = "pv_sid";
+/** The key is shared with the waitlist form (`src/lib/pageview-session.ts`), which reads it to link a join to its visit. */
+const SESSION_KEY = PV_SESSION_KEY;
 
 /**
  * A session ends after this long with no page view — the conventional 30 minutes.
@@ -119,12 +120,12 @@ function post(payload: Record<string, unknown>, viaBeacon: boolean): Promise<voi
       // A Blob rather than a bare string, so the request keeps its JSON content type —
       // sendBeacon defaults to text/plain, which the route would not parse.
       navigator.sendBeacon(
-        "/api/track",
+        "/api/p/v",
         new Blob([body], { type: "application/json" })
       );
       return Promise.resolve();
     }
-    return fetch("/api/track", {
+    return fetch("/api/p/v", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body,

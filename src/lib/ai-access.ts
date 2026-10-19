@@ -15,6 +15,7 @@ import { resolvePlan, type BillingColumns } from "@/lib/entitlements";
 import { classifyAiError } from "@/lib/errors";
 import { ERROR_SOURCES, recordErrorEvent, shouldRecordThrottled } from "@/lib/error-events";
 import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
+import { recordGateHitThrottled } from "@/lib/gate-events";
 import { AI_OPERATIONS } from "@/lib/ai-operations";
 import {
   creditPeriodFor,
@@ -706,9 +707,30 @@ export class AiAccess {
     // Below the background floor with credits left is not "you've used your credits".
     if (background) {
       const balance = await getCreditBalance(this.userId, this.plan, this.settings, undefined, { ensure: false });
-      if (balance.spendable > 0) throw this.refusal("managed_unavailable", BACKGROUND_RESERVE_MESSAGE);
+      if (balance.spendable > 0) {
+        await this.recordCreditWall("backgroundFloor", operation, background);
+        throw this.refusal("managed_unavailable", BACKGROUND_RESERVE_MESSAGE);
+      }
     }
+    await this.recordCreditWall("managedCredits", operation, background);
     throw this.refusal("managed_limit", refusalCopyFor("managed_limit", this.plan));
+  }
+
+  /**
+   * The pricing-v2 money moment, recorded as a gate hit: out of credits, or below the floor
+   * kept for what the person asks for. The refusal threw before anything was written, so
+   * neither `usage_events` nor `gate_events` saw it (audit D1). Throttled to one row per
+   * account, wall and hour, because a nightly job or a chat that makes several model calls
+   * would otherwise write one per attempt. Best effort and silent: the caller throws its own
+   * refusal, with its own text, whether or not this lands.
+   */
+  private async recordCreditWall(feature: "managedCredits" | "backgroundFloor", operation: string, background: boolean) {
+    await recordGateHitThrottled({
+      userId: this.userId,
+      feature,
+      plan: this.plan,
+      context: { surface: background ? "cron" : "web", route: operation },
+    });
   }
 
   /** A grant for "the user's model": chat, capture, drafts, briefs, OCR. */

@@ -10,7 +10,7 @@ import { expandLists, peopleIdsIn, stripInvalidDirectives } from "@/lib/chat-dir
 import { answerDeadlineMs, maybeGather } from "@/lib/chat-gather";
 import { isHandle } from "@/lib/meeting-context";
 import { CHAT_QUESTION_TOO_LONG_MESSAGE, isChatQuestionTooLong } from "@/lib/chat-question";
-import { discardEmptyThread, discardUnansweredQuestion, persistAssistantTurn } from "@/lib/chat-persist";
+import { discardEmptyThread, discardUnansweredQuestion, persistAssistantTurn, trackChatAnswerFailed } from "@/lib/chat-persist";
 import { createStepEmitter, deriveFollowUps, plural } from "@/lib/chat-steps";
 import { generateChatTitle, settleWithin, TITLE_GRACE_MS } from "@/lib/chat-title";
 import { formatSse, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
@@ -206,7 +206,7 @@ export async function POST(request: Request) {
         // One retrieval answers most questions; the ones whose shape says it cannot — what
         // was discussed and when, a path to someone, a follow-up that refers back — get a
         // bounded research loop first. See `routeFromParsed` and `gatherEvidence`.
-        const { evidence, notePassages, named } = await maybeGather(userId, ctx, {
+        const { evidence, notePassages, named, research } = await maybeGather(userId, ctx, {
           requestStartedAt,
           signal: request.signal,
           steps,
@@ -366,6 +366,7 @@ export async function POST(request: Request) {
             versionTarget && persistedUserMessageId
               ? { slot: versionTarget.slot, version: versionTarget.nextVersion, userMessageId: persistedUserMessageId }
               : undefined,
+          metrics: { durationMs: Date.now() - requestStartedAt, toolRounds: research?.rounds ?? 0 },
         });
         send({
           type: "done",
@@ -404,6 +405,9 @@ export async function POST(request: Request) {
         // The client is gone: there is nobody to tell, and enqueueing now would throw. Not
         // an error of ours either — the provider call was aborted on purpose.
         if (request.signal.aborted) return;
+        // Counted for the failure rate: the thread and a machine code, never the message. Not
+        // for a Stop (returned above) and not without a thread (nothing to key it to).
+        trackChatAnswerFailed(userId, threadId, err);
         // The status line is already sent, so this reaches the client as an event. Report it:
         // a mid-stream failure used to leave no trace outside the person's screen.
         send({ type: "error", message: reportedFailure(err, TOAST_COPY.chatFailed, { where: "route.chat.stream", userId }).error });

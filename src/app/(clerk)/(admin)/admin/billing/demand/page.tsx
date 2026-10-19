@@ -20,6 +20,15 @@ const GATE_LABELS: Record<string, string> = {
   recruiters: "Recruiter tools",
   sync: "Calendar / mail sync",
   extension: "Browser extension",
+  api: "API and webhooks",
+  meetings: "Meeting transcription",
+  creditPacks: "Credit packs",
+  extraConnections: "Second Google / Microsoft account",
+  // Pricing-v2 walls, recorded since the analytics rollout (`recordGateRefusal`).
+  managedCredits: "Out of AI credits",
+  backgroundFloor: "Credits reserved for what you ask for",
+  speechShortform: "Dictation minutes",
+  speechMeeting: "Meeting transcription minutes",
 };
 
 /**

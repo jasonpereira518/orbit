@@ -12,6 +12,7 @@ export const dynamic = "force-dynamic";
  */
 export const POST = extensionRoute<SaveActivityRequest, SaveActivityResponse>({
   schema: saveActivityRequestSchema,
+  action: "save_activity",
   handler: async ({ userId, settings, input }) => {
     if (settings.radarCaptureLinkedinActivity !== 1) {
       throw new ExtensionRouteError(
