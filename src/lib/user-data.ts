@@ -8,7 +8,7 @@ import { OUTLOOK_SCAN_IMPORT_TYPE } from "@/lib/outlook-scan-type";
 import { deleteAvatarBlobs } from "@/lib/avatar-blob";
 import { hasBlobStorage } from "@/lib/contact-avatar";
 import { purgeEmailAttachmentsForUser } from "@/lib/email/attachments";
-import { and, asc, eq, getTableName, inArray, lt, or, sql } from "drizzle-orm";
+import { and, asc, eq, getTableName, inArray, lt, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
 import { getDb, rowsOf } from "@/db";
