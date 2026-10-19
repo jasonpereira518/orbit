@@ -69,7 +69,7 @@ import { cn } from "@/lib/utils";
  * and the same guard checks it, which is what stops a new import type showing up as a bare
  * "Import" again.
  */
-const SOURCE_MARK: Record<string, { provider: IntegrationKey } | { icon: LucideIcon }> = {
+const SOURCE_ICON: Record<string, { provider: IntegrationKey } | { icon: LucideIcon }> = {
   linkedin_connections: { provider: "linkedin" },
   contacts_file: { provider: "file" },
   google_contacts: { provider: "google-contacts" },
@@ -85,11 +85,11 @@ const SOURCE_MARK: Record<string, { provider: IntegrationKey } | { icon: LucideI
   linkedin_export: { provider: "linkedin" },
 };
 
-const UNKNOWN_MARK = { icon: Upload } as const;
+const UNKNOWN_ICON = { icon: Upload } as const;
 
 /** The mark in the same neutral tile `IntegrationLogo` draws, so a chat export sits level with a logo. */
 function SourceMark({ importType }: { importType: string | null }) {
-  const mark = (importType && SOURCE_MARK[importType]) || UNKNOWN_MARK;
+  const mark = (importType && SOURCE_ICON[importType]) || UNKNOWN_ICON;
   if ("provider" in mark) return <IntegrationLogo provider={mark.provider} size="sm" title="" />;
   const Icon = mark.icon;
   return (

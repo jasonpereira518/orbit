@@ -198,8 +198,8 @@ async function mainAsync() {
       "Refresh",
     ],
     chat: [
-      "Chat with your network",
-      "Ask who can help, who to follow up with, or who knows what.",
+      "Chat",
+      "Ask anything about the people you know.",
       "Ask your network",
       "Who can help, who to follow up with, or who knows what — try a suggestion below.",
       "Ask about your network…",

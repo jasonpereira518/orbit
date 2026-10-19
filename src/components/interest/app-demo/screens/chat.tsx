@@ -483,8 +483,8 @@ export function ChatScreen() {
   return (
     <div className="flex h-full flex-col gap-4">
       <header>
-        <h2 className={cn(DISPLAY, "text-3xl")}>Chat with your network</h2>
-        <p className="mt-1 text-muted-foreground">Ask who can help, who to follow up with, or who knows what.</p>
+        <h2 className={cn(DISPLAY, "text-3xl")}>Chat</h2>
+        <p className="mt-1 text-muted-foreground">Ask anything about the people you know.</p>
       </header>
 
       <div className={cn(CARD, "flex min-h-0 flex-1 overflow-hidden")}>
