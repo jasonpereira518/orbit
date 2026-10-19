@@ -1,5 +1,6 @@
 import { webSearchPaused } from "@/lib/ai-access";
 import { consumeBucket, isRateLimitedError, RATE_LIMITS, RateLimitedError } from "@/lib/rate-limit";
+import { MANAGED_AI_POOLS } from "@/lib/managed-ai-policy";
 import { utcDayKey } from "@/lib/timeline-cost";
 
 /**
@@ -9,15 +10,23 @@ import { utcDayKey } from "@/lib/timeline-cost";
  * 2026 it was 85% of the bill. Two ceilings, both counted in searches, not calls:
  *  - per account, per calendar month (`RATE_LIMITS.webSearchMonthly`), every feature and key
  *    together, so one account cannot spend everyone's share;
- *  - across Orbit, per UTC day (`RATE_LIMITS.webSearchDaily`): $190 a month, paced daily so a
- *    burst cannot spend the month early.
+ *  - across Orbit, per UTC day (`RATE_LIMITS.webSearchDaily`): a share of Anthropic's monthly
+ *    pool, paced daily so a burst cannot spend the month early.
  * Plus the admin switch (`site_settings.web_search_paused`) that stops it all at once.
  */
 
 /** Searches one dollar buys at Anthropic's $10 per 1,000 — the yardstick for the budget. */
 const SEARCHES_PER_USD = 100;
-/** Orbit-wide web-search spend that has to last a month (Jason, Oct 17 2026). */
-export const WEB_SEARCH_BUDGET_USD_PER_30_DAYS = 190;
+/**
+ * The $190 Anthropic pool (`MANAGED_AI_POOLS.anthropic`) pays for EVERYTHING Orbit runs on its
+ * key — tokens and searches (Jason, Oct 19 2026). The pool itself stops all of it when spent;
+ * this share keeps searches from spending it before the month's tokens do. Half: searches were
+ * 85% of the bill before the sweep cuts, and the rest goes to chat, capture and summaries.
+ */
+export const WEB_SEARCH_POOL_SHARE = 0.5;
+const ANTHROPIC_POOL_USD = (MANAGED_AI_POOLS.anthropic?.capMicros ?? 0) / 1_000_000;
+/** What searches may spend per month: $95 of the $190. */
+export const WEB_SEARCH_BUDGET_USD_PER_30_DAYS = ANTHROPIC_POOL_USD * WEB_SEARCH_POOL_SHARE;
 /** ÷31, not ÷30: the longest month stays inside the budget too. */
 export const WEB_SEARCH_DAILY_CEILING = Math.floor((WEB_SEARCH_BUDGET_USD_PER_30_DAYS * SEARCHES_PER_USD) / 31);
 /** The share of an account's month background work may use, so it never starves a click. */

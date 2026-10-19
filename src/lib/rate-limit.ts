@@ -204,10 +204,11 @@ export const RATE_LIMITS = {
    */
   webSearchMonthly: { limit: 300, windowSec: 31 * 86_400 },
   /**
-   * Web searches across every account per UTC day: $190 a month at $10 per 1,000, paced so a
-   * burst cannot spend the month early. See `WEB_SEARCH_DAILY_CEILING`.
+   * Web searches across every account per UTC day: half of Anthropic's $190 monthly pool
+   * ($95) at $10 per 1,000, paced so a burst cannot spend the month early. See
+   * `WEB_SEARCH_DAILY_CEILING`, which smoke-rate-limit keeps this equal to.
    */
-  webSearchDaily: { limit: 612, windowSec: 86_400 },
+  webSearchDaily: { limit: 306, windowSec: 86_400 },
   /** `/contact`: sends on Orbit's own Resend key. Per IP, shared across instances. */
   contactForm: { limit: 3, windowSec: 600 },
   /**

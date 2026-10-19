@@ -101,7 +101,7 @@ async function main() {
   check("a live bucket is kept", left.includes(`smoke.fresh:${KEY}`));
 
   console.log("Web-search budget...");
-  check("the daily ceiling is $190 over a 31-day month", WEB_SEARCH_DAILY_CEILING === 612 && RATE_LIMITS.webSearchDaily.limit === WEB_SEARCH_DAILY_CEILING);
+  check("the daily ceiling is half the $190 pool over a 31-day month", WEB_SEARCH_DAILY_CEILING === 306 && RATE_LIMITS.webSearchDaily.limit === WEB_SEARCH_DAILY_CEILING);
   const refusal = async (fn: () => Promise<unknown>) => {
     try {
       await fn();
