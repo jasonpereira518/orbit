@@ -2393,8 +2393,8 @@ async function streamText(
       // ENDS, so a cut-off answer would come back as a finished (shorter) one. Rethrow the abort:
       // a deadline reads as a timeout, a Stop is filed as cancelled. (Gemini and Anthropic throw.)
       signal.throwIfAborted();
-      // A refusal or a safety stop with nothing written is not an "empty response": say so.
       if (!full.trim()) {
+        // A refusal or a safety stop with nothing written is not an "empty response": say so.
         assertUsableFinish(finish === "length" ? "other" : finish);
         throw new Error("Empty AI response");
       }
