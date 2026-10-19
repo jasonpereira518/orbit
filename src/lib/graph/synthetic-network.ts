@@ -138,15 +138,9 @@ export function buildSyntheticGraphPayload(
       aiSummary:
         rand() < 0.5 ? `${title ?? "Works"} at ${company ?? "an unlisted company"}.` : null,
       keyFacts: rand() < 0.3 ? ["Runs marathons"] : [],
-      howMet: rand() < 0.3 ? "Met at a conference" : null,
-      metContext: null,
-      dateMet: null,
-      notes: null,
-      sharedInterests: [],
-      email: `${first.toLowerCase()}.${i}@example.com`,
-      phone: null,
-      linkedinUrl: null,
-      website: null,
+      // The draw `howMet` took before the chart payload stopped carrying it, kept so every
+      // later draw — and so the synthetic sky — stays the same.
+      ...(rand() < 0.3 ? {} : {}),
       profileImageUrl: null,
       dormant,
       substantive: true,

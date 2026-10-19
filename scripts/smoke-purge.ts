@@ -108,7 +108,7 @@ async function seed() {
     plan: "free",
   });
 
-  // v171 telemetry and identity links. product_events is deleted with "activity"; the waitlist
+  // v181 telemetry and identity links. product_events is deleted with "activity"; the waitlist
   // row an account came from is deleted on a full purge (the waitlist notice promises that once
   // someone has been let in), and the invite ledger row is anonymised rather than deleted.
   await db.insert(schema.productEvents).values({

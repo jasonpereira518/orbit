@@ -23,7 +23,6 @@ import { hybridSearchContacts } from "@/lib/hybrid-search";
 import { matchContactsByName } from "@/lib/chat-lanes";
 import { findOrgRosters } from "@/lib/chat-roster";
 import { loadDueFollowUps } from "@/lib/due-follow-ups";
-import { getClosenessCohortSlim } from "@/lib/closeness-cohort";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { finalizeIngest, ingestEvents, openIngestContext } from "@/lib/ingest/events";
 import { getNetworkStats } from "@/lib/network-stats";
@@ -361,11 +360,12 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
     scope: "read",
     resultLabel: "overview",
     async run(userId) {
-      // One cohort read for both halves: `cache()` would not share it in a route handler.
-      const cohort = getClosenessCohortSlim(userId);
+      // Neither half loads the whole network's scores any more when the stored ones are
+      // current (`storedCohortSummary`, `storedScoresAreCurrent`), so there is no shared
+      // cohort read to pass between them.
       const [stats, due] = await Promise.all([
-        getNetworkStats(userId, { cohort }),
-        loadDueFollowUps(userId, { cohort }),
+        getNetworkStats(userId),
+        loadDueFollowUps(userId),
       ]);
       // The headline copy is written for a dashboard card ("Gravity well detected"), which
       // would read as nonsense quoted back by an assistant. Only the numbers cross over.

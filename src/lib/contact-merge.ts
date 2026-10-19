@@ -34,6 +34,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { after } from "next/server";
 import { TOUR_EXAMPLE_SOURCE } from "@/lib/onboarding-examples/marker";
+import { forgetDuplicateCount } from "@/lib/duplicate-count-memo";
 import { getDb, runAtomicWrite, type AtomicStatement, type AtomicWriter } from "@/db";
 import { contactMerges, contacts, duplicateSuggestions } from "@/db/schema";
 import { deleteAvatarBlobs, isAvatarBlobUrl } from "@/lib/avatar-blob";
@@ -156,6 +157,7 @@ export async function mergeContacts(
   loserId: string,
   options: MergeOptions = {}
 ): Promise<MergeResult> {
+  forgetDuplicateCount(userId);
   if (winnerId === loserId) throw new Error("mergeContacts: winner and loser are the same contact");
 
   const db = await getDb();
@@ -771,6 +773,7 @@ async function releaseOrphanedLoserPhoto(
 }
 
 export async function unmergeContacts(userId: string, mergeId: string): Promise<MergeResult> {
+  forgetDuplicateCount(userId);
   const db = await getDb();
   const [merge] = await db
     .select()
@@ -1031,6 +1034,7 @@ export async function recordDuplicateSuggestion(
   reason: string,
   confidence: number
 ) {
+  forgetDuplicateCount(userId);
   if (contactIdA === contactIdB) return;
   // Canonical ordering so "A and B" and "B and A" are the same row, not two.
   const [a, b] = contactIdA < contactIdB ? [contactIdA, contactIdB] : [contactIdB, contactIdA];
@@ -1069,6 +1073,7 @@ export async function recordDuplicateSuggestions(
   userId: string,
   pairs: ReadonlyArray<DuplicateSuggestionPair>
 ) {
+  forgetDuplicateCount(userId);
   const rows = new Map<string, typeof duplicateSuggestions.$inferInsert>();
   for (const { contactIdA, contactIdB, reason, confidence } of pairs) {
     if (contactIdA === contactIdB) continue;
@@ -1109,6 +1114,7 @@ export async function dismissDuplicatePair(
   contactIdB: string,
   reason = "Dismissed by hand"
 ) {
+  forgetDuplicateCount(userId);
   if (contactIdA === contactIdB) return;
   // Same canonical ordering as `recordDuplicateSuggestion`, so this writes the row a write
   // path would otherwise later try to create — and the conflict target matches.

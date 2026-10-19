@@ -203,7 +203,7 @@ Underpowered A/B tests will produce confident noise. The proposal:
 
 ## 6. Implementation status (2026-10-19)
 
-Everything in §0 to §4 is built except the items under "Not done". Schema is at version 171. Run `npx tsx scripts/run-smoke.ts --ci` for the full check; `analytics/checks/probe-known-distortions.ts` is now a regression guard (12 probes, 0 regressions).
+Everything in §0 to §4 is built except the items under "Not done". Schema is at version 181 (built as 171, renumbered when main reached 178). Run `npx tsx scripts/run-smoke.ts --ci` for the full check; `analytics/checks/probe-known-distortions.ts` is now a regression guard (12 probes, 0 regressions).
 
 ### What shipped
 

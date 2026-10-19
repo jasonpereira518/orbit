@@ -135,7 +135,7 @@ async function main() {
   const failing = {
     deliver: async () => { throw new Error("Slack webhook answered 500"); },
     heartbeat: async () => {},
-    // Not at the mercy of the weekday: on a Monday the cost line is a second failed delivery.
+    // As in `deps`: otherwise on a Monday the weekly report is due too and fails alongside.
     weeklyReportDue: () => false,
   };
   const down = await runOpsSweep({ trigger: "manual", deps: failing });

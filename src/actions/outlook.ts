@@ -1,5 +1,6 @@
 "use server";
 
+import { startJobInOwnInvocation } from "@/lib/import-stall";
 import { canConnect, refusedConnectUrl } from "@/lib/connection-limits";
 import { and, desc, eq } from "drizzle-orm";
 import { safeReturnPath } from "@/lib/safe-return-path";
@@ -345,7 +346,7 @@ export async function startOutlookRecruiterScan(): Promise<ActionResult<{ import
       })
       .returning();
 
-    after(() => runOutlookRecruiterScanJob(row.id).catch(() => {}));
+    after(() => startJobInOwnInvocation(row.id, runOutlookRecruiterScanJob).catch(() => {}));
     revalidatePath("/recruiters");
     return { importId: row.id };
   });

@@ -544,7 +544,7 @@ export async function recentMovements(limit = 25) {
 export const KNOWN_GATES = [
   "contacts",
   ...FEATURE_KEYS,
-  // Pricing-v2 walls recorded since v171: out of managed credits, the background floor, and the
+  // Pricing-v2 walls recorded since v181: out of managed credits, the background floor, and the
   // two Deepgram allowances. Without them the Demand page would not list the moments that sell.
   "managedCredits",
   "backgroundFloor",
