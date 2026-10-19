@@ -260,6 +260,7 @@
         "confidenceScore": null,
         "itemHash": null,
         "calendarEventKey": null,
+        "completedAt": null,
         "createdAt": "<ts>"
       },
       {
@@ -285,6 +286,7 @@
         "confidenceScore": null,
         "itemHash": null,
         "calendarEventKey": null,
+        "completedAt": null,
         "createdAt": "<ts>"
       },
       {
@@ -310,6 +312,7 @@
         "confidenceScore": null,
         "itemHash": null,
         "calendarEventKey": null,
+        "completedAt": null,
         "createdAt": "<ts>"
       },
       {
@@ -335,6 +338,7 @@
         "confidenceScore": null,
         "itemHash": null,
         "calendarEventKey": null,
+        "completedAt": null,
         "createdAt": "<ts>"
       },
       {
@@ -360,6 +364,7 @@
         "confidenceScore": null,
         "itemHash": null,
         "calendarEventKey": null,
+        "completedAt": null,
         "createdAt": "<ts>"
       },
       {
@@ -385,6 +390,7 @@
         "confidenceScore": null,
         "itemHash": null,
         "calendarEventKey": null,
+        "completedAt": null,
         "createdAt": "<ts>"
       },
       {
@@ -410,6 +416,7 @@
         "confidenceScore": null,
         "itemHash": null,
         "calendarEventKey": null,
+        "completedAt": null,
         "createdAt": "<ts>"
       },
       {
@@ -435,6 +442,7 @@
         "confidenceScore": null,
         "itemHash": null,
         "calendarEventKey": null,
+        "completedAt": null,
         "createdAt": "<ts>"
       }
     ],
@@ -5149,6 +5157,7 @@
         "confidenceScore": null,
         "itemHash": null,
         "calendarEventKey": null,
+        "completedAt": null,
         "createdAt": "<ts>"
       }
     ],
@@ -7074,6 +7083,7 @@
           "confidenceScore": null,
           "itemHash": null,
           "calendarEventKey": null,
+          "completedAt": null,
           "createdAt": "<ts>"
         }
       ]
@@ -7801,6 +7811,7 @@
         "confidenceScore": null,
         "itemHash": null,
         "calendarEventKey": null,
+        "completedAt": null,
         "createdAt": "<ts>"
       },
       {
@@ -7826,6 +7837,7 @@
         "confidenceScore": null,
         "itemHash": null,
         "calendarEventKey": null,
+        "completedAt": null,
         "createdAt": "<ts>"
       },
       {
@@ -7851,6 +7863,7 @@
         "confidenceScore": null,
         "itemHash": null,
         "calendarEventKey": null,
+        "completedAt": null,
         "createdAt": "<ts>"
       },
       {
@@ -7876,6 +7889,7 @@
         "confidenceScore": null,
         "itemHash": null,
         "calendarEventKey": null,
+        "completedAt": null,
         "createdAt": "<ts>"
       },
       {
@@ -7901,6 +7915,7 @@
         "confidenceScore": null,
         "itemHash": null,
         "calendarEventKey": null,
+        "completedAt": null,
         "createdAt": "<ts>"
       },
       {
@@ -7926,6 +7941,7 @@
         "confidenceScore": null,
         "itemHash": null,
         "calendarEventKey": null,
+        "completedAt": null,
         "createdAt": "<ts>"
       },
       {
@@ -7951,6 +7967,7 @@
         "confidenceScore": null,
         "itemHash": null,
         "calendarEventKey": null,
+        "completedAt": null,
         "createdAt": "<ts>"
       },
       {
@@ -7976,6 +7993,7 @@
         "confidenceScore": null,
         "itemHash": null,
         "calendarEventKey": null,
+        "completedAt": null,
         "createdAt": "<ts>"
       },
       {
@@ -8001,6 +8019,7 @@
         "confidenceScore": null,
         "itemHash": null,
         "calendarEventKey": null,
+        "completedAt": null,
         "createdAt": "<ts>"
       },
       {
@@ -8026,6 +8045,7 @@
         "confidenceScore": null,
         "itemHash": null,
         "calendarEventKey": null,
+        "completedAt": null,
         "createdAt": "<ts>"
       },
       {
@@ -8051,6 +8071,7 @@
         "confidenceScore": null,
         "itemHash": null,
         "calendarEventKey": null,
+        "completedAt": null,
         "createdAt": "<ts>"
       }
     ],
@@ -13890,6 +13911,7 @@
       "search_tsv": "'add':1 'asked':8 'at':14 'be':10 'dinner':18 'founders':17 'he':7 'james':2 'list':13 'monthly':5 'on':11 'the':4,12,15 'to':3,9 'unc':16 'update':6",
       "action_kind": "follow_up",
       "description": "He asked to be on the list at the UNC founders dinner.",
+      "completed_at": null,
       "note_batch_id": null,
       "reminder_type": "manual",
       "action_item_id": null,
@@ -13915,6 +13937,7 @@
       "search_tsv": "'a':2 'book':1 'dinner':8 'for':4 'orbit':6 'the':5 'user':7 'venue':3",
       "action_kind": "task",
       "description": null,
+      "completed_at": null,
       "note_batch_id": null,
       "reminder_type": "manual",
       "action_item_id": null,
@@ -13940,6 +13963,7 @@
       "search_tsv": "'about':3 'api':4,12 'call':1 'design':13 'he':6 'offered':7 'public':11 'review':9 'the':10 'to':8 'tom':2 'versioning':5",
       "action_kind": "call",
       "description": "He offered to review the public API design.",
+      "completed_at": null,
       "note_batch_id": null,
       "reminder_type": "manual",
       "action_item_id": null,
@@ -13965,6 +13989,7 @@
       "search_tsv": "'and':11 'codex':8 'conversation':10 'draft':1 'engineer':15 'founding':14 'founding-engineer':13 'investor':4 'october':3 'partnership':9 'search':16 'the':2,7,12 'traction':6 'update':5",
       "action_kind": "task",
       "description": "Traction, the Codex partnership conversation, and the founding-engineer search.",
+      "completed_at": null,
       "note_batch_id": null,
       "reminder_type": "manual",
       "action_item_id": null,
@@ -13990,6 +14015,7 @@
       "search_tsv": "'follow':1 'golden':4 'newperson':5 'up':2 'with':3",
       "action_kind": "follow_up",
       "description": null,
+      "completed_at": null,
       "note_batch_id": null,
       "reminder_type": "manual",
       "action_item_id": null,
@@ -14015,6 +14041,7 @@
       "search_tsv": "'chen':5 'follow':1 'sarah':4 'up':2 'with':3",
       "action_kind": "follow_up",
       "description": null,
+      "completed_at": null,
       "note_batch_id": null,
       "reminder_type": "manual",
       "action_item_id": null,
@@ -14040,6 +14067,7 @@
       "search_tsv": "'golden':1 'reminder':2",
       "action_kind": "follow_up",
       "description": null,
+      "completed_at": null,
       "note_batch_id": null,
       "reminder_type": "manual",
       "action_item_id": null,
@@ -14065,6 +14093,7 @@
       "search_tsv": "'a':12 'about':4 'elena':3 'for':11 'internship':14 'names':10 'possible':13 'reply':1 'sent':9 'she':8 'students':7 'the':5 'to':2 'two':6",
       "action_kind": "follow_up",
       "description": "She sent names for a possible internship.",
+      "completed_at": null,
       "note_batch_id": null,
       "reminder_type": "manual",
       "action_item_id": null,
@@ -14090,6 +14119,7 @@
       "search_tsv": "'a':12 'and':9 'asked':10 'decides':7 'every':15 'fast':8 'for':11 'grace':2 'quarter':16 'quarterly':4 'send':1 'she':6 'short':13 'the':3 'update':5,14",
       "action_kind": "follow_up",
       "description": "She decides fast and asked for a short update every quarter.",
+      "completed_at": null,
       "note_batch_id": null,
       "reminder_type": "manual",
       "action_item_id": null,
@@ -14115,6 +14145,7 @@
       "search_tsv": "'by':15 'description':11 'for':12 'friday':16 'liner':7 'maya':2 'needs':9 'one':6 'one-liner':5 'programme':14 'send':1 'she':8 'showcase':4 'the':3,10,13",
       "action_kind": "follow_up",
       "description": "She needs the description for the programme by Friday.",
+      "completed_at": null,
       "note_batch_id": null,
       "reminder_type": "manual",
       "action_item_id": null,
@@ -14140,6 +14171,7 @@
       "search_tsv": "'a':11 'after':15 'asked':9 'aws':17 'conversation':19 'for':10 'one':13 'one-pager':12 'pager':14 'retrieval':4 'sarah':2 'send':1 'she':8 'summit':18 'the':3,16 'up':7 'write':6 'write-up':5",
       "action_kind": "follow_up",
       "description": "She asked for a one-pager after the AWS Summit conversation.",
+      "completed_at": null,
       "note_batch_id": null,
       "reminder_type": "manual",
       "action_item_id": null,
@@ -14165,6 +14197,7 @@
       "search_tsv": "'feedback':6 'for':3 'nina':2 'positioning':5 'thank':1 'the':4",
       "action_kind": "email",
       "description": null,
+      "completed_at": null,
       "note_batch_id": null,
       "reminder_type": "manual",
       "action_item_id": null,

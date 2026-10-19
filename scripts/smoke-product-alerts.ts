@@ -11,6 +11,8 @@
 import "./smoke/_env";
 import { run } from "./smoke/_env";
 import { PRODUCT_ALERT_THRESHOLDS as T, productConditions, type ProductOpsFacts } from "../src/lib/product-alerts";
+import { sql } from "drizzle-orm";
+import { getDb } from "../src/db";
 import { loadProductOpsFacts } from "../src/lib/product-ops";
 
 let failures = 0;
@@ -94,6 +96,13 @@ run(async () => {
   check("a job that never ran is not", !ids(with_({ silentJobs: [{ job: "email.drain", label: "x", lastStartedAt: null, silentAfterMs: 1 }] })).length);
 
   console.log("\nthe loader");
+  // The throwaway database is shared by every script in a suite run, so "empty" is made true
+  // here rather than assumed: accounts from other scripts would open the funnel alert.
+  const db = await getDb();
+  await db.execute(sql`UPDATE user_settings SET created_at = now() - interval '60 days' WHERE created_at > now() - interval '30 days'`);
+  for (const table of ["capture_jobs", "imports", "email_sends", "product_events", "page_views", "cron_runs"]) {
+    await db.execute(sql.raw(`DELETE FROM ${table}`));
+  }
   const facts = await loadProductOpsFacts(new Date());
   check("reads an empty database without throwing", Array.isArray(facts.failures) && facts.signups.last7d >= 0);
   check("reports the four silent jobs", facts.silentJobs.length === 4);

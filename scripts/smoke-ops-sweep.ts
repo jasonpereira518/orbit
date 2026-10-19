@@ -47,6 +47,12 @@ async function reset() {
   // script does not expect. Plan columns only; the throwaway database is shared per suite.
   await db.execute(sql`UPDATE user_settings SET comped_plan = NULL WHERE comped_plan IN ('orbit', 'max')`);
   await db.execute(sql`UPDATE user_settings SET subscription_plan = NULL, subscription_status = NULL WHERE subscription_plan IN ('orbit', 'max')`);
+  // Product-health conditions read the whole shared database: the accounts other scripts just
+  // created (and no saved capture) would open `product.funnel_break`, a delivery this script
+  // does not expect. Age the accounts out of the 48-hour window and drop the telemetry.
+  await db.execute(sql`UPDATE user_settings SET created_at = now() - interval '60 days' WHERE created_at > now() - interval '30 days'`);
+  await db.execute(sql`DELETE FROM product_events`);
+  await db.execute(sql`DELETE FROM page_views`);
   // A healthy run of every OTHER scheduled job, so their own "has stopped running"
   // conditions stay quiet.
   //
@@ -129,6 +135,8 @@ async function main() {
   const failing = {
     deliver: async () => { throw new Error("Slack webhook answered 500"); },
     heartbeat: async () => {},
+    // Not at the mercy of the weekday: on a Monday the cost line is a second failed delivery.
+    weeklyReportDue: () => false,
   };
   const down = await runOpsSweep({ trigger: "manual", deps: failing });
   check("a failed delivery marks the sweep partial", down.status === "partial" && down.deliveryFailures === 1, JSON.stringify(down));
