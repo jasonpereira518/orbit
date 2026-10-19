@@ -1,4 +1,8 @@
 {
+  "smoke-a11y-patterns.ts": [
+    "src/app",
+    "src/components"
+  ],
   "smoke-action-user-scope.ts": [
     "src/actions",
     "src/actions/",
@@ -93,6 +97,9 @@
   "smoke-dashboard-search.ts": [
     "src/actions/search.ts"
   ],
+  "smoke-dictation-deepgram.ts": [
+    "src/lib/use-dictation.ts"
+  ],
   "smoke-draft-prompts.ts": [
     "scripts/fixtures/draft-prompt-goldens.json"
   ],
@@ -154,6 +161,10 @@
   "smoke-fast-model.ts": [
     "src/lib/ai.ts"
   ],
+  "smoke-font-preload.ts": [
+    "src/app/layout.tsx",
+    "src/app/theme.css"
+  ],
   "smoke-free-ai-copy.ts": [
     "src/app/(clerk)/(marketing)/pricing/page.tsx",
     "src/app/(site)/(docs)/contact/page.tsx",
@@ -205,7 +216,7 @@
     "src/components/contacts/interaction-detail-sheet.tsx"
   ],
   "smoke-landing-anchors.ts": [
-    "src/app/globals.css",
+    "src/app/theme.css",
     "src/components/landing/landing-page.tsx"
   ],
   "smoke-landing-cards.ts": [
@@ -231,6 +242,14 @@
   "smoke-migration-guards.ts": [
     "scripts/migrate.ts",
     "src/db/index.ts"
+  ],
+  "smoke-no-double-render.ts": [
+    "src/actions/capture.ts",
+    "src/app/(clerk)/(app)/(main)/contacts/page.tsx",
+    "src/components/contacts/contact-form.tsx",
+    "src/components/contacts/contacts-filters.tsx",
+    "src/components/contacts/log-interaction-sheet.tsx",
+    "src/lib/contact-writes.ts"
   ],
   "smoke-onboarding-copy.ts": [
     "src/app/(clerk)/(app)/onboarding/page.tsx",
@@ -295,6 +314,14 @@
     "src/components/settings/integrations-dialog.tsx",
     "src/lib/import-job-runner.ts"
   ],
+  "smoke-site-css-sources.ts": [
+    "src/app/(clerk)/layout.tsx",
+    "src/app/(site)/layout.tsx",
+    "src/app/global-error.tsx",
+    "src/app/layout.tsx",
+    "src/app/not-found.tsx",
+    "src/app/scan/[token]/page.tsx"
+  ],
   "smoke-speech-quota.ts": [
     "src/lib/ai.ts"
   ],
@@ -315,7 +342,7 @@
     "src/app/api/sync/run/route.ts"
   ],
   "smoke-tap-targets.ts": [
-    "src/app/globals.css",
+    "src/app/theme.css",
     "src/components/capture/capture-source-card.tsx",
     "src/components/capture/capture-summary.tsx",
     "src/components/capture/ignored-people-section.tsx",
@@ -331,7 +358,7 @@
     "src/components/reminders/suggested-reminders-panel.tsx"
   ],
   "smoke-tier-contrast.ts": [
-    "src/app/globals.css"
+    "src/app/theme.css"
   ],
   "smoke-toast-copy.ts": [
     "src/lib/import-errors.ts",
