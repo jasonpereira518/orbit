@@ -88,7 +88,7 @@ export async function AiOperationsPanel() {
               <Td className="font-mono text-xs">
                 {row.operation}
                 {row.background && (
-                  <span className="ml-2 rounded bg-muted px-1.5 py-0.5 font-sans text-[10px] text-muted-foreground">
+                  <span className="ml-2 rounded bg-muted px-1.5 py-0.5 font-sans text-3xs text-muted-foreground">
                     runs in the background
                   </span>
                 )}

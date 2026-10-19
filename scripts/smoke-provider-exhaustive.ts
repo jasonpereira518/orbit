@@ -170,11 +170,11 @@ const OPENROUTER_ROUTED_AWAY =
   "that earlier branch honest (every .create( it reaches goes through withOpenRouterRouting).";
 
 const ALLOWLIST: Record<string, string> = {
-  "src/lib/ai-access.ts:730": "the branch is keyed on the completion provider being " +
+  "src/lib/ai-access.ts:752": "the branch is keyed on the completion provider being " +
     "\"anthropic\" (the one provider with no embeddings API at all), to pick the copy that " +
     "names OpenAI/Gemini as the fix; every other provider — openrouter included — falls " +
     "through to the same generic embedding-refusal copy.",
-  "src/lib/ai-access.ts:398": "isOpenAiShaped's own body: `provider === \"openai\" || " +
+  "src/lib/ai-access.ts:399": "isOpenAiShaped's own body: `provider === \"openai\" || " +
     "provider === \"openrouter\"` — the second half is the literal \"openrouter\" itself, " +
     "which this checker does not flag; together the two are exhaustive for what this " +
     "predicate means to answer.",
@@ -194,10 +194,10 @@ const ALLOWLIST: Record<string, string> = {
   "src/lib/ai-tools.ts:131": OPENROUTER_ROUTED_AWAY + " (createToolDriver's anthropic arm; " +
     "openai and openrouter both now take the isOpenAiShaped branch below, leaving only " +
     "Gemini as this arm's fallthrough.)",
-  "src/lib/admin-metrics.ts:328": "the \"openai\" arm of the four-way ternary that now also " +
+  "src/lib/admin-metrics.ts:356": "the \"openai\" arm of the four-way ternary that now also " +
     "checks \"anthropic\" and \"openrouter\" explicitly (this commit added the openrouter " +
     "arm and its query column), defaulting to gemini — exhaustive over AiProvider.",
-  "src/lib/admin-metrics.ts:330": "the \"anthropic\" arm of the same ternary — see line 328.",
+  "src/lib/admin-metrics.ts:358": "the \"anthropic\" arm of the same ternary — see line 356.",
   // Task 3 widened the completion arms of these cascades — completeJson,
   // completeMultimodalJsonInner and streamText, but NOT transcribeAudioWithAI, reverted in
   // fix round 1 (see its own entry below) — to `isOpenAiShaped(...)`, which already admits
@@ -244,7 +244,7 @@ const ALLOWLIST: Record<string, string> = {
     "also checks \"anthropic\" and \"openrouter\" explicitly (this commit added the " +
     "openrouter arm and its keys.openrouter column), defaulting to gemini.",
   "src/lib/admin-user-detail.ts:572": "the \"anthropic\" arm of the same ternary — see line 570.",
-  "src/actions/settings.ts:121": "the \"gemini\" arm of the four-way `hasPersonalKey` " +
+  "src/actions/settings.ts:127": "the \"gemini\" arm of the four-way `hasPersonalKey` " +
     "ternary that now also checks \"openai\" and \"anthropic\" explicitly, defaulting to " +
     "settings?.openrouterApiKeyEncrypted (this fix round's fix — it used to default to the " +
     "anthropic key for an openrouter row) — exhaustive over AiProvider.",
@@ -259,15 +259,15 @@ const ALLOWLIST: Record<string, string> = {
     "working key to go add one. Exhaustive over AiProvider now.",
   "src/lib/outreach-readiness-server.ts:84": "the \"openai\" arm of the same ternary — see line 82.",
   "src/lib/outreach-readiness-server.ts:86": "the \"anthropic\" arm of the same ternary — see line 82.",
-  "src/lib/ai-settings-write.ts:97": "one of four INDEPENDENT `provider === X && encrypted` " +
+  "src/lib/ai-settings-write.ts:125": "one of four INDEPENDENT `provider === X && encrypted` " +
     "ternaries, one per key column of nextKeyState — each keys off its own literal with no " +
     "shared fallthrough default, so no cascade needs an openrouter arm; openrouterApiKeyEncrypted " +
     "has its own `provider === \"openrouter\"` line right below the three narrowed ones. " +
     "(applyAiKeyChange, moved here from src/actions/settings.ts by Task 5's fix round 1 — " +
     "that file is \"use server\", which made the function a directly-POST-able Server " +
     "Action despite taking a caller-supplied userId.)",
-  "src/lib/ai-settings-write.ts:101": "same independent-ternary shape as line 97 — see that entry.",
-  "src/lib/ai-settings-write.ts:105": "same independent-ternary shape as line 97 — see that entry.",
+  "src/lib/ai-settings-write.ts:129": "same independent-ternary shape as line 97 — see that entry.",
+  "src/lib/ai-settings-write.ts:133": "same independent-ternary shape as line 97 — see that entry.",
   // Surfaced by this fix round widening the walk to src/app and src/components — which is
   // where finding 1's shipped-OpenRouter-picker bug was hiding.
   "src/components/settings/ai-settings.tsx:289": "the standalone \"Anthropic has no " +
