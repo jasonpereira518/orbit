@@ -62,8 +62,11 @@ export async function createContact(page: Page, fullName: string): Promise<void>
       await create.click();
     },
     () =>
+      // 45 s, not 10: on a cold `next dev` the first /contacts/[id] compile can take longer than
+      // that, and a failed check makes untilHydrated fill and click "Create contact" AGAIN while
+      // the first request is still in flight. The wait ends as soon as the URL matches.
       expect(page).toHaveURL((url) => /^\/contacts\/[^/]+$/.test(url.pathname) && !url.pathname.endsWith("/new"), {
-        timeout: 10_000,
+        timeout: 45_000,
       })
   );
   await expect(page.getByRole("heading", { level: 1, name: fullName })).toBeVisible();
