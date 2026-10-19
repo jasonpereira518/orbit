@@ -18,6 +18,8 @@ import { ymdInZone } from "@/lib/reminder-due-bucket";
 import { CLOUD_NOTES_SURFACE_KEY } from "@/lib/surfaces";
 import { isSurfaceLive } from "@/lib/surface-visibility";
 
+export const metadata = { title: "Capture" };
+
 // Page-level, because it governs the server actions called from this page: summarizing an
 // hour-long meeting is a map-reduce over several model calls. The (main) layout is 60, so
 // this page needs its own.

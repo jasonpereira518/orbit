@@ -26,6 +26,7 @@ const BUCKET_LABELS: Record<string, string> = {
   captureHandoff: "scan",
   captureParts: "capture",
   meetingChunk: "meeting transcription",
+  meetingChunkClaim: "meeting transcription",
   meetingCandidates: "calendar lookup",
   calendarWindow: "calendar refresh",
   avatarResolve: "photo lookup",
@@ -329,6 +330,16 @@ export const RATE_LIMITS = {
   /** One token per connection attempt; a stuck reconnect loop must not mint endlessly. */
   speechToken: { limit: 30, windowSec: 300 },
   /**
+   * NOT a rate limit: a claim on one meeting chunk, keyed `session:seq`, taken before the chunk
+   * is transcribed. Two uploads of the same seq (a retry racing a slow first attempt, or two
+   * tabs draining an ended meeting) used to both reach Deepgram — the duplicate check ran
+   * before the call and the unique insert only after it — so Orbit paid twice. One claim per
+   * window, longer than the chunk route's 120s `maxDuration`, so the loser waits out the
+   * winner and then finds the stored segment. Released on a failed transcription so a retry
+   * is not held back (`releaseBucket`).
+   */
+  meetingChunkClaim: { limit: 1, windowSec: 150 },
+  /**
    * `/api/export`: a streamed read of every table the account owns, up to a 300s function.
    * A person takes a copy now and then; a script or a retry loop re-running it is the shape
    * to stop, since each run pages through the whole network.
@@ -383,6 +394,12 @@ export async function consumeBucket(
     throw new RateLimitedError(scope, Math.max(1, policy.windowSec - elapsed));
   }
   return { remaining: Math.max(0, policy.limit - count) };
+}
+
+/** Forget `scope:key` entirely, e.g. a claim whose work failed and must be retried at once. */
+export async function releaseBucket(scope: string, key: string): Promise<void> {
+  const db = await getDb();
+  await db.delete(rateLimitBuckets).where(sql`${rateLimitBuckets.bucket} = ${`${scope}:${key}`}`);
 }
 
 /**

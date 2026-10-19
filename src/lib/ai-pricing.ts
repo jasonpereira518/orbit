@@ -104,7 +104,9 @@ const PRICES: Record<string, PriceEntry> = {
   // separate duration column — so the caller reports the audio length in `inputTokens` (one
   // "token" = one second) and this row prices that unit like any other: $0.0043/min ÷ 60 ≈
   // 72 micros/sec, i.e. $72 per 1,000,000 seconds of audio. `output` stays 0; there is no
-  // second leg to a transcription call.
+  // second leg to a transcription call. NOTE: no caller reports those seconds, and this is
+  // the pre-recorded list rate only. What Deepgram actually costs Orbit — streaming, the
+  // add-ons and the opt-out premium — is priced from `speech_usage` in `speech-cost.ts`.
   [DEEPGRAM_MODEL]: { input: 72, output: 0 },
 };
 
@@ -193,26 +195,6 @@ export function estimateCostMicros(input: {
   return Math.round(usd * (input.batch ? BATCH_MULTIPLIER : 1) * 1_000_000);
 }
 
-/**
- * Hosted web search fees, USD per 1,000 searches, billed on top of tokens. Checked Oct 17 2026
- * (Anthropic's docs; OpenAI and Gemini via published comparisons — re-check on their pages).
- * Free tiers are ignored on purpose: an over-estimate is the safe side of a budget. Gemini 3
- * bills per query ($14), 2.5 per grounded prompt ($35 past 1,500/day) — priced as 3, the
- * default. OpenRouter is absent: its reported cost already includes the plugin fee.
- */
-const WEB_SEARCH_USD_PER_1K: Partial<Record<AiProvider, number>> = {
-  anthropic: 10,
-  openai: 10,
-  gemini: 14,
-};
-
-/** The search fee for one call, in micros. 0 for no searches or an unlisted provider. */
-export function webSearchFeeMicros(provider: string, searches: number | null | undefined): number {
-  const per1k = WEB_SEARCH_USD_PER_1K[provider as AiProvider];
-  if (!per1k || !searches || searches <= 0) return 0;
-  return Math.round(searches * per1k * 1_000);
-}
-
 /** Human-readable dollars for the admin UI. Null in, null out — never a fake $0.00. */
 export function formatCostMicros(micros: number | null | undefined): string | null {
   if (micros == null) return null;
@@ -223,3 +205,18 @@ export function formatCostMicros(micros: number | null | undefined): string | nu
 }
 
 export type { AiProvider };
+
+/**
+ * What one hosted web search costs on top of its tokens, in micros, by provider — charged by
+ * `webSearchJson` through `surchargeMicros` so included AI's credits and pools see it.
+ *
+ *  - anthropic: $10 per 1,000 searches (platform.claude.com/docs/en/about-claude/pricing,
+ *    checked 2026-10-18), counted from `usage.server_tool_use.web_search_requests`.
+ *  - openai: UNCONFIRMED; the hosted `web_search` tool's per-call fee priced at a pessimistic
+ *    $25 per 1,000 calls until checked against openai.com/api/pricing. One per
+ *    `web_search_call` output item.
+ *  - gemini: UNCONFIRMED; Google Search grounding priced at a pessimistic $35 per 1,000
+ *    grounded prompts (ai.google.dev pricing). One per grounded response.
+ *  - openrouter reports its own cost, plugin included, so it needs no entry.
+ */
+export const WEB_SEARCH_FEE_MICROS = { anthropic: 10_000, openai: 25_000, gemini: 35_000 } as const;

@@ -19,7 +19,7 @@ import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
 import { FREE_STARTER_CREDITS, PLAN_CONFIG } from "@/lib/plans/plan-config";
 
 export const metadata: Metadata = {
-  title: "Contact — Orbit",
+  title: "Contact",
   description:
     "Send a message to the person who builds Orbit: bug reports, feature requests, privacy questions, and everything else.",
 };
@@ -246,7 +246,7 @@ export default async function ContactPage() {
                   <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#f2c14e]/25 bg-[#f2c14e]/[0.08]">
                     <Icon className="h-5 w-5 text-landing-accent" />
                   </span>
-                  <span className="text-[11px] uppercase tracking-[0.16em] text-[#6d807c]">
+                  <span className="text-2xs uppercase tracking-[0.16em] text-[#6d807c]">
                     {channel.label}
                   </span>
                 </div>

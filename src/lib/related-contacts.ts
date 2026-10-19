@@ -135,7 +135,80 @@ export function mentionLikePatterns(aliases: string[]): string[] {
   return [...patterns];
 }
 
-/** `from`/`to` for SQL `translate()`: A-Z and U+212A lowered the way JS lowers them. */
+/** One already-lowered text as a `LIKE` body: ASCII kept (escaped), anything else `_`. See `mentionLikePatterns`. */
+export function likeBody(lowered: string): string {
+  let body = "";
+  for (const ch of lowered) {
+    const cp = ch.codePointAt(0)!;
+    if (cp >= 0x80) body += "_";
+    else if (ch === "\\" || ch === "%" || ch === "_") body += `\\${ch}`;
+    else body += ch;
+  }
+  return body;
+}
+
+/**
+ * What a candidate's narrow columns must look like for `bestReason` to give it anything
+ * but a mention, as SUPERSET prefilters for SQL (the same argument as `mentionLikePatterns`:
+ * the SQL side lowers with {@link RELATED_SQL_LOWER}, code-point aligned with JS where JS
+ * is ASCII, and every non-ASCII code point is a `_`). The exact test still runs in JS.
+ *
+ * - `phrase`: `normalizePhrase(x) === key` needs the raw text to hold the key's space-free
+ *   segments in order, so `%seg1%seg2%` matches it. Null when the source cannot match
+ *   (empty company; howMet or school under three characters).
+ * - `interests`: two of the source's interests in the candidate's needs at least one
+ *   element equal to one of them; lowered here, for `interestTextPattern` or `likeBody`.
+ *   Null when the source has fewer than two.
+ * - `corpus`: the source's own corpus, which a candidate's NAME can appear in.
+ *
+ * Returns null when the source's own jsonb is not an array of strings: then scoring is
+ * not shaped the way this reasons about, and the caller reads every contact as before.
+ */
+export function relatedCandidateFilter(source: RelatedContactCandidate): {
+  companyId: string | null;
+  company: string | null;
+  howMet: string | null;
+  school: string | null;
+  interests: string[] | null;
+  corpus: string;
+} | null {
+  const stringArray = (v: unknown) => v == null || (Array.isArray(v) && v.every((t) => typeof t === "string"));
+  if (!stringArray(source.sharedInterests) || !stringArray(source.keyFacts)) return null;
+  const phrase = (value: string | null | undefined, min: number) => {
+    const key = normalizePhrase(value);
+    if (key.length < Math.max(min, 1)) return null;
+    return `%${key.split(" ").filter(Boolean).map(likeBody).join("%")}%`;
+  };
+  const interests = source.sharedInterests ?? [];
+  return {
+    companyId: source.companyId || null,
+    company: phrase(source.company, 1),
+    howMet: phrase(source.howMet, 3),
+    school: phrase(source.school, 3),
+    interests: interests.length >= 2 ? [...new Set(interests.map((t) => t.toLowerCase()))] : null,
+    corpus: contactCorpus(source),
+  };
+}
+
+/**
+ * The characters JS's `\s` (and so `trim()` and `split(/\s+/)`) counts as whitespace, and
+ * as many spaces: SQL `translate()`s a name with these before splitting it, so it splits
+ * exactly where JS would. Spelled out rather than a regex `\s`, whose meaning in Postgres
+ * follows the database locale.
+ */
+export const JS_WHITESPACE = "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
+export const JS_WHITESPACE_AS_SPACES = " ".repeat(JS_WHITESPACE.length);
+
+/**
+ * An interest as a `LIKE` body over a jsonb array's text, or null when it cannot be one.
+ * `jsonb::text` writes a string element verbatim except for `"`, `\` and control
+ * characters, which it escapes; an interest without them appears in the text as is.
+ */
+export function interestTextPattern(lowered: string): string | null {
+  return /["\\\u0000-\u001f]/.test(lowered) ? null : `%${likeBody(lowered)}%`;
+}
+
+/** A-Z and U+212A lowered the way JS lowers them; `relatedSqlLower` (related-contacts-sql.ts) is the SQL form. */
 export const RELATED_SQL_LOWER = {
   from: "ABCDEFGHIJKLMNOPQRSTUVWXYZ\u212A",
   to: "abcdefghijklmnopqrstuvwxyzk",

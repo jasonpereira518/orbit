@@ -81,6 +81,8 @@ async function main() {
   const deps = {
     deliver: async (d: OpsDelivery) => { sent.push(d); },
     heartbeat: async () => { heartbeats += 1; },
+    // Pinned off: the Monday cost line has its own checks at the end.
+    weeklyReportDue: () => false,
   };
 
   console.log("First sweep on a fresh database...");
@@ -127,6 +129,8 @@ async function main() {
   const failing = {
     deliver: async () => { throw new Error("Slack webhook answered 500"); },
     heartbeat: async () => {},
+    // As in `deps`: otherwise on a Monday the weekly report is due too and fails alongside.
+    weeklyReportDue: () => false,
   };
   const down = await runOpsSweep({ trigger: "manual", deps: failing });
   check("a failed delivery marks the sweep partial", down.status === "partial" && down.deliveryFailures === 1, JSON.stringify(down));
@@ -173,6 +177,23 @@ async function main() {
   const snapshot = await loadOpsSnapshot(new Date(), null);
   check("resendRejectedLastHour counts it", snapshot.resendRejectedLastHour >= 1, String(snapshot.resendRejectedLastHour));
   await db.delete(errorEvents).where(eq(errorEvents.id, rejection.id));
+  check("…and the spend facts load beside it", snapshot.spend !== undefined && snapshot.spend.creditCapMicros > 0, JSON.stringify(snapshot.spend));
+
+  console.log("\nThe Monday cost line is sent once per week...");
+  await reset();
+  sent.length = 0;
+  const monday = { ...deps, weeklyReportDue: () => true };
+  const firstWeekly = await runOpsSweep({ trigger: "manual", deps: monday });
+  const weekly = sent.filter((d) => d.condition.id.startsWith("report.weekly:"));
+  check("one weekly report is delivered", weekly.length === 1 && weekly[0].condition.severity === "info", JSON.stringify(sent));
+  check("…naming the spend and the cost per active account", /estimated spend/.test(weekly[0]?.condition.title ?? "") && /per active account/.test(weekly[0]?.condition.title ?? ""));
+  check("…and recorded as opened", firstWeekly.opened.some((id) => id.startsWith("report.weekly:")));
+  const weeklyRow = await db.query.opsAlertState.findFirst({ where: eq(opsAlertState.id, weekly[0]?.condition.id ?? "") });
+  check("…as an inactive row, so it never shows as open or recovers", weeklyRow?.active === false);
+  sent.length = 0;
+  await runOpsSweep({ trigger: "manual", deps: monday });
+  check("the next sweep that week says nothing more about it", !sent.some((d) => d.condition.id.startsWith("report.weekly:")), JSON.stringify(sent));
+  await db.delete(opsAlertState);
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
     process.exit(1);

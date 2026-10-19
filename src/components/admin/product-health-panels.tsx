@@ -72,7 +72,7 @@ export async function AiOperationsPanel() {
       ) : aiOps.adoption.length === 0 ? (
         <EmptyState>No AI operations recorded in the last 30 days.</EmptyState>
       ) : (
-        <AdminTable
+        <AdminTable label="AI operations used"
           minWidth="sm"
           head={
             <>
@@ -125,7 +125,7 @@ export async function ArtifactsPanel() {
       {!artifacts ? (
         <EmptyState>Row counts are unavailable.</EmptyState>
       ) : (
-        <AdminTable
+        <AdminTable label="Durable artifacts"
           minWidth="none"
           head={
             <>
@@ -164,7 +164,7 @@ export async function DataQualityPanel() {
       {!quality ? (
         <EmptyState>Data-quality checks are unavailable.</EmptyState>
       ) : (
-        <AdminTable
+        <AdminTable label="Data quality"
           minWidth="none"
           head={
             <>

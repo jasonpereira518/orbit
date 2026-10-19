@@ -1,0 +1,60 @@
+{
+  "tier": "500",
+  "rows": 20000,
+  "csv_kb": 1965,
+  "network_before": 525,
+  "network_after": 525,
+  "stage": {
+    "jobId": "f382ac79-4921-4e14-9c25-da282de01e7f",
+    "rows": 20000,
+    "parse_ms": 60,
+    "stage_ms": 2199,
+    "statements": 20
+  },
+  "create": {
+    "run_ms": 85488,
+    "first_progress_ms": 85472,
+    "status": "completed",
+    "processed": 20000,
+    "stats": {
+      "skipped": 0,
+      "durationMs": 77932,
+      "failedRows": 0,
+      "runEndedAt": "2026-10-17T07:53:12.079Z",
+      "statements": 823,
+      "blockedByPlan": 0,
+      "remindersCreated": 0,
+      "interactionsLogged": 0
+    },
+    "statements": 823,
+    "chunk_size": 250,
+    "rows_per_s": 234
+  },
+  "stage_again": {
+    "jobId": "65e6e858-1d54-4a9b-9a08-4579472b3fcd",
+    "rows": 20000,
+    "parse_ms": 38,
+    "stage_ms": 1674,
+    "statements": 20
+  },
+  "merge": {
+    "run_ms": 138413,
+    "first_progress_ms": 138404,
+    "status": "completed",
+    "processed": 20000,
+    "stats": {
+      "skipped": 0,
+      "durationMs": 129510,
+      "failedRows": 0,
+      "runEndedAt": "2026-10-17T07:55:30.828Z",
+      "statements": 567,
+      "blockedByPlan": 0,
+      "remindersCreated": 0,
+      "interactionsLogged": 0
+    },
+    "statements": 567,
+    "chunk_size": 250,
+    "rows_per_s": 144
+  },
+  "at": "2026-10-17T07:55:44.775Z"
+}

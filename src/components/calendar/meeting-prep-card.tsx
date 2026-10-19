@@ -106,7 +106,7 @@ export function MeetingPrepCard({ offer }: { offer: PrepOffer }) {
 
 function PrepBrief({ prep, eventId }: { prep: MeetingPrep; eventId: string }) {
   return (
-    <div className="max-h-[50vh] space-y-3 overflow-y-auto border-t border-border/60 pt-2 text-xs">
+    <div className="max-h-[50dvh] space-y-3 overflow-y-auto border-t border-border/60 pt-2 text-xs">
       {prep.lastTime && (prep.lastTime.actionItems.length > 0 || prep.lastTime.decisions.length > 0) && (
         <div className="space-y-0.5">
           <p className="text-muted-foreground">Last time ({prep.lastTime.day})</p>

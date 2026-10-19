@@ -7,6 +7,8 @@ import { RadarHeader } from "@/components/radar/radar-header";
 import { RadarView } from "@/components/radar/radar-view";
 import { fetchRadar } from "@/actions/radar";
 
+export const metadata = { title: "Radar" };
+
 type Params = { focus?: string | string[] };
 
 async function RadarBody({ searchParams }: { searchParams: Promise<Params> }) {

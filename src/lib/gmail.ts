@@ -793,6 +793,27 @@ export async function mapWithConcurrency<T, R>(
   return out;
 }
 
+const MESSAGE_METADATA_QS =
+  "format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Subject" +
+  "&metadataHeaders=Date&metadataHeaders=List-Unsubscribe&metadataHeaders=List-Id&metadataHeaders=Precedence";
+
+function headerSummary(msg: RawGmailMessage, ref: GmailMessageRef) {
+  const internal = Number(msg.internalDate);
+  return {
+    id: ref.id,
+    threadId: msg.threadId || ref.threadId,
+    from: headerValue(msg, "From"),
+    to: headerValue(msg, "To"),
+    cc: headerValue(msg, "Cc"),
+    subject: headerValue(msg, "Subject"),
+    snippet: msg.snippet || "",
+    internalDate: Number.isFinite(internal) ? internal : null,
+    listUnsubscribe: headerValue(msg, "List-Unsubscribe"),
+    listId: headerValue(msg, "List-Id"),
+    precedence: headerValue(msg, "Precedence"),
+  } satisfies GmailHeaderSummary;
+}
+
 export async function fetchGmailHeaders(
   accessToken: string,
   refs: GmailMessageRef[],
@@ -801,7 +822,7 @@ export async function fetchGmailHeaders(
   const results = await mapWithConcurrency(refs, concurrency, async (ref) => {
     try {
       const res = await gmailFetchWithRetry(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${ref.id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Subject&metadataHeaders=Date&metadataHeaders=List-Unsubscribe&metadataHeaders=List-Id&metadataHeaders=Precedence`,
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${ref.id}?${MESSAGE_METADATA_QS}`,
         {
           headers: { Authorization: `Bearer ${accessToken}` },
           timeoutMs: 10_000,
@@ -811,21 +832,7 @@ export async function fetchGmailHeaders(
       // page of expired-token failures as "scanned, nothing recruiter-shaped".
       if (res.status === 401) throw new ReauthRequiredError("Gmail session expired — reconnect");
       if (!res.ok) return null;
-      const msg = (await res.json()) as RawGmailMessage;
-      const internal = Number(msg.internalDate);
-      return {
-        id: ref.id,
-        threadId: msg.threadId || ref.threadId,
-        from: headerValue(msg, "From"),
-        to: headerValue(msg, "To"),
-        cc: headerValue(msg, "Cc"),
-        subject: headerValue(msg, "Subject"),
-        snippet: msg.snippet || "",
-        internalDate: Number.isFinite(internal) ? internal : null,
-        listUnsubscribe: headerValue(msg, "List-Unsubscribe"),
-        listId: headerValue(msg, "List-Id"),
-        precedence: headerValue(msg, "Precedence"),
-      } satisfies GmailHeaderSummary;
+      return headerSummary((await res.json()) as RawGmailMessage, ref);
     } catch (err) {
       if (err instanceof ReauthRequiredError) throw err;
       return null;
@@ -920,6 +927,8 @@ export async function fetchGmailMessageLinks(
           timeoutMs: 15_000,
         }
       );
+      // A 401 is the session, not the message — same reasoning as `fetchGmailHeaders`.
+      if (res.status === 401) throw new ReauthRequiredError("Gmail session expired — reconnect");
       if (!res.ok) return null;
       const msg = (await res.json()) as RawGmailMessage;
       const internal = Number(msg.internalDate);
@@ -938,11 +947,12 @@ export async function fetchGmailMessageLinks(
         authenticationResults: headerValue(msg, "Authentication-Results"),
         links: collectLinks(msg.payload, []).slice(0, 200),
       } satisfies GmailLinkMessage;
-    } catch {
+    } catch (err) {
+      if (err instanceof ReauthRequiredError) throw err;
       return null;
     }
   });
-    return results.filter((r): r is NonNullable<typeof r> => r !== null);
+  return results.filter((r): r is NonNullable<typeof r> => r !== null);
 }
 
 export type GmailMessageContent = GmailHeaderSummary & { body: string };
@@ -961,6 +971,10 @@ export async function fetchGmailMessages(
           timeoutMs: 15_000,
         }
       );
+      // A 401 is the session, not the message. Returning null here let a revoked grant read
+      // as "this sender has no mail", so the recruiter scan rejected every sender and moved
+      // its watermark past them. Thrown, it fails the scan with needs_reconnect instead.
+      if (res.status === 401) throw new ReauthRequiredError("Gmail session expired — reconnect");
       if (!res.ok) return null;
       const msg = (await res.json()) as RawGmailMessage;
       const internal = Number(msg.internalDate);
@@ -979,7 +993,8 @@ export async function fetchGmailMessages(
         // characters and add nothing the classifier needs.
         body: extractBody(msg.payload).slice(0, 4000),
       } satisfies GmailMessageContent;
-    } catch {
+    } catch (err) {
+      if (err instanceof ReauthRequiredError) throw err;
       return null;
     }
   });
@@ -1074,22 +1089,20 @@ function parseBatchParts(body: string, boundary: string): Map<string, unknown> {
   return out;
 }
 
-async function fetchThreadBatch(
+/**
+ * One `batch/gmail/v1` request: a GET per id, answered as parsed JSON keyed by id. Parts that
+ * failed or did not parse are simply absent, so the caller retries them one by one.
+ */
+async function batchGetJson(
   accessToken: string,
-  threadIds: string[]
-): Promise<GmailThreadSummary[]> {
-  const boundary = `orbit_batch_${threadIds.length}_${threadIds[0]}`;
+  ids: string[],
+  pathFor: (id: string) => string
+): Promise<Map<string, unknown>> {
+  const boundary = `orbit_batch_${ids.length}_${ids[0]}`;
   const body =
-    threadIds
+    ids
       .map((id) =>
-        [
-          `--${boundary}`,
-          "Content-Type: application/http",
-          `Content-ID: <${id}>`,
-          "",
-          `GET /gmail/v1/users/me/threads/${id}?${THREAD_METADATA_QS}`,
-          "",
-        ].join("\r\n")
+        [`--${boundary}`, "Content-Type: application/http", `Content-ID: <${id}>`, "", `GET ${pathFor(id)}`, ""].join("\r\n")
       )
       .join("\r\n") + `\r\n--${boundary}--`;
 
@@ -1102,6 +1115,7 @@ async function fetchThreadBatch(
     body,
     timeoutMs: 30_000,
   });
+  if (res.status === 401) throw new ReauthRequiredError("Gmail session expired — reconnect");
   if (!res.ok) {
     throw new Error(`Gmail batch failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
   }
@@ -1112,7 +1126,14 @@ async function fetchThreadBatch(
   const mark = responseBoundary?.[1] || responseBoundary?.[2];
   if (!mark) throw new Error("Gmail batch response had no boundary");
 
-  const parsed = parseBatchParts(await res.text(), mark);
+  return parseBatchParts(await res.text(), mark);
+}
+
+async function fetchThreadBatch(
+  accessToken: string,
+  threadIds: string[]
+): Promise<GmailThreadSummary[]> {
+  const parsed = await batchGetJson(accessToken, threadIds, (id) => `/gmail/v1/users/me/threads/${id}?${THREAD_METADATA_QS}`);
   const threads: GmailThreadSummary[] = [];
   for (const id of threadIds) {
     const raw = parsed.get(id);
@@ -1121,6 +1142,40 @@ async function fetchThreadBatch(
     if (thread) threads.push(thread);
   }
   return threads;
+}
+
+/**
+ * `fetchGmailHeaders`, fifty messages to a request through the batch endpoint.
+ *
+ * A discovery page is up to a hundred messages, and one at a time (eight in flight) that was
+ * a dozen round trips back to back per page. Same quota, same answer, same order; a refused
+ * batch or a missing part falls back to the single GET, so a batch outage only costs speed.
+ */
+export async function fetchGmailHeadersBatched(
+  accessToken: string,
+  refs: GmailMessageRef[],
+  concurrency = 8
+): Promise<GmailHeaderSummary[]> {
+  const found = new Map<string, GmailHeaderSummary>();
+  for (let i = 0; i < refs.length; i += GMAIL_BATCH_SIZE) {
+    const chunk = refs.slice(i, i + GMAIL_BATCH_SIZE);
+    let parsed = new Map<string, unknown>();
+    try {
+      parsed = await batchGetJson(accessToken, chunk.map((r) => r.id), (id) => `/gmail/v1/users/me/messages/${id}?${MESSAGE_METADATA_QS}`);
+    } catch (err) {
+      if (err instanceof ReauthRequiredError) throw err;
+    }
+    const missing: GmailMessageRef[] = [];
+    for (const ref of chunk) {
+      const raw = parsed.get(ref.id);
+      if (raw) found.set(ref.id, headerSummary(raw as RawGmailMessage, ref));
+      else missing.push(ref);
+    }
+    if (missing.length > 0) {
+      for (const h of await fetchGmailHeaders(accessToken, missing, concurrency)) found.set(h.id, h);
+    }
+  }
+  return refs.flatMap((ref) => found.get(ref.id) ?? []);
 }
 
 /** Single-thread fetch. The fallback when a batch is refused, and the retry for a lost part. */
@@ -1136,9 +1191,12 @@ export async function fetchGmailThread(
         timeoutMs: 15_000,
       }
     );
+    // A 401 is the session, not the thread — same reasoning as `fetchGmailHeaders`.
+    if (res.status === 401) throw new ReauthRequiredError("Gmail session expired — reconnect");
     if (!res.ok) return null;
     return parseThread((await res.json()) as RawGmailThread, threadId);
-  } catch {
+  } catch (err) {
+    if (err instanceof ReauthRequiredError) throw err;
     return null;
   }
 }

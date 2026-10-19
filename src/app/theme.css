@@ -39,6 +39,7 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
+  --color-muted-foreground-subtle: var(--muted-foreground-subtle);
   --color-muted: var(--muted);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-secondary: var(--secondary);
@@ -89,6 +90,11 @@
  * TS mirror for motion/react + rAF consumers: src/lib/motion.ts — keep in sync.
  * Plain @theme (not inline) so the vars land on :root for raw CSS keyframes. */
 @theme {
+  /* The two smallest text steps, in rem so they follow the reader's own font-size setting
+   * (the px literals they replace did not). No line-height of their own, like the literals. */
+  --text-3xs: 0.625rem; /* 10px */
+  --text-2xs: 0.6875rem; /* 11px */
+
   --transition-duration-fast: 120ms; /* hover, press, tooltips, exits */
   --transition-duration-base: 180ms; /* overlays, toggles, small enters */
   --transition-duration-slow: 320ms; /* page/section reveals */
@@ -119,9 +125,14 @@
   --secondary-foreground: #1a1c1a;
   --muted: #f0f2ee;
   --muted-foreground: #5f6760;
+  /* One step quieter than muted, for secondary text that used to be `text-muted-foreground/70`
+     or `/80` (3.0-3.8:1). Still 4.6:1 on --muted and 5.2:1 on a card, so it can carry text. */
+  --muted-foreground-subtle: #686f69;
   --accent: #e7f0ee;
   --accent-foreground: #0f3d3e;
-  --destructive: oklch(0.577 0.245 27.325);
+  /* 6.0:1 on a card and 5.1:1 on its own 10% tint (the destructive button and error chips);
+     the shadcn default (0.577 0.245) fell to 4.0:1 there. */
+  --destructive: oklch(0.525 0.2 27.325);
   /* ── Status semantics ──
      `--destructive` above already owns error, so this names only the three it
      does not cover. Not new hues: these are the emerald/amber the app already
@@ -273,6 +284,7 @@
   --secondary-foreground: #e7ecf1;
   --muted: #1c1d20;
   --muted-foreground: #99a2aa; /* 6.0:1 on card, 5.4:1 on popover */
+  --muted-foreground-subtle: #8f98a0; /* 5.3:1 on card, 4.8:1 on popover */
   /* A dim slate-blue: the sky accent's own family, so accent text on it (9.5:1)
      reads as one piece, but dark enough to sit in the graphite without going navy. */
   --accent: #242e36;
@@ -452,6 +464,16 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+  /* The ambient glow, pinned to the viewport. A fixed layer rather than
+   * `background-attachment: fixed`, which iOS ignores (the glow scrolled away) and macOS
+   * Safari repaints on every scroll frame. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
     background-image:
       radial-gradient(
         ellipse 80% 50% at 100% -20%,
@@ -463,13 +485,12 @@
         rgba(196, 163, 90, 0.05),
         transparent
       );
-    background-attachment: fixed;
   }
   /* A faint neutral lift top-right, gold bottom-left, turned up for a dark
    * ground. This is where Orbit's gold lives in dark mode:
    * as ambient light, never as a control colour, so it can't be mistaken for
    * Lifetime or a warning. */
-  .dark body {
+  .dark body::before {
     background-image:
       radial-gradient(
         ellipse 80% 50% at 100% -20%,
@@ -1284,11 +1305,13 @@
  * above it a layer too — 97 layers mid-zoom at 1,000 contacts, against 17 without it.
  */
 
+/* 10px in rem (was 8px) and 0.6 white (was 0.32, about 3:1 on the night sky), so the label
+ * is text you can read rather than texture. */
 .constellation-edge-label {
-  font-size: 8px;
+  font-size: 0.625rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.32);
+  color: rgba(255, 255, 255, 0.6);
   white-space: nowrap;
   pointer-events: none;
   text-shadow: 0 0 8px rgba(0, 0, 0, 0.85);
@@ -3350,4 +3373,92 @@ html[data-celebration-handoff] [data-app-logo] {
   --tier-sheen-from: #eef1f5;
   --tier-sheen-to: #a9b3bf;
   --tier-sheen-ink: #242b34;
+}
+
+/*
+ * Fraunces' true italic for italic text set in the display serif (the pricing and waitlist
+ * headlines, the landing finale). It is a separate, non-preloaded face (see layout.tsx), so
+ * it is named here: italic text inside an element whose font is the display serif, whether
+ * via `font-heading` or `font-[family-name:var(--font-display)]`, and such an element that
+ * is itself italic. Zero specificity, so anything more specific still wins.
+ */
+:where(.font-heading, [class*="var(--font-display)"]) :where(em, i, .italic),
+:where(.font-heading, [class*="var(--font-display)"]):where(.italic) {
+  font-family: var(--font-display-italic), var(--font-display), "Fraunces", ui-serif, Georgia, serif;
+}
+
+/* ── Accessibility baseline ──
+ * Unlayered on purpose: these must win over any utility class, the way the user agent's own
+ * accessibility behaviour would. See A11Y_RESPONSIVE_AUDIT.md for the findings behind each. */
+
+/* Long unbroken strings (a pasted URL, a 120-character surname) wrap instead of pushing the
+ * page sideways. `break-word` rather than `anywhere`: it leaves min-content sizing alone, so
+ * tables and shrink-to-fit boxes lay out exactly as before. A flex child still needs
+ * `min-w-0` to be allowed to shrink. */
+body {
+  overflow-wrap: break-word;
+}
+
+/* Windows High Contrast drops box-shadows, and every focus ring in the app is a box-shadow
+ * `ring-*` over `outline-none`, so forced-colors users had no focus indicator at all. A real
+ * outline survives. Rows keep their inset variant (`.focus-ring-fallback`, above). */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline: 2px solid CanvasText;
+    outline-offset: 2px;
+  }
+}
+
+/* iOS Safari zooms the page into any focused field under 16px. The Input and Textarea
+ * primitives are 16px on phones, but a caller's `text-sm` wins over that, as does every raw
+ * <select>. One rule for every text-entry control on a touch screen, whatever its class. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]),
+  textarea,
+  select {
+    font-size: max(16px, 1em);
+  }
+}
+
+/* A page that fills the route (Reminders, Knowledge: `data-fill-route`) sizes its panes to
+ * the viewport. Under 500px tall (a landscape phone, 200% zoom) the app column scrolls
+ * instead (app-shell.tsx), and a viewport-sized pane had no height left at all. */
+@media (max-height: 500px) {
+  [data-fill-route] {
+    min-height: 30rem;
+  }
+}
+
+/* The admin console scrolls the window under a sticky header: keep focused and
+ * scrolled-to elements clear of it (WCAG 2.4.11). */
+html:has(.admin-console) {
+  scroll-padding-top: 4.5rem;
+}
+
+/* Native date and time fields on iOS: centred text, and an intrinsic minimum width that
+ * overflows a narrow grid cell. */
+input[type="date"],
+input[type="datetime-local"],
+input[type="time"] {
+  min-width: 0;
+}
+input::-webkit-date-and-time-value {
+  text-align: start;
+  min-height: 1lh;
+}
+/* iOS only (`-webkit-touch-callout` exists nowhere else): drop the native control styling,
+ * which centred the value and ignored the field's own height and padding. Tapping still opens
+ * the system picker. Not everywhere, because desktop Chrome loses its calendar icon. */
+@supports (-webkit-touch-callout: none) {
+  input[type="date"],
+  input[type="datetime-local"],
+  input[type="time"] {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+}
+
+/* Safari still draws a disclosure triangle on `<summary class="list-none">`. */
+summary.list-none::-webkit-details-marker {
+  display: none;
 }

@@ -150,7 +150,7 @@ export function AppShell({
   if (isOnboarding) {
     return (
       <MotionConfig reducedMotion="user">
-        <div className="min-h-screen bg-background">
+        <div className="min-h-dvh bg-background">
           <ThemeSync theme={theme} />
           <ConnectivityBanner />
           {children}
@@ -220,13 +220,22 @@ export function AppShell({
               tierTags={tierTags}
             />
           </div>
-          <main
+          {/* The scroll column. Not itself the <main> landmark: it also holds the phone
+              header and the bottom nav, which are not page content. */}
+          <div
             id="app-main-scroll"
             className={cn(
               "relative flex h-full min-h-0 flex-1 flex-col",
+              // A locked page (Chat, the constellation) fits itself to the viewport. Under
+              // 500px tall — a landscape phone, or 200% zoom — that left Chat's thread 0px
+              // tall, so there the column scrolls like any other page.
               isViewportLocked
-                ? "overflow-hidden"
+                ? "overflow-hidden [@media(max-height:500px)]:overflow-y-auto"
                 : "overflow-y-auto overscroll-contain",
+              // Focus and scrollIntoView stop clear of the sticky section headers at the top
+              // and the bottom nav and ask bar floating over the bottom (WCAG 2.4.11). The
+              // bottom value is the content's own reserved padding, below.
+              "scroll-pt-12 scroll-pb-[calc(9.625rem+env(safe-area-inset-bottom))] md:scroll-pb-24",
             )}
           >
             <header
@@ -282,9 +291,12 @@ export function AppShell({
               <NotificationsPanelButton tooltip />
             </div>
 
-            <div
+            <main
+              id="main-content"
+              // The skip link's target and where focus lands after a navigation.
+              tabIndex={-1}
               className={cn(
-                "mx-auto flex w-full max-w-6xl flex-col px-4 py-6 md:px-10 md:py-8",
+                "mx-auto flex w-full max-w-6xl flex-col px-4 py-6 outline-none md:px-10 md:py-8",
                 // Gutter for a page that floats a fixed rail over the right edge — the
                 // contacts A-Z scrubber is the one that does. It is an opaque card, so
                 // whatever it covers is gone, not dimmed. It publishes the variable only
@@ -307,7 +319,7 @@ export function AppShell({
                 // rail's gutter if that is larger.
                 "md:pr-[max(5rem,calc(2.5rem+var(--content-rail-gutter,0px)))]",
                 isViewportLocked
-                  ? "min-h-0 flex-1 overflow-hidden pb-[calc(4.625rem+env(safe-area-inset-bottom))] md:pb-8"
+                  ? "min-h-0 flex-1 overflow-hidden pb-[calc(4.625rem+env(safe-area-inset-bottom))] md:pb-8 [@media(max-height:500px)]:flex-none [@media(max-height:500px)]:overflow-visible"
                   : isSettings
                     ? "flex-1 pb-[calc(4.625rem+env(safe-area-inset-bottom))] md:pb-8"
                     : "flex-1 pb-[calc(9.625rem+env(safe-area-inset-bottom))] md:pb-24",
@@ -315,7 +327,7 @@ export function AppShell({
               )}
             >
               <HiddenSurfacesProvider value={hiddenSet}>{children}</HiddenSurfacesProvider>
-            </div>
+            </main>
 
             {showAskBar && <FloatingAskBar />}
             <MobileNav
@@ -326,7 +338,7 @@ export function AppShell({
               navOrder={navOrder}
               tierTags={tierTags}
             />
-          </main>
+          </div>
         </div>
       </div>
     </MotionConfig>

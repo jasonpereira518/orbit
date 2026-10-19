@@ -7,6 +7,7 @@
  *
  * Client-safe: no DB, no env, no server imports.
  */
+import { MAX_MEETING_MS } from "@/lib/meeting-chunking";
 import { PLAN_CONFIG, PLANS, type Plan } from "@/lib/plans/plan-config";
 
 export type SpeechKind = "meeting" | "shortform";
@@ -16,8 +17,9 @@ const WARN_AT = 0.9;
 
 /**
  * Seconds per month, per meter and plan — read from the single plan table.
- * Meetings: Free none, Pro 5 h, Max and Lifetime 10 h. Voice notes and the chat mic
- * (short-form): Free 1 h, Pro 5 h, Max and Lifetime 10 h.
+ * Meetings: Free none, Pro 8 h, Max and Lifetime 15 h. Voice notes and the chat mic
+ * (short-form): Free 90 min, Pro 8 h, Max and Lifetime 15 h. Raised 1.5x in Oct 2026, funded
+ * by the Deepgram credit (`speech-cost.ts`).
  */
 export const SPEECH_LIMITS: Record<SpeechKind, Record<Plan, number>> = {
   meeting: Object.fromEntries(
@@ -30,6 +32,26 @@ export const SPEECH_LIMITS: Record<SpeechKind, Record<Plan, number>> = {
 
 export function limitFor(kind: SpeechKind, plan: Plan): number {
   return SPEECH_LIMITS[kind][plan];
+}
+
+/**
+ * LENIENT BY DESIGN: a meeting that has started is never cut off by the monthly meter. The cap
+ * decides whether a NEW meeting may start; once one is recording on Deepgram, it runs to its own
+ * length limit (`MAX_MEETING_MS`, three hours) even if the month's hours run out partway. The
+ * overrun lands on the meter like any other seconds, so the next meeting is the one refused.
+ * What bounds the total is the Deepgram credit's ladder (`speech-cost.ts`), not this.
+ *
+ * Returns the seconds a live token should let this meeting stream before the browser stops it.
+ */
+export function meetingSecondsAllowed(input: {
+  remaining: number;
+  inProgress: boolean;
+  /** How far into the meeting we already are. */
+  elapsedMs: number;
+}): number {
+  if (!input.inProgress) return input.remaining;
+  const rest = Math.max(0, Math.floor((MAX_MEETING_MS - input.elapsedMs) / 1000));
+  return Math.max(input.remaining, rest);
 }
 
 /**

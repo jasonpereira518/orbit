@@ -7,8 +7,8 @@
  *
  * The rule is the same one every write path uses: at or above `DUPLICATE_MERGE_CONFIDENCE`
  * (0.85) the app decides, below it a human does. So a shared email, LinkedIn profile or X
- * handle is merged here, as is a shared name + company (0.90) or name + title (0.85). A bare
- * shared full name (0.60) is not — two different people can be called the same thing, and
+ * handle is merged here, as is a shared name + company (0.90) or name + title (0.85), except
+ * name + title across two different LinkedIn profiles. A bare shared full name (0.60) is not — two different people can be called the same thing, and
  * that is the one case worth interrupting someone for.
  *
  * The tiers are expressed in the SQL below rather than by importing the constant: this
@@ -135,6 +135,17 @@ async function confidentPairs(userId: string, limit: number): Promise<Pair[]> {
                 AND lower(btrim(a.company)) = lower(btrim(b.company)))
             OR (btrim(coalesce(a.title, '')) <> ''
                 AND lower(btrim(a.title)) = lower(btrim(b.title)))
+         )
+         -- Two different LinkedIn profiles are two people, unless it looks like one person
+         -- who changed their profile URL: same name at the same company. The rule
+         -- findDuplicateCandidatesIndexed applies (its exact-name case; this arm only ever
+         -- pairs exact names).
+         AND (
+               coalesce(a.linkedin_slug, '') = ''
+            OR coalesce(b.linkedin_slug, '') = ''
+            OR a.linkedin_slug = b.linkedin_slug
+            OR (btrim(coalesce(a.company, '')) <> ''
+                AND lower(btrim(a.company)) = lower(btrim(b.company)))
          )
        WHERE a.user_id = ${userId}
          AND btrim(coalesce(a.full_name, '')) <> ''

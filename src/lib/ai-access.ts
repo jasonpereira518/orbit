@@ -39,7 +39,7 @@ import {
   refusalCopyFor,
 } from "@/lib/ai-access-copy";
 import { JEV_MODEL } from "@/lib/ai-models";
-import { deepgramEnabled } from "@/lib/deepgram";
+import { deepgramOpenFor } from "@/lib/speech-credit";
 import { speechAllowance } from "@/lib/speech-quota";
 import {
   systemOneRequest,
@@ -165,9 +165,10 @@ export function managedAiSwitchedOff(): boolean {
 
 /**
  * The admin console's runtime switch (`site_settings.managed_ai_paused`), cached for 30s per
- * server instance so it costs one read per instance, not per call. Unset reads as PAUSED on
- * production — managed AI must not run before the legal text describing it ships — and as
- * running everywhere else. A read failure keeps the last answer, or pauses if there is none.
+ * server instance so it costs one read per instance, not per call. Unset reads as RUNNING on
+ * every deployment: the legal text describing included AI has shipped (Terms → Included AI,
+ * Privacy → subprocessors), so it is on unless an admin pauses it. A read failure keeps the
+ * last answer, or pauses if there is none.
  *
  * Each provider whose pool (`MANAGED_AI_POOLS`) is spent drops out of the managed set, read
  * in the same cached pass — so the pools cost one aggregate per instance per 30s, not one per
@@ -179,7 +180,7 @@ type PoolState = { paused: boolean; spent: ReadonlySet<AiProvider>; webSearchPau
 let pauseCache: (PoolState & { at: number }) | null = null;
 
 export function managedAiPausedDefault(): boolean {
-  return process.env.VERCEL_ENV === "production";
+  return false;
 }
 
 /** Orbit-paid spend on one provider since its pool's window opened, in micros. */
@@ -849,7 +850,7 @@ export async function getAiAccessStatus(userId: string): Promise<AiAccessStatus>
   const monthlyCredits = PLAN_CONFIG[access.plan].monthlyCredits;
   const [balance, speech, paused] = await Promise.all([
     monthlyCredits && access.eligibility === "plan" ? getCreditBalance(userId, access.plan, access.settings, now) : null,
-    deepgramEnabled() ? speechAllowance(userId, "shortform") : null,
+    deepgramOpenFor(userId, "shortform").then((open) => (open ? speechAllowance(userId, "shortform") : null)),
     access.eligibility === "plan" ? managedAiPaused() : Promise.resolve(false),
   ]);
 

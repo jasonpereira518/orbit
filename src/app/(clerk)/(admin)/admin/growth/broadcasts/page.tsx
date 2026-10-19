@@ -78,7 +78,7 @@ export default async function AdminBroadcastsPage() {
         {sent.length === 0 ? (
           <EmptyState>Nothing composed yet.</EmptyState>
         ) : (
-          <AdminTable
+          <AdminTable label="Drafts and sent"
             head={
               <>
                 <Th>Subject</Th>

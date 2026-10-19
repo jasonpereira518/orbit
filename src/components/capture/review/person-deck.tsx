@@ -261,7 +261,7 @@ export function PersonDeck({
           >
             <div className="flex items-center gap-3 pr-16">
               <div className="min-w-0">
-                <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Up next</p>
+                <p className="text-2xs font-medium uppercase tracking-wider text-muted-foreground">Up next</p>
                 <p className="truncate font-[family-name:var(--font-display)] text-xl text-ink">{next.parsed.name || "Unnamed person"}</p>
               </div>
             </div>
@@ -320,7 +320,7 @@ export function PersonDeck({
           <Check className="size-6" />
         </Button>
       </div>
-      <p className="hidden text-center text-[11px] text-muted-foreground md:block">
+      <p className="hidden text-center text-2xs text-muted-foreground md:block">
         <ArrowLeft className="inline size-3" /> not now · <span className="font-medium">→</span> keep · <span className="font-medium">↓</span> later · drag the name to swipe
       </p>
     </div>

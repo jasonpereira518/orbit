@@ -171,7 +171,7 @@ export function CaptureSourceCard({
                   </span>
                 )}
               </DialogTitle>
-              <div className="relative flex max-h-[75vh] items-center justify-center overflow-hidden rounded-lg bg-muted">
+              <div className="relative flex max-h-[75dvh] items-center justify-center overflow-hidden rounded-lg bg-muted">
                 {/* eslint-disable-next-line @next/next/no-img-element -- auth-gated API route. */}
                 <img
                   key={current.id}
@@ -179,7 +179,7 @@ export function CaptureSourceCard({
                   alt={current.fileName || `Photo ${viewing + 1} from this capture`}
                   width={current.width ?? undefined}
                   height={current.height ?? undefined}
-                  className="max-h-[75vh] w-auto max-w-full object-contain"
+                  className="max-h-[75dvh] w-auto max-w-full object-contain"
                 />
                 {photos.length > 1 && (
                   <>

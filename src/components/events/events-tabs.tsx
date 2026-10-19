@@ -88,7 +88,7 @@ export function EventsTabs({
               <span
                 className={cn(
                   "relative text-xs tabular-nums",
-                  selected ? "text-primary-foreground/80" : "text-muted-foreground/80"
+                  selected ? "text-primary-foreground/80" : "text-muted-foreground-subtle"
                 )}
               >
                 {t.count}

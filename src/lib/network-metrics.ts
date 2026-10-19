@@ -354,11 +354,30 @@ export function selectMetricsSample<T extends { id: string }>(
   scores: Map<string, { closeness: number }>
 ): T[] {
   if (contacts.length <= METRICS_MAX_CONTACTS) return contacts;
-  return [...contacts]
-    .sort(
-      (a, b) => (scores.get(b.id)?.closeness ?? 0) - (scores.get(a.id)?.closeness ?? 0)
-    )
-    .slice(0, METRICS_MAX_CONTACTS);
+  // The first METRICS_MAX_CONTACTS of a stable sort by closeness, descending — without
+  // sorting the whole network: a full sort with two Map lookups per comparison was ~0.3 s
+  // of every dashboard render at 100k contacts. Find the cut-off value, keep everything
+  // above it and enough of the ties at it in their original order, then sort just those.
+  const keys = contacts.map((c) => scores.get(c.id)?.closeness ?? 0);
+  const cutoff = Float64Array.from(keys).sort()[keys.length - METRICS_MAX_CONTACTS];
+  let tiesLeft = METRICS_MAX_CONTACTS - keys.filter((k) => k > cutoff).length;
+  const kept: number[] = [];
+  for (let i = 0; i < contacts.length; i++) {
+    if (keys[i] > cutoff) kept.push(i);
+    else if (keys[i] === cutoff && tiesLeft > 0) {
+      kept.push(i);
+      tiesLeft--;
+    }
+  }
+  return kept.sort((a, b) => keys[b] - keys[a] || a - b).map((i) => contacts[i]);
+}
+
+/** The pairwise part of `computeNetworkMetrics`: O(sample²), and a pure function of the sample. */
+export type PeerLinkSummary = { edgeCount: number; degrees: Map<string, number> };
+
+export function peerLinkSummary(sampled: GraphContactInput[]): PeerLinkSummary {
+  const peerEdges = buildPeerEdges(sampled, { metrics: true });
+  return { edgeCount: peerEdges.length, degrees: peerDegreeMap(peerEdges) };
 }
 
 /**
@@ -382,14 +401,20 @@ export function computeNetworkMetrics(
   sampled: GraphContactInput[],
   // Only `raw` is read — typed that narrowly so the dashboard can pass its slim scores.
   scores: Map<string, Pick<ClosenessBreakdown, "raw">>,
-  totalContacts: number
+  totalContacts: number,
+  /** `peerLinkSummary(sampled)`, when the caller already has it for exactly these rows. */
+  links: PeerLinkSummary = peerLinkSummary(sampled),
+  /**
+   * The tier tally, when the caller counted it elsewhere (the dashboard asks Postgres);
+   * `scores` then only has to cover the sample.
+   */
+  knownTierCounts?: NetworkMetrics["tierCounts"]
 ): NetworkMetrics {
   const sampledIds = new Set(sampled.map((c) => c.id));
-  const peerEdges = buildPeerEdges(sampled, { metrics: true });
-  const degrees = peerDegreeMap(peerEdges);
+  const { edgeCount, degrees } = links;
 
-  const tierCounts = { inner: 0, mid: 0, outer: 0 };
-  for (const breakdown of scores.values()) {
+  const tierCounts = knownTierCounts ?? { inner: 0, mid: 0, outer: 0 };
+  if (!knownTierCounts) for (const breakdown of scores.values()) {
     // Counted by absolute score, not by the contact's displayed (quota-assigned)
     // tier — quotas are fixed shares, so counting those would pin this
     // distribution to the same shape no matter how healthy the network is.
@@ -416,7 +441,7 @@ export function computeNetworkMetrics(
   return {
     tierCounts,
     totalContacts,
-    totalPeerEdges: peerEdges.length,
+    totalPeerEdges: edgeCount,
     avgPeerDegree: Math.round(avgPeerDegree * 10) / 10,
     degreeBuckets,
     metricsSampleSize: sampled.length,

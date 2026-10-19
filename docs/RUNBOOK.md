@@ -264,3 +264,37 @@ runner. The first real drill needs the secrets set.
   reports `config.statementTimeout`. `"0"` means unbounded — the ALTER ROLE never ran, or ran
   on the wrong role.
 - Verify the restore window under Project → Settings.
+- **JIT off for the app role.** With Postgres's default `jit = on`, a large sequential scan
+  compiles before it runs: the contacts search took 1.78 s with JIT and 0.67 s without at
+  100k contacts (`PERFORMANCE_AUDIT.md` §1.3). Check and set:
+  ```sql
+  SHOW jit;                                  -- as the app role
+  ALTER ROLE <app role> SET jit = off;       -- new connections pick it up
+  ```
+  The HTTP driver opens a connection per request, so this applies on the next one.
+
+## Database performance checks (Neon)
+
+Quarterly, or after a release that adds indexes (`SCALE_DDL` in `src/db/index.ts`).
+
+- **Indexes nobody reads.** Every index costs every write to its table. On the production
+  branch, after at least a week of traffic since the last stats reset:
+  ```sql
+  SELECT relname AS table, indexrelname AS index, idx_scan,
+         pg_size_pretty(pg_relation_size(indexrelid)) AS size
+    FROM pg_stat_user_indexes
+   WHERE schemaname = 'public' AND idx_scan = 0
+   ORDER BY pg_relation_size(indexrelid) DESC;
+  ```
+  An unused index is a candidate, not a verdict: check that it is not a unique constraint, a
+  foreign-key lookup a rare delete needs, or a path only a monthly job takes. Drop it in the
+  DDL (with a schema version bump), never by hand.
+- **Slowest statements.** With `pg_stat_statements` enabled on the project:
+  ```sql
+  SELECT calls, round(total_exec_time) AS total_ms, round(mean_exec_time) AS mean_ms,
+         rows, left(query, 120) AS query
+    FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 20;
+  ```
+  Compare against the local profile (`scripts/dev/perf/`, see `docs/performance.md`); a
+  statement here that the seeded profile does not show is a plan that only production data
+  produces.

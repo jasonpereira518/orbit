@@ -1007,6 +1007,24 @@ export const closenessCohorts = pgTable("closeness_cohorts", {
   dirtyAt: timestamp("dirty_at", { withTimezone: true }),
 });
 
+/**
+ * Each contact's constellation-eligibility tallies (`constellationSignalAggregates`), kept by
+ * triggers on `interactions` (`TOUCH_COUNT_DDL` in `src/db/index.ts`). Never written by the
+ * app. A contact with no counted interaction may have no row: read a missing row as zeros.
+ */
+export const contactTouchCounts = pgTable("contact_touch_counts", {
+  contactId: uuid("contact_id")
+    .primaryKey()
+    .references(() => contacts.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull(),
+  noteInteractions: integer("note_interactions").default(0).notNull(),
+  meetingInteractions: integer("meeting_interactions").default(0).notNull(),
+  messageInbound: integer("message_inbound").default(0).notNull(),
+  messageOutbound: integer("message_outbound").default(0).notNull(),
+  messageUndirected: integer("message_undirected").default(0).notNull(),
+  total: integer("total").default(0).notNull(),
+});
+
 export const userGoals = pgTable(
   "user_goals",
   {
@@ -5083,8 +5101,8 @@ export const siteSettings = pgTable("site_settings", {
   /**
    * The admin console's managed-AI switch. True = paused: Pro and Max fall back to "add your
    * own key" and no call runs on Orbit's provider keys. Null = never set, which reads as
-   * PAUSED in production (managed AI must not run before the legal text describing it ships)
-   * and on elsewhere. The `ORBIT_MANAGED_AI=off` env kill switch still wins over this.
+   * running everywhere (`managedAiPausedDefault`). The `ORBIT_MANAGED_AI=off` env kill switch
+   * still wins over this.
    */
   managedAiPaused: boolean("managed_ai_paused"),
   /**

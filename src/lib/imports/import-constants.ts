@@ -45,6 +45,15 @@ export const MAX_CONTACTS_FILE_BYTES = 50 * 1024 * 1024;
  * shrink in the browser (photos stripped); every other kind is sent as it is, so it has to
  * fit one request. A ZIP member is measured after unzipping.
  */
+/**
+ * LinkedIn connections are parsed in the browser and sent in chunks
+ * (`linkedin-connections-client.ts`), so a request's limit is not theirs. This only stops a
+ * file nobody's export could be from being read into memory.
+ */
+export const MAX_CONNECTIONS_FILE_BYTES = 50 * 1024 * 1024;
+
 export function maxImportBytesFor(target: ImportTarget): number {
-  return target === "contacts_file" ? MAX_CONTACTS_FILE_BYTES : IMPORT_TEXT_MAX_BYTES;
+  if (target === "contacts_file") return MAX_CONTACTS_FILE_BYTES;
+  if (target === "linkedin_connections") return MAX_CONNECTIONS_FILE_BYTES;
+  return IMPORT_TEXT_MAX_BYTES;
 }

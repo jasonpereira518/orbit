@@ -1,7 +1,7 @@
 import { after } from "next/server";
 import { getDb } from "@/db";
 import { usageEvents } from "@/db/schema";
-import { estimateCostMicros, webSearchFeeMicros } from "@/lib/ai-pricing";
+import { estimateCostMicros } from "@/lib/ai-pricing";
 import { classifyAiError } from "@/lib/errors";
 import { settleManagedUsage } from "@/lib/credits/ledger";
 import type { AiProvider } from "@/lib/ai-providers";
@@ -43,9 +43,13 @@ export type TokenCounts = {
    */
   reportedCostMicros?: number | null;
   /**
-   * Hosted web searches the call ran (`webSearchJson`). Stored, and priced into the estimate
-   * by `webSearchFeeMicros` — a search fee was most of the AI bill when this landed.
+   * Per-call fees the provider bills ON TOP of tokens — today, hosted web searches
+   * (`WEB_SEARCH_FEE_MICROS`). Added to the cost whichever figure it starts from, because
+   * neither Orbit's token estimate nor a token-only provider figure contains it. Without it,
+   * a search on Orbit's key spent credit and pool money that neither ever saw.
    */
+  surchargeMicros?: number | null;
+  /** Hosted web searches the call ran (`webSearchJson`), stored for the per-feature breakdown. */
   webSearches?: number | null;
 };
 
@@ -92,15 +96,18 @@ export type UsageRecord = UsageMeta &
  */
 export function usageRow(rec: UsageRecord) {
   const reported = rec.reportedCostMicros ?? null;
-  const tokenEstimate = estimateCostMicros({
-    model: rec.model,
-    inputTokens: rec.inputTokens,
-    outputTokens: rec.outputTokens,
-    cachedInputTokens: rec.cachedInputTokens,
-    cacheWriteTokens: rec.cacheWriteTokens,
-    audioInputTokens: rec.audioInputTokens,
-    batch: rec.batch,
-  });
+  const base =
+    reported ??
+    estimateCostMicros({
+      model: rec.model,
+      inputTokens: rec.inputTokens,
+      outputTokens: rec.outputTokens,
+      cachedInputTokens: rec.cachedInputTokens,
+      cacheWriteTokens: rec.cacheWriteTokens,
+      audioInputTokens: rec.audioInputTokens,
+      batch: rec.batch,
+    });
+  const surcharge = Math.max(0, Math.round(rec.surchargeMicros ?? 0));
   return {
     userId: rec.userId,
     operation: rec.operation,
@@ -111,9 +118,7 @@ export function usageRow(rec: UsageRecord) {
     inputTokens: rec.inputTokens ?? null,
     outputTokens: rec.outputTokens ?? null,
     cachedInputTokens: rec.cachedInputTokens ?? null,
-    // An unpriced model stays null even with searches: a fee alone would read as the whole cost.
-    estimatedCostMicros:
-      reported ?? (tokenEstimate === null ? null : tokenEstimate + webSearchFeeMicros(rec.provider, rec.webSearches)),
+    estimatedCostMicros: surcharge > 0 ? (base ?? 0) + surcharge : base,
     costSource: (reported === null ? "estimated" : "reported") as "estimated" | "reported",
     webSearches: rec.webSearches ?? null,
     success: rec.success ? 1 : 0,

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { buttonVariants } from "@/components/ui/button";
 import { onReconnect, useConnectivity } from "@/lib/connectivity-store";
 import { isNetworkError } from "@/lib/errors";
@@ -33,6 +33,13 @@ export function ErrorFallback({
   // not reported as a fault (a train tunnel is not a Sentry event), and retried by itself
   // the moment the connection is back.
   const offline = status !== "online" || isNetworkError(error);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  // The page under the pointer just vanished: put keyboard and screen-reader focus on the
+  // explanation rather than leaving it on <body> (or on a control that no longer exists).
+  useEffect(() => {
+    headingRef.current?.focus({ preventScroll: true });
+  }, [error]);
 
   useEffect(() => {
     console.error(error);
@@ -48,11 +55,18 @@ export function ErrorFallback({
   }, [offline, retry]);
 
   return (
-    <div className="mx-auto flex min-h-[50vh] max-w-lg flex-col items-center justify-center gap-4 px-6 py-16 text-center">
+    <div
+      role="alert"
+      className="mx-auto flex min-h-[50dvh] max-w-lg flex-col items-center justify-center gap-4 px-6 py-16 text-center"
+    >
       <p className="text-sm font-medium text-ink">
         {offline ? "No connection" : "Something went wrong"}
       </p>
-      <h1 className="font-[family-name:var(--font-display)] text-3xl tracking-tight text-ink">
+      <h1
+        ref={headingRef}
+        tabIndex={-1}
+        className="font-[family-name:var(--font-display)] text-3xl tracking-tight text-ink outline-none"
+      >
         {offline
           ? status === "unreachable"
             ? "Can’t reach Orbit"

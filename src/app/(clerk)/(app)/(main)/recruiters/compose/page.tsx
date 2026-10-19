@@ -16,6 +16,8 @@ import { LockedFeature } from "@/components/locked-feature";
 import { ComposeWorkspace } from "@/components/recruiters/compose-workspace";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
+export const metadata = { title: "Compose · Recruiters" };
+
 export default async function RecruiterComposePage() {
   const gate = await pageVisibilityGate("page.recruiters");
   if (gate) return gate;

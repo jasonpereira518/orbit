@@ -140,7 +140,7 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
     annualPriceCents: 0,
     contactLimit: FREE_CONTACT_LIMIT,
     monthlyCredits: 50,
-    speech: { meetingSeconds: 0, shortformSeconds: 1 * HOUR },
+    speech: { meetingSeconds: 0, shortformSeconds: 1.5 * HOUR },
     hostedEnrichmentsPerMonth: 0,
     googleMicrosoftConnections: 1,
     mcpRateTier: "mcpFree",
@@ -164,7 +164,7 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
     annualPriceCents: 8999,
     contactLimit: null,
     monthlyCredits: 300,
-    speech: { meetingSeconds: 5 * HOUR, shortformSeconds: 5 * HOUR },
+    speech: { meetingSeconds: 8 * HOUR, shortformSeconds: 8 * HOUR },
     hostedEnrichmentsPerMonth: 0,
     googleMicrosoftConnections: null,
     mcpRateTier: "mcp",
@@ -177,7 +177,7 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
     annualPriceCents: 19999,
     contactLimit: null,
     monthlyCredits: 650,
-    speech: { meetingSeconds: 10 * HOUR, shortformSeconds: 10 * HOUR },
+    speech: { meetingSeconds: 15 * HOUR, shortformSeconds: 15 * HOUR },
     hostedEnrichmentsPerMonth: 0,
     googleMicrosoftConnections: null,
     mcpRateTier: "mcp",
@@ -191,7 +191,7 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
     annualPriceCents: null,
     contactLimit: null,
     monthlyCredits: 150,
-    speech: { meetingSeconds: 10 * HOUR, shortformSeconds: 10 * HOUR },
+    speech: { meetingSeconds: 15 * HOUR, shortformSeconds: 15 * HOUR },
     hostedEnrichmentsPerMonth: 0,
     googleMicrosoftConnections: null,
     mcpRateTier: "mcp",
@@ -243,6 +243,16 @@ export function unlockPlanFor(feature: FeatureKey | "contacts"): "free" | Purcha
 /** The refusal for a Free account's second Google or Microsoft account. */
 export const EXTRA_CONNECTION_DENIAL =
   "The Free Plan includes one Google or Microsoft account. Connecting both is available on Orbit Pro and Orbit Max.";
+
+/**
+ * A speech allowance as a person reads it: whole hours as hours ("8 hours", "1 hour"),
+ * anything else in minutes ("90 minutes") rather than "1.5 hours".
+ */
+export function formatSpeechAllowance(seconds: number): string {
+  if (seconds % HOUR === 0) return `${seconds / HOUR} hour${seconds === HOUR ? "" : "s"}`;
+  const minutes = Math.round(seconds / 60);
+  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+}
 
 /** Display money: 899 → "$8.99". */
 export function formatPlanPrice(cents: number): string {

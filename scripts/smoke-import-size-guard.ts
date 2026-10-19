@@ -13,6 +13,7 @@ import {
 } from "../src/lib/capture-limits";
 import { IMPORT_COPY } from "../src/lib/imports/import-copy";
 import { readFileSync } from "node:fs";
+import { maxImportBytesFor } from "../src/lib/imports/import-constants";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -66,6 +67,38 @@ check(
   `${CRON_STALL_THRESHOLD_MS}ms vs ${maxDuration}s`,
 );
 check("the stall threshold is six minutes", CRON_STALL_THRESHOLD_MS === 6 * 60 * 1000);
+
+// LinkedIn connections are checked and uploaded in batches, so no import path may hold them
+// to the one-request limit: a 40k+ export must get through the card, the drop hub and the
+// runner alike.
+check(
+  "a connections file may be far bigger than one request",
+  maxImportBytesFor("linkedin_connections") > 10 * IMPORT_TEXT_MAX_BYTES,
+);
+check(
+  "the drop hub does not hold connections to one request",
+  /d\.target !== "linkedin_connections" && !fitsInOneRequest\(text\)/.test(
+    readFileSync("src/lib/imports/use-import-queue.ts", "utf8"),
+  ),
+);
+const runnerSource = readFileSync("src/lib/import-job-runner.ts", "utf8");
+check(
+  "the runner uploads connections in batches",
+  /case "connections":[\s\S]{0,300}?stageAndStartConnections\(job\.csvText/.test(runnerSource),
+);
+// The runner is in every signed-in page's first load (the import watcher); the uploader
+// brings the CSV parser, so it is loaded only when a connections import starts.
+check(
+  "the runner loads the connections uploader on demand, not up front",
+  !/^import[^;]*linkedin-connections-client/m.test(runnerSource) &&
+    /import\("@\/lib\/imports\/linkedin-connections-client"\)/.test(runnerSource),
+);
+check(
+  "the card reads a connections file without the one-request check",
+  /member === "connections" \? text : ensureFits\(text\)/.test(
+    readFileSync("src/components/imports/import-utils.tsx", "utf8"),
+  ),
+);
 
 if (failures) {
   console.error(`\n${failures} check(s) failed`);
