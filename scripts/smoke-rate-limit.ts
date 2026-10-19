@@ -246,9 +246,9 @@ async function newLimits() {
   check("the chat-mic mint spends `dictationToken`", /consumeBucket\("dictationToken"/.test(src("src/app/api/speech/token/route.ts")));
   check("new chats are capped", /consumeDailyCap\("chatThreadDaily", userId\)/.test(src("src/actions/chat.ts")));
   check("reminders are capped", (src("src/lib/reminder-writes.ts").match(/consumeDailyCap\("reminderDaily", userId\)/g) ?? []).length === 2);
-  const importSites = ["src/actions/imports.ts", "src/actions/gmail.ts", "src/actions/outlook.ts", "src/lib/chat-import-preview.ts", "src/lib/drive-import-processor.ts", "src/lib/linkedin-export-store.ts"]
+  const importSites = ["src/actions/imports.ts", "src/actions/gmail.ts", "src/actions/outlook.ts", "src/lib/chat-import-preview.ts", "src/lib/drive-import-processor.ts", "src/lib/linkedin-export-store.ts", "src/actions/linkedin-connections.ts"]
     .map((p) => (src(p).match(/consumeDailyCap\("importDaily", userId\)/g) ?? []).length);
-  check("imports are capped at every start (6 + 1 + 1 + 1 + 1 + 1)", importSites.join(",") === "6,1,1,1,1,1", importSites);
+  check("imports are capped at every start (6 + 1 + 1 + 1 + 1 + 1 + 1)", importSites.join(",") === "6,1,1,1,1,1,1", importSites);
   check("API keys are capped", /apiKeyCapRefusal\(userId\)/.test(src("src/actions/api-keys.ts")));
   check(".env.example documents the switch", /ORBIT_NEW_LIMITS/.test(src(".env.example")));
 }

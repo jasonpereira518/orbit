@@ -36,6 +36,7 @@
  *    several scheduler passes; the start time is carried in the cursor (`readStartedAt`) so
  *    the watermark reflects when the read began, not when its last page landed.
  */
+import { assertGraphUrl, graphFetchWithRetry } from "@/lib/graph-fetch";
 import type { PersonRecord } from "@/lib/ingest/people";
 
 const CONTACTS_API = "https://graph.microsoft.com/v1.0/me/contacts";
@@ -136,16 +137,19 @@ export async function fetchContactsPage(
   opts: FetchMicrosoftContactsPageOptions
 ): Promise<MicrosoftContactsFetchResult> {
   const { accessToken, cursor } = opts;
-  const doFetch = opts.fetchImpl ?? fetch;
 
   // Mid-run: the `@odata.nextLink` is a complete URL that already carries the filter it started
-  // with, so it is followed as-is rather than rebuilt.
+  // with, so it is followed as-is rather than rebuilt — but only if it is Graph's own, since
+  // it goes out with the bearer token.
+  if (cursor?.pageToken) assertGraphUrl(cursor.pageToken, "Bad Microsoft Contacts cursor");
   const url = cursor?.pageToken || firstPageUrl(cursor);
 
-  const res = await doFetch(url, {
+  // Through graph-fetch so a 429/503/504 is waited out rather than counted as a failed sync.
+  const res = await graphFetchWithRetry(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
     // A page of contacts, well inside the scheduler's 60-second per-connection budget.
-    signal: AbortSignal.timeout(20_000),
+    timeoutMs: 20_000,
+    fetchImpl: opts.fetchImpl,
   });
 
   if (res.status === 400 && cursor?.syncToken) throw new ContactsFilterRejectedError();

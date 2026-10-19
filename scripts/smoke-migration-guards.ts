@@ -75,10 +75,14 @@ function targetChecks() {
   check("without PRODUCTION_DB_HOST it allows but reports itself unarmed",
     unarmed.allowed === true && unarmed.unarmed === true && unarmed.reason.includes("PRODUCTION_DB_HOST"));
 
+  // Since the audit (M-06) a preview without PRODUCTION_DB_HOST is an error in check-env,
+  // not a warning: the build stops before it can migrate whatever DATABASE_URL names. The
+  // migration guard above still only reports itself unarmed, so a local or odd caller is
+  // never refused by it alone.
   check(
-    "check-env warns about the unarmed guard in preview",
+    "check-env refuses a preview with the guard unarmed",
     validateEnv({ DATABASE_URL: urlFor(BRANCH), NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_x", CLERK_SECRET_KEY: "sk_test_x", ENCRYPTION_SECRET: "x".repeat(40) }, { vercelEnv: "preview" })
-      .warnings.some((w) => w.includes("PRODUCTION_DB_HOST"))
+      .errors.some((e) => e.includes("PRODUCTION_DB_HOST"))
   );
 }
 

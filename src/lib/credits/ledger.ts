@@ -55,12 +55,6 @@ function monthWindow(now: Date): CreditPeriod {
   };
 }
 
-function minusOneMonth(d: Date): Date {
-  return new Date(
-    Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds())
-  );
-}
-
 /** `d` moved by `months` calendar months, clamped to the target month's last day (as Stripe does). */
 function addMonthsClamped(d: Date, months: number): Date {
   const y = d.getUTCFullYear();
@@ -105,11 +99,17 @@ export function creditPeriodFor(
   if (!row?.compedPlan && row?.subscriptionPeriodEnd && row.subscriptionPeriodEnd > now) {
     const end = row.subscriptionPeriodEnd;
     const known = row.subscriptionPeriodStart && row.subscriptionPeriodStart <= now ? row.subscriptionPeriodStart : null;
-    // A long period, or an unknown start with more than a month still to run: an annual plan.
-    if (known ? end.getTime() - known.getTime() > MONTHLY_PERIOD_MAX_MS : end.getTime() - now.getTime() > MONTHLY_PERIOD_MAX_MS) {
-      return monthSliceOf(end, now);
+    if (known) {
+      // A long period is an annual plan, cut into months.
+      return end.getTime() - known.getTime() > MONTHLY_PERIOD_MAX_MS ? monthSliceOf(end, now) : { start: known, end };
     }
-    return { start: known ?? minusOneMonth(end), end };
+    // No start on file: assume a monthly period, starting where Stripe would have started it
+    // — one calendar month back, CLAMPED (a Mar 31 end began Feb 28; unclamped "Feb 31" rolls
+    // to Mar 3, a start after now). When that start is still after now, or more than a month
+    // is left to run, it is an annual plan: the anniversary slice always contains now.
+    const start = addMonthsClamped(end, -1);
+    if (start <= now && end.getTime() - now.getTime() <= MONTHLY_PERIOD_MAX_MS) return { start, end };
+    return monthSliceOf(end, now);
   }
   return monthWindow(now);
 }

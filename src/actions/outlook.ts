@@ -1,5 +1,6 @@
 "use server";
 
+import { startJobInOwnInvocation } from "@/lib/import-stall";
 import { consumeDailyCap } from "@/lib/rate-limit";
 import { recordAccountAudit } from "@/lib/account-audit";
 import { canConnect, refusedConnectUrl } from "@/lib/connection-limits";
@@ -357,7 +358,7 @@ export const startOutlookRecruiterScan = defineAction(
         })
         .returning();
 
-      after(() => runOutlookRecruiterScanJob(row.id).catch(() => {}));
+      after(() => startJobInOwnInvocation(row.id, runOutlookRecruiterScanJob).catch(() => {}));
       revalidatePath("/recruiters");
       return { importId: row.id };
     });

@@ -49,6 +49,42 @@ export const getFullGraphData = defineAction(
   }
 );
 
+/** What the inspect panel shows for one star beyond the chart payload (see `loadGraphData`). */
+export type GraphContactDetail = {
+  howMet: string | null;
+  metContext: string | null;
+  dateMet: Date | null;
+  sharedInterests: string[] | null;
+  email: string | null;
+  phone: string | null;
+  linkedinUrl: string | null;
+  website: string | null;
+};
+
+/** One contact's detail for the inspect panel, or null when it is not the caller's. */
+export const getGraphContactDetail = defineAction(
+  // Anything is accepted and checked below: a malformed id answers null, as it always has.
+  { auth: { surface: "page.graph" }, schema: z.tuple([z.unknown()]) },
+  async (userId, contactId: unknown): Promise<GraphContactDetail | null> => {
+    if (typeof contactId !== "string" || !UUID_RE.test(contactId)) return null;
+    const db = await getDb();
+    const row = await db.query.contacts.findFirst({
+      where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+      columns: {
+        howMet: true,
+        metContext: true,
+        dateMet: true,
+        sharedInterests: true,
+        email: true,
+        phone: true,
+        linkedinUrl: true,
+        website: true,
+      },
+    });
+    return row ?? null;
+  }
+);
+
 /** Wall-clock budget for one constellation refresh tick. */
 const CONSTELLATION_REFRESH_BUDGET_MS = 20_000;
 

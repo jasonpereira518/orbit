@@ -4,7 +4,7 @@ import { outlookConnections } from "@/db/schema";
 import { encrypt } from "@/lib/crypto";
 import { decryptAndRewrapStrict } from "@/lib/crypto-rewrap";
 import { ReauthRequiredError, isRefreshRejection } from "@/lib/errors";
-import { graphFetchWithRetry } from "@/lib/graph-fetch";
+import { assertGraphUrl, graphFetchWithRetry } from "@/lib/graph-fetch";
 import {
   hasCalendarScope as msHasCalendarScope,
   hasContactsScope as msHasContactsScope,
@@ -531,6 +531,8 @@ export async function fetchOutlookContacts(
     }
 
     url = data["@odata.nextLink"] || null;
+    // Followed with the bearer token, so only ever Graph's own link.
+    if (url) assertGraphUrl(url, "Bad Outlook contacts page link");
   }
 
   return people.filter((p) => p.fullName.trim());
@@ -607,6 +609,9 @@ export async function listOutlookMessagePage(
   accessToken: string,
   opts: { query: string; skipToken?: string | null; top?: number }
 ): Promise<{ messages: OutlookMessageRef[]; nextLink: string | null }> {
+  // The stored link is replayed with the bearer token (it lives in the scan job's stats
+  // between invocations), so it must be Graph's own.
+  if (opts.skipToken) assertGraphUrl(opts.skipToken, "Bad Outlook page link");
   const url =
     opts.skipToken ||
     `${GRAPH_MESSAGES}?$search=${encodeURIComponent(opts.query)}&$top=${opts.top ?? 200}&$select=id`;

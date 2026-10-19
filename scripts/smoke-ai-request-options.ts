@@ -122,10 +122,16 @@ check(
   "an answer that happens to be complete at the limit is kept",
   normalizeJsonResponse('{"a":1}', { truncated: true, operation: "capture.parse" as never }) === '{"a":1}'
 );
-check(
-  "transcription still repairs a cut-off page",
-  normalizeJsonResponse('{"text":"Met Ada at', { truncated: true, operation: "capture.transcribe.page" }) === '{"text":"Met Ada at"}'
-);
+{
+  // A cut-off page is not passed off as a whole one either (main's assertNotCutOff policy).
+  let pageThrew: unknown = null;
+  try {
+    normalizeJsonResponse('{"text":"Met Ada at', { truncated: true, operation: "capture.transcribe.page" });
+  } catch (e) {
+    pageThrew = e;
+  }
+  check("a cut-off transcription page fails like any other call", pageThrew instanceof TruncatedOutputError, String(pageThrew));
+}
 check("an untruncated answer still goes through the lenient parser", normalizeJsonResponse('noise {"a":1} trailing') === '{"a":1}');
 
 if (failures > 0) {

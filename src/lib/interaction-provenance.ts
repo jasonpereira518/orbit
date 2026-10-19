@@ -10,7 +10,9 @@
 import { isNull, ne, or, type SQL } from "drizzle-orm";
 import { interactions } from "@/db/schema";
 
-export const AI_DERIVED_SOURCE = "ai_derived";
+import { AI_DERIVED_SOURCE } from "@/lib/touch-kinds";
+
+export { AI_DERIVED_SOURCE };
 
 /** WHERE fragment: the row is a real touch (anything but an AI-derived event). */
 export function countsAsTouch(): SQL {

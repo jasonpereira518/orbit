@@ -8,5 +8,12 @@ import Papa from "papaparse";
  * Every CSV Orbit generates goes through here.
  */
 export function toSpreadsheetCsv(rows: readonly object[]): string {
-  return Papa.unparse(rows as object[], { escapeFormulae: true });
+  return Papa.unparse(rows as object[], { escapeFormulae: CSV_FORMULA_START });
 }
+
+/**
+ * Only the first character is tested. Papa's own default (`/^[=+\-@\t\r].*$/`) misses a
+ * multi-line cell: `.` stops at the newline and `$` needs the end of the string. Numbers are
+ * not strings, so a negative count is left alone.
+ */
+const CSV_FORMULA_START = /^[=+\-@\t\r]/;

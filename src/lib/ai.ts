@@ -445,8 +445,13 @@ function findJsonEnd(text: string, start: number) {
 }
 
 /**
- * Close dangling strings / braces when a model truncates mid-JSON
- * (common with short max-output limits).
+ * Close dangling braces when a model truncates mid-JSON (common with short max-output
+ * limits).
+ *
+ * Never a dangling STRING: closing one turns a cut-off value into a complete-looking one — a
+ * person named "Gra", a summary that stops mid-word — and schema validation cannot tell. An
+ * answer cut inside a string fails to parse instead, and callers report `AI_INCOMPLETE_MESSAGE`.
+ * What is still repaired is an answer cut between values, where every value present is whole.
  */
 function repairTruncatedJson(text: string): string | null {
   const start = text.search(/[\[{]/);
@@ -482,8 +487,7 @@ function repairTruncatedJson(text: string): string | null {
     }
   }
 
-  if (escaped) slice = slice.slice(0, -1);
-  if (inString) slice += '"';
+  if (inString) return null;
   while (stack.length > 0) slice += stack.pop();
 
   try {
@@ -492,6 +496,22 @@ function repairTruncatedJson(text: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * The provider's own "I ran out of output tokens" stop: OpenAI-shaped `finish_reason:
+ * "length"`, Anthropic `stop_reason: "max_tokens"`, Gemini `finishReason: "MAX_TOKENS"`.
+ *
+ * Checked BEFORE parsing. A truncated answer can still parse — cut between two list items it
+ * is valid JSON missing the rest — and the repair above would close it either way, so the
+ * text alone cannot say whether it is complete. The provider can, so its word decides: the
+ * call fails as `AI_INCOMPLETE_MESSAGE` ("got cut off — try again") rather than handing the
+ * caller a partial capture as if it were the whole one (see `transcribeNotePage`).
+ */
+const OUTPUT_LIMIT_STOPS = new Set(["length", "max_tokens", "MAX_TOKENS"]);
+
+function assertNotCutOff(stop: string | null | undefined): void {
+  if (stop && OUTPUT_LIMIT_STOPS.has(stop)) throw new Error(AI_INCOMPLETE_MESSAGE);
 }
 
 export function parseAiJson<T = unknown>(raw: string): T {
@@ -531,12 +551,6 @@ export class TruncatedOutputError extends Error {
   }
 }
 
-/**
- * Operations whose truncated output is still worth keeping. Transcription keeps the patched
- * text on purpose: a page that is mostly read beats no page (see `transcribeNotePage`).
- */
-const TRUNCATION_REPAIR_OPERATIONS: ReadonlySet<AiOperationId> = new Set<AiOperationId>(["capture.transcribe.page"]);
-
 /** Whether a provider response says it stopped at the output-token ceiling. */
 export function stoppedAtTokenLimit(response: unknown): boolean {
   const r = response as {
@@ -559,7 +573,9 @@ export function stoppedAtTokenLimit(response: unknown): boolean {
  * complete JSON is accepted; anything that would need repair throws `TruncatedOutputError`.
  */
 export function normalizeJsonResponse(raw: string, opts: { truncated?: boolean; operation?: AiOperationId } = {}) {
-  if (opts.truncated && !(opts.operation && TRUNCATION_REPAIR_OPERATIONS.has(opts.operation))) {
+  // No exception for transcription: a cut-off page fails like every other call (see
+  // `assertNotCutOff`, which covers the completion paths; this covers web research).
+  if (opts.truncated) {
     const text = extractJsonText(raw);
     try {
       return JSON.stringify(JSON.parse(text));
@@ -653,6 +669,7 @@ export async function completeJson(
             },
           });
           report(tokensFromGemini(response));
+          assertNotCutOff(response.candidates?.[0]?.finishReason);
           const content = response.text;
           if (!content) throw new Error("Empty AI response");
           return normalizeJsonResponse(content, { truncated: stoppedAtTokenLimit(response), operation });
@@ -671,6 +688,7 @@ export async function completeJson(
             ...(input.sharedPrefix ? { prompt_cache_key: input.sharedPrefix.cacheKey } : {}),
           }), { signal: callSignal() });
           report({ ...tokensFromOpenAi(response), reportedCostMicros: reportedCostMicros(response as OpenAiUsageWithCost) });
+          assertNotCutOff(response.choices[0]?.finish_reason);
           const content = response.choices[0]?.message?.content;
           if (!content) throw new Error("Empty AI response");
           return normalizeJsonResponse(content, { truncated: stoppedAtTokenLimit(response), operation });
@@ -698,6 +716,7 @@ export async function completeJson(
           ],
         }, { signal: callSignal() });
         report(tokensFromAnthropic(response));
+        assertNotCutOff(response.stop_reason);
         const block = response.content.find((b) => b.type === "text");
         if (!block || block.type !== "text" || !block.text) {
           throw new Error("Empty AI response");
@@ -705,7 +724,10 @@ export async function completeJson(
         return normalizeJsonResponse(block.text, { truncated: stoppedAtTokenLimit(response), operation });
       } catch (err) {
         if (err instanceof TruncatedOutputError) throw err;
-        if (err instanceof Error && err.message === "Empty AI response")
+        if (
+          err instanceof Error &&
+          (err.message === "Empty AI response" || err.message === AI_INCOMPLETE_MESSAGE)
+        )
           throw err;
         if (
           err instanceof Error &&
@@ -802,6 +824,7 @@ async function completeMultimodalJsonInner(
         },
       });
       report(tokensFromGemini(response));
+      assertNotCutOff(response.candidates?.[0]?.finishReason);
       const content = response.text;
       if (!content) throw new Error("Empty AI response");
       return normalizeJsonResponse(content, { truncated: stoppedAtTokenLimit(response), operation: input.operation });
@@ -841,6 +864,7 @@ async function completeMultimodalJsonInner(
         ],
       }), { signal: aiSignal() });
       report({ ...tokensFromOpenAi(response), reportedCostMicros: reportedCostMicros(response as OpenAiUsageWithCost) });
+      assertNotCutOff(response.choices[0]?.finish_reason);
       const out = response.choices[0]?.message?.content;
       if (!out) throw new Error("Empty AI response");
       return normalizeJsonResponse(out, { truncated: stoppedAtTokenLimit(response), operation: input.operation });
@@ -894,6 +918,7 @@ async function completeMultimodalJsonInner(
       messages: [{ role: "user", content }],
     }, { signal: aiSignal() });
     report(tokensFromAnthropic(response));
+    assertNotCutOff(response.stop_reason);
     const block = response.content.find((b) => b.type === "text");
     if (!block || block.type !== "text" || !block.text) {
       throw new Error("Empty AI response");
@@ -901,7 +926,11 @@ async function completeMultimodalJsonInner(
     return normalizeJsonResponse(block.text, { truncated: stoppedAtTokenLimit(response), operation: input.operation });
   } catch (err) {
     if (err instanceof TruncatedOutputError) throw err;
-    if (err instanceof Error && err.message === "Empty AI response") throw err;
+    if (
+      err instanceof Error &&
+      (err.message === "Empty AI response" || err.message === AI_INCOMPLETE_MESSAGE)
+    )
+      throw err;
     if (
       err instanceof Error &&
       err.message.startsWith("Failed to parse AI JSON")
