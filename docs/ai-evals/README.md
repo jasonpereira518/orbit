@@ -272,3 +272,17 @@ lookup", and `meanLookups`/`meanRounds` count the loop's own lookups and rounds.
 The loop becomes the default only when, against the Phase 0 after-run: every gated metric holds;
 `meanLookups` ≤ 3.5; p50 latency is within +3 s; cost per case is within +60%. Run
 `--network large` too. Until then the flag stays off and the one-pass answer is what ships.
+
+## Changes chat makes itself (`EVAL_CHAT_AUTO_APPLY`, Phase 3)
+
+Chat cases 34–39 are change requests: on the loop path each must propose the right change
+(`proposalAccuracy`) and a plain question must propose none. With `EVAL_CHAT_AUTO_APPLY=1` as
+well, the eval account has "Let chat make small changes for you" switched on, and
+`autoApplyAccuracy` scores every card: an auto-tier change must come back applied, a
+confirm-tier one must stay a card. Each applied change is undone right after it is scored, so
+later cases see the fixture as seeded.
+
+```bash
+CHAT_LOOP_V2=1 EVAL_CHAT_AUTO_APPLY=1 npx tsx scripts/eval-ai.ts --keys-from .env.local \
+  --provider gemini --task chat --runs 3 --out runs/auto-apply/chat.json
+```

@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
+import { integrationHref } from "@/components/settings/sections";
 
 type LegacyKind = Exclude<StoredProposedAction["args"]["kind"], "tool">;
 
@@ -211,7 +212,7 @@ export function ProposedActionsCard({
           {action.status === "done" && (
             <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <Check className="size-3.5 text-primary" aria-hidden />
-              Done
+              {action.autoApplied ? "Done for you" : "Done"}
               {resultHref && (
                 <>
                   {" · "}
@@ -268,6 +269,7 @@ export function ProposedActionsList({
 }) {
   const [running, setRunning] = useState<{ done: number; of: number } | null>(null);
   const waiting = actions.filter((a) => a.status === "proposed" && !a.destructive);
+  const anyAutoApplied = actions.some((a) => a.autoApplied);
 
   async function confirmAll() {
     if (running || waiting.length < 2) return;
@@ -286,6 +288,14 @@ export function ProposedActionsList({
 
   return (
     <div className="flex flex-col gap-2">
+      {anyAutoApplied && (
+        <p className="text-xs text-muted-foreground">
+          Chat made the small changes below itself, as you allowed — each has Undo.{" "}
+          <Link href={integrationHref("ai")} className="text-primary underline underline-offset-2">
+            Change this
+          </Link>
+        </p>
+      )}
       {waiting.length >= 2 && (
         <div className="flex items-center gap-2">
           <Button type="button" size="sm" variant="secondary" onClick={confirmAll} disabled={Boolean(running)}>
