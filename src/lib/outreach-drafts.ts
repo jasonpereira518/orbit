@@ -1,4 +1,5 @@
 import { completeJson } from "@/lib/ai";
+import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { fenceUntrusted } from "@/lib/ai-security";
 import { senderProfileBlock } from "@/lib/sender-profile";
 import { loadSenderBio } from "@/lib/sender-profile-server";
@@ -71,7 +72,20 @@ function scrubPlaceholders(text: string) {
     .trim();
 }
 
+/**
+ * One outreach draft: one model call, one unit of the `draft` bucket (audit M-07). A
+ * campaign's bulk generation goes through `generateOutreachDraftsBatch` instead, which is
+ * charged per ten drafts.
+ */
 export async function generateOutreachDraft(
+  userId: string,
+  input: DraftInput
+): Promise<GeneratedDraft> {
+  await consumeBucket("draft", userId, RATE_LIMITS.draft);
+  return draftOutreachMessage(userId, input);
+}
+
+async function draftOutreachMessage(
   userId: string,
   input: DraftInput
 ): Promise<GeneratedDraft> {
@@ -152,11 +166,19 @@ ${input.templateSeed ? `Template seed:\n${input.templateSeed}` : ""}`,
   };
 }
 
+/** How many drafts of a bulk run count as one unit of the `draft` bucket. */
+const DRAFTS_PER_UNIT = 10;
+
 export async function generateOutreachDraftsBatch(
   userId: string,
   inputs: DraftInput[],
   concurrency = 5
 ): Promise<GeneratedDraft[]> {
+  // One click drafts the whole selection, so it is charged as a click per ten drafts rather
+  // than per draft: a 50-prospect campaign is 5 units of `draft`, not a refusal (M-07).
+  if (inputs.length) {
+    await consumeBucket("draft", userId, RATE_LIMITS.draft, Math.ceil(inputs.length / DRAFTS_PER_UNIT));
+  }
   const results: GeneratedDraft[] = new Array(inputs.length);
   let index = 0;
 
@@ -169,7 +191,7 @@ export async function generateOutreachDraftsBatch(
           inputs[current].variationHint ||
           `Variant ${current + 1} of ${inputs.length}`,
       };
-      results[current] = await generateOutreachDraft(userId, input);
+      results[current] = await draftOutreachMessage(userId, input);
     }
   }
 

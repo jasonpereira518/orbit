@@ -8,6 +8,7 @@
  * cites nothing is dropped. Without one, the same facts become points by rule — still useful,
  * never invented.
  */
+import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contactBriefs, relationshipDigests } from "@/db/schema";
@@ -221,6 +222,8 @@ export async function generateTalkingPoints(
   const fallback: TalkingPointsResult = { points: heuristicTalkingPoints(facts), source: "facts" };
   if (!facts.length || !(await (deps.canUseAi ?? userCanUseAi)(userId))) return fallback;
   try {
+    // The `prep` bucket (audit M-07). Past it the rule-based points below are the answer.
+    await consumeBucket("prep", userId, RATE_LIMITS.prep);
     const raw = await (deps.complete ?? cachedCompleteJson)(
       userId,
       {

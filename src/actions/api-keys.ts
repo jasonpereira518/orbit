@@ -24,6 +24,7 @@ import { apiKeys } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { isPaywallError, requireEntitlement } from "@/lib/entitlements";
 import { generateApiKey, type ApiKeyKind, type ApiKeyScope } from "@/lib/api/keys";
+import { apiKeyCapRefusal } from "@/lib/api/key-cap";
 import { getAppBaseUrl } from "@/lib/app-url";
 
 export type ApiKeySummary = {
@@ -73,7 +74,7 @@ export async function listApiKeys(): Promise<ApiKeySummary[]> {
  * lost: `requireEntitlement` writes the `gate_events` row before it throws, and this catches
  * it afterwards.
  */
-export type ApiKeyRefusal = { ok: false; reason: "payment_required"; message: string };
+export type ApiKeyRefusal = { ok: false; reason: "payment_required" | "limit_reached"; message: string };
 
 export type CreatedApiKey = {
   ok: true;
@@ -101,6 +102,8 @@ export async function createApiKey(
     }
     throw err;
   }
+  const atCap = await apiKeyCapRefusal(userId);
+  if (atCap) return { ok: false, reason: "limit_reached", message: atCap };
 
   const trimmed = name.trim().slice(0, 80) || "Untitled key";
   // Always include read: a write-only key is not a distinction anything here honours, and

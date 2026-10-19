@@ -292,7 +292,9 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
       // rebuilds the search text and brief itself when it lands).
       await kickWorkHistoryResearch(userId, linkedInContactIds);
       for (const contactId of out.contactIds) {
-        await generateAndStoreContactBrief(userId, contactId).catch(reportAndContinue(followOn("brief"), null));
+        // `meter: false`: the capture itself was the metered click (`capture`), and a roster scan
+        // can name more people than the `brief` bucket's window holds.
+        await generateAndStoreContactBrief(userId, contactId, { meter: false }).catch(reportAndContinue(followOn("brief"), null));
       }
     }
   } catch (err) {

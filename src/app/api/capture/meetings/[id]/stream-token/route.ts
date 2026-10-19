@@ -1,13 +1,13 @@
+import { authErrorResponse, rateLimitGuard, routeError } from "@/lib/api/route-error";
+import { sameOriginGuard } from "@/lib/api/same-origin";
 import { NextResponse } from "next/server";
 import { requireMeetingsUser } from "@/lib/plan-guards";
-import { isPaywallError } from "@/lib/entitlements";
-import { friendlyError } from "@/lib/errors";
 import { deepgramEnabled, mintStreamToken } from "@/lib/deepgram";
 import { keytermsFor } from "@/lib/deepgram-params";
 import { loadNetworkVocabulary } from "@/lib/transcription-vocabulary";
 import { ACCEPTS_CHUNKS, getMeetingSession } from "@/lib/meeting-sessions";
 import { speechAllowance } from "@/lib/speech-quota";
-import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { reportedFailure } from "@/lib/report-error";
 
 export const dynamic = "force-dynamic";
@@ -42,30 +42,15 @@ export async function POST(request: Request, ctx: Params) {
   try {
     userId = await requireMeetingsUser();
   } catch (err) {
-    const status = isPaywallError(err) ? 403 : 401;
-    return NextResponse.json({ error: friendlyError(err, "Sign in to record a meeting") }, { status });
+    return authErrorResponse(err, "Sign in to record a meeting");
   }
 
-  const origin = request.headers.get("origin");
-  if (origin && URL.parse(origin)?.host !== new URL(request.url).host) {
-    return NextResponse.json({ error: "Cross-origin request refused" }, { status: 403 });
-  }
+  const refused = sameOriginGuard(request, { message: "Cross-origin request refused" });
+  if (refused) return refused;
 
-  try {
-    await consumeBucket("speechToken", userId, RATE_LIMITS.speechToken);
-  } catch (err) {
-    if (isRateLimitedError(err)) {
-      // Matches every other rate-limited route (see meetings/[id]/chunks): the error's own
-      // message already carries the bucket's label and the wait, and friendlyError would
-      // just discard both in favor of a generic fallback since RateLimitedError isn't one
-      // of its recognized "own words".
-      return NextResponse.json(
-        { error: err.message },
-        { status: 429, headers: { "Retry-After": String(err.retryAfterSec) } },
-      );
-    }
-    throw err;
-  }
+  // The error's own message carries the bucket's label and the wait; `rateLimitGuard` keeps it.
+  const limited = await rateLimitGuard(() => consumeBucket("speechToken", userId, RATE_LIMITS.speechToken));
+  if (limited) return limited;
 
   const { id } = await ctx.params;
   const session = await getMeetingSession(userId, id);
@@ -127,11 +112,12 @@ export async function POST(request: Request, ctx: Params) {
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (err) {
-    const failure = reportedFailure(err, "Couldn’t start meeting transcription", {
+    return routeError(err, {
+      fallback: "Couldn’t start meeting transcription",
       where: "route.meeting-stream-token",
       userId,
       extra: { sessionId: id },
+      faultStatus: 502,
     });
-    return NextResponse.json({ error: failure.error, ref: failure.ref }, { status: 502 });
   }
 }

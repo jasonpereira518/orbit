@@ -715,6 +715,26 @@ async function realGate() {
     threw = true;
   }
   check("a Gemini grant does not open an OpenAI client", threw);
+
+  // Audit L-15: a web search Anthropic pauses is resumed on the SAME grant, each resume a
+  // billed round. The grant's hold covered only the first; each resume now holds its own.
+  console.log("\nA multi-round call reserves credits per round (L-15)");
+  await db.delete(creditHolds).where(eq(creditHolds.userId, U.proNone));
+  const access = await resolveAiAccess(U.proNone);
+  const metered = await access.completion("research.person");
+  const heldNow = async () => (await db.select().from(creditHolds).where(eq(creditHolds.userId, U.proNone))).length;
+  check("the grant holds its first round", (await heldNow()) === 1, await heldNow());
+  const step = await access.holdStep(metered);
+  check("a resume on a managed grant places its own hold", typeof step === "string" && (await heldNow()) === 2, { step, held: await heldNow() });
+  await access.releaseStepHold(metered, step!);
+  check("…released by id, leaving the grant's own for its settle", (await heldNow()) === 1, await heldNow());
+  await db.delete(creditHolds).where(eq(creditHolds.userId, U.proNone));
+  const ownGrant = await (await resolveAiAccess(U.proOwn)).completion("research.person");
+  check("a call on the account's own key holds nothing per round", (await (await resolveAiAccess(U.proOwn)).holdStep(ownGrant)) === null);
+  const aiSource = readFileSync("src/lib/ai.ts", "utf8");
+  const loop = aiSource.slice(aiSource.indexOf("const stepHolds"), aiSource.indexOf("const stepHolds") + 3_000);
+  check("webSearchJson's resume loop holds per round and releases in finally",
+    /access\.holdStep\(grant\)/.test(loop) && /finally \{\s*for \(const id of stepHolds\) await access\.releaseStepHold\(grant, id\)/.test(loop));
 }
 
 async function transitions() {

@@ -22,6 +22,7 @@ import {
   getCreditBalance,
   packsUsable,
   placeHold,
+  releaseHold,
   type CreditBalance,
 } from "@/lib/credits/ledger";
 import { creditsToMicros } from "@/lib/credits/grants";
@@ -672,7 +673,26 @@ export class AiAccess {
     return mint(provider, model, source, key, operation);
   }
 
-  private async holdCredits(operation: string): Promise<void> {
+  /**
+   * One more credit hold for a call that bills several rounds on ONE grant — a web search
+   * that Anthropic pauses and Orbit resumes (audit L-15). The grant's own hold covered the
+   * first round only; each resume reserves its own, so a balance that cannot cover the next
+   * round stops the call there instead of overspending. Null when the grant is not metered
+   * (the person's own key, or a dev server); throws the same refusal as a first hold.
+   * Release each id with `releaseStepHold` once the call is done: the usage settle releases
+   * only the grant's own hold.
+   */
+  async holdStep(grant: AiGrant): Promise<string | null> {
+    if (grant.keyOwner !== "orbit" || this.eligibility !== "plan") return null;
+    return this.holdCredits(grant.operation);
+  }
+
+  /** Release a hold `holdStep` placed, by id, without touching any concurrent call's. */
+  async releaseStepHold(grant: AiGrant, holdId: string): Promise<void> {
+    await releaseHold(this.userId, grant.operation, holdId);
+  }
+
+  private async holdCredits(operation: string): Promise<string> {
     await ensureAllowance(this.userId, this.plan, creditPeriodFor(this.settings));
     const tier = (AI_OPERATIONS as Record<string, { tier?: string }>)[operation]?.tier;
     const monthly = PLAN_CONFIG[this.plan].monthlyCredits ?? 0;
@@ -686,7 +706,7 @@ export class AiAccess {
       // Free's one-time starter credits are for things the person asks for, never background work.
       reserveStarter: background && this.plan === "free",
     });
-    if (hold) return;
+    if (hold) return hold;
     // Below the background floor with credits left is not "you've used your credits".
     if (background) {
       const balance = await getCreditBalance(this.userId, this.plan, this.settings, undefined, { ensure: false });

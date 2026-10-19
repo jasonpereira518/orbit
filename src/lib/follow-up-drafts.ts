@@ -1,3 +1,4 @@
+import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
@@ -176,7 +177,17 @@ async function draftFromContext(input: {
   operation?: AiOperationId;
   access?: AiAccess;
   signal?: AbortSignal;
+  /**
+   * Which bucket a click-driven draft spends (audit M-07): `draft` by default, `compose` for
+   * the compose window. Background drafting (an `operation` such as Radar's overnight run)
+   * is bounded by its own run and is not metered here.
+   */
+  meter?: "draft" | "compose";
 }): Promise<FollowUpDraft> {
+  if (!input.operation) {
+    const scope = input.meter ?? "draft";
+    await consumeBucket(scope, input.userId, RATE_LIMITS[scope]);
+  }
   const contactName = input.contact.preferredName || input.contact.fullName;
   const profileBlock = buildProfileBlock(input.contact);
   const transcript = buildConversationTranscript(input.recent);
@@ -348,6 +359,8 @@ export async function generateContactFollowUpDraft(
     operation?: AiOperationId;
     access?: AiAccess;
     signal?: AbortSignal;
+    /** See `draftFromContext`: `compose` for the compose window's "Draft with AI". */
+    meter?: "draft" | "compose";
   }
 ): Promise<FollowUpDraft> {
   const { contact, recent } = await loadContactContext(userId, contactId);
@@ -364,6 +377,7 @@ export async function generateContactFollowUpDraft(
     operation: options?.operation,
     access: options?.access,
     signal: options?.signal,
+    meter: options?.meter,
   });
 }
 

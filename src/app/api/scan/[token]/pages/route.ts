@@ -2,7 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { captureImageFiles, normalizeCaptureInput, type CaptureMediaFile } from "@/lib/capture-ingest";
 import { discardCapturePhotos, storeCapturePhotos } from "@/lib/capture-photos";
 import { CAPTURE_MAX_UPLOAD_BYTES, formatUploadSize } from "@/lib/capture-limits";
-import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
+import { rateLimitGuard } from "@/lib/api/route-error";
 import { MAX_SCAN_PAGES, estimateDecodedBytes } from "@/lib/scan-image";
 import {
   findScanHandoff,
@@ -97,19 +98,12 @@ export async function POST(
     );
   }
 
-  try {
-    // Keyed on the owner, not the token: the budget being protected is the account's AI
-    // spend, and a leaked token must not get a fresh allowance by being re-minted.
-    await consumeBucket("captureHandoff", handoff.userId, RATE_LIMITS.captureHandoff);
-  } catch (err) {
-    if (isRateLimitedError(err)) {
-      return NextResponse.json(
-        { error: err.message },
-        { status: 429, headers: { "Retry-After": String(err.retryAfterSec) } }
-      );
-    }
-    throw err;
-  }
+  // Keyed on the owner, not the token: the budget being protected is the account's AI
+  // spend, and a leaked token must not get a fresh allowance by being re-minted.
+  const limited = await rateLimitGuard(() =>
+    consumeBucket("captureHandoff", handoff.userId, RATE_LIMITS.captureHandoff)
+  );
+  if (limited) return limited;
 
   await markHandoffUploading(handoff.id);
 

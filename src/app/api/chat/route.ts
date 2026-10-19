@@ -1,3 +1,5 @@
+import { authErrorResponse, rateLimitGuard } from "@/lib/api/route-error";
+import { sameOriginGuard } from "@/lib/api/same-origin";
 import { NextResponse } from "next/server";
 import { chatMessages, type ChatRecommendation } from "@/db/schema";
 import { discardCountAfter, NotLastTurnError, resolveVersionTarget, truncateAfter } from "@/lib/chat-versions";
@@ -26,11 +28,11 @@ import { citedIds, stripUnresolvedMarkers, type EvidenceSource } from "@/lib/cha
 import { validateProposedActions } from "@/lib/chat-proposed-actions";
 import { friendlyError } from "@/lib/errors";
 import { traced } from "@/lib/perf-trace";
-import { isPaywallError } from "@/lib/entitlements";
-import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { reportedFailure, reportError } from "@/lib/report-error";
 import { createStreamRedactor } from "@/lib/ai-security";
+import { scrubModelText } from "@/lib/sentry-scrub";
 import { requireVisibleSurface } from "@/lib/surface-visibility";
 
 export const dynamic = "force-dynamic";
@@ -63,21 +65,16 @@ export async function POST(request: Request) {
     ({ userId, settings } = await requireAuthenticatedUser());
     await requireVisibleSurface(userId, "page.chat");
   } catch (err) {
-    const status = isPaywallError(err) ? 403 : 401;
-    return NextResponse.json({ error: friendlyError(err, "Sign in to chat") }, { status });
+    return authErrorResponse(err, "Sign in to chat");
   }
 
-  try {
-    await consumeBucket("chat", userId, RATE_LIMITS.chat);
-  } catch (err) {
-    if (isRateLimitedError(err)) {
-      return NextResponse.json(
-        { error: err.message },
-        { status: 429, headers: { "Retry-After": String(err.retryAfterSec) } }
-      );
-    }
-    throw err;
-  }
+  // Cookie-authenticated and reads JSON: refuse a cross-site caller before spending a bucket
+  // unit on it (audit L-01 — this was the one cookie route without the check).
+  const refused = sameOriginGuard(request, { json: true });
+  if (refused) return refused;
+
+  const limited = await rateLimitGuard(() => consumeBucket("chat", userId, RATE_LIMITS.chat));
+  if (limited) return limited;
 
   const body = (await request.json().catch(() => null)) as
     | {
@@ -352,7 +349,7 @@ export async function POST(request: Request) {
         // A JSON tail that did not parse used to mean zero cards and zero actions with no trace
         // anywhere. The answer still stands; this only makes the loss visible.
         if (result.parseError) {
-          reportError(new Error(`chat answer JSON did not parse: ${result.parseError}`), {
+          reportError(new Error(scrubModelText(`chat answer JSON did not parse: ${result.parseError}`)), {
             where: "chat.stream.recommendations",
             userId,
             level: "warning",

@@ -1,19 +1,18 @@
+import { authErrorResponse } from "@/lib/api/route-error";
+import { sameOriginGuard } from "@/lib/api/same-origin";
 import { NextResponse } from "next/server";
 import { requireUserForSurface } from "@/lib/plan-guards";
-import { isPaywallError } from "@/lib/entitlements";
-import { friendlyError } from "@/lib/errors";
-import { recordSpeechSeconds } from "@/lib/speech-quota";
-import { MAX_SESSION_MS } from "@/lib/dictation";
+import { DICTATION_SESSION_SECONDS, settleDictationGrants } from "@/lib/speech-quota";
 
 export const dynamic = "force-dynamic";
 
 /** The hard ceiling one beacon can report — one dictation session, never more. */
-const MAX_REPORTABLE_SECONDS = MAX_SESSION_MS / 1000;
+const MAX_REPORTABLE_SECONDS = DICTATION_SESSION_SECONDS;
 
 /**
  * Where the chat mic reports the Deepgram seconds it actually streamed, once a session ends.
  *
- *   POST /api/speech/usage  {seconds: number}
+ *   POST /api/speech/usage  {seconds: number, grants?: string[]}
  *
  * Sent by `navigator.sendBeacon` from `use-dictation.ts`'s `stop-recognition` and
  * `abort-recognition` effects, measured from the live socket's `openedAt`. A beacon fired
@@ -22,26 +21,31 @@ const MAX_REPORTABLE_SECONDS = MAX_SESSION_MS / 1000;
  *
  * Clamped to `MAX_SESSION_MS` seconds so a tampered client cannot claim more than one
  * session's worth no matter what number it sends.
+ *
+ * Since audit M-18 the seconds were already charged when each token was minted (a full
+ * session per token, `chargeDictationGrant`); `grants` names those tokens and this LOWERS
+ * them to what the session streamed (`settleDictationGrants`). It can never raise them, and
+ * each grant settles once.
  */
 export async function POST(request: Request) {
   let userId: string;
   try {
     userId = await requireUserForSurface("page.chat");
   } catch (err) {
-    const status = isPaywallError(err) ? 403 : 401;
-    return NextResponse.json({ error: friendlyError(err, "Sign in to dictate") }, { status });
+    return authErrorResponse(err, "Sign in to dictate");
   }
 
-  const origin = request.headers.get("origin");
-  if (origin && URL.parse(origin)?.host !== new URL(request.url).host) {
-    return NextResponse.json({ error: "Cross-origin request refused" }, { status: 403 });
-  }
+  const refused = sameOriginGuard(request, { message: "Cross-origin request refused", json: true });
+  if (refused) return refused;
 
-  const body = (await request.json().catch(() => null)) as { seconds?: unknown } | null;
+  const body = (await request.json().catch(() => null)) as { seconds?: unknown; grants?: unknown } | null;
   const raw = typeof body?.seconds === "number" && Number.isFinite(body.seconds) ? body.seconds : 0;
   const seconds = Math.max(0, Math.min(MAX_REPORTABLE_SECONDS, raw));
+  const grants = Array.isArray(body?.grants)
+    ? body.grants.filter((g): g is string => typeof g === "string")
+    : [];
 
-  await recordSpeechSeconds({ userId, kind: "shortform", seconds, source: "stream" });
+  await settleDictationGrants(userId, grants, seconds);
 
   return new NextResponse(null, { status: 204 });
 }

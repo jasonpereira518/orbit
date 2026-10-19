@@ -4219,11 +4219,16 @@ export const cronRuns = pgTable(
  * In Postgres rather than memory because a serverless instance's memory is neither shared
  * nor durable. Bounded by scopes × users; rows are tiny and reused every window.
  */
-export const rateLimitBuckets = pgTable("rate_limit_buckets", {
-  bucket: text("bucket").primaryKey(),
-  windowStartedAt: timestamp("window_started_at", { withTimezone: true }).defaultNow().notNull(),
-  count: integer("count").default(0).notNull(),
-});
+export const rateLimitBuckets = pgTable(
+  "rate_limit_buckets",
+  {
+    bucket: text("bucket").primaryKey(),
+    windowStartedAt: timestamp("window_started_at", { withTimezone: true }).defaultNow().notNull(),
+    count: integer("count").default(0).notNull(),
+  },
+  // v176: `pruneRateLimitBuckets` deletes by age; a range scan, not a sequential one.
+  (t) => [index("rate_limit_buckets_window_started_idx").on(t.windowStartedAt)]
+);
 
 /**
  * One row per known ops condition (`src/lib/ops-alerts.ts`), keyed by condition id.
