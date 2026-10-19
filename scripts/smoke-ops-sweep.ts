@@ -126,7 +126,10 @@ async function main() {
 
   console.log("\nSlack is down: the condition is persisted anyway, and retried...");
   await reset();
+  // Spread from `deps` so the weekly report stays pinned off: built bare, this run took the
+  // real Monday check and counted the cost line as a second failed delivery every Monday.
   const failing = {
+    ...deps,
     deliver: async () => { throw new Error("Slack webhook answered 500"); },
     heartbeat: async () => {},
   };
