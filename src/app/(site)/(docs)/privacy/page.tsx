@@ -534,9 +534,11 @@ export default function PrivacyPage() {
               connected-account records, events, goals, chat history, recruiter records, API keys
               (never the secret itself) and webhooks, usage and diagnostics, feedback, outreach,
               tags, preferences, and the AI suggestions and search index derived from them — plus
-              your billing history. Passwords, keys and tokens are left out. A few records are not
-              in it yet, among them your credit ledger and AI-suggested opportunities; ask through
-              the <Link href="/contact">contact page</Link> for a copy of anything you miss.
+              your billing and credit history, your waitlist entry and the updates it was sent, and
+              a list of the actions the operator took on your account and of the account events
+              Clerk sent. Passwords, keys and tokens are left out. The file ends with
+              <code>&quot;complete&quot;: true</code>; if it does not, the download was cut short —
+              try again, or ask through the <Link href="/contact">contact page</Link>.
             </li>
             <li>
               <strong>Delete data</strong>, choosing by category. Your account, plan and API keys

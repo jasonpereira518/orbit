@@ -1,6 +1,6 @@
 import { sql, type SQL } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { billingEvents } from "@/db/schema";
+import { billingEvents, creditAccounts, creditGrants, creditHolds, planMeterUsage } from "@/db/schema";
 import { DATA_CATEGORY_META, type DataCategory } from "@/lib/data-categories";
 import { exportSourcesFor, ownRowsSource, type ExportSource } from "@/lib/user-data";
 
@@ -14,13 +14,55 @@ const PAGE = 500;
 const REDACTED_SUFFIX = /(_encrypted|token|secret|_hash)$/i;
 // `ics_url` is a calendar's secret address: read access to it, so a credential like the rest.
 const EXCLUDED = new Set(["embedding", "embedding_vector", "blob_url", "inline_data", "ics_url"]);
-const ACCOUNT_SOURCES: ExportSource[] = [ownRowsSource(billingEvents)];
+/** A page of a query keyed on the account's mirrored email (the waitlist predates the account). */
+const byEmail = (name: string, query: (email: SQL, limit: number, offset: number) => SQL): ExportSource => ({
+  name,
+  page: (userId, limit, offset) =>
+    query(sql`(SELECT lower(email) FROM user_settings WHERE user_id = ${userId})`, limit, offset),
+});
+
+/**
+ * The account itself: billing, the credit ledger, and records about this account that live
+ * outside its own tables — the waitlist entry and broadcasts it received (by email), what the
+ * operator did to the account, and the account events Clerk sent. Operator ids, free-text
+ * reasons and raw webhook payloads stay out: those are the operator's records, and what they
+ * hold about the account is the action and when (⚖️ PRIVACY_PLAN.md §6 on audit entries).
+ */
+const ACCOUNT_SOURCES: ExportSource[] = [
+  ownRowsSource(billingEvents),
+  ownRowsSource(creditAccounts, "user_id"),
+  ownRowsSource(creditGrants),
+  ownRowsSource(creditHolds),
+  ownRowsSource(planMeterUsage),
+  byEmail("interest_list_signups", (email, limit, offset) => sql`
+    SELECT id, email, first_name, last_name, referrer, utm_source, utm_medium, utm_campaign, landing_path,
+           welcome_planet, referral_slug, signup_event_label, unsubscribed_at, created_at
+      FROM interest_list_signups WHERE lower(email) = ${email} ORDER BY id LIMIT ${limit} OFFSET ${offset}`),
+  byEmail("broadcasts_received", (email, limit, offset) => sql`
+    SELECT r.id, b.subject, r.sent_at, r.created_at
+      FROM broadcast_recipients r LEFT JOIN broadcasts b ON b.id = r.broadcast_id
+     WHERE lower(r.email) = ${email} ORDER BY r.id LIMIT ${limit} OFFSET ${offset}`),
+  {
+    name: "operator_actions_on_account",
+    page: (userId, limit, offset) => sql`
+      SELECT id, action, resource_type, created_at FROM admin_audit_log
+       WHERE target_user_id = ${userId} ORDER BY id LIMIT ${limit} OFFSET ${offset}`,
+  },
+  {
+    name: "account_events",
+    page: (userId, limit, offset) => sql`
+      SELECT id, source, event_type, outcome, created_at FROM webhook_deliveries
+       WHERE target_user_id = ${userId} ORDER BY id LIMIT ${limit} OFFSET ${offset}`,
+  },
+];
 
 export type UserExport = {
   format: string;
   exportedAt: string;
   categories: Record<DataCategory, Record<string, Record<string, unknown>[]>>;
   account: Record<string, Record<string, unknown>[]>;
+  /** Present (true) only when the whole file was written. */
+  complete: true;
 };
 
 function isRedactedColumn(key: string): boolean {
@@ -119,7 +161,9 @@ async function* groupChunks(userId: string, sources: readonly ExportSource[], ov
 }
 
 export async function* userExportChunks(userId: string, now = new Date()): AsyncGenerator<string> {
-  yield `{"format":"orbit-export/2","exportedAt":${JSON.stringify(now.toISOString())},"categories":{`;
+  // v3: the account section gained the credit ledger and the records found by email, and
+  // the file ends with `"complete":true`.
+  yield `{"format":"orbit-export/3","exportedAt":${JSON.stringify(now.toISOString())},"categories":{`;
   const overrides = await resolvePageOverrides([...DATA_CATEGORY_META.flatMap(({ id }) => exportSourcesFor(id)), ...ACCOUNT_SOURCES]);
   for (const [i, { id }] of DATA_CATEGORY_META.entries()) {
     yield `${i > 0 ? "," : ""}${JSON.stringify(id)}:`;
@@ -127,7 +171,9 @@ export async function* userExportChunks(userId: string, now = new Date()): Async
   }
   yield `},"account":`;
   yield* groupChunks(userId, ACCOUNT_SOURCES, overrides);
-  yield "}";
+  // Last, on purpose: a download the platform cut short (the route's 300 s limit) is already
+  // invalid JSON, but a tolerant reader — or a person — can tell it is incomplete by its absence.
+  yield `,"complete":true}`;
 }
 
 export function userExportStream(userId: string): ReadableStream<Uint8Array> {

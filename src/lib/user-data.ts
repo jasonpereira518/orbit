@@ -52,6 +52,8 @@ import {
   dataPurgeRuns,
   duplicateSuggestions,
   embeddingFailures,
+  contactOpportunities,
+  jobPostingMatches,
   errorEvents,
   eventAliases,
   eventAttendees,
@@ -259,7 +261,7 @@ async function stripMergeArchives(db: Db, userId: string, keys: readonly string[
 
 const STEPS: Record<DataCategory, CategoryStep> = {
   insights: {
-    exports: [own(aiSuggestions), own(recommendations), own(recommendationFeedback), own(radarRuns), own(contactSignals), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs), own(relationshipRuns)],
+    exports: [own(aiSuggestions), own(recommendations), own(recommendationFeedback), own(radarRuns), own(contactSignals), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs), own(relationshipRuns), own(embeddingFailures)],
     counts: [aiSuggestions, recommendations, contactEmbeddings, memoryChunks, closenessCohorts],
     run: async (db, userId) => {
       // Background AI still in flight at a provider. Cancelled there first — the provider is
@@ -314,7 +316,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   notes: {
-    exports: [own(interactions), own(noteBatches), own(interactionMentions), own(actionItems), own(meetingSessions), own(meetingTranscriptSegments), own(captureJobs), own(captureHandoffs), own(ignoredPeople), own(cloudNoteFiles), withUrl(own(capturePhotos), "/api/capture/photos/")],
+    exports: [own(interactions), own(noteBatches), own(interactionMentions), own(actionItems), own(meetingSessions), own(meetingTranscriptSegments), own(captureJobs), own(captureHandoffs), own(ignoredPeople), own(cloudNoteFiles), own(cloudNoteSources, "provider"), withUrl(own(capturePhotos), "/api/capture/photos/")],
     counts: [
       interactions,
       noteBatches,
@@ -499,6 +501,10 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       joined("user_recruiter_links", (userId, limit, offset) => sql`SELECT l.*, r.full_name AS recruiter_full_name, r.firm AS recruiter_firm FROM user_recruiter_links l JOIN recruiters r ON r.id = l.recruiter_id WHERE l.user_id = ${userId} ORDER BY l.id LIMIT ${limit} OFFSET ${offset}`),
       own(recruiterMessages),
       own(recruiterScanState),
+      // Shared-directory rows this account created: who and which firm only. Contact details on
+      // a shared row may have come from other users, which no column records, so they stay
+      // out (this account's own copy of them is in `user_recruiter_links` above).
+      joined("recruiters_created", (userId, limit, offset) => sql`SELECT id, full_name, firm, specialty, created_at FROM recruiters WHERE created_by_user_id = ${userId} ORDER BY id LIMIT ${limit} OFFSET ${offset}`),
     ],
     counts: [userRecruiterLinks, recruiterMessages],
     run: async (db, userId) => {
@@ -681,6 +687,10 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       own(contactExperiences),
       own(contactCareerMoves),
       own(emailSends),
+      // Both cascade from `contacts`: AI-suggested opportunities about a person, and which
+      // job postings matched them. Derived, but derived about named people.
+      own(contactOpportunities),
+      own(jobPostingMatches),
       joined("contact_tags", (userId, limit, offset) => sql`SELECT ct.* FROM contact_tags ct JOIN contacts c ON c.id = ct.contact_id WHERE c.user_id = ${userId} ORDER BY ct.id LIMIT ${limit} OFFSET ${offset}`),
     ],
     // The `implies` list in `DATA_CATEGORY_META` is what stops this step from quietly
