@@ -50,6 +50,7 @@ import {
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { asWelcomePlanet, planetForSignupNumber, type WelcomePlanet } from "@/lib/welcome-planets";
 import { ipBucketKey } from "@/lib/client-ip";
+import { reportError } from "@/lib/report-error";
 
 export type WelcomeSender = (
   email: string,
@@ -133,7 +134,7 @@ export async function joinInterestListCore(
     // response stays indistinguishable from a real join, so this log is the only signal
     // that a real person was dropped.
     if (isRateLimitedError(err)) console.warn("[interest-list] join rate-limited", { ipTag: ipLogTag(ctx.ip) });
-    else console.error("[interest-list] limiter failed", err);
+    else reportError(err, { where: "interest.join.limiter", level: "error" });
     return { ok: true, ticket: await plausibleTicket(), returning: false };
   }
 
@@ -265,7 +266,7 @@ export async function joinInterestListCore(
       await consumeBucket("interest.welcome", "global", RATE_LIMITS.interestWelcome);
     } catch (err) {
       if (isRateLimitedError(err)) console.warn("[interest-list] welcome cap reached; mail skipped");
-      else console.error("[interest-list] welcome limiter failed; mail skipped", err);
+      else reportError(err, { where: "interest.join.welcome-limiter", level: "error" });
       welcome = false;
     }
   }
@@ -324,7 +325,7 @@ export async function saveInterestListNameCore(
     await consumeBucket("interest.name", ipBucketKey(ctx.ip), RATE_LIMITS.interestName);
   } catch (err) {
     if (isRateLimitedError(err)) console.warn("[interest-list] name rate-limited", { ipTag: ipLogTag(ctx.ip) });
-    else console.error("[interest-list] limiter failed", err);
+    else reportError(err, { where: "interest.name.limiter", level: "error" });
     return { ok: true };
   }
 
@@ -384,6 +385,6 @@ async function notifyIfTierUnlocked(
       tier
     );
   } catch (err) {
-    console.error("[interest-list] tier notice failed", err);
+    reportError(err, { where: "interest.join.tier", level: "error" });
   }
 }

@@ -41,6 +41,7 @@ import {
   type StarAllocation,
 } from "@/lib/waitlist-poll";
 import { ipBucketKey } from "@/lib/client-ip";
+import { reportError } from "@/lib/report-error";
 
 const RESULTS_TTL_MS = 30_000;
 
@@ -159,7 +160,7 @@ export async function setStarsCore(input: StarsInput, ctx: VoteContext): Promise
     await consumeBucket("poll.vote", ipBucketKey(ctx.ip), RATE_LIMITS.pollVote);
   } catch (err) {
     if (isRateLimitedError(err)) return { ok: false, message: POLL_RATE_LIMITED };
-    console.error("[waitlist-poll] limiter failed", err);
+    reportError(err, { where: "waitlist.poll.limiter", level: "warning" });
     return { ok: false, message: POLL_ERROR };
   }
 
@@ -203,7 +204,7 @@ export async function setStarsCore(input: StarsInput, ctx: VoteContext): Promise
     invalidatePollResults();
     return { ok: true, allocation, budget, results: await readPollResults(), newVoterId };
   } catch (err) {
-    console.error("[waitlist-poll] stars failed", err);
+    reportError(err, { where: "waitlist.poll.stars", level: "error" });
     return { ok: false, message: POLL_ERROR };
   }
 }

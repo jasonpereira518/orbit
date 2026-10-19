@@ -28,6 +28,7 @@ import { getDb } from "@/db";
 import { siteSettings, userSettings } from "@/db/schema";
 import { recordAdminAction } from "@/lib/admin-audit";
 import { resolveStealth } from "@/lib/waitlist-host";
+import { reportError } from "@/lib/report-error";
 
 export type SiteMode = {
   stealth: boolean;
@@ -79,7 +80,7 @@ export async function getSiteMode(options: { fresh?: boolean } = {}): Promise<Si
     return value;
   } catch (err) {
     if (options.fresh) throw err;
-    console.error("[site-access] site_settings read failed", err);
+    reportError(err, { where: "site.access.mode", level: "warning" });
     return (
       cached?.value ?? {
         stealth: resolveStealth(null),
@@ -199,7 +200,7 @@ export const isHeldByStealth = cache(
             },
           });
         } catch (err) {
-          console.error("[site-access] Clerk lookup failed; letting the account through", err);
+          reportError(err, { where: "site.access.clerk", level: "warning" });
           return false;
         }
       }

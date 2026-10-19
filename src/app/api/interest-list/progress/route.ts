@@ -3,6 +3,7 @@ import { clientIpFrom, ipBucketKey } from "@/lib/client-ip";
 import { SHARE_TOKEN_MAX } from "@/lib/interest-list";
 import { getProgressByShareToken } from "@/lib/interest-list-ticket";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { reportError } from "@/lib/report-error";
 
 // Polled by the referral tracker on someone's own pass, which carries no session: the share
 // token in the query is the credential, same as the pass page. It answers with the caller's
@@ -24,7 +25,7 @@ export async function GET(request: NextRequest) {
   } catch (err) {
     // A limiter that cannot count is not a reason to run the line query unmetered.
     const limited = isRateLimitedError(err);
-    if (!limited) console.error("[interest-list] progress limiter failed", err);
+    if (!limited) reportError(err, { where: "interest.progress.limiter", level: "warning" });
     return NextResponse.json({ ok: false }, { status: limited ? 429 : 503, headers: HEADERS });
   }
 

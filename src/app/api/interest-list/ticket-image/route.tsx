@@ -5,6 +5,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { SHARE_TOKEN_MAX } from "@/lib/interest-list";
 import { getInviterPlanet } from "@/lib/interest-list-ticket";
 import { PLANET_GLOW, planetLabel, type WelcomePlanet } from "@/lib/welcome-planets";
+import { reportError } from "@/lib/report-error";
 
 /**
  * The waitlist's 1200×630 link preview, one per share token: the sharer's planet beside the
@@ -180,7 +181,7 @@ export async function GET(request: NextRequest) {
     try {
       sharer = await getInviterPlanet(token);
     } catch (err) {
-      console.error("[interest-list] ticket lookup failed for the image route", err);
+      reportError(err, { where: "interest.ticket-image.lookup", level: "warning" });
     }
   }
 
@@ -216,7 +217,7 @@ export async function GET(request: NextRequest) {
       headers: { "Content-Type": "image/png", "Cache-Control": CACHE_CONTROL },
     });
   } catch (err) {
-    console.error("[interest-list] ticket image assets failed; serving the bare card", err);
+    reportError(err, { where: "interest.ticket-image.assets", level: "warning" });
     const png = await new ImageResponse(
       <div
         style={{

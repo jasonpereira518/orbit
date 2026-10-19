@@ -38,6 +38,7 @@ import {
   sendSiteInviteEmail,
   type SiteInviteEmailKind,
 } from "@/lib/site-invite-email";
+import { reportError } from "@/lib/report-error";
 
 const INVITE_EXPIRES_DAYS = 30;const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -232,7 +233,7 @@ export async function claimSiteInviteGrant(userId: string): Promise<boolean> {
     const user = await (await clerkClient()).users.getUser(userId);
     return await recordSiteInvite(userId, user.publicMetadata as Record<string, unknown>);
   } catch (err) {
-    console.error("[site-invites] invite grant check failed", err);
+    reportError(err, { where: "site.invite.grant", level: "warning" });
     return false;
   }
 }

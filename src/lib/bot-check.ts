@@ -1,5 +1,6 @@
 import { checkBotId } from "botid/server";
 import { ERROR_SOURCES, recordErrorEvent, shouldRecordThrottled } from "@/lib/error-events";
+import { reportError } from "@/lib/report-error";
 
 /**
  * Vercel BotID's verdict on the current request (`instrumentation-client.ts` lists the
@@ -15,7 +16,7 @@ export async function isBotRequest(): Promise<boolean> {
   try {
     return (await checkBotId()).isBot;
   } catch (err) {
-    console.error("[bot-check] BotID check failed", err);
+    reportError(err, { where: "bot.check", level: "warning" });
     // Fail-open must not be silent: a BotID outage (or a missing OIDC token) is otherwise a
     // waitlist with no bot protection and no trace of it.
     if (shouldRecordThrottled("bot.check.failed")) {

@@ -18,6 +18,7 @@ export {
   planetForSignupNumber,
   type WelcomePlanet,
 } from "@/lib/welcome-planets";
+import { reportError } from "@/lib/report-error";
 
 /** The two personal links a signup gets once it has a share token. */
 export type EmailLinks = { ticketUrl: string; shareUrl: string };
@@ -442,6 +443,15 @@ export function waitlistReplyTo(): string | undefined {
 }
 
 /**
+ * Resend's error object carries a free-text `message` that can echo the recipient address
+ * ("The to field must be a valid email: x@y"), so it never reaches the log or Sentry. Only
+ * the provider's status and error name, which are fixed vocabulary, are kept.
+ */
+function resendRejection(error: { name?: string; statusCode?: number | null }): Error {
+  return new Error(`Resend rejected the email: ${error.statusCode ?? "no status"} ${error.name ?? "unknown"}`);
+}
+
+/**
  * Never throws. Returns whether the message actually went out; the join ignores it, because
  * its signup row is durable either way and a Resend hiccup must not fail the submission.
  */
@@ -480,7 +490,7 @@ async function deliver(
       },
     });
     if (error) {
-      console.error(`[interest-list] Resend rejected the ${kind} email`, error);
+      reportError(resendRejection(error), { where: "interest.email.rejected", level: "error", extra: { kind } });
       await recordErrorEvent({
         source: ERROR_SOURCES.resendRejected,
         kind: `interest.${kind}`,
@@ -491,7 +501,7 @@ async function deliver(
     }
     return true;
   } catch (err) {
-    console.error(`[interest-list] Failed to send the ${kind} email`, err);
+    reportError(err, { where: "interest.email.send", level: "error", extra: { kind } });
     // recordErrorEvent never throws, so deliver keeps its "never throws" contract.
     await recordErrorEvent({
       source: ERROR_SOURCES.resendRejected,

@@ -12,6 +12,7 @@ import { getWaitlistStats } from "@/lib/admin-interest-list";
 import { getAdminOverview } from "@/lib/admin-metrics";
 import { formatCostMicros } from "@/lib/ai-pricing";
 import { countLifetimePurchases } from "@/lib/user-settings";
+import { reportError } from "@/lib/report-error";
 
 export const metadata = { title: "Admin · Overview" };
 
@@ -33,7 +34,7 @@ export default async function AdminOverviewPage() {
     countLifetimePurchases().catch(() => 0),
     // Its own failure mode: a broken waitlist read says so in its panel, never 500s triage.
     getWaitlistStats().catch((err: unknown) => {
-      console.error("[admin] waitlist stats failed", err);
+      reportError(err, { where: "admin.overview.waitlist", level: "warning" });
       return null;
     }),
   ]);

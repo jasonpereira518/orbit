@@ -37,6 +37,7 @@ import { getPollInitial } from "@/lib/waitlist-poll-votes";
 import { BASE_STARS, POLL_VOTER_COOKIE } from "@/lib/waitlist-poll";
 import { getSiteMode } from "@/lib/site-access";
 import { isWaitlistHostHeader } from "@/lib/waitlist-host";
+import { reportError } from "@/lib/report-error";
 
 // The proof line, the invited strip and the pass all come from the URL and the database
 // on every request. The proof memo (60 s) keeps the count query off the hot path.
@@ -89,7 +90,7 @@ export async function generateMetadata({
     try {
       planetKnown = (await getInviterPlanet(token)) !== null;
     } catch (err) {
-      console.error("[interest] planet lookup failed in metadata", err);
+      reportError(err, { where: "interest.page.planet", level: "warning" });
     }
   }
   const image = planetKnown
@@ -233,19 +234,19 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
   const voterId = await readVoterId();
   const [proof, ticket, showDemo, poll, friendPlanets] = await Promise.all([
     getInterestProof().catch((err: unknown) => {
-      console.error("[interest] proof read failed", err);
+      reportError(err, { where: "interest.page.proof", level: "warning" });
       return EMPTY_PROOF;
     }),
     me
       ? getTicketByShareToken(me).catch((err: unknown): InterestTicket | null => {
-          console.error("[interest] ticket lookup failed", err);
+          reportError(err, { where: "interest.page.ticket", level: "warning" });
           return null;
         })
       : Promise.resolve(null),
     // The admin console's switch. Never throws: a failed read shows the demo.
     getWaitlistDemoEnabled(),
     getPollInitial({ me, voterId }).catch((err: unknown) => {
-      console.error("[interest] poll read failed", err);
+      reportError(err, { where: "interest.page.poll", level: "warning" });
       return EMPTY_POLL;
     }),
     // The tracker draws each friend's planet; without them it falls back to plain gold.
@@ -253,7 +254,7 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
       ? getProgressByShareToken(me)
           .then((p) => p?.friendPlanets ?? [])
           .catch((err: unknown) => {
-            console.error("[interest] friend planets read failed", err);
+            reportError(err, { where: "interest.page.friends", level: "warning" });
             return [];
           })
       : Promise.resolve([]),
@@ -264,7 +265,7 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
   const ref = ticket ? null : tokenParam(params.ref);
   const invite = ref
     ? await getInviterPlanet(ref).catch((err: unknown) => {
-        console.error("[interest] inviter lookup failed", err);
+        reportError(err, { where: "interest.page.inviter", level: "warning" });
         return null;
       })
     : null;

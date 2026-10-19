@@ -12,6 +12,7 @@ import { isClerkConfigured } from "@/lib/demo-account";
 import { getSiteMode } from "@/lib/site-access";
 import { listSiteInvites, type SiteInviteRow } from "@/lib/site-invites";
 import { cn } from "@/lib/utils";
+import { reportError } from "@/lib/report-error";
 
 export const metadata = { title: "Admin · Access" };
 
@@ -48,7 +49,7 @@ export default async function AdminAccessPage() {
   const [mode, invites] = await Promise.all([
     getSiteMode({ fresh: true }),
     listSiteInvites().catch((err: unknown) => {
-      console.error("[admin] invitation list failed", err);
+      reportError(err, { where: "admin.access.invites", level: "warning" });
       return null;
     }),
   ]);

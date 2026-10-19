@@ -3,6 +3,7 @@ import { getAppBaseUrl } from "@/lib/app-url";
 import { ACCENT, BG, FAINT, FONT_STACK, MUTED, TEXT, escapeHtml } from "@/lib/interest-list-email";
 import { PLAN_LABELS } from "@/lib/plans/plan-config";
 import type { WelcomePlanet } from "@/lib/welcome-planets";
+import { reportError } from "@/lib/report-error";
 
 /**
  * The admin invitation, as a boarding pass: the email that turns a waitlist wait into an
@@ -270,6 +271,15 @@ export function siteInviteSender(): string | null {
 }
 
 /**
+ * Resend's error object carries a free-text `message` that can echo the recipient address
+ * ("The to field must be a valid email: x@y"), so it never reaches the log or Sentry. Only
+ * the provider's status and error name, which are fixed vocabulary, are kept.
+ */
+function resendRejection(error: { name?: string; statusCode?: number | null }): Error {
+  return new Error(`Resend rejected the email: ${error.statusCode ?? "no status"} ${error.name ?? "unknown"}`);
+}
+
+/**
  * Never throws. Returns whether Resend accepted the message, which the admin console shows:
  * the invitation itself already exists in Clerk, so a failed send means "copy the link",
  * not "try again".
@@ -297,7 +307,7 @@ export async function sendSiteInviteEmail(
       replyTo: process.env.WAITLIST_REPLY_TO?.trim() || undefined,
     });
     if (error) {
-      console.error("[site-invites] Resend rejected the invitation email", error);
+      reportError(resendRejection(error), { where: "site.invite.email.rejected", level: "error" });
       await recordErrorEvent({
         source: ERROR_SOURCES.resendRejected,
         kind: "site.invite",
@@ -308,7 +318,7 @@ export async function sendSiteInviteEmail(
     }
     return true;
   } catch (err) {
-    console.error("[site-invites] Failed to send the invitation email", err);
+    reportError(err, { where: "site.invite.email", level: "error" });
     await recordErrorEvent({
       source: ERROR_SOURCES.resendRejected,
       kind: "site.invite",
