@@ -88,7 +88,7 @@ export const CoachRail = forwardRef<
       >
         <div
           className={cn(
-            "liquid-glass flex max-h-[min(60vh,32rem)] flex-col overflow-y-auto rounded-2xl",
+            "liquid-glass flex max-h-[min(60vh,32rem)] flex-col overflow-y-auto rounded-xl",
             desktopCollapsed ? "w-auto max-w-[24rem] p-1.5" : "w-[20rem] p-4",
           )}
         >
@@ -146,7 +146,7 @@ export const CoachRail = forwardRef<
           "bottom-[calc(4rem+env(safe-area-inset-bottom)+0.5rem)]",
         )}
       >
-        <div className="liquid-glass rounded-2xl">
+        <div className="liquid-glass rounded-xl">
           <button
             type="button"
             className="flex w-full items-center justify-between gap-2 px-4 py-2.5 text-left"

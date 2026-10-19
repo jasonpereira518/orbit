@@ -136,7 +136,7 @@ export function ReminderButton({
             transition={{ duration: DUR.base, ease: EASE_HOUSE }}
           >
             {phase === "saving" ? (
-              <Loader2 className="animate-spin" aria-hidden="true" />
+              <Loader2 className="motion-safe:animate-spin" aria-hidden="true" />
             ) : set ? (
               <motion.span
                 className="inline-flex"

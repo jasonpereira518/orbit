@@ -83,7 +83,7 @@ export function FeedbackTrigger({
       // looking pressed for as long as the form was open. The bell keeps the darkening and
       // never shows it, because it fades out.
       className={cn(
-        "size-10 rounded-full border-border/70 bg-background/90 shadow-md backdrop-blur-md hover:bg-background aria-expanded:bg-background/90",
+        "size-10 rounded-full border-border-subtle bg-background/90 shadow-md backdrop-blur-md hover:bg-background aria-expanded:bg-background/90",
         // Beats both the resting fill and the hover, so the press still reads while the
         // pointer is sitting on the button — which it always is.
         pressed && "bg-muted hover:bg-muted aria-expanded:bg-muted",

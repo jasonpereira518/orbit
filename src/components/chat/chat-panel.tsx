@@ -1430,7 +1430,7 @@ export function ChatPanel({
           the suggestion chips. The whole ancestor chain is bounded (app-shell `h-dvh` →
           `min-h-0 flex-1` → page `flex min-h-0 flex-1`), and ChatPanelSkeleton already sized
           itself this way — so this also removes the height jump when the panel swaps in. */}
-      <div className="flex min-h-0 w-full flex-1 flex-row overflow-hidden rounded-2xl border border-border/70 bg-card">
+      <div className="flex min-h-0 w-full flex-1 flex-row overflow-hidden rounded-xl border border-border-subtle bg-card">
         {/* From md up the history is a rail beside the conversation. Below that the header
             keeps its dropdown (`md:hidden` on both of its controls), because on a phone the
             conversation should have the full width. */}
@@ -1453,7 +1453,7 @@ export function ChatPanel({
           onDelete={removeThread}
         />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-2.5 sm:px-4">
+        <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-3 py-2.5 sm:px-4">
           <DropdownMenu open={historyOpen} onOpenChange={setHistoryOpen}>
             <DropdownMenuTrigger
               render={
@@ -1680,7 +1680,7 @@ export function ChatPanel({
                 scrollToBottom(true);
               }}
               className={cn(
-                "flex size-8 items-center justify-center rounded-full border border-border/70 bg-card text-muted-foreground shadow-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                "flex size-8 items-center justify-center rounded-full border border-border-subtle bg-card text-muted-foreground shadow-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
                 !atBottom && messages.length > 0 && "pointer-events-auto"
               )}
             >
@@ -1843,7 +1843,7 @@ export function ChatPanel({
           // cascade; a plain `sm:max-w-*` loses to it.
           className="w-full gap-0 overflow-y-auto data-[side=right]:sm:max-w-[26rem]"
         >
-          <SheetHeader className="border-b border-border/60">
+          <SheetHeader className="border-b border-border-subtle">
             <SheetTitle>Chat context</SheetTitle>
             <SheetDescription>
               Add context for Orbit to keep in mind during this conversation.
@@ -1880,7 +1880,7 @@ export function ChatPanel({
             />
             {contextIngest.busy && (
               <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Loader2 className="size-3.5 animate-spin" /> Reading…
+                <Loader2 className="size-3.5 motion-safe:animate-spin" /> Reading…
               </span>
             )}
 
@@ -1896,7 +1896,7 @@ export function ChatPanel({
                 // Unlike the main composer's mic, which sits inline right next to the
                 // field it dictates into, this one is alone in the footer — an outline
                 // gives it the same "this is a control" weight the Save button has.
-                className="border border-border/70"
+                className="border border-border-subtle"
               />
               <Button
                 type="button"
@@ -1904,7 +1904,7 @@ export function ChatPanel({
                 disabled={contextSaving || contextIngest.busy}
               >
                 {contextSaving ? (
-                  <Loader2 className="size-4 animate-spin" />
+                  <Loader2 className="size-4 motion-safe:animate-spin" />
                 ) : (
                   "Save"
                 )}
@@ -1956,7 +1956,7 @@ const UserBubble = memo(function UserBubble({
   if (editing) {
     return (
       <div className="flex justify-end">
-        <div className="w-full max-w-[85%] rounded-2xl rounded-br-md border border-primary/40 bg-background p-2">
+        <div className="w-full max-w-[85%] rounded-xl rounded-br-md border border-primary/40 bg-background p-2">
           <Textarea
             ref={fieldRef}
             value={text}
@@ -2012,7 +2012,7 @@ const UserBubble = memo(function UserBubble({
           <Pencil className="size-3.5" />
         </button>
       )}
-      <div className="max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm text-primary-foreground">
+      <div className="max-w-[85%] rounded-xl rounded-br-md bg-primary px-4 py-2.5 text-sm text-primary-foreground">
         <MentionText text={msg.content} names={msg.mentionNames} />
       </div>
     </div>
@@ -2199,7 +2199,7 @@ const AssistantBubble = memo(function AssistantBubble({
                 key={q}
                 type="button"
                 onClick={() => onFollowUp?.(q)}
-                className="rounded-full border border-border/70 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                className="rounded-full border border-border-subtle px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
                 {q}
               </button>
@@ -2313,7 +2313,7 @@ const RecommendationCard = memo(function RecommendationCard({
   }
 
   return (
-    <div className="flex h-full flex-col rounded-xl border border-border/70 bg-background p-3">
+    <div className="flex h-full flex-col rounded-xl border border-border-subtle bg-background p-3">
       <div className="flex items-center gap-2.5">
         {/* The picture opens the profile too — it is the obvious thing to click. The name
             beside it is the same link and stays the keyboard and screen-reader route, so this
@@ -2364,9 +2364,9 @@ const RecommendationCard = memo(function RecommendationCard({
           type="button"
           onClick={writeDraft}
           disabled={drafting}
-          className="mt-2.5 inline-flex w-fit items-center gap-1.5 rounded-full border border-border/70 px-2.5 py-1 text-2xs font-medium text-foreground/80 transition-colors hover:bg-muted disabled:opacity-60"
+          className="mt-2.5 inline-flex w-fit items-center gap-1.5 rounded-full border border-border-subtle px-2.5 py-1 text-2xs font-medium text-foreground/80 transition-colors hover:bg-muted disabled:opacity-60"
         >
-          {drafting ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Mail className="size-3.5" aria-hidden />}
+          {drafting ? <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden /> : <Mail className="size-3.5" aria-hidden />}
           {drafting ? "Drafting…" : "Draft message"}
         </button>
       )}

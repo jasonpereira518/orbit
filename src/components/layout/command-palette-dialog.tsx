@@ -182,7 +182,7 @@ function CommandIcon({ icon: Icon }: { icon: LucideIcon }) {
 
 function Key({ children }: { children: ReactNode }) {
   return (
-    <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded-md border border-border/60 bg-background px-1 font-sans text-2xs text-muted-foreground">
+    <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded-md border border-border-subtle bg-background px-1 font-sans text-2xs text-muted-foreground">
       {children}
     </kbd>
   );
@@ -498,7 +498,7 @@ export function CommandPaletteDialog({
       <DialogContent
         showCloseButton={false}
         initialFocus={inputRef}
-        className="top-[14vh] translate-y-0 gap-0 overflow-hidden rounded-2xl p-0 shadow-2xl ring-foreground/[0.08] sm:max-w-[34rem]"
+        className="top-[14vh] translate-y-0 gap-0 overflow-hidden rounded-xl p-0 shadow-2xl ring-foreground/[0.08] sm:max-w-[34rem]"
       >
         <DialogTitle className="sr-only">Search Orbit</DialogTitle>
         <div className="flex items-center gap-3 px-4">
@@ -518,9 +518,9 @@ export function CommandPaletteDialog({
             aria-autocomplete="list"
             autoComplete="off"
             spellCheck={false}
-            className="h-14 min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-muted-foreground/80"
+            className="h-14 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground/80"
           />
-          {searching && <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground/70" aria-hidden />}
+          {searching && <Loader2 className="size-4 shrink-0 motion-safe:animate-spin text-muted-foreground/70" aria-hidden />}
         </div>
 
         <div

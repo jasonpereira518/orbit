@@ -12,7 +12,6 @@ import {
   LINKEDIN_ARCHIVE_LINK_HOURS,
   LINKEDIN_DATA_URL,
 } from "@/lib/linkedin-export";
-import { cn } from "@/lib/utils";
 
 /** Fixed positions, not random: identical on every render and between server and client. */
 const STARS: Array<[number, number, number]> = [
@@ -117,7 +116,7 @@ export function LinkedInReminderStage({
                   href={search.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className={cn(buttonVariants({ size: "lg" }), "h-11 px-5 text-[15px]")}
+                  className={buttonVariants({ size: "lg" })}
                 >
                   <Search className="size-4" aria-hidden />
                   {search.label}
@@ -126,7 +125,7 @@ export function LinkedInReminderStage({
                 <Link
                   href="/imports#import-panel-connections"
                   onClick={onClose}
-                  className={cn(buttonVariants({ variant: "outline", size: "lg" }), "h-11 px-5 text-[15px]")}
+                  className={buttonVariants({ variant: "outline", size: "lg" })}
                 >
                   <Upload className="size-4" aria-hidden />
                   I have it — upload

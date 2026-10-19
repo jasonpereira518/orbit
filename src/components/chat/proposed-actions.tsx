@@ -91,7 +91,7 @@ export function ProposedActionsCard({
   const resultHref = action.resultId ? RESULT_HREF[action.args.kind](action.resultId) : null;
 
   return (
-    <div className="flex items-start gap-2.5 rounded-xl border border-border/70 bg-background p-3">
+    <div className="flex items-start gap-2.5 rounded-xl border border-border-subtle bg-background p-3">
       {contactId ? (
         <ContactAvatar
           contactId={contactId}
@@ -111,7 +111,7 @@ export function ProposedActionsCard({
           {action.status === "proposed" && (
             <>
               <Button type="button" size="sm" onClick={confirm} disabled={busy}>
-                {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Check className="size-3.5" aria-hidden />}
+                {busy ? <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden /> : <Check className="size-3.5" aria-hidden />}
                 Confirm
               </Button>
               <Button type="button" size="sm" variant="outline" onClick={dismiss} disabled={busy}>
@@ -122,7 +122,7 @@ export function ProposedActionsCard({
           )}
           {action.status === "committing" && (
             <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Loader2 className="size-3.5 animate-spin" aria-hidden /> Adding…
+              <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden /> Adding…
             </span>
           )}
           {action.status === "done" && (

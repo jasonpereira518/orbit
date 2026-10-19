@@ -1,5 +1,6 @@
-import { TIMED_OUT, withTimeout } from "@/lib/with-timeout";
 "use client";
+
+import { TIMED_OUT, withTimeout } from "@/lib/with-timeout";
 
 import { useEffect, useState, useTransition } from "react";
 import { toast } from "@/lib/toast";

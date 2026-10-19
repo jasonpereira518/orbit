@@ -1049,7 +1049,7 @@
  * page cannot reflow around a purely decorative cue. Deliberately a soft, spread shadow
  * sitting BEHIND the card rather than a hard ring around it: a crisp outline reads as a
  * focus state or a validation error, which is the wrong meaning for "this is the one you
- * asked about". The radius matches the cards it lands on (`rounded-2xl`). */
+ * asked about". The radius matches the cards it lands on (`rounded-xl`). */
 @keyframes section-flash {
   0% {
     box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 0%, transparent);
@@ -1068,7 +1068,7 @@
 /* Attribute, not a class: React owns `className` on these cards and rewrites it on
  * hydration, which strips a class added imperatively. See `section-flash.tsx`. */
 [data-section-flash="on"] {
-  border-radius: 1rem;
+  border-radius: var(--radius-xl);
   animation: section-flash 1.6s var(--ease-house) both;
 }
 

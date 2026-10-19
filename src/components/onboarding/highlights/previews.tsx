@@ -207,7 +207,7 @@ export function FollowUpsPreview() {
 export function AskPreview() {
   return (
     <Stagger className="flex h-full flex-col gap-2.5">
-      <StaggerItem className="self-end rounded-2xl rounded-br-md bg-primary px-3 py-2 text-xs text-primary-foreground">
+      <StaggerItem className="self-end rounded-xl rounded-br-md bg-primary px-3 py-2 text-xs text-primary-foreground">
         Who could help me get an AI internship?
       </StaggerItem>
       <StaggerItem className={cn(card, "p-3")}>

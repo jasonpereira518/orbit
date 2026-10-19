@@ -638,7 +638,7 @@ export function FeedbackPanel({
                   <X className="size-3" />
                 </Button>
                 {shot.note && (
-                  <span className="mt-1 block max-w-24 truncate text-[0.65rem] text-muted-foreground">
+                  <span className="mt-1 block max-w-24 truncate text-3xs text-muted-foreground">
                     {shot.note}
                   </span>
                 )}
@@ -719,7 +719,7 @@ export function FeedbackPanel({
             aria-labelledby="feedback-discard-title"
             className="inset-0 flex items-center justify-center rounded-[inherit] bg-popover/85 p-6 supports-backdrop-filter:backdrop-blur-[2px]"
           >
-            <div className="w-full max-w-[17rem] rounded-2xl border border-border/70 bg-popover p-4 text-center shadow-lg">
+            <div className="w-full max-w-[17rem] rounded-xl border border-border-subtle bg-popover p-4 text-center shadow-lg">
               <p
                 id="feedback-discard-title"
                 className="font-heading text-base text-ink"

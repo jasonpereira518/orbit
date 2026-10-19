@@ -141,7 +141,7 @@ export function ChatActivity({ steps, state, variant = "full", answerStarted = f
                         <CircleDashed
                           className={cn(
                             "absolute -left-[1.15rem] top-px size-3.5 text-muted-foreground",
-                            !reduceMotion && "animate-spin [animation-duration:2.5s]"
+                            !reduceMotion && "motion-safe:animate-spin [animation-duration:2.5s]"
                           )}
                           aria-hidden="true"
                         />
@@ -173,7 +173,7 @@ export function ChatActivity({ steps, state, variant = "full", answerStarted = f
         type="button"
         onClick={() => setFinalOpen((v) => !v)}
         aria-expanded={finalOpen}
-        className="group inline-flex max-w-full items-center gap-1.5 rounded-full border border-border/70 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+        className="group inline-flex max-w-full items-center gap-1.5 rounded-full border border-border-subtle px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
       >
         <CircleDashed className="size-3.5 shrink-0" aria-hidden="true" />
         <span className="truncate">{summary}</span>
@@ -192,7 +192,7 @@ export function ChatActivity({ steps, state, variant = "full", answerStarted = f
             transition={{ duration: DUR.slow, ease: EASE_HOUSE }}
             className="overflow-hidden"
           >
-            <ol className="mt-2 space-y-2 border-l border-border/70 pl-3">
+            <ol className="mt-2 space-y-2 border-l border-border-subtle pl-3">
               {steps.map((step) => (
                 <li key={step.id} className="text-xs text-muted-foreground">
                   <span className="text-foreground/80">{step.label}</span>

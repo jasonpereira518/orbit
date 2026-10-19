@@ -43,7 +43,7 @@ export function MentionText({
         // green over either one mostly just desaturates, and inheriting the bubble's own
         // text colour left the mark near-invisible on the light-blue variant. A solid light
         // chip with dark green text is legible on both without a per-theme rule.
-        className="rounded-[4px] bg-emerald-200 px-[3px] py-[1px] font-medium text-emerald-900"
+        className="rounded-[4px] bg-success/15 px-[3px] py-[1px] font-medium text-success"
       >
         {text.slice(m.start, m.end)}
       </span>,

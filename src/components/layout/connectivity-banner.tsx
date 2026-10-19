@@ -79,7 +79,7 @@ export function ConnectivityBanner() {
                   ? "border-success/30 bg-success/12 text-success"
                   : shown === "unreachable"
                     ? "border-warning/40 bg-warning/15 text-warning"
-                    : "border-border/70 bg-muted text-foreground"
+                    : "border-border-subtle bg-muted text-foreground"
               )}
             >
               {shown === "offline" && <WifiOff className="size-3.5 shrink-0" aria-hidden />}
@@ -123,7 +123,7 @@ export function ConnectivityBanner() {
                   }}
                   className="flex shrink-0 items-center gap-1 rounded-full bg-warning/15 px-2 py-0.5 font-medium text-warning transition-colors hover:bg-warning/25 disabled:opacity-60"
                 >
-                  <RefreshCw className={cn("size-3", checking && "animate-spin")} aria-hidden />
+                  <RefreshCw className={cn("size-3", checking && "motion-safe:animate-spin")} aria-hidden />
                   {checking ? "Checking…" : "Retry now"}
                 </button>
               )}

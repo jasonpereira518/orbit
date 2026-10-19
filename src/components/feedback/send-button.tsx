@@ -119,7 +119,7 @@ export function SendButton({
         >
           {/* Reduced motion gets the spinner back, because the sweep it replaces is
               hidden there — see the `.send-signal` block in globals.css. */}
-          {sending && reduced && <Loader2 className="size-3.5 animate-spin" />}
+          {sending && reduced && <Loader2 className="size-3.5 motion-safe:animate-spin" />}
           Send
         </motion.span>
 

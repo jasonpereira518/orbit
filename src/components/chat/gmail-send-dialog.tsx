@@ -203,7 +203,7 @@ function SendPanel({
 
       {ctx === null ? (
         <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-          <Loader2 className="size-4 animate-spin" aria-hidden /> Getting ready…
+          <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> Getting ready…
         </p>
       ) : ctx === "unavailable" ? (
         <p className="text-sm text-muted-foreground" role="alert">
@@ -243,7 +243,7 @@ function SendPanel({
 
           <div className="flex flex-col gap-1">
             <span className="text-xs font-medium text-muted-foreground">Message</span>
-            <p className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border/70 bg-muted/40 p-2.5 text-sm">
+            <p className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border-subtle bg-muted/40 p-2.5 text-sm">
               {finalBody}
             </p>
             <DraftLinkWarning text={finalBody} />
@@ -295,7 +295,7 @@ function SendPanel({
               !content.ok
             }
           >
-            {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Mail className="size-4" aria-hidden />}
+            {busy ? <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> : <Mail className="size-4" aria-hidden />}
             Send email
           </Button>
         )}
@@ -350,7 +350,7 @@ function Blocker({
   }
   if (block.reason === "not_connected" || !block.provider) {
     return (
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed border-border/70 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed border-border-subtle p-3">
         <p className="min-w-0 flex-1 text-sm text-muted-foreground">Connect your email to send from your own address.</p>
         <div className="flex gap-2">
           <Button type="button" variant="outline" size="sm" onClick={() => onConnect("gmail")} disabled={busy}>
@@ -369,7 +369,7 @@ function Blocker({
   const company = block.provider === "outlook" ? "Microsoft" : "Google";
   const reconnect = block.reason === "needs_reauth";
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/70 bg-muted/40 p-3">
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border-subtle bg-muted/40 p-3">
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium">{reconnect ? `Reconnect ${mailbox}` : `Allow ${mailbox} to send`}</p>
         <p className="mt-0.5 text-xs text-muted-foreground">

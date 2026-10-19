@@ -198,7 +198,7 @@ export function ComposerToolsMenu({
         }
       />
       <PopoverContent align="start" side="top" className="w-80 p-0">
-        <div className="flex items-center gap-1 border-b border-border/60 p-1.5">
+        <div className="flex items-center gap-1 border-b border-border-subtle p-1.5">
           {(["people", "events"] as const).map((t) => (
             <button
               key={t}
@@ -222,7 +222,7 @@ export function ComposerToolsMenu({
           ))}
         </div>
 
-        <div className="relative border-b border-border/60">
+        <div className="relative border-b border-border-subtle">
           <Search className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             id={searchId}
@@ -237,7 +237,7 @@ export function ComposerToolsMenu({
         {/* What the green token will mean once it is in the box. Worth a line: the menu
             otherwise looks like it only types a name for you. */}
         {tab === "people" && (
-          <p className="border-b border-border/60 px-3 py-1.5 text-2xs text-muted-foreground">
+          <p className="border-b border-border-subtle px-3 py-1.5 text-2xs text-muted-foreground">
             Adds their role and interaction history to your question.
           </p>
         )}

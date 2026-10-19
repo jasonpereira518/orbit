@@ -214,7 +214,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
         info: <InfoIcon className="size-4" />,
         warning: <TriangleAlertIcon className="size-4" />,
         error: <OctagonXIcon className="size-4" />,
-        loading: <Loader2Icon className="size-4 animate-spin" />,
+        loading: <Loader2Icon className="size-4 motion-safe:animate-spin" />,
       }}
       // Match the job progress widget's width so the two surfaces share both
       // vertical edges when they stack (`jobs/global-job-progress-bar.tsx`).

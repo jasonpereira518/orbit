@@ -22,7 +22,7 @@ export function TermsUpdateNotice() {
   return (
     <section
       aria-labelledby="terms-update-title"
-      className="mb-6 flex flex-col gap-3 rounded-2xl border bg-card p-4 sm:flex-row sm:items-center sm:justify-between"
+      className="mb-6 flex flex-col gap-3 rounded-xl border bg-card p-4 sm:flex-row sm:items-center sm:justify-between"
     >
       <div className="space-y-1">
         <h2 id="terms-update-title" className="text-sm font-medium text-ink">

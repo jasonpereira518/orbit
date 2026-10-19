@@ -29,7 +29,7 @@ import { cn } from "@/lib/utils";
  * padding needs no such treatment: on an inline box it does not affect the line box.
  */
 const MENTION_MARK =
-  "rounded-[4px] bg-emerald-500/18 px-[2px] py-[2px] mx-[-2px] dark:bg-emerald-400/20";
+  "rounded-[4px] bg-success/20 px-[2px] py-[2px] mx-[-2px]";
 
 export function ComposerHighlights({
   value,

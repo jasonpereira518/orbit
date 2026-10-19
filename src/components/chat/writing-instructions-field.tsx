@@ -73,7 +73,7 @@ export function WritingInstructionsField({ active }: { active: boolean }) {
   const justSaved = receipt !== null && text.trim() === receipt.trim();
 
   return (
-    <section aria-labelledby={`${id}-title`} className="flex flex-col gap-2 border-t border-border/60 p-4">
+    <section aria-labelledby={`${id}-title`} className="flex flex-col gap-2 border-t border-border-subtle p-4">
       <div>
         <h3 id={`${id}-title`} className="text-sm font-medium text-foreground">
           How I like things written
@@ -112,7 +112,7 @@ export function WritingInstructionsField({ active }: { active: boolean }) {
             </span>
           )}
           <Button type="button" variant="outline" onClick={save} disabled={!dirty || saving}>
-            {saving ? <Loader2 className="size-4 animate-spin" /> : "Save"}
+            {saving ? <Loader2 className="size-4 motion-safe:animate-spin" /> : "Save"}
           </Button>
         </div>
       </div>

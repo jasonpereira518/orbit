@@ -80,7 +80,7 @@ export function ComposerSendButton({
               {stopping ? (
                 <Square className="size-3 fill-current" />
               ) : (
-                <Loader2 className="size-4 animate-spin" />
+                <Loader2 className="size-4 motion-safe:animate-spin" />
               )}
             </motion.span>
           ) : (

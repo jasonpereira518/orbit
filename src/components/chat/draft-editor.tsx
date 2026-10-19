@@ -174,9 +174,9 @@ export function DraftEditor({
             onClick={() => refine(chip.kind, chip.done)}
             disabled={busy !== null || editing}
             aria-busy={busy === chip.kind}
-            className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background px-2 py-0.5 text-2xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-full border border-border-subtle bg-background px-2 py-0.5 text-2xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {busy === chip.kind && <Loader2 className="size-3 animate-spin" aria-hidden />}
+            {busy === chip.kind && <Loader2 className="size-3 motion-safe:animate-spin" aria-hidden />}
             {chip.label}
           </button>
         ))}

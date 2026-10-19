@@ -111,7 +111,7 @@ function SidebarNavLink({
       <Icon className="relative z-10 h-4 w-4 shrink-0" />
       <span className="relative z-10 hidden lg:inline">{item.label}</span>
       {hiddenFromUsers && (
-        <span className="relative z-10 ml-auto hidden rounded-full border border-border/70 px-1.5 py-px text-3xs uppercase tracking-wide text-muted-foreground lg:inline">
+        <span className="relative z-10 ml-auto hidden rounded-full border border-border-subtle px-1.5 py-px text-3xs uppercase tracking-wide text-muted-foreground lg:inline">
           Hidden
         </span>
       )}
@@ -227,7 +227,7 @@ export function AppSidebar({
                 size="icon"
                 aria-label={`Search (${shortcut})`}
                 onClick={() => window.dispatchEvent(new Event(OPEN_COMMAND_PALETTE_EVENT))}
-                className="shrink-0 rounded-full border-border/70 text-muted-foreground hover:text-ink"
+                className="shrink-0 rounded-full border-border-subtle text-muted-foreground hover:text-ink"
               >
                 <Search className="size-4" />
               </Button>

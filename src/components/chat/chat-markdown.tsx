@@ -155,7 +155,7 @@ function buildComponents(matcher: NameMatcher | null, evidence: EvidenceContext 
     // sideways inside the answer rather than stretch the whole chat column, which on a phone is
     // the difference between a readable answer and a page that scrolls in two directions.
     table: ({ children }) => (
-      <div className="mb-2 max-w-full overflow-x-auto rounded-lg border border-border/60 last:mb-0">
+      <div className="mb-2 max-w-full overflow-x-auto rounded-lg border border-border-subtle last:mb-0">
         <table className="min-w-full border-collapse text-left text-xs">{children}</table>
       </div>
     ),

@@ -599,7 +599,7 @@ export function FloatingAskBar() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 8, scale: 0.98 }}
               transition={{ duration: DUR.base, ease: EASE_HOUSE }}
-              className="overflow-hidden rounded-3xl border border-border/60 bg-card/95 shadow-2xl shadow-black/[0.08] backdrop-blur-md"
+              className="overflow-hidden rounded-3xl border border-border-subtle bg-card/95 shadow-2xl shadow-black/[0.08] backdrop-blur-md"
             >
               <div
                 className={cn(
@@ -677,7 +677,7 @@ export function FloatingAskBar() {
                         ) : (
                           <>
                             Nobody by that name. Press{" "}
-                            <kbd className="inline-flex h-5 items-center rounded-md border border-border/60 bg-background px-1 align-middle">
+                            <kbd className="inline-flex h-5 items-center rounded-md border border-border-subtle bg-background px-1 align-middle">
                               <CornerDownLeft className="size-3" aria-hidden />
                               <span className="sr-only">Enter</span>
                             </kbd>{" "}
@@ -704,10 +704,10 @@ export function FloatingAskBar() {
                                       contextContactIds: s.contactIds.length ? s.contactIds : undefined,
                                     })
                                   }
-                                  className="group flex w-full flex-col rounded-xl border border-border/60 bg-background/70 px-3 py-2 text-left shadow-xs transition-[border-color,background-color,transform] duration-150 hover:-translate-y-px hover:border-primary/30 hover:bg-primary/[0.04] focus-visible:border-primary/40 focus-visible:ring-[3px] focus-visible:ring-primary/15 focus-visible:outline-none active:translate-y-0 disabled:opacity-50 motion-reduce:hover:translate-y-0 dark:bg-background/40 dark:hover:bg-primary/[0.08]"
+                                  className="group flex w-full flex-col rounded-xl border border-border-subtle bg-background/70 px-3 py-2 text-left shadow-xs transition-[border-color,background-color,transform] duration-150 hover:-translate-y-px hover:border-primary/30 hover:bg-primary/[0.04] focus-visible:border-primary/40 focus-visible:ring-[3px] focus-visible:ring-primary/15 focus-visible:outline-none active:translate-y-0 disabled:opacity-50 motion-reduce:hover:translate-y-0 dark:bg-background/40 dark:hover:bg-primary/[0.08]"
                                 >
                                   <span className="flex items-start gap-2">
-                                    <span className="min-w-0 flex-1 truncate text-[13px] leading-snug text-ink">
+                                    <span className="min-w-0 flex-1 truncate text-sm leading-snug text-ink">
                                       <BrandedQuestion question={s.question} company={s.company} />
                                     </span>
                                     <ArrowUp
@@ -816,7 +816,7 @@ export function FloatingAskBar() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 6, scale: 0.98 }}
               transition={{ duration: DUR.base, ease: EASE_HOUSE }}
-              className="flex items-center gap-2 self-center rounded-full border border-border/70 bg-card/95 py-1 pl-1 pr-1.5 shadow-md backdrop-blur-md"
+              className="flex items-center gap-2 self-center rounded-full border border-border-subtle bg-card/95 py-1 pl-1 pr-1.5 shadow-md backdrop-blur-md"
             >
               <ContactAvatar
                 contactId={profileContact.id}
@@ -848,7 +848,7 @@ export function FloatingAskBar() {
 
         <motion.div
           className={cn(
-            "flex h-12 items-center gap-2 rounded-full border border-border/70 bg-card/95 pl-4 pr-1.5 shadow-lg backdrop-blur-md",
+            "flex h-12 items-center gap-2 rounded-full border border-border-subtle bg-card/95 pl-4 pr-1.5 shadow-lg backdrop-blur-md",
             "focus-within:border-primary/40 focus-within:ring-[3px] focus-within:ring-primary/15",
             personContextActive && "border-primary/25",
             open && "shadow-xl"
@@ -892,7 +892,7 @@ export function FloatingAskBar() {
             }}
           />
           {!open && !query && (
-            <kbd className="hidden h-5 shrink-0 items-center rounded-md border border-border/60 bg-background px-1.5 font-sans text-2xs text-muted-foreground sm:inline-flex">
+            <kbd className="hidden h-5 shrink-0 items-center rounded-md border border-border-subtle bg-background px-1.5 font-sans text-2xs text-muted-foreground sm:inline-flex">
               ⌘J
             </kbd>
           )}
@@ -961,7 +961,7 @@ function BrandedQuestion({ question, company }: { question: string; company?: st
 const UserBubble = memo(function UserBubble({ msg }: { msg: UserMessage }) {
   return (
     <div className="flex justify-end">
-      <div className="max-w-[85%] rounded-2xl rounded-br-md bg-primary/[0.08] px-3 py-1.5 text-sm text-ink dark:bg-primary/[0.14]">
+      <div className="max-w-[85%] rounded-xl rounded-br-md bg-primary/[0.08] px-3 py-1.5 text-sm text-ink dark:bg-primary/[0.14]">
         {msg.content}
       </div>
     </div>
@@ -1031,7 +1031,7 @@ const MiniRecommendation = memo(function MiniRecommendation({
   const canRemind = Boolean(rec.contact_id);
 
   return (
-    <div className="rounded-2xl border border-border/60 bg-background/60 p-3">
+    <div className="rounded-xl border border-border-subtle bg-background/60 p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <Link

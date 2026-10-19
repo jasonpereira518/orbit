@@ -107,7 +107,7 @@ export function ScreenshotAnnotator({
           {redactions.map((r, i) => (
             <div
               key={i}
-              className="pointer-events-none absolute bg-[#111827]"
+              className="pointer-events-none absolute bg-space-900"
               style={{
                 left: `${r.x * 100}%`,
                 top: `${r.y * 100}%`,

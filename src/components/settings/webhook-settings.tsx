@@ -1,5 +1,6 @@
-import { TIMED_OUT, withTimeout } from "@/lib/with-timeout";
 "use client";
+
+import { TIMED_OUT, withTimeout } from "@/lib/with-timeout";
 
 /**
  * Where Orbit should POST when something happens.

@@ -213,7 +213,7 @@ function Shell({
       className={cn(
         "absolute left-0 z-30 w-full max-w-sm overflow-hidden",
         placement === "above" ? "bottom-full mb-2" : "top-full mt-2",
-        "rounded-xl border border-border/70 bg-popover shadow-lg",
+        "rounded-xl border border-border-subtle bg-popover shadow-lg",
       )}
     >
       {children}

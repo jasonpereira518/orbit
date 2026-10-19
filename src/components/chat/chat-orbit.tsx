@@ -67,7 +67,7 @@ export function ChatOrbit({
           className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
         >
           <div className="size-8 rounded-full bg-primary shadow-[inset_-4px_-4px_8px_rgb(0_0_0/0.3),inset_3px_3px_6px_rgb(255_255_255/0.28)]" />
-          <div className="absolute left-1/2 top-1/2 h-3.5 w-12 -translate-x-1/2 -translate-y-1/2 -rotate-[18deg] rounded-[50%] border border-amber-300/70" />
+          <div className="absolute left-1/2 top-1/2 h-3.5 w-12 -translate-x-1/2 -translate-y-1/2 -rotate-[18deg] rounded-[50%] border border-tier-max/70" />
         </div>
 
         {rings.map(({ ring, riders }, ringIndex) => (

@@ -230,7 +230,7 @@ export function AppShell({
             )}
           >
             <header
-              className="z-30 flex shrink-0 items-center justify-between border-b border-border/70 bg-background/95 px-4 py-3 backdrop-blur md:hidden"
+              className="z-30 flex shrink-0 items-center justify-between border-b border-border-subtle bg-background/95 px-4 py-3 backdrop-blur md:hidden"
               style={{ viewTransitionName: "app-mobile-header" }}
             >
               <Link
@@ -261,7 +261,7 @@ export function AppShell({
                   size="icon"
                   aria-label="Search"
                   // The same round glass as the feedback and bell buttons beside it.
-                  className="size-10 rounded-full border-border/70 bg-background/90 shadow-md backdrop-blur-md hover:bg-background"
+                  className="size-10 rounded-full border-border-subtle bg-background/90 shadow-md backdrop-blur-md hover:bg-background"
                   onClick={() => window.dispatchEvent(new Event(OPEN_COMMAND_PALETTE_EVENT))}
                 >
                   <Search className="h-4 w-4" />

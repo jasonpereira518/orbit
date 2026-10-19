@@ -31,8 +31,8 @@ function lastTouchLabel(lastInteractionAt?: Date | string | null) {
   const d = new Date(lastInteractionAt);
   if (Number.isNaN(d.getTime())) return null;
   const days = Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
-  if (days <= 0) return "Last touch today";
-  return `Last touch ${days}d ago`;
+  if (days <= 0) return "Last interaction today";
+  return `Last interaction ${days}d ago`;
 }
 
 export function DueFollowUpRow({

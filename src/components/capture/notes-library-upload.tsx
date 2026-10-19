@@ -43,7 +43,7 @@ const STATUS_COPY: Record<FanoutEntry["status"], string> = {
   uploading: "Reading…",
   waiting: "Rate limited — retrying",
   queued: "Reading in the background",
-  failed: "Failed",
+  failed: "Didn’t finish",
   skipped: "Skipped",
 };
 

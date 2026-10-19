@@ -1,5 +1,6 @@
-import { TIMED_OUT, withTimeout } from "@/lib/with-timeout";
 "use client";
+
+import { TIMED_OUT, withTimeout } from "@/lib/with-timeout";
 
 /**
  * API keys, the MCP endpoint, and where to point Zapier.

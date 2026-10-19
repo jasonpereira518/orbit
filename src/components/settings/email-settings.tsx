@@ -1,5 +1,6 @@
-import { withTimeout } from "@/lib/with-timeout";
 "use client";
+
+import { withTimeout } from "@/lib/with-timeout";
 
 import { useState, useTransition } from "react";
 import { saveDefaultSendProviderAction, saveEmailSignatureAction } from "@/actions/settings";

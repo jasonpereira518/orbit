@@ -1,5 +1,6 @@
-import { TOAST_COPY } from "@/lib/toast-copy";
 "use client";
+
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 import { useTransition } from "react";
 import { Loader2 } from "lucide-react";

@@ -209,7 +209,7 @@ export function MobileCaptureButton({
             <span
               aria-hidden
               className={cn(
-                "size-2 rounded-full bg-red-500",
+                "size-2 rounded-full bg-destructive",
                 state === "recording" && !reducedMotion && "animate-pulse"
               )}
             />

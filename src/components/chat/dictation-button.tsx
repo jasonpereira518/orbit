@@ -143,7 +143,7 @@ export function DictationButton({
               // offset leaves the bubble overlapping the pill's top border.
               "absolute bottom-full left-1/2 z-20 mb-3 -translate-x-1/2",
               "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full",
-              "border border-border/70 bg-popover px-2.5 py-1 text-2xs text-primary shadow-md",
+              "border border-border-subtle bg-popover px-2.5 py-1 text-2xs text-primary shadow-md",
               // Load-bearing: the bubble overhangs the composer and would otherwise
               // swallow clicks aimed at the text field.
               "pointer-events-none",
@@ -171,7 +171,7 @@ export function DictationButton({
       )}
 
       {showSpinner ? (
-        <Loader2 className="relative size-4 animate-spin" />
+        <Loader2 className="relative size-4 motion-safe:animate-spin" />
       ) : state === "listening" ? (
         // Bars, not a mic glyph: a mic means "you can dictate", moving bars mean "it is
         // hearing you right now". `MicOff` was rejected — it reads as muted, the opposite.

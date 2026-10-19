@@ -17,7 +17,7 @@ export function ChatRailPlaceholder() {
   return (
     <div
       aria-hidden
-      className="hidden shrink-0 border-r border-border/60 md:block"
+      className="hidden shrink-0 border-r border-border-subtle md:block"
       style={{ width: open ? RAIL_OPEN_WIDTH : RAIL_CLOSED_WIDTH }}
     >
       {open ? (

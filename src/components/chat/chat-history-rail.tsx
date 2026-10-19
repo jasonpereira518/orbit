@@ -101,7 +101,7 @@ function ChatHistoryRailImpl<T extends ThreadLike>({
 
   return (
     <motion.div
-      className={cn("hidden shrink-0 overflow-hidden border-r border-border/60 md:block", className)}
+      className={cn("hidden shrink-0 overflow-hidden border-r border-border-subtle md:block", className)}
       initial={false}
       animate={{ width: open ? RAIL_OPEN_WIDTH : RAIL_CLOSED_WIDTH }}
       transition={{ duration: 0.22, ease: EASE_HOUSE }}

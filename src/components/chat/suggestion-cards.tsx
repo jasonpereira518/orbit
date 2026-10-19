@@ -169,7 +169,7 @@ function Scroller({ children }: { children: React.ReactNode }) {
 }
 
 const PILL_CLASS = cn(
-  "reveal-mount inline-flex items-center gap-1.5 border border-border/70 bg-card/80 px-3 text-left",
+  "reveal-mount inline-flex items-center gap-1.5 border border-border-subtle bg-card/80 px-3 text-left",
   PILL_BOX,
   PILL_MAX_W,
   "transition-[border-color,box-shadow,background-color]",
