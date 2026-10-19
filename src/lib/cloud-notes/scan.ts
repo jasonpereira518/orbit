@@ -3,6 +3,7 @@ import { getDb, rowsOf } from "@/db";
 import { cloudNoteFiles, cloudNoteSources, userSettings } from "@/db/schema";
 import {
   cloudAccessToken,
+  CloudCursorExpiredError,
   listChanges,
   listRecentFiles,
   readFileText,
@@ -75,20 +76,35 @@ export async function scanSource(userId: string, provider: CloudProvider, deps: 
     // 1. What to look at: the last 30 days on the first pass, the changes since the cursor after.
     let files: CloudFile[];
     let cursor: string;
-    const fromBackfill = !source.backfilledAt;
+    let fromBackfill = !source.backfilledAt;
+    const lookBack = async () => {
+      const since = new Date(now.getTime() - BACKFILL_DAYS * 24 * 60 * 60_000);
+      return (await listRecentFiles(ctx, provider, { since, pageSize: 50 })).files;
+    };
     if (fromBackfill) {
       // The "from now on" cursor first, so nothing edited during the look-back is missed.
       cursor = source.cursor ?? (await startChangeCursor(ctx, provider));
-      const since = new Date(now.getTime() - BACKFILL_DAYS * 24 * 60 * 60_000);
-      files = (await listRecentFiles(ctx, provider, { since, pageSize: 50 })).files;
+      files = await lookBack();
     } else {
       cursor = source.cursor ?? (await startChangeCursor(ctx, provider));
       files = [];
-      for (let page = 0; page < MAX_CHANGE_PAGES; page++) {
-        const res = await listChanges(ctx, provider, cursor);
-        files.push(...res.files);
-        cursor = res.cursor;
-        if (res.done) break;
+      try {
+        for (let page = 0; page < MAX_CHANGE_PAGES; page++) {
+          const res = await listChanges(ctx, provider, cursor);
+          files.push(...res.files);
+          cursor = res.cursor;
+          if (res.done) break;
+        }
+      } catch (err) {
+        // A dead cursor (OneDrive 410 resyncRequired, Drive invalid pageToken) used to be
+        // kept and replayed every hour, so the drive was never scanned again. Start over
+        // exactly as a first pass does: a fresh cursor, then the 30-day look-back. Docs
+        // already filed are skipped below by `cloud_note_files`, and the look-back counts as
+        // backlog, so auto-extract does not fire on a window the person never asked about.
+        if (!(err instanceof CloudCursorExpiredError)) throw err;
+        cursor = await startChangeCursor(ctx, provider);
+        files = await lookBack();
+        fromBackfill = true;
       }
     }
 

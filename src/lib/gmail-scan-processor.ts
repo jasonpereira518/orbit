@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import { classifyAiError, friendlyError } from "@/lib/errors";
+import { classifyAiError, friendlyError, ReauthRequiredError } from "@/lib/errors";
 import { getDb } from "@/db";
 import {
   gmailConnections,
@@ -704,6 +704,14 @@ export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps 
             })
             .where(eq(importJobRows.id, row.id));
         } catch (err) {
+          // The session, not the sender: every later fetch would fail the same way, so the
+          // scan fails with needs_reconnect (row left pending, watermark untouched) — the
+          // same as the Outlook scan. Recording it as a skipped sender is what used to step
+          // the watermark over a whole window nobody could read.
+          if (err instanceof ReauthRequiredError) {
+            await failImport(importId, err);
+            return;
+          }
           // The key, not the sender: stop now, row left pending, watermark untouched.
           const keyProblem = scanAbortReason(err);
           if (keyProblem) {

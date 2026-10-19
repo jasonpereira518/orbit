@@ -20,7 +20,7 @@ import {
 } from "@/lib/drive";
 import { ReauthRequiredError } from "@/lib/errors";
 import { googleFetchWithRetry } from "@/lib/google-fetch";
-import { graphFetchWithRetry } from "@/lib/graph-fetch";
+import { assertGraphUrl as assertGraphLink, GRAPH_API, graphFetchWithRetry } from "@/lib/graph-fetch";
 import { DRIVE_MIME } from "@/lib/imports/drive-triage";
 
 export type CloudProvider = "google" | "microsoft";
@@ -41,8 +41,20 @@ export type CloudFile = {
 
 export type CloudCtx = { token: string; fetchImpl?: typeof fetch };
 
+/**
+ * The stored change cursor is dead: OneDrive's `410 Gone` (`resyncRequired`) for a delta
+ * token it no longer tracks, or Drive's `400 Invalid Value` on `pageToken`. Both providers'
+ * contract is "discard it and start over", so this is neither a dead grant nor a transient
+ * failure — retrying the same cursor can never succeed.
+ */
+export class CloudCursorExpiredError extends Error {
+  constructor(provider: CloudProvider) {
+    super(provider === "google" ? "Drive change cursor expired" : "OneDrive delta link expired");
+    this.name = "CloudCursorExpiredError";
+  }
+}
+
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
-const GRAPH_API = "https://graph.microsoft.com/v1.0";
 const TIMEOUT_MS = 15_000;
 /** OneDrive files bigger than this are never downloaded — no notes doc is 10 MB. */
 const MAX_ONEDRIVE_BYTES = 10 * 1024 * 1024;
@@ -89,6 +101,11 @@ async function googleJson<T>(ctx: CloudCtx, url: string): Promise<T> {
     throw new ReauthRequiredError("Google Drive needs permission to list your Docs — reconnect Google");
   }
   if (res.status === 429) throw new DriveRateLimitedError();
+  if (res.status === 400) {
+    // Drive's answer to a page token it no longer accepts names the parameter.
+    const body = await res.text().catch(() => "");
+    if (/"location"\s*:\s*"pageToken"/.test(body)) throw new CloudCursorExpiredError("google");
+  }
   if (!res.ok) throw new Error(`Drive returned ${res.status}`);
   return (await res.json()) as T;
 }
@@ -127,6 +144,8 @@ async function graphResponse(ctx: CloudCtx, url: string): Promise<Response> {
   if (res.status === 403) throw new ReauthRequiredError("OneDrive needs permission to read your files — reconnect Microsoft");
   if (res.status === 429) throw new DriveRateLimitedError();
   if (res.status === 404) throw new DriveFileUnavailableError();
+  // Only a delta link answers 410: the token has expired and Graph wants a fresh delta.
+  if (res.status === 410) throw new CloudCursorExpiredError("microsoft");
   if (!res.ok) throw new Error(`OneDrive returned ${res.status}`);
   return res;
 }
@@ -142,7 +161,7 @@ function graphQuoted(value: string): string {
 
 /** A cursor or page link is only ever one Graph handed back — never follow anything else with the token. */
 function assertGraphUrl(url: string) {
-  if (!url.startsWith(`${GRAPH_API}/`)) throw new Error("Bad OneDrive cursor");
+  assertGraphLink(url, "Bad OneDrive cursor");
 }
 
 // ── Listing ──────────────────────────────────────────────────────────────────
