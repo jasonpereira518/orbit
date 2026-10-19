@@ -1991,6 +1991,8 @@ export function buildChatPrompt({
   hasRecruiters: boolean;
   /** Every source cited in the prompt, minted after budgeting — see `@/lib/chat-evidence`. */
   evidence: Record<string, EvidenceSource>;
+  /** This prompt's fence nonce, so a scan of `user` can tell its own fences from a forged one. */
+  fenceNonce: string;
 } {
   // One nonce for every untrusted fence in this prompt. See `focusBlock` below for why the
   // delimiters are nonce-bearing rather than a fixed sigil.
@@ -2274,7 +2276,7 @@ ${hasRecruiters ? "When the question is about recruiters, prefer recruiters the 
   // final word on precedence. A prompt rule is a filter, not a control — `guardModelOutput`
   // (applied to every answer before it is stored) is what backs it in code.
   const systemCore = `${systemCoreRules}\n\n${UNTRUSTED_DATA_RULES}`;
-  return { user, systemCore, hasRecruiters, evidence: Object.fromEntries(ledger.entries()) };
+  return { user, systemCore, hasRecruiters, evidence: Object.fromEntries(ledger.entries()), fenceNonce };
 }
 
 /**

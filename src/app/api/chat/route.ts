@@ -8,6 +8,7 @@ import { requireAuthenticatedUser, type AuthenticatedUser } from "@/lib/auth";
 import { buildChatBlocks, prepareChatContext } from "@/lib/chat-context";
 import { expandLists, peopleIdsIn, stripInvalidDirectives } from "@/lib/chat-directives";
 import { answerDeadlineMs, maybeGather } from "@/lib/chat-gather";
+import { rollBackApplied } from "@/lib/chat-auto-apply";
 import { answerWithLookups, chatLoopEnabled, type ChatAgentRun } from "@/lib/chat-agent-loop";
 import { isHandle } from "@/lib/meeting-context";
 import { CHAT_QUESTION_TOO_LONG_MESSAGE, isChatQuestionTooLong } from "@/lib/chat-question";
@@ -381,6 +382,8 @@ export async function POST(request: Request) {
         // Persisted before `done` so the client learns the real message id and title. The
         // CLEANED text, not what streamed live — an invented citation was already visible
         // for that turn, but a reload should never show a dead `[e99]` nobody can resolve.
+        // A turn that applied changes itself and then failed to save would leave them with no card
+        // to undo from (`@/lib/chat-auto-apply`), so they are put back.
         const saved = await persistAssistantTurn(userId, threadId, ctx.thread?.title ?? null, ctx.q, {
           // Lists are stored as the table they rendered as, so a reload needs no block data;
           // people blocks stay as directives and re-render from `recommendations`.
@@ -406,6 +409,9 @@ export async function POST(request: Request) {
             // but the last, which writes the answer).
             toolRounds: research?.rounds ?? ("run" in result ? Math.max(0, (result.run as ChatAgentRun).rounds - 1) : 0),
           },
+        }).catch(async (err) => {
+          await rollBackApplied(userId, proposedActions);
+          throw err;
         });
         send({
           type: "done",
