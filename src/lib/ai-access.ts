@@ -176,7 +176,7 @@ export function managedAiSwitchedOff(): boolean {
  * for has spent its pool.
  */
 const PAUSE_TTL_MS = 30_000;
-type PoolState = { paused: boolean; spent: ReadonlySet<AiProvider> };
+type PoolState = { paused: boolean; spent: ReadonlySet<AiProvider>; webSearchPaused: boolean };
 let pauseCache: (PoolState & { at: number }) | null = null;
 
 export function managedAiPausedDefault(): boolean {
@@ -237,21 +237,28 @@ export async function managedPoolState(now = Date.now()): Promise<PoolState> {
     const [result, spentMicros] = await Promise.all([
       db.execute(sql`
         SELECT (SELECT managed_ai_paused FROM site_settings WHERE id = 1) AS paused,
+               (SELECT web_search_paused FROM site_settings WHERE id = 1) AS web_search_paused,
                (SELECT array_agg(DISTINCT context->>'provider') FROM error_events
                  WHERE source = ${ERROR_SOURCES.managedAi} AND kind = 'quota'
                    AND created_at > now() - interval '2 hours') AS dry
       `),
       managedPoolsSpent(new Date(now)),
     ]);
-    const [row] = rowsOf<{ paused: boolean | null; dry: string[] | null }>(result);
+    const [row] = rowsOf<{ paused: boolean | null; web_search_paused: boolean | null; dry: string[] | null }>(result);
     const spent = new Set<AiProvider>([
       ...(Object.keys(spentMicros) as AiProvider[]).filter((p) => (spentMicros[p] ?? 0) >= MANAGED_AI_POOLS[p]!.capMicros),
       ...((row?.dry ?? []) as AiProvider[]),
     ]);
-    pauseCache = { paused: row?.paused ?? managedAiPausedDefault(), spent, at: now };
+    pauseCache = {
+      paused: row?.paused ?? managedAiPausedDefault(),
+      spent,
+      webSearchPaused: row?.web_search_paused ?? false,
+      at: now,
+    };
     return pauseCache;
   } catch {
-    return pauseCache ?? { paused: true, spent: new Set() };
+    // Web search stays up on a read failure: its budget buckets are writes that fail closed.
+    return pauseCache ?? { paused: true, spent: new Set(), webSearchPaused: false };
   }
 }
 
@@ -260,6 +267,14 @@ export async function managedAiPaused(now = Date.now()): Promise<boolean> {
   if (state.paused) return true;
   const held = MANAGED_PROVIDER_ORDER.filter((p) => managedKey(p));
   return held.length > 0 && held.every((p) => state.spent.has(p));
+}
+
+/**
+ * The admin console's web-search switch (`site_settings.web_search_paused`), read in the same
+ * cached pass as the managed-AI switch. Applies to every key, the account's own included.
+ */
+export async function webSearchPaused(now = Date.now()): Promise<boolean> {
+  return (await managedPoolState(now)).webSearchPaused;
 }
 
 /** For the admin switch: forget the cached answer so this instance sees the change at once. */
