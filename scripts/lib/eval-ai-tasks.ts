@@ -16,6 +16,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "../../src/db";
 import { actionItems, chatMessages, chatThreads, contactTags, contacts, interactions, memoryChunks, reminders, tags } from "../../src/db/schema";
 import { labelAnswer } from "../../src/lib/chat-abstention";
+import type { StoredProposedAction } from "../../src/lib/chat-proposed-actions";
 import { citedIds } from "../../src/lib/chat-evidence";
 import { runCaptureParse } from "../../src/lib/capture-parse";
 import { classifyRecruiterSender, RECRUITER_CONFIDENCE_FLOOR, RULED_OUT_VERDICT } from "../../src/lib/recruiter-scan";
@@ -1499,6 +1500,8 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
   const abstainedRight = tally();
   /** Cases with an answer in the records that came back labelled `abstained`. */
   let falseAbstentions = 0;
+  /** Write requests that proposed the right change, and questions that proposed none. */
+  const proposedRight = tally();
   const listed = tally();
   const counted = tally();
   const resolved = tally();
@@ -1595,6 +1598,14 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
         falseAbstentions++;
         why.push("said it did not know");
       }
+      if (chatLoopEnabled() && (c.mustPropose?.length || c.mustNotPropose)) {
+        const tools = ("proposals" in result ? (result.proposals as StoredProposedAction[]) : []).flatMap((p) =>
+          p.args.kind === "tool" ? [p.args.tool] : []
+        );
+        const ok = c.mustNotPropose ? tools.length === 0 : tools.some((t) => c.mustPropose!.includes(t));
+        count(proposedRight, ok);
+        if (!ok) why.push(c.mustNotPropose ? `proposed ${tools.join(", ")} for a question` : `proposed ${tools.join(", ") || "nothing"}, wanted ${c.mustPropose!.join(" or ")}`);
+      }
       if (c.expectList) {
         const ok = ctx.orgRosters.some((r) => r.kind === "filter" && r.total === c.expectList!.total);
         count(listed, ok);
@@ -1635,6 +1646,7 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
       if (c.expectCount !== undefined) count(counted, false);
       if (c.expectPerson) count(resolved, false);
       if (c.mustAbstain) count(abstainedRight, false);
+      if (chatLoopEnabled() && (c.mustPropose?.length || c.mustNotPropose)) count(proposedRight, false);
       for (let i = 0; i < (c.mustSay?.length ?? 0); i++) count(said, false);
       log(`  FAIL chat/${c.id} — ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -1656,6 +1668,7 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
       falseAbstentions,
       ...(cases.some((c) => c.mustAbstain) ? { abstainAccuracy: rate(abstainedRight) } : {}),
       ...(cases.some((c) => c.mustSay?.length) ? { factRecall: rate(said) } : {}),
+      ...(proposedRight.total ? { proposalAccuracy: rate(proposedRight) } : {}),
     },
   };
 }

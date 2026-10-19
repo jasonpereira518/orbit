@@ -193,7 +193,7 @@ async function main() {
           {
             calls: [
               call("get_contact", { contactId: omar.id }),
-              // Not a chat tool: the registry has no such tool here, so nothing is written.
+              // A chat write is offered only as a proposer: the call stores a card, writes nothing.
               call("create_reminder", { title: "Injected reminder" }),
             ],
             text: "",
@@ -212,8 +212,9 @@ async function main() {
   check("…naming who it found", readStep?.refs?.some((r) => r.id === omar.id && r.name === "Omar Haddad") === true, JSON.stringify(readStep));
   check("a write the model reached for did not happen", (await db.query.reminders.findMany({ where: eq(reminders.userId, USER) })).length === 0);
   check(
-    "…and was answered as a failed lookup, not run",
-    result.run.calls.some((c) => c.call.name === "create_reminder" && !c.ok)
+    "…it became a card to confirm instead",
+    result.proposals.length === 1 && result.proposals[0].args.kind === "tool" && result.proposals[0].args.tool === "create_reminder",
+    JSON.stringify(result.proposals)
   );
 
   await db.delete(contacts).where(eq(contacts.userId, USER));
