@@ -12,6 +12,12 @@
  *   pure    — no database, no network. Safe anywhere.
  *   pglite  — uses `getDb()` against a throwaway PGlite directory (via the preamble).
  *   manual  — wall-clock budgets or long runs; not part of `--ci`.
+ *   bug     — `smoke-bug-*.ts`: a defect documented but not yet fixed. Each one asserts the
+ *             CORRECT behaviour, so it fails while the bug is there (see
+ *             scripts/smoke/check.ts → knownBug). Not part of `--ci`; `--bugs` runs only
+ *             these and inverts the verdict: exit 3 (still broken, as documented) passes,
+ *             exit 0 means the bug is FIXED and fails the run until the script is promoted
+ *             to an ordinary tier, and any other exit is a real failure.
  *
  * Scripts run SEQUENTIALLY: PGlite is single-writer, and the pglite tier shares one
  * throwaway directory per run so the DDL bootstraps once, not fifty times.
@@ -21,18 +27,21 @@
  * single-writer rule still holds, and the shards together cover every script exactly once.
  * `--list` prints the selection and exits, for checking a partition without running it.
  *
- * Run: npx tsx scripts/run-smoke.ts [--ci] [--check] [--shard i/n] [--list] [--only <name>...]
+ * Run: npx tsx scripts/run-smoke.ts [--ci | --bugs] [--check] [--shard i/n] [--list] [--only <name>...]
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { EXIT_KNOWN_BUG } from "./smoke/check";
 
-type Tier = "pure" | "pglite" | "manual";
+type Tier = "pure" | "pglite" | "manual" | "bug";
 
 /** Every smoke script, by tier. `--check` fails when a script on disk is missing here. */
 const MANIFEST: Record<string, Tier> = {
   // pure ------------------------------------------------------------------------------
+  "smoke-test-harness": "pure", // the fixtures, fetch mock and known-bug exit codes themselves
   "smoke-friendly-error": "pure",
   "smoke-ai-notice-copy": "pure",
   "smoke-interaction-edit": "pure",
@@ -129,6 +138,40 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-commands": "pure",
   "smoke-chat-refine": "pure",
   "smoke-cross-tenant-refs": "pglite",
+  "smoke-tenant-isolation": "pglite", // every id-taking tool and the v1 API, called with another account's ids
+  "smoke-extension-auth": "pglite",
+  "smoke-resend-signature": "pglite",
+  "smoke-cron-gates": "pglite", // every public route has a gate; every cron route answers 401 unauthenticated
+  "smoke-token-routes": "pglite",
+  // Third-party contracts: real response shapes, errors and malformed bodies, fetch mocked.
+  "smoke-contract-gmail": "pure",
+  "smoke-contract-microsoft-sync": "pure",
+  "smoke-contract-events-cloud": "pure",
+  "smoke-contract-oauth-tokens": "pglite",
+  "smoke-contract-llm": "pglite",
+  // Fixed connector bugs, promoted from the bug tier.
+  "smoke-gmail-401-reauth": "pglite",
+  "smoke-graph-nextlink-guard": "pure",
+  "smoke-graph-sync-resilience": "pure",
+  "smoke-cloud-notes-dead-cursor": "pglite",
+  // Fixed billing, export and AI bugs, promoted from the bug tier.
+  "smoke-stripe-revocation-regrant": "pglite",
+  "smoke-stripe-deleted-account-resurrect": "pglite",
+  "smoke-credit-period-overflow": "pglite",
+  "smoke-admin-export-formula": "pglite",
+  "smoke-relationship-trivial-excerpt": "pglite",
+  "smoke-llm-truncated-json": "pglite",
+  // Fixed contact bugs, promoted from the bug tier.
+  "smoke-merge-children": "pglite",
+  "smoke-merge-email-sends": "pglite",
+  "smoke-contact-delete-ghost-suggestion": "pglite",
+  "smoke-linkedin-slug": "pglite",
+  // Contacts, exports, billing and AI validation.
+  "smoke-merge-coverage": "pglite", // every FK and id column pointing at contacts is handled by merge, or named as a gap
+  "smoke-data-export-isolation": "pglite",
+  "smoke-relationship-malformed": "pglite",
+  "smoke-billing-helpers": "pure",
+  "smoke-credit-ledger-pure": "pure",
   "smoke-draft-follow-up-result": "pglite",
   "smoke-relationship-schema": "pglite",
   "smoke-ai-guardrails": "pglite",
@@ -604,6 +647,7 @@ const MANIFEST: Record<string, Tier> = {
   // manual ----------------------------------------------------------------------------
   "smoke-import-perf": "manual", // wall-clock budgets; run by hand or nightly
   "smoke-stripe-testclock": "manual", // Stripe sandbox + test clocks; several minutes
+  // bug: documented defects, expected to fail (see the header) ---------------------------
 };
 
 const TIMEOUT_MS: Partial<Record<string, number>> = {
@@ -648,6 +692,12 @@ function check(): string[] {
     if (tier === "pure" && DB_IMPORT.test(src)) {
       problems.push(`${name}: pure tier imports ../src/db — move it to the pglite tier`);
     }
+    if (tier === "bug" && DB_IMPORT.test(src) && !hasPreamble) {
+      problems.push(`${name}: bug tier touches the database, so it must start with import "./smoke/_env"`);
+    }
+    if ((tier === "bug") !== name.startsWith("smoke-bug-")) {
+      problems.push(`${name}: the bug tier is exactly the smoke-bug-*.ts scripts`);
+    }
   }
   return problems;
 }
@@ -655,6 +705,7 @@ function check(): string[] {
 function main() {
   const args = process.argv.slice(2);
   const ci = args.includes("--ci");
+  const bugs = args.includes("--bugs");
   const checkOnly = args.includes("--check");
   const onlyIdx = args.indexOf("--only");
   const only = onlyIdx >= 0 ? args.slice(onlyIdx + 1).filter((a) => !a.startsWith("--")) : null;
@@ -682,7 +733,9 @@ function main() {
   if (checkOnly) process.exit(0);
 
   const selected = Object.entries(MANIFEST)
-    .filter(([name, tier]) => (only ? only.includes(name) : ci ? tier !== "manual" : true))
+    .filter(([name, tier]) =>
+      only ? only.includes(name) : bugs ? tier === "bug" : ci ? tier !== "manual" && tier !== "bug" : tier !== "bug"
+    )
     .map(([name]) => name)
     // Round-robin over manifest order, so the few long scripts (see TIMEOUT_MS) land in
     // different shards rather than one shard inheriting a whole block of them.
@@ -697,6 +750,12 @@ function main() {
   const pgliteDir = mkdtempSync(join(tmpdir(), "orbit-smoke-run-"));
   const env: NodeJS.ProcessEnv = { ...process.env, ORBIT_PGLITE_DIR: pgliteDir, FORCE_COLOR: "0" };
   delete env.DATABASE_URL; // belt and braces; the preamble does this too
+  // Hermetic runs (see scripts/smoke/hermetic.mjs): DNS is answered locally, because the SSRF
+  // guard resolves hosts even under a stubbed fetch, and the real fetch refuses anything but
+  // loopback, so a missed stub fails at once instead of reaching a live service. NODE_OPTIONS
+  // rather than an argv flag because tsx runs the script in a child process of its own.
+  const hermetic = pathToFileURL(join(process.cwd(), "scripts", "smoke", "hermetic.mjs")).href;
+  env.NODE_OPTIONS = [env.NODE_OPTIONS, `--import ${hermetic}`].filter(Boolean).join(" ");
 
   // The CLI entry point rather than the `.bin` shim.
   //
@@ -735,7 +794,10 @@ function main() {
     if (r.stderr) process.stderr.write(r.stderr);
     const ms = Date.now() - started;
     const timedOut = r.error && (r.error as NodeJS.ErrnoException).code === "ETIMEDOUT";
-    const ok = !timedOut && r.status === 0;
+    // A bug-tier script under --bugs passes by still reproducing its documented bug
+    // (exit 3), and FAILS by passing: the fix has landed and the script needs promoting.
+    const expectBug = bugs && MANIFEST[name] === "bug";
+    const ok = !timedOut && (expectBug ? r.status === EXIT_KNOWN_BUG : r.status === 0);
 
     // A script that degraded rather than fully verified something signals it with a
     // "PENDING: <reason>" line on STDERR — stderr, not stdout, precisely so that stdout can
@@ -753,7 +815,13 @@ function main() {
       pending,
       note: timedOut
         ? `timed out after ${timeout / 1000}s`
-        : r.status !== 0
+        : expectBug
+          ? r.status === EXIT_KNOWN_BUG
+            ? "known bug still reproduces (expected)"
+            : r.status === 0
+              ? "FIXED — every known-bug check now passes; move it out of the bug tier"
+              : `exit ${r.status ?? r.signal} — an ordinary check failed, not just the known bug`
+          : r.status !== 0
           ? `exit ${r.status ?? r.signal}`
           : pending
             ? `PENDING: ${pendingReasons.join("; ")}`

@@ -133,7 +133,8 @@ async function main() {
     try {
       await fetchCalendarPage({
         accessToken: "x",
-        cursor: { syncToken: "stale" },
+        // A real Graph delta link: a foreign one is now refused before any request is sent.
+        cursor: { syncToken: "https://graph.microsoft.com/v1.0/me/calendarView/delta?$deltatoken=stale" },
         ownerEmail: OWNER,
         fetchImpl: impl,
       });
