@@ -5,6 +5,7 @@ import { USAGE_EVENT_RETENTION_DAYS } from "@/lib/admin-health";
 import type { Grain } from "@/lib/admin-trends";
 import { managedCostSql } from "@/lib/ai-access";
 import { internalAccountSql } from "@/lib/analytics-internal";
+import { signupChannelSql } from "@/lib/attribution";
 import {
   compedAccountSql,
   fallbackMonthlyCents,
@@ -511,11 +512,7 @@ export async function revenueAtRiskCents(now = new Date()): Promise<{
 export async function paidSignupsByChannel(since: Date) {
   const db = await getDb();
   const result = await db.execute(sql`
-    SELECT coalesce(
-             nullif(s.signup_utm_source, ''),
-             nullif(s.signup_referrer, ''),
-             CASE WHEN s.signup_attributed_at IS NULL THEN 'unattributed' ELSE 'direct' END
-           ) AS channel,
+    SELECT ${signupChannelSql("s")} AS channel,
            count(*)::int AS signups,
            count(*) FILTER (WHERE ${paidAccountSql(sql`s.user_id`)})::int AS paid
     FROM user_settings s

@@ -3,6 +3,7 @@ import { getDb, rowsOf } from "@/db";
 import { ACTIVATION_WINDOW_DAYS, activatedSql, intentionalActionsSince } from "@/lib/activity";
 import { managedCostSql } from "@/lib/ai-access";
 import { internalAccountSql } from "@/lib/analytics-internal";
+import { signupChannelSql } from "@/lib/attribution";
 import { speechSpendMicros } from "@/lib/speech-credit";
 
 /**
@@ -24,13 +25,10 @@ const num = (v: unknown) => {
 const real = (col: string) => sql`NOT ${internalAccountSql(sql.raw(col))}`;
 
 /**
- * Where an account came from, first touch: the campaign source, else the referring host, else
- * direct. `unattributed` is an account never attributed at all (an API-only account, or one
- * from before the capture existed), kept apart from `direct` so it is not mistaken for it.
+ * Where an account came from, first touch. The one definition lives in `attribution.ts`
+ * (`signupChannelSql`), shared with the paid-by-channel reader, so the two cannot drift.
  */
-export const CHANNEL_SQL = sql.raw(
-  `coalesce(nullif(s.signup_utm_source, ''), nullif(s.signup_referrer, ''), CASE WHEN s.signup_attributed_at IS NULL THEN 'unattributed' ELSE 'direct' END)`
-);
+export const CHANNEL_SQL = signupChannelSql("s");
 
 /* ------------------------------------------------------------- north star -------- */
 

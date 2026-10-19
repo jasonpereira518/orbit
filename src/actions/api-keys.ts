@@ -25,6 +25,7 @@ import { requireUserId } from "@/lib/auth";
 import { isPaywallError, requireEntitlement } from "@/lib/entitlements";
 import { generateApiKey, type ApiKeyKind, type ApiKeyScope } from "@/lib/api/keys";
 import { getAppBaseUrl } from "@/lib/app-url";
+import { trackMcpConnected } from "@/lib/mcp/events";
 
 export type ApiKeySummary = {
   id: string;
@@ -122,6 +123,8 @@ export async function createApiKey(
     .returning();
 
   revalidatePath("/settings");
+  if (kind === "mcp_url") trackMcpConnected({ userId, client: "other", via: "api_key" });
+
   return {
     ok: true,
     summary: {
