@@ -6,7 +6,7 @@ import { ChatRailPlaceholder } from "@/components/chat/chat-rail-placeholder";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
-function PageHeaderSkeleton({
+export function PageHeaderSkeleton({
   subtitle = true,
   actions = false,
 }: {

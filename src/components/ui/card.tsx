@@ -3,29 +3,37 @@ import * as React from "react"
 import { cn } from "@/lib/utils"
 
 /**
- * A card surface. Deliberately has no hover treatment of its own: a card is not
- * interactive by default, and the ones that are reach for `CARD_HOVER` from
- * `src/lib/interaction.ts` so every clickable card in the app lifts the same way.
+ * A card surface.
  *
- * (There was once an `interactive` prop here carrying a third, different hover
- * language — ring + shadow + a dark-mode inset highlight. It had zero call sites
- * app-wide and its transition list named only `box-shadow` while the rule also
- * changed the ring, so the ring snapped while the shadow eased. Removed rather
- * than fixed; `CARD_HOVER` is the one card treatment.)
+ * This is the house card: `rounded-xl`, the `border-subtle` hairline, `bg-card`. It used to
+ * be a ring-based variant that nobody used (23 importers against ~280 hand-rolled
+ * `rounded-2xl border border-border/70 bg-card` divs). The hand-rolled look won; the
+ * primitive now matches it, so migrating a div is a rename.
+ *
+ * Deliberately no hover treatment of its own: a card is not interactive by default, and the
+ * ones that are reach for `CARD_HOVER` from `src/lib/interaction.ts` so every clickable card
+ * in the app lifts the same way.
+ *
+ * `size` sets the padding (`sm` 16px, default 20px, `lg` 24px) through `--card-spacing`,
+ * which the header, content and footer all read. `variant="inset"` is the recessed panel
+ * that sits inside another card.
  */
 function Card({
   className,
   size = "default",
+  variant = "default",
   ...props
 }: React.ComponentProps<"div"> & {
-  size?: "default" | "sm"
+  size?: "default" | "sm" | "lg"
+  variant?: "default" | "inset"
 }) {
   return (
     <div
       data-slot="card"
       data-size={size}
+      data-variant={variant}
       className={cn(
-        "group/card flex flex-col gap-(--card-spacing) overflow-hidden rounded-xl bg-card py-(--card-spacing) text-sm text-card-foreground ring-1 ring-foreground/10 [--card-spacing:--spacing(4)] has-data-[slot=card-footer]:pb-0 has-[>img:first-child]:pt-0 data-[size=sm]:[--card-spacing:--spacing(3)] data-[size=sm]:has-data-[slot=card-footer]:pb-0 *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl",
+        "group/card flex flex-col gap-(--card-spacing) overflow-hidden rounded-xl border border-border-subtle bg-card py-(--card-spacing) text-sm text-card-foreground [--card-spacing:--spacing(5)] has-data-[slot=card-footer]:pb-0 has-[>img:first-child]:pt-0 data-[size=sm]:[--card-spacing:--spacing(4)] data-[size=lg]:[--card-spacing:--spacing(6)] data-[variant=inset]:bg-surface-inset *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl",
         className
       )}
       {...props}
@@ -68,7 +76,7 @@ function CardTitle({
     <Comp
       data-slot="card-title"
       className={cn(
-        "font-heading text-base leading-snug font-medium group-data-[size=sm]/card:text-sm",
+        "font-heading text-base leading-snug font-medium text-ink group-data-[size=sm]/card:text-sm",
         className
       )}
       {...props}
@@ -114,7 +122,7 @@ function CardFooter({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="card-footer"
       className={cn(
-        "flex items-center rounded-b-xl border-t bg-muted/50 p-(--card-spacing)",
+        "flex items-center rounded-b-xl border-t border-border-subtle bg-surface-inset p-(--card-spacing)",
         className
       )}
       {...props}
