@@ -2,6 +2,56 @@ import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 
+/**
+ * Local rule: in a file whose first statement is the "use client" directive, a value import of
+ * server-only code is an error. Type-only imports are erased and always fine.
+ */
+const SERVER_ONLY_MODULES = new Set([
+  "@/db",
+  "@/lib/report-error",
+  "@/lib/ai-access",
+  "@/lib/auth",
+  "@/lib/internal-auth",
+  "@/lib/crypto",
+  "stripe",
+  "resend",
+  "twilio",
+  "@vercel/blob",
+  "drizzle-orm",
+  "@neondatabase/serverless",
+  "@electric-sql/pglite",
+]);
+const orbitPlugin = {
+  rules: {
+    "no-server-imports-in-client": {
+      meta: { type: "problem", schema: [] },
+      create(context) {
+        let isClient = false;
+        return {
+          Program(node) {
+            isClient = node.body.some((n) => n.type === "ExpressionStatement" && n.directive === "use client");
+          },
+          ImportDeclaration(node) {
+            if (!isClient || node.importKind === "type") return;
+            if (node.specifiers.length > 0 && node.specifiers.every((sp) => sp.importKind === "type")) return;
+            const source = node.source.value;
+            const banned =
+              SERVER_ONLY_MODULES.has(source) ||
+              source.startsWith("node:") ||
+              source.startsWith("@/db/");
+            if (banned) {
+              context.report({
+                node,
+                message: `"use client" files must not import server-only code (${source}). Call a server action, or import only types.`,
+              });
+            }
+          },
+        };
+      },
+    },
+  },
+};
+
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -51,6 +101,119 @@ const eslintConfig = defineConfig([
   {
     files: ["**/*.test.{ts,tsx}"],
     rules: { "@typescript-eslint/no-floating-promises": "off" },
+  },
+  // ---- Boundaries (plan P3.3) -------------------------------------------------------------
+  // The client/server split holds by discipline today (an import-graph search found no client
+  // file reaching the database or a server SDK) and `server-only` cannot enforce it: its
+  // default export throws under plain Node, which would break the ~285 tsx smoke scripts. A
+  // lint rule gives the same protection without that cost.
+  //
+  // 1. Only the AI gate may import a provider SDK (replaces the regex in smoke-ai-access).
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: [
+      "src/lib/ai.ts",
+      "src/lib/ai-tools.ts",
+      "src/lib/ai-access.ts",
+      "src/lib/ai-batch.ts",
+      "src/lib/ai-key-check.ts",
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: ["@anthropic-ai/sdk", "openai", "@google/genai"].map((name) => ({
+            name,
+            message: "Provider SDKs are imported only by src/lib/ai*.ts. Go through src/lib/ai.ts / ai-access.ts.",
+          })),
+          patterns: [{ group: ["@anthropic-ai/sdk/*", "openai/*", "@google/genai/*"], message: "Go through src/lib/ai.ts." }],
+        },
+      ],
+    },
+  },
+  // 2. A file that starts with "use client" must not reach the database or a server SDK.
+  //    Decided by the directive, not a path glob: src/components also holds server components
+  //    (which may import @/lib/auth), and 37 client files live in src/lib.
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["**/*.test.{ts,tsx}"],
+    plugins: { orbit: orbitPlugin },
+    rules: { "orbit/no-server-imports-in-client": "error" },
+  },
+  // 3. Domain code must not depend on UI components (value imports; types are tolerated).
+  //    Warning at today's count, ratcheted by scripts/lint-ratchet.mjs.
+  {
+    files: ["src/lib/**/*.{ts,tsx}"],
+    ignores: ["src/lib/**/use-*.{ts,tsx}", "**/*.test.{ts,tsx}"],
+    rules: {
+      "@typescript-eslint/no-restricted-imports": [
+        "warn",
+        { patterns: [{ group: ["@/components/*"], allowTypeImports: true, message: "src/lib must not depend on src/components; move the shared data into src/lib." }] },
+      ],
+    },
+  },
+  // 4. Route handlers should call lib, not server actions (an action re-runs auth and is a
+  //    public endpoint). Plan P6.2 removes the remaining imports.
+  {
+    files: ["src/app/api/**/*.{ts,tsx}"],
+    ignores: ["**/*.test.{ts,tsx}"],
+    rules: {
+      "@typescript-eslint/no-restricted-imports": [
+        "warn",
+        { patterns: [{ group: ["@/actions/*"], message: "Route handlers should call src/lib, not a server action." }] },
+      ],
+    },
+  },
+  // ---- Conventions (plan P3.4), warnings ratcheted at their current counts -----------------
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: [
+      "**/*.test.{ts,tsx}",
+      "src/test-support/**",
+      // Modules that own a family of variables. Everything else should read through
+      // src/lib/env.ts or one of these (plan P10.1).
+      "src/lib/env.ts",
+      "src/lib/app-url.ts",
+      "src/lib/ai-access.ts",
+      "src/lib/crypto.ts",
+      "src/lib/deepgram.ts",
+      "src/lib/internal-auth.ts",
+      "src/lib/waitlist-host.ts",
+      "src/db/index.ts",
+      "src/instrumentation*.ts",
+      "src/proxy.ts",
+    ],
+    rules: {
+      "no-restricted-syntax": [
+        "warn",
+        {
+          // Platform and framework variables (NODE_ENV, VERCEL*, NEXT_*) are fine anywhere.
+          selector:
+            "MemberExpression[object.object.name='process'][object.property.name='env'][property.name!=/^(NEXT_PUBLIC_|NODE_ENV$|VERCEL|NEXT_RUNTIME$|NEXT_PHASE$|CI$)/]",
+          message: "Read configuration through src/lib/env.ts (or the module that owns the variable), not process.env.",
+        },
+      ],
+    },
+  },
+  {
+    files: ["src/actions/**/*.ts"],
+    ignores: ["**/*.test.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "warn",
+        {
+          selector:
+            "MemberExpression[object.object.name='process'][object.property.name='env'][property.name!=/^(NEXT_PUBLIC_|NODE_ENV$|VERCEL|NEXT_RUNTIME$|NEXT_PHASE$|CI$)/]",
+          message: "Read configuration through src/lib/env.ts (or the module that owns the variable), not process.env.",
+        },
+        {
+          selector:
+            // `ok: false` and `ok: false as const` (the common spelling) both count.
+            "ReturnStatement > ObjectExpression:has(Property[key.name='ok']:matches([value.value=false], [value.expression.value=false])):has(Property[key.name='message'])",
+          message: "Return the shared ActionResult shape ({ ok: false, error }) from @/lib/errors, not { ok: false, message }.",
+        },
+      ],
+    },
   },
   // Server code reports caught errors through `reportError` (src/lib/report-error.ts), which
   // reaches Sentry and prints one greppable `[orbit:<where>] ref=<ref>` line. A bare

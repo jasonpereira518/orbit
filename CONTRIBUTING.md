@@ -73,7 +73,7 @@ Run the gate before opening a PR (CI runs the same):
 
 ```bash
 npm run typecheck
-npm run lint            # warning count must not rise
+npm run lint            # typed ESLint + per-rule warning ratchet (see below); ~3 min
 npm test                # smoke suite on throwaway PGlite; --shard i/n or --only <name> to narrow
 npm run test:unit       # node:test unit tests (src/**/*.test.ts, scripts/**/*.test.ts)
 npm run test:e2e        # Playwright against next dev with a stub AI server
@@ -84,6 +84,27 @@ Also useful: `npm run test:check` (every smoke script is in the manifest) and `n
 `npx tsx scripts/smoke-env-documented.ts` and `npx tsx scripts/smoke-schedules.ts` check the env and
 schedule docs. Smoke scripts run on a throwaway database and strip provider keys (`scripts/smoke/_env.ts`);
 set `SMOKE_ALLOW_REMOTE` or `SMOKE_ALLOW_PROVIDER_KEYS` only on purpose.
+
+### Lint rules and the ratchet
+
+`npm run lint` fails on any error, and on any rule whose warning count is **above**
+`scripts/lint-baseline.json`. Introduce a new convention as a warning at its current count;
+it can then only go down. After fixing some, run `npm run lint -- --update` to lock the lower
+number in (it refuses to raise a count unless you add `--allow-increase`, which needs a
+reason in the PR). `npm run lint -- src/lib` lints a subset (no baseline check); `npm run lint:raw`
+is plain ESLint.
+
+What is enforced as an **error**: typed rules (`no-floating-promises`, `no-misused-promises`,
+`switch-exhaustiveness-check`, `await-thenable`, `no-unnecessary-type-assertion`,
+`consistent-type-imports`), `no-console` in server code, provider SDKs imported only by
+`src/lib/ai*.ts`, and `"use client"` files importing the database or a server SDK (decided by the
+directive, so server components in `src/components` are fine). **Warnings** at their current count:
+`process.env` read outside `src/lib/env.ts` and the modules that own a variable, the `{ ok: false,
+message }` action result shape, `src/lib` importing UI components, and route handlers importing server
+actions.
+
+Fire-and-forget promises take an explicit `void`. An `eslint-disable` needs a `-- reason` after it,
+and an unused one is itself an error.
 
 ## Pull requests
 
