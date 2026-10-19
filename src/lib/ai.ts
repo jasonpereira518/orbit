@@ -9,6 +9,7 @@ import {
   anthropicClient,
   geminiClient,
   getAiAccessStatus,
+  isAiAccessError,
   isOpenAiShaped,
   openaiClient,
   openAiShapedClient,
@@ -723,11 +724,31 @@ async function retryingOnTruncation<I extends { operation: AiOperationId; maxOut
   }
 }
 
+/**
+ * A managed provider that just failed for Orbit (`runOnGrant` reworded it, and a spent pool was
+ * already taken out of the set) is tried once more: the retry mints a fresh grant, which lands
+ * on the next provider in `MANAGED_PROVIDER_ORDER` when the first was dropped. Before this the
+ * person saw an error and the NEXT call quietly worked. Only the call that failed is repeated,
+ * never one that produced an answer, and never on a person's own key.
+ */
+async function failingOverManaged<T>(signal: AbortSignal | undefined, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (!isAiAccessError(err) || err.reason !== "managed_unavailable" || signal?.aborted) throw err;
+    return run();
+  }
+}
+
 export async function completeJson(
   userId: string,
   input: Parameters<typeof completeJsonOnce>[1],
 ): Promise<string> {
-  return retryingOnTruncation(input, (i) => completeJsonOnce(userId, i), 4096);
+  return retryingOnTruncation(
+    input,
+    (i) => failingOverManaged(i.signal, () => completeJsonOnce(userId, i)),
+    4096,
+  );
 }
 
 /**
@@ -745,7 +766,11 @@ export async function completeMultimodalJson(
   userId: string,
   input: MultimodalInput,
 ): Promise<string> {
-  return retryingOnTruncation(input, (i) => completeMultimodalJsonOnce(userId, i), 4096);
+  return retryingOnTruncation(
+    input,
+    (i) => failingOverManaged(undefined, () => completeMultimodalJsonOnce(userId, i)),
+    4096,
+  );
 }
 
 async function completeMultimodalJsonOnce(
