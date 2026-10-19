@@ -1,4 +1,6 @@
 import { cancelBatchJobsFor } from "@/lib/ai-batch";
+import { reportError } from "@/lib/report-error";
+import { retireStripeCustomer } from "@/lib/stripe-customer-retire";
 import { del } from "@/lib/blob-lazy";
 import { revokeGoogleGrant } from "@/lib/oauth-revoke";
 import { OUTLOOK_SCAN_IMPORT_TYPE } from "@/lib/outlook-scan-type";
@@ -17,6 +19,7 @@ import {
   apiKeys,
   appleConnections,
   billingEvents,
+  interestListSignups,
   creditAccounts,
   creditGrants,
   creditHolds,
@@ -163,8 +166,11 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  * but does not: both of its foreign keys are `on delete set null`, so its rows outlive the
  * reminders and contacts they point at. `outlook_connections` has no parent at all.
  *
- * Deliberate exceptions — two operator ledgers are NOT deleted, and both use a column
+ * Deliberate exceptions — three audit ledgers are NOT deleted, and all use a column
  * named something other than `user_id` to keep them out of the user-scoped sweep:
+ *   - `account_audit_log.subject_user_id`: the account's own security events (keys, exports,
+ *     connections, plan changes), ending with the deletion itself (audit L-23). Ids and
+ *     labels only.
  *   - `admin_audit_log.target_user_id`: the operator's own record of privileged actions he
  *     took, chiefly comping a plan — which outranks every real billing signal and has no
  *     other trace. Purging it would mean deleting an account erases the evidence.
@@ -846,6 +852,11 @@ const PRESERVED_SETTINGS_COLUMNS = {
   radarDigestTz: true,
   radarDigestLastWeek: true,
   radarDigestUnsubTokenHash: true,
+  // Same reasoning for the credit email: a delete must not break the link in the last one.
+  creditEmailUnsubTokenHash: true,
+  // Part of the Clerk identity mirror: without it, a replayed older user.updated could revert
+  // the preserved email and name (audit L-07).
+  clerkUserUpdatedAt: true,
 } as const;
 
 async function purgeUserSettings(db: Db, userId: string, keepSettings: boolean) {
@@ -881,9 +892,56 @@ export class PurgeIncompleteError extends Error {
 export const PURGE_RESUME_AFTER_MS = 10 * 60 * 1000;
 const PURGE_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
+/** Keys a `billing_events.detail` writer could have filled with something personal. */
+const BILLING_DETAIL_PERSONAL_KEYS = ["email", "name", "customerEmail", "customerName", "targetUserId", "userId", "ip"] as const;
+
+/**
+ * The account-deletion half of the billing step (audit M-09), run only when the account
+ * itself is going (`keepSettings: false`), before the settings row is deleted:
+ *   - `credit_grants`: deleted. Their keys embed the account id (`starter:<id>`,
+ *     `allowance:<id>:…`), and the money record that matters is `billing_events`, kept above.
+ *   - the waitlist row whose address is the account's: deleted, with its referral and poll
+ *     links (`deleteInterestListRow`), so the address is not kept for marketing.
+ *   - the Stripe customer: NOT deleted (finance keeps its history); its metadata is marked
+ *     deleted so nobody reuses it. Best-effort: a Stripe outage must not block an erasure.
+ */
+async function retireDeletedAccount(db: Db, userId: string) {
+  await db.delete(creditGrants).where(eq(creditGrants.userId, userId));
+  const settings = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+    columns: { email: true, stripeCustomerId: true },
+  });
+  const email = settings?.email?.trim().toLowerCase();
+  if (email) {
+    const { deleteInterestListRow } = await import("@/lib/admin-interest-list");
+    const rows = await db
+      .select({ id: interestListSignups.id })
+      .from(interestListSignups)
+      .where(sql`lower(${interestListSignups.email}) = ${email}`);
+    for (const row of rows) await deleteInterestListRow(row.id);
+  }
+  if (settings?.stripeCustomerId) {
+    try {
+      await retireStripeCustomer(settings.stripeCustomerId);
+    } catch (err) {
+      reportError(err, { where: "purge.stripe-customer-retire", userId });
+    }
+  }
+}
+
 async function runPurgeStep(db: Db, userId: string, key: PurgeStepKey, keepSettings: boolean) {
   if (key === "billing") {
-    await db.update(billingEvents).set({ userId: null }).where(eq(billingEvents.userId, userId));
+    // Billing rows are the accounting record (finance keeps them), so they are anonymised:
+    // the account id goes, and so does any personal field a writer put in `detail`. Stripe
+    // object ids (charge, invoice, subscription) stay — they are what a refund is traced by.
+    await db
+      .update(billingEvents)
+      .set({ userId: null, detail: sql`${billingEvents.detail} - ${sql.raw(BILLING_DETAIL_PERSONAL_KEYS.map((k) => `'${k}'`).join(" - "))}` })
+      .where(eq(billingEvents.userId, userId));
+    if (!keepSettings) {
+      await retireDeletedAccount(db, userId);
+      return;
+    }
     // Credit grants are money for the same reason billing rows are: a pack is cash received
     // and its unused credits are a liability, so the rows are anonymised, never deleted. The
     // account is gone, so whatever it had not spent is closed out as revoked — which is what

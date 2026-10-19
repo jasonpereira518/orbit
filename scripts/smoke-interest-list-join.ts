@@ -30,6 +30,8 @@ import {
   slugFromEmail,
 } from "../src/lib/interest-list";
 import { joinInterestListCore, saveInterestListNameCore, type JoinContext } from "../src/lib/interest-list-join";
+import { backfillInterestListTokens, hashInterestToken, withRevealedTokens } from "../src/lib/interest-list-tokens";
+import { decrypt } from "../src/lib/crypto";
 import type { EmailLinks } from "../src/lib/interest-list-email";
 import { RATE_LIMITS } from "../src/lib/rate-limit";
 import { isBotRequest, setBotCheckForTests } from "../src/lib/bot-check";
@@ -145,8 +147,11 @@ async function joinPath() {
     sendTier: async () => undefined,
   });
   const base = { website: "", elapsedMs: MIN_FILL_MS + 10 };
-  const rowFor = async (email: string) =>
-    (await db.select().from(interestListSignups).where(eq(interestListSignups.email, email)))[0];
+  // Tokens are stored hashed and encrypted (audit L-05); read them back the way the app does.
+  const rowFor = async (email: string) => {
+    const row = (await db.select().from(interestListSignups).where(eq(interestListSignups.email, email)))[0];
+    return row ? withRevealedTokens(row) : row;
+  };
 
   // --- new join
   const a = await joinInterestListCore({ ...base, email: `${PREFIX}A@Example.test` }, ctx("a"));
@@ -156,6 +161,9 @@ async function joinPath() {
   const rowA = await rowFor(`${PREFIX}a@example.test`);
   check("email is normalised on insert", Boolean(rowA));
   check("ticket carries the stored share token", rowA?.shareToken === a.ticket.shareToken);
+  const rawA = (await db.select().from(interestListSignups).where(eq(interestListSignups.email, `${PREFIX}a@example.test`)))[0];
+  check("no token is stored in plaintext (L-05)", rawA?.shareToken === null && rawA?.unsubscribeToken === null);
+  check("…each is stored as its hash and its ciphertext", rawA?.shareTokenHash === hashInterestToken(a.ticket.shareToken) && decrypt(rawA!.shareTokenEncrypted!) === a.ticket.shareToken && Boolean(rawA?.unsubscribeTokenHash) && decrypt(rawA!.unsubscribeTokenEncrypted!) === rowA?.unsubscribeToken);
   check("ticket planet matches the stored one", rowA?.welcomePlanet === a.ticket.planet);
   check("attribution is stored", rowA?.utmSource === "reddit" && rowA.landingPath === "/interest");
   check("welcome states the place in line", sent[0]?.position === a.ticket.position, String(sent[0]?.position));
@@ -204,6 +212,27 @@ async function joinPath() {
   check("legacy row is minted a share token", legacy.ok && Boolean(rowL?.shareToken) && legacy.ticket.shareToken === rowL?.shareToken);
   check("legacy mint sends no mail", !sent.some((s) => s.email === `${PREFIX}legacy@example.test`));
 
+  // --- a pre-v177 row with plaintext tokens: links keep working before and after the backfill
+  const oldShare = "smoke-plaintext-share-token-0001";
+  const oldUnsub = generateUnsubscribeToken();
+  await db.insert(interestListSignups).values({ email: `${PREFIX}plain@example.test`, unsubscribeToken: oldUnsub, shareToken: oldShare, welcomePlanet: "mars" });
+  check("a plaintext share token still opens its pass", (await getTicketByShareToken(oldShare)) !== null);
+  const plainRejoin = await joinInterestListCore({ ...base, email: `${PREFIX}plain@example.test` }, ctx("plain"));
+  check("…and a returning join hands back that same token", plainRejoin.ok && plainRejoin.ticket.shareToken === oldShare);
+  let moved = 0;
+  for (let i = 0; i < 50; i++) {
+    const n = await backfillInterestListTokens();
+    moved += n;
+    if (n === 0) break;
+  }
+  const rawPlain = (await db.select().from(interestListSignups).where(eq(interestListSignups.email, `${PREFIX}plain@example.test`)))[0];
+  check("the backfill moves plaintext rows to hash + ciphertext", moved >= 1 && rawPlain?.shareToken === null && rawPlain?.unsubscribeToken === null && rawPlain?.shareTokenHash === hashInterestToken(oldShare));
+  check("…keeping the token values, so the old pass link still opens", (await getTicketByShareToken(oldShare)) !== null);
+  check("…and the old unsubscribe link still finds its row", withRevealedTokens(rawPlain!).unsubscribeToken === oldUnsub && rawPlain?.unsubscribeTokenHash === hashInterestToken(oldUnsub));
+  await backfillInterestListTokens();
+  const rePlain = (await db.select().from(interestListSignups).where(eq(interestListSignups.email, `${PREFIX}plain@example.test`)))[0];
+  check("a second backfill leaves it as it was", rePlain?.shareTokenEncrypted === rawPlain?.shareTokenEncrypted && rePlain?.shareToken === null);
+
   // --- honeypot: ok, plausible ticket, no row
   const rowsBefore = (await db.select().from(interestListSignups)).length;
   const bot = await joinInterestListCore({ ...base, website: "http://spam", email: `${PREFIX}bot@example.test` }, ctx("bot"));
@@ -241,8 +270,11 @@ async function namePath() {
     sendWelcome: async () => undefined,
     sendTier: async () => undefined,
   };
-  const rowFor = async (email: string) =>
-    (await db.select().from(interestListSignups).where(eq(interestListSignups.email, email)))[0];
+  // Tokens are stored hashed and encrypted (audit L-05); read them back the way the app does.
+  const rowFor = async (email: string) => {
+    const row = (await db.select().from(interestListSignups).where(eq(interestListSignups.email, email)))[0];
+    return row ? withRevealedTokens(row) : row;
+  };
   const joined = await joinInterestListCore(
     { email: `${PREFIX}name@example.test`, website: "", elapsedMs: MIN_FILL_MS + 10 },
     ctx
@@ -286,8 +318,11 @@ async function slugPath() {
     sendTier: async () => undefined,
   });
   const base = { website: "", elapsedMs: MIN_FILL_MS + 10 };
-  const rowFor = async (email: string) =>
-    (await db.select().from(interestListSignups).where(eq(interestListSignups.email, email)))[0];
+  // Tokens are stored hashed and encrypted (audit L-05); read them back the way the app does.
+  const rowFor = async (email: string) => {
+    const row = (await db.select().from(interestListSignups).where(eq(interestListSignups.email, email)))[0];
+    return row ? withRevealedTokens(row) : row;
+  };
 
   check("the local part is the slug", slugFromEmail("Ada.Lovelace@example.com") === "ada.lovelace");
   check("unsafe characters are dropped", slugFromEmail("ada+list@example.com") === "adalist" && slugFromEmail("a b/c@x.y") === "abc");
@@ -375,7 +410,7 @@ async function welcomeCapPath() {
     const row = (await db.select().from(interestListSignups).where(eq(interestListSignups.email, `${PREFIX}capped@example.test`)))[0];
     check("a join past the welcome cap still answers ok", r.ok);
     check("…and still lands its row", Boolean(row));
-    check("…with its real ticket", r.ok && r.ticket.shareToken === row?.shareToken);
+    check("…with its real ticket", r.ok && Boolean(row) && r.ticket.shareToken === withRevealedTokens(row!).shareToken);
     check("…but sends no welcome", sent.length === 0, sent.join(","));
   } finally {
     if (prior) {

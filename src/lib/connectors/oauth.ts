@@ -10,6 +10,7 @@
  * `upsertConnectorConnection`.
  */
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { KEY_PURPOSES, subKey, verificationKeys } from "@/lib/secrets";
 import { safeReturnPath } from "@/lib/safe-return-path";
 
 export type OAuthProviderConfig = {
@@ -104,19 +105,6 @@ type SignedStatePayload = OAuthState & {
  */
 const OAUTH_STATE_TTL_MS = 30 * 60 * 1000;
 
-function stateSecret(): string {
-  const secret = process.env.ENCRYPTION_SECRET;
-  if (!secret) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error(
-        "ENCRYPTION_SECRET must be set in production — refusing to sign OAuth state with a default key."
-      );
-    }
-    return "orbit-dev-secret-change-me-in-prod";
-  }
-  return secret;
-}
-
 /**
  * Domain separation for the state signature.
  *
@@ -131,8 +119,21 @@ function stateSecret(): string {
  */
 const STATE_HMAC_LABEL = "orbit:connector-oauth-state:v1";
 
+const STATE_DEV_FALLBACK = "orbit-dev-secret-change-me-in-prod";
+
+/**
+ * Signing uses the "oauth-state" HKDF sub-key (audit L-06). Verifying also accepts the raw
+ * secret's key and the previous secret's, so a consent screen left open across a deploy or a
+ * secret rotation still completes; states live 30 minutes, so those fallbacks matter briefly.
+ */
 function stateKey(): Buffer {
-  return createHmac("sha256", stateSecret()).update(STATE_HMAC_LABEL).digest();
+  return createHmac("sha256", subKey(KEY_PURPOSES.oauthState, STATE_DEV_FALLBACK)).update(STATE_HMAC_LABEL).digest();
+}
+
+function stateVerificationKeys(): Buffer[] {
+  return verificationKeys(KEY_PURPOSES.oauthState, STATE_DEV_FALLBACK).map(({ key }) =>
+    createHmac("sha256", key).update(STATE_HMAC_LABEL).digest()
+  );
 }
 
 /**
@@ -183,13 +184,15 @@ export function parseOAuthState(raw: string | null | undefined): OAuthState | nu
   if (!raw) return null;
   const [payload, mac] = raw.split(".");
   if (!payload || !mac) return null;
-  const expected = createHmac("sha256", stateKey()).update(payload).digest("base64url");
   const a = Buffer.from(mac);
-  const b = Buffer.from(expected);
   // timingSafeEqual throws on a buffer-length mismatch rather than returning false, so an
   // attacker-controlled mac of the "wrong" length must be caught before it ever reaches
   // that call, not after.
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  const signedByUs = stateVerificationKeys().some((key) => {
+    const b = Buffer.from(createHmac("sha256", key).update(payload).digest("base64url"));
+    return a.length === b.length && timingSafeEqual(a, b);
+  });
+  if (!signedByUs) return null;
   try {
     const parsed = JSON.parse(
       Buffer.from(payload, "base64url").toString("utf8")

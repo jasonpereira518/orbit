@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { gmailConnections } from "@/db/schema";
-import { decrypt, encrypt } from "@/lib/crypto";
+import { encrypt } from "@/lib/crypto";
+import { decryptAndRewrapStrict } from "@/lib/crypto-rewrap";
 import { ReauthRequiredError, isRefreshRejection } from "@/lib/errors";
 import {
   GOOGLE_SCOPES,
@@ -430,7 +431,12 @@ export async function getValidAccessToken(
 
   if (!expiresSoon) {
     await touchLastSynced(conn);
-    return decrypt(conn.accessTokenEncrypted);
+    return decryptAndRewrapStrict(conn.accessTokenEncrypted, {
+      table: gmailConnections,
+      column: gmailConnections.accessTokenEncrypted,
+      idColumn: gmailConnections.id,
+      id: conn.id,
+    });
   }
 
   if (!conn.refreshTokenEncrypted) {
@@ -440,7 +446,14 @@ export async function getValidAccessToken(
 
   let refreshed;
   try {
-    refreshed = await refreshAccessToken(decrypt(conn.refreshTokenEncrypted));
+    refreshed = await refreshAccessToken(
+      await decryptAndRewrapStrict(conn.refreshTokenEncrypted, {
+        table: gmailConnections,
+        column: gmailConnections.refreshTokenEncrypted,
+        idColumn: gmailConnections.id,
+        id: conn.id,
+      })
+    );
   } catch (err) {
     if (err instanceof ReauthRequiredError) {
       await markNeedsReauth(userId);

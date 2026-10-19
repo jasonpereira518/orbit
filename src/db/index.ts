@@ -100,6 +100,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   credit_email_enabled integer NOT NULL DEFAULT 1,
   credit_notice_period_start timestamptz,
   credit_notice_level integer NOT NULL DEFAULT 0,
+  credit_email_unsub_token_hash text,
+  clerk_user_updated_at timestamptz,
   last_active_at timestamptz,
   recruiter_sharing integer NOT NULL DEFAULT 0,
   terms_accepted_at timestamptz,
@@ -1104,6 +1106,18 @@ CREATE TABLE IF NOT EXISTS admin_audit_log (
 );
 CREATE INDEX IF NOT EXISTS admin_audit_log_created_idx ON admin_audit_log(created_at);
 CREATE INDEX IF NOT EXISTS admin_audit_log_target_idx ON admin_audit_log(target_user_id);
+CREATE TABLE IF NOT EXISTS account_audit_log (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  subject_user_id text NOT NULL,
+  actor text NOT NULL,
+  action text NOT NULL,
+  resource_type text,
+  resource_id text,
+  detail jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS account_audit_log_subject_idx ON account_audit_log(subject_user_id, created_at);
+CREATE INDEX IF NOT EXISTS account_audit_log_action_idx ON account_audit_log(action, created_at);
 CREATE TABLE IF NOT EXISTS api_keys (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1363,11 +1377,15 @@ CREATE TABLE IF NOT EXISTS interest_list_signups (
   utm_medium text,
   utm_campaign text,
   landing_path text,
-  unsubscribe_token text NOT NULL,
+  unsubscribe_token text,
+  unsubscribe_token_hash text,
+  unsubscribe_token_encrypted text,
   unsubscribed_at timestamptz,
   welcome_planet text,
   follow_up_sent_at timestamptz,
   share_token text,
+  share_token_hash text,
+  share_token_encrypted text,
   referred_by_id uuid,
   first_name text,
   last_name text,
@@ -2748,7 +2766,13 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 175 = chat_messages.interrupted: the part of an answer that streamed before a dropped
 // connection is kept, marked as cut off (audit L-25). Rescanned Oct 19 2026: 174 (this
 // branch) was the highest claimed anywhere.
-export const SCHEMA_VERSION = 175;
+//
+// 177 = FIX_PLAN 3.5 / 3.6: account_audit_log (new table, audit L-23);
+// user_settings.credit_email_unsub_token_hash (L-05) and clerk_user_updated_at (L-07);
+// interest_list_signups.unsubscribe_token_hash / _encrypted and share_token_hash / _encrypted,
+// with unsubscribe_token made nullable (L-05). NOT 176, 178 or 179: those are claimed by the
+// other Phase 3 branches built alongside this one from 175.
+export const SCHEMA_VERSION = 177;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -4779,6 +4803,18 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS relationship_engine_enabled integer NOT NULL DEFAULT 1`,
   // Schema v148: sender labels the owner picked as "me" in chat exports (WhatsApp has no "Me").
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS chat_self_names jsonb NOT NULL DEFAULT '[]'`,
+  // Schema v177 (FIX_PLAN 3.5 / 3.6): hash-bound credit-email unsubscribe (audit L-05), Clerk
+  // user.updated ordering (L-07), and interest-list tokens hashed at rest (L-05). The plaintext
+  // token columns become nullable; `backfillInterestListTokens` moves old rows over in place.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credit_email_unsub_token_hash text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS clerk_user_updated_at timestamptz`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS unsubscribe_token_hash text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS unsubscribe_token_encrypted text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS share_token_hash text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS share_token_encrypted text`,
+  `ALTER TABLE interest_list_signups ALTER COLUMN unsubscribe_token DROP NOT NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_unsub_hash_uidx ON interest_list_signups(unsubscribe_token_hash)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_hash_uidx ON interest_list_signups(share_token_hash)`,
 ];
 
 /**

@@ -25,6 +25,7 @@ import { requireUserId } from "@/lib/auth";
 import { isPaywallError, requireEntitlement } from "@/lib/entitlements";
 import { generateApiKey, type ApiKeyKind, type ApiKeyScope } from "@/lib/api/keys";
 import { getAppBaseUrl } from "@/lib/app-url";
+import { recordAccountAudit } from "@/lib/account-audit";
 
 export type ApiKeySummary = {
   id: string;
@@ -120,6 +121,7 @@ export async function createApiKey(
       scopes: resolved,
     })
     .returning();
+  await recordAccountAudit({ userId, action: "api_key.create", resourceType: "api_key", resourceId: row.id, detail: { kind, prefix: key.prefix, scopes: resolved } });
 
   revalidatePath("/settings");
   return {
@@ -154,6 +156,7 @@ export async function revokeApiKey(id: string): Promise<{ ok: true }> {
     // Scoped by userId as well as id, so one user can never revoke another's key.
     .set({ revokedAt: new Date(), revokedReason: "revoked by user" })
     .where(and(eq(apiKeys.id, id), eq(apiKeys.userId, userId)));
+  await recordAccountAudit({ userId, action: "api_key.revoke", resourceType: "api_key", resourceId: id });
   revalidatePath("/settings");
   return { ok: true };
 }

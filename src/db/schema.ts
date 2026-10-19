@@ -463,6 +463,16 @@ export const userSettings = pgTable("user_settings", {
   creditNoticePeriodStart: timestamp("credit_notice_period_start", { withTimezone: true }),
   creditNoticeLevel: integer("credit_notice_level").default(0).notNull(),
   /**
+   * SHA-256 of the unsubscribe token in the last credit email sent, so a link only works while
+   * it is on the account (audit L-05; the same binding as `radarDigestUnsubTokenHash`).
+   */
+  creditEmailUnsubTokenHash: text("credit_email_unsub_token_hash"),
+  /**
+   * `updated_at` of the last Clerk `user.created` / `user.updated` applied to this row. An
+   * event no newer than this is a replay or arrived out of order and is ignored (audit L-07).
+   */
+  clerkUserUpdatedAt: timestamp("clerk_user_updated_at", { withTimezone: true }),
+  /**
    * The last time this human was present. Two writers, deliberately sharing one column:
    *
    *  - `POST /api/presence`, a ~45s heartbeat from every visible tab (`src/lib/presence.ts`).
@@ -3816,6 +3826,39 @@ export const adminAuditLog = pgTable(
 );
 
 /**
+ * What an account holder did to their own account's security surface (audit L-23): API keys
+ * created and revoked, data exported, accounts connected and disconnected, the plan changing,
+ * and the account being deleted. The admin console's own actions stay in `admin_audit_log`.
+ *
+ * Keyed by `subject_user_id`, not `user_id`, on purpose, for the reason `admin_audit_log`
+ * uses `target_user_id`: the row recording a self-deletion has to outlive the deletion, so
+ * this table is outside the purge sweep. It holds ids and labels only — never a token, a key,
+ * an email body or anyone's contact data.
+ *
+ * Action names, all written through `src/lib/account-audit.ts`:
+ *   api_key.create · api_key.revoke · data.export · account.delete
+ *   integration.connect · integration.disconnect · plan.change · webhook.secret_rotate
+ */
+export const accountAuditLog = pgTable(
+  "account_audit_log",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    subjectUserId: text("subject_user_id").notNull(),
+    /** Who did it: the person, or a system path acting for them (Stripe, Clerk). */
+    actor: text("actor").$type<"user" | "stripe" | "clerk" | "system">().notNull(),
+    action: text("action").notNull(),
+    resourceType: text("resource_type"),
+    resourceId: text("resource_id"),
+    detail: jsonb("detail").$type<Record<string, unknown>>().default({}).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("account_audit_log_subject_idx").on(t.subjectUserId, t.createdAt),
+    index("account_audit_log_action_idx").on(t.action, t.createdAt),
+  ]
+);
+
+/**
  * One row per scheduled-job invocation.
  *
  * The row is written at START, not only at the end. Without that, "the cron never fired"
@@ -4606,7 +4649,14 @@ export const interestListSignups = pgTable(
     landingPath: text("landing_path"),
     /** Opaque, same convention as `user_settings.calendar_feed_token` — mints the one-click
      * unsubscribe link without exposing the row's uuid or requiring a session. */
-    unsubscribeToken: text("unsubscribe_token").notNull(),
+    /**
+     * Plaintext, only on rows written before v177 and not yet backfilled
+     * (`src/lib/interest-list-tokens.ts`). New rows keep the hash for lookups and the
+     * ciphertext for building the link again in a later email (audit L-05).
+     */
+    unsubscribeToken: text("unsubscribe_token"),
+    unsubscribeTokenHash: text("unsubscribe_token_hash"),
+    unsubscribeTokenEncrypted: text("unsubscribe_token_encrypted"),
     unsubscribedAt: timestamp("unsubscribed_at", { withTimezone: true }),
     /**
      * Which planet the welcome email showed. Stored rather than recomputed so the note's
@@ -4627,6 +4677,9 @@ export const interestListSignups = pgTable(
      * submitted.
      */
     shareToken: text("share_token"),
+    /** Hash and ciphertext of the share token; the plaintext above only on pre-v177 rows. */
+    shareTokenHash: text("share_token_hash"),
+    shareTokenEncrypted: text("share_token_encrypted"),
     /**
      * The row whose share link brought this signup in — the referrer's `id`. Written once,
      * on insert, never on a rejoin. No FK, like every other cross-row reference here.
@@ -4673,6 +4726,8 @@ export const interestListSignups = pgTable(
     uniqueIndex("interest_list_signups_token_uidx").on(t.unsubscribeToken),
     index("interest_list_signups_created_idx").on(t.createdAt),
     uniqueIndex("interest_list_signups_share_token_uidx").on(t.shareToken),
+    uniqueIndex("interest_list_signups_unsub_hash_uidx").on(t.unsubscribeTokenHash),
+    uniqueIndex("interest_list_signups_share_hash_uidx").on(t.shareTokenHash),
     index("interest_list_signups_referred_by_idx").on(t.referredById),
   ]
 );
@@ -4919,9 +4974,9 @@ export const gateEvents = pgTable(
  * `grant_key` is the idempotency key: `pack:cs:<checkout session>` for a pack (so a retried
  * webhook grants once), `allowance:<user>:<period start>` for an allowance.
  *
- * `user_id` is nullable only so a full account deletion can anonymise the rows the way it
- * anonymises `billing_events`: a pack is money, and the liability figure must not silently
- * change when its buyer leaves.
+ * `user_id` is nullable so "delete all my data" (which keeps the account) can anonymise the
+ * rows the way it anonymises `billing_events`. Deleting the account itself deletes them
+ * (audit M-09): their keys embed the account id, and the money record is `billing_events`.
  */
 export const creditGrants = pgTable(
   "credit_grants",

@@ -149,6 +149,17 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
         errors.push("ENCRYPTION_SECRET must be at least 32 characters and not the .env.example placeholder");
       }
     }
+    // Set only while rotating ENCRYPTION_SECRET: the old value, still accepted for decrypting
+    // and verifying (src/lib/secrets.ts). Same strength rule; the same value as the current
+    // one means the rotation has not actually happened.
+    if (has(env, "ENCRYPTION_SECRET_PREVIOUS")) {
+      const previous = env.ENCRYPTION_SECRET_PREVIOUS!.trim();
+      if (previous.length < 32 || previous === ENCRYPTION_PLACEHOLDER) {
+        errors.push("ENCRYPTION_SECRET_PREVIOUS must be at least 32 characters and not the .env.example placeholder");
+      } else if (previous === env.ENCRYPTION_SECRET?.trim()) {
+        warnings.push("ENCRYPTION_SECRET_PREVIOUS equals ENCRYPTION_SECRET — remove it, or set ENCRYPTION_SECRET to the new value");
+      }
+    }
     // A short salt is worse than none: the hash it produces is a plain digest of an IP,
     // which is reversible by anyone willing to try four billion of them.
     if (has(env, "ANALYTICS_SALT") && env.ANALYTICS_SALT!.trim().length < 16) {

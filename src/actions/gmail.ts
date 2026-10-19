@@ -1,5 +1,6 @@
 "use server";
 
+import { recordAccountAudit } from "@/lib/account-audit";
 import { canConnect, refusedConnectUrl } from "@/lib/connection-limits";
 import { and, desc, eq } from "drizzle-orm";
 import { safeReturnPath } from "@/lib/safe-return-path";
@@ -237,6 +238,7 @@ export async function disconnectGmail(opts: { alsoDelete?: boolean } = {}) {
   });
   // Row first: the disconnect is done even if Google never answers.
   await db.delete(gmailConnections).where(eq(gmailConnections.userId, userId));
+  await recordAccountAudit({ userId, action: "integration.disconnect", resourceType: "gmail" });
   // Explicit, not a cascade: calendar_sources has no FK to any connection table (they are
   // deliberately separate — see provider-connections.ts), so a reconnect's fresh connection
   // id would otherwise never dedupe against the orphaned row and seedCalendarSources would

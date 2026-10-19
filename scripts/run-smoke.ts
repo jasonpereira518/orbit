@@ -445,6 +445,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-calendar-subscription-sync": "pglite",
   "smoke-calendar-source-rows": "pglite",
   "smoke-housekeeping-sweeps": "pglite",
+  "smoke-crypto-rotation": "pglite",
   "smoke-usage-prune": "pglite",
   "smoke-export-limit": "pglite",
   "smoke-linkedin-direction": "pglite",

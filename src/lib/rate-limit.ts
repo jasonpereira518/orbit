@@ -1,4 +1,5 @@
-import { lt, sql } from "drizzle-orm";
+import { eq, lt, sql } from "drizzle-orm";
+import { ipBucketKey, legacyIpBucketKey } from "@/lib/client-ip";
 import { TIMELINE_DAILY_CONTACT_CAP } from "@/lib/timeline-cost";
 import { getDb } from "@/db";
 import { rateLimitBuckets } from "@/db/schema";
@@ -368,6 +369,32 @@ export async function consumeBucket(
     throw new RateLimitedError(scope, Math.max(1, policy.windowSec - elapsed));
   }
   return { remaining: Math.max(0, policy.limit - count) };
+}
+
+/**
+ * `consumeBucket` keyed by a client IP (`ipBucketKey`). The key derivation moved to an HKDF
+ * sub-key (audit L-06); a bucket an IP filled under the old one is still live for up to a
+ * window, so it is read here and honoured: an IP already over the limit there stays limited.
+ * The legacy bucket is only ever read, never written, so it ages out on its own.
+ */
+export async function consumeIpBucket(scope: string, ip: string, policy: BucketPolicy): Promise<{ remaining: number }> {
+  const legacyKey = legacyIpBucketKey(ip);
+  const currentKey = ipBucketKey(ip);
+  if (legacyKey !== currentKey) {
+    const db = await getDb();
+    const [legacy] = await db
+      .select({ count: rateLimitBuckets.count, windowStartedAt: rateLimitBuckets.windowStartedAt })
+      .from(rateLimitBuckets)
+      .where(eq(rateLimitBuckets.bucket, `${scope}:${legacyKey}`))
+      .limit(1);
+    if (legacy) {
+      const elapsed = Math.floor((Date.now() - legacy.windowStartedAt.getTime()) / 1000);
+      if (elapsed < policy.windowSec && legacy.count >= policy.limit) {
+        throw new RateLimitedError(scope, Math.max(1, policy.windowSec - elapsed));
+      }
+    }
+  }
+  return consumeBucket(scope, currentKey, policy);
 }
 
 /**

@@ -1,7 +1,7 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { getAppBaseUrl } from "@/lib/app-url";
+import { hashIdToken, signIdToken, verifyIdToken, type SignedIdTokenSpec } from "@/lib/signed-id-token";
 import { getCreditBalance } from "@/lib/credits/ledger";
 import { MICROS_PER_CREDIT } from "@/lib/credits/grants";
 import { getEntitlements } from "@/lib/entitlements";
@@ -22,7 +22,8 @@ import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_CENTS } from "@/lib/stripe-confi
  *    refuses puts the claim back, and the next run tries again.
  *  - Crossing both levels between two runs sends only the 100% email.
  *  - One-click unsubscribe (RFC 8058) through `/api/credits/email/unsubscribe`, with a token
- *    that is an HMAC of the account id; the Settings switch turns it back on.
+ *    that is an HMAC of the account id, bound to the account by its stored hash; the Settings
+ *    switch turns it back on.
  *
  * No `next/server`: the route and the smoke both drive this.
  */
@@ -40,45 +41,45 @@ export function noticeLevelFor(grantedMicros: number, remainingMicros: number): 
 
 // ---- Unsubscribe -------------------------------------------------------------------------
 
-const UNSUBSCRIBE_LABEL = "orbit:credit-email-unsubscribe:v1";
-
-function unsubscribeKey(): Buffer {
-  // ENCRYPTION_SECRET is required in production (src/lib/env.ts); the fallback is dev-only,
-  // and refused outright in production: a known key would let anyone sign a token.
-  const secret = process.env.ENCRYPTION_SECRET;
-  if (!secret && process.env.NODE_ENV === "production") throw new Error("ENCRYPTION_SECRET must be set in production");
-  return createHmac("sha256", secret || "orbit-dev-credit-email").update(UNSUBSCRIBE_LABEL).digest();
-}
+/**
+ * Hash-bound, like Radar's digest (audit L-05): every send stores the SHA-256 of the token it
+ * put in the email (`user_settings.credit_email_unsub_token_hash`), and a token unsubscribes
+ * only while that hash is on the account. Deleting the account or its settings row therefore
+ * revokes every link already sent.
+ *
+ * Links mailed before this change were signed with the raw secret and never recorded; they
+ * still verify (`legacy`) and still work, without the hash check, because they are already in
+ * inboxes and an unsubscribe link must never stop working.
+ */
+const UNSUBSCRIBE_TOKEN: SignedIdTokenSpec = {
+  label: "orbit:credit-email-unsubscribe:v1",
+  devFallback: "orbit-dev-credit-email",
+};
 
 export function creditEmailUnsubscribeToken(userId: string): string {
-  const id = Buffer.from(userId, "utf8").toString("base64url");
-  const mac = createHmac("sha256", unsubscribeKey()).update(id).digest("base64url");
-  return `${id}.${mac}`;
+  return signIdToken(UNSUBSCRIBE_TOKEN, userId);
 }
 
 /** The account a token was issued for, or null when this app did not sign it. */
 export function readCreditEmailUnsubscribeToken(token: string | null | undefined): string | null {
-  if (!token || token.length > 400) return null;
-  const [id, mac, extra] = token.split(".");
-  if (!id || !mac || extra !== undefined) return null;
-  const expected = Buffer.from(createHmac("sha256", unsubscribeKey()).update(id).digest("base64url"));
-  const given = Buffer.from(mac);
-  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
-  return Buffer.from(id, "base64url").toString("utf8") || null;
+  return verifyIdToken(UNSUBSCRIBE_TOKEN, token)?.id ?? null;
 }
 
-export function creditEmailUnsubscribeUrl(userId: string): string {
-  return `${getAppBaseUrl()}/api/credits/email/unsubscribe?token=${encodeURIComponent(creditEmailUnsubscribeToken(userId))}`;
+export function creditEmailUnsubscribeUrl(token: string): string {
+  return `${getAppBaseUrl()}/api/credits/email/unsubscribe?token=${encodeURIComponent(token)}`;
 }
 
 /** Turn the emails off for the account a token names. Idempotent; false for a bad token. */
 export async function unsubscribeCreditEmail(token: string | null | undefined): Promise<boolean> {
-  const userId = readCreditEmailUnsubscribeToken(token);
-  if (!userId) return false;
+  const verified = verifyIdToken(UNSUBSCRIBE_TOKEN, token);
+  if (!verified || !token) return false;
   const db = await getDb();
+  const bound = verified.legacy
+    ? sql``
+    : sql` AND credit_email_unsub_token_hash = ${hashIdToken(token)}`;
   const rows = rowsOf<{ user_id: string }>(
     await db.execute(sql`
-      UPDATE user_settings SET credit_email_enabled = 0 WHERE user_id = ${userId} RETURNING user_id
+      UPDATE user_settings SET credit_email_enabled = 0 WHERE user_id = ${verified.id}${bound} RETURNING user_id
     `)
   );
   return rows.length > 0;
@@ -217,12 +218,13 @@ type Candidate = {
  * Claim this cycle's level for one account: one statement, so of two overlapping runs only
  * one gets a row back. Returns what it replaced, for the release.
  */
-async function claim(userId: string, periodStart: Date, level: NoticeLevel) {
+async function claim(userId: string, periodStart: Date, level: NoticeLevel, tokenHash: string) {
   const db = await getDb();
   const [row] = rowsOf<{ prev_period: Date | string | null; prev_level: number }>(
     await db.execute(sql`
       UPDATE user_settings u
-         SET credit_notice_period_start = ${periodStart}, credit_notice_level = ${level}
+         SET credit_notice_period_start = ${periodStart}, credit_notice_level = ${level},
+             credit_email_unsub_token_hash = ${tokenHash}
         FROM (SELECT credit_notice_period_start AS prev_period, credit_notice_level AS prev_level
                 FROM user_settings WHERE user_id = ${userId}) p
        WHERE u.user_id = ${userId}
@@ -290,14 +292,15 @@ export async function sendCreditNotices(
       stats.skipped++;
       continue;
     }
-    const prev = await claim(c.user_id, periodStart, level);
+    const token = creditEmailUnsubscribeToken(c.user_id);
+    const prev = await claim(c.user_id, periodStart, level, hashIdToken(token));
     if (!prev) {
       stats.skipped++;
       continue;
     }
     const balance = await getCreditBalance(c.user_id, ent.plan, null, now, { ensure: false });
     const packCredits = balance.packsFrozen ? 0 : Math.floor(balance.packRemaining / MICROS_PER_CREDIT);
-    const unsubscribeUrl = creditEmailUnsubscribeUrl(c.user_id);
+    const unsubscribeUrl = creditEmailUnsubscribeUrl(token);
     const email = buildCreditEmail(
       {
         level,

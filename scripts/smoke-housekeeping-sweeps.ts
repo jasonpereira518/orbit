@@ -1,13 +1,30 @@
 /**
  * The global sweeps the daily cron runs: abandoned meeting sessions (and their transcript
- * segments) past the TTL, and expired phone-scan grants. Run: npx tsx scripts/smoke-housekeeping-sweeps.ts
+ * segments) past the TTL, expired phone-scan grants, and the retention windows of
+ * `src/lib/retention.ts` (audit M-08). Run: npx tsx scripts/smoke-housekeeping-sweeps.ts
  */
 import "./smoke/_env";
 
 import { readFileSync } from "node:fs";
 import { eq, inArray, like } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { captureHandoffs, meetingSessions, meetingTranscriptSegments, rateLimitBuckets } from "../src/db/schema";
+import {
+  captureHandoffs,
+  cronRuns,
+  emailSends,
+  extensionUsage,
+  feedback,
+  feedbackScreenshots,
+  gateEvents,
+  meetingSessions,
+  meetingTranscriptSegments,
+  outboundWebhookDeliveries,
+  rateLimitBuckets,
+  speechUsage,
+  webhookDeliveries,
+  webhookEndpoints,
+} from "../src/db/schema";
+import { RETENTION, runRetentionSweeps } from "../src/lib/retention";
 import { ABANDONED_SESSION_TTL_DAYS, sweepAbandonedMeetingSessions } from "../src/lib/meeting-sessions";
 import { RATE_LIMITS, RATE_LIMIT_BUCKET_RETENTION_MS, pruneRateLimitBuckets } from "../src/lib/rate-limit";
 import { sweepExpiredHandoffs } from "../src/lib/scan-handoff";
@@ -28,6 +45,15 @@ async function cleanup() {
   await db.delete(meetingSessions).where(inArray(meetingSessions.userId, USERS));
   await db.delete(captureHandoffs).where(inArray(captureHandoffs.userId, USERS));
   await db.delete(rateLimitBuckets).where(like(rateLimitBuckets.bucket, "smoke-sweeps:%"));
+  await db.delete(cronRuns).where(like(cronRuns.job, "smoke-sweeps.%"));
+  await db.delete(webhookDeliveries).where(like(webhookDeliveries.eventId, "smoke-sweeps-%"));
+  await db.delete(webhookEndpoints).where(inArray(webhookEndpoints.userId, USERS));
+  await db.delete(feedbackScreenshots).where(inArray(feedbackScreenshots.userId, USERS));
+  await db.delete(feedback).where(inArray(feedback.userId, USERS));
+  await db.delete(emailSends).where(inArray(emailSends.userId, USERS));
+  await db.delete(gateEvents).where(inArray(gateEvents.userId, USERS));
+  await db.delete(extensionUsage).where(inArray(extensionUsage.userId, USERS));
+  await db.delete(speechUsage).where(inArray(speechUsage.userId, USERS));
 }
 
 run(async () => {
@@ -74,7 +100,101 @@ run(async () => {
     const longestWindowMs = Math.max(...Object.values(RATE_LIMITS).map((p) => p.windowSec)) * 1000;
     check("retention outlasts the longest bucket window, so a live window is never cut", RATE_LIMIT_BUCKET_RETENTION_MS >= 2 * longestWindowMs, String(longestWindowMs));
 
+    console.log("\nRetention windows (M-08)…");
+    check(
+      "the windows are the plan's",
+      RETENTION.cronRunsDays === 90 && RETENTION.webhookDeliveriesDays === 90 && RETENTION.webhookRecipientsDays === 30 &&
+        RETENTION.outboundPayloadDays === 30 && RETENTION.feedbackScreenshotClosedDays === 90 &&
+        RETENTION.meetingTranscriptAfterDigestDays === 0 && RETENTION.emailBodyDays === 90 &&
+        RETENTION.gateEventsDays === 180 && RETENTION.extensionUsageDays === 180 && RETENTION.speechUsageDays === 180
+    );
+    const daysAgo = (d: number) => new Date(Date.now() - d * 86_400_000);
+
+    await db.insert(cronRuns).values([
+      { job: "smoke-sweeps.old", startedAt: daysAgo(91) },
+      { job: "smoke-sweeps.new", startedAt: daysAgo(89) },
+    ]);
+    await db.insert(webhookDeliveries).values([
+      { source: "resend", eventId: "smoke-sweeps-old", outcome: "handled", detail: { recipients: ["a@example.test"] }, createdAt: daysAgo(91) },
+      { source: "resend", eventId: "smoke-sweeps-mid", outcome: "handled", detail: { recipients: ["b@example.test"], kind: "bounce" }, createdAt: daysAgo(31) },
+      { source: "resend", eventId: "smoke-sweeps-new", outcome: "handled", detail: { recipients: ["c@example.test"] }, createdAt: daysAgo(29) },
+    ]);
+    const [endpoint] = await db.insert(webhookEndpoints).values({ userId: USERS[0], url: "https://example.test/h", secretEncrypted: "x" }).returning();
+    await db.insert(outboundWebhookDeliveries).values([
+      { userId: USERS[0], endpointId: endpoint.id, eventId: "e-old", eventType: "contact.created", payload: { name: "Ada" }, status: "delivered", deliveredAt: daysAgo(31) },
+      { userId: USERS[0], endpointId: endpoint.id, eventId: "e-new", eventType: "contact.created", payload: { name: "Grace" }, status: "delivered", deliveredAt: daysAgo(29) },
+      { userId: USERS[0], endpointId: endpoint.id, eventId: "e-pending", eventType: "contact.created", payload: { name: "Alan" }, status: "pending", createdAt: daysAgo(40) },
+    ]);
+    const [closedOld] = await db.insert(feedback).values({ userId: USERS[0], kind: "freeform", text: "old", status: "resolved", statusChangedAt: daysAgo(91) }).returning();
+    const [closedNew] = await db.insert(feedback).values({ userId: USERS[0], kind: "freeform", text: "new", status: "resolved", statusChangedAt: daysAgo(10) }).returning();
+    const [openOld] = await db.insert(feedback).values({ userId: USERS[0], kind: "freeform", text: "open", status: "new", createdAt: daysAgo(200) }).returning();
+    const shot = (feedbackId: string, blobUrl: string | null) => ({
+      feedbackId, userId: USERS[0], storage: blobUrl ? ("blob" as const) : ("inline" as const), blobUrl, inlineData: blobUrl ? null : "aGk=", contentType: "image/webp", byteSize: 2,
+    });
+    await db.insert(feedbackScreenshots).values([
+      shot(closedOld.id, "https://store.public.blob.vercel-storage.com/feedback/old-abc.webp"),
+      shot(closedOld.id, null),
+      shot(closedNew.id, "https://store.public.blob.vercel-storage.com/feedback/new-abc.webp"),
+      shot(openOld.id, "https://store.public.blob.vercel-storage.com/feedback/open-abc.webp"),
+    ]);
+    const digest = { title: "t", summary: "s", keyPoints: [], decisions: [], actionItems: [], blockers: [], openQuestions: [], participants: [], datedQuotes: [], notes: "" };
+    const [savedMeeting] = await db.insert(meetingSessions).values({ userId: USERS[0], status: "saved", digest }).returning();
+    const [analyzedMeeting] = await db.insert(meetingSessions).values({ userId: USERS[0], status: "analyzed", digest }).returning();
+    await db.insert(meetingTranscriptSegments).values([
+      { sessionId: savedMeeting.id, userId: USERS[0], seq: 0, startMs: 0, endMs: 1000, text: "said", engine: "whisper" },
+      { sessionId: analyzedMeeting.id, userId: USERS[0], seq: 0, startMs: 0, endMs: 1000, text: "still being reviewed", engine: "whisper" },
+    ]);
+    const send = (status: "sent" | "queued", updatedAt: Date, key: string) => ({
+      userId: USERS[0], provider: "demo" as const, fromEmail: "me@example.test", to: ["you@example.test"], subject: `s-${key}`,
+      bodyText: `body ${key}`, bodyHtml: `<p>${key}</p>`, origin: "compose" as const, status, sendAt: updatedAt, rfcMessageId: `<${key}@smoke>`, updatedAt,
+    });
+    await db.insert(emailSends).values([send("sent", daysAgo(91), "old"), send("sent", daysAgo(89), "new"), send("queued", daysAgo(120), "queued")]);
+    await db.insert(gateEvents).values([
+      { userId: USERS[0], feature: "smoke", plan: "free", createdAt: daysAgo(181) },
+      { userId: USERS[0], feature: "smoke", plan: "free", createdAt: daysAgo(179) },
+    ]);
+    await db.insert(extensionUsage).values([
+      { userId: USERS[0], windowStartedAt: daysAgo(200), lastSeenAt: daysAgo(181) },
+      { userId: USERS[1], windowStartedAt: daysAgo(200), lastSeenAt: daysAgo(10) },
+    ]);
+    await db.insert(speechUsage).values([
+      { userId: USERS[0], kind: "shortform", seconds: 5, source: "file", createdAt: daysAgo(181) },
+      { userId: USERS[1], kind: "shortform", seconds: 5, source: "file", createdAt: daysAgo(179) },
+    ]);
+
+    const blobsDeleted: string[] = [];
+    const stats = await runRetentionSweeps({ deleteBlob: async (url) => void blobsDeleted.push(url) });
+
+    const jobs = (await db.select({ job: cronRuns.job }).from(cronRuns).where(like(cronRuns.job, "smoke-sweeps.%"))).map((r) => r.job);
+    check("cron_runs past 90 days go, newer stay", JSON.stringify(jobs) === JSON.stringify(["smoke-sweeps.new"]), JSON.stringify(jobs));
+    const deliveries = await db.select().from(webhookDeliveries).where(like(webhookDeliveries.eventId, "smoke-sweeps-%"));
+    const byId = new Map(deliveries.map((d) => [d.eventId, d.detail]));
+    check("webhook_deliveries past 90 days go", !byId.has("smoke-sweeps-old") && byId.size === 2);
+    check("recipients are dropped after 30 days, the rest of the detail kept", !("recipients" in (byId.get("smoke-sweeps-mid") ?? {})) && byId.get("smoke-sweeps-mid")?.kind === "bounce");
+    check("…and kept before then", Array.isArray(byId.get("smoke-sweeps-new")?.recipients));
+    const outbound = new Map((await db.select().from(outboundWebhookDeliveries).where(eq(outboundWebhookDeliveries.endpointId, endpoint.id))).map((d) => [d.eventId, d]));
+    check("a payload delivered 30+ days ago is emptied, the row kept", JSON.stringify(outbound.get("e-old")?.payload) === "{}" && outbound.get("e-old")?.status === "delivered");
+    check("…a recent one and an undelivered one keep theirs", (outbound.get("e-new")?.payload as { name?: string })?.name === "Grace" && (outbound.get("e-pending")?.payload as { name?: string })?.name === "Alan");
+    const shots = await db.select().from(feedbackScreenshots).where(inArray(feedbackScreenshots.userId, USERS));
+    check("screenshots of feedback resolved 90+ days ago go, rows and blobs", !shots.some((x) => x.feedbackId === closedOld.id) && JSON.stringify(blobsDeleted) === JSON.stringify(["https://store.public.blob.vercel-storage.com/feedback/old-abc.webp"]), JSON.stringify(blobsDeleted));
+    check("…recently resolved and still-open feedback keeps its screenshots", shots.some((x) => x.feedbackId === closedNew.id) && shots.some((x) => x.feedbackId === openOld.id));
+    check("…and the feedback text itself stays", (await db.select().from(feedback).where(eq(feedback.id, closedOld.id))).length === 1);
+    const kept = await db.select().from(meetingTranscriptSegments).where(inArray(meetingTranscriptSegments.sessionId, [savedMeeting.id, analyzedMeeting.id]));
+    check("a saved meeting with its digest loses its transcript", !kept.some((x) => x.sessionId === savedMeeting.id));
+    check("…one still being reviewed keeps it", kept.some((x) => x.sessionId === analyzedMeeting.id));
+    const sends = new Map((await db.select().from(emailSends).where(inArray(emailSends.userId, USERS))).map((r) => [r.subject, r]));
+    check("a settled send's body is cleared after 90 days, the envelope kept", sends.get("s-old")?.bodyText === "" && sends.get("s-old")?.bodyHtml === null && sends.get("s-old")?.status === "sent");
+    check("…a newer one and a queued one keep theirs", sends.get("s-new")?.bodyText === "body new" && sends.get("s-queued")?.bodyText === "body queued");
+    check("gate_events past 180 days go", (await db.select().from(gateEvents).where(inArray(gateEvents.userId, USERS))).length === 1);
+    const ext = (await db.select().from(extensionUsage).where(inArray(extensionUsage.userId, USERS))).map((r) => r.userId);
+    check("extension_usage unused for 180 days goes", JSON.stringify(ext) === JSON.stringify([USERS[1]]), JSON.stringify(ext));
+    const speech = (await db.select().from(speechUsage).where(inArray(speechUsage.userId, USERS))).map((r) => r.userId);
+    check("speech_usage past 180 days goes", JSON.stringify(speech) === JSON.stringify([USERS[1]]), JSON.stringify(speech));
+    check("the sweep reports what it did", stats.cronRunsPruned >= 1 && stats.webhookRecipientsStripped >= 1 && stats.outboundPayloadsCleared >= 1 && stats.feedbackScreenshotsPruned >= 2 && stats.emailBodiesCleared >= 1, JSON.stringify(stats));
+
     const route = readFileSync("src/app/api/imports/process-stalled/route.ts", "utf8");
+    check("the hourly sweep runs the retention windows in their own try block", /try \{\s*\/\/[^\n]*\n[^\n]*\n\s*Object\.assign\(stats, await runRetentionSweeps\(\)\)/.test(route));
+    check("…and the interest-list token backfill", route.includes("await backfillInterestListTokens()"));
     check("the daily cron calls both sweeps", route.includes("sweepAbandonedMeetingSessions()") && route.includes("sweepExpiredHandoffs()"));
     check("…and prunes the rate-limit buckets", route.includes("pruneRateLimitBuckets()"));
     const stepOf = (call: string) => {
