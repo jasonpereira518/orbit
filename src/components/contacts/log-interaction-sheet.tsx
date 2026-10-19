@@ -405,7 +405,7 @@ export function LogInteractionSheet({
                 textareaClassName={FIELD_BARE}
               />
             </div>
-            <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
+            <p className="flex items-start gap-1.5 text-2xs leading-relaxed text-muted-foreground">
               <Sparkles className="mt-px size-3 shrink-0" />
               {hasApiKey
                 ? "Write it however you like — the summary, action items and any dates get pulled out for you. Type @ to link someone else who came up."

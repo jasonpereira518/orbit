@@ -45,7 +45,7 @@ export default async function ChatPage() {
     <div className="flex h-[calc(100dvh-11.375rem-env(safe-area-inset-bottom))] min-h-0 flex-col gap-4 overflow-hidden md:h-[calc(100dvh-4rem)]">
       <RenderStamp />
       <div className="shrink-0">
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
+        <h1 className="font-heading text-3xl text-ink">
           Chat with your network
         </h1>
         {/* Hidden on phones: the empty chat card says the same thing, and every line here

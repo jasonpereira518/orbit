@@ -234,7 +234,7 @@ function YouPanelBody({
             </div>
           )}
           <div className="min-w-0">
-            <SheetTitle className="font-[family-name:var(--font-display)] text-2xl text-ink">
+            <SheetTitle className="font-heading text-2xl text-ink">
               {data.label}
             </SheetTitle>
             <SheetDescription>
@@ -461,7 +461,7 @@ function ContactPanelBody({
             {/* The wrapper is already `min-w-0`, but that only lets flex shrink it — a
                 single unbroken token still overflows without `break-words`. A long name
                 ran off the right edge of the mobile sheet header. */}
-            <SheetTitle className="font-[family-name:var(--font-display)] text-2xl break-words text-ink">
+            <SheetTitle className="font-heading text-2xl break-words text-ink">
               {data.label}
             </SheetTitle>
             {data.fullName &&
@@ -677,7 +677,7 @@ function ContactPanelBody({
             href={`/contacts/${id}`}
             className={cn(
               buttonVariants(),
-              "flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
+              "flex-1"
             )}
           >
             Open full profile

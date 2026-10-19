@@ -50,7 +50,7 @@ export function LockedFeature({
         <span className="mx-auto flex size-11 items-center justify-center rounded-full border border-tier-border bg-tier-surface">
           <Lock className="size-5 text-tier-accent" />
         </span>
-        <h1 className="font-[family-name:var(--font-display)] text-2xl text-ink">
+        <h1 className="font-heading text-2xl text-ink">
           {title}
         </h1>
         <p className="text-sm leading-relaxed text-muted-foreground">

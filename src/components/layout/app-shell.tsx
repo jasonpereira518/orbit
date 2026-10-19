@@ -241,7 +241,7 @@ export function AppShell({
                 <span data-app-logo className="inline-flex shrink-0">
                   <OrbitLogo size="md" plan={plan} />
                 </span>
-                <span className="font-[family-name:var(--font-display)] text-lg leading-none text-ink">
+                <span className="font-heading text-lg leading-none text-ink">
                   Orbit
                 </span>
               </Link>

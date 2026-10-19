@@ -177,7 +177,7 @@ function SuggestionRow({
           )}
 
           {item.yearInferred && (
-            <p className="text-xs text-amber-700 dark:text-warning">
+            <p className="text-xs text-warning">
               Year not stated in the notes — assumed{" "}
               {new Date(item.dueDate).getFullYear()}
             </p>

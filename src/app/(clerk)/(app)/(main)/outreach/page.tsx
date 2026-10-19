@@ -56,7 +56,7 @@ export default async function OutreachPage() {
       <RenderStamp />
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
+          <h1 className="font-heading text-3xl text-ink">
             Outreach
           </h1>
           <p className="mt-1 text-muted-foreground">
@@ -65,10 +65,7 @@ export default async function OutreachPage() {
         </div>
         <Link
           href="/outreach/new"
-          className={cn(
-            buttonVariants(),
-            "bg-primary text-primary-foreground hover:bg-primary/90"
-          )}
+          className={buttonVariants()}
         >
           <Plus className="mr-1 h-4 w-4" />
           New campaign
@@ -79,7 +76,7 @@ export default async function OutreachPage() {
         <div className="rounded-2xl border border-border/70 bg-card px-5 py-4">
           <div className="text-xs text-muted-foreground">Account successful reply rate</div>
           <div className="mt-1 flex flex-wrap items-baseline gap-4">
-            <span className="font-[family-name:var(--font-display)] text-3xl text-ink">
+            <span className="font-heading text-3xl text-ink">
               {formatReplyRate(accountRate)}
             </span>
             <span className="text-sm text-muted-foreground">

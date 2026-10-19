@@ -71,7 +71,7 @@ export function MonthCalendar({
   return (
     <div className={cn("w-[17.5rem]", className)}>
       <div className="mb-3 flex items-center justify-between gap-2">
-        <p className="font-[family-name:var(--font-display)] text-base text-ink">
+        <p className="font-heading text-base text-ink">
           {format(month, "MMMM yyyy")}
         </p>
         <div className="flex items-center gap-0.5">
@@ -102,7 +102,7 @@ export function MonthCalendar({
         {WEEKDAYS.map((d) => (
           <div
             key={d}
-            className="py-1 text-center text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+            className="py-1 text-center text-3xs font-medium uppercase tracking-wide text-muted-foreground"
           >
             {d}
           </div>

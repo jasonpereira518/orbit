@@ -39,7 +39,7 @@ export async function DossierPane({ contactId }: { contactId: string }) {
       <div className="space-y-4">
         <BackToPeople />
         <div className="rounded-2xl border border-dashed border-border/70 px-6 py-12 text-center">
-          <h2 className="font-[family-name:var(--font-display)] text-xl text-ink">
+          <h2 className="font-heading text-xl text-ink">
             We couldn’t find that person
           </h2>
           <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
@@ -84,13 +84,13 @@ export async function DossierPane({ contactId }: { contactId: string }) {
           size="lg"
         />
         <div className="min-w-[12rem] flex-1">
-          <h2 className="font-[family-name:var(--font-display)] text-2xl leading-tight text-ink">
+          <h2 className="font-heading text-2xl leading-tight text-ink">
             {contact.fullName}
           </h2>
           {role ? <p className="mt-0.5 text-sm text-muted-foreground">{role}</p> : null}
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             {tier ? (
-              <Badge variant="secondary" className={cn("text-[10px]", closenessTierChipClass(tier))}>
+              <Badge variant="secondary" className={cn("text-3xs", closenessTierChipClass(tier))}>
                 {TIER_LABEL[tier]}
               </Badge>
             ) : null}
@@ -227,7 +227,7 @@ export async function DossierPane({ contactId }: { contactId: string }) {
                         {[r.title, r.company].filter(Boolean).join(" · ")}
                       </p>
                     </div>
-                    <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                    <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-2xs text-muted-foreground">
                       {r.reasonLabel}
                     </span>
                   </IntentLink>
@@ -314,7 +314,7 @@ export async function DossierPane({ contactId }: { contactId: string }) {
             <Fact label="Tags" source="Yours">
               <div className="flex flex-wrap gap-1.5">
                 {facts.tags.map((t) => (
-                  <Badge key={t} variant="secondary" className="text-[11px]">
+                  <Badge key={t} variant="secondary" className="text-2xs">
                     {t}
                   </Badge>
                 ))}
@@ -352,7 +352,7 @@ function Fact({
     <section>
       <div className="mb-1.5 flex items-baseline justify-between gap-3">
         <h4 className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{label}</h4>
-        <span className="text-[11px] text-muted-foreground/80">{source}</span>
+        <span className="text-2xs text-muted-foreground/80">{source}</span>
       </div>
       {children}
     </section>

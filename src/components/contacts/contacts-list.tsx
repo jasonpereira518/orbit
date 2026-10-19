@@ -766,7 +766,7 @@ const ContactRow = memo(function ContactRow({
                         <span className="mx-1.5">·</span>
                       </>
                     )}
-                    <span className="font-medium text-amber-700 dark:text-warning">
+                    <span className="font-medium text-warning">
                       {overdueText}
                     </span>
                     {lastTouch && (
@@ -785,7 +785,7 @@ const ContactRow = memo(function ContactRow({
               // Only set for the "non-obvious" hits — a past role, or a
               // semantic match with no literal keyword overlap — so this
               // line is rare, not a fixture of every search result.
-              <p className="mt-0.5 truncate text-[11px] font-medium text-primary/70">
+              <p className="mt-0.5 truncate text-2xs font-medium text-primary/70">
                 {c.matchReason}
               </p>
             )}
@@ -996,7 +996,7 @@ function AlphabetScrubber({
                 hasContacts ? `Jump to ${letter}` : `${letter} — no contacts`
               }
               className={cn(
-                "flex h-[1.1%] min-h-0 w-full items-center justify-center text-[9px] leading-none sm:text-[10px]",
+                "flex h-[1.1%] min-h-0 w-full items-center justify-center text-3xs leading-none sm:text-3xs",
                 hasContacts
                   ? "font-medium text-muted-foreground hover:text-primary"
                   : "text-muted-foreground/30",

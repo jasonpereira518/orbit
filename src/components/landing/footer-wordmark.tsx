@@ -231,7 +231,7 @@ export function FooterWordmark({ className }: { className?: string }) {
       {/* touch-pan-y: a vertical swipe still scrolls the page, a sideways drag draws. */}
       <canvas
         ref={canvasRef}
-        className="absolute inset-0 size-full touch-pan-y font-[family-name:var(--font-display)]"
+        className="absolute inset-0 size-full touch-pan-y font-heading"
       />
     </div>
   );

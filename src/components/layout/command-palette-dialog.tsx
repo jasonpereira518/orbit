@@ -182,7 +182,7 @@ function CommandIcon({ icon: Icon }: { icon: LucideIcon }) {
 
 function Key({ children }: { children: ReactNode }) {
   return (
-    <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded-md border border-border/60 bg-background px-1 font-sans text-[11px] text-muted-foreground">
+    <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded-md border border-border/60 bg-background px-1 font-sans text-2xs text-muted-foreground">
       {children}
     </kbd>
   );

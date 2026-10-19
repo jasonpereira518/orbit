@@ -164,7 +164,6 @@ export function TriageStep({ onDone }: { onDone: () => void }) {
         <div className="flex flex-wrap gap-2">
           <Button
             type="button"
-            className="bg-primary text-primary-foreground hover:bg-primary/90"
             onClick={retry}
           >
             Try again
@@ -186,7 +185,6 @@ export function TriageStep({ onDone }: { onDone: () => void }) {
         </p>
         <Button
           type="button"
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
           onClick={onDone}
         >
           Continue
@@ -275,7 +273,6 @@ export function TriageStep({ onDone }: { onDone: () => void }) {
         </p>
         <Button
           type="button"
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
           disabled={pending}
           onClick={submitScreenAndAdvance}
         >

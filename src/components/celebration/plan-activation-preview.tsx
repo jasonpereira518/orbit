@@ -48,7 +48,7 @@ export function PlanActivationPreview() {
   return (
     <div className="mx-auto max-w-3xl space-y-8 pb-12">
       <header className="space-y-2">
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
+        <h1 className="font-heading text-3xl text-ink">
           Plan activation preview
         </h1>
         <p className="max-w-2xl text-muted-foreground">
@@ -91,7 +91,7 @@ export function PlanActivationPreview() {
 
       <section aria-label="Paid to Free displays" className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="font-[family-name:var(--font-display)] text-xl text-ink">
+          <h2 className="font-heading text-xl text-ink">
             Paid to Free
           </h2>
           <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">

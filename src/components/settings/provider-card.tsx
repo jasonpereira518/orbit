@@ -260,7 +260,6 @@ export function ProviderCard({
             <Button
               type="button"
               disabled={pending || !apiKey.trim()}
-              className="bg-primary text-primary-foreground hover:bg-primary/90"
               onClick={() =>
                 start(async () => {
                   // Straight to `saveAiSettings`, which overwrites the stored key. Never via

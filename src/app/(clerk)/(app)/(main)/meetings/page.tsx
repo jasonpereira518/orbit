@@ -25,7 +25,7 @@ export default async function MeetingsPage({ searchParams }: { searchParams: Pro
     return (
       <div className="mx-auto max-w-3xl space-y-6">
         <RenderStamp />
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">Meetings</h1>
+        <h1 className="font-heading text-3xl text-ink">Meetings</h1>
         <LockedFeature
           title="Meeting history"
           description={FEATURE_DENIAL.meetings}
@@ -49,7 +49,7 @@ export default async function MeetingsPage({ searchParams }: { searchParams: Pro
     <div className="mx-auto max-w-3xl space-y-6">
       <RenderStamp />
       <div>
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">Meetings</h1>
+        <h1 className="font-heading text-3xl text-ink">Meetings</h1>
         <p className="mt-1 text-muted-foreground">
           Every call you&apos;ve recorded. Search by a person, a topic, or something that was said.
         </p>

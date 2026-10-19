@@ -249,7 +249,7 @@ function PricingTiersView({
 
               <h2
                 id={`tier-${plan.id}`}
-                className="font-[family-name:var(--font-display)] text-2xl tracking-tight text-[#e8f3f1]"
+                className="font-heading text-2xl tracking-tight text-[#e8f3f1]"
               >
                 {plan.name}
               </h2>

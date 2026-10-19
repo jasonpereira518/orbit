@@ -97,7 +97,6 @@ export function OutreachSettings({
 
       <Button
         disabled={pending}
-        className="bg-primary text-primary-foreground hover:bg-primary/90"
         onClick={() =>
           start(async () => {
             try {

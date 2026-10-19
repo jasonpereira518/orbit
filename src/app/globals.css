@@ -81,6 +81,20 @@
   --color-night-max: #f2c14e;
   --color-night-lifetime: #c9d1db;
   --color-ink: var(--ink);
+  /* ── Surface and edge tokens (UI polish pass) ──
+     The hairline every card, row and panel uses. Was `border-border/70` typed out
+     at ~85 call sites; one name, one alpha. */
+  --color-border-subtle: var(--border-subtle);
+  /* A recessed well inside a card (was `bg-muted/30`). */
+  --color-surface-inset: var(--surface-inset);
+  /* Highlight / comet red used by the constellation and the inspect panel. */
+  --color-signal: var(--signal);
+  /* Constellation chrome: the three fixed near-black blues the sky UI is built
+     on (`#0a0e16` / `#080b12` / `#05070c`). Fixed, never themed — the sky is dark
+     in both modes by design. Not `--color-sky-*`: Tailwind owns that blue ramp. */
+  --color-space-900: #0a0e16;
+  --color-space-950: #080b12;
+  --color-space-980: #05070c;
   --color-admin-nav-hover: var(--admin-nav-hover);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
@@ -109,6 +123,15 @@
    * interaction tier in one place. */
   --default-transition-duration: 120ms;
   --default-transition-timing-function: cubic-bezier(0, 0, 0.2, 1);
+
+  /* ── Fine-print type sizes ──
+   * `text-xs` (12px) was the smallest named step, so ~250 call sites reached for
+   * `text-[11px]` / `text-[10px]`. These name them; nothing in the app goes below
+   * 10px. Line heights follow the `text-xs` ratio. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-3xs: 0.625rem;
+  --text-3xs--line-height: 0.875rem;
 }
 
 :root {
@@ -213,6 +236,9 @@
      lets `--primary` be an accent in both themes without dragging body content
      with it. Light is unchanged from before the split. */
   --ink: #0f3d3e;
+  --border-subtle: color-mix(in oklab, var(--border) 70%, transparent);
+  --surface-inset: color-mix(in oklab, var(--muted) 40%, transparent);
+  --signal: #c4452d;
   /* Admin nav hover wash. Carries its own alpha rather than being tinted at the call
      site, because the hover span uses `opacity` for its fade-in — the two would fight. */
   --admin-nav-hover: rgb(15 61 62 / 0.10);
@@ -334,6 +360,9 @@
   --tier-max: #f2c14e;
   --tier-lifetime: #c5ccd6;
   --ink: #e7ecf1;
+  --border-subtle: color-mix(in oklab, var(--border) 70%, transparent);
+  --surface-inset: color-mix(in oklab, var(--muted) 40%, transparent);
+  --signal: #ff6b4a;
   --admin-nav-hover: rgb(124 195 226 / 0.16);
   /* Shadows on a dark ground want to be deeper than the surface, not neutral
      black — a pure-black shadow over a tinted ground reads as a dead hole. */

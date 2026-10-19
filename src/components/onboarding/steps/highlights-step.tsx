@@ -218,7 +218,7 @@ export function HighlightsStep({
             <p className="text-xs tabular-nums text-muted-foreground" aria-live="polite">
               {index + 1} / {chapters.length}
             </p>
-            <Button type="button" size="lg" className="h-10 justify-self-end px-4" onClick={next}>
+            <Button type="button" size="lg" className="justify-self-end" onClick={next}>
               {index >= last ? "Go to dashboard" : "Next"}
               <ArrowRight className="size-4" aria-hidden />
             </Button>
@@ -333,7 +333,7 @@ function ChapterRail({
 
 function NeedTag({ chapter, facts }: { chapter: HighlightChapter; facts: OverviewFacts }) {
   const base =
-    "inline-flex items-center rounded-full border border-border/70 bg-muted/40 px-2 py-px text-[11px] font-medium text-muted-foreground";
+    "inline-flex items-center rounded-full border border-border/70 bg-muted/40 px-2 py-px text-2xs font-medium text-muted-foreground";
   if (chapter.needs === "ai") return <span className={base}>Uses AI credits</span>;
   if (chapter.needs === "linkedin" && facts.linkedinPending) {
     return <span className={base}>Upload when your export arrives</span>;
@@ -366,7 +366,7 @@ function ChapterCopy({
         <NeedTag chapter={chapter} facts={facts} />
       </StaggerItem>
       <StaggerItem>
-        <h2 className="font-[family-name:var(--font-display)] text-2xl tracking-tight text-ink text-balance">
+        <h2 className="font-heading text-2xl tracking-tight text-ink text-balance">
           {chapter.title}
         </h2>
         <p className="mt-2 text-sm text-muted-foreground text-pretty">{chapter.blurb}</p>

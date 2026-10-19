@@ -559,7 +559,6 @@ export function ContactForm({
       <Button
         type="submit"
         disabled={pending || lookingUp}
-        className="bg-primary text-primary-foreground hover:bg-primary/90"
       >
         {pending ? "Saving…" : contactId ? "Save changes" : "Create contact"}
       </Button>

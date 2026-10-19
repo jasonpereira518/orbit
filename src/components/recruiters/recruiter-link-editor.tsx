@@ -45,7 +45,7 @@ export function RecruiterLinkEditor({
 
   return (
     <div className="space-y-4 rounded-2xl border border-border/70 bg-card p-5">
-      <h2 className="font-[family-name:var(--font-display)] text-lg text-ink">
+      <h2 className="font-heading text-lg text-ink">
         Your relationship
       </h2>
       <div className="grid gap-3 sm:grid-cols-2">

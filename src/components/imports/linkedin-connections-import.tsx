@@ -152,7 +152,6 @@ export function LinkedInConnectionsImport() {
         </Button>
         <Button
           disabled={!csvText || busy || selected.size === 0}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
           onClick={() => {
             if (busy) return;
             try {

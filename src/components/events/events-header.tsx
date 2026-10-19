@@ -5,7 +5,7 @@
 export function EventsHeader() {
   return (
     <div className="reveal-mount">
-      <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">Events</h1>
+      <h1 className="font-heading text-3xl text-ink">Events</h1>
       <p className="mt-1 text-muted-foreground">
         Conferences, meetups and parties you went to — and the people you met there.
       </p>

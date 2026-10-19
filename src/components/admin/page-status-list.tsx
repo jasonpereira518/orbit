@@ -153,7 +153,7 @@ function TierChips({
             }
             onClick={() => onChange(on ? value.filter((p) => p !== plan) : PLANS.filter((p) => p === plan || value.includes(p)))}
             className={cn(
-              "rounded-md border px-2 py-0.5 text-[11px] transition-colors duration-fast",
+              "rounded-md border px-2 py-0.5 text-2xs transition-colors duration-fast",
               on
                 ? "border-tier-border bg-tier-surface font-medium text-tier-accent"
                 : "border-border/60 text-muted-foreground/70 line-through decoration-muted-foreground/40 hover:text-foreground",

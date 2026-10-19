@@ -43,7 +43,7 @@ export function LandingPage({
              * claim's bottom to size the flattened system above it — a taller
              * claim silently drives the camera toward CAM_SCALE_MIN. */}
             <p className={KICKER}>Your search, mapped</p>
-            <h2 className="mt-3 font-[family-name:var(--font-display)] text-[clamp(26px,3.6vw,42px)] font-normal leading-[1.15] tracking-[-0.02em] text-[#e8f3f1]">
+            <h2 className="mt-3 font-heading text-[clamp(26px,3.6vw,42px)] font-normal leading-[1.15] tracking-[-0.02em] text-[#e8f3f1]">
               The people who can get you hired are already drifting.
             </h2>
             <p className={`${BODY} mx-auto`}>

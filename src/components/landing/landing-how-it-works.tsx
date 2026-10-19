@@ -94,9 +94,9 @@ const W_TERM = (LABEL_W + LABEL_GAP + 16) / OUTER;
 const STAGE_CSS = `max(${STAGE_MIN}px, min(${STAGE_MAX}px, calc(50svh / ${OUTER} - ${Math.round(H_TERM)}px), calc(50vw / ${OUTER} - ${Math.round(W_TERM)}px)))`;
 const CENTRE_CSS = `calc(50% + ${HEADER_CLEARANCE / 2}px)`;
 
-const KICKER_CLASS = "text-[11px] uppercase tracking-[0.16em] text-[#6d807c]";
+const KICKER_CLASS = "text-2xs uppercase tracking-[0.16em] text-[#6d807c]";
 const TITLE_CLASS =
-  "mt-1 font-[family-name:var(--font-display)] text-[19px] text-[#e8f3f1]";
+  "mt-1 font-heading text-[19px] text-[#e8f3f1]";
 const BODY_CLASS = "mt-1 text-[13px] leading-[1.6] text-[#9aada8]";
 
 function StepLabel({
@@ -377,7 +377,7 @@ function Ring() {
         className="absolute left-1/2 -translate-x-1/2 text-center"
         style={{ top: "calc(50% + 48px)" }}
       >
-        <p className="font-[family-name:var(--font-display)] text-[19px] text-[#e8f3f1]">
+        <p className="font-heading text-[19px] text-[#e8f3f1]">
           Orbit
         </p>
         <p className="text-xs text-[#6d807c]">the record keeps itself</p>
@@ -585,7 +585,7 @@ export function LandingHowItWorks() {
         <Reveal className="reveal-celestial" delay={80}>
           <h2
             id="how-heading"
-            className="mt-3 max-w-[18ch] font-[family-name:var(--font-display)] text-[clamp(30px,4.4vw,50px)] font-normal leading-[1.15] tracking-[-0.025em] text-[#e8f3f1]"
+            className="mt-3 max-w-[18ch] font-heading text-[clamp(30px,4.4vw,50px)] font-normal leading-[1.15] tracking-[-0.025em] text-[#e8f3f1]"
           >
             From a conversation to a callback.
           </h2>

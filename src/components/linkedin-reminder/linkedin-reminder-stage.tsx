@@ -92,7 +92,7 @@ export function LinkedInReminderStage({
               <StaggerItem>
                 <DialogPrimitive.Title
                   id="linkedin-reminder-title"
-                  className="mt-3 font-[family-name:var(--font-display)] text-4xl tracking-tight text-ink text-balance sm:text-5xl"
+                  className="mt-3 font-heading text-4xl tracking-tight text-ink text-balance sm:text-5xl"
                 >
                   Is your LinkedIn export ready?
                 </DialogPrimitive.Title>

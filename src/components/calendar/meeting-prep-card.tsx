@@ -137,7 +137,7 @@ function PrepBrief({ prep, eventId }: { prep: MeetingPrep; eventId: string }) {
           )}
           {p.dueBefore.length > 0 && (
             <div>
-              <p className="font-medium text-amber-700 dark:text-warning">Due before this meeting</p>
+              <p className="font-medium text-warning">Due before this meeting</p>
               <ul className="list-disc pl-4 text-ink">
                 {p.dueBefore.slice(0, 3).map((o, i) => (
                   <li key={i}>{o}</li>

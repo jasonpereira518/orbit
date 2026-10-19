@@ -892,7 +892,7 @@ export function FloatingAskBar() {
             }}
           />
           {!open && !query && (
-            <kbd className="hidden h-5 shrink-0 items-center rounded-md border border-border/60 bg-background px-1.5 font-sans text-[11px] text-muted-foreground sm:inline-flex">
+            <kbd className="hidden h-5 shrink-0 items-center rounded-md border border-border/60 bg-background px-1.5 font-sans text-2xs text-muted-foreground sm:inline-flex">
               ⌘J
             </kbd>
           )}
@@ -916,7 +916,7 @@ export function FloatingAskBar() {
             type="button"
             size="icon-sm"
             disabled={chatPending || (!query.trim() && !lastUserQuery)}
-            className="size-9 shrink-0 rounded-full bg-primary text-primary-foreground hover:bg-primary/90"
+            className="size-9 shrink-0 rounded-full"
             onClick={() => {
               if (!query.trim()) {
                 fillMostRecentUserMessage();

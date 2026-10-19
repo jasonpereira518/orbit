@@ -858,7 +858,7 @@ export function NetworkGraph({
                 >
                   <Sparkles className="mr-1.5 h-3.5 w-3.5" />
                   Clusters
-                  <span className="ml-1.5 rounded-full bg-white/10 px-1.5 text-[10px]">
+                  <span className="ml-1.5 rounded-full bg-white/10 px-1.5 text-3xs">
                     {data.clusters.length}
                   </span>
                 </PopoverTrigger>
@@ -893,7 +893,7 @@ export function NetworkGraph({
                             }}
                           >
                             <span className="min-w-0 truncate">
-                              <span className="mr-1.5 text-[9px] uppercase tracking-wider text-white/35">
+                              <span className="mr-1.5 text-3xs uppercase tracking-wider text-white/35">
                                 {c.kind}
                               </span>
                               <span
@@ -954,7 +954,7 @@ export function NetworkGraph({
                   className="w-72 space-y-3 border-white/10 bg-[#0a0e16] text-white"
                 >
                   <div className="space-y-1.5">
-                    <p className="text-[11px] uppercase tracking-wide text-white/45">
+                    <p className="text-2xs uppercase tracking-wide text-white/45">
                       Company
                     </p>
                     <Select
@@ -978,7 +978,7 @@ export function NetworkGraph({
                     </Select>
                   </div>
                   <div className="space-y-1.5">
-                    <p className="text-[11px] uppercase tracking-wide text-white/45">
+                    <p className="text-2xs uppercase tracking-wide text-white/45">
                       School
                     </p>
                     <Select
@@ -999,7 +999,7 @@ export function NetworkGraph({
                     </Select>
                   </div>
                   <div className="space-y-1.5">
-                    <p className="text-[11px] uppercase tracking-wide text-white/45">
+                    <p className="text-2xs uppercase tracking-wide text-white/45">
                       Keyword
                     </p>
                     <Input
@@ -1010,7 +1010,7 @@ export function NetworkGraph({
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <p className="text-[11px] uppercase tracking-wide text-white/45">
+                    <p className="text-2xs uppercase tracking-wide text-white/45">
                       Min strength (orbit)
                     </p>
                     <Select
@@ -1054,7 +1054,7 @@ export function NetworkGraph({
                 >
                   Re-engage
                   {cometContacts.length > 0 && (
-                    <span className="ml-1.5 rounded-full bg-[#c4452d]/40 px-1.5 text-[10px]">
+                    <span className="ml-1.5 rounded-full bg-[#c4452d]/40 px-1.5 text-3xs">
                       {cometContacts.length}
                     </span>
                   )}
@@ -1063,7 +1063,7 @@ export function NetworkGraph({
                   align="end"
                   className="max-h-80 w-72 overflow-y-auto border-white/10 bg-[#0a0e16] p-2 text-white"
                 >
-                  <p className="mb-2 px-2 text-[11px] uppercase tracking-wide text-white/45">
+                  <p className="mb-2 px-2 text-2xs uppercase tracking-wide text-white/45">
                     Drifting away
                   </p>
                   {cometContacts.length === 0 ? (
@@ -1146,7 +1146,7 @@ export function NetworkGraph({
                               <span className="text-sm text-[#ffb4a0]">
                                 {name}
                               </span>
-                              <span className="text-[11px] text-white/40">
+                              <span className="text-2xs text-white/40">
                                 {[c.company, c.title]
                                   .filter(Boolean)
                                   .join(" · ") || "No company"}
@@ -1181,7 +1181,7 @@ export function NetworkGraph({
             {/* Refresh progress */}
             {refreshing && (
               <div className="absolute left-1/2 top-14 z-30 w-[min(90vw,320px)] -translate-x-1/2 rounded-xl border border-white/10 bg-[#080b12]/95 px-3 py-2.5">
-                <div className="mb-1.5 flex items-center justify-between text-[11px] text-white/60">
+                <div className="mb-1.5 flex items-center justify-between text-2xs text-white/60">
                   <span>Refreshing constellation…</span>
                   <span>
                     {refreshProgress.processed}/{refreshProgress.total || "…"}
@@ -1214,7 +1214,7 @@ export function NetworkGraph({
                   side="top"
                   className="w-64 border-white/10 bg-[#0a0e16] text-white"
                 >
-                  <p className="mb-2 flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-white/45">
+                  <p className="mb-2 flex items-center gap-1.5 text-2xs uppercase tracking-wide text-white/45">
                     <Info className="h-3 w-3" />
                     Map legend
                   </p>
@@ -1228,7 +1228,7 @@ export function NetworkGraph({
                       Star — a person in your network (bigger = closer tie)
                     </li>
                     <li className="flex items-center gap-2">
-                      <span className="text-[9px] font-semibold uppercase tracking-wider text-[#ff9900]">
+                      <span className="text-3xs font-semibold uppercase tracking-wider text-[#ff9900]">
                         AWS
                       </span>
                       Cluster label — company, school or industry group

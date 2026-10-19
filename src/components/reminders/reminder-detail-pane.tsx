@@ -123,7 +123,7 @@ export function ReminderDetailPane({
           <p
             className={cn(
               "text-xs font-medium",
-              due.bucket === "overdue" ? "text-amber-700 dark:text-warning" : "text-muted-foreground"
+              due.bucket === "overdue" ? "text-warning" : "text-muted-foreground"
             )}
           >
             {due.bucket === "overdue" || due.bucket === "today" || due.bucket === "tomorrow"
@@ -155,7 +155,7 @@ export function ReminderDetailPane({
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+    <h3 className="mb-2 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
       {children}
     </h3>
   );
@@ -221,7 +221,7 @@ function ContactSection({ item }: { item: ReminderRow }) {
         {draft && (
           <div className="mt-3 rounded-lg bg-muted/50 p-3">
             <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Draft</p>
+              <p className="text-3xs font-medium uppercase tracking-wide text-muted-foreground">Draft</p>
               <Button
                 type="button"
                 size="sm"
@@ -258,7 +258,7 @@ function ProvenanceSection({ item }: { item: ReminderRow }) {
         <div className="flex flex-wrap items-center gap-1.5">
           <span
             className={cn(
-              "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+              "rounded-full px-2 py-0.5 text-3xs font-medium uppercase tracking-wide",
               reminderTypeStyle(item.reminderType)
             )}
           >
@@ -266,7 +266,7 @@ function ProvenanceSection({ item }: { item: ReminderRow }) {
           </span>
           {item.origin === "implied" && (
             <span
-              className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+              className="rounded-full bg-muted px-2 py-0.5 text-3xs font-medium uppercase tracking-wide text-muted-foreground"
               title="Orbit inferred this from what was discussed; the notes didn't say it outright."
             >
               Implied

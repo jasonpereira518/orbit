@@ -95,7 +95,7 @@ export function KnowledgeBaseView({
     return (
       <div className="rounded-2xl border border-dashed border-border/70 px-6 py-12 text-center">
         <BookOpen className="mx-auto h-8 w-8 text-muted-foreground" />
-        <h2 className="mt-3 font-[family-name:var(--font-display)] text-xl text-ink">
+        <h2 className="mt-3 font-heading text-xl text-ink">
           Your knowledge base is empty
         </h2>
         <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
@@ -195,7 +195,7 @@ export function KnowledgeBaseView({
                       <span className="truncate text-sm font-medium text-ink">
                         {entry.contactName}
                       </span>
-                      <Badge variant="secondary" className="text-[10px]">
+                      <Badge variant="secondary" className="text-3xs">
                         {KIND_LABEL[entry.kind]}
                       </Badge>
                       {entry.date ? (
@@ -238,7 +238,7 @@ function Stat({
         {icon}
         {label}
       </dt>
-      <dd className="ml-auto font-[family-name:var(--font-display)] text-lg leading-none text-ink">
+      <dd className="ml-auto font-heading text-lg leading-none text-ink">
         {value}
       </dd>
     </div>

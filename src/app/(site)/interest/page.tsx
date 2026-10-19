@@ -106,7 +106,7 @@ export async function generateMetadata({
 }
 
 const HEADING =
-  "font-[family-name:var(--font-display)] font-normal leading-[1.12] tracking-[-0.025em] text-[#e8f3f1]";
+  "font-heading font-normal leading-[1.12] tracking-[-0.025em] text-[#e8f3f1]";
 
 const SECTION_TITLE = `${HEADING} text-[clamp(26px,3.4vw,38px)]`;
 
@@ -295,7 +295,7 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
             priority
             className="shrink-0 rounded-full"
           />
-          <span className="font-[family-name:var(--font-display)] text-xl font-bold tracking-tight text-[#e8f3f1]">
+          <span className="font-heading text-xl font-bold tracking-tight text-[#e8f3f1]">
             Orbit
           </span>
         </div>
@@ -322,7 +322,7 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
                 className="pillar-card rounded-2xl border border-[#e8f3f1]/[0.07] bg-[linear-gradient(180deg,rgba(232,243,241,0.04),rgba(232,243,241,0.01))] p-5 transition-colors duration-300 hover:border-[#f2c14e]/25"
               >
                 <PillarArt kind={art} />
-                <h3 className="mt-4 font-[family-name:var(--font-display)] text-lg leading-snug text-[#e8f3f1]">
+                <h3 className="mt-4 font-heading text-lg leading-snug text-[#e8f3f1]">
                   {title}
                 </h3>
                 <p className="mt-1.5 text-sm leading-relaxed text-[#9aada8]">{body}</p>

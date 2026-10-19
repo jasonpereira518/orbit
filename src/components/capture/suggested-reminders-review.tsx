@@ -136,7 +136,7 @@ function ReminderRow({
                 className={cn("w-full justify-start font-normal", item.yearInferred && "ring-1 ring-amber-500/50")}
               />
               {item.yearInferred && (
-                <p className="text-xs text-amber-700 dark:text-warning">
+                <p className="text-xs text-warning">
                   Year not stated — assumed {item.dueDateIso.slice(0, 4)}
                 </p>
               )}
@@ -188,7 +188,7 @@ function SourceLine({ item }: { item: SuggestionReviewItem }) {
           : `from “${item.rawDatePhrase ?? ""}”`}
       </button>
       {!implied && item.dateBasis !== "absolute" && (
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-2xs text-muted-foreground">
           {" "}
           · counted from {item.anchorIso}
           {item.dateBasis === "vague" ? " (no date given, default 2 weeks)" : ""}

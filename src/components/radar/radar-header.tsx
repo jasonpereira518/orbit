@@ -5,7 +5,7 @@
 export function RadarHeader() {
   return (
     <div className="reveal-mount">
-      <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">Radar</h1>
+      <h1 className="font-heading text-3xl text-ink">Radar</h1>
       <p className="mt-1 text-muted-foreground">
         Who to reach out to this week, and why. Orbit checks your network every night.
       </p>

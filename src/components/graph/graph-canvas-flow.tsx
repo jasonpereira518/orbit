@@ -2187,7 +2187,7 @@ function GraphCanvasInner({
           <div className="pointer-events-auto max-w-sm rounded-2xl border border-white/10 bg-[#080b12]/90 px-6 py-5 text-center shadow-xl">
             {data.summary.total === 0 ? (
               <>
-                <p className="font-[family-name:var(--font-display)] text-lg text-white">
+                <p className="font-heading text-lg text-white">
                   Your sky is empty
                 </p>
                 <p className="mt-1 text-sm text-white/55">
@@ -2202,7 +2202,7 @@ function GraphCanvasInner({
               </>
             ) : constellationFilterOn && data.contacts.length === 0 ? (
               <>
-                <p className="font-[family-name:var(--font-display)] text-lg text-white">
+                <p className="font-heading text-lg text-white">
                   Nobody here yet
                 </p>
                 <p className="mt-1 text-sm text-white/55">
@@ -2234,7 +2234,7 @@ function GraphCanvasInner({
               </>
             ) : (
               <>
-                <p className="font-[family-name:var(--font-display)] text-lg text-white">
+                <p className="font-heading text-lg text-white">
                   No stars match
                 </p>
                 <p className="mt-1 text-sm text-white/55">

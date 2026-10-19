@@ -289,7 +289,7 @@ export function OnboardingFlow({
       <header className="relative z-10 mx-auto grid w-full max-w-6xl grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 pt-4 sm:px-8 sm:pt-5">
         <div className="flex items-center gap-2 justify-self-start">
           <OrbitLogo size="sm" />
-          <span className="font-[family-name:var(--font-display)] text-lg leading-none tracking-tight text-ink">
+          <span className="font-heading text-lg leading-none tracking-tight text-ink">
             Orbit
           </span>
         </div>

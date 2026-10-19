@@ -191,7 +191,7 @@ export function ContactAvatarPreview({
                 {typeof contact.closeness === "number" && (
                   <span
                     className={cn(
-                      "rounded-md px-1.5 py-0.5 text-[11px] font-medium tabular-nums",
+                      "rounded-md px-1.5 py-0.5 text-2xs font-medium tabular-nums",
                       closenessPercentChipClass(contact.closeness)
                     )}
                   >
@@ -201,7 +201,7 @@ export function ContactAvatarPreview({
               </div>
             )}
             {detail ? (
-              <p className="mt-2 truncate text-[11px] text-muted-foreground">
+              <p className="mt-2 truncate text-2xs text-muted-foreground">
                 {detail}
               </p>
             ) : null}

@@ -206,7 +206,7 @@ export function BoardingPass({
         >
           <PlanetArt planet={ticket.planet} size={PLANET_SIZE} />
         </motion.span>
-        <p className="mt-3 font-[family-name:var(--font-display)] text-[28px] leading-none tracking-tight text-[#e8f3f1]">
+        <p className="mt-3 font-heading text-[28px] leading-none tracking-tight text-[#e8f3f1]">
           <span aria-hidden="true">#</span>
           <span className="sr-only">Place in line: </span>
           <RollingCount value={position} delay={full ? 0.35 : 0.1} />
@@ -255,7 +255,7 @@ export function BoardingPass({
           {...rise(1.0)}
           ref={headingRef}
           tabIndex={-1}
-          className="mt-2 font-[family-name:var(--font-display)] text-[22px] leading-[1.15] tracking-tight text-[#e8f3f1] outline-none"
+          className="mt-2 font-heading text-[22px] leading-[1.15] tracking-tight text-[#e8f3f1] outline-none"
         >
           {positionLine({ position })}
         </motion.h3>

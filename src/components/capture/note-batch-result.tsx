@@ -286,7 +286,7 @@ export function NoteBatchResultView({
                 <t.Icon className="size-3.5" aria-hidden />
                 {tile.label}
               </span>
-              <span className="font-[family-name:var(--font-display)] text-3xl leading-none text-ink tabular-nums">
+              <span className="font-heading text-3xl leading-none text-ink tabular-nums">
                 {tile.count}
               </span>
             </a>
@@ -316,9 +316,9 @@ export function NoteBatchResultView({
                   {p.name}
                 </IntentLink>
                 {p.created && (
-                  <Badge className="bg-emerald-500/15 text-[10px] text-emerald-700 dark:text-emerald-300">New contact</Badge>
+                  <Badge className="bg-emerald-500/15 text-3xs text-emerald-700 dark:text-emerald-300">New contact</Badge>
                 )}
-                {p.duplicate && <Badge variant="secondary" className="text-[10px]">Already logged</Badge>}
+                {p.duplicate && <Badge variant="secondary" className="text-3xs">Already logged</Badge>}
               </span>
               {p.created && (
                 <Button variant="ghost" size="sm" disabled={pending} onClick={() => removeContact(p.contactId)}>
@@ -349,7 +349,7 @@ export function NoteBatchResultView({
                 <IntentLink href={`/contacts/${m.contactId}`} className="font-medium text-primary hover:underline">
                   {name(m.contactId)}
                 </IntentLink>
-                <Badge className="bg-sky-500/15 text-[10px] text-sky-700 dark:text-sky-300">
+                <Badge className="bg-sky-500/15 text-3xs text-sky-700 dark:text-sky-300">
                   {Math.round(m.confidence * 100)}% sure
                 </Badge>
               </li>
@@ -392,11 +392,11 @@ export function NoteBatchResultView({
                   </span>
                 </span>
                 {a.reminderId ? (
-                  <Badge className="shrink-0 gap-1 bg-emerald-500/15 text-[10px] text-emerald-700 dark:text-emerald-300">
+                  <Badge className="shrink-0 gap-1 bg-emerald-500/15 text-3xs text-emerald-700 dark:text-emerald-300">
                     <BellRing className="size-3" aria-hidden /> Reminder set
                   </Badge>
                 ) : (
-                  <Badge variant="secondary" className="shrink-0 text-[10px]">No reminder</Badge>
+                  <Badge variant="secondary" className="shrink-0 text-3xs">No reminder</Badge>
                 )}
               </li>
             ))}
@@ -437,7 +437,7 @@ export function NoteBatchResultView({
                         <Button variant="ghost" size="sm" disabled={pending} onClick={() => dismiss(r.id)}>Dismiss</Button>
                       </>
                     ) : (
-                      <Badge variant="secondary" className="text-[10px] capitalize">{st}</Badge>
+                      <Badge variant="secondary" className="text-3xs capitalize">{st}</Badge>
                     )}
                   </div>
                 </li>

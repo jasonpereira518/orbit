@@ -36,7 +36,7 @@ export function AdminPageHeader({
         {leading && <div className="shrink-0">{leading}</div>}
         <div className="min-w-0">
           {/* The only Fraunces on the page. */}
-          <h1 className="break-words font-[family-name:var(--font-display)] text-2xl text-ink">
+          <h1 className="break-words font-heading text-2xl text-ink">
             {title}
           </h1>
           {subtitle && (
@@ -245,7 +245,7 @@ export function TrendBars({
       {headings && (
         <li
           aria-hidden
-          className="flex items-center gap-3 pb-1 text-[11px] uppercase tracking-wide text-muted-foreground/70"
+          className="flex items-center gap-3 pb-1 text-2xs uppercase tracking-wide text-muted-foreground/70"
         >
           <span className="w-24 shrink-0" />
           <span className="w-10 shrink-0 text-right">{headings.count}</span>

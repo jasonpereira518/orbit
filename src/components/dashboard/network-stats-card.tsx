@@ -133,10 +133,10 @@ export function NetworkStatsCard({ stats }: { stats: NetworkStats }) {
               key={item.label}
               className="flex h-full min-h-[5.5rem] flex-col rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 backdrop-blur-sm"
             >
-              <dt className="text-[11px] font-medium uppercase tracking-wide text-[#9aada8]">
+              <dt className="text-2xs font-medium uppercase tracking-wide text-[#9aada8]">
                 {item.label}
               </dt>
-              <dd className="mt-1 font-[family-name:var(--font-display)] text-2xl leading-none text-[#e8f3f1]">
+              <dd className="mt-1 font-heading text-2xl leading-none text-[#e8f3f1]">
                 <AnimatedStatValue item={item} active={open} />
               </dd>
               <dd className="mt-1.5 min-h-[1rem] text-xs text-[#9aada8]">

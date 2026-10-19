@@ -50,7 +50,7 @@ export function CaptureSaved({
           <Check className="size-5" />
         </span>
         <div className="min-w-0 flex-1">
-          <h2 className="font-[family-name:var(--font-display)] text-2xl text-ink">
+          <h2 className="font-heading text-2xl text-ink">
             {single
               ? `${single.decision.edits?.name || single.item.parsed.name || "Saved"} is in your orbit`
               : accepted.length
@@ -70,7 +70,7 @@ export function CaptureSaved({
               {[single.decision.edits?.company ?? single.item.parsed.company, single.decision.edits?.role ?? single.item.parsed.role].filter(Boolean).join(" · ")}
             </p>
           </div>
-          <Badge variant="secondary" className="text-[10px]">
+          <Badge variant="secondary" className="text-3xs">
             {single.decision.mergeContactId ? "Updated" : "New"}
           </Badge>
         </div>
@@ -91,7 +91,7 @@ export function CaptureSaved({
                 ) : (
                   <span className="min-w-0 flex-1 truncate font-medium">{name}</span>
                 )}
-                <Badge variant="secondary" className="text-[10px]">
+                <Badge variant="secondary" className="text-3xs">
                   {decision.mergeContactId ? "Updated" : "New"}
                 </Badge>
               </li>
@@ -101,7 +101,7 @@ export function CaptureSaved({
       )}
 
       <div className="flex flex-wrap gap-2">
-        <Button className="bg-primary text-primary-foreground hover:bg-primary/90" onClick={onCaptureMore}>
+        <Button onClick={onCaptureMore}>
           <Sparkles className="size-4" /> Capture more
         </Button>
         {single && saved?.contactIdByKey[single.item.key] && (

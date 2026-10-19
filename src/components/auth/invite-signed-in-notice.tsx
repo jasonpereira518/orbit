@@ -22,7 +22,7 @@ export function InviteSignedInNotice({ email }: { email: string | null }) {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-5 bg-background p-6 text-center">
       <OrbitLogo size="lg" />
-      <h1 className="font-[family-name:var(--font-display)] text-2xl text-ink">
+      <h1 className="font-heading text-2xl text-ink">
         You&apos;ve been invited to Orbit
       </h1>
       <p className="max-w-sm text-muted-foreground">

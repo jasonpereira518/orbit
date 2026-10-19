@@ -676,24 +676,24 @@ function FileTile({
             // eslint-disable-next-line @next/next/no-img-element
             <img src={preview.url} alt="" className="size-full object-cover" />
           ) : preview?.kind === "text" ? (
-            <span className="line-clamp-4 px-1.5 py-1 text-[10px] leading-snug text-muted-foreground">
+            <span className="line-clamp-4 px-1.5 py-1 text-3xs leading-snug text-muted-foreground">
               {preview.snippet}
             </span>
           ) : (
-            <span className="text-[11px] font-medium tracking-wide text-muted-foreground">
+            <span className="text-2xs font-medium tracking-wide text-muted-foreground">
               {preview?.kind === "label" ? preview.label : "…"}
             </span>
           )}
         </span>
         <span className="block px-1.5 py-1">
-          <span className="block truncate text-[11px] text-foreground">{file.name}</span>
-          <span className="block truncate text-[10px] text-muted-foreground">
+          <span className="block truncate text-2xs text-foreground">{file.name}</span>
+          <span className="block truncate text-3xs text-muted-foreground">
             {file.path ? `${file.path} · ` : ""}
             {sizeLabel(file.size)}
           </span>
           {capturedBefore && (
             <span
-              className="block truncate text-[10px] font-medium text-amber-700 dark:text-amber-400"
+              className="block truncate text-3xs font-medium text-amber-700 dark:text-amber-400"
               title={capturedBefore.label ? `Captured as “${capturedBefore.label}”` : undefined}
             >
               Already captured · {capturedOn(capturedBefore.capturedAt)}

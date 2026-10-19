@@ -148,11 +148,11 @@ export function RecommendationCard({
                   {rec.contactName}
                 </IntentLink>
                 {rec.tier && <ClosenessTierBadge tier={rec.tier} />}
-                <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide", KIND_STYLES[rec.kind])}>
+                <span className={cn("rounded-full px-2 py-0.5 text-3xs font-medium uppercase tracking-wide", KIND_STYLES[rec.kind])}>
                   {KIND_LABELS[rec.kind]}
                 </span>
                 {rec.draft && (
-                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-3xs font-medium uppercase tracking-wide text-primary">
                     Draft ready
                   </span>
                 )}

@@ -17,7 +17,6 @@ import { ContactsFilters } from "@/components/contacts/contacts-filters";
 import { ContactsList } from "@/components/contacts/contacts-list";
 import { PeopleListShell } from "@/components/contacts/people-list-shell";
 import { RefreshContactsButton } from "@/components/contacts/refresh-contacts-button";
-import { cn } from "@/lib/utils";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
 
@@ -111,10 +110,7 @@ export default async function ContactsPage({
           <RefreshContactsButton />
           <Link
             href="/contacts/new"
-            className={cn(
-              buttonVariants(),
-              "bg-primary text-primary-foreground hover:bg-primary/90"
-            )}
+            className={buttonVariants()}
           >
             <Plus className="mr-1 h-4 w-4" />
             Add contact
@@ -167,7 +163,7 @@ async function DuplicatesButton() {
   const duplicateCount = await countDuplicates().catch(() => 0);
   if (duplicateCount <= 0) return null;
   return (
-    <Link href="/contacts/duplicates" className={cn(buttonVariants({ variant: "outline" }))}>
+    <Link href="/contacts/duplicates" className={buttonVariants({ variant: "outline" })}>
       <Copy className="mr-1 h-4 w-4" aria-hidden />
       {duplicateCount >= 99
         ? "99+ duplicates"

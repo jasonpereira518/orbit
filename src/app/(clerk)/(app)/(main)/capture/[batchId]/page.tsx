@@ -34,7 +34,7 @@ export default async function NoteBatchPage({
           <ArrowLeft className="size-3.5" aria-hidden />
           Capture
         </Link>
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
+        <h1 className="font-heading text-3xl text-ink">
           {fromMeeting ? "What your meeting produced" : "What your notes produced"}
         </h1>
         <p className="mt-1 text-muted-foreground">

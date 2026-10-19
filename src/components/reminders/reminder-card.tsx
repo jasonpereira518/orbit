@@ -129,7 +129,7 @@ export function ReminderCard({
               <Link
                 href={`/capture/${noteBatchId}`}
                 className={cn(
-                  "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide hover:underline",
+                  "rounded-full px-2 py-0.5 text-3xs font-medium uppercase tracking-wide hover:underline",
                   reminderTypeStyle(reminderType)
                 )}
               >
@@ -138,7 +138,7 @@ export function ReminderCard({
             ) : (
               <span
                 className={cn(
-                  "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+                  "rounded-full px-2 py-0.5 text-3xs font-medium uppercase tracking-wide",
                   reminderTypeStyle(reminderType)
                 )}
               >
@@ -146,7 +146,7 @@ export function ReminderCard({
               </span>
             )}
             {!compact && (
-              <span className="rounded-full bg-muted/80 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              <span className="rounded-full bg-muted/80 px-2 py-0.5 text-3xs font-medium uppercase tracking-wide text-muted-foreground">
                 {kindLabel}
               </span>
             )}
@@ -171,7 +171,7 @@ export function ReminderCard({
               className={cn(
                 "mt-1 text-xs",
                 due.overdue
-                  ? "font-medium text-amber-700 dark:text-warning"
+                  ? "font-medium text-warning"
                   : "text-muted-foreground"
               )}
             >
@@ -306,7 +306,7 @@ export function ReminderCard({
       {draft && (
         <div className="mt-3 rounded-lg bg-muted/50 p-3">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            <p className="text-3xs font-medium uppercase tracking-wide text-muted-foreground">
               Draft follow-up
             </p>
             <Button

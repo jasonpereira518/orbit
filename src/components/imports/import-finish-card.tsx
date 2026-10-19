@@ -464,7 +464,7 @@ export function ImportFinishCard({
           sentence set into it when the phase becomes done. The card a person comes back to
           after a refresh is read, not announced.
         */}
-        <p className="font-[family-name:var(--font-display)] text-xl text-ink">
+        <p className="font-heading text-xl text-ink">
           {showScene ? (
             <>
               {/* What a screen reader hears: the finished sentence, never a half-counted one. */}

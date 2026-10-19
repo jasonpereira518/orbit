@@ -57,7 +57,7 @@ export function ComposerSendButton({
         // it just replaced — the same button in the same place doing the opposite.
         stopping
           ? "bg-destructive text-white hover:bg-destructive/90"
-          : "bg-primary text-primary-foreground hover:bg-primary/90"
+          : ""
       )}
       onClick={stopping ? onStop : onClick}
       aria-label={label}

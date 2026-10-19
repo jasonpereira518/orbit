@@ -40,7 +40,7 @@ export function ContactForm() {
         </span>
         <p
           role="status"
-          className="mt-5 font-[family-name:var(--font-display)] text-xl tracking-tight text-[#e8f3f1]"
+          className="mt-5 font-heading text-xl tracking-tight text-[#e8f3f1]"
         >
           Message sent.
         </p>

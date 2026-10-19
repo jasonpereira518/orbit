@@ -293,7 +293,7 @@ export function ImportWarningBanner({
   if (!warnings.length) return null;
 
   return (
-    <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-warning">
+    <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-warning">
       <AlertTriangle className="mt-0.5 size-4 shrink-0" />
       <ul className="min-w-0 flex-1 space-y-1">
         {warnings.map((w, i) => (

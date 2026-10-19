@@ -209,14 +209,14 @@ export function ChatActivity({ steps, state, variant = "full", answerStarted = f
                           <IntentLink
                             key={`${step.id}-${ref.id}`}
                             href={`/contacts/${ref.id}`}
-                            className="rounded-full bg-muted/60 px-2 py-0.5 text-[11px] text-foreground/80 transition-colors hover:bg-muted hover:text-foreground"
+                            className="rounded-full bg-muted/60 px-2 py-0.5 text-2xs text-foreground/80 transition-colors hover:bg-muted hover:text-foreground"
                           >
                             {ref.name}
                           </IntentLink>
                         ) : (
                           <span
                             key={`${step.id}-${ref.id}`}
-                            className="rounded-full bg-muted/60 px-2 py-0.5 text-[11px] text-foreground/80"
+                            className="rounded-full bg-muted/60 px-2 py-0.5 text-2xs text-foreground/80"
                           >
                             {ref.name}
                           </span>

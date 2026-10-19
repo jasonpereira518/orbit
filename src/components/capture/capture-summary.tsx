@@ -131,7 +131,7 @@ export function CaptureSummary({
       <div className="space-y-4 rounded-2xl border border-border/70 bg-card p-5 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
-            <h2 className="font-[family-name:var(--font-display)] text-2xl text-ink">Ready to save</h2>
+            <h2 className="font-heading text-2xl text-ink">Ready to save</h2>
             <p className="text-sm text-muted-foreground">
               {counts.accepted} kept
               {counts.skipped ? ` · ${counts.skipped} for later` : ""}
@@ -179,7 +179,7 @@ export function CaptureSummary({
                         </ul>
                       )}
                     </div>
-                    <Badge variant={draft.mergeContactId ? "secondary" : "outline"} className="text-[10px]">
+                    <Badge variant={draft.mergeContactId ? "secondary" : "outline"} className="text-3xs">
                       {draft.mergeContactId ? "Update" : "New"}
                     </Badge>
                     <Button variant="outline" size="sm" onClick={() => setEditing(item.key)} disabled={saving}>
@@ -254,7 +254,7 @@ export function CaptureSummary({
           <Button
             type="button"
             disabled={saving || !canSave}
-            className="bg-primary text-primary-foreground hover:bg-primary/90 sm:flex-1"
+            className="sm:flex-1"
             onClick={onSave}
           >
             {saving ? "Saving…" : error ? "Try again" : saveLabel}

@@ -74,7 +74,7 @@ export function PersonFields({
   return (
     <div className={cn("space-y-3", !compact && "space-y-4")}>
       {guessed && (
-        <p className="text-xs text-amber-700 dark:text-warning">Fields marked * were guessed — worth a glance.</p>
+        <p className="text-xs text-warning">Fields marked * were guessed — worth a glance.</p>
       )}
       <div className="grid gap-3 sm:grid-cols-2">
         <Field id={`${idPrefix}-name`} label="Name" low={lowConfidence.has("name")}>
@@ -165,7 +165,7 @@ export function PersonFields({
           <ul className="flex flex-wrap gap-1.5">
             {connections.map((c) => (
               <li key={c.name}>
-                <Badge variant="outline" className="text-[11px] font-normal">
+                <Badge variant="outline" className="text-2xs font-normal">
                   <span className="font-medium text-foreground">{c.name}</span>
                   {c.relation && <span className="ml-1 text-muted-foreground">· {c.relation}</span>}
                 </Badge>
@@ -177,7 +177,7 @@ export function PersonFields({
       {topics.length > 0 && (
         <div className="flex flex-wrap gap-1.5" aria-label="Topics">
           {topics.map((t) => (
-            <Badge key={t} variant="secondary" className="text-[10px]">
+            <Badge key={t} variant="secondary" className="text-3xs">
               {t}
             </Badge>
           ))}
@@ -248,7 +248,7 @@ function BulletList({
     requestAnimationFrame(() => document.getElementById(`${id}-${i}`)?.focus());
   return (
     <div className="space-y-1.5">
-      <Label htmlFor={items.length ? `${id}-0` : `${id}-add`} className={cn("text-xs", low && "text-amber-700 dark:text-warning")}>
+      <Label htmlFor={items.length ? `${id}-0` : `${id}-add`} className={cn("text-xs", low && "text-warning")}>
         {label}
         {low ? " *" : ""}
       </Label>
@@ -325,7 +325,7 @@ function Field({
 }) {
   return (
     <div className={cn("space-y-1", className)}>
-      <Label htmlFor={id} className={cn("text-xs", low && "text-amber-700 dark:text-warning")}>
+      <Label htmlFor={id} className={cn("text-xs", low && "text-warning")}>
         {label}
         {low ? " *" : ""}
         {hint && <span className="ml-1 font-normal text-muted-foreground">· {hint}</span>}

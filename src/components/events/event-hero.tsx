@@ -102,19 +102,19 @@ export function EventHero({ event }: { event: EventRecord }) {
 
         <div className="relative w-full p-5">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full bg-black/45 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur">
+            <span className="rounded-full bg-black/45 px-2 py-0.5 text-2xs font-medium text-white backdrop-blur">
               {event.role === "hosted" ? "You hosted this" : "You attended"}
             </span>
             {/* Only when it is not the assumed case: badging every in-person event "In person"
                 would be noise on the majority and would not make the minority stand out. */}
             {event.attendanceMode === "online" || event.attendanceMode === "mixed" ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-black/45 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur">
+              <span className="inline-flex items-center gap-1 rounded-full bg-black/45 px-2 py-0.5 text-2xs font-medium text-white backdrop-blur">
                 <Video className="size-3" aria-hidden />
                 {ATTENDANCE_LABEL[event.attendanceMode]}
               </span>
             ) : null}
           </div>
-          <h1 className="mt-2 font-[family-name:var(--font-display)] text-3xl text-white drop-shadow-sm">
+          <h1 className="mt-2 font-heading text-3xl text-white drop-shadow-sm">
             {event.title}
           </h1>
         </div>

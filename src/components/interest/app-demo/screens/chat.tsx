@@ -224,7 +224,7 @@ function Activity({ steps, at, done, totalMs }: { steps: DemoStep[]; at: number;
                         key={id}
                         type="button"
                         onClick={() => dispatch({ type: "openProfile", id })}
-                        className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] text-ink/80 hover:bg-white/10"
+                        className="rounded-full bg-white/[0.06] px-2 py-0.5 text-2xs text-ink/80 hover:bg-white/10"
                       >
                         {personById(id)!.name}
                       </button>
@@ -337,7 +337,7 @@ function Answer({ turn, last }: { turn: AssistantTurn; last: boolean }) {
                       aria-label={`Source ${i + 1}: ${p.name}, ${s.label}`}
                       onClick={() => setOpenSrc(open ? null : i)}
                       className={cn(
-                        "inline-flex size-5 items-center justify-center rounded-full text-[11px] tabular-nums transition-colors",
+                        "inline-flex size-5 items-center justify-center rounded-full text-2xs tabular-nums transition-colors",
                         open ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-ink"
                       )}
                     >

@@ -151,7 +151,6 @@ export function CalendarImportSection({
           </Button>
           <Button
             disabled={!calendarText || busy}
-            className="bg-primary text-primary-foreground hover:bg-primary/90"
             onClick={() => {
               if (busy) return;
               try {

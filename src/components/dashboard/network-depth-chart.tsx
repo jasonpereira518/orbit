@@ -193,10 +193,10 @@ export function NetworkDepthChart({
 function StatMini({ label, value }: { label: string; value: number }) {
   return (
     <div>
-      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+      <p className="text-3xs uppercase tracking-wide text-muted-foreground">
         {label}
       </p>
-      <p className="mt-0.5 font-[family-name:var(--font-display)] text-xl text-ink">
+      <p className="mt-0.5 font-heading text-xl text-ink">
         {value}
       </p>
     </div>

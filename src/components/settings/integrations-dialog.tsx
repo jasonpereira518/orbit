@@ -486,7 +486,7 @@ function DialogBody({
             </button>
           ) : null}
           <div className="min-w-0">
-            <DialogTitle className="font-[family-name:var(--font-display)] text-xl text-ink">
+            <DialogTitle className="font-heading text-xl text-ink">
               Integrations
             </DialogTitle>
             <DialogDescription className="mt-1.5 hidden text-xs md:block">

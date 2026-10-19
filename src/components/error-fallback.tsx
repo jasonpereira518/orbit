@@ -52,7 +52,7 @@ export function ErrorFallback({
       <p className="text-sm font-medium text-ink">
         {offline ? "No connection" : "Something went wrong"}
       </p>
-      <h1 className="font-[family-name:var(--font-display)] text-3xl tracking-tight text-ink">
+      <h1 className="font-heading text-3xl tracking-tight text-ink">
         {offline
           ? status === "unreachable"
             ? "Can’t reach Orbit"

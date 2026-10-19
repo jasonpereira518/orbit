@@ -155,7 +155,7 @@ export default async function EventDetailPage({
       </div>
 
       <div className="reveal-mount" style={{ "--reveal-delay": "120ms" } as React.CSSProperties}>
-        <h2 className="mb-3 font-[family-name:var(--font-display)] text-xl text-ink">
+        <h2 className="mb-3 font-heading text-xl text-ink">
           Who was there
         </h2>
         <Suspense fallback={<Skeleton className="h-64 w-full rounded-2xl" />}>

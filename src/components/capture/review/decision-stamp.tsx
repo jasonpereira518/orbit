@@ -32,7 +32,7 @@ export function DecisionStamp({
       aria-hidden
       style={{ opacity }}
       className={cn(
-        "pointer-events-none absolute top-4 z-20 inline-flex items-center gap-1.5 rounded-lg border-2 px-3 py-1 font-[family-name:var(--font-display)] text-lg uppercase tracking-wide backdrop-blur-sm",
+        "pointer-events-none absolute top-4 z-20 inline-flex items-center gap-1.5 rounded-lg border-2 px-3 py-1 font-heading text-lg uppercase tracking-wide backdrop-blur-sm",
         side === "left" && "left-4 -rotate-12",
         side === "right" && "right-4 rotate-12",
         side === "center" && "left-1/2 -translate-x-1/2",

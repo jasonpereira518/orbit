@@ -24,12 +24,12 @@ import { cn } from "@/lib/utils";
 
 const KICKER = "text-xs uppercase tracking-[0.16em] text-[#f2c14e]";
 const CARD_TITLE =
-  "mt-3 font-[family-name:var(--font-display)] text-2xl leading-snug tracking-tight text-[#e8f3f1] md:text-3xl";
+  "mt-3 font-heading text-2xl leading-snug tracking-tight text-[#e8f3f1] md:text-3xl";
 const CARD_BODY = "mt-3 max-w-md text-base leading-relaxed text-[#9aada8]";
 /** One step down from CARD_TITLE, so the pair reads as a coda rather than as
  * two more chapters. */
 const CODA_TITLE =
-  "mt-3 font-[family-name:var(--font-display)] text-xl leading-snug tracking-tight text-[#e8f3f1] md:text-2xl";
+  "mt-3 font-heading text-xl leading-snug tracking-tight text-[#e8f3f1] md:text-2xl";
 
 type Feature = {
   kicker: string;
@@ -105,7 +105,7 @@ export function SceneFeatures() {
           <Reveal className="reveal-celestial" delay={80}>
             <h2
               id="features-heading"
-              className="mt-3 font-[family-name:var(--font-display)] text-[clamp(30px,4.4vw,50px)] font-normal leading-[1.15] tracking-[-0.025em] text-[#e8f3f1]"
+              className="mt-3 font-heading text-[clamp(30px,4.4vw,50px)] font-normal leading-[1.15] tracking-[-0.025em] text-[#e8f3f1]"
             >
               Every person who could help you, remembered.
             </h2>

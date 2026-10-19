@@ -72,7 +72,7 @@ export function VoiceCapture({
 
       <motion.div layout transition={SPRING_SOFT} className="flex flex-col items-center gap-3 py-2 text-center">
         {!hasTranscript && (
-          <h2 className="font-[family-name:var(--font-display)] text-2xl text-ink">Say who you met</h2>
+          <h2 className="font-heading text-2xl text-ink">Say who you met</h2>
         )}
         <VoiceRecorder
           size={hasTranscript ? "default" : "hero"}
@@ -140,7 +140,7 @@ export function VoiceCapture({
           <div className="flex flex-col gap-2 sm:flex-row">
             <Button
               disabled={busy || !ingest.hasApiKey}
-              className="bg-primary text-primary-foreground hover:bg-primary/90 sm:flex-1"
+              className="sm:flex-1"
               onClick={onExtract}
             >
               {extracting ? "Reading…" : "Extract people"}

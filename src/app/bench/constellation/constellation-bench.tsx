@@ -93,7 +93,7 @@ export function ConstellationBench() {
   return (
     <div className="min-h-dvh bg-background p-4">
       <div className="-mx-1 space-y-3 overflow-hidden md:-mx-2">
-        <h1 className="px-1 font-[family-name:var(--font-display)] text-2xl text-ink md:text-3xl">
+        <h1 className="px-1 font-heading text-2xl text-ink md:text-3xl">
           Constellation bench
           {payload ? ` · ${payload.contacts.length.toLocaleString()} contacts` : ""}
         </h1>

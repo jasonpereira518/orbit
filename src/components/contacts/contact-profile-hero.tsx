@@ -184,7 +184,7 @@ function StickyMiniBar({
           size="sm"
           className="size-9 shrink-0"
         />
-        <p className="min-w-0 flex-1 truncate font-[family-name:var(--font-display)] text-lg text-ink">
+        <p className="min-w-0 flex-1 truncate font-heading text-lg text-ink">
           {displayName}
           {role ? (
             <>
@@ -418,7 +418,7 @@ export function ContactProfileHero({
             <div ref={sentinelRef} className="h-px w-px" aria-hidden />
             {/* `break-words` so a pasted URL or an over-long name wraps instead of
                 running off the right edge, past the Edit button and out of the card. */}
-            <h1 className="flex flex-wrap items-center gap-x-2 font-[family-name:var(--font-display)] text-3xl break-words text-ink sm:text-4xl">
+            <h1 className="flex flex-wrap items-center gap-x-2 font-heading text-3xl break-words text-ink sm:text-4xl">
               {displayName}
               {isTourExampleSource(source) && <ExampleTag className="align-middle" />}
             </h1>

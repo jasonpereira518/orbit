@@ -20,7 +20,7 @@ export default async function NewRecruiterPage() {
       <RenderStamp />
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
+          <h1 className="font-heading text-3xl text-ink">
             Log a recruiter
           </h1>
           <p className="mt-1 text-muted-foreground">

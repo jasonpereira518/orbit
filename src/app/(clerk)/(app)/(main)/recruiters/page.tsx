@@ -85,10 +85,7 @@ export default async function RecruitersPage({
           )}
         <Link
           href="/recruiters/new"
-          className={cn(
-            buttonVariants(),
-            "bg-primary text-primary-foreground hover:bg-primary/90"
-          )}
+          className={buttonVariants()}
         >
           <Plus className="mr-1 h-4 w-4" />
           Log recruiter

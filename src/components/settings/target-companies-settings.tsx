@@ -154,7 +154,7 @@ export function TargetCompaniesSettings({
               >
                 <span className="min-w-0 truncate text-sm">
                   {company.name}
-                  <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                  <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-2xs text-muted-foreground">
                     {PRIORITY_LABEL[company.priority]}
                   </span>
                   {/* The useful part: a target you already have a way into. */}

@@ -153,7 +153,7 @@ function ChatHistoryRailImpl<T extends ThreadLike>({
             ) : (
               groups.map((group) => (
                 <section key={group.label} className="mb-3 last:mb-0">
-                  <h2 className="px-2 pb-1 text-[11px] font-medium text-muted-foreground">
+                  <h2 className="px-2 pb-1 text-2xs font-medium text-muted-foreground">
                     {group.label}
                   </h2>
                   <ul className="space-y-0.5">

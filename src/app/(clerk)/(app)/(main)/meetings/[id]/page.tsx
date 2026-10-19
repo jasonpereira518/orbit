@@ -87,7 +87,7 @@ export default async function MeetingDetailPage({
       </Link>
 
       <div className="space-y-2">
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">{title}</h1>
+        <h1 className="font-heading text-3xl text-ink">{title}</h1>
         <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
           <span className="inline-flex items-center gap-1.5">
             <CalendarDays className="size-4" />
@@ -153,7 +153,7 @@ export default async function MeetingDetailPage({
       <section className="space-y-2">
         <h2 className="text-sm font-medium text-ink">Transcript</h2>
         {missingSeqs.length > 0 && (
-          <p className="text-xs text-amber-700 dark:text-warning">
+          <p className="text-xs text-warning">
             {missingSeqs.length} part{missingSeqs.length === 1 ? "" : "s"} of this transcript never reached Orbit, so
             some of what was said may be missing.
           </p>

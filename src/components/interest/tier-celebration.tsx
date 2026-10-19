@@ -107,7 +107,7 @@ export function TierCelebration({
           transition={{ duration: DUR.base, ease: EASE_HOUSE, delay: reduced ? 0 : 0.25 }}
         >
           <p className="text-xs uppercase tracking-[0.2em] text-[#f2c14e]">Unlocked</p>
-          <p className="mt-2 font-[family-name:var(--font-display)] text-[clamp(30px,5vw,44px)] leading-tight text-[#e8f3f1]">
+          <p className="mt-2 font-heading text-[clamp(30px,5vw,44px)] leading-tight text-[#e8f3f1]">
             {tier.label}
           </p>
           <p className="mx-auto mt-2 max-w-[36ch] text-sm leading-relaxed text-[#9aada8]">

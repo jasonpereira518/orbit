@@ -6,7 +6,7 @@ export default function NotFound() {
   return (
     <div className="mx-auto flex min-h-[60vh] max-w-lg flex-col items-center justify-center gap-4 px-6 py-16 text-center">
       <p className="text-sm font-medium text-ink">404</p>
-      <h1 className="font-[family-name:var(--font-display)] text-3xl tracking-tight text-ink">
+      <h1 className="font-heading text-3xl tracking-tight text-ink">
         Page not found
       </h1>
       <p className="text-muted-foreground">

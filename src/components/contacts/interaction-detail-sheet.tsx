@@ -407,7 +407,7 @@ export function InteractionDetailSheet({
             {detail.topics.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
                 {detail.topics.map((topic) => (
-                  <Badge key={topic} variant="outline" className="text-[11px]">
+                  <Badge key={topic} variant="outline" className="text-2xs">
                     {topic}
                   </Badge>
                 ))}
@@ -448,7 +448,7 @@ export function InteractionDetailSheet({
                           {item.reminderId ? (
                             <Badge
                               variant="outline"
-                              className="mt-1 text-[10px]"
+                              className="mt-1 text-3xs"
                             >
                               reminder set
                             </Badge>

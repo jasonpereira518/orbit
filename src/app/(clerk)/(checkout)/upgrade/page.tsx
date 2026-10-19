@@ -25,7 +25,7 @@ export const metadata: Metadata = {
 };
 
 const HEADING =
-  "font-[family-name:var(--font-display)] font-normal leading-[1.12] tracking-[-0.025em] text-[#e8f3f1]";
+  "font-heading font-normal leading-[1.12] tracking-[-0.025em] text-[#e8f3f1]";
 
 // Matches /pricing's trust row (see TRUST in pricing/page.tsx), placed right under the
 // cards here rather than at the page floor — the point of hesitation, not past it.
@@ -94,7 +94,7 @@ export default async function UpgradePage() {
               aria-label="Orbit home"
             >
               <OrbitLogo size="sm" />
-              <span className="font-[family-name:var(--font-display)] text-[17px] tracking-tight text-[#e8f3f1]">
+              <span className="font-heading text-[17px] tracking-tight text-[#e8f3f1]">
                 Orbit
               </span>
             </Link>

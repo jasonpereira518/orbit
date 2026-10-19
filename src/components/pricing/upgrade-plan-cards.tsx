@@ -61,7 +61,7 @@ function PlanCard({
       </p>
       <h2
         id={`upgrade-${plan.id}`}
-        className="font-[family-name:var(--font-display)] text-xl tracking-tight text-[#e8f3f1]"
+        className="font-heading text-xl tracking-tight text-[#e8f3f1]"
       >
         {plan.name}
       </h2>

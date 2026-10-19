@@ -76,7 +76,7 @@ export default async function WaitlistPrivacyPage() {
         <p className="text-xs uppercase tracking-[0.16em] text-landing-accent">
           Early access waitlist
         </p>
-        <h1 className="mt-4 font-[family-name:var(--font-display)] text-[clamp(30px,4.4vw,44px)] font-normal leading-[1.12] tracking-[-0.025em]">
+        <h1 className="mt-4 font-heading text-[clamp(30px,4.4vw,44px)] font-normal leading-[1.12] tracking-[-0.025em]">
           Privacy
         </h1>
         <p className="mt-5 text-base leading-relaxed text-[#9aada8]">

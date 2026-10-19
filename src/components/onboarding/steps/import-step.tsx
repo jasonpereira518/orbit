@@ -31,7 +31,7 @@ export function ImportStep({ onContinue }: { onContinue: (started: boolean) => v
       <div className="space-y-4">
         <LinkedInConnectionsImport />
         <div className="flex justify-end">
-          <Button type="button" size="lg" className="h-10 px-4" onClick={() => onContinue(started)}>
+          <Button type="button" size="lg" onClick={() => onContinue(started)}>
             {started ? "Continue" : "Skip for now"}
           </Button>
         </div>

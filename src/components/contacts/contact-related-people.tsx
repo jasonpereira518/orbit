@@ -76,7 +76,7 @@ export function ContactRelatedPeople({
                           .filter(Boolean)
                           .join(" · ") || "No role yet"}
                       </p>
-                      <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                      <p className="mt-0.5 truncate text-2xs text-muted-foreground">
                         {person.reasonLabel}
                       </p>
                     </div>

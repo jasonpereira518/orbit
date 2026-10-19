@@ -15,7 +15,7 @@ import "./finale-orbit.css";
 
 export const KICKER = "text-xs uppercase tracking-[0.16em] text-[#f2c14e]";
 export const HEADING =
-  "mt-3 font-[family-name:var(--font-display)] text-[clamp(30px,4.4vw,50px)] font-normal leading-[1.15] tracking-[-0.025em] text-[#e8f3f1]";
+  "mt-3 font-heading text-[clamp(30px,4.4vw,50px)] font-normal leading-[1.15] tracking-[-0.025em] text-[#e8f3f1]";
 export const BODY = "mt-4 max-w-md text-base leading-relaxed text-[#9aada8] sm:text-lg";
 
 export function SceneConstellations() {
@@ -283,7 +283,7 @@ function FinaleCloser({
           {/* Rides the outer ellipse (see finale-orbit.css). */}
           <span className="finale-orbit-dot absolute size-2.5 rounded-full bg-[#f2c14e] shadow-[0_0_0_6px_rgba(242,193,78,0.14)]" />
         </div>
-        <p className="font-[family-name:var(--font-display)] text-[clamp(36px,6.4vw,72px)] font-light leading-[1.06] tracking-[-0.03em] text-balance text-[#e8f3f1]">
+        <p className="font-heading text-[clamp(36px,6.4vw,72px)] font-light leading-[1.06] tracking-[-0.03em] text-balance text-[#e8f3f1]">
           Don&apos;t lose the person who{" "}
           <em className="text-[#f2c14e]">gets you hired.</em>
         </p>
@@ -316,7 +316,7 @@ function FinaleCloser({
           </summary>
           <dl className="grid gap-5 pb-6 pt-1">
             <div>
-              <dt className="font-[family-name:var(--font-display)] text-base text-[#e8f3f1]">
+              <dt className="font-heading text-base text-[#e8f3f1]">
                 Do I need to type everyone in?
               </dt>
               <dd className="mt-1.5 text-sm leading-relaxed text-[#9aada8]">
@@ -326,7 +326,7 @@ function FinaleCloser({
               </dd>
             </div>
             <div>
-              <dt className="font-[family-name:var(--font-display)] text-base text-[#e8f3f1]">
+              <dt className="font-heading text-base text-[#e8f3f1]">
                 What does it read?
               </dt>
               <dd className="mt-1.5 text-sm leading-relaxed text-[#9aada8]">

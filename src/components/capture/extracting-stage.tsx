@@ -52,7 +52,7 @@ export function ExtractingStage({
     >
       <OrbitSpinner done={phase !== "reading"} failed={phase === "failed"} />
       <div className="space-y-1.5">
-        <h2 className="font-[family-name:var(--font-display)] text-2xl text-ink">{heading}</h2>
+        <h2 className="font-heading text-2xl text-ink">{heading}</h2>
         <p className="text-sm text-muted-foreground">
           {phase === "failed"
             ? error

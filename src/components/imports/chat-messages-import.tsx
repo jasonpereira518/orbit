@@ -411,7 +411,6 @@ export function ChatMessagesImport() {
       <div className="flex flex-wrap gap-2">
         <Button
           disabled={!preview || busy || includedMessages === 0 || awaitingSelf}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
           onClick={startImport}
         >
           {importProgress

@@ -89,7 +89,6 @@ export function DecisionModelSettings({ initialSettings }: { initialSettings: Se
       <div className="flex flex-wrap gap-2">
         <Button
           disabled={pending || !apiKey.trim()}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
           onClick={() =>
             start(async () => {
               try {

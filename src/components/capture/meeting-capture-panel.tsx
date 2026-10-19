@@ -637,7 +637,7 @@ function PanelBody({
           {captureSupported ? (
             <Button
               size="lg"
-              className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
+              className="gap-2"
               disabled={blocked || !s.ready || s.busyAction !== null}
               onClick={() => s.startRecording(null, "display")}
             >
@@ -646,7 +646,7 @@ function PanelBody({
           ) : (
             <Button
               size="lg"
-              className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
+              className="gap-2"
               disabled={blocked || !s.ready || s.busyAction !== null || !micSupported}
               onClick={() => s.startRecording(null, "mic")}
             >

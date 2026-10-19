@@ -370,7 +370,7 @@ export function ReferralTracker({
                 </span>
               )}
               {milestone ? (
-                <span className="absolute -bottom-6 text-[11px] tabular-nums text-[#9aada8]">{i + 1}</span>
+                <span className="absolute -bottom-6 text-2xs tabular-nums text-[#9aada8]">{i + 1}</span>
               ) : null}
             </span>
           );
@@ -380,7 +380,7 @@ export function ReferralTracker({
       {activeToken && position ? (
         <div className="mt-2 text-center">
           <p className="text-xs uppercase tracking-[0.14em] text-[#9aada8]">You&apos;re number</p>
-          <p className="mt-1 font-[family-name:var(--font-display)] text-[56px] leading-none tracking-tight text-[#e8f3f1]">
+          <p className="mt-1 font-heading text-[56px] leading-none tracking-tight text-[#e8f3f1]">
             <RollingCount value={position} />
           </p>
           <p className="mt-2 text-sm text-[#9aada8]">
@@ -464,7 +464,7 @@ export function ReferralTracker({
                 flashing={isFlash && motionOk}
                 floatIndex={i}
               />
-              <p className="mt-2 whitespace-nowrap text-[11px] uppercase tracking-[0.14em] text-[#9aada8]">
+              <p className="mt-2 whitespace-nowrap text-2xs uppercase tracking-[0.14em] text-[#9aada8]">
                 {t.at === 0 ? "Start" : `${t.at} ${t.at === 1 ? "friend" : "friends"}`}
               </p>
               <p className="mt-1.5 text-sm font-medium text-[#e8f3f1]">{t.label}</p>

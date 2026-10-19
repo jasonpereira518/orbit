@@ -311,7 +311,7 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
                     <p className="mt-0.5 text-sm leading-snug text-[#9aada8]">{v.blurb.charAt(0).toUpperCase() + v.blurb.slice(1)}.</p>
                   </div>
                   {view.showNumbers && v.share !== null ? (
-                    <span className="hidden w-11 text-right font-[family-name:var(--font-display)] text-lg tabular-nums text-[#e8f3f1] sm:block">{v.share}%</span>
+                    <span className="hidden w-11 text-right font-heading text-lg tabular-nums text-[#e8f3f1] sm:block">{v.share}%</span>
                   ) : null}
                   {stars(v.id, v.label)}
                 </div>

@@ -84,7 +84,7 @@ export function StepHeading({
       <StaggerItem>
         <h1
           id={titleId}
-          className="font-[family-name:var(--font-display)] text-3xl tracking-tight text-ink text-balance sm:text-4xl"
+          className="font-heading text-3xl tracking-tight text-ink text-balance sm:text-4xl"
         >
           {title}
         </h1>
@@ -123,7 +123,7 @@ export function SoonTag({ className }: { className?: string }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full border border-warning/40 bg-warning/10 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-warning",
+        "inline-flex items-center rounded-full border border-warning/40 bg-warning/10 px-1.5 py-px text-3xs font-semibold uppercase tracking-wide text-warning",
         className,
       )}
     >
@@ -136,7 +136,7 @@ export function ProTag({ className }: { className?: string }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full border border-brand-pro/35 bg-brand-pro/10 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-tier-pro",
+        "inline-flex items-center rounded-full border border-brand-pro/35 bg-brand-pro/10 px-1.5 py-px text-3xs font-semibold uppercase tracking-wide text-tier-pro",
         className,
       )}
     >

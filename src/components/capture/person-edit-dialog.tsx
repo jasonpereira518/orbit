@@ -71,7 +71,7 @@ function EditBody({
         <div className="flex items-center gap-3 pr-8">
           <PlanetBadge index={index} closeness={draft.closeness} size="sm" />
           <div className="min-w-0">
-            <DialogTitle className="truncate font-[family-name:var(--font-display)] text-xl font-normal text-ink">
+            <DialogTitle className="truncate font-heading text-xl font-normal text-ink">
               {draft.fields.name.trim() || "Unnamed person"}
             </DialogTitle>
             <DialogDescription>Change anything before it&apos;s saved.</DialogDescription>
@@ -101,7 +101,7 @@ function EditBody({
       </div>
       <DialogFooter>
         <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
-        <Button className="bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => onDone(draft)}>
+        <Button onClick={() => onDone(draft)}>
           Done
         </Button>
       </DialogFooter>

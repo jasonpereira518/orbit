@@ -111,7 +111,7 @@ export default async function CapturePage({
     <div className="mx-auto max-w-3xl space-y-6">
       <RenderStamp />
       <div>
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">Capture</h1>
+        <h1 className="font-heading text-3xl text-ink">Capture</h1>
         <p className="mt-1 text-muted-foreground">
           {contactName
             ? `Log an interaction with ${contactName} — or paste notes that mention others too.`

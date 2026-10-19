@@ -252,7 +252,7 @@ export function ScanCamera({
                   className="h-16 rounded-md border border-border/60 object-cover"
                   style={{ aspectRatio: VIEWFINDER_STYLE.aspectRatio }}
                 />
-                <span className="absolute bottom-0 left-0 rounded-br-lg rounded-tl-lg bg-black/60 px-1 text-[10px] text-white">
+                <span className="absolute bottom-0 left-0 rounded-br-lg rounded-tl-lg bg-black/60 px-1 text-3xs text-white">
                   {i + 1}
                 </span>
                 <button
@@ -273,7 +273,6 @@ export function ScanCamera({
         <Button
           size="sm"
           disabled={!pages.length}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
           onClick={() => {
             for (const page of pages) handedOffRef.current.add(page);
             onDone(pages);

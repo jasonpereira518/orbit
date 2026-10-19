@@ -50,7 +50,7 @@ export default async function KnowledgePage({
         )}
       >
         <div>
-          <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
+          <h1 className="font-heading text-3xl text-ink">
             Knowledge base
           </h1>
           <p className="mt-1 text-muted-foreground">
@@ -77,7 +77,7 @@ async function People({ selectedId }: { selectedId: string | null }) {
     return (
       <div className="rounded-2xl border border-dashed border-border/70 px-6 py-12 text-center">
         <BookOpen className="mx-auto h-8 w-8 text-muted-foreground" />
-        <h2 className="mt-3 font-[family-name:var(--font-display)] text-xl text-ink">
+        <h2 className="mt-3 font-heading text-xl text-ink">
           No one is in your orbit yet
         </h2>
         <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
@@ -120,7 +120,7 @@ async function People({ selectedId }: { selectedId: string | null }) {
         ) : (
           <div className="rounded-2xl border border-dashed border-border/70 px-6 py-16 text-center">
             <Sparkles className="mx-auto h-7 w-7 text-muted-foreground" />
-            <h2 className="mt-3 font-[family-name:var(--font-display)] text-xl text-ink">
+            <h2 className="mt-3 font-heading text-xl text-ink">
               Pick someone
             </h2>
             <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">

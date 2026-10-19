@@ -62,7 +62,7 @@ export function MarketingDocShell({
             <OrbitLogo size="sm" />
             {/* Below sm the wordmark is what pushes the auth controls into
                 wrapping — the logo alone still identifies the link. */}
-            <span className="hidden font-[family-name:var(--font-display)] text-[17px] tracking-tight text-[#e8f3f1] sm:inline">
+            <span className="hidden font-heading text-[17px] tracking-tight text-[#e8f3f1] sm:inline">
               Orbit
             </span>
           </Link>
@@ -83,7 +83,7 @@ export function MarketingDocShell({
       <footer className="relative z-10 mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-4 px-6 pb-7 pt-12 md:px-10">
         <Link href="/" className="flex items-center gap-2.5" aria-label="Orbit home">
           <OrbitLogo size="sm" />
-          <span className="font-[family-name:var(--font-display)] text-[17px] tracking-tight text-[#e8f3f1]">
+          <span className="font-heading text-[17px] tracking-tight text-[#e8f3f1]">
             Orbit
           </span>
         </Link>
@@ -143,7 +143,7 @@ export function DocHero({
         <p className="text-xs uppercase tracking-[0.18em] text-landing-accent">
           {eyebrow}
         </p>
-        <h1 className="mt-4 max-w-[17ch] font-[family-name:var(--font-display)] text-[clamp(38px,6.4vw,72px)] font-normal leading-[1.04] tracking-[-0.03em] text-[#e8f3f1]">
+        <h1 className="mt-4 max-w-[17ch] font-heading text-[clamp(38px,6.4vw,72px)] font-normal leading-[1.04] tracking-[-0.03em] text-[#e8f3f1]">
           {title}
         </h1>
         <p className="mt-6 max-w-[54ch] text-base leading-[1.75] text-[#9aada8] sm:text-lg">
@@ -158,7 +158,7 @@ export function DocHero({
           <dl className="mt-8 grid grid-cols-2 gap-x-8 gap-y-5 border-t border-[#e8f3f1]/[0.07] pt-6 sm:flex sm:flex-wrap sm:gap-x-12">
             {meta.map((entry) => (
               <div key={entry.label}>
-                <dt className="text-[11px] uppercase tracking-[0.16em] text-[#6d807c]">
+                <dt className="text-2xs uppercase tracking-[0.16em] text-[#6d807c]">
                   {entry.label}
                 </dt>
                 <dd className="mt-1 text-sm text-[#e8f3f1]">{entry.value}</dd>
@@ -255,7 +255,7 @@ export function DocSection({
         >
           {String(index).padStart(2, "0")}
         </span>
-        <h2 className="font-[family-name:var(--font-display)] text-[clamp(21px,2.5vw,28px)] font-normal tracking-tight text-[#e8f3f1]">
+        <h2 className="font-heading text-[clamp(21px,2.5vw,28px)] font-normal tracking-tight text-[#e8f3f1]">
           {title}
         </h2>
       </div>
@@ -317,7 +317,7 @@ export function DocCard({
       <div className="flex items-center justify-between gap-3">
         <p className="text-[15px] text-[#e8f3f1]">{title}</p>
         {badge && (
-          <span className="shrink-0 rounded-full border border-[#e8f3f1]/[0.14] px-2 py-0.5 text-[10px] uppercase tracking-[0.1em] text-[#6d807c]">
+          <span className="shrink-0 rounded-full border border-[#e8f3f1]/[0.14] px-2 py-0.5 text-3xs uppercase tracking-[0.1em] text-[#6d807c]">
             {badge}
           </span>
         )}
@@ -348,7 +348,7 @@ export function DocFooterCta({
     <section className="mx-auto w-full max-w-6xl px-6 pb-8 md:px-10">
       <Reveal className="reveal-celestial landing-glass flex flex-col gap-6 rounded-3xl p-8 sm:p-10 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h2 className="max-w-[20ch] font-[family-name:var(--font-display)] text-[clamp(24px,3.2vw,34px)] font-normal leading-[1.15] tracking-tight text-[#e8f3f1]">
+          <h2 className="max-w-[20ch] font-heading text-[clamp(24px,3.2vw,34px)] font-normal leading-[1.15] tracking-tight text-[#e8f3f1]">
             {title}
           </h2>
           <p className="mt-3 max-w-[48ch] text-base leading-[1.7] text-[#9aada8]">

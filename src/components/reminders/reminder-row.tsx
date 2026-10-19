@@ -229,7 +229,7 @@ export const ReminderRow = memo(function ReminderRow({
                 <span
                   className={cn(
                     "tabular-nums",
-                    due.bucket === "overdue" && "font-medium text-amber-700 dark:text-warning",
+                    due.bucket === "overdue" && "font-medium text-warning",
                     due.bucket === "today" && "font-medium text-primary"
                   )}
                 >
@@ -251,7 +251,7 @@ export const ReminderRow = memo(function ReminderRow({
               {isNoteworthyType(item.reminderType, item.noteBatchId) && (
                 <span
                   className={cn(
-                    "rounded-full px-1.5 py-px text-[10px] font-medium uppercase tracking-wide",
+                    "rounded-full px-1.5 py-px text-3xs font-medium uppercase tracking-wide",
                     reminderTypeStyle(item.reminderType)
                   )}
                 >

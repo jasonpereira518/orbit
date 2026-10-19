@@ -1157,7 +1157,7 @@ export function BulkNotesPanel({
           <Button
             disabled={pending || !notes.trim() || (!hasApiKey && !linkedInOnly)}
             size={compact ? "sm" : "default"}
-            className="w-full bg-primary text-primary-foreground hover:bg-primary/90 sm:w-auto"
+            className="w-full sm:w-auto"
             onClick={() => runParse(notes)}
           >
             {linkedInOnly
@@ -1322,7 +1322,6 @@ export function BulkNotesPanel({
               type="button"
               size={compact ? "sm" : "default"}
               disabled={pending || !current.parsed.name?.trim()}
-              className="bg-primary text-primary-foreground hover:bg-primary/90"
               onClick={() => decide("accepted")}
             >
               {isLastCard ? "Accept" : "Accept & next"}
@@ -1389,7 +1388,7 @@ export function BulkNotesPanel({
                       </span>
                     ) : null}
                   </span>
-                  <Badge variant="secondary" className="text-[10px]">
+                  <Badge variant="secondary" className="text-3xs">
                     {item.mergeContactId ? "Update" : "New"}
                   </Badge>
                 </li>
@@ -1459,7 +1458,7 @@ export function BulkNotesPanel({
               type="button"
               size={compact ? "sm" : "default"}
               disabled={pending || (!meeting && accepted.length === 0 && checkedDates === 0)}
-              className="bg-primary text-primary-foreground hover:bg-primary/90 sm:flex-1"
+              className="sm:flex-1"
               onClick={saveAccepted}
             >
               {pending ? "Saving…" : saveLabel}
@@ -1510,17 +1509,17 @@ function PersonReviewCard({
         </p>
         <div className="flex flex-wrap gap-1.5">
           {item.parsed.linkedin_url && (
-            <Badge variant="secondary" className="text-[10px]">
+            <Badge variant="secondary" className="text-3xs">
               From LinkedIn
             </Badge>
           )}
           {item.sharedNoteTexts.length > 0 && (
-            <Badge variant="secondary" className="text-[10px]">
+            <Badge variant="secondary" className="text-3xs">
               Includes shared note
             </Badge>
           )}
           {item.suggestedMergeId && (
-            <Badge variant="secondary" className="text-[10px]">
+            <Badge variant="secondary" className="text-3xs">
               Likely existing
             </Badge>
           )}
@@ -1611,7 +1610,7 @@ function PersonReviewCard({
       {(item.parsed.topics || []).length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {item.parsed.topics.map((t) => (
-            <Badge key={t} variant="secondary" className="text-[10px]">
+            <Badge key={t} variant="secondary" className="text-3xs">
               {t}
             </Badge>
           ))}
@@ -1742,7 +1741,7 @@ function Field({
       <Label
         className={cn(
           "text-xs",
-          lowConfidence && "text-amber-700 dark:text-warning"
+          lowConfidence && "text-warning"
         )}
       >
         {label}

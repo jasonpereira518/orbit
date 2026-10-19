@@ -213,7 +213,7 @@ function RailBody({
     <div className="relative flex flex-col gap-3">
       {!compact && (
         <div className="flex items-start justify-between gap-2">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
             Stop {index + 1} of {total}
           </p>
           <div className="-mr-1 -mt-1 flex items-center">
@@ -244,7 +244,7 @@ function RailBody({
       ) : (
         <>
           {!compact && (
-            <h2 className="font-[family-name:var(--font-display)] text-xl leading-tight text-ink">
+            <h2 className="font-heading text-xl leading-tight text-ink">
               {stop.title}
             </h2>
           )}
@@ -405,12 +405,12 @@ function ExitConfirm({
         }
       }}
     >
-      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+      <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
         Leaving the tour
       </p>
       <h2
         id="tour-exit-title"
-        className="font-[family-name:var(--font-display)] text-xl leading-tight text-ink"
+        className="font-heading text-xl leading-tight text-ink"
       >
         Exit for now?
       </h2>

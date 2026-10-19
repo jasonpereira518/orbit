@@ -80,7 +80,7 @@ export function DemoSidebar({ state, dispatch }: { state: DemoState; dispatch: D
           <Icon className="relative z-10 h-4 w-4 shrink-0" />
           <span className="relative z-10">{it.label}</span>
           {isSoon && (
-            <span className="relative z-10 ml-auto rounded-full border border-warning/40 px-1.5 py-px text-[10px] uppercase tracking-wide text-warning">
+            <span className="relative z-10 ml-auto rounded-full border border-warning/40 px-1.5 py-px text-3xs uppercase tracking-wide text-warning">
               Soon
             </span>
           )}
@@ -118,8 +118,8 @@ export function DemoSidebar({ state, dispatch }: { state: DemoState; dispatch: D
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/waitlist/logo.png" alt="" width={32} height={32} className="size-8 rounded-full" />
           <div className="min-w-0 flex-1 leading-tight">
-            <p className="font-[family-name:var(--font-display)] text-lg text-sidebar-primary">Orbit</p>
-            <p className="text-[11px] text-muted-foreground">Network tracker</p>
+            <p className="font-heading text-lg text-sidebar-primary">Orbit</p>
+            <p className="text-2xs text-muted-foreground">Network tracker</p>
           </div>
           <button
             type="button"
@@ -146,14 +146,14 @@ export function DemoSidebar({ state, dispatch }: { state: DemoState; dispatch: D
           <ul className="space-y-0.5">{shown(APP_NAV_CORE).map(item)}</ul>
           <div className="my-2 flex items-center gap-2 px-3" aria-hidden="true">
             <span className="h-px flex-1 bg-white/10" />
-            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Coming soon</span>
+            <span className="text-3xs uppercase tracking-wider text-muted-foreground">Coming soon</span>
             <span className="h-px flex-1 bg-white/10" />
           </div>
           <ul className="space-y-0.5">{shown(APP_NAV_EXTRAS).map(item)}</ul>
         </nav>
 
         <div className="flex items-center gap-2.5 border-t border-white/10 px-4 py-3">
-          <span className="inline-flex size-7 items-center justify-center rounded-full bg-tier-lifetime/20 text-[11px] font-medium text-tier-lifetime">
+          <span className="inline-flex size-7 items-center justify-center rounded-full bg-tier-lifetime/20 text-2xs font-medium text-tier-lifetime">
             You
           </span>
           <span className="text-xs text-muted-foreground">Account</span>

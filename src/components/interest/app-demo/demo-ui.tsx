@@ -16,7 +16,7 @@ import { LOOKS, initials, tierOf, type DemoPerson, type Look, type SuggestionRea
  * `scripts/smoke-waitlist-demo-fidelity.ts` enforces it.
  */
 export const CARD = "rounded-2xl border border-border/70 bg-card/80";
-export const DISPLAY = "font-[family-name:var(--font-display)] tracking-tight text-ink";
+export const DISPLAY = "font-heading tracking-tight text-ink";
 export const BTN = buttonVariants({ variant: "outline" });
 export const BTN_PRIMARY = buttonVariants({ variant: "default" });
 export const BTN_GHOST = buttonVariants({ variant: "ghost", size: "sm" });
@@ -171,7 +171,7 @@ const REASON_STYLE: Record<SuggestionReason, string> = {
 };
 
 export function ReasonPill({ reason }: { reason: SuggestionReason }) {
-  return <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium", REASON_STYLE[reason])}>{reason}</span>;
+  return <span className={cn("rounded-full px-2 py-0.5 text-3xs font-medium", REASON_STYLE[reason])}>{reason}</span>;
 }
 
 export function LinkedInGlyph({ className }: { className?: string }) {
@@ -198,7 +198,7 @@ export function SourceIcon({ source, className }: { source: TimelineSource; clas
 
 export function SourceBadge({ source }: { source: TimelineSource }) {
   return (
-    <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium", SOURCE_STYLE[source])}>
+    <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-3xs font-medium", SOURCE_STYLE[source])}>
       <SourceIcon source={source} className="size-3" />
       {source === "You" ? "Logged by you" : `via ${source}`}
     </span>

@@ -29,7 +29,7 @@ const REPO_URL = "https://github.com/jasonpereira518/orbit";
 const ISSUES_URL = "https://github.com/jasonpereira518/orbit/issues/new";
 
 const HEADING =
-  "font-[family-name:var(--font-display)] font-normal leading-[1.15] tracking-[-0.025em] text-[#e8f3f1]";
+  "font-heading font-normal leading-[1.15] tracking-[-0.025em] text-[#e8f3f1]";
 
 const CHANNELS = [
   {
@@ -246,11 +246,11 @@ export default async function ContactPage() {
                   <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#f2c14e]/25 bg-[#f2c14e]/[0.08]">
                     <Icon className="h-5 w-5 text-landing-accent" />
                   </span>
-                  <span className="text-[11px] uppercase tracking-[0.16em] text-[#6d807c]">
+                  <span className="text-2xs uppercase tracking-[0.16em] text-[#6d807c]">
                     {channel.label}
                   </span>
                 </div>
-                <p className="mt-5 font-[family-name:var(--font-display)] text-xl tracking-tight text-[#e8f3f1]">
+                <p className="mt-5 font-heading text-xl tracking-tight text-[#e8f3f1]">
                   {channel.title}
                 </p>
                 <p className="mt-2.5 text-sm leading-[1.65] text-[#9aada8]">

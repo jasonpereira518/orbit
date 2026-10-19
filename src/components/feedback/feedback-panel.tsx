@@ -449,7 +449,7 @@ export function FeedbackPanel({
           onPointerUp={endDrag}
           onPointerCancel={endDrag}
         >
-          <SheetTitle className="font-[family-name:var(--font-display)] text-lg">
+          <SheetTitle className="font-heading text-lg">
             Tell us what happened
           </SheetTitle>
           <SheetDescription>
@@ -722,7 +722,7 @@ export function FeedbackPanel({
             <div className="w-full max-w-[17rem] rounded-2xl border border-border/70 bg-popover p-4 text-center shadow-lg">
               <p
                 id="feedback-discard-title"
-                className="font-[family-name:var(--font-display)] text-base text-ink"
+                className="font-heading text-base text-ink"
               >
                 Discard your feedback?
               </p>

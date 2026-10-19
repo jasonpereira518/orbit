@@ -249,7 +249,7 @@ export function NotificationsPanelButton({
           className="t-badge absolute -right-1 -top-1"
           data-open={badgeCount > 0}
         >
-          <span className="t-badge-dot flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
+          <span className="t-badge-dot flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-3xs font-semibold text-primary-foreground">
             {shownCount > 99 ? "99+" : shownCount}
           </span>
         </span>
@@ -283,7 +283,7 @@ export function NotificationsPanelButton({
           showCloseButton
         >
           <SheetHeader className="border-b border-border/60 pr-12">
-            <SheetTitle className="font-[family-name:var(--font-display)] text-lg text-ink">
+            <SheetTitle className="font-heading text-lg text-ink">
               Notifications
             </SheetTitle>
             <SheetDescription>

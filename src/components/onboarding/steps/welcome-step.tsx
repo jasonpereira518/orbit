@@ -50,7 +50,7 @@ export function WelcomeStep({
       </StaggerItem>
 
       <StaggerItem>
-        <h1 className="font-[family-name:var(--font-display)] text-4xl tracking-tight text-ink text-balance sm:text-5xl">
+        <h1 className="font-heading text-4xl tracking-tight text-ink text-balance sm:text-5xl">
           Welcome to Orbit
         </h1>
       </StaggerItem>
@@ -155,11 +155,11 @@ function PathCard({
     >
       <div className="space-y-1">
         {eyebrow && (
-          <span className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-primary">
+          <span className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wide text-primary">
             {eyebrow}
           </span>
         )}
-        <h2 className="font-[family-name:var(--font-display)] text-2xl tracking-tight text-ink">
+        <h2 className="font-heading text-2xl tracking-tight text-ink">
           {title}
         </h2>
         <p className="text-sm text-muted-foreground">{time}</p>
@@ -169,7 +169,7 @@ function PathCard({
         type="button"
         size="lg"
         variant={primary ? "default" : "outline"}
-        className="h-10 w-full text-[15px]"
+        className="w-full"
         disabled={disabled}
         onClick={onClick}
       >

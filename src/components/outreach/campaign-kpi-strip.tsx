@@ -28,7 +28,7 @@ export function CampaignKpiStrip({ metrics }: { metrics: CampaignMetrics }) {
         >
           <div className="text-xs text-muted-foreground">{item.label}</div>
           <div
-            className={`mt-1 font-[family-name:var(--font-display)] text-2xl ${
+            className={`mt-1 font-heading text-2xl ${
               item.primary ? "text-primary" : "text-foreground"
             }`}
           >

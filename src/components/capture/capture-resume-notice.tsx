@@ -42,13 +42,13 @@ export function CaptureResumeNotice({
         )}
       </div>
       <div className="space-y-1">
-        <h2 className="font-[family-name:var(--font-display)] text-2xl text-ink">
+        <h2 className="font-heading text-2xl text-ink">
           {count} {count === 1 ? "person" : "people"} ready to review
         </h2>
         <p className="text-sm text-muted-foreground">Pulled from {sourceLabel}. Pick up where you left off.</p>
       </div>
       <div className="flex flex-wrap justify-center gap-2">
-        <Button size="lg" className="bg-primary text-primary-foreground hover:bg-primary/90" onClick={onReview}>
+        <Button size="lg" onClick={onReview}>
           Review {count === 1 ? "them" : "everyone"}
         </Button>
         <Button size="lg" variant="ghost" className="text-muted-foreground" onClick={onStartOver}>

@@ -14,7 +14,7 @@ export function DraftLinkWarning({ text, aiText }: { text: string; aiText?: stri
   const link = findLinkOrAddress(aiText ?? text);
   if (!link || !text.includes(link)) return null;
   return (
-    <p className="text-xs text-amber-700 dark:text-warning" role="status">
+    <p className="text-xs text-warning" role="status">
       This draft includes a link or address ({link.slice(0, 60)}). Check it’s one you meant to send.
     </p>
   );

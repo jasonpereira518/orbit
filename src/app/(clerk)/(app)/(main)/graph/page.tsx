@@ -36,10 +36,10 @@ export default async function GraphPage() {
       */}
       <div className="flex shrink-0 items-end justify-between gap-3 px-1">
         <div>
-          <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-primary">
+          <p className="text-2xs font-medium uppercase tracking-[0.2em] text-primary">
             Star chart
           </p>
-          <h1 className="mt-0.5 font-[family-name:var(--font-display)] text-2xl text-ink md:text-3xl">
+          <h1 className="mt-0.5 font-heading text-2xl text-ink md:text-3xl">
             Constellation
           </h1>
           {/* Desktop only. On a phone these lines cost the chart ~62px of height, and the

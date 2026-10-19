@@ -52,7 +52,7 @@ export function RemindersStageSkeleton() {
       className="flex min-h-0 flex-1 flex-col gap-4"
     >
       <div className="flex shrink-0 items-center justify-between">
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
+        <h1 className="font-heading text-3xl text-ink">
           Reminders
         </h1>
       </div>

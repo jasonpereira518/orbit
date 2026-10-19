@@ -60,7 +60,7 @@ export function PlanLaunchCard({ plan }: { plan: Plan }) {
         <div className="relative flex flex-wrap items-center justify-between gap-5">
           <div className="min-w-0 max-w-md space-y-2">
             <span
-              className={`relative inline-flex items-center gap-1.5 overflow-hidden rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide shadow-sm bg-gradient-to-b from-tier-sheen-from to-tier-sheen-to text-tier-sheen-ink`}
+              className={`relative inline-flex items-center gap-1.5 overflow-hidden rounded-full px-2.5 py-1 text-2xs font-semibold uppercase tracking-wide shadow-sm bg-gradient-to-b from-tier-sheen-from to-tier-sheen-to text-tier-sheen-ink`}
             >
               <span
                 aria-hidden="true"
@@ -69,7 +69,7 @@ export function PlanLaunchCard({ plan }: { plan: Plan }) {
               <tier.Icon className="relative size-3" aria-hidden="true" />
               <span className="relative">{name}</span>
             </span>
-            <h2 className="font-[family-name:var(--font-display)] text-2xl leading-tight tracking-tight text-[#e8f3f1]">
+            <h2 className="font-heading text-2xl leading-tight tracking-tight text-[#e8f3f1]">
               You&apos;re on <span className="text-tier-accent">{name}</span>.
             </h2>
             <p className="text-sm leading-relaxed text-[#9aada8]">{planCopy(plan).tagline}</p>
@@ -104,11 +104,11 @@ export function PlanLaunchCard({ plan }: { plan: Plan }) {
 
       <div className="relative flex flex-wrap items-center justify-between gap-5">
         <div className="min-w-0 max-w-md space-y-2">
-          <span className="inline-flex items-center gap-2 rounded-full border border-night-free/30 bg-night-free/10 px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-night-free">
+          <span className="inline-flex items-center gap-2 rounded-full border border-night-free/30 bg-night-free/10 px-2.5 py-1 text-2xs font-medium uppercase tracking-wide text-night-free">
             <Rocket className="size-3" aria-hidden="true" />
             Free plan
           </span>
-          <h2 className="font-[family-name:var(--font-display)] text-2xl leading-tight tracking-tight text-[#e8f3f1]">
+          <h2 className="font-heading text-2xl leading-tight tracking-tight text-[#e8f3f1]">
             Your first {FREE_CONTACT_LIMIT} contacts are on us.
           </h2>
           <p className="text-sm leading-relaxed text-[#9aada8]">

@@ -140,7 +140,6 @@ export function LinkedInMessagesImport() {
         </Button>
         <Button
           disabled={!messagesText || busy || selected.size === 0}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
           onClick={() => {
             if (busy) return;
             try {

@@ -27,7 +27,7 @@ export type HeroInitial =
   | { kind: "ticket"; proof: InterestProof; ticket: InterestTicket };
 
 const HEADING =
-  "font-[family-name:var(--font-display)] font-normal leading-[1.12] tracking-[-0.025em] text-[#e8f3f1]";
+  "font-heading font-normal leading-[1.12] tracking-[-0.025em] text-[#e8f3f1]";
 
 const inputClass =
   "w-full rounded-xl border border-[#e8f3f1]/[0.14] bg-[#05070f]/50 px-4.5 py-4 text-base text-[#e8f3f1] transition-colors placeholder:text-[#6d807c] focus:border-[#f2c14e]/50 focus:outline-none";

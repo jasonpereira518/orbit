@@ -87,11 +87,11 @@ export function RecruiterList({
               </p>
               {r.myLink && (
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  <Badge variant="secondary" className="text-[10px]">
+                  <Badge variant="secondary" className="text-3xs">
                     {r.myLink.status}
                   </Badge>
                   {r.myLink.sharedToPool === 0 && (
-                    <Badge variant="outline" className="text-[10px]">
+                    <Badge variant="outline" className="text-3xs">
                       Kept private
                     </Badge>
                   )}
@@ -117,7 +117,7 @@ export function RecruiterList({
                 <p className="text-muted-foreground/70">No community ratings</p>
               )}
               {!r.piiUnlocked && (
-                <p className="mt-1 text-[10px] uppercase tracking-wide">
+                <p className="mt-1 text-3xs uppercase tracking-wide">
                   Contact locked
                 </p>
               )}

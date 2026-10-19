@@ -111,7 +111,7 @@ export function ExtensionPromo() {
       <div className="flex items-start gap-3 pr-6">
         <OrbitLogo size="md" className="mt-0.5" />
         <div className="min-w-0 flex-1">
-          <p className="font-[family-name:var(--font-display)] text-[15px] leading-snug text-primary">
+          <p className="font-heading text-[15px] leading-snug text-primary">
             Get the Orbit browser extension
           </p>
           <p className="mt-0.5 text-sm leading-snug text-muted-foreground">

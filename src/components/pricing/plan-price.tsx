@@ -76,7 +76,7 @@ export function PlanPriceDisplay({ price }: { price: PlanPrice }) {
         {/* `relative` anchors the glyphs that popLayout lifts out of flow while they
             leave; `tabular-nums` keeps every slot the same width so a digit swapping in
             place never twitches the ones beside it. */}
-        <span className="relative flex font-[family-name:var(--font-display)] text-[42px] leading-none tracking-tight tabular-nums text-[#e8f3f1]">
+        <span className="relative flex font-heading text-[42px] leading-none tracking-tight tabular-nums text-[#e8f3f1]">
           <AnimatePresence initial={false} mode="popLayout">
             {price.amount.split("").map((char, index) => (
               // Keying on slot *and* character means an unchanged glyph is never

@@ -56,7 +56,7 @@ export function MorningBriefing({ items, total, today, drafts, changes, paused }
                 <Radar className="size-3.5 text-primary" aria-hidden />
                 Radar
               </p>
-              <h2 id="radar-briefing-title" className="mt-1 font-[family-name:var(--font-display)] text-xl text-ink sm:text-2xl">
+              <h2 id="radar-briefing-title" className="mt-1 font-heading text-xl text-ink sm:text-2xl">
                 {headline}
               </h2>
               {sub.length > 0 && <p className="mt-0.5 text-sm text-muted-foreground">{sub.join(" · ")}</p>}
@@ -123,7 +123,7 @@ function BriefingRow({ rec }: { rec: RecommendationCardData }) {
               <IntentLink href={`/contacts/${rec.contactId}`} className="truncate text-sm font-medium text-primary hover:underline">
                 {rec.contactName}
               </IntentLink>
-              <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">{KIND_LABELS[rec.kind]}</span>
+              <span className="hidden shrink-0 text-2xs text-muted-foreground sm:inline">{KIND_LABELS[rec.kind]}</span>
             </div>
             {/* On a phone the kind moves down here, so the name gets the row's width. */}
             <p className={cn("truncate text-xs text-muted-foreground", !line && "sm:hidden")}>

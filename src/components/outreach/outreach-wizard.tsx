@@ -206,7 +206,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                 {/* Hidden on phones: four steps share 370px there, and the figure cost each
                     label enough to truncate it ("1. Audien…"). The bar below says the same
                     thing, and carries the value for assistive tech. */}
-                <span className="hidden shrink-0 text-[10px] tabular-nums text-muted-foreground sm:inline">
+                <span className="hidden shrink-0 text-3xs tabular-nums text-muted-foreground sm:inline">
                   {Math.round(value * 100)}%
                 </span>
               </div>
@@ -304,7 +304,6 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
           <Button
             onClick={handleAudienceNext}
             disabled={pending || !audienceQuery.trim()}
-            className="bg-primary text-primary-foreground hover:bg-primary/90"
           >
             Continue
           </Button>
@@ -331,7 +330,6 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
             <Button
               onClick={handleSearch}
               disabled={pending}
-              className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
               Search prospects
             </Button>
@@ -423,7 +421,6 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
             <Button
               onClick={handleMessageNext}
               disabled={pending || !messageIntent.trim()}
-              className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
               Generate drafts & open campaign
             </Button>

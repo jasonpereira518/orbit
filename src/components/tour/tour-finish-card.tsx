@@ -56,7 +56,7 @@ export function TourFinishCard({
 
   return (
     <div className="flex flex-col gap-3">
-      <h2 className="font-[family-name:var(--font-display)] text-xl leading-tight text-ink">
+      <h2 className="font-heading text-xl leading-tight text-ink">
         You’re in orbit
       </h2>
       <p className="text-sm text-muted-foreground">
@@ -95,7 +95,7 @@ export function TourFinishCard({
         {pending ? "Finishing…" : "Go to your dashboard"}
         {!pending && <ArrowRight className="size-4" aria-hidden />}
       </Button>
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-2xs text-muted-foreground">
         Anything you skipped waits on your dashboard under Finish setting up.
       </p>
     </div>

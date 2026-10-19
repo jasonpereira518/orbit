@@ -1583,7 +1583,7 @@ export function ChatPanel({
                 <>
                   {messages.length === 0 && !busy && (
                     <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8 text-center sm:py-16">
-                      <p className="font-[family-name:var(--font-display)] text-xl text-ink sm:text-2xl">
+                      <p className="font-heading text-xl text-ink sm:text-2xl">
                         Ask your <span className="gold-shimmer-text">network</span>
                       </p>
                       <p className="max-w-md text-sm text-muted-foreground">
@@ -2349,7 +2349,7 @@ const RecommendationCard = memo(function RecommendationCard({
           type="button"
           onClick={writeDraft}
           disabled={drafting}
-          className="mt-2.5 inline-flex w-fit items-center gap-1.5 rounded-full border border-border/70 px-2.5 py-1 text-[11px] font-medium text-foreground/80 transition-colors hover:bg-muted disabled:opacity-60"
+          className="mt-2.5 inline-flex w-fit items-center gap-1.5 rounded-full border border-border/70 px-2.5 py-1 text-2xs font-medium text-foreground/80 transition-colors hover:bg-muted disabled:opacity-60"
         >
           {drafting ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Mail className="size-3.5" aria-hidden />}
           {drafting ? "Drafting…" : "Draft message"}
@@ -2363,7 +2363,7 @@ const RecommendationCard = memo(function RecommendationCard({
             messageId && rec.contact_id
               ? (text) =>
                   sent ? (
-                    <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <p className="flex items-center gap-1.5 text-2xs text-muted-foreground">
                       <Check className="size-3.5" aria-hidden />
                       {sent.maybe ? "May have been sent — check your Sent folder" : `Sent to ${rec.name}`}
                       {!sent.maybe && ` · ${formatSentAt(sent.at)}`}
@@ -2375,7 +2375,7 @@ const RecommendationCard = memo(function RecommendationCard({
                         setSendBody(text);
                         setSendOpen(true);
                       }}
-                      className="inline-flex items-center gap-1.5 rounded-full bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                      className="inline-flex items-center gap-1.5 rounded-full bg-primary px-2.5 py-1 text-2xs font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
                     >
                       <Mail className="size-3.5" aria-hidden /> Send email…
                     </button>

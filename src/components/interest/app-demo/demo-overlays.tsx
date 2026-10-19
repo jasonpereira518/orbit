@@ -78,7 +78,7 @@ export function SearchPalette() {
             aria-label="Search people, companies, tags"
             className="w-full bg-transparent py-3 text-sm text-ink placeholder:text-muted-foreground/70 focus:outline-none"
           />
-          <kbd className="rounded border border-border px-1.5 text-[10px] text-muted-foreground">esc</kbd>
+          <kbd className="rounded border border-border px-1.5 text-3xs text-muted-foreground">esc</kbd>
         </div>
         <ul className="max-h-72 overflow-y-auto p-1.5" role="listbox" aria-label="People">
           {results.map((p, i) => (
@@ -92,7 +92,7 @@ export function SearchPalette() {
                 <Avatar person={p} size={26} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm text-ink">{p.name}</span>
-                  <span className="block truncate text-[11px] text-muted-foreground">
+                  <span className="block truncate text-2xs text-muted-foreground">
                     {p.title} · {p.company}
                   </span>
                 </span>
@@ -126,8 +126,8 @@ export function LogSheet() {
           dispatch({ type: "log", id: personId, entryType: type, note: note.trim() || `${type} with ${firstName(p)}` });
         }}
       >
-        <p className="font-[family-name:var(--font-display)] text-lg text-ink">Log interaction</p>
-        <label className="mt-3 block text-[11px] font-medium text-muted-foreground" htmlFor="demo-log-person">
+        <p className="font-heading text-lg text-ink">Log interaction</p>
+        <label className="mt-3 block text-2xs font-medium text-muted-foreground" htmlFor="demo-log-person">
           With
         </label>
         <select
@@ -142,7 +142,7 @@ export function LogSheet() {
             </option>
           ))}
         </select>
-        <p className="mt-3 text-[11px] font-medium text-muted-foreground">What happened</p>
+        <p className="mt-3 text-2xs font-medium text-muted-foreground">What happened</p>
         <div className="mt-1 flex flex-wrap gap-1.5" role="group" aria-label="Interaction type">
           {TIMELINE_TYPES.map((t) => (
             <button
@@ -151,7 +151,7 @@ export function LogSheet() {
               aria-pressed={type === t}
               onClick={() => setType(t)}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-full border py-0.5 pl-0.5 pr-2.5 text-[11px]",
+                "inline-flex items-center gap-1.5 rounded-full border py-0.5 pl-0.5 pr-2.5 text-2xs",
                 type === t ? "border-primary/60 text-ink" : "border-border text-muted-foreground"
               )}
             >
@@ -162,7 +162,7 @@ export function LogSheet() {
             </button>
           ))}
         </div>
-        <label className="mt-3 block text-[11px] font-medium text-muted-foreground" htmlFor="demo-log-note">
+        <label className="mt-3 block text-2xs font-medium text-muted-foreground" htmlFor="demo-log-note">
           Notes
         </label>
         <textarea

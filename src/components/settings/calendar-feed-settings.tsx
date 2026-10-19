@@ -141,7 +141,6 @@ export function CalendarFeedSettings() {
           </p>
           <Button
             disabled={pending}
-            className="bg-primary text-primary-foreground hover:bg-primary/90"
             onClick={() => run("Calendar feed created", enableCalendarFeed)}
           >
             Create calendar feed

@@ -25,10 +25,10 @@ export function LandingHeroCopy({
         "motion-reduce:opacity-100 motion-reduce:translate-y-0"
       )}
     >
-      <p className="font-[family-name:var(--font-display)] text-5xl leading-[0.95] tracking-tight text-white sm:text-6xl md:text-8xl lg:text-[5.5rem] xl:text-9xl">
+      <p className="font-heading text-5xl leading-[0.95] tracking-tight text-white sm:text-6xl md:text-8xl lg:text-[5.5rem] xl:text-9xl">
         Orbit
       </p>
-      <h1 className="mx-auto mt-3 max-w-xl font-[family-name:var(--font-display)] text-xl leading-snug tracking-tight text-[#e8f3f1] sm:mt-6 sm:text-2xl md:mx-0 md:mt-8 md:text-4xl">
+      <h1 className="mx-auto mt-3 max-w-xl font-heading text-xl leading-snug tracking-tight text-[#e8f3f1] sm:mt-6 sm:text-2xl md:mx-0 md:mt-8 md:text-4xl">
         Keep your connections in Orbit.
       </h1>
       <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-[#9aada8] sm:mt-4 sm:text-base md:mx-0 md:text-lg">

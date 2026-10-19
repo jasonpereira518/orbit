@@ -113,7 +113,7 @@ function OrbitRingsNodeComponent({
           return (
             <span
               key={`label-${r}`}
-              className="absolute whitespace-nowrap text-[9px] uppercase tracking-[0.16em] text-white/30"
+              className="absolute whitespace-nowrap text-3xs uppercase tracking-[0.16em] text-white/30"
               style={{
                 left: 6,
                 top: -r - 6,
@@ -172,7 +172,7 @@ function SunNodeComponent({
         style={{ width: 22, height: 22 }}
         title={data.label}
       />
-      <p className="absolute top-8 whitespace-nowrap text-[11px] font-medium tracking-wide text-white/95 drop-shadow-[0_0_8px_rgba(0,0,0,0.8)]">
+      <p className="absolute top-8 whitespace-nowrap text-2xs font-medium tracking-wide text-white/95 drop-shadow-[0_0_8px_rgba(0,0,0,0.8)]">
         {data.label}
       </p>
     </div>

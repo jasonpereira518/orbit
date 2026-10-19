@@ -418,7 +418,7 @@ export function MessyNotesCapture({
       <Button
         {...tourAnchor("capture.extract")}
         disabled={busy || !ingest.notes.trim() || (!ingest.hasApiKey && !linkedInOnly)}
-        className="w-full bg-primary text-primary-foreground hover:bg-primary/90 sm:w-auto"
+        className="w-full sm:w-auto"
         onClick={onExtract}
       >
         {linkedInOnly

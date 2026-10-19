@@ -116,7 +116,7 @@ function HazardTape() {
     <div className="flex shrink-0 items-center" aria-hidden={hidden || undefined}>
       {TAPE_PHRASES.map((phrase, i) => (
         <span key={i} className="flex items-center">
-          <span className="px-5 text-[11px] font-semibold tracking-[0.22em] whitespace-nowrap uppercase">
+          <span className="px-5 text-2xs font-semibold tracking-[0.22em] whitespace-nowrap uppercase">
             {phrase}
           </span>
           <span className="h-7 w-14 bg-[repeating-linear-gradient(135deg,#1a1406_0_7px,transparent_7px_14px)]" />
@@ -149,7 +149,7 @@ export function ComingSoon({ surfaceKey, label }: { surfaceKey: string; label: s
             className="reveal-mount min-w-0 max-w-sm space-y-3 text-center md:pb-16 md:text-left"
             style={{ "--reveal-delay": "80ms" } as React.CSSProperties}
           >
-            <h1 className="font-[family-name:var(--font-display)] text-ink">
+            <h1 className="font-heading text-ink">
               <span className="block font-sans text-xs font-medium tracking-[0.2em] text-warning uppercase">
                 {label}
               </span>

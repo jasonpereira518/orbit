@@ -100,7 +100,7 @@ export function SuggestionRow({
             {tier && <ClosenessTierBadge tier={tier} />}
             <span
               className={cn(
-                "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+                "rounded-full px-2 py-0.5 text-3xs font-medium uppercase tracking-wide",
                 REASON_STYLES[suggestionType] ?? "bg-muted text-muted-foreground"
               )}
             >

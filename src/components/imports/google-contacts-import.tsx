@@ -131,7 +131,6 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
           />
           <Button
             disabled={busy || selected.size === 0}
-            className="bg-primary text-primary-foreground hover:bg-primary/90"
             onClick={() => {
               if (busy) return;
               contacts.start();

@@ -88,7 +88,6 @@ export function CalendarSubscribePanel({
         </div>
         <Button
           disabled={!url.trim() || pending}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
           onClick={() =>
             start(async () => {
               try {

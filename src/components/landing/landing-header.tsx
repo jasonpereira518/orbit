@@ -136,7 +136,7 @@ export function LandingHeader({
             <OrbitLogo size="md" priority />
             <span
               className={cn(
-                "font-[family-name:var(--font-display)] text-xl tracking-tight text-[#e8f3f1]",
+                "font-heading text-xl tracking-tight text-[#e8f3f1]",
                 pastHero ? "hidden sm:inline" : "inline"
               )}
             >

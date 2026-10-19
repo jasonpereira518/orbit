@@ -112,7 +112,7 @@ export function DraftEditor({
   return (
     <div className="mt-2 rounded-lg bg-muted/50 p-2 text-xs">
       <div className="mb-1 flex items-center justify-between gap-2">
-        <Badge variant="secondary" className="text-[10px]">
+        <Badge variant="secondary" className="text-3xs">
           Draft
         </Badge>
         <div className="flex items-center gap-0.5">
@@ -174,7 +174,7 @@ export function DraftEditor({
             onClick={() => refine(chip.kind, chip.done)}
             disabled={busy !== null || editing}
             aria-busy={busy === chip.kind}
-            className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background px-2 py-0.5 text-2xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {busy === chip.kind && <Loader2 className="size-3 animate-spin" aria-hidden />}
             {chip.label}

@@ -23,7 +23,7 @@ export function SurfaceUnavailable({ label }: { label?: string }) {
       </span>
 
       <div className="space-y-2">
-        <h1 className="font-[family-name:var(--font-display)] text-2xl text-ink">
+        <h1 className="font-heading text-2xl text-ink">
           {label ? `${label} isn't available` : "Not available"}
         </h1>
         <p className="text-sm leading-relaxed text-muted-foreground">

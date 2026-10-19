@@ -153,7 +153,7 @@ export function PlanDowngradeStage({
 
         {!rest && (
           <motion.p
-            className="max-w-lg font-[family-name:var(--font-display)] text-2xl leading-tight tracking-tight sm:text-4xl"
+            className="max-w-lg font-heading text-2xl leading-tight tracking-tight sm:text-4xl"
             style={{ color: theme.ink }}
             initial={false}
             animate={{ opacity: phase === "start" ? 1 : 0 }}
@@ -173,7 +173,7 @@ export function PlanDowngradeStage({
             <p className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-300">
               Your {theme.name} access has ended
             </p>
-            <h2 className="font-[family-name:var(--font-display)] text-3xl leading-tight tracking-tight sm:text-5xl">
+            <h2 className="font-heading text-3xl leading-tight tracking-tight sm:text-5xl">
               You&apos;re on the Free Plan
             </h2>
             <p className="mt-5 max-w-md text-base leading-relaxed text-slate-300 sm:text-lg">
