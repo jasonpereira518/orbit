@@ -46,12 +46,18 @@ export type ChatPrefetch = {
   commitments: string | null;
   /** Upcoming and recent events, unfenced, or null when there are none or events are closed. */
   events: string | null;
+  /** Ids the commitments section lists, id → text: what a chat proposal may tick off. */
+  commitmentIds: Map<string, string>;
+  /** Ids the events section lists, id → title: what a chat proposal may name. */
+  eventIds: Map<string, string>;
 };
 
 export const EMPTY_PREFETCH: ChatPrefetch = {
   reminders: null,
   reminderRows: [],
   commitments: null,
+  commitmentIds: new Map(),
+  eventIds: new Map(),
   events: null,
 };
 
@@ -123,7 +129,7 @@ export function renderCommitments(rows: CommitmentRow[], total: number): string 
   const lines = rows.map((r) => {
     const name = line(r.contactName, 80);
     const who = r.owedBy === "them" ? `${name} owes the user` : r.owedBy === "me" ? `the user owes ${name}` : `with ${name}`;
-    return `- ${line(r.text, 200)} · ${who} [id=${r.contactId}]`;
+    return `- [item_id=${r.id}] ${line(r.text, 200)} · ${who} [id=${r.contactId}]`;
   });
   return capLines(`${total} open, newest first:`, lines, PREFETCH_CAPS.commitments);
 }
@@ -179,10 +185,13 @@ async function loadCommitments(userId: string) {
       .limit(COMMITMENT_ROWS),
     db.select({ n: count() }).from(actionItems).where(open),
   ]);
-  return renderCommitments(
-    rows.map((r) => ({ ...r, owedBy: r.owedBy ?? null })),
-    total?.n ?? rows.length
-  );
+  return {
+    text: renderCommitments(
+      rows.map((r) => ({ ...r, owedBy: r.owedBy ?? null })),
+      total?.n ?? rows.length
+    ),
+    ids: new Map(rows.map((r) => [r.id, r.text])),
+  };
 }
 
 async function loadEvents(userId: string, now: Date) {
@@ -191,11 +200,12 @@ async function loadEvents(userId: string, now: Date) {
     listEventsForUser(userId, EVENT_ROWS_EACH_WAY, { when: "past", now }),
   ]);
   if (!upcoming.length && !past.length) return null;
+  const ids = new Map([...upcoming, ...past].map((e) => [e.id, e.title]));
   // An events page that has not shipped for this account is not something chat brings up.
   // Checked only once there is something to show: resolving visibility can read the account
   // row, and most questions come from accounts with no events at all.
   if (!(await isSurfaceLive(userId, "page.events"))) return null;
-  return renderEvents(upcoming, past);
+  return { text: renderEvents(upcoming, past), ids };
 }
 
 /**
@@ -212,5 +222,12 @@ export async function loadChatPrefetch(
     loadCommitments(userId).catch(() => null),
     loadEvents(userId, now).catch(() => null),
   ]);
-  return { reminders: reminders.text, reminderRows: reminders.rows, commitments, events };
+  return {
+    reminders: reminders.text,
+    reminderRows: reminders.rows,
+    commitments: commitments?.text ?? null,
+    events: events?.text ?? null,
+    commitmentIds: commitments?.ids ?? new Map(),
+    eventIds: events?.ids ?? new Map(),
+  };
 }

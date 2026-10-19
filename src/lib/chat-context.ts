@@ -222,6 +222,10 @@ export type ChatContext = {
   commitments?: string | null;
   /** The user's upcoming and recent events, as prompt lines, or null. */
   events?: string | null;
+  /** Ids the commitments section shows, id → text — what a chat write may tick off. */
+  commitmentIds?: Map<string, string>;
+  /** Ids the events section shows, id → title — what a chat write may name. */
+  eventIds?: Map<string, string>;
   /** The `recruitersContext` argument of `chatWithNetwork`. */
   modelRecruiters: Array<{
     id: string;
@@ -1241,6 +1245,8 @@ export async function prepareChatContext(
     reminderTitles,
     commitments: prefetch.commitments,
     events: prefetch.events,
+    commitmentIds: prefetch.commitmentIds,
+    eventIds: prefetch.eventIds,
     focusProfile,
     writingInstructions,
     access: await accessP,
