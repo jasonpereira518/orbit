@@ -75,12 +75,12 @@ import {
 import { reindexInteractionPassages } from "@/lib/memory-backfill";
 import { traced } from "@/lib/perf-trace";
 import {
-  RELATED_SQL_LOWER,
   findRelatedContacts,
   mentionLikePatterns,
   nameAliases,
   type RelatedContact,
 } from "@/lib/related-contacts";
+import { relatedSqlLower } from "@/lib/related-contacts-sql";
 import { UNDO_DELAY_MS } from "@/lib/email/config";
 import { enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
 import { scheduleDispatch } from "@/lib/email/schedule";
@@ -1766,10 +1766,9 @@ export const listRelatedContacts = defineAction(
         : [];
 
     const patterns = mentionLikePatterns(nameAliases(sourceNarrow));
-    // `RELATED_SQL_LOWER` + U+0130 → "i" U+0307: the JS lowering at every position that
-    // matters to an ASCII match. See `mentionLikePatterns` for why this is exact enough.
-    const lowered = (text: ReturnType<typeof sql>) =>
-      sql`replace(translate(${text}, ${RELATED_SQL_LOWER.from}::text, ${RELATED_SQL_LOWER.to}::text), chr(304), chr(105) || chr(775))`;
+    // The JS lowering at every position that matters to an ASCII match. See
+    // `mentionLikePatterns` for why this is exact enough.
+    const lowered = relatedSqlLower;
     const mayMentionSource = patterns.length
       ? sql`${lowered(
         sql`coalesce(${contacts.aiSummary}, '') || ' ' || coalesce(${contacts.notes}, '') || ' ' || ${jsonArrayTextSql(contacts.keyFacts)} || ' ' || ${jsonArrayTextSql(contacts.sharedInterests)}`

@@ -135,7 +135,7 @@ export function mentionLikePatterns(aliases: string[]): string[] {
   return [...patterns];
 }
 
-/** `from`/`to` for SQL `translate()`: A-Z and U+212A lowered the way JS lowers them. */
+/** A-Z and U+212A lowered the way JS lowers them; `relatedSqlLower` (related-contacts-sql.ts) is the SQL form. */
 export const RELATED_SQL_LOWER = {
   from: "ABCDEFGHIJKLMNOPQRSTUVWXYZ\u212A",
   to: "abcdefghijklmnopqrstuvwxyzk",

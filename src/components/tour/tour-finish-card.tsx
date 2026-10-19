@@ -95,7 +95,7 @@ export function TourFinishCard({
         {pending ? "Finishing…" : "Go to your dashboard"}
         {!pending && <ArrowRight className="size-4" aria-hidden />}
       </Button>
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-2xs text-muted-foreground">
         Anything you skipped waits on your dashboard under Finish setting up.
       </p>
     </div>

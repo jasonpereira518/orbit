@@ -96,6 +96,10 @@ jobs:
         env:
           # Keep the Sentry build plugin quiet and source-map upload off in CI.
           SENTRY_AUTH_TOKEN: ""
+      # First-load JS and preloaded fonts per route, against the ceilings in the script
+      # (LATENCY_PLAN.md §4). Reads the build above; no network, a few seconds.
+      - name: bundle budget
+        run: node scripts/check-bundle-budget.mjs
 
   # The smoke suite is ~400 scripts run one after another (PGlite is single-writer), about
   # ten minutes serially and by far the slowest job. Three machines run exactly the same

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import {
   addMonths,
   eachDayOfInterval,
@@ -16,6 +16,7 @@ import {
 } from "date-fns";
 import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useFieldControl } from "@/components/ui/field";
 import {
   Popover,
   PopoverContent,
@@ -71,7 +72,11 @@ export function MonthCalendar({
   return (
     <div className={cn("w-[17.5rem]", className)}>
       <div className="mb-3 flex items-center justify-between gap-2">
-        <p className="font-[family-name:var(--font-display)] text-base text-ink">
+        {/* Announced when the arrows change it: otherwise paging months is silent. */}
+        <p
+          aria-live="polite"
+          className="font-[family-name:var(--font-display)] text-base text-ink"
+        >
           {format(month, "MMMM yyyy")}
         </p>
         <div className="flex items-center gap-0.5">
@@ -102,7 +107,7 @@ export function MonthCalendar({
         {WEEKDAYS.map((d) => (
           <div
             key={d}
-            className="py-1 text-center text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+            className="py-1 text-center text-3xs font-medium uppercase tracking-wide text-muted-foreground"
           >
             {d}
           </div>
@@ -122,6 +127,10 @@ export function MonthCalendar({
               type="button"
               disabled={disabled}
               onClick={() => onSelect(day)}
+              // The visible "14" alone says nothing about the month or weekday.
+              aria-label={format(day, "EEEE, MMMM d, yyyy")}
+              aria-pressed={isSelected}
+              aria-current={isToday ? "date" : undefined}
               className={cn(
                 "relative flex size-9 items-center justify-center rounded-full text-sm transition-colors",
                 "outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
@@ -153,6 +162,7 @@ export function DatePickerButton({
   minDate,
   label = "Calendar",
   className,
+  ...control
 }: {
   /** YYYY-MM-DD */
   value?: string | null;
@@ -162,7 +172,15 @@ export function DatePickerButton({
   minDate?: Date | null;
   label?: string;
   className?: string;
+  /** For a `<label htmlFor>`; inside a `Field` the id comes from the field. */
+  id?: string;
+  "aria-describedby"?: string;
+  "aria-invalid"?: React.AriaAttributes["aria-invalid"];
 }) {
+  const { "aria-describedby": describedBy, ...field } = useFieldControl(control);
+  // A <label> replaces a button's text as its name, so the chosen date would go unheard.
+  // When something labels the trigger, keep the date audible as its description.
+  const valueId = useId();
   const [open, setOpen] = useState(false);
   const selected = value ? parseLocalYmd(value) : null;
   const [month, setMonth] = useState<Date>(
@@ -180,6 +198,11 @@ export function DatePickerButton({
       <PopoverTrigger
         type="button"
         disabled={disabled}
+        {...field}
+        aria-describedby={
+          [field.id ? valueId : null, describedBy].filter(Boolean).join(" ") ||
+          undefined
+        }
         className={cn(
           "inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-sm font-medium transition-colors",
           "hover:bg-muted disabled:pointer-events-none disabled:opacity-50",
@@ -187,7 +210,7 @@ export function DatePickerButton({
         )}
       >
         <Calendar className="size-3.5" />
-        {label}
+        <span id={valueId}>{label}</span>
       </PopoverTrigger>
       <PopoverContent
         align="start"

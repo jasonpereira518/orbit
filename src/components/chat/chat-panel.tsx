@@ -1477,7 +1477,7 @@ export function ChatPanel({
               }
             >
               <History className="size-4" />
-              <span className="hidden sm:inline">History</span>
+              <span className="max-sm:sr-only">History</span>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-72">
               <DropdownMenuLabel>Recent chats</DropdownMenuLabel>
@@ -1521,7 +1521,7 @@ export function ChatPanel({
                     </div>
                     <button
                       type="button"
-                      className="mt-0.5 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 group-focus-within:opacity-100 disabled:invisible"
+                      className="relative mt-0.5 grid size-6 shrink-0 place-items-center rounded tap-target text-muted-foreground pointer-fine:opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 group-focus-within:opacity-100 disabled:invisible"
                       aria-label="Delete chat"
                       disabled={busy}
                       onClick={(e) => {
@@ -1567,7 +1567,7 @@ export function ChatPanel({
             disabled={busy}
           >
             <Plus className="size-4" />
-            <span className="hidden sm:inline">New chat</span>
+            <span className="max-sm:sr-only">New chat</span>
           </Button>
 
           <Button
@@ -1578,7 +1578,7 @@ export function ChatPanel({
             onClick={() => setContextOpen(true)}
           >
             <NotebookPen className="size-4" />
-            <span className="hidden sm:inline">Context</span>
+            <span className="max-sm:sr-only">Context</span>
           </Button>
         </div>
 
@@ -1610,7 +1610,7 @@ export function ChatPanel({
                   {messages.length === 0 && !busy && (
                     <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8 text-center sm:py-16">
                       <p className="font-[family-name:var(--font-display)] text-xl text-ink sm:text-2xl">
-                        Ask your <span className="gold-shimmer-text">network</span>
+                        Ask your <span className="gold-shimmer-text [animation-iteration-count:2]!">network</span>
                       </p>
                       <p className="max-w-md text-sm text-muted-foreground">
                         Who can help, who to follow up with, or who knows what —
@@ -1755,6 +1755,8 @@ export function ChatPanel({
                   rows={1}
                   maxLength={CHAT_QUESTION_MAX_CHARS}
                   placeholder="Ask about your network…"
+                  // The placeholder vanishes once there's text, so it can't be the name.
+                  aria-label="Message Orbit"
                   data-dictating={dictation.listening || undefined}
                   textareaClassName={cn(
                     // Bare field: the pill around it owns the border, background, focus
@@ -1862,9 +1864,12 @@ export function ChatPanel({
             </SheetDescription>
           </SheetHeader>
           <div className="flex flex-col gap-3 p-4">
-            <h3 className="text-sm font-medium text-foreground">This chat</h3>
+            <h3 id="chat-context-heading" className="text-sm font-medium text-foreground">
+              This chat
+            </h3>
             <Textarea
               ref={contextTextareaRef}
+              aria-labelledby="chat-context-heading"
               rows={8}
               placeholder="e.g. I'm prepping for a fundraise this quarter, so prioritize investor intros."
               value={contextIngest.notes}
@@ -2018,12 +2023,12 @@ const UserBubble = memo(function UserBubble({
           onClick={() => onStartEdit?.(msg.id)}
           aria-label="Edit this question"
           title="Edit"
-          className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+          className="relative flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground tap-target pointer-fine:opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
         >
           <Pencil className="size-3.5" />
         </button>
       )}
-      <div className="max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm text-primary-foreground">
+      <div className="max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm break-words text-primary-foreground">
         <MentionText text={msg.content} names={msg.mentionNames} />
       </div>
     </div>
@@ -2250,7 +2255,7 @@ function VersionSwitcher({
         onClick={() => onSwitch?.(versions[index - 1]!.version)}
         disabled={index === 0}
         aria-label="Previous version"
-        className="flex size-5 items-center justify-center rounded transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
+        className="relative flex size-6 tap-target items-center justify-center rounded transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
       >
         <ChevronLeft className="size-3.5" />
       </button>
@@ -2262,7 +2267,7 @@ function VersionSwitcher({
         onClick={() => onSwitch?.(versions[index + 1]!.version)}
         disabled={index === versions.length - 1}
         aria-label="Next version"
-        className="flex size-5 items-center justify-center rounded transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
+        className="relative flex size-6 tap-target items-center justify-center rounded transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
       >
         <ChevronRight className="size-3.5" />
       </button>
@@ -2383,7 +2388,7 @@ const RecommendationCard = memo(function RecommendationCard({
           type="button"
           onClick={writeDraft}
           disabled={drafting}
-          className="mt-2.5 inline-flex w-fit items-center gap-1.5 rounded-full border border-border/70 px-2.5 py-1 text-[11px] font-medium text-foreground/80 transition-colors hover:bg-muted disabled:opacity-60"
+          className="mt-2.5 inline-flex w-fit items-center gap-1.5 rounded-full border border-border/70 px-2.5 py-1 text-2xs font-medium text-foreground/80 transition-colors hover:bg-muted disabled:opacity-60"
         >
           {drafting ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Mail className="size-3.5" aria-hidden />}
           {drafting ? "Drafting…" : "Draft message"}
@@ -2397,7 +2402,7 @@ const RecommendationCard = memo(function RecommendationCard({
             messageId && rec.contact_id
               ? (text) =>
                   sent ? (
-                    <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <p className="flex items-center gap-1.5 text-2xs text-muted-foreground">
                       <Check className="size-3.5" aria-hidden />
                       {sent.maybe ? "May have been sent — check your Sent folder" : `Sent to ${rec.name}`}
                       {!sent.maybe && ` · ${formatSentAt(sent.at)}`}
@@ -2409,7 +2414,7 @@ const RecommendationCard = memo(function RecommendationCard({
                         setSendBody(text);
                         setSendOpen(true);
                       }}
-                      className="inline-flex items-center gap-1.5 rounded-full bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                      className="inline-flex items-center gap-1.5 rounded-full bg-primary px-2.5 py-1 text-2xs font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
                     >
                       <Mail className="size-3.5" aria-hidden /> Send email…
                     </button>

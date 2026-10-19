@@ -4,7 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { calendarSources, gmailConnections, meetingSessions, type MeetingDigest } from "@/db/schema";
 import { completeJson, parseAiJson, type CaptureParseHints } from "@/lib/ai";
-import { deepgramEnabled } from "@/lib/deepgram";
+import { deepgramOpenFor } from "@/lib/speech-credit";
 import { ReauthRequiredError } from "@/lib/errors";
 import { getValidAccessToken, hasCalendarScope } from "@/lib/gmail";
 import { fetchCalendarWindow } from "@/lib/connectors/google-calendar";
@@ -18,7 +18,7 @@ import {
   cleanUserNotes,
   formatTranscriptSegment,
   isSelf,
-  speakerNames,
+  speakerDisplayNames,
 } from "@/lib/meeting-digest";
 import { requireMeetingsUser } from "@/lib/plan-guards";
 import {
@@ -99,7 +99,10 @@ export const createMeetingSession = defineAction(
       // and tell them their hours are gone when their hours are not what is stopping them. The
       // read is skipped entirely rather than taken and ignored, so no stale number can leak
       // into copy from here.
-      if (deepgramEnabled()) {
+      //
+      // The same holds once the Deepgram credit is spent (`deepgramOpenFor`): a NEW meeting then
+      // records on the account's own key, so the cap is not Orbit's to enforce.
+      if (await deepgramOpenFor(userId, "meeting")) {
         const allowance = await speechAllowance(userId, "meeting");
         if (allowance.exhausted) {
           return { ok: false, error: `You’ve used this month’s meeting hours — they reset on ${resetLabel(allowance.resetsAt)}` };
@@ -275,7 +278,7 @@ export const analyzeMeetingSession = defineAction(
       const invited = event?.guestsHidden ? [] : (event?.attendees ?? []).map((a) => a.name).filter(Boolean);
 
       // A 1:1's other voice is the other person; the transcript then reads "Priya:" not "Speaker 1:".
-      const voices = speakerNames(t.segments, invited.length ? invited : (t.session.attendees ?? []).map((a) => a.name));
+      const voices = speakerDisplayNames(t.segments, invited.length ? invited : (t.session.attendees ?? []).map((a) => a.name));
       const paragraphs = t.segments
         .filter((s) => s.text.trim())
         .map((s) => formatTranscriptSegment(s, voices));

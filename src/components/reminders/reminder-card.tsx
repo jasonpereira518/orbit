@@ -14,6 +14,7 @@ import {
   Coffee,
 } from "lucide-react";
 import { runToastAction, toast } from "@/lib/toast";
+import { copyText } from "@/lib/clipboard";
 import {
   draftFollowUpResponse,
   moveReminderToList,
@@ -129,7 +130,7 @@ export function ReminderCard({
               <Link
                 href={`/capture/${noteBatchId}`}
                 className={cn(
-                  "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide hover:underline",
+                  "rounded-full px-2 py-0.5 text-3xs font-medium uppercase tracking-wide hover:underline",
                   reminderTypeStyle(reminderType)
                 )}
               >
@@ -138,7 +139,7 @@ export function ReminderCard({
             ) : (
               <span
                 className={cn(
-                  "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+                  "rounded-full px-2 py-0.5 text-3xs font-medium uppercase tracking-wide",
                   reminderTypeStyle(reminderType)
                 )}
               >
@@ -146,7 +147,7 @@ export function ReminderCard({
               </span>
             )}
             {!compact && (
-              <span className="rounded-full bg-muted/80 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              <span className="rounded-full bg-muted/80 px-2 py-0.5 text-3xs font-medium uppercase tracking-wide text-muted-foreground">
                 {kindLabel}
               </span>
             )}
@@ -306,7 +307,7 @@ export function ReminderCard({
       {draft && (
         <div className="mt-3 rounded-lg bg-muted/50 p-3">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            <p className="text-3xs font-medium uppercase tracking-wide text-muted-foreground">
               Draft follow-up
             </p>
             <Button
@@ -314,9 +315,9 @@ export function ReminderCard({
               size="sm"
               variant="ghost"
               className="h-7 px-2 text-xs"
-              onClick={() => {
-                void navigator.clipboard.writeText(draft);
-                toast.success(TOAST_COPY.copied);
+              onClick={async () => {
+                if (await copyText(draft)) toast.success(TOAST_COPY.copied);
+                else toast.error(TOAST_COPY.copyFailed);
               }}
             >
               <Copy className="mr-1 h-3 w-3" />

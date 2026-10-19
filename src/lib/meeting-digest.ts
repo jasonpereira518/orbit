@@ -395,23 +395,9 @@ export function formatTranscriptSegment(
   return label ? `${label}: ${text}` : text;
 }
 
-/**
- * Names for the anonymous voices, when the call itself settles who they are. Today that is the
- * one unambiguous case: a 1:1 — exactly one other person invited, and exactly one voice besides
- * the user's — where that voice can only be them. Any more people and the voices stay
- * "Speaker N": guessing who is who in a group call would put words in the wrong mouth.
- */
-export function speakerNames(
-  segments: ReadonlyArray<{ speaker: string | null }>,
-  otherAttendees: readonly string[]
-): Map<string, string> {
-  const names = new Map<string, string>();
-  const others = [...new Set(otherAttendees.map((n) => n.trim()).filter(Boolean))];
-  if (others.length !== 1) return names;
-  const voices = new Set(segments.map((s) => s.speaker).filter((s): s is string => !!s && s !== "you"));
-  if (voices.size === 1) names.set([...voices][0], others[0]);
-  return names;
-}
+// The display helpers live in a client-safe module (this one reaches `node:crypto` through
+// `ai-security`), re-exported so server callers keep importing them from here.
+export { speakerDisplayNames, speakerNames } from "@/lib/speaker-display";
 
 const SHAPE = `{
   "title": string,                 // short meeting title; reuse the given one if there is one

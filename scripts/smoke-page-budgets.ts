@@ -77,7 +77,9 @@ function contactScans(statements: string[]) {
 
 /** True when the column is selected as a bare value (not merely referenced inside an expression). */
 function selectsBare(statement: string, column: string) {
-  return new RegExp(`"${column}"\\s*(,|\\bfrom\\b)`, "i").test(statement);
+  // A comma followed by a number is a function argument (`substr("profile_image_url", 1, 11)`
+  // reads an 11-character prefix), not the next item of a projection.
+  return new RegExp(`"${column}"\\s*(,(?!\\s*\\d)|\\bfrom\\b)`, "i").test(statement);
 }
 
 type SpecialRow = {

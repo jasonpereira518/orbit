@@ -1,5 +1,7 @@
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import Link from "next/link";
+import type { Metadata } from "next";
+import { cache } from "react";
 import { notFound } from "next/navigation";
 import { Lock, Mail, Phone, ExternalLink } from "lucide-react";
 import { getRecruiter, getRecruiterSharing } from "@/actions/recruiters";
@@ -13,6 +15,19 @@ import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { viewerTimeZone } from "@/lib/viewer-time-zone";
+
+/** Request-memoized so `generateMetadata` and the page share one read. */
+const loadRecruiter = cache((id: string) => getRecruiter(id));
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  const recruiter = await loadRecruiter(id).catch(() => null);
+  return { title: recruiter?.fullName || "Recruiter" };
+}
 
 function formatAvg(avgRating: number) {
   if (!avgRating) return "—";
@@ -33,7 +48,7 @@ export default async function RecruiterDetailPage({
   const timeZone = await viewerTimeZone();
 
   const [recruiter, { enabled: sharingEnabled }] = await Promise.all([
-    getRecruiter(id),
+    loadRecruiter(id),
     getRecruiterSharing(),
   ]);
   if (!recruiter) notFound();
@@ -161,7 +176,7 @@ export default async function RecruiterDetailPage({
             </h2>
             {/* Stated plainly because this text is distilled from the user's inbox.
                 It lives on the link, never on the shared recruiter row. */}
-            <Badge variant="outline" className="text-[10px]">
+            <Badge variant="outline" className="text-3xs">
               Private to you
             </Badge>
           </div>

@@ -5169,8 +5169,8 @@ export const siteSettings = pgTable("site_settings", {
   /**
    * The admin console's managed-AI switch. True = paused: Pro and Max fall back to "add your
    * own key" and no call runs on Orbit's provider keys. Null = never set, which reads as
-   * PAUSED in production (managed AI must not run before the legal text describing it ships)
-   * and on elsewhere. The `ORBIT_MANAGED_AI=off` env kill switch still wins over this.
+   * running everywhere (`managedAiPausedDefault`). The `ORBIT_MANAGED_AI=off` env kill switch
+   * still wins over this.
    */
   managedAiPaused: boolean("managed_ai_paused"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),

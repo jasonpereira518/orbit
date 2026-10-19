@@ -88,7 +88,7 @@ export default async function MoneyMovementPage() {
         </div>
 
         <AdminPanel title="Recurring movement by month">
-          <TrendTable
+          <TrendTable label="Recurring movement by month"
             columns={["New", "Return", "Expand", "Contract", "Churn", "Net"]}
             rows={movements.map((m) => ({
               period: MONTH.format(m.bucketStart),
@@ -123,7 +123,7 @@ export default async function MoneyMovementPage() {
           {comped.length === 0 ? (
             <EmptyState>Nobody has been comped yet.</EmptyState>
           ) : (
-            <AdminTable
+            <AdminTable label="Comped accounts"
               head={
                 <>
                   <Th>Account</Th>

@@ -83,6 +83,37 @@ export function isUnfetchableImageUrl(url: string | null | undefined): boolean {
 }
 
 /**
+ * `/api/avatars/{id}`, versioned by the photo the caller can see.
+ *
+ * The route answers a stored Blob or shared photo with a redirect, and a redirect the
+ * browser may not cache is one authenticated function call per avatar per render — about
+ * fifty on a contacts page (LATENCY_PLAN NET-1). With `?v=` the route marks the redirect
+ * cacheable for a day, and the version is a hash of the photo URL the list or profile
+ * already holds, so a new photo is a new URL: the browser never serves a stale one. The
+ * `/api/avatars/{id}` value `clientAvatarUrlSql` returns for inline photos carries no
+ * version (the route already serves those bytes with its own cache header) and neither
+ * does on-demand resolution, which has no photo yet.
+ */
+export function avatarRouteUrl(contactId: string, visibleUrl: string | null | undefined): string {
+  const base = `/api/avatars/${contactId}`;
+  const u = visibleUrl?.trim();
+  // Already a route URL: keep a cache-busting query the caller added (`?t=` after a backfill).
+  if (u?.startsWith(`${base}?`)) return u;
+  if (!u || isUnusableAvatarUrl(u) || u.startsWith("/api/avatars/") || u.startsWith("data:")) return base;
+  return `${base}?v=${avatarVersion(u)}`;
+}
+
+/** FNV-1a over the URL, base 36: short, stable, and different whenever the photo is. */
+export function avatarVersion(url: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < url.length; i++) {
+    h ^= url.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(36);
+}
+
+/**
  * True when a stored URL is already durable (a legacy inline data URL, or a
  * photo we've already uploaded to Blob storage) and needs no further work.
  */

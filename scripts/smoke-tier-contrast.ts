@@ -24,7 +24,7 @@ function check(label: string, ok: boolean, detail?: unknown) {
   }
 }
 
-const css = readFileSync(join(process.cwd(), "src/app/globals.css"), "utf8");
+const css = readFileSync(join(process.cwd(), "src/app/theme.css"), "utf8");
 
 /** The first `selector { … }` block's declarations. */
 function block(selector: string): string {

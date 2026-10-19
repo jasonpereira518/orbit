@@ -1,4 +1,6 @@
 import Link from "next/link";
+import type { Metadata } from "next";
+import { cache } from "react";
 import { notFound } from "next/navigation";
 import { getCampaign } from "@/actions/outreach";
 import { requireUserId } from "@/lib/auth";
@@ -12,6 +14,19 @@ import { Badge } from "@/components/ui/badge";
 import { formatReplyRate } from "@/lib/outreach-metrics";
 import type { SequenceStep } from "@/lib/outreach-types";
 import { RenderStamp } from "@/components/layout/render-stamp";
+
+/** Request-memoized so `generateMetadata` and the page share one read. */
+const loadCampaign = cache((id: string) => getCampaign(id));
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  const campaign = await loadCampaign(id).catch(() => null);
+  return { title: campaign?.name || "Campaign" };
+}
 
 export default async function OutreachCampaignPage({
   params,
@@ -29,7 +44,7 @@ export default async function OutreachCampaignPage({
 
   let campaign;
   try {
-    campaign = await getCampaign(id);
+    campaign = await loadCampaign(id);
   } catch {
     notFound();
   }

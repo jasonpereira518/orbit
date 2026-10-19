@@ -20,6 +20,8 @@ import { isSurfaceLive } from "@/lib/surface-visibility";
 import type { ProviderCalendarInput } from "@/lib/imports/calendar-sources";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
+export const metadata = { title: "Imports" };
+
 /** Large connections imports process in the background via after(); allow it room to run. */
 export const maxDuration = 300;
 

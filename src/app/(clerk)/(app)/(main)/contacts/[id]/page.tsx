@@ -1,5 +1,6 @@
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
-import { Suspense } from "react";
+import { Suspense, cache } from "react";
+import type { Metadata } from "next";
 import { listContactPendingSendsAction } from "@/actions/email-compose";
 import { PendingSends } from "@/components/email/pending-sends";
 import type { PendingSend } from "@/lib/email/compose";
@@ -58,6 +59,22 @@ import { viewerTimeZone } from "@/lib/viewer-time-zone";
  * limit, not the layout's.
  */
 export const maxDuration = 300;
+
+/**
+ * Request-memoized so `generateMetadata` and the page share one read: the tab title costs no
+ * extra query.
+ */
+const loadContactForProfile = cache((id: string) => getContactForProfile(id));
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  const contact = await loadContactForProfile(id).catch(() => null);
+  return { title: contact ? contact.preferredName || contact.fullName : "Contact" };
+}
 
 export default async function ContactDetailPage({
   params,
@@ -132,7 +149,7 @@ export default async function ContactDetailPage({
   // notFound() must fire BEFORE any Suspense boundary renders so the route
   // still returns a real 404 status.
   const [contact, closenessCohort, constellationConfig] = await Promise.all([
-    getContactForProfile(id),
+    loadContactForProfile(id),
     cohortPromise,
     getConstellationConfig(),
   ]);

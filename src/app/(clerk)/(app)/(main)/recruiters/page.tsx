@@ -23,6 +23,8 @@ import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
+export const metadata = { title: "Recruiters" };
+
 export default async function RecruitersPage({
   searchParams,
 }: {

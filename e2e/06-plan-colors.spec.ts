@@ -36,7 +36,9 @@ for (const theme of ["light", "dark"] as const) {
         localStorage.setItem("theme", t);
       } catch {}
     }, theme);
-    await page.goto("/contact");
+    // /pricing loads the full sheet (globals.css): the marketing pages load site.css, which
+    // carries only the utilities those pages use, and none of them uses `text-tier-accent`.
+    await page.goto("/pricing");
     await expect.poll(async () => (await accents(page)).dark).toBe(theme === "dark");
     expect((await accents(page)).accents).toEqual(EXPECTED[theme]);
   });

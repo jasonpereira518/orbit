@@ -29,8 +29,8 @@ export type AiKeySource = "personal" | "managed";
  * MANAGED AI IS ON (pricing v2). A code constant rather than an env var, so no deployment
  * flips the model by accident. Two switches still stop it without a deploy: the
  * `ORBIT_MANAGED_AI=off` env kill switch and the admin console's runtime pause
- * (`site_settings.managed_ai_paused`, which reads as PAUSED in production until set — the
- * legal text describing managed AI has to ship first).
+ * (`site_settings.managed_ai_paused`; never set reads as running, now that the legal text
+ * describing included AI has shipped).
  */
 export const MANAGED_AI_ENABLED: boolean = true;
 

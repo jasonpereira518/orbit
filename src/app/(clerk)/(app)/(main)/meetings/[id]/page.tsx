@@ -1,12 +1,14 @@
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import Link from "next/link";
+import type { Metadata } from "next";
+import { cache } from "react";
 import { notFound } from "next/navigation";
 import { ArrowLeft, CalendarDays, Clock, Users } from "lucide-react";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { formatMeetingDuration } from "@/lib/format-meeting-duration";
 import { requireUserId } from "@/lib/auth";
 import { formatElapsed } from "@/lib/format-elapsed";
-import { speakerLabel, speakerNames } from "@/lib/meeting-digest";
+import { speakerDisplayNames, speakerLabel } from "@/lib/meeting-digest";
 import { getMeetingTranscript } from "@/lib/meeting-sessions";
 import { MeetingRecapButton } from "@/components/meetings/meeting-recap-button";
 import { isSurfaceLive } from "@/lib/surface-visibility";
@@ -14,6 +16,27 @@ import { COMPOSE_SURFACE_KEY } from "@/lib/surfaces";
 import { viewerTimeZone } from "@/lib/viewer-time-zone";
 
 const SEARCH_MAX = 100;
+
+/** Request-memoized so `generateMetadata` and the page share one read. */
+const loadMeetingTranscript = cache((userId: string, id: string) => getMeetingTranscript(userId, id));
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  try {
+    const meeting = await loadMeetingTranscript(await requireUserId(), id);
+    if (!meeting || (meeting.session.status !== "analyzed" && meeting.session.status !== "saved")) {
+      return { title: "Meeting" };
+    }
+    const { session } = meeting;
+    return { title: session.title?.trim() || session.digest?.title?.trim() || "Untitled meeting" };
+  } catch {
+    return { title: "Meeting" };
+  }
+}
 
 /** Splits `text` around case-insensitive occurrences of `q`, marking each. */
 function Highlighted({ text, q }: { text: string; q: string }) {
@@ -64,7 +87,7 @@ export default async function MeetingDetailPage({
   const userId = await requireUserId();
 
   const [meeting, composeLive, timeZone] = await Promise.all([
-    getMeetingTranscript(userId, id),
+    loadMeetingTranscript(userId, id),
     isSurfaceLive(userId, COMPOSE_SURFACE_KEY).catch(() => false),
     viewerTimeZone(),
   ]);
@@ -75,8 +98,9 @@ export default async function MeetingDetailPage({
   const digest = session.digest;
   const title = session.title?.trim() || digest?.title?.trim() || "Untitled meeting";
   const guests = (session.attendees ?? []).map((a) => a.name);
-  // The same 1:1 rule the summary used: one guest and one other voice is that guest.
-  const voices = speakerNames(segments, guests);
+  // The same 1:1 rule the summary used (one guest and one other voice is that guest), and
+  // "Speaker 1, 2, ..." for everyone else, in order of first appearance.
+  const voices = speakerDisplayNames(segments, guests);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">

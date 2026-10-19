@@ -17,6 +17,8 @@ import {
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { viewerTimeZone } from "@/lib/viewer-time-zone";
 
+export const metadata = { title: "Events" };
+
 async function ConnectionsSection() {
   const { connections, eventbriteConfigured, googleConnected, googleMailGranted, googleCalendarGranted } =
     await getEventConnections();
