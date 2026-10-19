@@ -110,7 +110,7 @@ export function ProposedActionsCard({
         {action.status === "proposed" && action.args.kind === "update_contact" && action.args.fields.email && (
           // A proposal stored before chat stopped taking email changes (audit M-10): the
           // commit drops the email (`updateFieldsForCommit`), so say so instead of implying it.
-          <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+          <p className="mt-1 text-2xs leading-snug text-muted-foreground">
             The email change won’t be applied — edit the contact to change an email.
           </p>
         )}
