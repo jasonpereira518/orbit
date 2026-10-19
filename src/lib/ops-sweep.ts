@@ -26,7 +26,7 @@ import { loadManagedAiOpsFacts } from "@/lib/managed-ai-ops";
 import { deliverToSlack, type OpsDelivery } from "@/lib/ops-notify";
 import { prunePageViews } from "@/lib/page-views";
 import { formatWeeklyCostReport, isoWeekKey, loadSpendOpsFacts, loadWeeklyCostReport, weeklyReportDue } from "@/lib/spend-ops";
-import { reportError } from "@/lib/report-error";
+import { reportAndContinue, reportError } from "@/lib/report-error";
 
 export type { OpsDelivery } from "@/lib/ops-notify";
 
@@ -190,8 +190,8 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         .where(eq(dataPurgeRuns.status, "failed")),
       // Production only: PGlite and preview branches report Postgres's default of 0, which
       // would open this condition in every local sweep and smoke run.
-      process.env.VERCEL_ENV === "production" ? probeStatementTimeout().catch(() => null) : null,
-      oldestDueAgeMs("google", now).catch(() => null),
+      process.env.VERCEL_ENV === "production" ? probeStatementTimeout().catch(reportAndContinue({ where: "ops.sweep.statement-timeout-probe" }, null)) : null,
+      oldestDueAgeMs("google", now).catch(reportAndContinue({ where: "ops.sweep.oldest-due-age" }, null)),
       // `ai.security` events and the accounts they span — see AI_SECURITY_ALERT_EVENTS.
       db
         .select({
@@ -551,7 +551,7 @@ export async function runOpsSweep(options: {
     // the customer base. It rides along here because this is the only thing that already
     // runs on a schedule; a failed prune must not turn an alert sweep into a failed run,
     // so it is caught and reported as a count of zero.
-    const prunedViews = await prunePageViews(now).catch(() => 0);
+    const prunedViews = await prunePageViews(now).catch(reportAndContinue({ where: "ops.sweep.prune-page-views" }, 0));
 
     await finishCronRun(run, {
       status: result.status,

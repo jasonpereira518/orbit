@@ -1,4 +1,5 @@
 import { eq, sql } from "drizzle-orm";
+import { reportError } from "@/lib/report-error";
 import { getCreditBalance } from "@/lib/credits/ledger";
 import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
 import { getDb, rowsOf } from "@/db";
@@ -428,7 +429,8 @@ async function pausedApiItems(userId: string): Promise<number> {
         + (SELECT count(*) FROM webhook_endpoints WHERE user_id = ${userId} AND status <> 'disabled')::int AS n
     `);
     return rowsOf<{ n: number }>(result)[0]?.n ?? 0;
-  } catch {
+  } catch (err) {
+    reportError(err, { where: "admin.account-health.integration-count", userId, level: "warning" });
     return 0;
   }
 }
@@ -467,7 +469,8 @@ async function creditFacts(
       spendable: balance.spendable,
       resetsAt: balance.allowance?.periodEnd ?? null,
     };
-  } catch {
+  } catch (err) {
+    reportError(err, { where: "admin.account-health.credit-balance", userId, level: "warning" });
     return null;
   }
 }
@@ -501,7 +504,8 @@ export async function getAccountAlerts(
     );
 
     return visible.slice(0, MAX_ACCOUNT_ALERTS);
-  } catch {
+  } catch (err) {
+    reportError(err, { where: "admin.account-health.account-alerts", userId, level: "warning" });
     return [];
   }
 }

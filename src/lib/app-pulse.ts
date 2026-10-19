@@ -1,4 +1,5 @@
 import { entitlementsFromSettings } from "@/lib/entitlements";
+import { reportAndContinue } from "@/lib/report-error";
 import { loadNotificationPanel } from "@/lib/notification-panel";
 import type { AccountHealthContext } from "@/lib/account-health";
 import { ensureUserSettings } from "@/lib/user-settings";
@@ -72,8 +73,12 @@ export async function loadAppPulse(
     }),
     isAdminUser(userId) ? isViewingAsUser(userId).then((v) => !v) : Promise.resolve(false),
     // Best-effort: a calendar read must never cost the panel its pulse.
-    nextKnownMeeting(userId, now, NEXT_MEETING_WITHIN_MS).catch(() => null),
-    lastUnloggedMeeting(userId, now).catch(() => null),
+    nextKnownMeeting(userId, now, NEXT_MEETING_WITHIN_MS).catch(
+      reportAndContinue({ where: "admin.app-pulse.next-meeting", userId }, null)
+    ),
+    lastUnloggedMeeting(userId, now).catch(
+      reportAndContinue({ where: "admin.app-pulse.unlogged-meeting", userId }, null)
+    ),
   ]);
   const panel = { ...rawPanel, canOpenAdmin };
   const notified = new Set(settings.desktopNotifiedIds ?? []);

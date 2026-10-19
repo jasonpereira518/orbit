@@ -249,6 +249,7 @@ function aggregatesWithin(maxAgeMs: number): ReturnType<typeof queryAggregates> 
   aggregateMemo = { at: now, value };
   // A failed read must not be served for ten minutes.
   value.catch(() => {
+    // best-effort: the caller awaiting `value` receives the rejection; this only drops the memo.
     if (aggregateMemo?.value === value) aggregateMemo = null;
   });
   return value;

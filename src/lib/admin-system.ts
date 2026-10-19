@@ -1,4 +1,5 @@
 import { and, desc, eq, gt, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { reportError } from "@/lib/report-error";
 import { getDb, isPgvectorAvailable, rowsOf } from "@/db";
 import {
   cronRuns,
@@ -329,7 +330,8 @@ export async function getBugSignatures(): Promise<BugSignatures> {
         sql`SELECT count(*)::int AS n FROM contact_embeddings WHERE embedding_vector IS NULL`
       );
       embeddingsMissingVector = rowsOf<{ n: number }>(res)[0]?.n ?? 0;
-    } catch {
+    } catch (err) {
+      reportError(err, { where: "admin.system.embeddings-missing-vector", level: "warning" });
       embeddingsMissingVector = null;
     }
   }
@@ -418,7 +420,8 @@ export async function getSystemIssues(now = new Date()): Promise<SystemIssues> {
       syncWedged: num(row.sync_wedged),
       syncFailing: num(row.sync_failing),
     };
-  } catch {
+  } catch (err) {
+    reportError(err, { where: "admin.system.connection-health", level: "warning" });
     // The Overview must render even if this one extra query fails.
     return empty;
   }

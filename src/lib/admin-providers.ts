@@ -215,7 +215,7 @@ async function checkVercel(): Promise<ProviderStatus> {
         return event.type === "stderr" || event.level === "error";
       }).length;
     } catch {
-      // Deployment reachability is still useful when the event stream is unavailable.
+      // best-effort: Deployment reachability is still useful when the event stream is unavailable.
     }
   }
   return {
@@ -419,7 +419,7 @@ async function fetchRaw(
       signal: controller.signal,
       cache: "no-store",
     });
-    const json = await response.json().catch(() => null);
+    const json = await response.json().catch(() => null); // best-effort: a non-JSON body is just "no body"
     return { status: response.status, json };
   } finally {
     clearTimeout(timer);

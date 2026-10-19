@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { reportError } from "@/lib/report-error";
 import { and, desc, eq, gt } from "drizzle-orm";
 import { SCHEMA_VERSION, getDb, isPgvectorAvailable, rowsOf } from "@/db";
 import { errorEvents, opsAlertState } from "@/db/schema";
@@ -100,7 +101,8 @@ export async function probeStatementTimeout(): Promise<string | null> {
 async function section<T>(work: () => Promise<T>, ms: number): Promise<T | null> {
   try {
     return await withTimeout(work(), ms);
-  } catch {
+  } catch (err) {
+    reportError(err, { where: "admin.health.section", level: "warning" });
     return null;
   }
 }
@@ -127,6 +129,7 @@ export async function checkHealth(options: {
     if (recorded === null || recorded < SCHEMA_VERSION) reason = "schema_mismatch";
     else if (recorded > SCHEMA_VERSION) ahead = true;
   } catch (err) {
+    reportError(err, { where: "admin.health.db-probe", level: "warning" });
     reason = err instanceof TimeoutError ? "db_timeout" : "db_error";
   }
   const latencyMs = reason === "db_error" || reason === "db_timeout" ? null : Date.now() - started;

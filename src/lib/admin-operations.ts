@@ -1,4 +1,5 @@
 import { clerkClient } from "@clerk/nextjs/server";
+import { reportError } from "@/lib/report-error";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
@@ -133,7 +134,8 @@ export async function recordAccountView(
       action: "account.view",
       targetUserId,
     });
-  } catch {
+  } catch (err) {
+    reportError(err, { where: "admin.operations.audit-account-view" }); // a lost audit row is not best-effort
     // See above: never fail a render over the audit trail.
   }
 }
@@ -159,7 +161,8 @@ export async function recordContactView(
       resourceType: "contact",
       resourceId: contactId,
     });
-  } catch {
+  } catch (err) {
+    reportError(err, { where: "admin.operations.audit-contact-view" });
     // Never fail a render over the audit trail.
   }
 }
@@ -291,7 +294,7 @@ export async function runImportJob(importId: string): Promise<void> {
   try {
     await runImportJobById(importId);
   } catch {
-    // The processor writes its own error onto the import row; nothing to add here.
+    // best-effort: The processor writes its own error onto the import row; nothing to add here.
   }
 }
 

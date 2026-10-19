@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { reportError } from "@/lib/report-error";
 import { getDb, rowsOf, runAtomicBatch } from "@/db";
 import { interestListSignups, userSettings, waitlistPollVotes } from "@/db/schema";
 import { countInt } from "@/lib/admin-metrics";
@@ -774,6 +775,8 @@ export async function addManualInterestListSignupsFromPaste(input: {
       });
       added.push(result);
     } catch (err) {
+      // Per-row loop: reportError's warning throttle (1/min per `where`) caps the noise.
+      if (!(err instanceof UserFacingError)) reportError(err, { where: "admin.interest-list.add-signup", level: "warning" });
       const message =
         err instanceof UserFacingError ? err.message : "Couldn’t add that signup";
       skipped.push({ email: row.email, reason: message });
