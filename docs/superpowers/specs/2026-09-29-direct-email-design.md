@@ -387,7 +387,7 @@ Local-dev caution: smoke scripts use `.env.local`'s `DATABASE_URL` if present �
 
 ## Planning amendments (P1 plan)
 
-Decided while writing `docs/superpowers/plans/2026-09-29-direct-email-p1-engine.md`:
+Decided while writing `docs/archive/superpowers/plans/2026-09-29-direct-email-p1-engine.md`:
 
 1. **`idempotency_key` column** (nullable text) with a partial unique index on `(user_id, idempotency_key)` for active/ambiguous rows. Chat, agent and recruiter sends already have natural keys; this replaces chat's claim-row-before-send.
 2. **Interaction `source` is per origin, not the origin name**, so existing readers keep working: `chat` → `"chat_send"` (read by `src/actions/chat.ts`), `agent` → `"mcp"`, `follow_up` → `"follow_up"`, `recruiter` → `"recruiter_send"`, `compose` → `"email_send"`.
@@ -399,7 +399,7 @@ Decided while writing `docs/superpowers/plans/2026-09-29-direct-email-p1-engine.
 
 ## Planning amendments (P2 plan)
 
-Decided while writing `docs/superpowers/plans/2026-09-30-direct-email-p2-compose.md`:
+Decided while writing `docs/archive/superpowers/plans/2026-09-30-direct-email-p2-compose.md`:
 
 1. **Gate via a new `feature` surface kind.** `comingSoon` only worked on `page` surfaces (`COMING_SOON_KEYS` was built from pages). P2 adds `kind: "feature"`; a coming-soon feature lands in `hidden` for non-previewers, so the existing client hook (`useHiddenSurfaces`) and server guard (`requireUserForSurface`) both apply unchanged. `settings.email` is its companion. The surface key is `feature.compose`, not `action.compose`.
 2. **Signature is plain text in P2.** The repo has no HTML sanitizer; adding one for a signature isn't worth the dependency. `email_signature_html` stays unused until rich signatures are asked for.
@@ -411,7 +411,7 @@ Decided while writing `docs/superpowers/plans/2026-09-30-direct-email-p2-compose
 
 ## Planning amendments (P3 plan)
 
-Decided while writing `docs/superpowers/plans/2026-09-30-direct-email-p3-outlook.md` (supersedes §6's create-then-send):
+Decided while writing `docs/archive/superpowers/plans/2026-09-30-direct-email-p3-outlook.md` (supersedes §6's create-then-send):
 
 1. **`Mail.Send` + `/me/sendMail`, not create-draft-then-send** (Jason, Sep 30 2026). Creating a draft requires `Mail.ReadWrite` ("read, update, create and delete your mail"); `Mail.Send` keeps Outlook's ask as narrow as Gmail's `gmail.send`. Graph answers `202` with no body, so Outlook sends store no provider message or thread id (`SendResult.providerMessageId` is nullable).
 2. **Duplicate check by custom header.** Each message carries `x-orbit-send-id: <rfc_message_id>` (Graph requires custom header names to start with `x-`, set only at creation, readable only via `$select` on a single-message GET). `findSent` lists recent Sent Items and matches that header — only with `Mail.Read`; otherwise `"unknown"`.
@@ -424,7 +424,7 @@ Decided while writing `docs/superpowers/plans/2026-09-30-direct-email-p3-outlook
 
 ## Planning amendments (P4 plan)
 
-Decided while writing `docs/superpowers/plans/2026-09-30-direct-email-p4-schedule-attachments.md`:
+Decided while writing `docs/archive/superpowers/plans/2026-09-30-direct-email-p4-schedule-attachments.md`:
 
 1. **Scheduling = a future `send_at`; the drain delivers it** (~10 min granularity; the UI says "around"). No new queue. `after()` is used only for undo-window delays.
 2. **The browser computes the instant** ("8:00 tomorrow" in the browser's zone) and sends ISO; the server only bounds it (1 minute – 30 days).
@@ -437,7 +437,7 @@ Decided while writing `docs/superpowers/plans/2026-09-30-direct-email-p4-schedul
 
 ## Planning amendments (P5 plan)
 
-Decided while writing `docs/superpowers/plans/2026-09-30-direct-email-p5-reply-thread.md`:
+Decided while writing `docs/archive/superpowers/plans/2026-09-30-direct-email-p5-reply-thread.md`:
 
 1. **Outlook replies use MIME `sendMail`** (`Content-Type: text/plain`, base64) — still `Mail.Send` only. It is the only sendMail form that carries `In-Reply-To`/`References`; `x-orbit-send-id` is written as a MIME header. New messages keep JSON. Outlook reply attachments ≤ 2 MB (double base64 inside Graph's ~4 MB request).
 2. **Reply sources:** threads Orbit sent (`email_sends`), messages BCC-logged to Orbit (`interactions.external_id = mail:<Message-ID>:<contactId>`), and — dark — the latest mailbox message via existing read scopes.

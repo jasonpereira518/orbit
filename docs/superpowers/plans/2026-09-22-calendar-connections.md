@@ -8,7 +8,7 @@
 
 **Tech Stack:** Next.js (App Router), TypeScript strict, Drizzle + Postgres (Neon http in prod, PGlite locally), `fast-xml-parser` (new), `tsx` smoke scripts.
 
-**Spec:** `docs/superpowers/specs/2026-09-22-calendar-connections-design.md`
+**Spec:** `docs/archive/superpowers/specs/2026-09-22-calendar-connections-design.md`
 
 ## Global Constraints
 

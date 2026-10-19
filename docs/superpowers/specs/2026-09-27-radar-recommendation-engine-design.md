@@ -1,7 +1,7 @@
 # Radar — proactive recommendation engine
 
 **Date:** 2026-09-27
-**Status:** Design for review. Implementation plan: `docs/superpowers/plans/2026-09-27-radar-recommendation-engine.md`.
+**Status:** Design for review. Implementation plan: `docs/archive/superpowers/plans/2026-09-27-radar-recommendation-engine.md`.
 **Branch:** `claude/inspiring-fermi-npcgb7`, cut from `main` at `f36306a` (schema 120).
 
 ## Where this came from
@@ -51,7 +51,7 @@ and no way to hear about any of it without opening Orbit.
 ## Non-goals (v1)
 
 - No web-search or per-company news API. No X/Twitter. No server-side LinkedIn fetching of any
-  kind (`docs/superpowers/specs/2026-09-19-integrations-strategy-design.md`, "Explicitly out").
+  kind (`docs/archive/superpowers/specs/2026-09-19-integrations-strategy-design.md`, "Explicitly out").
 - No auto-sending, ever. Autopilot stops at a ready draft.
 - No model-driven ranking. An LLM never chooses or orders recommendations — the
   `src/lib/events/relevance.ts` principle: a ranking that reshuffles between loads is one the user
