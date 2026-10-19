@@ -187,7 +187,9 @@ run(async () => {
 
     await db.delete(rateLimitBuckets).where(eq(rateLimitBuckets.bucket, "avatarSource.shared:unavatar"));
     unavatarAsked.length = 0;
-    const second = await fillSharedAvatars();
+    // Two slugs: B and C are the most-shared left, and any LinkedIn contact an earlier script
+    // in this shard's database left behind would otherwise spend the allowance down to the reserve.
+    const second = await fillSharedAvatars(2);
     const order = mine().filter((s) => s === "fill-b" || s === "fill-c");
     check("the next run takes the next-most-shared", JSON.stringify(order) === JSON.stringify(["fill-b", "fill-c"]) && !second.deferred && second.found >= 2, JSON.stringify({ second, order }));
     check("…and A, already filled, is not looked up again", !mine().includes("fill-a"));

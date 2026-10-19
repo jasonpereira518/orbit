@@ -194,6 +194,7 @@
 @source "../lib/demo-data/student.ts";
 @source "../lib/demo-workspace.ts";
 @source "../lib/dictation.ts";
+@source "../lib/duplicate-count-memo.ts";
 @source "../lib/duplicates.ts";
 @source "../lib/entitlements.ts";
 @source "../lib/error-events.ts";
