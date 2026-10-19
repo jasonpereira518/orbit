@@ -16,12 +16,38 @@ import { normalizeForMatch } from "@/lib/verbatim";
 import type { RelationshipDigestAnswer } from "@/lib/relationship-engine/extract";
 import type { MessageWindow, ValidatedDigest, WindowMessage } from "@/lib/relationship-engine/types";
 
+/**
+ * The floor for an excerpt to count as evidence. A substring test alone accepted "ok" — found
+ * inside "Looking" in almost any thread — so a model (or a sender's prompt injection) could back
+ * an invented fact or to-do by quoting two letters. Two words and ten characters is short enough
+ * for every real quote the prompt asks for ("I know Priya", "send the deck") and long enough
+ * that it has to say something.
+ */
+const MIN_EXCERPT_CHARS = 10;
+const MIN_EXCERPT_WORDS = 2;
+
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+
+/** `needle` in `haystack` with no word character glued to either end ("ok" is not in "looking"). */
+function containsOnWordBoundaries(haystack: string, needle: string): boolean {
+  const guardStart = WORD_CHAR.test(needle[0]);
+  const guardEnd = WORD_CHAR.test(needle[needle.length - 1]);
+  for (let at = haystack.indexOf(needle); at !== -1; at = haystack.indexOf(needle, at + 1)) {
+    const before = haystack[at - 1];
+    const after = haystack[at + needle.length];
+    if (guardStart && before !== undefined && WORD_CHAR.test(before)) continue;
+    if (guardEnd && after !== undefined && WORD_CHAR.test(after)) continue;
+    return true;
+  }
+  return false;
+}
+
 export function locateExcerpt(window: MessageWindow, excerpt: string): WindowMessage | null {
   const needle = normalizeForMatch(excerpt);
-  if (!needle) return null;
+  if (needle.length < MIN_EXCERPT_CHARS || needle.split(" ").length < MIN_EXCERPT_WORDS) return null;
   // Newest first: a phrase repeated across messages is attributed to its latest use.
   for (let i = window.messages.length - 1; i >= 0; i--) {
-    if (normalizeForMatch(window.messages[i].text).includes(needle)) return window.messages[i];
+    if (containsOnWordBoundaries(normalizeForMatch(window.messages[i].text), needle)) return window.messages[i];
   }
   return null;
 }

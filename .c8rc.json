@@ -1,0 +1,10 @@
+{
+  "all": true,
+  "src": ["src"],
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["src/**/*.d.ts"],
+  "exclude-after-remap": true,
+  "reporter": ["json", "text-summary"],
+  "report-dir": "coverage",
+  "temp-directory": "coverage/.v8"
+}
