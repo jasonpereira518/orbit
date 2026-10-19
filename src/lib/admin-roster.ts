@@ -151,6 +151,7 @@ type RosterRecord = {
   subscription_period_end: string | Date | null;
   stripe_customer_id: string | null;
   suspended_at: string | Date | null;
+  account_kind: "internal" | "tester" | null;
   contacts: number;
   interactions: number;
   imports: number;
@@ -229,6 +230,7 @@ function toRow(record: RosterRecord): AdminUserRow {
     aiModel: record.ai_model,
     hasProviderKey: Boolean(record.has_provider_key),
     suspendedAt: toDate(record.suspended_at),
+    accountKind: record.account_kind,
     counts: {
       contacts: num(record.contacts),
       interactions: num(record.interactions),
@@ -364,7 +366,7 @@ function rosterSql(query: RosterQuery, limit: number, offset: number) {
       (${sql.raw(HAS_PROVIDER_KEY_SQL)}) AS has_provider_key,
       s.comped_plan, s.comped_note, s.comped_at,
       s.lifetime_purchased_at, s.subscription_plan, s.subscription_status,
-      s.subscription_period_end, s.stripe_customer_id, s.suspended_at,
+      s.subscription_period_end, s.stripe_customer_id, s.suspended_at, s.account_kind,
       coalesce(agg.contacts, 0)      AS contacts,
       coalesce(agg.interactions, 0)  AS interactions,
       coalesce(agg.imports, 0)       AS imports,

@@ -51,6 +51,8 @@ import { ORBIT_TOOLS } from "@/lib/tools/definitions";
 import { isToolError, runTool, toolError, toolsFor } from "@/lib/tools/registry";
 import { auditUntrustedWrite, recordAiSecurityEvent } from "@/lib/ai-security";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import type { McpClient } from "@/lib/mcp/client";
+import { resultCountOf, trackMcpToolCalled } from "@/lib/mcp/events";
 
 /**
  * Free-text arguments of write tools whose content lands somewhere Orbit's own chat will
@@ -114,7 +116,15 @@ function fenced(label: string, value: unknown) {
  * allowlist in the registry is what keeps free-text notes from fanning out through
  * `search_contacts`.
  */
-export function buildOrbitMcpServer(userId: string, opts: { scopes: ApiKeyScope[] }) {
+export function buildOrbitMcpServer(
+  userId: string,
+  opts: {
+    scopes: ApiKeyScope[];
+    /** Which assistant is calling, for `mcp_tool_called`. Unknown callers are `other`. */
+    client?: McpClient;
+  }
+) {
+  const client: McpClient = opts.client ?? "other";
   const server = new McpServer({ name: "orbit", version: "1.0.0" });
 
   for (const tool of toolsFor(ORBIT_TOOLS, "mcp", opts.scopes)) {
@@ -127,39 +137,51 @@ export function buildOrbitMcpServer(userId: string, opts: { scopes: ApiKeyScope[
         ...(tool.annotations ? { annotations: tool.annotations } : {}),
       },
       async (args: unknown) => {
-        if (tool.scope === "write") {
-          // Its own, tighter budget on top of the per-request one: a write is re-read by
-          // Orbit's chat on every later question, so a fast-writing agent is the shape to stop.
-          try {
-            await consumeBucket("mcpWrite", userId, RATE_LIMITS.mcpWrite);
-          } catch (err) {
-            if (isRateLimitedError(err)) return textResult(toolError(err.message));
-            throw err;
+        // One `mcp_tool_called` per call, whatever happens: a result, a refusal (scope, schema,
+        // rate limit) or a throw. Only the tool name, the client enum, ok, the elapsed time and an
+        // item count are recorded, in `finally`, so the response below is exactly what it was.
+        const started = Date.now();
+        let ok = false;
+        let resultCount: number | undefined;
+        try {
+          if (tool.scope === "write") {
+            // Its own, tighter budget on top of the per-request one: a write is re-read by
+            // Orbit's chat on every later question, so a fast-writing agent is the shape to stop.
+            try {
+              await consumeBucket("mcpWrite", userId, RATE_LIMITS.mcpWrite);
+            } catch (err) {
+              if (isRateLimitedError(err)) return textResult(toolError(err.message));
+              throw err;
+            }
+            const record = (args ?? {}) as Record<string, unknown>;
+            for (const field of AUDITED_WRITE_FIELDS) {
+              const value = record[field];
+              if (typeof value === "string") auditUntrustedWrite(userId, `mcp.${tool.name}`, field, value);
+            }
           }
-          const record = (args ?? {}) as Record<string, unknown>;
-          for (const field of AUDITED_WRITE_FIELDS) {
-            const value = record[field];
-            if (typeof value === "string") auditUntrustedWrite(userId, `mcp.${tool.name}`, field, value);
-          }
+          const result = await runTool(tool, userId, args, {
+            surface: "mcp",
+            // Re-checked at execution, not only when listing: a client that names a tool it was
+            // never offered (a read-only key calling a write tool) gets a refusal, not a write.
+            scopes: opts.scopes,
+            onRefused: (name, reason) =>
+              void recordAiSecurityEvent({
+                kind: "tool_refused",
+                userId,
+                surface: "mcp",
+                detail: { tool: name, reason },
+              }),
+          });
+          // An error envelope is this code's own message and carries no user text, so it is
+          // reported plainly rather than fenced as something to be careful of. Same for a
+          // write's confirmation, which is why those tools carry no `resultLabel`.
+          ok = !isToolError(result);
+          resultCount = ok ? resultCountOf(result) : undefined;
+          if (isToolError(result) || tool.resultLabel === null) return textResult(result);
+          return fenced(tool.resultLabel, result);
+        } finally {
+          trackMcpToolCalled({ userId, client, tool: tool.name, ok, durationMs: Date.now() - started, resultCount });
         }
-        const result = await runTool(tool, userId, args, {
-          surface: "mcp",
-          // Re-checked at execution, not only when listing: a client that names a tool it was
-          // never offered (a read-only key calling a write tool) gets a refusal, not a write.
-          scopes: opts.scopes,
-          onRefused: (name, reason) =>
-            void recordAiSecurityEvent({
-              kind: "tool_refused",
-              userId,
-              surface: "mcp",
-              detail: { tool: name, reason },
-            }),
-        });
-        // An error envelope is this code's own message and carries no user text, so it is
-        // reported plainly rather than fenced as something to be careful of. Same for a
-        // write's confirmation, which is why those tools carry no `resultLabel`.
-        if (isToolError(result) || tool.resultLabel === null) return textResult(result);
-        return fenced(tool.resultLabel, result);
       }
     );
   }

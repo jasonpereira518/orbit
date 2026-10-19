@@ -178,11 +178,11 @@ export async function commitProposedAction(messageId: string, actionId: string):
         description: args.description ?? undefined,
         dueDate: args.dueDate ?? undefined,
         reminderType: "manual",
-      });
+      }, { origin: "suggestion" });
       resultId = row?.id ?? null;
       revalidatePathIfRequestScoped("/reminders");
     } else if (args.kind === "schedule_follow_up") {
-      const result = await scheduleContactFollowUpForUser(userId, args.contactId, args.days);
+      const result = await scheduleContactFollowUpForUser(userId, args.contactId, args.days, { origin: "suggestion" });
       resultId = result.reminder?.id ?? null;
       revalidatePathIfRequestScoped(`/contacts/${args.contactId}`);
     } else if (args.kind === "update_contact") {

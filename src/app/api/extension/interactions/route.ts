@@ -16,6 +16,7 @@ export const dynamic = "force-dynamic";
  */
 export const POST = extensionRoute<LogInteractionRequest, LogInteractionResponse>({
   schema: logInteractionRequestSchema,
+  action: "log_interaction",
   handler: ({ userId, input }) => logExtensionInteraction(userId, input, after),
 });
 

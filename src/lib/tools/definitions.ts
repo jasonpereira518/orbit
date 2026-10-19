@@ -1355,7 +1355,7 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         contactId: args.contactId,
         dueDate: args.dueDate,
         reminderType: "manual",
-      });
+      }, { origin: "mcp", surface: "mcp" });
       return { created: true, reminderId: row?.id ?? null };
     },
   },
@@ -1371,7 +1371,7 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
     scope: "write",
     resultLabel: null,
     async run(userId, args: { reminderId: string }) {
-      const snapshot = await completeReminder(userId, args.reminderId);
+      const snapshot = await completeReminder(userId, args.reminderId, { via: "mcp" });
       if (!snapshot) return toolError("No such reminder.");
       return { completed: true, reminderId: args.reminderId };
     },
@@ -1412,7 +1412,10 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
     resultLabel: null,
     async run(userId, args: { contactId: string; days: number }) {
       try {
-        const result = await scheduleContactFollowUpForUser(userId, args.contactId, args.days);
+        const result = await scheduleContactFollowUpForUser(userId, args.contactId, args.days, {
+          origin: "mcp",
+          surface: "mcp",
+        });
         return {
           scheduled: true,
           contactId: args.contactId,

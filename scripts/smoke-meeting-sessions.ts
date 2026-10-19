@@ -18,6 +18,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import {
   contacts,
+  gateEvents,
   meetingSessions,
   meetingTranscriptSegments,
   noteBatches,
@@ -499,6 +500,13 @@ async function main() {
     const refused = await ingestMeetingChunk(USER, fresh.id, meta(0, "rec-F"), WAV, dg.fn);
     check("a meeting with nothing recorded yet is refused once the month is spent", !refused.ok && refused.status === 402, JSON.stringify(refused));
     check("…before spending anything on it", dg.calls.length === freshBefore);
+    // Audit D1: a speech-cap 402 used to leave no gate row; the refusal is unchanged.
+    const capRows = await db.select().from(gateEvents).where(and(eq(gateEvents.userId, USER), eq(gateEvents.feature, "speechMeeting")));
+    check("the spent-cap refusal is recorded as a speechMeeting gate hit, on the account's plan, with its route",
+      capRows.length === 1 && capRows[0]!.plan === "orbit" && (capRows[0]!.context as { route?: string }).route === "meeting.chunk", JSON.stringify(capRows));
+    const refusedAgain = await ingestMeetingChunk(USER, fresh.id, meta(1, "rec-F"), WAV, dg.fn);
+    check("…refused again with the same 402, and still one row (throttled)",
+      !refusedAgain.ok && refusedAgain.status === 402 && (await db.select().from(gateEvents).where(and(eq(gateEvents.userId, USER), eq(gateEvents.feature, "speechMeeting")))).length === 1);
     await discardMeetingSessionRow(USER, fresh.id);
   }
 

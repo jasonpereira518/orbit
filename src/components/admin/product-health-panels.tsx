@@ -85,7 +85,14 @@ export async function AiOperationsPanel() {
         >
           {aiOps.adoption.map((row) => (
             <tr key={row.operation} className="border-b border-border/40 last:border-b-0">
-              <Td className="font-mono text-xs">{row.operation}</Td>
+              <Td className="font-mono text-xs">
+                {row.operation}
+                {row.background && (
+                  <span className="ml-2 rounded bg-muted px-1.5 py-0.5 font-sans text-3xs text-muted-foreground">
+                    runs in the background
+                  </span>
+                )}
+              </Td>
               <Td numeric>{row.users}</Td>
               <Td numeric className="text-muted-foreground">
                 {row.calls}
