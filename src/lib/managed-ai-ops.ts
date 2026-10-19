@@ -2,6 +2,7 @@ import { and, eq, gt, gte, inArray, ne, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { billingEvents, errorEvents, usageEvents } from "@/db/schema";
 import { managedAiSwitchedOff, managedCostSql, managedKeysConfigured, managedPoolsSpent } from "@/lib/ai-access";
+import { ledgerRowCountsSql } from "@/lib/billing-events";
 import { ERROR_SOURCES } from "@/lib/error-events";
 import type { ManagedAiOpsFacts } from "@/lib/ops-alerts";
 
@@ -22,7 +23,9 @@ export async function loadManagedAiOpsFacts(now: Date): Promise<ManagedAiOpsFact
   const orbit = eq(usageEvents.keyOwner, "orbit");
   // Deepgram rows carry keyOwner "orbit" too (Orbit's own key), but they are metered by
   // `speech_usage`, not credits — without this, voice-note volume would inflate the
-  // spend-spike and margin alerts below.
+  // spend-spike and margin alerts below. (Deepgram dollars are priced from `speech_usage` in
+  // `speech-cost.ts` and watched by the speech-credit alerts; they are added BESIDE this
+  // managed-AI figure everywhere else, never inside it.)
   const notDeepgram = ne(usageEvents.provider, "deepgram");
 
   const [included, spend, revenue, dry, failing, poolSpentMicros] = await Promise.all([
@@ -48,7 +51,15 @@ export async function loadManagedAiOpsFacts(now: Date): Promise<ManagedAiOpsFact
     db
       .select({ cents: sql<string>`coalesce(sum(${billingEvents.amountCents}), 0)::bigint` })
       .from(billingEvents)
-      .where(and(inArray(billingEvents.kind, ["payment", "credit_pack"]), gt(billingEvents.effectiveAt, monthAgo))),
+      // The revenue behind the spend: the operator's own test charges are not revenue, but the
+      // spend above is real money whoever incurred it, so it is not filtered.
+      .where(
+        and(
+          inArray(billingEvents.kind, ["payment", "credit_pack"]),
+          gt(billingEvents.effectiveAt, monthAgo),
+          ledgerRowCountsSql(sql`${billingEvents.userId}`)
+        )
+      ),
     db.execute(sql`
       SELECT count(DISTINCT a.user_id)::int AS n
         FROM credit_grants a

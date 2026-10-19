@@ -32,6 +32,7 @@ const BUCKET_LABELS: Record<string, string> = {
   avatarResolve: "photo lookup",
   avatarFill: "photo fill",
   feedback: "feedback",
+  survey: "survey",
   radarRefresh: "Radar refresh",
   knowledgeRefresh: "refresh",
   interestJoin: "sign-up",
@@ -217,6 +218,8 @@ export const RATE_LIMITS = {
    * and nobody has anything to say five times in five minutes.
    */
   feedback: { limit: 5, windowSec: 300 },
+  /** The micro-survey prompt: a handful of tiny writes per person, once in a long while. */
+  survey: { limit: 20, windowSec: 3600 },
   // Each refresh re-scores the whole network and may write up to five AI lines on the
   // account's own key. The nightly pass does this anyway; three an hour is plenty by hand.
   radarRefresh: { limit: 3, windowSec: 600 },

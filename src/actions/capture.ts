@@ -9,6 +9,7 @@ import { hashSourceNote } from "@/lib/suggested-reminder-utils";
 import type { CaptureParseHints } from "@/lib/ai";
 import { runCaptureParse } from "@/lib/capture-parse";
 import { captureSourceKinds } from "@/lib/note-batches";
+import { trackCaptureSaved } from "@/lib/capture-events";
 import {
   captureImageFiles,
   normalizeCaptureInput,
@@ -244,6 +245,18 @@ export async function confirmBulkCapture(
         ? { summary: meetingSummary, extraReminders: batch.meeting.extraReminders.slice(0, 40) }
         : null,
   });
+
+  // The reviewed-and-confirmed path has no capture job, so the batch id stands in for it: one
+  // `capture_saved` per batch, however many times the action is reached.
+  trackCaptureSaved(
+    {
+      id: out.batchId,
+      userId,
+      sourceKind: batch.meeting ? "meeting" : "messy",
+      sources: [...(batch.sources ?? []), ...(batch.photoIds?.length ? ["photos"] : [])],
+    },
+    { created: out.created, updated: out.updated }
+  );
 
   // After the save, not inside it: a photo is a record of where the notes came from, and a
   // failure to claim one must not roll back contacts and reminders the person just reviewed.

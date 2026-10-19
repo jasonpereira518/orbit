@@ -10,6 +10,7 @@ import { loadNetworkVocabulary } from "@/lib/transcription-vocabulary";
 import { speechAllowance } from "@/lib/speech-quota";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { reportedFailure } from "@/lib/report-error";
+import { recordGateRefusal } from "@/lib/gate-refusal";
 
 export const dynamic = "force-dynamic";
 
@@ -72,6 +73,8 @@ export async function POST(request: Request) {
 
   const allowance = await speechAllowance(userId, "shortform");
   if (allowance.exhausted) {
+    // The monthly shortform allowance is a wall: recorded (throttled), then refused as before.
+    await recordGateRefusal(userId, "speechShortform", { surface: "web", route: "/api/speech/token" });
     return NextResponse.json(
       { error: "You’ve used this month’s transcription minutes" },
       { status: 402 },

@@ -3,6 +3,7 @@ import { PURGE_MAX_ATTEMPTS } from "@/lib/data-categories";
 import { hasMissedRun } from "@/lib/cron-runs";
 import { MANAGED_AI_ALERTS, MANAGED_AI_POOLS, MANAGED_AI_POOL_WARN_SHARE, poolWindowStart } from "@/lib/managed-ai-policy";
 import type { AiProvider } from "@/lib/ai-providers";
+import { productConditions, type ProductOpsFacts } from "@/lib/product-alerts";
 import { SPEECH_CREDIT_ALERTS, SPEECH_CREDIT_LADDER, creditRunwayDays } from "@/lib/speech-cost";
 
 /**
@@ -109,6 +110,8 @@ export type OpsSnapshot = {
   managedAi: ManagedAiOpsFacts;
   /** What Orbit is spending, against the Deepgram credit and the monthly budget. See `spend-ops.ts`. */
   spend?: SpendOpsFacts;
+  /** Product health and money integrity (`product-ops.ts`, `product-alerts.ts`). Optional like `spend`. */
+  product?: ProductOpsFacts;
 };
 
 export type SpendOpsFacts = {
@@ -701,6 +704,7 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
 
   out.push(...managedAiConditions(s.managedAi));
   if (s.spend) out.push(...spendConditions(s.spend));
+  if (s.product) out.push(...productConditions(s.product, now));
 
   if (s.reauthNeeded > 0) {
     out.push({

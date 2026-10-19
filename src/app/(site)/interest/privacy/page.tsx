@@ -40,7 +40,9 @@ const SECTIONS: ReadonlyArray<{ title: string; body: React.ReactNode }> = [
         </li>
         <li>
           Anonymous page-view counts — the page, rough location and device type. No cookies are
-          set for this, and it is never tied to your email address.
+          set for this. When you join, a random id for that browser tab (it disappears when you
+          close the tab) is saved with your entry so we can tell which page your sign-up came
+          from; it is not your IP address and identifies no one on its own.
         </li>
         <li>
           Your IP address, to rate-limit sign-ups and stop automated ones. It is kept apart
@@ -59,7 +61,7 @@ const SECTIONS: ReadonlyArray<{ title: string; body: React.ReactNode }> = [
   },
   {
     title: "How long we keep it",
-    body: "Until you leave the waitlist, or until early access opens and your invite has been sent. Leaving takes one click from any waitlist email.",
+    body: "Until you leave the waitlist. Once you have created an account, your email address and name are removed from the waitlist 30 days after you accept your invite, and at once if you delete your account; your place in line and where you came from are kept without them. Leaving takes one click from any waitlist email.",
   },
   {
     title: "Questions, or deletion",

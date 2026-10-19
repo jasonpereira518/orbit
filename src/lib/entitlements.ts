@@ -270,10 +270,25 @@ const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {
  * what someone wanted and could not reach — so the pricing question depends entirely on it.
  * `recordGateHit` swallows its own failures, so this cannot turn a paywall into a 500.
  */
-export async function requireEntitlement(userId: string, feature: DeniableFeature) {
+export async function requireEntitlement(
+  userId: string,
+  feature: DeniableFeature,
+  /**
+   * Where the refusal happened, for `gate_events.context`: `route` is the page, endpoint or
+   * action that asked, `surface` who was asking (default "web"). Optional, so every existing
+   * caller is unchanged; a caller that can name its route should (an empty context cannot be
+   * located in the product).
+   */
+  where: { surface?: string; route?: string } = {}
+) {
   const ent = await getEntitlements(userId);
   if (ent[FEATURE_FLAG[feature]] !== true) {
-    await recordGateHit({ userId, feature, plan: ent.plan });
+    await recordGateHit({
+      userId,
+      feature,
+      plan: ent.plan,
+      context: { surface: where.surface ?? "web", ...(where.route ? { route: where.route } : {}) },
+    });
     throw new PaywallError(feature, ent.plan, FEATURE_DENIAL[feature]);
   }
   return ent;

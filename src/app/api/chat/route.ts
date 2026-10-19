@@ -8,10 +8,10 @@ import { requireAuthenticatedUser, type AuthenticatedUser } from "@/lib/auth";
 import { buildChatBlocks, prepareChatContext } from "@/lib/chat-context";
 import { expandLists, peopleIdsIn, stripInvalidDirectives } from "@/lib/chat-directives";
 import { answerDeadlineMs, maybeGather } from "@/lib/chat-gather";
-import { answerWithLookups, chatLoopEnabled } from "@/lib/chat-agent-loop";
+import { answerWithLookups, chatLoopEnabled, type ChatAgentRun } from "@/lib/chat-agent-loop";
 import { isHandle } from "@/lib/meeting-context";
 import { CHAT_QUESTION_TOO_LONG_MESSAGE, isChatQuestionTooLong } from "@/lib/chat-question";
-import { discardEmptyThread, discardUnansweredQuestion, persistAssistantTurn } from "@/lib/chat-persist";
+import { discardEmptyThread, discardUnansweredQuestion, persistAssistantTurn, trackChatAnswerFailed } from "@/lib/chat-persist";
 import { createStepEmitter, deriveFollowUps, plural } from "@/lib/chat-steps";
 import { generateChatTitle, settleWithin, TITLE_GRACE_MS } from "@/lib/chat-title";
 import { formatSse, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
@@ -210,8 +210,13 @@ export async function POST(request: Request) {
         // someone, a follow-up that refers back — get a bounded research loop first. See
         // `routeFromParsed` and `gatherEvidence`.
         const loop = chatLoopEnabled();
-        const { evidence, notePassages, named } = loop
-          ? { evidence: null, notePassages: ctx.notePassages ?? [], named: [] as Array<{ id: string; name: string }> }
+        const { evidence, notePassages, named, research } = loop
+          ? {
+              evidence: null,
+              notePassages: ctx.notePassages ?? [],
+              named: [] as Array<{ id: string; name: string }>,
+              research: null,
+            }
           : await maybeGather(userId, ctx, { requestStartedAt, signal: request.signal, steps });
 
         // What the answer's `::people` / `::list` blocks may show, before its first word, so
@@ -393,6 +398,12 @@ export async function POST(request: Request) {
             versionTarget && persistedUserMessageId
               ? { slot: versionTarget.slot, version: versionTarget.nextVersion, userMessageId: persistedUserMessageId }
               : undefined,
+          metrics: {
+            durationMs: Date.now() - requestStartedAt,
+            // The research step's rounds, or the loop's rounds that looked something up (all
+            // but the last, which writes the answer).
+            toolRounds: research?.rounds ?? ("run" in result ? Math.max(0, (result.run as ChatAgentRun).rounds - 1) : 0),
+          },
         });
         send({
           type: "done",
@@ -431,6 +442,9 @@ export async function POST(request: Request) {
         // The client is gone: there is nobody to tell, and enqueueing now would throw. Not
         // an error of ours either — the provider call was aborted on purpose.
         if (request.signal.aborted) return;
+        // Counted for the failure rate: the thread and a machine code, never the message. Not
+        // for a Stop (returned above) and not without a thread (nothing to key it to).
+        trackChatAnswerFailed(userId, threadId, err);
         // The status line is already sent, so this reaches the client as an event. Report it:
         // a mid-stream failure used to leave no trace outside the person's screen.
         send({ type: "error", message: reportedFailure(err, TOAST_COPY.chatFailed, { where: "route.chat.stream", userId }).error });

@@ -206,6 +206,15 @@ async function readSourceByConnection(connectionId: string): Promise<SourceRow |
  * Foreign rows are disarmed rather than deleted: they belong to other scripts, and this one
  * has no business destroying them.
  */
+/** `sync_failed` events recorded for one user (track() writes after the pass returns). */
+async function syncFailedEvents(userId: string) {
+  await new Promise((r) => setTimeout(r, 250));
+  const db = await getDb();
+  return rowsOf<{ properties: { provider: string; error_kind: string }; actor: string }>(
+    await db.execute(sql`SELECT properties, actor FROM product_events WHERE name = 'sync_failed' AND user_id = ${userId}`)
+  );
+}
+
 async function clearAll() {
   const db = await getDb();
   await db.execute(sql`DELETE FROM gmail_connections WHERE user_id LIKE 'sched-%'`);
@@ -265,6 +274,15 @@ run(async () => {
     check("a dead grant counts as a failure", stats.failed === 1);
     const row = await readConn(id);
     check("a dead grant is disarmed, not rescheduled", row.next_sync_at === null, String(row.next_sync_at));
+    // sync_failed: a dead grant stops the sync for good, so it is recorded (once) — with a machine code.
+    const ev = await syncFailedEvents("sched-reauth");
+    check(
+      "a dead grant records one sync_failed (google_calendar, reauth_required, by the system)",
+      ev.length === 1 && ev[0]!.properties.provider === "google_calendar" && ev[0]!.properties.error_kind === "reauth_required" && ev[0]!.actor === "system",
+      JSON.stringify(ev)
+    );
+    await runSyncPass({ deps });
+    check("a second pass over the disarmed connection adds nothing", (await syncFailedEvents("sched-reauth")).length === 1);
   }
   await clearAll();
   {
@@ -283,6 +301,22 @@ run(async () => {
       row.status === "active",
       row.status
     );
+    check("a fault that will be retried is not a sync_failed (the ladder is doing its job)", (await syncFailedEvents("sched-transient")).length === 0);
+  }
+
+  // --- The retry that spends the last attempt is the failure that counts ----------------------
+  await clearAll();
+  {
+    const id = await seed("sched-lastretry");
+    const db = await getDb();
+    await db.execute(sql`UPDATE gmail_connections SET sync_failures = ${MAX_SYNC_FAILURES - 1} WHERE id = ${id}`);
+    const { deps } = depsFor(new Map([["sched-lastretry", "transient" as const]]));
+    await runSyncPass({ deps });
+    const row = await readConn(id);
+    check("the last allowed retry disarms the connection", row.next_sync_at === null && Number(row.sync_failures) === MAX_SYNC_FAILURES, JSON.stringify(row));
+    const ev = await syncFailedEvents("sched-lastretry");
+    check("…and records one sync_failed with a machine error_kind, never the message",
+      ev.length === 1 && /^[a-z_]{1,32}$/.test(ev[0]!.properties.error_kind) && !JSON.stringify(ev[0]).includes("transient"), JSON.stringify(ev));
   }
 
   // --- An expired syncToken is a lifecycle event, not a fault ---------------------------------

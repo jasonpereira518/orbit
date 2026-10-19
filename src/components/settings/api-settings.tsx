@@ -168,7 +168,7 @@ export function ApiSettings() {
         <div className="bg-muted/40 space-y-2 rounded-lg border p-4">
           <p className="text-sm">{blocked}</p>
           <a
-            href="/upgrade"
+            href="/upgrade?gate=api"
             className="bg-primary text-primary-foreground inline-flex h-8 items-center rounded-md px-3 text-sm font-medium"
           >
             See plans
