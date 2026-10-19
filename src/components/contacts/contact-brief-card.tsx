@@ -38,8 +38,8 @@ export function ContactBriefCard({ contactId, standing, nextStep, recentDiscussi
   const router = useRouter();
   const [pending, start] = useTransition();
   return (
-    <Card className="border-border/70 shadow-none">
-      <CardHeader className="border-b border-border/50">
+    <Card>
+      <CardHeader className="border-b border-border-subtle">
         <CardTitle as="h2">Where things stand</CardTitle>
         <CardAction>
           <Button type="button" variant="ghost" size="sm" className="h-7 gap-1.5 text-xs text-muted-foreground" disabled={pending}
@@ -73,18 +73,20 @@ export function ContactBriefCard({ contactId, standing, nextStep, recentDiscussi
           )}
           {recentDiscussions.length > 0 && (
             <div>
-              <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">Recent discussions</p>
+              <p className="mb-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">Recent discussions</p>
               <ul className="space-y-1 text-sm">
                 {recentDiscussions.map((d) => (
                   <li key={d.interactionId} className="flex gap-2">
-                    <button
+                    <Button
                       type="button"
-                      className="shrink-0 cursor-pointer tabular-nums text-muted-foreground hover:text-primary"
+                      variant="link"
+                      size="xs"
+                      className="h-auto shrink-0 px-0 font-normal tabular-nums text-muted-foreground hover:text-primary"
                       onClick={() => revealInteraction(d.interactionId)}
                     >
                       {/* local noon: a date-time string without a zone parses as local time */}
                       {format(new Date(`${d.dateIso}T12:00:00`), "MMM d")}
-                    </button>
+                    </Button>
                     <span className="text-ink">{d.line}</span>
                   </li>
                 ))}
@@ -93,7 +95,7 @@ export function ContactBriefCard({ contactId, standing, nextStep, recentDiscussi
           )}
         </div>
         <div>
-          <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">Open next steps</p>
+          <p className="mb-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">Open next steps</p>
           <ContactNextSteps items={nextSteps} />
         </div>
       </CardContent>

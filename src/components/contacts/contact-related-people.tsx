@@ -21,7 +21,7 @@ export function ContactRelatedPeople({
   if (people.length === 0) return null;
 
   return (
-    <Card className="border-border/70 shadow-none">
+    <Card>
       <CardHeader>
         <CardTitle as="h2">Related people</CardTitle>
         <CardDescription>
@@ -36,7 +36,7 @@ export function ContactRelatedPeople({
             return (
               <li
                 key={person.id}
-                className="flex flex-wrap items-center gap-3 rounded-xl border border-border/50 p-3"
+                className="flex flex-wrap items-center gap-3 rounded-xl border border-border-subtle p-3"
               >
                 <ContactAvatarPreview
                   className="min-w-0 flex-1"

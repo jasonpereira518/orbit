@@ -25,6 +25,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   Dialog,
   DialogContent,
@@ -131,17 +132,13 @@ export function EditEventDialog({
     });
   }
 
-  function remove() {
-    start(async () => {
-      try {
-        await deleteEvent(event.id);
-        toast.success("Event deleted — the people you connected are still in your contacts");
-        router.push("/events");
-        router.refresh();
-      } catch (error) {
-        toast.error(friendlyError(error, "Couldn’t delete that event — try again?"));
-      }
-    });
+  // Awaited by the confirm dialog, which shows its own pending label and surfaces a failure
+  // inline — so this throws rather than toasting on error.
+  async function remove() {
+    await deleteEvent(event.id);
+    toast.success("Event deleted — the people you connected are still in your contacts");
+    router.push("/events");
+    router.refresh();
   }
 
   return (
@@ -220,25 +217,6 @@ export function EditEventDialog({
           </div>
         </div>
 
-        {confirmingDelete ? (
-          <div className="rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2.5">
-            <p className="text-sm text-ink">Delete this event?</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              The guest list goes with it. Anyone you already added stays in your contacts, and
-              this event stays on their timeline.
-            </p>
-            <div className="mt-2 flex gap-2">
-              <Button variant="ghost" size="sm" onClick={() => setConfirmingDelete(false)} disabled={pending}>
-                Keep it
-              </Button>
-              <Button variant="destructive" size="sm" onClick={remove} disabled={pending}>
-                {pending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-                Delete event
-              </Button>
-            </div>
-          </div>
-        ) : null}
-
         <DialogFooter className="sm:justify-between">
           <Button
             variant="ghost"
@@ -251,16 +229,28 @@ export function EditEventDialog({
             Delete
           </Button>
           <div className="flex gap-2">
-            <Button variant="ghost" onClick={onClose} disabled={pending}>
+            <Button variant="outline" onClick={onClose} disabled={pending}>
               Cancel
             </Button>
             <Button onClick={save} disabled={pending}>
-              {pending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-              Save
+              {pending ? <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> : null}
+              {pending ? "Saving…" : "Save"}
             </Button>
           </div>
         </DialogFooter>
       </DialogContent>
+
+      <ConfirmDialog
+        open={confirmingDelete}
+        onOpenChange={setConfirmingDelete}
+        tone="destructive"
+        title="Delete this event?"
+        description="The guest list goes with it. Anyone you already added stays in your contacts, and this event stays on their timeline."
+        cancelLabel="Keep it"
+        confirmLabel="Delete event"
+        pendingLabel="Deleting…"
+        onConfirm={remove}
+      />
     </Dialog>
   );
 }

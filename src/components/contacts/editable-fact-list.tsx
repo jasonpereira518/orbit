@@ -7,6 +7,7 @@ import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
 import { updateContact } from "@/actions/contacts";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Card,
   CardAction,
@@ -76,7 +77,7 @@ export function EditableFactList({
   }
 
   return (
-    <Card className="border-border/70 shadow-none">
+    <Card>
       <CardHeader>
         <CardTitle as="h2">{title}</CardTitle>
         <CardAction>
@@ -123,10 +124,11 @@ export function EditableFactList({
           <div className="space-y-2">
             {draft.map((value, i) => (
               <div key={i} className="flex items-center gap-2">
-                <input
+                <Input
                   type="text"
                   value={value}
                   autoFocus={i === 0}
+                  aria-label={`${title} ${i + 1}`}
                   onChange={(e) =>
                     setDraft((prev) => prev.map((v, j) => (j === i ? e.target.value : v)))
                   }
@@ -139,7 +141,6 @@ export function EditableFactList({
                       setDraft((prev) => [...prev.slice(0, i + 1), "", ...prev.slice(i + 1)]);
                     }
                   }}
-                  className="w-full rounded-lg border border-border/70 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-border"
                 />
                 <Button
                   type="button"

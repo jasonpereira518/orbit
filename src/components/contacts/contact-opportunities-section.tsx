@@ -27,7 +27,7 @@ import {
 } from "@/actions/opportunities";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -56,6 +56,7 @@ import {
   isOpenOpportunityStatus,
   opportunityKindLabel,
 } from "@/lib/opportunity-kinds";
+import type { Tone } from "@/lib/tone";
 import { cn } from "@/lib/utils";
 
 export type ContactOpportunityRow = {
@@ -70,21 +71,17 @@ export type ContactOpportunityRow = {
   createdBy: string;
 };
 
-/**
- * Status tone → classes. A map rather than tokens in `globals.css`: Tailwind v4 has no config
- * file here and every theme token lives in one `@theme inline` block, so a feature that wants
- * five shades should use the utilities that already exist rather than widening the palette.
- */
-const STATUS_CLASS: Record<string, string> = {
-  open: "bg-primary/10 text-primary border-primary/30",
-  active: "bg-amber-500/10 text-amber-700 border-amber-500/30 dark:text-amber-300",
-  good: "bg-emerald-500/10 text-emerald-700 border-emerald-500/30 dark:text-emerald-300",
-  bad: "bg-muted text-muted-foreground border-border",
-  muted: "bg-muted text-muted-foreground border-border",
+/** The status's own tone word (from `opportunity-kinds`) → the app's status tone. */
+const STATUS_TONE: Record<string, Tone> = {
+  open: "accent",
+  active: "warning",
+  good: "success",
+  bad: "neutral",
+  muted: "neutral",
 };
 
-function toneFor(status: string) {
-  return OPPORTUNITY_STATUSES.find((s) => s.value === status)?.tone ?? "muted";
+function toneFor(status: string): Tone {
+  return STATUS_TONE[OPPORTUNITY_STATUSES.find((s) => s.value === status)?.tone ?? "muted"] ?? "neutral";
 }
 
 function dueLabel(due: Date | string | null) {
@@ -199,18 +196,20 @@ export function ContactOpportunitiesSection({
 
   return (
     <>
-      <Card className="border-border/70 shadow-none">
-        <CardHeader className="flex flex-row items-center justify-between gap-2">
+      <Card>
+        <CardHeader>
           <CardTitle as="h2">Opportunities</CardTitle>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setDraft({ ...EMPTY_DRAFT })}
-            disabled={pending}
-          >
-            <Plus className="size-4" />
-            Add
-          </Button>
+          <CardAction>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setDraft({ ...EMPTY_DRAFT })}
+              disabled={pending}
+            >
+              <Plus className="size-4" />
+              Add
+            </Button>
+          </CardAction>
         </CardHeader>
         <CardContent className="space-y-3">
           {visible.length === 0 ? (
@@ -226,7 +225,7 @@ export function ContactOpportunitiesSection({
                   <li
                     key={o.id}
                     className={cn(
-                      "rounded-xl border border-border/60 bg-card p-3",
+                      "rounded-xl border border-border-subtle bg-card p-3",
                       !isOpenOpportunityStatus(o.status) && "opacity-70"
                     )}
                   >
@@ -234,38 +233,35 @@ export function ContactOpportunitiesSection({
                       <div className="min-w-0 flex-1 space-y-1.5">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <Badge variant="secondary">{opportunityKindLabel(o.kind)}</Badge>
-                          <span
-                            className={cn(
-                              "rounded-4xl border px-2 py-0.5 text-2xs font-medium",
-                              STATUS_CLASS[toneFor(o.status)]
-                            )}
-                          >
+                          <Badge tone={toneFor(o.status)} size="sm">
                             {OPPORTUNITY_STATUSES.find((s) => s.value === o.status)?.label ??
                               "Open"}
-                          </span>
+                          </Badge>
                           {due && (
                             <span className="text-xs text-muted-foreground">Due {due}</span>
                           )}
                         </div>
                         <p className="text-sm text-foreground">{o.label}</p>
                         {o.sourceExcerpt && (
-                          <p className="rounded-lg bg-muted/50 p-2 text-xs text-muted-foreground">
+                          <p className="rounded-lg border border-border-subtle bg-surface-inset p-2 text-xs text-muted-foreground">
                             {o.sourceExcerpt}
                           </p>
                         )}
                         {isOpenOpportunityStatus(o.status) && (
                           <div className="flex flex-wrap gap-1 pt-0.5">
                             {OPPORTUNITY_STATUSES.filter((s) => s.value !== o.status).map((s) => (
-                              <button
+                              <Button
                                 key={s.value}
                                 type="button"
+                                variant="outline"
+                                size="xs"
                                 aria-pressed={false}
                                 disabled={pending}
                                 onClick={() => changeStatus(o, s.value)}
-                                className="rounded-4xl border border-border/60 px-2 py-0.5 text-2xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none disabled:opacity-50"
+                                className="h-5 rounded-full px-2 text-2xs font-normal text-muted-foreground"
                               >
                                 {s.label}
-                              </button>
+                              </Button>
                             ))}
                           </div>
                         )}

@@ -7,6 +7,9 @@ import { EventConnectionsCard } from "@/components/events/event-connections-card
 import { EventsTabs } from "@/components/events/events-tabs";
 import { RepeatPeoplePanel } from "@/components/events/repeat-people-panel";
 import { EventsListSkeleton } from "@/components/loading/page-skeletons";
+import { PageShell } from "@/components/layout/page-shell";
+import { EmptyState } from "@/components/ui/empty-state";
+import { CalendarDays } from "lucide-react";
 import type { EventListRow } from "@/lib/events/store";
 import {
   getEventConnections,
@@ -50,7 +53,7 @@ async function HiddenList() {
   if (hidden.length === 0) return null;
 
   return (
-    <details className="rounded-xl border border-border/70 bg-card px-4 py-3">
+    <details className="rounded-xl border border-border-subtle bg-card px-4 py-3">
       <summary className="cursor-pointer text-sm text-muted-foreground">
         Hidden events ({hidden.length})
       </summary>
@@ -66,13 +69,15 @@ async function HiddenList() {
   );
 }
 
-function EventGrid({ events, empty }: { events: EventListRow[]; empty: React.ReactNode }) {
+function EventGrid({
+  events,
+  empty,
+}: {
+  events: EventListRow[];
+  empty: { title: string; description: React.ReactNode };
+}) {
   if (events.length === 0) {
-    return (
-      <div className="rounded-xl border border-dashed border-border/70 px-4 py-10 text-center">
-        <p className="text-sm text-muted-foreground">{empty}</p>
-      </div>
-    );
+    return <EmptyState icon={CalendarDays} title={empty.title} description={empty.description} />;
   }
   return (
     <div className="grid gap-4 sm:grid-cols-2">
@@ -90,14 +95,11 @@ async function EventsList() {
     return (
       <EventGrid
         events={[]}
-        empty={
-          <>
-            No events yet. Add one by pasting its link — the event page or your ticket, from
-            Luma, Eventbrite, Partiful and the rest — and Orbit will pull in the details. Or
-            connect your Luma or Partiful calendar below and the events you go to will arrive on
-            their own.
-          </>
-        }
+        empty={{
+          title: "No events yet",
+          description:
+            "Add one by pasting its link — the event page or your ticket, from Luma, Eventbrite, Partiful and the rest — or connect your Luma or Partiful calendar below and the events you go to will arrive on their own.",
+        }}
       />
     );
   }
@@ -109,10 +111,21 @@ async function EventsList() {
       upcoming={
         <EventGrid
           events={upcoming}
-          empty="Nothing coming up. Events you RSVP to will appear here as soon as you're confirmed."
+          empty={{
+            title: "Nothing coming up",
+            description: "Events you RSVP to will appear here as soon as you’re confirmed.",
+          }}
         />
       }
-      past={<EventGrid events={past} empty="No past events yet." />}
+      past={
+        <EventGrid
+          events={past}
+          empty={{
+            title: "No past events yet",
+            description: "Events you’ve been to will appear here once they’re over.",
+          }}
+        />
+      }
     />
   );
 }
@@ -124,12 +137,9 @@ export default async function EventsPage() {
   if (gate) return gate;
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <PageShell width="wide" spacing="tight">
       <RenderStamp />
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <EventsHeader />
-        <AddEventDialog />
-      </div>
+      <EventsHeader actions={<AddEventDialog />} />
 
       {/* Above the list: the point of keeping rosters is the pattern across them, and a
           panel below four screens of events is a panel nobody reads. `fallback={null}`
@@ -160,6 +170,6 @@ export default async function EventsPage() {
       <Suspense fallback={null}>
         <ConnectionsSection />
       </Suspense>
-    </div>
+    </PageShell>
   );
 }

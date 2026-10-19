@@ -3,6 +3,8 @@ import Link from "next/link";
 import { ContactForm } from "@/components/contacts/contact-form";
 import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import { LockedFeature } from "@/components/locked-feature";
+import { PageHeader } from "@/components/layout/page-header";
+import { PageShell } from "@/components/layout/page-shell";
 import { getPlanOverview } from "@/actions/settings";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
@@ -35,10 +37,10 @@ export default async function NewContactPage({
   // masks thrown Server Function messages in production anyway.
   if (atLimit) {
     return (
-      <div className="mx-auto max-w-2xl">
+      <PageShell width="narrow">
         <RenderStamp />
         <LockedFeature
-          title={`You've reached ${usage.limit} contacts`}
+          title={`You’ve reached ${usage.limit} contacts`}
           description="Every contact you already have stays right where it is — fully visible and editable. Upgrading lifts the limit so you can keep adding people."
           highlights={[
             "Unlimited contacts on Orbit Pro and Orbit Max",
@@ -46,27 +48,30 @@ export default async function NewContactPage({
             "Your existing notes, reminders, and history are untouched",
           ]}
         />
-      </div>
+      </PageShell>
     );
   }
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
+    <PageShell width="narrow">
       <RenderStamp />
-      <div>
-        <h1 className="font-heading text-3xl text-ink">
-          Add contact
-        </h1>
-        <p className="mt-1 text-muted-foreground">
-          Quick manual entry. Prefer{" "}
-          <Link href="/capture" className="text-primary underline">
-            AI capture
-          </Link>{" "}
-          for messy notes.
-        </p>
+      <PageHeader
+        title="Add contact"
+        back={{ href: "/contacts", label: "Contacts" }}
+        description={
+          <>
+            Quick manual entry. Prefer{" "}
+            <Link href="/capture" className="text-primary underline underline-offset-4">
+              AI capture
+            </Link>{" "}
+            for messy notes.
+          </>
+        }
+      />
+      <div className="space-y-4">
+        <ContactQuotaNotice used={usage.used} limit={usage.limit} />
+        <ContactForm initial={initial} />
       </div>
-      <ContactQuotaNotice used={usage.used} limit={usage.limit} />
-      <ContactForm initial={initial} />
-    </div>
+    </PageShell>
   );
 }

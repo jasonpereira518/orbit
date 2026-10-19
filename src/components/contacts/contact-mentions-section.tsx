@@ -22,14 +22,14 @@ export function ContactMentionsSection({
   if (mentionedIn.length === 0 && mentions.length === 0) return null;
 
   return (
-    <Card className="border-border/70 shadow-none">
+    <Card>
       <CardHeader>
         <CardTitle as="h2">Mentioned in</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         {mentionedIn.length > 0 && (
           <div>
-            <p className="mb-2 text-xs font-medium text-muted-foreground">
+            <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
               In notes about others
             </p>
             <ul className="space-y-1.5 text-sm">
@@ -50,7 +50,7 @@ export function ContactMentionsSection({
         )}
         {mentions.length > 0 && (
           <div>
-            <p className="mb-2 text-xs font-medium text-muted-foreground">
+            <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
               People named in these notes
             </p>
             <ul className="space-y-1.5 text-sm">

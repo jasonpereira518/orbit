@@ -187,7 +187,7 @@ export function EditAttendeeDialog({
                 Keep them
               </Button>
               <Button variant="destructive" size="sm" onClick={remove} disabled={pending}>
-                {pending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+                {pending ? <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> : null}
                 Remove
               </Button>
             </div>
@@ -210,7 +210,7 @@ export function EditAttendeeDialog({
               Cancel
             </Button>
             <Button onClick={save} disabled={pending}>
-              {pending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+              {pending ? <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> : null}
               Save
             </Button>
           </div>

@@ -1,9 +1,10 @@
 import { EventDetailSkeleton } from "@/components/loading/page-skeletons";
+import { PageShell } from "@/components/layout/page-shell";
 
 export default function EventDetailLoading() {
   return (
-    <div className="mx-auto max-w-5xl">
+    <PageShell width="wide" spacing="tight">
       <EventDetailSkeleton />
-    </div>
+    </PageShell>
   );
 }

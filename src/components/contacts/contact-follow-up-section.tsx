@@ -4,19 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Mail, MessageSquare, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
-
-function LinkedInGlyph({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden
-      className={className}
-    >
-      <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
-    </svg>
-  );
-}
+import { LinkedInGlyph } from "@/components/contacts/contact-profile-icons";
 import { toast } from "@/lib/toast";
 import {
   draftContactFollowUp,
@@ -35,9 +23,11 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
+  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { DatePickerButton, toLocalYmd } from "@/components/ui/date-picker";
 import { Textarea } from "@/components/ui/textarea";
 import { KEEP_IN_TOUCH_PRESETS } from "@/lib/keep-in-touch";
@@ -398,12 +388,13 @@ export function ContactFollowUpSection({
             Draft for
           </p>
           {initialIntent || intent ? (
-            <input
+            <Input
               type="text"
               value={intent}
               onChange={(e) => setIntent(e.target.value)}
               placeholder="Optional intent (e.g. ask for intro)"
-              className="mb-2 w-full max-w-md rounded-lg border border-border/70 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-border"
+              aria-label="Intent"
+              className="mb-2 max-w-md"
             />
           ) : null}
           <div className="flex flex-wrap gap-1.5">
@@ -436,7 +427,7 @@ export function ContactFollowUpSection({
                 onClick={() => platform && draftFor(platform)}
               >
                 <RefreshCw
-                  className={`size-3.5 ${pending ? "animate-spin" : ""}`}
+                  className={cn("size-3.5", pending && "motion-safe:animate-spin")}
                 />
                 Regenerate
               </Button>
@@ -490,13 +481,12 @@ export function ContactFollowUpSection({
   if (bare) return content;
 
   return (
-    <Card id="follow-up" className="scroll-mt-24 border-border/70 shadow-none">
+    <Card id="follow-up" className="scroll-mt-24">
       <CardHeader>
         <CardTitle as="h2">Follow up</CardTitle>
-        <p className="text-sm text-muted-foreground">
-          Schedule a reminder, or pick a channel to draft a message from your
-          history.
-        </p>
+        <CardDescription>
+          Schedule a reminder, or pick a channel to draft a message from your history.
+        </CardDescription>
       </CardHeader>
       <CardContent>{content}</CardContent>
     </Card>

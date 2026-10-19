@@ -23,6 +23,7 @@ import { useRouter } from "next/navigation";
 import { CalendarPlus, ChevronDown, Loader2, Mail, Plug, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { IntegrationLogo } from "@/components/integrations/integration-logo";
 import { toast } from "@/lib/toast";
 import {
   connectEventFeed,
@@ -249,9 +250,11 @@ export function EventConnectionsCard({
     return (
       <div
         key={provider}
-        className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/60 p-3"
+        className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border-subtle p-3"
       >
-        <div className="min-w-0">
+        <div className="flex min-w-0 items-center gap-3">
+          <IntegrationLogo provider={provider === "luma_ics" ? "luma" : "partiful"} size="sm" title="" />
+          <div className="min-w-0">
           <p className="text-sm font-medium text-ink">{help.name} calendar</p>
           <p className="text-xs text-muted-foreground">
             {connection
@@ -260,6 +263,7 @@ export function EventConnectionsCard({
                 : "Connected — events you’re confirmed for appear automatically."
               : <Steps name={help.name} steps={help.steps} />}
           </p>
+          </div>
         </div>
         {connection ? (
           <Button variant="ghost" size="sm" onClick={() => disconnect(provider)} disabled={pending}>
@@ -278,8 +282,8 @@ export function EventConnectionsCard({
               aria-label={`${help.name} calendar link`}
             />
             <Button onClick={() => saveFeed(provider)} disabled={pending || !feedUrl.trim()}>
-              {pending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-              Save
+              {pending ? <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> : null}
+              {pending ? "Saving…" : "Save"}
             </Button>
           </div>
         ) : (
@@ -315,8 +319,8 @@ export function EventConnectionsCard({
     // Collapsed by default and at the foot of the page: this is set-up you do once, and it
     // used to sit above the events themselves as the largest thing on the page. `<details>`
     // with the grid-rows height transition is the pattern `network-stats-card.tsx` set.
-    <details className="group rounded-2xl border border-border/70 bg-card">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl px-4 py-3 transition-colors duration-fast ease-house hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset focus-ring-fallback [&::-webkit-details-marker]:hidden">
+    <details className="group rounded-xl border border-border-subtle bg-card">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-xl px-4 py-3 transition-colors duration-fast ease-house hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset focus-ring-fallback [&::-webkit-details-marker]:hidden">
         <div className="flex min-w-0 items-center gap-2">
           <Plug className="size-4 shrink-0 text-muted-foreground" aria-hidden />
           <h2 className="text-sm font-medium text-ink">Where your events come from</h2>
@@ -339,8 +343,8 @@ export function EventConnectionsCard({
           transition, so the panel is force-shown and the grid row does the hiding. */}
       <div className="grid grid-rows-[0fr] transition-[grid-template-rows] duration-slow ease-house group-open:grid-rows-[1fr] [content-visibility:visible]">
       <div className="overflow-hidden">
-      <div className="space-y-3 border-t border-border/60 px-4 pb-4 pt-3">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+      <div className="space-y-3 border-t border-border-subtle px-4 pb-4 pt-3">
+        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
           Events you go to
         </p>
         <p className="-mt-2 text-sm text-muted-foreground">
@@ -348,14 +352,17 @@ export function EventConnectionsCard({
           up here — not the ones you&rsquo;re waitlisted, pending or invited to. A connected
           Google Calendar already does this for invites that land in it.
         </p>
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/60 p-3">
-          <div className="min-w-0">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border-subtle p-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <IntegrationLogo provider="google-calendar" size="sm" title="" />
+            <div className="min-w-0">
             <p className="text-sm font-medium text-ink">Google Calendar</p>
             <p className="text-xs text-muted-foreground">
               {googleCalendarGranted
                 ? "Connected — meetings with people in your network land on their timelines."
                 : "Read-only access to your calendar, so meetings with people in your network land on their timelines."}
             </p>
+            </div>
           </div>
           {googleCalendarGranted ? null : (
             <Button variant="outline" size="sm" onClick={() => connectGoogle("calendar")} disabled={pending}>
@@ -370,8 +377,10 @@ export function EventConnectionsCard({
         {/* The mailbox scan. Off unless asked for, and it says exactly what it reads —
             `gmail.readonly` is a restricted scope the user granted for something else, and a
             toggle that quietly widened its purpose would be a breach of that. */}
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/60 p-3">
-          <div className="min-w-0">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border-subtle p-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <IntegrationLogo provider="gmail" size="sm" title="" />
+            <div className="min-w-0">
             <p className="text-sm font-medium text-ink">Confirmation emails</p>
             <p className="text-xs text-muted-foreground">
               {gmail
@@ -380,6 +389,7 @@ export function EventConnectionsCard({
                   ? "Find events from “you’re registered” emails. Orbit opens only mail from those platforms, stores no message content, and never sends any of it to AI."
                   : "Find events from “you’re registered” emails. Turning this on asks Google for permission to read your mail — Orbit opens only mail from those platforms and stores no message content."}
             </p>
+            </div>
           </div>
           {gmail ? (
             <Button variant="ghost" size="sm" onClick={() => setGmailScan(false)} disabled={pending}>
@@ -399,7 +409,7 @@ export function EventConnectionsCard({
           )}
         </div>
 
-        <p className="pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <p className="pt-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
           Events you host
         </p>
         <p className="-mt-2 text-sm text-muted-foreground">
@@ -407,8 +417,10 @@ export function EventConnectionsCard({
           you attended, paste or upload the list on the event itself.
         </p>
 
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/60 p-3">
-          <div className="min-w-0">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border-subtle p-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <IntegrationLogo provider="luma" size="sm" title="" />
+            <div className="min-w-0">
             <p className="text-sm font-medium text-ink">Luma API key</p>
             <p className="text-xs text-muted-foreground">
               {luma
@@ -417,6 +429,7 @@ export function EventConnectionsCard({
                   : `Connected${luma.label ? ` · ${luma.label}` : ""}`
                 : "A calendar API key from a Luma Plus account."}
             </p>
+            </div>
           </div>
           {luma ? (
             <Button variant="ghost" size="sm" onClick={() => disconnect("luma")} disabled={pending}>
@@ -433,8 +446,8 @@ export function EventConnectionsCard({
                 aria-label="Luma API key"
               />
               <Button onClick={saveLuma} disabled={pending || !apiKey.trim()}>
-                {pending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-                Save
+                {pending ? <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> : null}
+                {pending ? "Saving…" : "Save"}
               </Button>
             </div>
           ) : (
@@ -445,8 +458,10 @@ export function EventConnectionsCard({
           )}
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/60 p-3">
-          <div className="min-w-0">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border-subtle p-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <IntegrationLogo provider="eventbrite" size="sm" title="" />
+            <div className="min-w-0">
             <p className="text-sm font-medium text-ink">Eventbrite</p>
             <p className="text-xs text-muted-foreground">
               {eventbrite
@@ -457,6 +472,7 @@ export function EventConnectionsCard({
                   ? "Sign in to sync events your organisation runs."
                   : "Not configured on this deployment."}
             </p>
+            </div>
           </div>
           {eventbrite ? (
             <Button

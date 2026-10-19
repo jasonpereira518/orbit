@@ -159,7 +159,7 @@ export function RefreshContactsButton() {
         </span>
       ) : null}
       <RefreshCw
-        className={cn("h-4 w-4", pending && "animate-spin")}
+        className={cn("size-4", pending && "motion-safe:animate-spin")}
         aria-hidden
       />
       {pending && progress && progress.total > 0

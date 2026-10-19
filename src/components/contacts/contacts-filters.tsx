@@ -4,8 +4,9 @@ import { emitTourEvent } from "@/lib/tour/tour-events";
 import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Building2, ChevronDown, GraduationCap, X } from "lucide-react";
+import { Building2, Check, ChevronDown, GraduationCap, Tag, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { TONE } from "@/lib/tone";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -44,6 +45,8 @@ type FilterState = {
   sort: string;
   quiet: string;
   school: string;
+  /** Only ever cleared from here (the chip below); set by links elsewhere. */
+  tag: string;
 };
 
 export function ContactsFilters({
@@ -112,6 +115,7 @@ export function ContactsFilters({
     const so = next?.sort ?? sort;
     const qt = next?.quiet ?? quiet;
     const sc = (next?.school ?? school).trim();
+    const tg = (next?.tag ?? initialTag ?? "").trim();
     if (qq) params.set("q", qq);
     if (cc) params.set("company", cc);
     if (ms && ms !== "any") params.set("minScore", ms);
@@ -123,7 +127,7 @@ export function ContactsFilters({
     // the query string from scratch without them meant that touching any filter here threw
     // away the active tag and the A-Z letter — the list jumped back to "everyone, from A"
     // and nothing said why.
-    if (initialTag) params.set("tag", initialTag);
+    if (tg) params.set("tag", tg);
     if (initialLetter) params.set("letter", initialLetter);
     if (importId) params.set("importId", importId);
     const qs = params.toString();
@@ -164,15 +168,19 @@ export function ContactsFilters({
   return (
     <div className="space-y-6">
       {followUp === "due" && (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2">
-          <p className="text-sm text-amber-900 dark:text-amber-200">
+        <div
+          className={cn(
+            "flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2",
+            TONE.warning.box
+          )}
+        >
+          <p className={cn("text-sm", TONE.warning.text)}>
             Showing contacts with due follow-ups
           </p>
           <Button
             type="button"
             variant="ghost"
             size="sm"
-            className="h-8"
             onClick={() => {
               setFollowUp("");
               apply({ followUp: "" });
@@ -182,6 +190,30 @@ export function ContactsFilters({
           </Button>
         </div>
       )}
+
+      {/* The tag filter is set by links on the profile and the dashboard, never from this
+          toolbar — so without this chip it was invisible and could not be cleared. */}
+      {initialTag ? (
+        <div
+          className={cn(
+            "flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2",
+            TONE.accent.box
+          )}
+        >
+          <p className={cn("inline-flex items-center gap-1.5 text-sm", TONE.accent.text)}>
+            <Tag className="size-3.5" aria-hidden />
+            Tagged {initialTag}
+          </p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => apply({ tag: "" })}
+          >
+            Clear filter
+          </Button>
+        </div>
+      ) : null}
 
       <div className="mx-auto w-full max-w-xl">
         <SearchPill
@@ -330,7 +362,7 @@ export function ContactsFilters({
         )}
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-border/70 bg-card">
+      <div className="overflow-hidden rounded-xl border border-border-subtle bg-card">
         {children}
       </div>
     </div>
@@ -373,7 +405,7 @@ function SearchPill({
   return (
     <div
       className={cn(
-        "flex h-11 w-full items-center gap-1 rounded-full border border-border/70 bg-card pl-3.5 pr-1.5 shadow-sm",
+        "flex h-11 w-full items-center gap-1 rounded-full border border-border-subtle bg-card pl-3.5 pr-1.5 shadow-xs",
         "focus-within:border-primary/40 focus-within:ring-[3px] focus-within:ring-primary/15"
       )}
     >
@@ -487,7 +519,7 @@ function SearchPill({
             >
               {opt.label}
               {minScore === opt.value ? (
-                <span className="ml-auto text-xs text-muted-foreground">✓</span>
+                <Check className="ml-auto size-3.5 text-muted-foreground" aria-hidden />
               ) : null}
             </DropdownMenuItem>
           ))}

@@ -334,7 +334,7 @@ export function LogInteractionSheet({
                       "focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
                       selected
                         ? fam.chip
-                        : "border-border/60 text-muted-foreground hover:border-border hover:text-ink"
+                        : "border-border-subtle text-muted-foreground hover:border-border hover:text-ink"
                     )}
                   >
                     <Icon

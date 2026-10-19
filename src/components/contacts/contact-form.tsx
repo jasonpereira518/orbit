@@ -221,7 +221,7 @@ export function ContactForm({
   return (
     <form
       className={cn(
-        "space-y-4 rounded-2xl border border-border/70 bg-card p-6",
+        "space-y-4 rounded-xl border border-border-subtle bg-card p-6",
         className
       )}
       onSubmit={(e) => {
@@ -443,7 +443,7 @@ export function ContactForm({
             />
           </Field>
         </div>
-        <div className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
+        <div className="space-y-4 rounded-lg border border-border-subtle bg-surface-inset p-4">
           <div>
             <p className="text-sm font-medium text-ink">How you met</p>
             <p className="mt-0.5 text-xs text-muted-foreground">
@@ -503,7 +503,7 @@ export function ContactForm({
           </Field>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Strength (1–5)">
+          <Field label="Your rating (1–5)">
             <Input
               type="number"
               min={1}

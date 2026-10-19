@@ -11,6 +11,9 @@
  */
 import Link from "next/link";
 import { AlertTriangle } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
+import { TONE } from "@/lib/tone";
+import { cn } from "@/lib/utils";
 import type { ConnectSummary } from "@/lib/events/types";
 
 export function IngestResultCard({
@@ -20,9 +23,10 @@ export function IngestResultCard({
 }) {
   const blocked = summary.blockedByPlan > 0;
   return (
-    <div className="rounded-2xl border border-border/70 bg-card p-5">
+    <Card>
+      <CardContent>
       <p className="text-sm text-ink">
-        <strong>{summary.created}</strong> added to your network,{" "}
+        <strong>{summary.created}</strong> added to your contacts,{" "}
         <strong>{summary.matched}</strong> already there.
       </p>
       {summary.unmatched > 0 ? (
@@ -37,8 +41,8 @@ export function IngestResultCard({
         </p>
       ) : null}
       {blocked ? (
-        <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
+        <div className={cn("mt-3 flex items-start gap-2 rounded-lg border p-3", TONE.warning.box)}>
+          <AlertTriangle className={cn("mt-0.5 size-4 shrink-0", TONE.warning.text)} aria-hidden />
           <p className="text-sm text-ink">
             {summary.blockedByPlan}{" "}
             {summary.blockedByPlan === 1 ? "person wasn't" : "people weren't"} added — your
@@ -50,6 +54,7 @@ export function IngestResultCard({
           </p>
         </div>
       ) : null}
-    </div>
+      </CardContent>
+    </Card>
   );
 }

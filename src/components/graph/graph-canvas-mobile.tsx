@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GraphChartProps } from "@/components/graph/graph-chart-types";
+import { SkyEmptyState } from "@/components/graph/sky-empty-state";
 import { useGraphLayout } from "@/components/graph/use-graph-layout";
 import { buildSkyIndex } from "@/components/graph/sky-canvas/sky-index";
 import { clearTextCache, drawSky } from "@/components/graph/sky-canvas/draw-sky";
@@ -77,6 +78,9 @@ export function GraphCanvasMobile(props: GraphChartProps) {
     onFocusCluster,
     compact,
     company,
+    constellationFilterOn,
+    onShowAll,
+    loadingAll,
   } = props;
 
   const router = useRouter();
@@ -515,6 +519,17 @@ export function GraphCanvasMobile(props: GraphChartProps) {
       aria-label="Constellation star chart"
     >
       <canvas ref={canvasRef} aria-hidden className="block h-full w-full" />
+
+      {/* The same three empty skies the desktop chart shows. Not in the dashboard's
+          preview, which has its own empty state around the card. */}
+      {!compact && contactCount === 0 && (
+        <SkyEmptyState
+          data={data}
+          constellationFilterOn={constellationFilterOn}
+          loadingAll={loadingAll}
+          onShowAll={onShowAll}
+        />
+      )}
 
       {/*
         A canvas is opaque to a screen reader, so the chart states what it holds and then

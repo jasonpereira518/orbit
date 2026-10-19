@@ -39,6 +39,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
+  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -65,15 +66,15 @@ export function ContactJobMatchesSection({
   const firstName = contactName.trim().split(/\s+/)[0] || contactName;
 
   return (
-    <Card className="border-border/70 shadow-none">
+    <Card>
       <CardHeader>
         <CardTitle as="h2">Roles that opened</CardTitle>
         {/* Says WHY this is on this page. Without it the section reads as a job board that
             has appeared on a person, rather than as the consequence of an opportunity the
             person recorded themselves. */}
-        <p className="text-sm text-muted-foreground">
+        <CardDescription>
           Found because you have an open opportunity with {firstName}.
-        </p>
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2">
         <ul className="space-y-2">
@@ -81,7 +82,7 @@ export function ContactJobMatchesSection({
             <li
               key={m.matchId}
               className={cn(
-                "rounded-xl border border-border/60 p-3",
+                "rounded-xl border border-border-subtle p-3",
                 !m.isOpen && "opacity-70"
               )}
             >
@@ -95,16 +96,12 @@ export function ContactJobMatchesSection({
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
-                  <Badge variant="outline" className="text-xs">
-                    {KIND_LABEL[m.matchKind]}
-                  </Badge>
+                  <Badge variant="outline">{KIND_LABEL[m.matchKind]}</Badge>
                   {/* The feed refreshes `active` on every sweep, so this is the one thing
                       here the bell could never tell you: it fired once and never came back
                       to say the role had come down. */}
                   {!m.isOpen && (
-                    <Badge variant="outline" className="text-xs text-muted-foreground">
-                      Closed
-                    </Badge>
+                    <Badge tone="neutral">Closed</Badge>
                   )}
                 </div>
               </div>

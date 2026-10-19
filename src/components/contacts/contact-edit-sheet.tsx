@@ -45,7 +45,7 @@ export function ContactEditSheet({
           <SheetHeader>
             <SheetTitle>Edit {name}</SheetTitle>
             <SheetDescription>
-              Update profile details, strength, tags, and notes.
+              Update profile details, your rating, tags, and notes.
             </SheetDescription>
           </SheetHeader>
           <div className="flex flex-col gap-6 px-4 pb-6">
@@ -55,7 +55,7 @@ export function ContactEditSheet({
               className="rounded-none border-0 bg-transparent p-0 shadow-none"
               onSuccess={() => setOpen(false)}
             />
-            <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-4">
+            <div className="flex flex-wrap items-center gap-2 border-t border-border-subtle pt-4">
               <MergeContactButton id={contactId} name={name} />
               <DeleteContactButton id={contactId} name={name} />
             </div>

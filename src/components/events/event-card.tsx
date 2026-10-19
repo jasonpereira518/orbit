@@ -3,6 +3,9 @@ import { CalendarDays, MapPin, Sparkles, Users } from "lucide-react";
 import { eventGradient } from "@/lib/events/theme";
 import { DISCOVERY_LABEL, RSVP_LABEL } from "@/components/events/event-provenance";
 import { DismissEventButton } from "@/components/events/dismiss-event-button";
+import { Badge } from "@/components/ui/badge";
+import { CARD_HOVER } from "@/lib/interaction";
+import { cn } from "@/lib/utils";
 import type { EventListRow } from "@/lib/events/store";
 
 function formatDate(date: Date | null): string {
@@ -30,7 +33,7 @@ export function EventCard({
     <div className="relative">
     <Link
       href={`/events/${event.id}`}
-      className="group block overflow-hidden rounded-2xl border border-border/70 bg-card transition-shadow hover:shadow-md"
+      className={cn("group block overflow-hidden rounded-xl border border-border-subtle bg-card", CARD_HOVER)}
     >
       <div
         // 5:2 rather than a fixed 96px strip: platform covers are mostly square (Luma's
@@ -41,7 +44,7 @@ export function EventCard({
         style={
           event.coverImageUrl
             ? undefined
-            : { backgroundImage: eventGradient(event.themeColor ?? "#6b7280") }
+            : { backgroundImage: eventGradient(event.themeColor ?? "") }
         }
       >
         {event.coverImageUrl ? (
@@ -68,15 +71,15 @@ export function EventCard({
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             {found ? (
               // An event nobody added has to say so, in the place people look first.
-              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-2xs text-muted-foreground">
-                <Sparkles className="size-3" aria-hidden />
+              <Badge tone="neutral" size="sm">
+                <Sparkles aria-hidden />
                 {found}
-              </span>
+              </Badge>
             ) : null}
             {rsvp ? (
-              <span className="rounded-full border border-border/70 px-2 py-0.5 text-2xs text-muted-foreground">
+              <Badge variant="outline" size="sm" className="text-muted-foreground">
                 {rsvp}
-              </span>
+              </Badge>
             ) : null}
           </div>
         ) : null}

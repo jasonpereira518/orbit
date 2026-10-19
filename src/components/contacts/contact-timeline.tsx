@@ -6,6 +6,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
 import { CircleDashed, FileText, Plus, Sparkles } from "lucide-react";
+import { EmptyState } from "@/components/ui/empty-state";
 import { toast } from "@/lib/toast";
 import {
   listContactTimelineInteractions,
@@ -664,9 +665,9 @@ export function ContactTimeline({
   return (
     <Card
       id="interaction-timeline"
-      className="scroll-mt-24 border-border/70 shadow-none"
+      className="scroll-mt-24"
     >
-      <CardHeader className="border-b border-border/50">
+      <CardHeader className="border-b border-border-subtle">
         <CardTitle as="h2">Timeline</CardTitle>
         <CardAction>
           <div className="flex items-center gap-1">
@@ -696,29 +697,28 @@ export function ContactTimeline({
       </CardHeader>
       <CardContent className="pt-4">
         {sorted.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 py-8 text-center">
-            <span className="flex size-11 items-center justify-center rounded-full border border-dashed border-border text-muted-foreground">
-              <CircleDashed className="size-5" />
-            </span>
-            <div>
-              <p className="text-sm text-ink">Nothing logged yet</p>
-              <p className="mt-0.5 text-sm text-muted-foreground">
-                Every meeting, intro and run-in you record shows up here.
-              </p>
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="gap-1.5"
-              onPointerEnter={preloadLogInteractionSheet}
-              onFocus={preloadLogInteractionSheet}
-              onClick={() => setLogOpen(true)}
-            >
-              <Plus className="size-3.5" />
-              Log your first interaction
-            </Button>
-          </div>
+          // "Nothing logged yet" rather than the house "No interactions yet": e2e/03 and
+          // e2e/06 wait on this exact text, so the title stays until the specs move.
+          <EmptyState
+            variant="plain"
+            icon={CircleDashed}
+            title="Nothing logged yet"
+            description="Every meeting, intro and run-in you record shows up here."
+            action={
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                onPointerEnter={preloadLogInteractionSheet}
+                onFocus={preloadLogInteractionSheet}
+                onClick={() => setLogOpen(true)}
+              >
+                <Plus className="size-3.5" />
+                Log your first interaction
+              </Button>
+            }
+          />
         ) : (
           <>
             {filterChips.length > 2 ? (
@@ -741,7 +741,7 @@ export function ContactTimeline({
                         "focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
                         on
                           ? chip.active
-                          : "border-border/60 text-muted-foreground hover:border-border hover:text-ink"
+                          : "border-border-subtle text-muted-foreground hover:border-border hover:text-ink"
                       )}
                     >
                       <span
@@ -805,7 +805,7 @@ export function ContactTimeline({
                             {group.gapLabel}
                           </p>
                         ) : null}
-                        <h3 className="sticky top-0 z-[2] mb-2 bg-card/95 py-1.5 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground backdrop-blur">
+                        <h3 className="sticky top-0 z-[2] mb-2 bg-card/95 py-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground backdrop-blur">
                           {group.label}
                         </h3>
                         <ul className="relative">
@@ -908,7 +908,7 @@ export function ContactTimeline({
                                     {openCount > 0 || hasNotes || i.noteBatchId ? (
                                       <span className="mt-1.5 flex flex-wrap items-center gap-2 text-2xs text-muted-foreground">
                                         {openCount > 0 ? (
-                                          <span className="inline-flex items-center gap-1 rounded-full border border-border/60 px-2 py-0.5">
+                                          <span className="inline-flex items-center gap-1 rounded-full border border-border-subtle px-2 py-0.5">
                                             <span className="size-1.5 rounded-full bg-primary" />
                                             {openCount} open
                                           </span>

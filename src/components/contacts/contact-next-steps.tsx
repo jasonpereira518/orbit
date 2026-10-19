@@ -56,7 +56,7 @@ export function ContactNextSteps({ items }: { items: OpenActionItem[] }) {
       {visible.map((item) => (
         <label
           key={item.id}
-          className="group flex items-start gap-3 rounded-xl border border-border/60 p-3"
+          className="group flex items-start gap-3 rounded-xl border border-border-subtle p-3"
         >
           <Checkbox
             className="mt-0.5"

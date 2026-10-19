@@ -8,7 +8,6 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ReactFlow,
@@ -78,7 +77,7 @@ import { markGraphViewportReady } from "@/lib/graph/intro-signal";
 import { markOpenStage } from "@/lib/graph/open-marks";
 import { markFirstPaintThenInteractive } from "@/lib/graph/open-marks-paint";
 import { CAMERA_MS } from "@/lib/motion";
-import { Loader2 } from "lucide-react";
+import { SkyEmptyState } from "@/components/graph/sky-empty-state";
 
 type LayoutNodes = ReturnType<typeof buildHybridGraphLayout>["nodes"];
 
@@ -2177,75 +2176,13 @@ function GraphCanvasInner({
         */}
       </ReactFlow>
 
-      {/*
-        Three different empty skies, which used to be one. "Add contacts" is right only when
-        there genuinely are none — said to someone whose 800 contacts were filtered out it is
-        both wrong and unactionable, and it points at the one button that will not help.
-      */}
       {isEmpty && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="pointer-events-auto max-w-sm rounded-2xl border border-white/10 bg-[#080b12]/90 px-6 py-5 text-center shadow-xl">
-            {data.summary.total === 0 ? (
-              <>
-                <p className="font-heading text-lg text-white">
-                  Your sky is empty
-                </p>
-                <p className="mt-1 text-sm text-white/55">
-                  Add contacts and they will appear as stars in your constellation.
-                </p>
-                <Link
-                  href="/contacts/new"
-                  className="mt-4 inline-flex h-8 items-center rounded-lg bg-white/10 px-3 text-sm font-medium text-white hover:bg-white/15"
-                >
-                  Add a contact
-                </Link>
-              </>
-            ) : constellationFilterOn && data.contacts.length === 0 ? (
-              <>
-                <p className="font-heading text-lg text-white">
-                  Nobody here yet
-                </p>
-                <p className="mt-1 text-sm text-white/55">
-                  Your chart shows the people you have notes on, met, or really talked with.
-                  Write a note about someone and they take their place in the sky.
-                </p>
-                <div className="mt-4 flex items-center justify-center gap-2">
-                  <Link
-                    href="/capture"
-                    className="inline-flex h-8 items-center rounded-lg bg-white/10 px-3 text-sm font-medium text-white hover:bg-white/15"
-                  >
-                    Add notes
-                  </Link>
-                  <button
-                    type="button"
-                    disabled={loadingAll}
-                    onClick={onShowAll}
-                    aria-busy={loadingAll}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-sm text-white/70 hover:text-white disabled:opacity-70"
-                  >
-                    {loadingAll && (
-                      <Loader2 className="size-3 animate-spin" aria-hidden />
-                    )}
-                    {loadingAll
-                      ? "Loading…"
-                      : `Show all ${data.summary.total.toLocaleString()}`}
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <p className="font-heading text-lg text-white">
-                  No stars match
-                </p>
-                <p className="mt-1 text-sm text-white/55">
-                  {constellationFilterOn
-                    ? "Nobody fits these filters and the people you know. Widen the filters, or show everyone."
-                    : "Nobody fits these filters. Try widening them."}
-                </p>
-              </>
-            )}
-          </div>
-        </div>
+        <SkyEmptyState
+          data={data}
+          constellationFilterOn={constellationFilterOn}
+          loadingAll={loadingAll}
+          onShowAll={onShowAll}
+        />
       )}
     </>
   );

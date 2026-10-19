@@ -88,7 +88,7 @@ export function ConnectPreviewDialog({
             Back
           </Button>
           <Button onClick={onConfirm} disabled={pending}>
-            {pending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+            {pending ? <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> : null}
             Add {rows.length}
           </Button>
         </DialogFooter>

@@ -6,7 +6,7 @@ export default function ContactsLoading() {
     <PeopleNavFallback
       active="contacts"
       title="Contacts"
-      subtitle="Your network"
+      subtitle="Your contacts"
       skeleton={<ContactsPageSkeleton />}
     />
   );

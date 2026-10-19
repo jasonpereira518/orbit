@@ -79,7 +79,7 @@ export function HealthSparkline({ health }: { health: RelationshipHealth }) {
                 ? balance[0].toUpperCase() + balance.slice(1)
                 : "Not enough messages yet"}
             </dd>
-            <dt className="text-muted-foreground">Last touch</dt>
+            <dt className="text-muted-foreground">Last interaction</dt>
             <dd>{touchLong}</dd>
           </dl>
           <p className="text-muted-foreground">

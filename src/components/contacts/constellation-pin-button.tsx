@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Loader2, Plus, RotateCcw } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { setConstellationPin } from "@/actions/contacts";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -79,7 +79,7 @@ export function ConstellationPinButton({
         className={cn("rounded-full", onChart && "text-muted-foreground")}
       >
         {pending ? (
-          <Loader2 className="animate-spin" aria-hidden />
+          <Loader2 className="motion-safe:animate-spin" aria-hidden />
         ) : onChart ? (
           <Check aria-hidden />
         ) : (

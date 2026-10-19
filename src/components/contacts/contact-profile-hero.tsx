@@ -12,7 +12,8 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
+import { IntentLink } from "@/components/ui/intent-link";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { ContactChannelIcons } from "@/components/contacts/contact-profile-icons";
 import { ContactEditSheet } from "@/components/contacts/contact-edit-sheet";
@@ -89,7 +90,7 @@ function AvatarHoverPreview({
       {active && typeof document !== "undefined"
         ? createPortal(
             <div
-              className="pointer-events-none fixed z-[100] overflow-hidden rounded-xl border-2 border-border bg-card shadow-2xl"
+              className="pointer-events-none fixed z-[100] overflow-hidden rounded-xl border-2 border-border bg-card shadow-lg"
               style={{
                 left: Math.min(pos.x + 16, window.innerWidth - 196),
                 top: Math.min(pos.y + 16, window.innerHeight - 196),
@@ -162,7 +163,7 @@ function StickyMiniBar({
   return createPortal(
     <div
       className={cn(
-        "fixed z-40 border-b border-border/60 bg-background/95 backdrop-blur transition-[transform,opacity] duration-200",
+        "fixed z-40 border-b border-border-subtle bg-background/95 backdrop-blur transition-[transform,opacity] duration-200",
         visible
           ? "pointer-events-auto translate-y-0 opacity-100"
           : "pointer-events-none -translate-y-full opacity-0"
@@ -181,8 +182,8 @@ function StickyMiniBar({
           fullName={fullName}
           profileImageUrl={profileImageUrl}
           resolveOnDemand
-          size="sm"
-          className="size-9 shrink-0"
+          size="default"
+          className="size-8 shrink-0"
         />
         <p className="min-w-0 flex-1 truncate font-heading text-lg text-ink">
           {displayName}
@@ -368,12 +369,13 @@ export function ContactProfileHero({
         is room again, and they return to the right of the identity.
       */}
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-5">
-        <Link
+        <IntentLink
           href="/contacts"
-          className="col-start-1 row-start-1 justify-self-start text-sm text-muted-foreground hover:underline"
+          className="col-start-1 row-start-1 inline-flex items-center gap-1 justify-self-start text-sm text-muted-foreground transition-colors hover:text-foreground"
         >
-          ← Contacts
-        </Link>
+          <ArrowLeft className="size-3.5" aria-hidden />
+          Contacts
+        </IntentLink>
 
         <div
           className={cn(

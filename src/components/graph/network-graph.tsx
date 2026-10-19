@@ -14,7 +14,7 @@ import {
   getGraphData,
   refreshConstellationBatch,
 } from "@/actions/graph";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useCornerClearance } from "@/lib/corner-clearance";
 import { searchDashboardContacts } from "@/actions/search";
 import {
@@ -800,7 +800,7 @@ export function NetworkGraph({
     return (
       <div
         className={cn(
-          "flex items-center justify-center rounded-2xl border border-white/10 bg-[#05070c] text-white/50",
+          "flex items-center justify-center rounded-2xl border border-white/10 bg-space-980 text-white/50",
           compact
             ? "h-[300px]"
             : "h-[calc(100dvh-15.125rem)] md:h-[calc(100dvh-10.5rem)]"
@@ -853,10 +853,10 @@ export function NetworkGraph({
                   type="button"
                   className={cn(
                     buttonVariants({ size: "sm" }),
-                    "rounded-full border border-white/15 bg-[#080b12]/92 text-white hover:bg-[#0c1018]/90"
+                    "rounded-full border border-white/15 bg-space-950/92 text-white hover:bg-space-900/90"
                   )}
                 >
-                  <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+                  <Sparkles className="mr-1.5 size-3.5" />
                   Clusters
                   <span className="ml-1.5 rounded-full bg-white/10 px-1.5 text-3xs">
                     {data.clusters.length}
@@ -864,7 +864,7 @@ export function NetworkGraph({
                 </PopoverTrigger>
                 <PopoverContent
                   align="start"
-                  className="max-h-72 w-64 overflow-y-auto border-white/10 bg-[#0a0e16] p-2 text-white"
+                  className="max-h-72 w-64 overflow-y-auto border-white/10 bg-space-900 p-2 text-white"
                 >
                   {data.clusters.length === 0 ? (
                     <p className="px-2 py-3 text-sm text-white/50">
@@ -922,7 +922,7 @@ export function NetworkGraph({
                 three were unreadable and partly untappable. */}
             <div className="absolute left-1/2 top-14 z-20 flex w-[min(92%,420px)] -translate-x-1/2 items-center gap-2 lg:top-3">
               <div className="relative flex-1">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/40" />
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-white/40" />
                 <Input
                   ref={searchInputRef}
                   value={search}
@@ -935,7 +935,7 @@ export function NetworkGraph({
                     setSearch(next);
                   }}
                   placeholder="Search name, role, school, keywords…"
-                  className="h-9 border-white/15 bg-[#080b12]/92 pl-9 text-white placeholder:text-white/35"
+                  className="h-9 border-white/15 bg-space-950/92 pl-9 text-white placeholder:text-white/35"
                 />
               </div>
               <Popover open={filtersOpen} onOpenChange={setFiltersOpen}>
@@ -944,14 +944,14 @@ export function NetworkGraph({
                   aria-label="Filters"
                   className={cn(
                     buttonVariants({ size: "sm", variant: "outline" }),
-                    "h-9 shrink-0 rounded-full border-white/15 bg-[#080b12]/92 text-white"
+                    "h-9 shrink-0 rounded-full border-white/15 bg-space-950/92 text-white"
                   )}
                 >
-                  <Filter className="h-3.5 w-3.5" />
+                  <Filter className="size-3.5" />
                 </PopoverTrigger>
                 <PopoverContent
                   align="end"
-                  className="w-72 space-y-3 border-white/10 bg-[#0a0e16] text-white"
+                  className="w-72 space-y-3 border-white/10 bg-space-900 text-white"
                 >
                   <div className="space-y-1.5">
                     <p className="text-2xs uppercase tracking-wide text-white/45">
@@ -1011,7 +1011,7 @@ export function NetworkGraph({
                   </div>
                   <div className="space-y-1.5">
                     <p className="text-2xs uppercase tracking-wide text-white/45">
-                      Min strength (orbit)
+                      Closeness
                     </p>
                     <Select
                       value={minScore}
@@ -1049,19 +1049,19 @@ export function NetworkGraph({
                   type="button"
                   className={cn(
                     buttonVariants({ size: "sm" }),
-                    "rounded-full border border-[#ff6b4a]/35 bg-[#1a0c0a]/95 text-[#ffb4a0] hover:bg-[#2a1210]/90"
+                    "rounded-full border border-signal/35 bg-signal/15 text-signal hover:bg-signal/25"
                   )}
                 >
                   Re-engage
                   {cometContacts.length > 0 && (
-                    <span className="ml-1.5 rounded-full bg-[#c4452d]/40 px-1.5 text-3xs">
+                    <span className="ml-1.5 rounded-full bg-signal/40 px-1.5 text-3xs">
                       {cometContacts.length}
                     </span>
                   )}
                 </PopoverTrigger>
                 <PopoverContent
                   align="end"
-                  className="max-h-80 w-72 overflow-y-auto border-white/10 bg-[#0a0e16] p-2 text-white"
+                  className="max-h-80 w-72 overflow-y-auto border-white/10 bg-space-900 p-2 text-white"
                 >
                   <p className="mb-2 px-2 text-2xs uppercase tracking-wide text-white/45">
                     Drifting away
@@ -1143,7 +1143,7 @@ export function NetworkGraph({
                                 setReengageOpen(false);
                               }}
                             >
-                              <span className="text-sm text-[#ffb4a0]">
+                              <span className="text-sm text-signal">
                                 {name}
                               </span>
                               <span className="text-2xs text-white/40">
@@ -1165,12 +1165,12 @@ export function NetworkGraph({
                 size="sm"
                 disabled={refreshing}
                 onClick={() => void runRefresh()}
-                className="rounded-full border border-white/15 bg-[#080b12]/92 text-white hover:bg-[#0c1018]/90"
+                className="rounded-full border border-white/15 bg-space-950/92 text-white hover:bg-space-900/90"
               >
                 {refreshing ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin sm:mr-1.5" />
+                  <Loader2 className="size-3.5 motion-safe:animate-spin sm:mr-1.5" />
                 ) : (
-                  <RefreshCw className="h-3.5 w-3.5 sm:mr-1.5" />
+                  <RefreshCw className="size-3.5 sm:mr-1.5" />
                 )}
                 {/* Icon-only below sm: with the label, this row's three pills were
                     14px wider than a 375px canvas and Re-engage sat on top of Clusters. */}
@@ -1180,7 +1180,7 @@ export function NetworkGraph({
 
             {/* Refresh progress */}
             {refreshing && (
-              <div className="absolute left-1/2 top-14 z-30 w-[min(90vw,320px)] -translate-x-1/2 rounded-xl border border-white/10 bg-[#080b12]/95 px-3 py-2.5">
+              <div className="absolute left-1/2 top-14 z-30 w-[min(90vw,320px)] -translate-x-1/2 rounded-xl border border-white/10 bg-space-950/95 px-3 py-2.5">
                 <div className="mb-1.5 flex items-center justify-between text-2xs text-white/60">
                   <span>Refreshing constellation…</span>
                   <span>
@@ -1203,19 +1203,19 @@ export function NetworkGraph({
                   type="button"
                   className={cn(
                     buttonVariants({ size: "sm" }),
-                    "rounded-full border border-white/15 bg-[#080b12]/92 text-white"
+                    "rounded-full border border-white/15 bg-space-950/92 text-white"
                   )}
                 >
-                  <KeyRound className="mr-1.5 h-3.5 w-3.5" />
+                  <KeyRound className="mr-1.5 size-3.5" />
                   Key
                 </PopoverTrigger>
                 <PopoverContent
                   align="start"
                   side="top"
-                  className="w-64 border-white/10 bg-[#0a0e16] text-white"
+                  className="w-64 border-white/10 bg-space-900 text-white"
                 >
                   <p className="mb-2 flex items-center gap-1.5 text-2xs uppercase tracking-wide text-white/45">
-                    <Info className="h-3 w-3" />
+                    <Info className="size-3" aria-hidden />
                     Map legend
                   </p>
                   <ul className="space-y-2 text-xs text-white/75">
@@ -1243,7 +1243,7 @@ export function NetworkGraph({
                       figure; fainter ones are the rest of the group
                     </li>
                     <li className="flex items-center gap-2">
-                      <span className="h-2 w-4 rounded-full bg-gradient-to-r from-transparent to-[#ff6b4a]" />
+                      <span className="h-2 w-4 rounded-full bg-gradient-to-r from-transparent to-signal" />
                       Red Comet — drifting connection
                     </li>
                   </ul>
@@ -1261,12 +1261,12 @@ export function NetworkGraph({
                 }
                 title={fullscreenActive ? "Exit full screen" : "Full screen"}
                 onClick={() => void toggleFullscreen()}
-                className="h-9 w-9 rounded-full border border-white/15 bg-[#080b12]/92 text-white hover:bg-[#0c1018]/90"
+                className="size-9 rounded-full border border-white/15 bg-space-950/92 text-white hover:bg-space-900/90"
               >
                 {fullscreenActive ? (
-                  <Minimize2 className="h-4 w-4" />
+                  <Minimize2 className="size-4" />
                 ) : (
-                  <Maximize2 className="h-4 w-4" />
+                  <Maximize2 className="size-4" />
                 )}
               </Button>
               <Button
@@ -1275,9 +1275,9 @@ export function NetworkGraph({
                 aria-label="Reset map to home"
                 title="Reset map"
                 onClick={goHome}
-                className="h-9 w-9 rounded-full border border-white/15 bg-[#080b12]/92 text-white hover:bg-[#0c1018]/90"
+                className="size-9 rounded-full border border-white/15 bg-space-950/92 text-white hover:bg-space-900/90"
               >
-                <Home className="h-4 w-4" />
+                <Home className="size-4" />
               </Button>
             </div>
           </>

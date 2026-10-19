@@ -28,14 +28,7 @@ import { setActionItemStatus } from "@/actions/action-items";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -266,7 +259,7 @@ export function InteractionDetailSheet({
       {/* The popup itself must NOT scroll — SheetFooter pins with `mt-auto`, which only
           works when the body is the scroller. */}
       <SheetContent className="overflow-hidden sm:max-w-lg">
-        <SheetHeader className="border-b border-border/50 pb-4 pr-12">
+        <SheetHeader className="border-b border-border-subtle pb-4 pr-12">
           <div className="flex items-start gap-3">
             <span
               className={cn(
@@ -344,7 +337,7 @@ export function InteractionDetailSheet({
                         "flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-xs transition-colors",
                         on
                           ? fam.chip
-                          : "border-border/60 text-muted-foreground hover:text-ink"
+                          : "border-border-subtle text-muted-foreground hover:text-ink"
                       )}
                     >
                       <span
@@ -423,7 +416,7 @@ export function InteractionDetailSheet({
                     return (
                       <label
                         key={item.id}
-                        className="flex items-start gap-3 rounded-xl border border-border/50 p-3"
+                        className="flex items-start gap-3 rounded-xl border border-border-subtle p-3"
                       >
                         <Checkbox
                           className="mt-0.5"
@@ -467,7 +460,7 @@ export function InteractionDetailSheet({
             {detail.meeting && (
               <div>
                 <SectionLabel>From the meeting</SectionLabel>
-                <div className="space-y-2 rounded-xl border border-border/50 bg-muted/20 p-3">
+                <div className="space-y-2 rounded-lg border border-border-subtle bg-surface-inset p-3">
                   <p className="text-sm font-medium text-ink">{detail.meeting.title}</p>
                   {detail.meeting.summary.trim() && (
                     <p className="text-sm leading-relaxed text-muted-foreground">
@@ -506,7 +499,7 @@ export function InteractionDetailSheet({
                     <IntentLink
                       key={m.contactId}
                       href={`/contacts/${m.contactId}`}
-                      className="rounded-full border border-border/60 px-2.5 py-1 text-xs text-ink transition-colors hover:border-primary/50 hover:text-primary"
+                      className="rounded-full border border-border-subtle px-2.5 py-1 text-xs text-ink transition-colors hover:border-primary/50 hover:text-primary"
                     >
                       {m.fullName}
                     </IntentLink>
@@ -518,7 +511,7 @@ export function InteractionDetailSheet({
             <div>
               <SectionLabel>Notes</SectionLabel>
               {hasNotes ? (
-                <p className="whitespace-pre-wrap rounded-xl border border-border/50 bg-muted/30 p-3 text-sm leading-relaxed text-ink">
+                <p className="whitespace-pre-wrap rounded-lg border border-border-subtle bg-surface-inset p-3 text-sm leading-relaxed text-ink">
                   {detail.rawNotes!.trim()}
                 </p>
               ) : (
@@ -532,7 +525,7 @@ export function InteractionDetailSheet({
               {detail.batchId && (
                 <Link
                   href={`/capture/${detail.batchId}`}
-                  className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-border/60 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
+                  className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-border-subtle px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
                 >
                   <NotebookPen className="size-3" />
                   {detail.meeting ? "Meeting notes" : "The capture this came from"}
@@ -543,7 +536,7 @@ export function InteractionDetailSheet({
         )}
 
         {detail ? (
-          <SheetFooter className="flex-row items-center gap-2 border-t border-border/50">
+          <SheetFooter className="flex-row items-center gap-2 border-t border-border-subtle">
             {editing ? (
               <>
                 <Button type="button" size="sm" disabled={pending} onClick={saveEdit}>
@@ -629,30 +622,16 @@ export function InteractionDetailSheet({
         ) : null}
       </SheetContent>
 
-      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <DialogContent showCloseButton={false} className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Delete this interaction?</DialogTitle>
-            <DialogDescription>
-              Its notes and action items go with it. Reminders it created are
-              kept. This cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-2">
-            <Button
-              variant="outline"
-              disabled={pending}
-              onClick={() => setConfirmOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button variant="destructive" disabled={pending} onClick={remove}>
-              <Trash2 className="size-3.5" />
-              Delete interaction
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        tone="destructive"
+        title="Delete this interaction?"
+        description="Its notes and action items go with it. Reminders it created are kept. This cannot be undone."
+        confirmLabel="Delete interaction"
+        pendingLabel="Deleting…"
+        onConfirm={remove}
+      />
     </Sheet>
   );
 }

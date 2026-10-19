@@ -9,6 +9,7 @@ import {
   type ExperienceEntry,
 } from "@/lib/contact-profile-format";
 import { findContactWorkHistory } from "@/actions/contact-profile";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ExpandableText } from "@/components/ui/expandable-text";
@@ -119,19 +120,16 @@ function ChipRow({ label, items }: { label: string; items: string[] }) {
   if (!items.length) return null;
   return (
     <div className="space-y-1.5">
-      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
         {label}
       </p>
       <div className="flex flex-wrap gap-1.5">
         {/* Keyed by index, not by value: LinkedIn happily lists the same skill twice, and
             a duplicated name would collide as a key. Nothing here reorders or animates. */}
         {items.map((item, index) => (
-          <span
-            key={`${index}-${item}`}
-            className="rounded-full border border-border/70 px-2.5 py-1 text-2xs text-muted-foreground"
-          >
+          <Badge key={`${index}-${item}`} variant="outline" className="font-normal text-muted-foreground">
             {item}
-          </span>
+          </Badge>
         ))}
       </div>
     </div>
@@ -142,7 +140,7 @@ function EntryRow({ entry }: { entry: ProfileExperienceEntry }) {
   const dates = formatExperienceDates(entry);
   const heading = [entry.title, entry.organization].filter(Boolean).join(" · ");
   return (
-    <li className="border-b border-border/50 py-3 last:border-b-0 last:pb-0">
+    <li className="border-b border-border-subtle py-3 last:border-b-0 last:pb-0">
       <p className="text-sm font-medium text-ink">{heading}</p>
       {(dates || entry.location) && (
         <p className="text-xs text-muted-foreground">
@@ -170,9 +168,9 @@ export function ContactExperienceSection({
   // --- empty state: this section is the feature's entry point, not a blank card ---
   if (!profile) {
     return (
-      <Card className="border-border/70 shadow-none">
+      <Card>
         <CardHeader>
-          <CardTitle>Experience</CardTitle>
+          <CardTitle as="h2">Experience</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">
@@ -212,9 +210,9 @@ export function ContactExperienceSection({
   const education = profile.experiences.filter((e) => e.kind === "education");
 
   return (
-    <Card className="border-border/70 shadow-none">
+    <Card>
       <CardHeader>
-        <CardTitle>Experience</CardTitle>
+        <CardTitle as="h2">Experience</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* The headline is the one line the person wrote to describe themselves, and it is
@@ -227,14 +225,14 @@ export function ContactExperienceSection({
 
         {moves.length > 0 && (
           <div>
-            <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
               <ArrowRightLeft className="size-3.5" aria-hidden /> Career moves
             </p>
             <ul>
               {moves.map((move) => (
                 <li
                   key={move.id}
-                  className="border-b border-border/50 py-2.5 last:border-b-0 last:pb-0"
+                  className="border-b border-border-subtle py-2.5 last:border-b-0 last:pb-0"
                 >
                   <p className="text-sm font-medium text-ink">{jobChangeSentence(move)}</p>
                   <p className="text-xs text-muted-foreground">
@@ -248,7 +246,7 @@ export function ContactExperienceSection({
 
         {roles.length > 0 && (
           <div>
-            <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
               <Building2 className="size-3.5" aria-hidden /> Roles
             </p>
             <ul>
@@ -261,7 +259,7 @@ export function ContactExperienceSection({
 
         {education.length > 0 && (
           <div>
-            <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
               <GraduationCap className="size-3.5" aria-hidden /> Education
             </p>
             <ul>
@@ -284,7 +282,7 @@ export function ContactExperienceSection({
           skills, and without this line it reads as a person who wrote
           nothing about themselves — or as their LinkedIn page, which it is not.
         */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/50 pt-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border-subtle pt-3">
           <p className="text-xs text-muted-foreground">
             {profile.source === "extension"
               ? `From LinkedIn · captured ${format(new Date(profile.capturedAt), "MMM d, yyyy")}`

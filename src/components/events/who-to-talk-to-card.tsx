@@ -14,9 +14,17 @@
  * it costs a model call against the user's own key, and the card is useful without it.
  */
 import { useState, useTransition } from "react";
-import { Link2, Loader2, Sparkles, Users } from "lucide-react";
+import { Link2, Loader2, Sparkles } from "lucide-react";
 import { IntentLink } from "@/components/ui/intent-link";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { toast } from "@/lib/toast";
 import { explainAttendee } from "@/actions/events";
 import type { WhoToTalkTo } from "@/lib/events/who-to-talk-to";
@@ -58,23 +66,24 @@ export function WhoToTalkToCard({
   }
 
   return (
-    <div className="rounded-2xl border border-border/70 bg-card p-5">
-      <h2 className="flex items-center gap-2 font-medium text-ink">
-        <Users className="size-4 text-muted-foreground" aria-hidden />
-        {data.when === "upcoming" ? "Before you go" : "Worth following up"}
-      </h2>
-      <p className="mt-1 text-sm text-muted-foreground">
-        {data.when === "upcoming"
-          ? `${data.rows.length} ${data.rows.length === 1 ? "person" : "people"} on this guest list worth finding.`
-          : "The people from this room most worth a message now."}
-      </p>
-
-      <ul className="mt-4 space-y-3">
+    <Card>
+      <CardHeader>
+        <CardTitle as="h2">
+          {data.when === "upcoming" ? "Before you go" : "Worth following up"}
+        </CardTitle>
+        <CardDescription>
+          {data.when === "upcoming"
+            ? `${data.rows.length} ${data.rows.length === 1 ? "person" : "people"} on this guest list worth finding.`
+            : "The people from this room most worth a message now."}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+      <ul className="space-y-3">
         {data.rows.map((row) => {
           const note = notes[row.attendeeId];
           const detail = [row.title, row.company].filter(Boolean).join(" · ");
           return (
-            <li key={row.attendeeId} className="rounded-xl border border-border/60 p-3">
+            <li key={row.attendeeId} className="rounded-xl border border-border-subtle p-3">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-ink">
@@ -98,7 +107,7 @@ export function WhoToTalkToCard({
                     disabled={pending}
                   >
                     {busy === row.attendeeId ? (
-                      <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                      <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden />
                     ) : (
                       <Sparkles className="size-3.5" aria-hidden />
                     )}
@@ -110,11 +119,10 @@ export function WhoToTalkToCard({
               {/* The reasons the ranking actually used. Checkable, and the whole point. */}
               <ul className="mt-2 flex flex-wrap gap-1.5">
                 {row.reasons.slice(0, 3).map((reason) => (
-                  <li
-                    key={reason.code}
-                    className="rounded-full bg-muted px-2 py-0.5 text-2xs text-muted-foreground"
-                  >
-                    {reason.label}
+                  <li key={reason.code}>
+                    <Badge tone="neutral" size="sm" className="normal-case tracking-normal">
+                      {reason.label}
+                    </Badge>
                   </li>
                 ))}
               </ul>
@@ -134,6 +142,7 @@ export function WhoToTalkToCard({
           );
         })}
       </ul>
-    </div>
+      </CardContent>
+    </Card>
   );
 }

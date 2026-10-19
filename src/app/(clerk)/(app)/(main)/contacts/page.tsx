@@ -92,13 +92,13 @@ export default async function ContactsPage({
       title="Contacts"
       subtitle={
         page.total === null
-          ? "Your network"
-          : // `total` counts what the filters matched, not the network. Calling a filtered
-            // count "in your network" told someone with 24 contacts that they had 6 — and
-            // the more prominent the filters get, the more often that reads as data loss.
-            `${page.total.toLocaleString()} ${page.total === 1 ? "person" : "people"}${
-              filtersActive ? " match" : " in your network"
-            }`
+          ? "Your contacts"
+          : // `total` counts what the filters matched, not the whole list. Calling a filtered
+            // count "your contacts" told someone with 24 contacts that they had 6 — and the
+            // more prominent the filters get, the more often that reads as data loss.
+            filtersActive
+            ? `${page.total.toLocaleString()} ${page.total === 1 ? "person matches" : "people match"}`
+            : `${page.total.toLocaleString()} ${page.total === 1 ? "contact" : "contacts"}`
       }
       actions={
         <>
@@ -112,7 +112,7 @@ export default async function ContactsPage({
             href="/contacts/new"
             className={buttonVariants()}
           >
-            <Plus className="mr-1 h-4 w-4" />
+            <Plus className="size-4" aria-hidden />
             Add contact
           </Link>
         </>
@@ -151,6 +151,7 @@ export default async function ContactsPage({
             filters={filters}
             availableLetters={letters}
             activeLetter={params.letter ?? null}
+            filtersActive={filtersActive}
           />
         </ContactsFilters>
       </div>
@@ -164,7 +165,7 @@ async function DuplicatesButton() {
   if (duplicateCount <= 0) return null;
   return (
     <Link href="/contacts/duplicates" className={buttonVariants({ variant: "outline" })}>
-      <Copy className="mr-1 h-4 w-4" aria-hidden />
+      <Copy className="size-4" aria-hidden />
       {duplicateCount >= 99
         ? "99+ duplicates"
         : `${duplicateCount} duplicate${duplicateCount === 1 ? "" : "s"}`}

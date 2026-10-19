@@ -14,6 +14,13 @@ import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ClipboardPaste, Loader2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/lib/toast";
 import { importAttendeesFromCsv, importAttendeesFromText } from "@/actions/events";
@@ -65,18 +72,19 @@ export function RosterImportPanel({ eventId }: { eventId: string }) {
   }
 
   return (
-    <div className="rounded-2xl border border-border/70 bg-card p-5">
-      <h2 className="font-medium text-ink">Add the guest list</h2>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Paste it from the event page, or upload a CSV export. One person per line — names,
-        emails, LinkedIn URLs and &ldquo;Name — Title at Company&rdquo; all work.
-      </p>
-
+    <Card>
+      <CardHeader>
+        <CardTitle as="h2">Add the guest list</CardTitle>
+        <CardDescription>
+          Paste it from the event page, or upload a CSV export. One person per line — names,
+          emails, LinkedIn URLs and &ldquo;Name — Title at Company&rdquo; all work.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
       <Textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
         rows={5}
-        className="mt-3"
         placeholder={"Ada Lovelace <ada@analytical.io> — Engineer at Analytical\nGrace Hopper, COBOL Inc"}
         aria-label="Paste the guest list"
       />
@@ -84,11 +92,11 @@ export function RosterImportPanel({ eventId }: { eventId: string }) {
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Button onClick={submitText} disabled={pending || !text.trim()}>
           {pending ? (
-            <Loader2 className="size-4 animate-spin" aria-hidden />
+            <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden />
           ) : (
             <ClipboardPaste className="size-4" aria-hidden />
           )}
-          Add pasted list
+          {pending ? "Adding…" : "Add pasted list"}
         </Button>
 
         <input
@@ -110,6 +118,7 @@ export function RosterImportPanel({ eventId }: { eventId: string }) {
           Upload CSV
         </Button>
       </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }

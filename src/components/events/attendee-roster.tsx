@@ -30,7 +30,9 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { IntentLink } from "@/components/ui/intent-link";
 import { Check, Loader2, MoreHorizontal, Pencil, Search, UserPlus, Users } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
@@ -218,7 +220,7 @@ export function AttendeeRoster({
     start(async () => {
       try {
         await removeSpokenToConnection(eventId, attendeeId);
-        toast.success("Unlinked from this event — they’re still in your network");
+        toast.success("Unlinked from this event — they’re still in your contacts");
         router.refresh();
       } catch (error) {
         toast.error(friendlyError(error, "Couldn’t unlink that person — try again?"));
@@ -230,11 +232,11 @@ export function AttendeeRoster({
 
   if (rows.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-border/70 px-4 py-10 text-center">
-        <p className="text-sm text-muted-foreground">
-          No attendees yet. Paste or upload the guest list to get started.
-        </p>
-      </div>
+      <EmptyState
+        icon={Users}
+        title="No attendees yet"
+        description="Paste or upload the guest list to get started."
+      />
     );
   }
 
@@ -269,7 +271,7 @@ export function AttendeeRoster({
         </Button>
       </div>
 
-      <ul className="divide-y divide-border/70 rounded-2xl border border-border/70 bg-card">
+      <ul className="divide-y divide-border-subtle rounded-xl border border-border-subtle bg-card">
         {visible.map((row) => {
           const connected = row.contactId !== null;
           const match = matchById.get(row.id);
@@ -288,9 +290,9 @@ export function AttendeeRoster({
                 <p className="flex items-center gap-1.5 truncate text-sm font-medium text-ink">
                   <span className="truncate">{row.fullName ?? row.email ?? "Unnamed guest"}</span>
                   {row.attendeeRole && ROLE_LABEL[row.attendeeRole] ? (
-                    <span className="shrink-0 rounded-full border border-border/70 px-1.5 py-px text-3xs font-normal text-muted-foreground">
+                    <Badge variant="outline" size="sm" className="font-normal text-muted-foreground">
                       {ROLE_LABEL[row.attendeeRole]}
-                    </span>
+                    </Badge>
                   ) : null}
                 </p>
                 <p className="truncate text-xs text-muted-foreground">
@@ -307,47 +309,57 @@ export function AttendeeRoster({
                     className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:underline"
                   >
                     <Check className="size-3.5" aria-hidden />
-                    In your network
+                    In your contacts
                   </IntentLink>
                   <Button variant="ghost" size="xs" onClick={() => disconnect(row.id)} disabled={busy}>
-                    {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : null}
-                    Unlink
+                    {busy ? <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden /> : null}
+                    {busy ? "Unlinking…" : "Unlink"}
                   </Button>
                 </div>
               ) : seenBefore ? (
                 // The strongest signal this roster carries: not "who is this" but "you have
                 // been in a room with them before and never said so". That belongs in front
                 // of the source badge, which is bookkeeping by comparison.
-                <span
-                  className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-2xs font-medium text-ink"
+                <Badge
+                  tone="neutral"
+                  size="sm"
+                  className="shrink-0 normal-case tracking-normal text-ink"
                   title={`You have been at ${seenBefore} events with ${who}`}
                 >
-                  <Users className="size-3" aria-hidden />
+                  <Users aria-hidden />
                   {seenBefore}
                   {ordinalSuffix(seenBefore)} event together
-                </span>
+                </Badge>
               ) : match ? (
                 // Known, but not yet attached to this event. Still selectable: connecting is
                 // what adds this event to the timeline you already have for them.
-                <IntentLink
-                  href={`/contacts/${match.contactId}`}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/70 px-2 py-0.5 text-2xs text-muted-foreground hover:text-foreground"
+                <Badge
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 normal-case tracking-normal text-muted-foreground hover:text-foreground"
+                  render={<IntentLink href={`/contacts/${match.contactId}`} />}
                   title={`${match.contactName ?? "This person"} is already in your contacts`}
                 >
-                  <Users className="size-3" aria-hidden />
+                  <Users aria-hidden />
                   Already a contact
-                </IntentLink>
+                </Badge>
               ) : (
-                <span className="shrink-0 rounded-full border border-border/70 px-2 py-0.5 text-2xs text-muted-foreground">
+                <Badge variant="outline" size="sm" className="shrink-0 text-muted-foreground">
                   {SOURCE_LABEL[row.source]}
-                </span>
+                </Badge>
               )}
 
               <DropdownMenu>
                 <DropdownMenuTrigger
-                  type="button"
-                  aria-label={`Edit ${who}`}
-                  className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={`Edit ${who}`}
+                      className="shrink-0 rounded-full text-muted-foreground"
+                    />
+                  }
                 >
                   <MoreHorizontal className="size-4" aria-hidden />
                 </DropdownMenuTrigger>
@@ -368,17 +380,17 @@ export function AttendeeRoster({
       ) : null}
 
       {actionable.length > 0 ? (
-        <div className="sticky bottom-4 flex items-center justify-between gap-3 rounded-2xl border border-border/70 bg-card p-3 shadow-lg">
+        <div className="sticky bottom-4 flex items-center justify-between gap-3 rounded-xl border border-border-subtle bg-card p-3 shadow-lg">
           <p className="text-sm text-muted-foreground">
             {actionable.length} {actionable.length === 1 ? "person" : "people"} selected
           </p>
           <Button onClick={openPreview} disabled={pending}>
             {pending ? (
-              <Loader2 className="size-4 animate-spin" aria-hidden />
+              <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden />
             ) : (
               <UserPlus className="size-4" aria-hidden />
             )}
-            Add to connections
+            {pending ? "Adding…" : "Add to contacts"}
           </Button>
         </div>
       ) : null}

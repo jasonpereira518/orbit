@@ -10,9 +10,9 @@ import {
 import { createPortal } from "react-dom";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
-import {
-  closenessPercentChipClass,
-} from "@/lib/closeness";
+import { CLOSENESS_TIER_TONE } from "@/components/contacts/closeness-tone";
+import { Badge } from "@/components/ui/badge";
+import { closenessTier as tierOfCloseness } from "@/lib/closeness";
 import { companyBrandColor } from "@/lib/company-brand";
 import { cn } from "@/lib/utils";
 
@@ -144,7 +144,7 @@ export function ContactAvatarPreview({
               // No enter animation: tw-animate keyframes would override the
               // cursor-position transform (card flies in from 0,0), and the
               // card should simply appear at the pointer.
-              "pointer-events-none fixed left-0 top-0 z-[100] w-64 rounded-xl border border-border/70 bg-card p-3 shadow-lg ring-1 ring-foreground/5"
+              "pointer-events-none fixed left-0 top-0 z-[100] w-64 rounded-xl border border-border-subtle bg-card p-3 shadow-lg ring-1 ring-foreground/5"
             )}
           >
             <div className="flex items-start gap-2.5">
@@ -189,14 +189,13 @@ export function ContactAvatarPreview({
                   <ClosenessTierBadge tier={contact.closenessTier} />
                 )}
                 {typeof contact.closeness === "number" && (
-                  <span
-                    className={cn(
-                      "rounded-md px-1.5 py-0.5 text-2xs font-medium tabular-nums",
-                      closenessPercentChipClass(contact.closeness)
-                    )}
+                  <Badge
+                    size="sm"
+                    tone={CLOSENESS_TIER_TONE[contact.closenessTier ?? tierOfCloseness(contact.closeness)]}
+                    className="tabular-nums"
                   >
                     {Math.round(contact.closeness * 100)}%
-                  </span>
+                  </Badge>
                 )}
               </div>
             )}

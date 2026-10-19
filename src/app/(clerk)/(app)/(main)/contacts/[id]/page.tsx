@@ -22,6 +22,7 @@ import { ContactJobMatchesSection } from "@/components/contacts/contact-job-matc
 import { ContactStatPills } from "@/components/contacts/contact-stat-pills";
 import { ContactTimeline } from "@/components/contacts/contact-timeline";
 import { Reveal } from "@/components/motion/reveal";
+import { PageShell } from "@/components/layout/page-shell";
 import { Skeleton } from "@/components/ui/skeleton";
 import { computeCloseness, formatInteractionFrequency } from "@/lib/closeness";
 import { getContactCloseness } from "@/lib/closeness-cohort";
@@ -307,7 +308,7 @@ export default async function ContactDetailPage({
   };
 
   return (
-    <div className="space-y-6 pb-8">
+    <PageShell width="full" spacing="tight">
       <RenderStamp />
       <div className="reveal-mount">
         <ContactProfileHero
@@ -420,7 +421,7 @@ export default async function ContactDetailPage({
         />
       </Suspense>
 
-      <Suspense fallback={<Skeleton className="h-40 w-full rounded-2xl" />}>
+      <Suspense fallback={<Skeleton className="h-40 w-full rounded-xl" />}>
         <StreamedFollowUp
           sendOptions={sendOptionsPromise}
           contactId={contact.id}
@@ -443,7 +444,7 @@ export default async function ContactDetailPage({
       {/* Streamed so the settings read never blocks the rest of the profile. The timeline
           needs it: whether an AI key is configured decides whether logging an interaction
           extracts a summary or just files the note as written. */}
-      <Suspense fallback={<Skeleton className="h-96 w-full rounded-2xl" />}>
+      <Suspense fallback={<Skeleton className="h-96 w-full rounded-xl" />}>
         <StreamedTimeline
           settings={settingsPromise}
           contactId={contact.id}
@@ -475,7 +476,7 @@ export default async function ContactDetailPage({
       {/* After Reminders and before Mentions: an opportunity is a commitment, like a
           reminder, rather than provenance, like a mention. Unlike mentions this section
           renders when empty — it carries an Add button, so the space earns itself. */}
-      <Suspense fallback={<Skeleton className="h-28 w-full rounded-2xl" />}>
+      <Suspense fallback={<Skeleton className="h-28 w-full rounded-xl" />}>
         <StreamedOpportunities
           data={opportunitiesPromise}
           contactId={contact.id}
@@ -510,7 +511,7 @@ export default async function ContactDetailPage({
       <Suspense fallback={null}>
         <StreamedEventsTogether contactId={contact.id} name={displayName} />
       </Suspense>
-    </div>
+    </PageShell>
   );
 }
 

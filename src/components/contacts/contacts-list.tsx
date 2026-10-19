@@ -18,7 +18,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import { CalendarClock, Trash2 } from "lucide-react";
+import { CalendarClock, Trash2, Users } from "lucide-react";
 import { DUR_MS } from "@/lib/motion";
 import { toast } from "@/lib/toast";
 import { deleteContact, listContactsPage } from "@/actions/contacts";
@@ -27,17 +27,14 @@ import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { CompanyRoleLine } from "@/components/contacts/company-role-line";
 import { ContactAvatarPreview } from "@/components/contacts/contact-preview-card";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
+import { CLOSENESS_TIER_TONE } from "@/components/contacts/closeness-tone";
+import { LinkedInGlyph } from "@/components/contacts/contact-profile-icons";
+import { badgeVariants } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { EmptyState } from "@/components/ui/empty-state";
 import { EasyFollowUp } from "@/components/follow-up/easy-follow-up";
 import { FollowUpDraftSheetLazy } from "@/components/follow-up/follow-up-draft-sheet-lazy";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   Popover,
   PopoverContent,
@@ -49,10 +46,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  closenessPercentChipClass,
-  closenessTierChipClass,
-} from "@/lib/closeness";
+import { closenessTier as tierOfCloseness } from "@/lib/closeness";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { ExampleTag } from "@/components/onboarding/example-tag";
 import { isTourExampleSource } from "@/lib/onboarding-examples/marker";
@@ -141,8 +135,8 @@ function lastTouchLabel(lastInteractionAt?: string | Date | null) {
   const d = new Date(lastInteractionAt);
   if (Number.isNaN(d.getTime())) return null;
   const days = Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
-  if (days <= 0) return "Last touch today";
-  return `Last touch ${days}d ago`;
+  if (days <= 0) return "Last interaction today";
+  return `Last interaction ${days}d ago`;
 }
 
 function overdueFollowUpLabel(nextFollowUpAt?: string | Date | null) {
@@ -185,6 +179,7 @@ export function ContactsList({
   filters,
   availableLetters: serverLetters,
   activeLetter: seekLetter,
+  filtersActive = false,
 }: {
   initialItems: ContactListItem[];
   initialCursor: string | null;
@@ -192,6 +187,11 @@ export function ContactsList({
   filters: ContactsListFilters;
   availableLetters: string[];
   activeLetter: string | null;
+  /**
+   * Whether any filter narrowed this page. Decides which empty state an empty list shows:
+   * "no contacts yet" is only true when nothing was filtered out.
+   */
+  filtersActive?: boolean;
 }) {
   const [contacts, setContacts] = useState(initialItems);
   const [cursor, setCursor] = useState(initialCursor);
@@ -421,38 +421,52 @@ export function ContactsList({
   }
 
   if (contacts.length === 0) {
-    return (
-      <div className="p-10 text-center text-muted-foreground">
-        No contacts match these filters. Clear search to see everyone, or{" "}
-        <Link href="/capture" className="text-primary underline">
-          capture notes
-        </Link>{" "}
-        /{" "}
-        <Link href="/imports" className="text-primary underline">
-          import LinkedIn
-        </Link>
-        .
-      </div>
+    // Two different empties. A brand-new account used to read "No contacts match these
+    // filters" with no filter set, which told them the list was broken rather than empty.
+    return filtersActive ? (
+      <EmptyState
+        variant="plain"
+        icon={Users}
+        title="No contacts match"
+        description="Clear the search or filters to see everyone."
+        action={
+          <Link href="/contacts" className={buttonVariants({ variant: "outline", size: "sm" })}>
+            Clear filters
+          </Link>
+        }
+      />
+    ) : (
+      <EmptyState
+        variant="plain"
+        icon={Users}
+        title="No contacts yet"
+        description="Capture notes, import a file, or add someone by hand."
+        action={
+          <Link href="/capture" className={buttonVariants()}>
+            Capture notes
+          </Link>
+        }
+      />
     );
   }
 
   return (
     <TooltipProvider>
       <>
-        <ul className="divide-y divide-border/60 overflow-hidden rounded-2xl">
+        <ul className="divide-y divide-border-subtle overflow-hidden rounded-xl">
           {sections.map((section) => (
             <li key={section.letter ?? "all"} className="list-none">
               {section.letter !== null && (
                 <div
                   id={`contact-letter-${section.letter}`}
-                  className="sticky top-0 z-10 border-b border-border/50 bg-card/95 px-4 py-1.5 backdrop-blur sm:px-5"
+                  className="sticky top-0 z-10 border-b border-border-subtle bg-card/95 px-4 py-1.5 backdrop-blur sm:px-5"
                 >
                   <p className="text-xs font-semibold tracking-wide text-muted-foreground">
                     {section.letter}
                   </p>
                 </div>
               )}
-              <ul className="divide-y divide-border/60">
+              <ul className="divide-y divide-border-subtle">
                 {section.contacts.map((c) => (
                   <ContactRow
                     key={c.id}
@@ -532,46 +546,25 @@ export function ContactsList({
         />
         )}
 
-        <Dialog
+        <ConfirmDialog
           open={confirmId !== null}
           onOpenChange={(open) => {
             if (!open) setConfirmId(null);
           }}
-        >
-          <DialogContent showCloseButton={false} className="sm:max-w-md">
-            <DialogHeader>
-              {/* Clamped: the name is interpolated straight into the title, and a
-                  10,000-character one pushed this dialog's own Cancel and Delete buttons
-                  to x=116,705px — the record became undeletable through the UI, and the
-                  only way out was to rename it shorter first. Phase 0 caps new input at
-                  200 characters, but rows written before that still have to render. */}
-              <DialogTitle className="line-clamp-2 break-words">
-                Delete {confirmContact?.fullName}?
-              </DialogTitle>
-              <DialogDescription>
-                {CONTACT_DELETE_EXPLAINER}
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter className="gap-2 sm:gap-2">
-              <Button
-                variant="outline"
-                onClick={() => setConfirmId(null)}
-                disabled={pending}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                className="delete-confirm-btn"
-                onClick={confirmDelete}
-                disabled={pending}
-              >
-                <Trash2 className="size-3.5" />
-                Delete contact
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+          tone="destructive"
+          // Clamped: the name is interpolated straight into the title, and a
+          // 10,000-character one pushed the dialog's own Cancel and Delete buttons to
+          // x=116,705px — the record became undeletable through the UI, and the only way
+          // out was to rename it shorter first. Phase 0 caps new input at 200 characters,
+          // but rows written before that still have to render.
+          title={
+            <span className="line-clamp-2 break-words">Delete {confirmContact?.fullName}?</span>
+          }
+          description={CONTACT_DELETE_EXPLAINER}
+          confirmLabel="Delete contact"
+          pendingLabel="Deleting…"
+          onConfirm={confirmDelete}
+        />
       </>
     </TooltipProvider>
   );
@@ -703,7 +696,7 @@ const ContactRow = memo(function ContactRow({
             "flex items-center gap-3 px-4 py-3.5 transition-[background-color,translate] duration-slow ease-house hover:bg-muted/40 sm:px-5",
             // New from the import the list was opened from: a light yellow
             // that fades out once the row is hovered, focused or opened.
-            marked && "bg-amber-100/45 dark:bg-amber-300/10",
+            marked && "bg-warning-surface",
             exiting && "-translate-x-8"
           )}
         >
@@ -818,7 +811,7 @@ const ContactRow = memo(function ContactRow({
                     );
                   }}
                 >
-                  <LinkedInIcon className="size-4" />
+                  <LinkedInGlyph className="size-4" />
                 </Button>
               ) : null}
 
@@ -972,7 +965,7 @@ function AlphabetScrubber({
         role="navigation"
         aria-label="Jump to letter"
         className={cn(
-          "pointer-events-auto relative flex h-[min(70vh,32rem)] w-7 cursor-ns-resize select-none flex-col items-center justify-between rounded-full border border-border/70 bg-card/95 py-3 shadow-sm backdrop-blur",
+          "pointer-events-auto relative flex h-[min(70vh,32rem)] w-7 cursor-ns-resize select-none flex-col items-center justify-between rounded-full border border-border-subtle bg-card/95 py-3 shadow-sm backdrop-blur",
           // Thinner on phones, where every pixel of width is the list's; the desktop rail
           // keeps its original size and card shape.
           "md:w-9 md:rounded-2xl md:py-2.5 md:shadow-md",
@@ -1040,12 +1033,10 @@ function ClosenessChip({
       ? `${Math.round(closeness * 100)}%`
       : `Score ${relationshipScore}`;
 
-  const chipClass =
-    typeof closeness === "number"
-      ? closenessPercentChipClass(closeness)
-      : closenessTier
-        ? closenessTierChipClass(closenessTier)
-        : "bg-muted text-muted-foreground";
+  // The same tier → tone map the profile uses, so a person reads the same in both places.
+  const tier =
+    closenessTier ?? (typeof closeness === "number" ? tierOfCloseness(closeness) : undefined);
+  const tone = tier ? CLOSENESS_TIER_TONE[tier] : "neutral";
 
   const tierHint = closenessTier ? ` (${TIER_TOOLTIP[closenessTier]})` : "";
 
@@ -1054,9 +1045,8 @@ function ClosenessChip({
       <TooltipTrigger
         type="button"
         className={cn(
-          "rounded-md px-1.5 py-0.5 text-sm font-medium tabular-nums outline-none",
-          "focus-visible:ring-2 focus-visible:ring-ring/50",
-          chipClass
+          badgeVariants({ tone }),
+          "cursor-default tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         )}
         onClick={(e) => {
           e.preventDefault();
@@ -1197,15 +1187,3 @@ function DeleteRowButton({
   );
 }
 
-function LinkedInIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden
-      className={className}
-    >
-      <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
-    </svg>
-  );
-}

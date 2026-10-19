@@ -70,12 +70,14 @@ function formatRange(startsAt: Date | null, endsAt: Date | null, timezone: strin
 const ATTENDANCE_LABEL = { online: "Online", mixed: "Hybrid" } as const;
 
 export function EventHero({ event }: { event: EventRecord }) {
-  const accent = event.themeColor ?? "#6b7280";
+  // `theme.ts` falls back to its own neutral grey when the stored colour is missing or
+  // malformed, so no literal fallback is needed here.
+  const accent = event.themeColor ?? "";
   const place = [event.venue, event.city].filter(Boolean).join(", ");
 
   return (
     <div
-      className="event-theme reveal-mount overflow-hidden rounded-2xl border border-border/70"
+      className="event-theme reveal-mount overflow-hidden rounded-xl border border-border-subtle"
       style={eventThemeVars(accent) as React.CSSProperties}
     >
       <div
@@ -130,7 +132,7 @@ export function EventHero({ event }: { event: EventRecord }) {
           {/* The host published a wall-clock time with no zone, so the time above is their
               text taken at face value. Said plainly rather than shown as false precision. */}
           {event.startsAt && !event.timezone ? (
-            <span className="text-xs opacity-70" title="The event page did not say which time zone this is in.">
+            <span className="text-xs opacity-70" title="The event page didn’t say which time zone this is in.">
               (time zone not stated)
             </span>
           ) : null}
@@ -194,7 +196,7 @@ export function EventHero({ event }: { event: EventRecord }) {
       </div>
 
       {event.description ? (
-        <p className="border-t border-border/70 px-5 py-3 text-sm leading-relaxed text-muted-foreground">
+        <p className="border-t border-border-subtle px-5 py-3 text-sm leading-relaxed text-muted-foreground">
           {event.description}
         </p>
       ) : null}

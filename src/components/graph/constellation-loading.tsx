@@ -35,7 +35,7 @@ export function ConstellationLoading({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        "relative flex w-full items-center justify-center overflow-hidden rounded-2xl bg-[#05070c]",
+        "relative flex w-full items-center justify-center overflow-hidden rounded-2xl bg-space-980",
         className
       )}
       role="status"

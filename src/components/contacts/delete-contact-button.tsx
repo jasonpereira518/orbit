@@ -6,14 +6,7 @@ import { Trash2 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { deleteContact } from "@/actions/contacts";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { cn } from "@/lib/utils";
 import { CONTACT_DELETE_EXPLAINER } from "@/lib/contact-delete-copy";
 
@@ -54,6 +47,7 @@ export function DeleteContactButton({
     <>
       <Button
         variant="outline"
+        size="sm"
         disabled={pending || leaving}
         className={cn(
           "delete-contact-btn group/trash text-destructive",
@@ -80,36 +74,16 @@ export function DeleteContactButton({
         </span>
       </Button>
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent showCloseButton={false} className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              Delete {name ?? "this contact"}?
-            </DialogTitle>
-            <DialogDescription>
-              {CONTACT_DELETE_EXPLAINER}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setOpen(false)}
-              disabled={pending}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              className="delete-confirm-btn"
-              onClick={handleDelete}
-              disabled={pending}
-            >
-              <Trash2 className="size-3.5" />
-              Delete contact
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={open}
+        onOpenChange={setOpen}
+        tone="destructive"
+        title={`Delete ${name ?? "this contact"}?`}
+        description={CONTACT_DELETE_EXPLAINER}
+        confirmLabel="Delete contact"
+        pendingLabel="Deleting…"
+        onConfirm={handleDelete}
+      />
     </>
   );
 }

@@ -82,19 +82,19 @@ export function EventActions({ event }: { event: EditableEvent }) {
   return (
     <>
       <div className="flex shrink-0 items-center gap-1">
-        <Button variant="ghost" size="xs" onClick={() => setEditing(true)}>
+        <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
           <Pencil className="size-3.5" aria-hidden />
           Edit
         </Button>
         {/* Only offered when there is a page to refresh FROM. */}
         {event.url ? (
-          <Button variant="ghost" size="xs" onClick={preview} disabled={pending}>
+          <Button variant="ghost" size="sm" onClick={preview} disabled={pending}>
             {pending ? (
-              <Loader2 className="size-3.5 animate-spin" aria-hidden />
+              <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden />
             ) : (
               <RefreshCw className="size-3.5" aria-hidden />
             )}
-            Refresh
+            {pending ? "Checking…" : "Refresh"}
           </Button>
         ) : null}
       </div>
@@ -112,10 +112,10 @@ export function EventActions({ event }: { event: EditableEvent }) {
               </DialogDescription>
             </DialogHeader>
 
-            <ul className="max-h-72 divide-y divide-border/70 overflow-y-auto rounded-xl border border-border/70">
+            <ul className="max-h-72 divide-y divide-border-subtle overflow-y-auto rounded-xl border border-border-subtle">
               {changes.map((change) => (
                 <li key={change.field} className="px-3 py-2 text-sm">
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     {change.label}
                   </p>
                   {change.from ? (
@@ -129,12 +129,14 @@ export function EventActions({ event }: { event: EditableEvent }) {
             </ul>
 
             <DialogFooter>
-              <Button variant="ghost" onClick={() => setChanges(null)} disabled={pending}>
+              <Button variant="outline" onClick={() => setChanges(null)} disabled={pending}>
                 Keep what I have
               </Button>
               <Button onClick={apply} disabled={pending}>
-                {pending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-                Apply {changes.length} {changes.length === 1 ? "change" : "changes"}
+                {pending ? <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> : null}
+                {pending
+                  ? "Applying…"
+                  : `Apply ${changes.length} ${changes.length === 1 ? "change" : "changes"}`}
               </Button>
             </DialogFooter>
           </DialogContent>

@@ -8,7 +8,14 @@
  * A server component: it renders a list and links, and needs nothing from the browser.
  */
 import { IntentLink } from "@/components/ui/intent-link";
-import { Users } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import type { RepeatPerson } from "@/lib/events/people-store";
 
 function lastSeen(date: Date | null): string | null {
@@ -22,17 +29,16 @@ export function RepeatPeoplePanel({ people }: { people: RepeatPerson[] }) {
   if (people.length === 0) return null;
 
   return (
-    <div className="rounded-2xl border border-border/70 bg-card p-5">
-      <h2 className="flex items-center gap-2 font-medium text-ink">
-        <Users className="size-4 text-muted-foreground" aria-hidden />
-        People you keep seeing
-      </h2>
-      <p className="mt-1 text-sm text-muted-foreground">
-        They were in the room more than once. The ones you have not connected yet are usually
-        the easiest introductions you will ever make.
-      </p>
-
-      <ul className="mt-4 divide-y divide-border/60">
+    <Card>
+      <CardHeader>
+        <CardTitle as="h2">People you keep seeing</CardTitle>
+        <CardDescription>
+          They were in the room more than once. The ones you haven’t connected yet are usually
+          the easiest introductions you will ever make.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+      <ul className="divide-y divide-border-subtle">
         {people.map((person) => {
           const detail = [person.title, person.company].filter(Boolean).join(" · ");
           const seen = lastSeen(person.lastTogetherAt);
@@ -56,22 +62,23 @@ export function RepeatPeoplePanel({ people }: { people: RepeatPerson[] }) {
                 ) : null}
               </div>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span className="rounded-full bg-muted px-2 py-0.5 font-medium text-ink">
+                <Badge tone="neutral" size="sm">
                   {person.eventsTogether} events
-                </span>
+                </Badge>
                 {seen ? <span>last {seen}</span> : null}
-                {/* The honest state: on a roster, not in the network. This is the row worth
+                {/* The honest state: on a roster, not in your contacts. This is the row worth
                     acting on, so it says so rather than looking like an error. */}
                 {person.connected ? null : (
-                  <span className="rounded-full border border-border/70 px-2 py-0.5">
+                  <Badge variant="outline" size="sm" className="text-muted-foreground">
                     Not a contact yet
-                  </span>
+                  </Badge>
                 )}
               </div>
             </li>
           );
         })}
       </ul>
-    </div>
+      </CardContent>
+    </Card>
   );
 }

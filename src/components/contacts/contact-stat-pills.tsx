@@ -2,11 +2,13 @@ import { formatLastTouch } from "@/lib/relative-date";
 import { ConstellationPinButton } from "@/components/contacts/constellation-pin-button";
 import { HealthSparkline } from "@/components/contacts/health-sparkline";
 import { StatPillExplainer } from "@/components/contacts/stat-pill-explainer";
-import { Badge } from "@/components/ui/badge";
 import {
-  closenessPercentChipClass,
-  type ClosenessBreakdown,
-} from "@/lib/closeness";
+  CLOSENESS_TIER_LABEL,
+  CLOSENESS_TIER_TONE,
+} from "@/components/contacts/closeness-tone";
+import { Badge } from "@/components/ui/badge";
+import { TONE } from "@/lib/tone";
+import type { ClosenessBreakdown } from "@/lib/closeness";
 import type { RelationshipHealth } from "@/lib/relationship-health";
 
 export function ContactStatPills({
@@ -23,7 +25,7 @@ export function ContactStatPills({
   /**
    * Whether an `interactions` row exists. `lastTouchAt` falls back to
    * `contacts.lastInteractionAt`, which is stamped on every create/import — so
-   * without this, an untouched LinkedIn import claims a "last touch" that never
+   * without this, an untouched LinkedIn import claims a "last interaction" that never
    * happened, right next to a timeline that says "no interactions yet".
    */
   hasLoggedInteraction: boolean;
@@ -42,8 +44,9 @@ export function ContactStatPills({
   const lastLabel = !since
     ? "No interactions yet"
     : hasLoggedInteraction
-      ? `Last touch ${since}`
-      : `Connected ${since}`;
+      ? `Last interaction ${since}`
+      : `In your contacts ${since}`;
+  const tone = CLOSENESS_TIER_TONE[closeness.tier];
 
   return (
     // `items-center` so the constellation button sits on the same baseline as the badges —
@@ -51,19 +54,19 @@ export function ContactStatPills({
     <div className="flex flex-wrap items-center gap-2">
       <StatPillExplainer
         label={`Closeness ${pct}%. Show what this means.`}
-        className={closenessPercentChipClass(closeness.closeness)}
+        className={TONE[tone].chip}
         title={`Closeness ${pct}% · how much they matter`}
         body={
           <>
             <p className="text-muted-foreground">
               Where this person sits in your network: your rating, how recently and how often
-              you&apos;re in touch, and how they fit your goals — ranked against everyone else
+              you’re in touch, and how they fit your goals — ranked against everyone else
               you know.
             </p>
-            <p className="border-t pt-2 text-muted-foreground">
+            <p className="border-t border-border-subtle pt-2 text-muted-foreground">
               {health
                 ? "Health, next to it, is how the conversation itself is going: reply speed, who writes, and recency."
-                : "It doesn't look at who writes or how fast replies come — that's Health, once there are touches to score."}
+                : "It doesn’t look at who writes or how fast replies come — that’s Health, once there are touches to score."}
             </p>
           </>
         }
@@ -71,16 +74,10 @@ export function ContactStatPills({
         Closeness {pct}%
       </StatPillExplainer>
       {health && <HealthSparkline health={health} />}
-      <Badge
-        variant="secondary"
-        className="rounded-full px-3 py-1 text-xs font-medium capitalize"
-      >
-        {closeness.tier} orbit
+      <Badge tone={tone} className="h-auto rounded-full px-3 py-1">
+        {CLOSENESS_TIER_LABEL[closeness.tier]}
       </Badge>
-      <Badge
-        variant="outline"
-        className="rounded-full px-3 py-1 text-xs font-normal text-muted-foreground"
-      >
+      <Badge variant="outline" className="h-auto rounded-full px-3 py-1 font-normal text-muted-foreground">
         {lastLabel}
       </Badge>
       {constellation && (

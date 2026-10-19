@@ -63,8 +63,8 @@ export function ContactProfileOverview({
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      <Card className="border-border/70 shadow-none lg:col-span-2">
-        <CardHeader className="border-b border-border/50">
+      <Card className="lg:col-span-2">
+        <CardHeader className="border-b border-border-subtle">
           <CardTitle as="h2">Who they are</CardTitle>
           <CardAction>
             <Button
@@ -88,14 +88,14 @@ export function ContactProfileOverview({
                 })
               }
             >
-              <RefreshCw className={`size-3 ${pending ? "animate-spin" : ""}`} />
+              <RefreshCw className={pending ? "size-3 motion-safe:animate-spin" : "size-3"} />
               {pending ? "Updating…" : aiSummary ? "Refresh" : "Generate"}
             </Button>
           </CardAction>
         </CardHeader>
         <CardContent>
           {aiSummary?.trim() ? (
-            <p className="max-w-3xl text-[15px] leading-relaxed text-primary/90">
+            <p className="max-w-3xl text-base leading-relaxed text-primary/90">
               {aiSummary}
             </p>
           ) : (
@@ -136,7 +136,7 @@ export function ContactProfileOverview({
 
 
       {industry?.trim() ? (
-        <Card className="border-border/70 shadow-none">
+        <Card>
           <CardHeader>
             <CardTitle as="h2">Industry</CardTitle>
           </CardHeader>
@@ -147,14 +147,14 @@ export function ContactProfileOverview({
       ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:col-span-2">
-        <Card className="border-border/70 shadow-none">
+        <Card>
           <CardHeader>
             <CardTitle as="h2">Closeness</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex items-start gap-4">
               <div
-                className="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-primary/8 text-primary"
+                className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-primary/8 text-primary"
                 aria-hidden
               >
                 <Orbit className="size-8 stroke-[1.5]" />
@@ -196,11 +196,11 @@ export function ContactProfileOverview({
                           interactions yet" is the kind of contradiction that costs
                           trust in every other number on the page. */}
                       <p className="mt-0.5 text-sm text-ink">
-                        No interactions logged
+                        No interactions yet
                       </p>
                       <p className="mt-0.5 text-sm text-muted-foreground">
                         {lastTouchAt
-                          ? `In your network ${recencyLabel}`
+                          ? `In your contacts ${recencyLabel}`
                           : "Log an interaction to start the history"}
                       </p>
                     </>
@@ -212,14 +212,14 @@ export function ContactProfileOverview({
         </Card>
 
         {howMetSummary ? (
-          <Card className="border-border/70 shadow-none">
+          <Card>
             <CardHeader>
               <CardTitle as="h2">How you met</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-start gap-4">
                 <div
-                  className="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-primary/8 text-primary"
+                  className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-primary/8 text-primary"
                   aria-hidden
                 >
                   <Handshake className="size-8 stroke-[1.5]" />

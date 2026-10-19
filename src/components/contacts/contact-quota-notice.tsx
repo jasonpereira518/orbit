@@ -38,7 +38,7 @@ export function ContactQuotaNotice({
         "flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3",
         atLimit
           ? "border-primary/50 bg-primary/5"
-          : "border-border/70 bg-muted/40"
+          : "border-border-subtle bg-surface-inset"
       )}
     >
       <p className="text-sm">

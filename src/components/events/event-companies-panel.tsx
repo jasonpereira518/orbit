@@ -15,7 +15,17 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { IntentLink } from "@/components/ui/intent-link";
 import { Building2, Loader2, Plus, Star, X } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
@@ -86,25 +96,22 @@ export function EventCompaniesPanel({
   }
 
   return (
-    <div className="rounded-2xl border border-border/70 bg-card p-5">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h2 className="flex items-center gap-2 font-medium text-ink">
-            <Building2 className="size-4 text-muted-foreground" aria-hidden />
-            Companies here
-          </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Who was in the room as an organisation — and who you already know there.
-          </p>
-        </div>
-        <Button variant="outline" size="sm" onClick={() => setOpen((v) => !v)}>
-          <Plus className="size-4" aria-hidden />
-          Paste employer list
-        </Button>
-      </div>
-
+    <Card>
+      <CardHeader>
+        <CardTitle as="h2">Companies here</CardTitle>
+        <CardDescription>
+          Who was in the room as an organisation — and who you already know there.
+        </CardDescription>
+        <CardAction>
+          <Button variant="outline" size="sm" onClick={() => setOpen((v) => !v)}>
+            <Plus className="size-4" aria-hidden />
+            Paste employer list
+          </Button>
+        </CardAction>
+      </CardHeader>
+      <CardContent>
       {open ? (
-        <div className="mt-4 space-y-2">
+        <div className="mb-4 space-y-2">
           <Textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
@@ -117,8 +124,8 @@ export function EventCompaniesPanel({
           </p>
           <div className="flex gap-2">
             <Button onClick={save} disabled={pending || !text.trim()}>
-              {pending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-              Add companies
+              {pending ? <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> : null}
+              {pending ? "Adding…" : "Add companies"}
             </Button>
             <Button variant="ghost" onClick={() => setOpen(false)} disabled={pending}>
               Cancel
@@ -128,12 +135,14 @@ export function EventCompaniesPanel({
       ) : null}
 
       {rows.length === 0 ? (
-        <p className="mt-4 rounded-xl border border-dashed border-border/70 px-4 py-6 text-center text-sm text-muted-foreground">
-          No companies yet. Paste the exhibitor list from a career fair, or import a roster —
-          people&rsquo;s employers show up here on their own.
-        </p>
+        <EmptyState
+          size="sm"
+          icon={Building2}
+          title="No companies yet"
+          description="Paste the exhibitor list from a career fair, or import a roster — people’s employers show up here on their own."
+        />
       ) : (
-        <ul className="mt-4 divide-y divide-border/60">
+        <ul className="divide-y divide-border-subtle">
           {rows.map((row) => (
             <li key={row.id ?? `roster:${row.name}`} className="py-3">
               <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
@@ -141,14 +150,14 @@ export function EventCompaniesPanel({
                   <span className="truncate text-sm font-medium text-ink">{row.name}</span>
                   {row.targetPriority ? (
                     // The reason to look at this row first.
-                    <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-2xs font-medium text-primary">
-                      <Star className="size-3" aria-hidden />
+                    <Badge tone="accent" size="sm">
+                      <Star aria-hidden />
                       Target
-                    </span>
+                    </Badge>
                   ) : null}
-                  <span className="rounded-full border border-border/70 px-2 py-0.5 text-2xs text-muted-foreground">
+                  <Badge variant="outline" size="sm" className="text-muted-foreground">
                     {ROLE_LABEL[row.role]}
-                  </span>
+                  </Badge>
                 </div>
                 <div className="flex items-center gap-1">
                   {row.targetPriority ? null : (
@@ -210,6 +219,7 @@ export function EventCompaniesPanel({
           ))}
         </ul>
       )}
-    </div>
+      </CardContent>
+    </Card>
   );
 }

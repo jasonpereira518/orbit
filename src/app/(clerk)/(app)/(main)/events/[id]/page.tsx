@@ -1,8 +1,11 @@
 import { Suspense } from "react";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { ArrowLeft } from "lucide-react";
+import { IntentLink } from "@/components/ui/intent-link";
+import { PageShell } from "@/components/layout/page-shell";
+import { PageSection } from "@/components/layout/page-header";
+import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EventHero } from "@/components/events/event-hero";
 import { AttendeeRoster, type RosterMatch } from "@/components/events/attendee-roster";
@@ -52,10 +55,12 @@ async function Roster({
   // opposite facts and must not share a screen.
   if (!result.ok) {
     return (
-      <p className="rounded-xl border border-border/70 bg-card px-4 py-3 text-sm text-muted-foreground">
-        The guest list could not be loaded just now. Refresh to try again — nothing has been
-        lost.
-      </p>
+      <Card size="sm">
+        <CardContent className="text-sm text-muted-foreground">
+          The guest list couldn’t be loaded just now. Refresh to try again — nothing has been
+          lost.
+        </CardContent>
+      </Card>
     );
   }
 
@@ -115,23 +120,28 @@ export default async function EventDetailPage({
   if (!event) notFound();
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 pb-8">
+    <PageShell width="wide" spacing="tight">
       <RenderStamp />
       {/* A static destination rather than `router.back()`: an event page is a deep link
-          people reach from a fresh tab or a search result, where going back leaves the app. */}
-      <Link
+          people reach from a fresh tab or a search result, where going back leaves the app.
+          The hero is this page's h1, so the back link stands alone in `PageHeader`'s style
+          rather than inside a second header. */}
+      <IntentLink
         href="/events"
-        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
+        className="inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
-        <ArrowLeft className="size-3" aria-hidden /> Back to events
-      </Link>
+        <ArrowLeft className="size-3.5" aria-hidden />
+        Back to events
+      </IntentLink>
 
       <EventHero event={event} />
 
       {event.enrichError ? (
-        <p className="rounded-xl border border-border/70 bg-card px-4 py-3 text-sm text-muted-foreground">
-          Orbit couldn&apos;t read that event page: {event.enrichError}
-        </p>
+        <Card size="sm">
+          <CardContent className="text-sm text-muted-foreground">
+            Orbit couldn’t read that event page: {event.enrichError}
+          </CardContent>
+        </Card>
       ) : null}
 
       <div className="reveal-mount" style={{ "--reveal-delay": "60ms" } as React.CSSProperties}>
@@ -149,24 +159,23 @@ export default async function EventDetailPage({
       {/* Companies before the roster: at a career fair the booth list IS the event, and at a
           conference it is the shape that makes four hundred names navigable. */}
       <div className="reveal-mount" style={{ "--reveal-delay": "90ms" } as React.CSSProperties}>
-        <Suspense fallback={<Skeleton className="h-40 w-full rounded-2xl" />}>
+        <Suspense fallback={<Skeleton className="h-40 w-full rounded-xl" />}>
           <Companies eventId={event.id} />
         </Suspense>
       </div>
 
       <div className="reveal-mount" style={{ "--reveal-delay": "120ms" } as React.CSSProperties}>
-        <h2 className="mb-3 font-heading text-xl text-ink">
-          Who was there
-        </h2>
-        <Suspense fallback={<Skeleton className="h-64 w-full rounded-2xl" />}>
-          <Roster
-            eventId={event.id}
-            rosterPromise={rosterPromise}
-            matchesPromise={matchesPromise}
-            historyPromise={historyPromise}
-          />
-        </Suspense>
+        <PageSection title="Who was there">
+          <Suspense fallback={<Skeleton className="h-64 w-full rounded-xl" />}>
+            <Roster
+              eventId={event.id}
+              rosterPromise={rosterPromise}
+              matchesPromise={matchesPromise}
+              historyPromise={historyPromise}
+            />
+          </Suspense>
+        </PageSection>
       </div>
-    </div>
+    </PageShell>
   );
 }

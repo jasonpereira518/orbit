@@ -142,7 +142,7 @@ export function ConstellationScopeToggle({ className }: { className?: string }) 
             {/* The spinner replaces the side being travelled TO, so the wait is attached to
                 the thing being waited for rather than floating over the whole control. */}
             {state.loading ? (
-              <Loader2 className={cn(ICON, "animate-spin")} />
+              <Loader2 className={cn(ICON, "motion-safe:animate-spin")} />
             ) : (
               <Users className={ICON} />
             )}

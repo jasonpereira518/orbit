@@ -1,13 +1,13 @@
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { Suspense } from "react";
 import type { Metadata } from "next";
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 import { listDuplicates, listRecentMerges } from "@/actions/duplicates";
 import { requireUserId } from "@/lib/auth";
 import { mergeConfidentDuplicates } from "@/lib/duplicate-sweep";
 import { openEngines } from "@/lib/decisions/engine";
 import { DuplicateReviewList } from "@/components/contacts/duplicate-review-list";
+import { PageHeader } from "@/components/layout/page-header";
+import { PageShell } from "@/components/layout/page-shell";
 import { DuplicatesListSkeleton } from "@/components/loading/page-skeletons";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
@@ -38,30 +38,19 @@ export default async function DuplicatesPage() {
   const userId = await requireUserId();
 
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-6">
+    <PageShell>
       <RenderStamp />
-      <div className="space-y-2">
-        <Link
-          href="/contacts"
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground underline-offset-4 hover:underline"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
-          Contacts
-        </Link>
-        <h1 className="font-heading text-2xl">Duplicates</h1>
-        <p className="text-sm text-muted-foreground">
-          Orbit merges duplicates for you whenever it can tell they are the same person.
-          These are the ones it wasn&rsquo;t sure about. Merging keeps everything: notes,
-          interactions, reminders and tags all move to the record you keep, and the other one
-          is hidden rather than deleted. Every merge can be undone.
-        </p>
-      </div>
+      <PageHeader
+        title="Duplicates"
+        back={{ href: "/contacts", label: "Contacts" }}
+        description="Orbit merges duplicates for you whenever it can tell they are the same person. These are the ones it wasn’t sure about. Merging keeps everything: notes, interactions, reminders and tags all move to the record you keep, and the other one is hidden rather than deleted. Every merge can be undone."
+      />
 
       {/* The header is static; only the list waits on the sweep and the reads. */}
       <Suspense fallback={<DuplicatesListSkeleton />}>
         <DuplicatesList userId={userId} />
       </Suspense>
-    </div>
+    </PageShell>
   );
 }
 

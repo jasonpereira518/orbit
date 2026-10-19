@@ -9,6 +9,8 @@ import {
   CONSTELLATION_STAGE_HEIGHT,
 } from "@/components/graph/constellation-loading";
 import { NetworkGraphLazy } from "@/components/graph/network-graph-lazy";
+import { PageHeader } from "@/components/layout/page-header";
+import { PageShell } from "@/components/layout/page-shell";
 import { STAGE_GROUND } from "@/lib/graph/stage-layers";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
@@ -22,35 +24,32 @@ export default async function GraphPage() {
   if (gate) return gate;
 
   return (
-    <div className="-mx-1 space-y-3 overflow-hidden md:-mx-2">
+    // The shell's rhythm is overridden on purpose: the stage's height
+    // (CONSTELLATION_STAGE_HEIGHT) is sized for a 12px gap under the header, and the
+    // negative margins let the sky run a little past the content column.
+    <PageShell width="full" className="-mx-1 space-y-3 overflow-hidden md:-mx-2">
       <RenderStamp />
       {/*
-        The scope toggle is here, in the header, rather than over the canvas: the canvas is
-        where the stars are, so anything sitting on it is either covering the network or
-        getting out of the way of it.
+        The scope toggle is here, in the header's actions, rather than over the canvas: the
+        canvas is where the stars are, so anything sitting on it is either covering the
+        network or getting out of the way of it.
 
-        `items-end` sits it at the FOOT of the header, immediately above the chart's top-right
-        corner. Aligned to the top instead it landed level with the app's notification bell —
-        near enough to read as a third piece of app chrome, when it is a control for this one
-        chart and belongs next to it.
+        The description is desktop only. On a phone these lines cost the chart ~62px of
+        height, and the Key in the chart's corner explains the same picture on demand. The
+        stage height below `md` (CONSTELLATION_STAGE_HEIGHT) is sized for its absence.
       */}
-      <div className="flex shrink-0 items-end justify-between gap-3 px-1">
-        <div>
-          <p className="text-2xs font-medium uppercase tracking-[0.2em] text-primary">
-            Star chart
-          </p>
-          <h1 className="mt-0.5 font-heading text-2xl text-ink md:text-3xl">
-            Constellation
-          </h1>
-          {/* Desktop only. On a phone these lines cost the chart ~62px of height, and the
-              Key in the chart's corner explains the same picture on demand. The stage
-              height below `md` (CONSTELLATION_STAGE_HEIGHT) is sized for its absence. */}
-          <p className="mt-0.5 hidden max-w-xl text-sm text-muted-foreground md:block">
-            You are the sun. Companies and schools form constellations around
-            you — each figure traced by its own people.
-          </p>
-        </div>
-        <ConstellationScopeToggle className="mb-0.5 shrink-0" />
+      <div className="px-1">
+        <PageHeader
+          eyebrow="Star chart"
+          title="Constellation"
+          description={
+            <span className="hidden md:inline">
+              You are the sun. Companies and schools form constellations around you — each
+              figure traced by its own people.
+            </span>
+          }
+          actions={<ConstellationScopeToggle className="shrink-0" />}
+        />
       </div>
       {/*
         The intro sits OUTSIDE the boundary so it outlives every phase swap beneath it — the
@@ -78,7 +77,7 @@ export default async function GraphPage() {
           <GraphIsland />
         </Suspense>
       </div>
-    </div>
+    </PageShell>
   );
 }
 

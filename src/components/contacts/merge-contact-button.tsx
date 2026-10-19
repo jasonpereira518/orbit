@@ -15,7 +15,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Merge, Search } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -73,7 +73,7 @@ export function MergeContactButton({ id, name }: { id: string; name: string }) {
     <>
       {/* This dialog has no DialogTrigger: the ui/dialog wrapper does not re-export one. */}
       <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
-        <Merge className="h-4 w-4" aria-hidden />
+        <Merge className="size-4" aria-hidden />
         Merge into…
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
@@ -91,7 +91,7 @@ export function MergeContactButton({ id, name }: { id: string; name: string }) {
           <div className="space-y-3">
             <div className="relative">
               <Search
-                className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
                 aria-hidden
               />
               <Input

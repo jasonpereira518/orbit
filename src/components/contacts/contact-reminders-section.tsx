@@ -3,16 +3,21 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
-import { Pencil } from "lucide-react";
+import { BellRing, Pencil } from "lucide-react";
+import Link from "next/link";
 import { toast } from "@/lib/toast";
 import { updateReminder } from "@/actions/reminders";
-import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Card,
+  CardAction,
   CardContent,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import type { Tone } from "@/lib/tone";
 import {
   Dialog,
   DialogContent,
@@ -31,6 +36,17 @@ type ContactReminder = {
   status: string;
   dueDate: Date | string | null;
 };
+
+/** The stored status, as a word a person would use, and the tone it is drawn in. */
+const STATUS: Record<string, { label: string; tone: Tone }> = {
+  pending: { label: "Open", tone: "info" },
+  done: { label: "Done", tone: "success" },
+  snoozed: { label: "Snoozed", tone: "neutral" },
+};
+
+function statusOf(status: string) {
+  return STATUS[status] ?? { label: status.charAt(0).toUpperCase() + status.slice(1), tone: "neutral" as Tone };
+}
 
 export function ContactRemindersSection({
   reminders,
@@ -68,18 +84,31 @@ export function ContactRemindersSection({
 
   return (
     <>
-      <Card className="border-border/70 shadow-none">
+      <Card>
         <CardHeader>
           <CardTitle as="h2">Reminders</CardTitle>
+          <CardAction>
+            <Link href="/reminders" className={buttonVariants({ variant: "outline", size: "sm" })}>
+              All reminders
+            </Link>
+          </CardAction>
         </CardHeader>
         <CardContent className="space-y-3">
           {reminders.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No reminders.</p>
+            <EmptyState
+              variant="plain"
+              size="sm"
+              icon={BellRing}
+              title="No reminders yet"
+              description="Schedule a follow-up and it will show up here."
+            />
           ) : (
-            reminders.map((r) => (
+            reminders.map((r) => {
+              const status = statusOf(r.status);
+              return (
               <div
                 key={r.id}
-                className="flex items-start gap-2 rounded-xl border border-border/60 p-3"
+                className="flex items-start gap-2 rounded-xl border border-border-subtle p-3"
               >
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-ink">{r.title}</p>
@@ -88,11 +117,11 @@ export function ContactRemindersSection({
                       {r.description}
                     </p>
                   ) : null}
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    {r.status}
-                    {r.dueDate
-                      ? ` · due ${format(new Date(r.dueDate), "MMM d")}`
-                      : ""}
+                  <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                    <Badge tone={status.tone} size="sm">
+                      {status.label}
+                    </Badge>
+                    {r.dueDate ? <span>Due {format(new Date(r.dueDate), "MMM d")}</span> : null}
                   </p>
                 </div>
                 <Button
@@ -106,7 +135,8 @@ export function ContactRemindersSection({
                   <Pencil className="size-3.5" />
                 </Button>
               </div>
-            ))
+              );
+            })
           )}
         </CardContent>
       </Card>

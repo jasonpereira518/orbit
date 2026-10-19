@@ -54,7 +54,7 @@ export function DismissEventButton({
       aria-label={hidden ? `Restore ${title}` : `Hide ${title} — not mine`}
     >
       {pending ? (
-        <Loader2 className="size-3 animate-spin" aria-hidden />
+        <Loader2 className="size-3 motion-safe:animate-spin" aria-hidden />
       ) : hidden ? (
         <Undo2 className="size-3" aria-hidden />
       ) : (

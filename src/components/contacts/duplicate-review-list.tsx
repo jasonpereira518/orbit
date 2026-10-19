@@ -3,11 +3,13 @@
 import { useState, useTransition } from "react";
 import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Check, Undo2, X } from "lucide-react";
-import { toast } from "sonner";
+import { ArrowRight, Check, Copy, Undo2, X } from "lucide-react";
+import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { PageSection } from "@/components/layout/page-header";
 import {
   dismissDuplicatePair,
   mergeDuplicatePair,
@@ -50,7 +52,7 @@ function Side({
         "flex-1 rounded-lg border p-3 text-left transition-colors",
         selected
           ? "border-primary bg-primary/5"
-          : "border-border/60 hover:border-border hover:bg-muted/40"
+          : "border-border-subtle hover:border-border hover:bg-muted/40"
       )}
     >
       <div className="flex items-center justify-between gap-2">
@@ -140,9 +142,9 @@ function PairCard({ pair }: { pair: DuplicatePair }) {
     });
 
   return (
-    <Card className="group/card" data-size="sm">
-      <CardHeader className="pb-2">
-        <CardTitle as="h3" className="flex items-center gap-2 text-sm">
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle as="h3" className="flex items-center gap-2">
           {pair.reason}
           {!pair.certain ? (
             <Badge variant="outline" className="font-normal">
@@ -151,7 +153,7 @@ function PairCard({ pair }: { pair: DuplicatePair }) {
           ) : null}
         </CardTitle>
         {decisionHint(pair.decision) ? (
-          <p className="text-xs text-muted-foreground">{decisionHint(pair.decision)}</p>
+          <CardDescription>{decisionHint(pair.decision)}</CardDescription>
         ) : null}
       </CardHeader>
       <CardContent className="space-y-3">
@@ -163,7 +165,7 @@ function PairCard({ pair }: { pair: DuplicatePair }) {
             onSelect={() => setKeepId(pair.keep.id)}
           />
           <div className="flex items-center justify-center px-1 text-muted-foreground">
-            <ArrowRight className="h-4 w-4 rotate-90 sm:rotate-0" aria-hidden />
+            <ArrowRight className="size-4 rotate-90 sm:rotate-0" aria-hidden />
           </div>
           <Side
             contact={pair.merge}
@@ -174,12 +176,12 @@ function PairCard({ pair }: { pair: DuplicatePair }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" onClick={onMerge} disabled={pending}>
-            <Check className="h-4 w-4" aria-hidden />
+            <Check className="size-4" aria-hidden />
             Merge into {keep.fullName}
           </Button>
           {!pair.certain ? (
             <Button size="sm" variant="ghost" onClick={onDismiss} disabled={pending}>
-              <X className="h-4 w-4" aria-hidden />
+              <X className="size-4" aria-hidden />
               Not the same person
             </Button>
           ) : null}
@@ -221,50 +223,38 @@ export function DuplicateReviewList({
   return (
     <div className="space-y-8">
       {nothingToDo ? (
-        <Card>
-          <CardContent className="py-10 text-center">
-            <p className="font-heading text-base">Nothing to review</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Duplicates are merged automatically whenever Orbit can tell two records are the
-              same person. Only genuinely ambiguous pairs land here.
-            </p>
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={Copy}
+          title="Nothing to review"
+          description="Duplicates are merged automatically whenever Orbit can tell two records are the same person. Only genuinely ambiguous pairs land here."
+        />
       ) : null}
 
       {proposed.length > 0 ? (
-        <section className="space-y-3">
-          <div>
-            <h2 className="font-heading text-lg">Possibly the same person</h2>
-            <p className="text-sm text-muted-foreground">
-              These share a name and nothing else, which two different people can do — so
-              Orbit left them alone rather than guessing.
-            </p>
-          </div>
+        <PageSection
+          title="Possibly the same person"
+          description="These share a name and nothing else, which two different people can do — so Orbit left them alone rather than guessing."
+        >
           <div className="space-y-3">
             {proposed.map((pair) => (
               <PairCard key={`${pair.keep.id}:${pair.merge.id}`} pair={pair} />
             ))}
           </div>
-        </section>
+        </PageSection>
       ) : null}
 
       {recentMerges.length > 0 ? (
-        <section className="space-y-3">
-          <div>
-            <h2 className="font-heading text-lg">Recently merged</h2>
-            <p className="text-sm text-muted-foreground">
-              Nothing is deleted by a merge. Undo restores the contact and everything that
-              moved with it.
-            </p>
-          </div>
-          <ul className="divide-y divide-border/60 rounded-lg border border-border/60">
+        <PageSection
+          title="Recently merged"
+          description="Nothing is deleted by a merge. Undo restores the contact and everything that moved with it."
+        >
+          <ul className="divide-y divide-border-subtle rounded-xl border border-border-subtle bg-card">
             {recentMerges.map((merge) => (
               <li key={merge.id} className="flex items-center gap-3 p-3">
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm">
                     <span className="text-muted-foreground">{merge.loserName ?? "A contact"}</span>
-                    <ArrowRight className="mx-1.5 inline h-3 w-3" aria-hidden />
+                    <ArrowRight className="mx-1.5 inline size-3" aria-hidden />
                     <IntentLink
                       href={`/contacts/${merge.winnerId}`}
                       className="font-medium underline-offset-4 hover:underline"
@@ -286,13 +276,13 @@ export function DuplicateReviewList({
                   onClick={() => onUndo(merge.id)}
                   disabled={pending}
                 >
-                  <Undo2 className="h-4 w-4" aria-hidden />
+                  <Undo2 className="size-4" aria-hidden />
                   Undo
                 </Button>
               </li>
             ))}
           </ul>
-        </section>
+        </PageSection>
       ) : null}
     </div>
   );
