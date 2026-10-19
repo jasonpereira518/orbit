@@ -26,6 +26,7 @@ import { DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
 import { completeReminder, snoozeReminder } from "@/lib/reminders";
 import { UserFacingError } from "@/lib/errors";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
+import { EMAIL_CHANGE_NOT_APPLIED, updateFieldsForCommit } from "@/lib/chat-proposed-actions";
 import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
 
 type ClaimOk = { ok: true; actions: StoredProposedAction[]; index: number; action: StoredProposedAction };
@@ -162,7 +163,10 @@ export async function commitProposedAction(messageId: string, actionId: string):
       revalidatePathIfRequestScoped(`/contacts/${args.contactId}`);
     } else if (args.kind === "update_contact") {
       // Scoped by userId inside; the id was on the allowlist when the answer was written.
-      await updateContactForUser(userId, args.contactId, args.fields, { skipRevalidate: true });
+      // A legacy proposal's `email` is never applied (audit M-10).
+      const fields = updateFieldsForCommit(args.fields);
+      if (!fields) throw new UserFacingError(EMAIL_CHANGE_NOT_APPLIED);
+      await updateContactForUser(userId, args.contactId, fields, { skipRevalidate: true });
       resultId = args.contactId;
       revalidatePathIfRequestScoped(`/contacts/${args.contactId}`);
     } else if (args.kind === "create_contact") {

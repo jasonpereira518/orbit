@@ -65,17 +65,23 @@ export async function refineDraft(
   const nonce = randomBytes(6).toString("hex");
   const prefs = renderWritingPreferences(input.writingInstructions);
   let timer: ReturnType<typeof setTimeout> | undefined;
+  // The timeout aborts the request itself, not just the wait for it (audit L-15).
+  const controller = new AbortController();
   try {
     const content = await Promise.race([
       completeFn(userId, {
         operation: "chat.refine",
         temperature: 0.4,
         maxOutputTokens: 1200,
+        signal: controller.signal,
         system: systemPrompt(input.kind, nonce),
         user: `<<<DRAFT_${nonce}\n${original}\nDRAFT_${nonce}${prefs ? `\n\n${prefs}` : ""}`,
       }),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("refine timeout")), REFINE_TIMEOUT_MS);
+        timer = setTimeout(() => {
+          controller.abort(new Error("refine timeout"));
+          reject(new Error("refine timeout"));
+        }, REFINE_TIMEOUT_MS);
       }),
     ]);
     const parsed = parseAiJson<{ draft?: unknown } | null>(content);

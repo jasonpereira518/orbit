@@ -1,5 +1,6 @@
-import { completeJson } from "@/lib/ai";
+import { completeJson, parseAiJson } from "@/lib/ai";
 import { fenceUntrusted } from "@/lib/ai-security";
+import { guardDraftOutput } from "@/lib/draft-output";
 import { senderProfileBlock } from "@/lib/sender-profile";
 import { loadSenderBio } from "@/lib/sender-profile-server";
 import { withWritingPreferences } from "@/lib/writing-instructions";
@@ -106,17 +107,18 @@ export async function generateOutreachDraft(
   const step = input.stepIndex ?? 0;
   const stepBlock =
     step > 0
-      ? `This is follow-up #${step}. Reference the prior note lightly; do not repeat it. Prior message:\n${input.previousBody || "(none)"}`
+      ? `This is follow-up #${step}. Reference the prior note lightly; do not repeat it. Prior message:\n${
+          // The prior draft may have been edited, or written from a prospect row someone else
+          // shaped — data to build on, never instructions (audit M-11).
+          input.previousBody ? fenceUntrusted("PRIOR", input.previousBody) : "(none)"
+        }`
       : "This is the first touch.";
 
   const audienceBlock = input.audienceQuery?.trim()
     ? `Audience / ICP: ${input.audienceQuery.trim()}`
     : "";
 
-  const content = await completeJson(userId, {
-    operation: "outreach.draft",
-    temperature: 0.55,
-    system: `You write personalized outreach optimized for a successful reply.
+  const system = `You write personalized outreach optimized for a successful reply.
 Primary campaign intent (must drive the message): ${input.messageIntent}
 ${audienceBlock}
 ${replyCtaGuidance(input.replyCta)}
@@ -132,7 +134,12 @@ Critical rules:
 - Prefer specificity over length. Avoid spammy language, fake familiarity, and exaggerated claims.
 - Never leave placeholders like [My Name] or [Your Name].
 - Do not use identical phrasing across people — vary openers and hooks.
-Return JSON: { "subject": string|null, "body": string }`,
+Return JSON: { "subject": string|null, "body": string }`;
+
+  const content = await completeJson(userId, {
+    operation: "outreach.draft",
+    temperature: 0.55,
+    system,
     user: `${withWritingPreferences(goalsBlock, input.writingInstructions)}
 ${senderBlock ? `${senderBlock}\n` : ""}
 Prospect:
@@ -142,13 +149,14 @@ ${stepBlock}
 
 ${input.variationHint ? `Variation hint: ${input.variationHint}` : ""}
 
-${input.templateSeed ? `Template seed:\n${input.templateSeed}` : ""}`,
+${input.templateSeed ? `Template seed (a starting point for structure and wording):\n${fenceUntrusted("TEMPLATE", input.templateSeed)}` : ""}`,
   });
 
-  const parsed = JSON.parse(content) as GeneratedDraft;
+  // Schema-checked and scrubbed before anyone can send it (audit M-11).
+  const draft = guardDraftOutput(parseAiJson(content), { userId, surface: "outreach.draft", system });
   return {
-    subject: scrubPlaceholders(parsed.subject?.trim() || "") || null,
-    body: scrubPlaceholders(parsed.body?.trim() || ""),
+    subject: scrubPlaceholders(draft.subject?.trim() || "") || null,
+    body: scrubPlaceholders(draft.body.trim()),
   };
 }
 

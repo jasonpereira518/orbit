@@ -42,7 +42,8 @@ const RawShape = z.discriminatedUnion("kind", [
     title: z.string().nullish(),
     company: z.string().nullish(),
     location: z.string().nullish(),
-    email: z.string().nullish(),
+    // No `email`: see `ProposedContactUpdate`. An `email` key the model sends anyway is
+    // stripped by zod's default object parsing, never stored.
     how_met: z.string().nullish(),
   }),
   z.object({
@@ -63,6 +64,37 @@ const RawShape = z.discriminatedUnion("kind", [
  * that silently wipes someone's notes is not one a person can judge at a glance.
  */
 export type ProposedContactFields = Partial<Record<"title" | "company" | "location" | "email" | "howMet", string>>;
+
+/**
+ * What a chat `update_contact` proposal may change: no `email` (audit M-10). One-click sends
+ * resolve their recipient from `contact.email`, so a hostile note that steered the model into
+ * proposing a "corrected" address would, after a single approval, redirect every later send.
+ * MCP's `update_contact` has no email field for the same reason; a person changes an email on
+ * the contact page. (`create_contact` keeps `email`: a brand-new contact has no send history
+ * to hijack, and the confirm card names the address.)
+ *
+ * The stored type stays `ProposedContactFields` because rows written before this change may
+ * still carry `email`; `updateFieldsForCommit` is what drops it at commit time.
+ */
+export type ProposedContactUpdate = Omit<ProposedContactFields, "email">;
+
+/**
+ * The fields a stored `update_contact` proposal may actually write. Older rows may carry an
+ * `email` the model proposed before M-10; it is dropped here, never applied. Null when
+ * nothing else is left to change, so the caller can refuse with a clear message rather than
+ * run an empty update.
+ */
+export function updateFieldsForCommit(fields: ProposedContactFields): ProposedContactUpdate | null {
+  const out: ProposedContactUpdate = {};
+  for (const key of ["title", "company", "location", "howMet"] as const) {
+    const value = fields[key];
+    if (typeof value === "string" && value.trim()) out[key] = value;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+export const EMAIL_CHANGE_NOT_APPLIED =
+  "Email changes from chat aren’t applied — edit the contact to change an email.";
 
 export type ProposedActionArgs =
   | { kind: "log_interaction"; contactId: string; text: string }
@@ -118,7 +150,10 @@ const FIELD_LABELS: Record<keyof ProposedContactFields, string> = {
 };
 
 /** Each field the model offered, cleaned; a bad email is dropped, never stored half-valid. */
-function contactFields(p: { title?: string | null; company?: string | null; location?: string | null; email?: string | null; how_met?: string | null }): ProposedContactFields {
+function contactFields(
+  p: { title?: string | null; company?: string | null; location?: string | null; email?: string | null; how_met?: string | null },
+  allowEmail: boolean
+): ProposedContactFields {
   const out: ProposedContactFields = {};
   const set = (key: keyof ProposedContactFields, raw: string | null | undefined, max: number) => {
     const clean = raw ? sanitizeAgentText(raw).slice(0, max).trim() : "";
@@ -128,7 +163,7 @@ function contactFields(p: { title?: string | null; company?: string | null; loca
   set("company", p.company, 200);
   set("location", p.location, 200);
   set("howMet", p.how_met, 500);
-  if (p.email && z.string().email().safeParse(p.email.trim()).success) out.email = p.email.trim();
+  if (allowEmail && p.email && z.string().email().safeParse(p.email.trim()).success) out.email = p.email.trim();
   return out;
 }
 
@@ -212,13 +247,13 @@ export function validateProposedActions(
       args = { kind: "schedule_follow_up", contactId: p.contact_id, days: clampDays(p.days) };
     } else if (p.kind === "update_contact") {
       if (!allowedContacts.has(p.contact_id)) continue;
-      const fields = contactFields(p);
+      const fields = contactFields(p, false);
       if (!Object.keys(fields).length) continue;
       args = { kind: "update_contact", contactId: p.contact_id, fields };
     } else if (p.kind === "create_contact") {
       const fullName = sanitizeAgentText(p.full_name).slice(0, 200).trim();
       if (!fullName) continue;
-      args = { kind: "create_contact", fullName, fields: contactFields({ ...p, location: null }) };
+      args = { kind: "create_contact", fullName, fields: contactFields({ ...p, location: null }, true) };
     } else if (p.kind === "complete_reminder") {
       if (!reminders.has(p.reminder_id)) continue;
       args = { kind: "complete_reminder", reminderId: p.reminder_id };

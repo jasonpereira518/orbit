@@ -462,6 +462,16 @@ function systemPrompt(input: AnalyzeInput, part: { index: number; total: number 
     .join("\n");
 }
 
+/**
+ * The reduce step's user turn. Each partial is the model's own reading of a transcript piece
+ * — a transcript other people spoke — so it is fed back as fenced data, not as prompt text
+ * (audit M-16): a line the map step copied from the transcript cannot become an instruction
+ * to the merge.
+ */
+export function reduceUserPrompt(partials: unknown[]): string {
+  return partials.map((p, i) => `PART ${i + 1}:\n${fenceUntrusted("PART", JSON.stringify(p))}`).join("\n\n");
+}
+
 export function meetingUserPrompt(input: AnalyzeInput, transcript: string): string {
   // Title and attendee names arrive pre-filled from calendar invites, which anyone can send.
   const invite = [
@@ -573,7 +583,7 @@ export async function analyzeMeetingTranscript(
       deps.parseJson,
       userId,
       reducePrompt(input),
-      partials.map((p, i) => `PART ${i + 1}:\n${JSON.stringify(p)}`).join("\n\n"),
+      reduceUserPrompt(partials),
       "meeting.digest.reduce"
     );
   }

@@ -360,6 +360,8 @@ async function retrieveRankedContacts(
     onParsed: (parsed: ParsedQuery | null) => void;
     /** The account read the question shares; undefined means each call opens its own. */
     access?: Promise<AiAccess | undefined>;
+    /** The request's signal: the parse and the rerank are cancelled when the caller leaves. */
+    signal?: AbortSignal;
   }
 ): Promise<{
   ranked: RankedContact[];
@@ -398,7 +400,7 @@ async function retrieveRankedContacts(
     // second one"); the embedding beside it does not.
     (routing?.priorTurns ?? Promise.resolve([] as PriorTurn[]))
       .catch(() => [] as PriorTurn[])
-      .then((priorTurns) => understandQuery(userId, q, activeGoals, complete, { priorTurns, userSchools, aboutUser }))
+      .then((priorTurns) => understandQuery(userId, q, activeGoals, complete, { priorTurns, userSchools, aboutUser, signal: routing?.signal }))
       .then((parsed) => {
         routing?.onParsed(parsed);
         return parsed;
@@ -459,7 +461,7 @@ async function retrieveRankedContacts(
   steps.start("rank", `Ranking ${plural(candidates.length, "candidate")}`);
   const { contacts: ranked, engine: rankEngine } =
     parsedQuery.shape === "open"
-      ? await rerankCandidatesWithEngine(userId, searchQuery, candidates, complete, parsedQuery.semanticQuery, decider)
+      ? await rerankCandidatesWithEngine(userId, searchQuery, candidates, complete, parsedQuery.semanticQuery, decider, routing?.signal)
       : { contacts: candidates.slice(0, FINAL_CONTACT_COUNT), engine: "search" as const };
   const keptRefs = toRefs(
     ranked.map((c) => ({ id: c.id, name: c.fullName })),
@@ -734,6 +736,8 @@ export async function prepareChatContext(
      * opened here, once, beside the other first reads.
      */
     access?: AiAccess;
+    /** The request's own signal, passed to the model calls retrieval makes. */
+    signal?: AbortSignal;
   }
 ): Promise<ChatContext> {
   const db = await getDb();
@@ -821,6 +825,7 @@ export async function prepareChatContext(
         priorTurns: priorRowsP.then(rowsToTurns),
         onParsed: settleParsed,
         access: accessP,
+        signal: options.signal,
       }).finally(() => settleParsed(null)),
       // Exhaustive membership for any organisation the question names — the one thing a
       // relevance-ranked top-K cannot supply. Never fatal.

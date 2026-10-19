@@ -191,6 +191,7 @@ export async function POST(request: Request) {
           steps,
           excludeSlot: versionTarget?.slot ?? null,
           access,
+          signal: request.signal,
         });
         if (threadId) {
           const db = await getDb();
