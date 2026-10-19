@@ -33,8 +33,8 @@ export function GenericPageSkeleton() {
   return (
     <div className="space-y-6">
       <PageHeaderSkeleton />
-      <Skeleton className="h-40 w-full rounded-2xl" />
-      <Skeleton className="h-40 w-full rounded-2xl" />
+      <Skeleton className="h-40 w-full rounded-xl" />
+      <Skeleton className="h-40 w-full rounded-xl" />
     </div>
   );
 }
@@ -67,15 +67,15 @@ export function RemindersStageSkeleton() {
             ))}
           </div>
         </div>
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/70 bg-card">
-          <div className="flex shrink-0 flex-col gap-3 border-b border-border/60 p-3 sm:p-4">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border-subtle bg-card">
+          <div className="flex shrink-0 flex-col gap-3 border-b border-border-subtle p-3 sm:p-4">
             <div className="flex items-center justify-between gap-2">
               <Skeleton className="h-7 w-32 rounded-lg" />
               <Skeleton className="h-8 w-32 rounded-lg" />
             </div>
             <Skeleton className="h-10 w-full rounded-full" />
           </div>
-          <div className="min-h-10 shrink-0 border-b border-border/60" />
+          <div className="min-h-10 shrink-0 border-b border-border-subtle" />
           <div className="min-h-0 flex-1 basis-0 overflow-hidden">
             {Array.from({ length: 7 }).map((_, i) => (
               <div
@@ -110,7 +110,7 @@ export function DashboardStatRowSkeleton() {
   return (
     <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
       {Array.from({ length: 4 }).map((_, i) => (
-        <Skeleton key={i} className="h-24 rounded-2xl" />
+        <Skeleton key={i} className="h-24 rounded-xl" />
       ))}
     </div>
   );
@@ -118,7 +118,7 @@ export function DashboardStatRowSkeleton() {
 
 /** One dashboard card slot; height matches the card it stands in for. */
 export function DashboardCardSkeleton({ className }: { className?: string }) {
-  return <Skeleton className={`rounded-2xl ${className ?? "h-64"}`} />;
+  return <Skeleton className={`rounded-xl ${className ?? "h-64"}`} />;
 }
 
 export function ContactsPageSkeleton() {
@@ -130,11 +130,11 @@ export function ContactsPageSkeleton() {
           <Skeleton key={i} className="h-10 rounded-lg" />
         ))}
       </div>
-      <div className="overflow-hidden rounded-2xl border border-border/70">
+      <div className="overflow-hidden rounded-xl border border-border-subtle">
         {Array.from({ length: 6 }).map((_, i) => (
           <div
             key={i}
-            className="flex items-center justify-between gap-4 border-b border-border/60 px-5 py-4 last:border-0"
+            className="flex items-center justify-between gap-4 border-b border-border-subtle px-5 py-4 last:border-0"
           >
             <div className="min-w-0 flex-1 space-y-2">
               <Skeleton className="h-4 w-36" />
@@ -153,17 +153,17 @@ export function RecruitersPageSkeleton() {
   return (
     <div className="space-y-6">
       <PageHeaderSkeleton actions />
-      <Skeleton className="h-36 w-full rounded-2xl" />
-      <Skeleton className="h-28 w-full rounded-2xl" />
+      <Skeleton className="h-36 w-full rounded-xl" />
+      <Skeleton className="h-28 w-full rounded-xl" />
       <div className="flex flex-wrap items-center gap-3">
         <Skeleton className="h-9 w-56 rounded-lg" />
         <Skeleton className="h-9 min-w-[16rem] flex-1 rounded-lg" />
       </div>
-      <div className="overflow-hidden rounded-2xl border border-border/70">
+      <div className="overflow-hidden rounded-xl border border-border-subtle">
         {Array.from({ length: 6 }).map((_, i) => (
           <div
             key={i}
-            className="flex items-center justify-between gap-4 border-b border-border/60 px-5 py-4 last:border-0"
+            className="flex items-center justify-between gap-4 border-b border-border-subtle px-5 py-4 last:border-0"
           >
             <div className="min-w-0 flex-1 space-y-2">
               <Skeleton className="h-4 w-36" />
@@ -193,9 +193,9 @@ export function RecruiterDetailPageSkeleton() {
         </div>
         <Skeleton className="h-16 w-32 rounded-xl" />
       </div>
-      <Skeleton className="h-32 w-full rounded-2xl" />
-      <Skeleton className="h-40 w-full rounded-2xl" />
-      <Skeleton className="h-52 w-full rounded-2xl" />
+      <Skeleton className="h-32 w-full rounded-xl" />
+      <Skeleton className="h-40 w-full rounded-xl" />
+      <Skeleton className="h-52 w-full rounded-xl" />
       <Skeleton className="h-9 w-40 rounded-lg" />
     </div>
   );
@@ -219,14 +219,14 @@ export function ContactDetailPageSkeleton() {
           <Skeleton className="h-8 w-20" />
         </div>
       </div>
-      <Skeleton className="h-52 w-full rounded-2xl" />
+      <Skeleton className="h-52 w-full rounded-xl" />
       <div className="grid gap-6 lg:grid-cols-2">
-        <Skeleton className="h-56 rounded-2xl" />
-        <Skeleton className="h-56 rounded-2xl" />
+        <Skeleton className="h-56 rounded-xl" />
+        <Skeleton className="h-56 rounded-xl" />
       </div>
       <div className="space-y-3">
         <Skeleton className="h-6 w-28" />
-        <Skeleton className="h-80 w-full rounded-2xl" />
+        <Skeleton className="h-80 w-full rounded-xl" />
       </div>
     </div>
   );
@@ -236,7 +236,7 @@ export function FormPageSkeleton({ wide = false }: { wide?: boolean }) {
   return (
     <div className={`space-y-6 ${wide ? "" : "mx-auto max-w-2xl"}`}>
       <PageHeaderSkeleton />
-      <div className="space-y-4 rounded-2xl border border-border/70 p-6">
+      <div className="space-y-4 rounded-xl border border-border-subtle p-6">
         {Array.from({ length: 5 }).map((_, i) => (
           <div key={i} className="space-y-2">
             <Skeleton className="h-4 w-24" />
@@ -258,13 +258,13 @@ function SettingsCardSkeleton({
   tall?: boolean;
 }) {
   return (
-    <div className="space-y-4 rounded-2xl border border-border/70 p-6">
+    <div className="space-y-4 rounded-xl border border-border-subtle p-6">
       <div className="space-y-2">
         <Skeleton className="h-5 w-40" />
         <Skeleton className="h-4 w-72 max-w-full" />
       </div>
       {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className="space-y-2 border-t border-border/60 pt-4">
+        <div key={i} className="space-y-2 border-t border-border-subtle pt-4">
           <Skeleton className="h-4 w-28" />
           <Skeleton
             className={cn("w-full rounded-lg", tall ? "h-24" : "h-9")}
@@ -297,7 +297,7 @@ export function SettingsPageSkeleton() {
       </div>
       <div className="space-y-4">
         {label}
-        <div className="space-y-4 rounded-2xl border border-border/70 p-6">
+        <div className="space-y-4 rounded-xl border border-border-subtle p-6">
           <div className="space-y-2">
             <Skeleton className="h-5 w-32" />
             <Skeleton className="h-4 w-64 max-w-full" />
@@ -330,9 +330,9 @@ export function NoteBatchResultSkeleton() {
         <Skeleton className="h-4 w-full max-w-md" />
       </div>
       <div className="space-y-4">
-        <Skeleton className="h-12 w-full rounded-2xl" />
-        <Skeleton className="h-48 w-full rounded-2xl" />
-        <Skeleton className="h-40 w-full rounded-2xl" />
+        <Skeleton className="h-12 w-full rounded-xl" />
+        <Skeleton className="h-48 w-full rounded-xl" />
+        <Skeleton className="h-40 w-full rounded-xl" />
       </div>
     </div>
   );
@@ -349,13 +349,13 @@ export function ChatPanelSkeleton({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        "flex min-h-0 flex-row overflow-hidden rounded-2xl border border-border/70",
+        "flex min-h-0 flex-row overflow-hidden rounded-xl border border-border-subtle",
         className,
       )}
     >
       <ChatRailPlaceholder />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-4 py-3">
+      <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-4 py-3">
         <Skeleton className="h-8 w-20" />
         <div className="min-w-0 flex-1 space-y-1.5">
           <Skeleton className="h-4 w-40" />
@@ -367,17 +367,17 @@ export function ChatPanelSkeleton({ className }: { className?: string }) {
       <div className="min-h-0 flex-1 basis-0 overflow-hidden p-4">
         <div className="mx-auto w-full max-w-3xl space-y-4">
           <div className="flex justify-end">
-            <Skeleton className="h-12 w-2/3 rounded-2xl" />
+            <Skeleton className="h-12 w-2/3 rounded-xl" />
           </div>
           <div className="flex justify-start">
-            <Skeleton className="h-24 w-4/5 rounded-2xl" />
+            <Skeleton className="h-24 w-4/5 rounded-xl" />
           </div>
           <div className="flex justify-end">
-            <Skeleton className="h-10 w-1/2 rounded-2xl" />
+            <Skeleton className="h-10 w-1/2 rounded-xl" />
           </div>
         </div>
       </div>
-      <div className="shrink-0 space-y-2 border-t border-border/60 p-4">
+      <div className="shrink-0 space-y-2 border-t border-border-subtle p-4">
         <div className="mx-auto max-w-3xl space-y-2.5">
           <Skeleton className="h-14 w-full rounded-lg" />
           {/* The suggestion pills, at their real height. Fixed on purpose: the composer
@@ -405,7 +405,7 @@ export function ChatPanelSkeleton({ className }: { className?: string }) {
  */
 export function CaptureFormSkeleton() {
   return (
-    <div className="space-y-4 rounded-2xl border border-border/70 p-6">
+    <div className="space-y-4 rounded-xl border border-border-subtle p-6">
       <Skeleton className="h-9 w-40 rounded-lg" />
       {Array.from({ length: 3 }).map((_, i) => (
         <div key={i} className="space-y-2">
@@ -480,7 +480,7 @@ export function ImportsPageSkeleton() {
   return (
     <div className="mx-auto max-w-3xl space-y-8">
       <PageHeaderSkeleton />
-      <Skeleton className="h-44 w-full rounded-2xl" />
+      <Skeleton className="h-44 w-full rounded-xl" />
       <div className="space-y-2">
         <Skeleton className="h-4 w-24" />
         <Skeleton className="h-14 w-full rounded-xl" />
@@ -622,7 +622,7 @@ export function DocPageSkeleton() {
           {Array.from({ length: 4 }).map((_, i) => (
             <div
               key={i}
-              className="rounded-2xl border border-white/10 bg-white/[0.03] p-5"
+              className="rounded-xl border border-white/10 bg-white/[0.03] p-5"
             >
               <Skeleton className="size-9 rounded-xl bg-white/10" />
               <Skeleton className="mt-4 h-4 w-3/4 bg-white/10" />
@@ -732,7 +732,7 @@ export function ContactPageSkeleton() {
           {Array.from({ length: 7 }).map((_, i) => (
             <Skeleton
               key={i}
-              className="h-14 w-full rounded-2xl border border-white/10 bg-white/[0.03]"
+              className="h-14 w-full rounded-xl border border-white/10 bg-white/[0.03]"
             />
           ))}
         </div>
@@ -968,10 +968,10 @@ export function PricingPageSkeleton() {
 export function EventsListSkeleton() {
   return (
     <div className="space-y-4">
-      <Skeleton className="h-24 w-full rounded-2xl" />
+      <Skeleton className="h-24 w-full rounded-xl" />
       <div className="grid gap-4 sm:grid-cols-2">
         {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-44 w-full rounded-2xl" />
+          <Skeleton key={i} className="h-44 w-full rounded-xl" />
         ))}
       </div>
     </div>
@@ -982,9 +982,9 @@ export function EventsListSkeleton() {
 export function EventDetailSkeleton() {
   return (
     <div className="space-y-6">
-      <Skeleton className="h-60 w-full rounded-2xl" />
-      <Skeleton className="h-40 w-full rounded-2xl" />
-      <Skeleton className="h-72 w-full rounded-2xl" />
+      <Skeleton className="h-60 w-full rounded-xl" />
+      <Skeleton className="h-40 w-full rounded-xl" />
+      <Skeleton className="h-72 w-full rounded-xl" />
     </div>
   );
 }
@@ -998,7 +998,7 @@ export function DuplicatesListSkeleton() {
   return (
     <div className="space-y-3" aria-hidden>
       {Array.from({ length: 3 }).map((_, i) => (
-        <div key={i} className="space-y-3 rounded-xl border border-border/60 p-4">
+        <div key={i} className="space-y-3 rounded-xl border border-border-subtle p-4">
           <Skeleton className="h-4 w-40" />
           <div className="flex flex-col gap-2 sm:flex-row">
             <Skeleton className="h-20 flex-1 rounded-lg" />
@@ -1029,7 +1029,7 @@ export function RadarPageSkeleton() {
           <Skeleton key={i} className="h-40 w-full rounded-xl" />
         ))}
       </div>
-      <Skeleton className="hidden h-64 w-full rounded-2xl lg:block" />
+      <Skeleton className="hidden h-64 w-full rounded-xl lg:block" />
     </div>
   );
 }
