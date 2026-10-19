@@ -191,6 +191,8 @@ CREATE TABLE IF NOT EXISTS contacts (
   notes text,
   embedding_stale_at timestamptz,
   work_history_due_at timestamptz,
+  work_history_misses integer NOT NULL DEFAULT 0,
+  work_history_miss_slug text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -1038,6 +1040,7 @@ CREATE TABLE IF NOT EXISTS usage_events (
   output_tokens integer,
   cached_input_tokens integer,
   estimated_cost_micros integer,
+  web_searches integer,
   cost_source text NOT NULL DEFAULT 'estimated',
   key_owner text NOT NULL DEFAULT 'user',
   success integer NOT NULL DEFAULT 1,
@@ -1615,6 +1618,7 @@ CREATE TABLE IF NOT EXISTS site_settings (
   stealth_since timestamptz,
   waitlist_demo_enabled boolean,
   managed_ai_paused boolean,
+  web_search_paused boolean,
   updated_at timestamptz NOT NULL DEFAULT now(),
   updated_by text,
   CONSTRAINT site_settings_single_row CHECK (id = 1)
@@ -2781,12 +2785,20 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 172-177: branches claim up to 177 (claude/trusting-wozniak-ebsks3 at 177). Rescanned every
 // remote ref on Oct 19 2026: 177 was the highest claimed anywhere.
 //
+// 179 = this branch's web-search budget, renumbered from 175 + 178 when merging main (main took
+// 178 for contact_touch_counts, and a database stamped 178 would never run a 175):
+// site_settings.web_search_paused (the admin switch that stops hosted web search for every
+// account), usage_events.web_searches (searches per call, for the per-feature breakdown), and
+// contacts.work_history_misses + work_history_miss_slug (two misses against the same LinkedIn
+// slug stop automatic work-history checks; a new URL lifts it). Rescanned every remote ref on
+// Oct 19 2026: 178 (main) was the highest claimed anywhere.
+//
 // 181 = measurement (docs: ANALYTICS_PLAN.md): user_settings.account_kind / ai_key_added_at /
 // signup_attribution_source / signup_session_id / invite_id / interest_signup_id,
 // reminders.completed_at, extension_usage.first_seen_at + version, interest_list_signups
 // .join_session_id / user_id / converted_at, and two new tables: site_invites (Orbit's own
 // invitation ledger) and product_events (append-only, schema-validated telemetry). Renumbered from 171 on Oct 19 2026
-// after main reached 178; rescanned every remote ref that day: 180 was the highest claimed anywhere.
+// after main reached 179; rescanned every remote ref that day: 180 was the highest claimed anywhere.
 export const SCHEMA_VERSION = 181;
 
 /**
@@ -4074,6 +4086,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   // existence check entirely when no `source_id` is supplied.
   await ensureColumn(client, "contacts", "embedding_stale_at", "timestamptz");
   await ensureColumn(client, "contacts", "work_history_due_at", "timestamptz");
+  await ensureColumn(client, "contacts", "work_history_misses", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "contacts", "work_history_miss_slug", "text");
+  await ensureColumn(client, "usage_events", "web_searches", "integer");
   await ensureColumn(client, "user_settings", "work_history_auto_enabled", "integer NOT NULL DEFAULT 1");
   await ensureColumn(client, "user_settings", "relationship_engine_enabled", "integer NOT NULL DEFAULT 1");
   await ensureColumn(client, "user_settings", "chat_self_names", "jsonb NOT NULL DEFAULT '[]'");
@@ -4585,6 +4600,12 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS max_nudge_seen_at timestamptz`,
   `ALTER TABLE gate_events ADD COLUMN IF NOT EXISTS unlock_plan text`,
   `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS managed_ai_paused boolean`,
+  // Schema v179: the admin console's web-search switch (null = never set = running).
+  `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS web_search_paused boolean`,
+  // Schema v179: searches per call, and the work-history miss streak that stops auto checks.
+  `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS web_searches integer`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS work_history_misses integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS work_history_miss_slug text`,
   // Schema v139: the credit emails at 80% and 100% of the monthly allowance — the switch, and
   // which cycle and level were last sent (claimed in one UPDATE before each send).
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credit_email_enabled integer NOT NULL DEFAULT 1`,

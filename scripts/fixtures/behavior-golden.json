@@ -1873,30 +1873,6 @@
         "substantive": true
       },
       {
-        "id": "<contacts:Fatima Nasser>",
-        "fullName": "Fatima Nasser",
-        "preferredName": null,
-        "company": "Stripe",
-        "school": null,
-        "title": "Product Manager",
-        "relationshipScore": 2,
-        "closeness": 0.380423,
-        "closenessTier": "outer",
-        "orbitScore": 2,
-        "lastInteractionAt": "<ts>",
-        "hasLoggedInteraction": true,
-        "nextFollowUpAt": "<ts>",
-        "tags": [],
-        "aiSummary": "Fatima Nasser is Product Manager at Stripe. How you met: Marcus introduced us. Owns Stripe's onboarding surface. Offered to walk through how they measure activation.",
-        "keyFacts": [
-          "Owns Stripe onboarding",
-          "Offered an activation-metrics walkthrough"
-        ],
-        "profileImageUrl": null,
-        "dormant": false,
-        "substantive": true
-      },
-      {
         "id": "<contacts:Rachel Adeyemi>",
         "fullName": "Rachel Adeyemi",
         "preferredName": null,
@@ -2237,6 +2213,30 @@
         "substantive": true
       },
       {
+        "id": "<contacts:Fatima Nasser>",
+        "fullName": "Fatima Nasser",
+        "preferredName": null,
+        "company": "Stripe",
+        "school": null,
+        "title": "Product Manager",
+        "relationshipScore": 2,
+        "closeness": 0.380423,
+        "closenessTier": "outer",
+        "orbitScore": 2,
+        "lastInteractionAt": "<ts>",
+        "hasLoggedInteraction": true,
+        "nextFollowUpAt": "<ts>",
+        "tags": [],
+        "aiSummary": "Fatima Nasser is Product Manager at Stripe. How you met: Marcus introduced us. Owns Stripe's onboarding surface. Offered to walk through how they measure activation.",
+        "keyFacts": [
+          "Owns Stripe onboarding",
+          "Offered an activation-metrics walkthrough"
+        ],
+        "profileImageUrl": null,
+        "dormant": false,
+        "substantive": true
+      },
+      {
         "id": "<contacts:Daniel Osei>",
         "fullName": "Daniel Osei",
         "preferredName": null,
@@ -2473,8 +2473,8 @@
         "kind": "company",
         "count": 3,
         "contactIds": [
-          "<contacts:Fatima Nasser>",
           "<contacts:Tom Bennett>",
+          "<contacts:Fatima Nasser>",
           "<contacts:Marcus Lee>"
         ]
       },
@@ -4408,6 +4408,8 @@
     "profileImageCheckedAt": null,
     "profileImageSource": null,
     "workHistoryDueAt": null,
+    "workHistoryMisses": 0,
+    "workHistoryMissSlug": null,
     "relationshipScore": 4,
     "statedCloseness": 4,
     "priorityLevel": 2,
@@ -6288,6 +6290,8 @@
       "profileImageCheckedAt": null,
       "profileImageSource": null,
       "workHistoryDueAt": null,
+      "workHistoryMisses": 0,
+      "workHistoryMissSlug": null,
       "relationshipScore": 4,
       "statedCloseness": 4,
       "priorityLevel": 2,
@@ -8994,30 +8998,6 @@
         "substantive": true
       },
       {
-        "id": "<contacts:Fatima Nasser>",
-        "fullName": "Fatima Nasser",
-        "preferredName": null,
-        "company": "Stripe",
-        "school": null,
-        "title": "Product Manager",
-        "relationshipScore": 2,
-        "closeness": 0.380423,
-        "closenessTier": "outer",
-        "orbitScore": 2,
-        "lastInteractionAt": "<ts>",
-        "hasLoggedInteraction": true,
-        "nextFollowUpAt": "<ts>",
-        "tags": [],
-        "aiSummary": "Fatima Nasser is Product Manager at Stripe. How you met: Marcus introduced us. Owns Stripe's onboarding surface. Offered to walk through how they measure activation.",
-        "keyFacts": [
-          "Owns Stripe onboarding",
-          "Offered an activation-metrics walkthrough"
-        ],
-        "profileImageUrl": null,
-        "dormant": false,
-        "substantive": true
-      },
-      {
         "id": "<contacts:Rachel Adeyemi>",
         "fullName": "Rachel Adeyemi",
         "preferredName": null,
@@ -9358,6 +9338,30 @@
         "substantive": true
       },
       {
+        "id": "<contacts:Fatima Nasser>",
+        "fullName": "Fatima Nasser",
+        "preferredName": null,
+        "company": "Stripe",
+        "school": null,
+        "title": "Product Manager",
+        "relationshipScore": 2,
+        "closeness": 0.380423,
+        "closenessTier": "outer",
+        "orbitScore": 2,
+        "lastInteractionAt": "<ts>",
+        "hasLoggedInteraction": true,
+        "nextFollowUpAt": "<ts>",
+        "tags": [],
+        "aiSummary": "Fatima Nasser is Product Manager at Stripe. How you met: Marcus introduced us. Owns Stripe's onboarding surface. Offered to walk through how they measure activation.",
+        "keyFacts": [
+          "Owns Stripe onboarding",
+          "Offered an activation-metrics walkthrough"
+        ],
+        "profileImageUrl": null,
+        "dormant": false,
+        "substantive": true
+      },
+      {
         "id": "<contacts:Daniel Osei>",
         "fullName": "Daniel Osei",
         "preferredName": null,
@@ -9616,8 +9620,8 @@
         "kind": "company",
         "count": 3,
         "contactIds": [
-          "<contacts:Fatima Nasser>",
           "<contacts:Tom Bennett>",
+          "<contacts:Fatima Nasser>",
           "<contacts:Marcus Lee>"
         ]
       },
@@ -9802,9 +9806,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -9875,9 +9881,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -9946,9 +9954,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -10020,9 +10030,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -10091,9 +10103,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -10162,9 +10176,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -10235,9 +10251,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -10309,9 +10327,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -10383,9 +10403,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -10454,9 +10476,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -10525,9 +10549,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -10599,9 +10625,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -10672,9 +10700,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -10747,9 +10777,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -10818,9 +10850,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -10892,9 +10926,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -10969,9 +11005,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -11043,9 +11081,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -11117,9 +11157,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -11188,9 +11230,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -11265,9 +11309,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -11336,9 +11382,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -11414,9 +11462,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -11489,9 +11539,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -11564,9 +11616,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -11641,9 +11695,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     },
     {
@@ -11715,9 +11771,11 @@
       },
       "last_interaction_at": "<ts>",
       "work_history_due_at": null,
+      "work_history_misses": 0,
       "first_interaction_at": "<ts>",
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
+      "work_history_miss_slug": null,
       "profile_image_checked_at": null
     }
   ],

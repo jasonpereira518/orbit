@@ -35,7 +35,12 @@ import {
   type ConstellationConfig,
 } from "@/lib/constellation-config";
 import { setStealth } from "@/lib/site-access";
-import { setManagedAiPaused, type ManagedAiSwitchState } from "@/lib/managed-ai-switch";
+import {
+  setManagedAiPaused,
+  setWebSearchPaused,
+  type ManagedAiSwitchState,
+  type WebSearchSwitchState,
+} from "@/lib/managed-ai-switch";
 import { setWaitlistDemoEnabled } from "@/lib/waitlist-demo";
 import {
   inviteToSite,
@@ -1137,6 +1142,17 @@ export async function setManagedAiPausedAction(input: {
 }): Promise<ManagedAiSwitchState> {
   const adminUserId = await requireAdminUserId();
   const state = await setManagedAiPaused(adminUserId, input.paused === true, input.reason);
+  revalidatePath("/admin/billing");
+  return state;
+}
+
+/** Stop or restart hosted web search for every account. Audited; same 30-second reach. */
+export async function setWebSearchPausedAction(input: {
+  paused: boolean;
+  reason: string;
+}): Promise<WebSearchSwitchState> {
+  const adminUserId = await requireAdminUserId();
+  const state = await setWebSearchPaused(adminUserId, input.paused === true, input.reason);
   revalidatePath("/admin/billing");
   return state;
 }

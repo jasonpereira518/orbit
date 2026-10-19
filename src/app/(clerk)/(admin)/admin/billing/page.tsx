@@ -22,8 +22,8 @@ import {
 } from "@/lib/admin-metrics";
 import { currentMrrDetail, mrrReconciliation } from "@/lib/billing-events";
 import { loadCreditsMoney, planDistribution } from "@/lib/credits/admin-credits";
-import { getManagedAiSwitchState } from "@/lib/managed-ai-switch";
-import { ManagedAiSwitch } from "@/components/admin/managed-ai-switch";
+import { getManagedAiSwitchState, getWebSearchSwitchState } from "@/lib/managed-ai-switch";
+import { ManagedAiSwitch, WebSearchSwitch } from "@/components/admin/managed-ai-switch";
 import { LIFETIME_INTRO_PRICE, LIFETIME_STANDARD_PRICE } from "@/lib/plan-limits";
 import { PLAN_CONFIG, PLAN_LABELS } from "@/lib/plans/plan-config";
 import {
@@ -80,10 +80,11 @@ export default async function AdminMoneyPage() {
   ]);
 
   const spendable = new Set(rows.filter((r) => PLAN_CONFIG[r.plan].features.creditPacks).map((r) => r.userId));
-  const [credits, distribution, managedSwitch] = await Promise.all([
+  const [credits, distribution, managedSwitch, webSearchSwitch] = await Promise.all([
     loadCreditsMoney(spendable),
     planDistribution(rows),
     getManagedAiSwitchState(),
+    getWebSearchSwitchState(),
   ]);
 
   const plans = buildPlanBreakdown(rows);
@@ -344,6 +345,10 @@ export default async function AdminMoneyPage() {
 
           <div className="mt-4 border-t border-border/60 pt-4">
             <ManagedAiSwitch state={managedSwitch} />
+          </div>
+
+          <div className="mt-4 border-t border-border/60 pt-4">
+            <WebSearchSwitch state={webSearchSwitch} />
           </div>
 
           {credits.managedAi.topSpenders.length > 0 && (
