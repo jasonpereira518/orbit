@@ -2716,11 +2716,15 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // is not a contact. Built as 158 on Oct 13, renumbered to 163 on Oct 14 and to 169 on Oct 15,
 // above 168, since main reached 164. Rescanned Oct 15 2026: 168 (this stack) was the highest claimed.
 //
+// 171 = embedding_model on contact_embeddings and memory_chunks, web_searches on usage_events
+// (AI audit P0-3, P0-7). Additive and nullable, so no backfill. Highest SCHEMA_VERSION claimed
+// anywhere when this was written (every ref and worktree, Oct 20 2026): 170.
+//
 // 170 = guest_profiles dropped: guest "Look up" runs on Find people's research (researchPerson)
 // and its briefs live in ai_result_cache, read back by key. The table was a day old (v169) and
 // held only cached web lookups. Rescanned every ref and worktree on Oct 15 2026: 169 was the
 // highest claimed anywhere.
-export const SCHEMA_VERSION = 170;
+export const SCHEMA_VERSION = 171;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3901,6 +3905,10 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "email_signature_text", "text");
   await ensureColumn(client, "user_settings", "email_signature_html", "text");
   await ensureColumn(client, "user_settings", "default_send_provider", "text");
+  // v171: which model made a stored vector, and how many web searches a call ran.
+  await ensureColumn(client, "contact_embeddings", "embedding_model", "text");
+  await ensureColumn(client, "memory_chunks", "embedding_model", "text");
+  await ensureColumn(client, "usage_events", "web_searches", "integer");
 
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
@@ -4086,6 +4094,13 @@ const alters = [
   // by that pass: syncMemoryChunks carries vectors across by content_hash, which unchanged
   // text does not move.
   `ALTER TABLE memory_chunks ADD COLUMN IF NOT EXISTS source_hash text`,
+  // Schema v171: which embedding model made each stored vector, and how many web searches a
+  // call ran. Vectors from two models cannot be compared, and until now nothing recorded which
+  // one a row held (a key change cleared contact_embeddings but not memory_chunks). Search
+  // fees are billed per search on top of tokens and appeared nowhere in usage_events.
+  `ALTER TABLE contact_embeddings ADD COLUMN IF NOT EXISTS embedding_model text`,
+  `ALTER TABLE memory_chunks ADD COLUMN IF NOT EXISTS embedding_model text`,
+  `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS web_searches integer`,
   // Deliberately not backfilled from `committed_at` — see the column's comment in schema.ts.
   `ALTER TABLE fundraising_investors ADD COLUMN IF NOT EXISTS received_at timestamptz`,
   // The events feature landed whole at v32, so these are its first incremental columns.

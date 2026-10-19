@@ -2858,6 +2858,13 @@ export const memoryChunks = pgTable(
      */
     embeddedHash: text("embedded_hash"),
     embedding: jsonb("embedding").$type<number[]>(),
+    /**
+     * The embedding model that produced `embedding`, e.g. "text-embedding-3-small". Vectors
+     * from two models are not comparable, and nothing else records which one a row holds, so
+     * a backend switch used to leave old-space vectors silently queryable. NULL on rows that
+     * predate this column, which read as "unknown, re-embed".
+     */
+    embeddingModel: text("embedding_model"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -2881,6 +2888,8 @@ export const contactEmbeddings = pgTable(
     embedding: jsonb("embedding").$type<number[]>().notNull(),
     content: text("content").notNull(),
     contentHash: text("content_hash"),
+    /** The model that produced `embedding`; see `memoryChunks.embeddingModel`. NULL = unknown. */
+    embeddingModel: text("embedding_model"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -3659,6 +3668,13 @@ export const usageEvents = pgTable(
     success: integer("success").notNull().default(1),
     /** Stable machine code, not the user-facing message — that is unqueryably high-cardinality. */
     errorKind: text("error_kind"),
+    /**
+     * Web searches the provider ran for this call (Gemini grounding queries, OpenAI
+     * `web_search_call` items, Anthropic `web_search_requests`). The provider bills a fee per
+     * search on top of tokens, and tokens are all `estimated_cost_micros` knew about. Null for
+     * a call that does not search.
+     */
+    webSearches: integer("web_searches"),
     durationMs: integer("duration_ms"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
