@@ -49,6 +49,7 @@ import {
   tokensFromAnthropic,
   type TokenCounts,
 } from "@/lib/usage-events";
+import { anthropicSearchCount, reserveWebSearch, resumeMaxUses, settleWebSearch } from "@/lib/web-search-budget";
 import {
   AI_INCOMPLETE_MESSAGE,
   aiProviderErrorMessage,
@@ -2815,8 +2816,11 @@ export function anthropicWebSearchToolType(model: string): "web_search_20260209"
 /** A searched answer runs several fetches before it writes a word — more than a plain call. */
 const WEB_SEARCH_TIMEOUT_MS = 120_000;
 
-/** Server-tool turns Anthropic may pause mid-search; each resume is one more request. */
-const MAX_WEB_SEARCH_RESUMES = 3;
+/**
+ * Server-tool turns Anthropic may pause mid-search; each resume is one more request, and one
+ * more chance to search (`resumeMaxUses`). One is enough to finish a lookup.
+ */
+const MAX_WEB_SEARCH_RESUMES = 1;
 
 /**
  * A JSON answer grounded in a live web search, run on the account's own provider.
@@ -2828,10 +2832,11 @@ const MAX_WEB_SEARCH_RESUMES = 3;
  * JSON response format with search — so the answer is read with `parseAiJson`, which finds
  * the object inside any prose around it.
  *
- * Token usage is reported like any other call, and each provider's per-search fee rides
- * along as `surchargeMicros` (`WEB_SEARCH_FEE_MICROS`), so on Orbit's key a search spends the
- * account's credits and the provider pool like the tokens around it do. Callers still bound
- * searches with `maxSearches` and by running rarely.
+ * Each search is a provider fee on top of tokens: priced as `surchargeMicros`
+ * (`WEB_SEARCH_FEE_MICROS`), so on Orbit's key a search spends credits and the pool like the
+ * tokens around it, and counted as `webSearches` against the budget in `web-search-budget.ts`,
+ * which refuses the call up front when the account's month, Orbit's day, or the admin switch
+ * says no.
  */
 export async function webSearchJson(
   userId: string,
@@ -2859,7 +2864,10 @@ export async function webSearchJson(
     return input.signal ? AbortSignal.any([own, input.signal]) : own;
   };
 
-  return runOnGrant(grant, withUsage(
+  await reserveWebSearch(userId);
+  let searches = 0;
+  try {
+  return await runOnGrant(grant, withUsage(
     { userId, operation, provider, model, kind: "completion", keyOwner },
     async (report) => {
       try {
@@ -2877,8 +2885,13 @@ export async function webSearchJson(
               ...geminiThinking(model, operation),
             },
           });
+          searches = response.candidates?.[0]?.groundingMetadata?.webSearchQueries?.length ?? 0;
           const grounded = Boolean(response.candidates?.[0]?.groundingMetadata);
-          report({ ...tokensFromGemini(response), surchargeMicros: grounded ? WEB_SEARCH_FEE_MICROS.gemini : 0 });
+          report({
+            ...tokensFromGemini(response),
+            webSearches: searches,
+            surchargeMicros: grounded ? WEB_SEARCH_FEE_MICROS.gemini : 0,
+          });
           const content = response.text;
           if (!content) throw new Error("Empty AI response");
           const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
@@ -2905,6 +2918,8 @@ export async function webSearchJson(
             }) as Parameters<typeof client.chat.completions.create>[0] & { stream?: false },
             { signal: callSignal() },
           );
+          // One plugin search per call; its fee is inside the reported cost.
+          searches = 1;
           report({ ...tokensFromOpenAi(response), reportedCostMicros: reportedCostMicros(response as OpenAiUsageWithCost) });
           const message = response.choices[0]?.message;
           if (!message?.content) throw new Error("Empty AI response");
@@ -2932,12 +2947,13 @@ export async function webSearchJson(
             },
             { signal: callSignal() },
           );
-          const searchCalls = response.output.filter((item) => item.type === "web_search_call").length;
+          searches = response.output.filter((item) => item.type === "web_search_call").length;
           report({
             inputTokens: response.usage?.input_tokens ?? null,
             outputTokens: response.usage?.output_tokens ?? null,
             cachedInputTokens: response.usage?.input_tokens_details?.cached_tokens ?? null,
-            surchargeMicros: searchCalls * WEB_SEARCH_FEE_MICROS.openai,
+            webSearches: searches,
+            surchargeMicros: searches * WEB_SEARCH_FEE_MICROS.openai,
           });
           const content = response.output_text;
           if (!content) throw new Error("Empty AI response");
@@ -2956,7 +2972,7 @@ export async function webSearchJson(
 
         const client = await anthropicClient(grant);
         const messages: Anthropic.MessageParam[] = [{ role: "user", content: input.user }];
-        const totals = { input: 0, output: 0, cached: 0, searches: 0 };
+        const totals = { input: 0, output: 0, cached: 0 };
         let response: Anthropic.Message | null = null;
         // A long search can end the turn with `pause_turn`; sending the partial turn back
         // lets it continue where it stopped rather than starting the research over.
@@ -2968,18 +2984,19 @@ export async function webSearchJson(
             ...anthropicEffort(model),
             system,
             messages,
-            tools: [{ type: anthropicWebSearchToolType(model), name: "web_search", max_uses: maxSearches }],
+            tools: [{ type: anthropicWebSearchToolType(model), name: "web_search", max_uses: resumeMaxUses(maxSearches, searches) }],
           }, { signal: callSignal() });
           const t = tokensFromAnthropic(response);
           totals.input += t.inputTokens ?? 0;
           totals.output += t.outputTokens ?? 0;
           totals.cached += t.cachedInputTokens ?? 0;
-          totals.searches += response.usage?.server_tool_use?.web_search_requests ?? 0;
+          searches += anthropicSearchCount(response);
           report({
             inputTokens: totals.input,
             outputTokens: totals.output,
             cachedInputTokens: totals.cached,
-            surchargeMicros: totals.searches * WEB_SEARCH_FEE_MICROS.anthropic,
+            webSearches: searches,
+            surchargeMicros: searches * WEB_SEARCH_FEE_MICROS.anthropic,
           });
           if (response.stop_reason !== "pause_turn") break;
           messages.push({ role: "assistant", content: response.content });
@@ -3007,4 +3024,8 @@ export async function webSearchJson(
     },
     { cancelSignal: input.signal },
   ));
+  } finally {
+    // A failed call may still have searched (a parse error after the results came back).
+    await settleWebSearch(userId, searches);
+  }
 }
