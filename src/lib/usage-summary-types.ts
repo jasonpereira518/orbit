@@ -27,6 +27,8 @@ export type UsageSummary = {
    * that a number would have been exact.
    */
   costIsEstimated: boolean;
+  /** Web searches this calendar month against the account's cap — every key, not just theirs. */
+  webSearches?: { used: number; limit: number };
 };
 
 /** The `operation` ids AI call sites record, in words a person would use. */
