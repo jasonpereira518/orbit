@@ -249,6 +249,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-note-window": "pure",
   "smoke-memory-chunks": "pure",
   "smoke-tool-loop": "pure",
+  "smoke-tool-stream-driver": "pure",
   "smoke-ops-alerts": "pure",
   "smoke-outreach-sender": "pure",
   "smoke-parsers": "pure",

@@ -40,7 +40,8 @@ import { geminiThinking, translatingProviderErrors } from "@/lib/ai";
 import { modelForOperation } from "@/lib/ai-models";
 import type { AiOperationId } from "@/lib/ai-operations";
 import { aiOperationThinking } from "@/lib/ai-operations";
-import { anthropicAcceptsTemperature } from "@/lib/ai-providers";
+import { anthropicAcceptsTemperature, anthropicEffort } from "@/lib/ai-providers";
+import { readAnthropicText, readGeminiRound, readOpenAiRound } from "@/lib/ai-tools-stream";
 import { openaiCompletionOptions } from "@/lib/ai-request-options";
 import { aiProviderLabel } from "@/lib/errors";
 import {
@@ -102,6 +103,13 @@ type DriverInput = {
    * grant, and its managed-allowance check, is still minted here for this driver alone.
    */
   access?: AiAccess;
+  /**
+   * Stream each round: the model's prose is handed here as it arrives, and the round's tool
+   * calls are returned once its stream ends. For the chat answer loop
+   * (`@/lib/chat-agent-loop`), whose prose IS the answer. Absent, a round is one plain call,
+   * as the research step has always used it.
+   */
+  onText?: (delta: string) => void;
 };
 
 export async function createToolDriver(input: DriverInput): Promise<ToolDriver> {
@@ -136,20 +144,28 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
       input_schema: toolParameters(t.inputSchema) as Anthropic.Tool.InputSchema,
     }));
     const messages: Anthropic.MessageParam[] = [{ role: "user", content: input.user }];
+    const onText = input.onText;
     return {
       async step(signal) {
         const response = await metered(signal, async (report) => {
-          const r = await client.messages.create(
-            {
-              model,
-              max_tokens: maxOutputTokens,
-              ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
-              system: input.system,
-              tools,
-              messages,
-            },
-            { signal }
-          );
+          const params = {
+            model,
+            max_tokens: maxOutputTokens,
+            ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
+            system: input.system,
+            tools,
+            messages,
+          };
+          if (onText) {
+            // The effort dial the answer stream has always used (`streamText`), since this
+            // round is the answer now.
+            const stream = client.messages.stream({ ...params, ...anthropicEffort(model) }, { signal });
+            await readAnthropicText(stream, onText);
+            const r = await stream.finalMessage();
+            report(tokensFromAnthropic(r));
+            return r;
+          }
+          const r = await client.messages.create(params, { signal });
           report(tokensFromAnthropic(r));
           return r;
         });
@@ -187,8 +203,41 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
       { role: "system", content: input.system },
       { role: "user", content: input.user },
     ];
+    const onText = input.onText;
     return {
       async step(signal) {
+        if (onText) {
+          const round = await metered(signal, async (report) => {
+            const stream = await client.chat.completions.create(
+              withOpenRouterRouting(provider, {
+                model,
+                ...openaiCompletionOptions(model, {
+                  temperature,
+                  maxOutputTokens,
+                  thinking: aiOperationThinking(input.operation),
+                }),
+                tools,
+                messages,
+                stream: true,
+                stream_options: { include_usage: true },
+              }),
+              { signal }
+            );
+            const read = await readOpenAiRound(stream, onText);
+            // OpenAI's iterator ENDS on an abort rather than throwing, so a cut-off round
+            // would read as a finished one. Same rethrow as `streamText`.
+            signal.throwIfAborted();
+            if (read.usage) {
+              report({
+                ...tokensFromOpenAi({ usage: read.usage } as never),
+                reportedCostMicros: reportedCostMicros({ usage: read.usage } as OpenAiUsageWithCost),
+              });
+            }
+            return read;
+          });
+          messages.push(round.message);
+          return { calls: round.calls, text: round.text };
+        }
         const response = await metered(signal, async (report) => {
           const r = await client.chat.completions.create(
             withOpenRouterRouting(provider, {
@@ -242,8 +291,30 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
     parametersJsonSchema: toolParameters(t.inputSchema),
   }));
   const contents: Content[] = [{ role: "user", parts: [{ text: input.user }] }];
+  const onText = input.onText;
   return {
     async step(signal) {
+      if (onText) {
+        const round = await metered(signal, async (report) => {
+          const stream = await client.models.generateContentStream({
+            model,
+            contents,
+            config: {
+              abortSignal: signal,
+              temperature,
+              maxOutputTokens,
+              systemInstruction: input.system,
+              tools: [{ functionDeclarations }],
+              ...geminiThinking(model, input.operation),
+            },
+          });
+          const read = await readGeminiRound(stream, onText, `call-${contents.length}`);
+          if (read.last) report(tokensFromGemini(read.last));
+          return read;
+        });
+        if (round.content.parts?.length) contents.push(round.content);
+        return { calls: round.calls, text: round.text };
+      }
       const response = await metered(signal, async (report) => {
         const r = await client.models.generateContent({
           model,
