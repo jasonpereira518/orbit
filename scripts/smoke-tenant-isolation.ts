@@ -1,0 +1,290 @@
+/**
+ * Tenant isolation through the two surfaces an outside program drives: the tool registry
+ * (MCP, and Orbit's chat) and the v1 REST API.
+ *
+ * Every id a tool accepts arrives from a model — on MCP, a model somebody else wrote, holding
+ * a valid key for ITS user. An id is a uuid, so it is unguessable in practice but not secret:
+ * it travels in URLs, webhook payloads, exports and screenshots. So the property pinned here
+ * is not "nobody will try" but "trying does nothing": for every tool that takes an id, user A
+ * passing user B's contact / reminder / draft / event id is refused (or answers empty), and
+ * B's rows read back byte-identical afterwards — compared both by per-table row counts
+ * (`rowCountsFor`) and by re-reading the actual rows.
+ *
+ * Each refusal is paired with a positive control on A's OWN record, so a refusal cannot pass
+ * because the tool is simply broken. A meta-check fails when a tool gains an id-shaped
+ * argument this script does not exercise, so the next tool cannot slip past.
+ *
+ * Then the v1 API's one hard delete: `DELETE /api/v1/webhook-endpoints/:id` with A's valid
+ * key against B's endpoint must 404 and leave it in place. (PATCH /v1/followups/:id is
+ * covered elsewhere.)
+ *
+ * Run: npx tsx scripts/smoke-tenant-isolation.ts
+ */
+import "./smoke/_env";
+import { run } from "./smoke/_env";
+
+import { randomUUID } from "node:crypto";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { getDb } from "../src/db";
+import {
+  agentSendRequests,
+  calendarEvents,
+  calendarSources,
+  contacts,
+  interactions,
+  memoryChunks,
+  reminders,
+  webhookEndpoints,
+} from "../src/db/schema";
+import { ORBIT_TOOLS } from "../src/lib/tools/definitions";
+import { isToolError, runTool, type ToolSurface } from "../src/lib/tools/registry";
+import { createAgentSendRequest } from "../src/lib/agent-sends";
+import { generateApiKey } from "../src/lib/api/keys";
+import { DELETE as endpointDelete } from "../src/app/api/v1/webhook-endpoints/[id]/route";
+import { GET as endpointsGet } from "../src/app/api/v1/webhook-endpoints/route";
+import { checker } from "./smoke/check";
+import { fakeUserId, insertContact, insertInteraction, insertReminder, purgeUsers, rowCountsFor } from "./smoke/factories";
+
+const VICTIM = fakeUserId("xt_victim");
+const ATTACKER = fakeUserId("xt_attacker");
+const SECRET_WORD = "zebracornium";
+
+const tool = (name: string) => {
+  const found = ORBIT_TOOLS.find((x) => x.name === name);
+  if (!found) throw new Error(`no such tool: ${name}`);
+  return found;
+};
+
+/** A as the caller, every scope, on the tool's own surface (MCP when it has it). */
+async function call(name: string, args: Record<string, unknown>, userId = ATTACKER): Promise<unknown> {
+  const t = tool(name);
+  const surface: ToolSurface = t.surfaces.includes("mcp") ? "mcp" : "chat";
+  return runTool(t, userId, args, { surface, scopes: surface === "mcp" ? ["read", "write"] : undefined });
+}
+
+const errorOf = (r: unknown) => (isToolError(r) ? r.error : null);
+const mentions = (r: unknown, ...needles: string[]) => {
+  const s = JSON.stringify(r ?? null);
+  return needles.filter((n) => s.includes(n));
+};
+
+run(async () => {
+  const t = checker();
+  const db = await getDb();
+  await purgeUsers(db, [VICTIM, ATTACKER]);
+
+  try {
+    // --- Fixtures -------------------------------------------------------------------------------
+    const vContact = await insertContact(db, VICTIM, 1, { notes: `VICTIM-PROFILE-NOTE ${SECRET_WORD}` });
+    const vInteraction = await insertInteraction(db, VICTIM, vContact.id, { rawNotes: `VICTIM-INTERACTION ${SECRET_WORD}` });
+    const vReminder = await insertReminder(db, VICTIM, vContact.id, {
+      title: "VICTIM-REMINDER",
+      dueDate: new Date(Date.now() - 86_400_000),
+    });
+    const vDraft = await createAgentSendRequest(VICTIM, {
+      toEmail: "victim-friend@example.com",
+      subject: "VICTIM-DRAFT-SUBJECT",
+      body: "VICTIM-DRAFT-BODY",
+      contactId: vContact.id,
+    });
+    const [vSource] = await db
+      .insert(calendarSources)
+      .values({ userId: VICTIM, provider: "google", connectionId: randomUUID(), calendarId: "primary" })
+      .returning();
+    const vStart = new Date(Date.now() + 3_600_000);
+    const [vEvent] = await db
+      .insert(calendarEvents)
+      .values({
+        userId: VICTIM,
+        sourceId: vSource.id,
+        providerEventId: "xt-victim-event",
+        title: "VICTIM-MEETING",
+        startAt: vStart,
+        endAt: new Date(vStart.getTime() + 1_800_000),
+        attendees: [{ name: vContact.fullName, email: vContact.email ?? "", contactId: vContact.id }],
+        attendeeCount: 1,
+      })
+      .returning();
+    await db.insert(memoryChunks).values({
+      userId: VICTIM,
+      sourceKind: "interaction",
+      sourceId: vInteraction.id,
+      contactId: vContact.id,
+      contactIds: [vContact.id],
+      occurredAt: new Date(),
+      content: `VICTIM-PASSAGE about the ${SECRET_WORD} merger`,
+      contentHash: "xt-victim",
+    });
+
+    const aContact = await insertContact(db, ATTACKER, 2);
+    const aInteraction = await insertInteraction(db, ATTACKER, aContact.id, { rawNotes: `attacker's own ${SECRET_WORD} note` });
+    await db.insert(memoryChunks).values({
+      userId: ATTACKER,
+      sourceKind: "interaction",
+      sourceId: aInteraction.id,
+      contactId: aContact.id,
+      contactIds: [aContact.id],
+      occurredAt: new Date(),
+      content: `ATTACKER-PASSAGE about the ${SECRET_WORD} merger`,
+      contentHash: "xt-attacker",
+    });
+    const aReminder = await insertReminder(db, ATTACKER, aContact.id, { title: "ATTACKER-REMINDER", dueDate: new Date(Date.now() - 86_400_000) });
+    const aReminder2 = await insertReminder(db, ATTACKER, aContact.id, { title: "ATTACKER-REMINDER-2" });
+
+    /** Everything B owns that a tool could touch, read back in full. */
+    const victimState = async () => {
+      const [c, i, r, d, e, m] = await Promise.all([
+        db.select().from(contacts).where(eq(contacts.userId, VICTIM)),
+        db.select().from(interactions).where(eq(interactions.userId, VICTIM)),
+        db.select().from(reminders).where(eq(reminders.userId, VICTIM)),
+        db.select().from(agentSendRequests).where(eq(agentSendRequests.userId, VICTIM)),
+        db.select().from(calendarEvents).where(eq(calendarEvents.userId, VICTIM)),
+        db.select().from(memoryChunks).where(eq(memoryChunks.userId, VICTIM)),
+      ]);
+      return JSON.stringify({ c, i, r, d, e, m });
+    };
+    const victimBefore = await victimState();
+    const victimCountsBefore = await rowCountsFor(db, VICTIM);
+
+    // --- Tools ---------------------------------------------------------------------------------
+    console.log("Tools refuse another account's ids…");
+    const exercised = new Set<string>();
+    const refused = (name: string, r: unknown, needle = "No such") => {
+      exercised.add(name);
+      const e = errorOf(r);
+      t.check(`${name}: B's id is refused`, e !== null && e.includes(needle), JSON.stringify(r).slice(0, 160));
+    };
+    const control = (name: string, r: unknown, ok: (r: unknown) => boolean) =>
+      t.check(`${name}: control — A's own id works`, !isToolError(r) && ok(r), JSON.stringify(r).slice(0, 160));
+
+    // Reads by id.
+    refused("get_contact", await call("get_contact", { contactId: vContact.id }));
+    control("get_contact", await call("get_contact", { contactId: aContact.id }), (r) => (r as { id: string }).id === aContact.id);
+    refused("get_timeline", await call("get_timeline", { contactId: vContact.id }));
+    control("get_timeline", await call("get_timeline", { contactId: aContact.id }), (r) => (r as { total: number }).total >= 1);
+    refused("get_send_status", await call("get_send_status", { draftId: vDraft.id }));
+    refused("meeting_context", await call("meeting_context", { eventId: vEvent.id }), "No matching meeting");
+
+    // Reads filtered by an id: no refusal, but nothing of B's may come back.
+    const leakFree = async (name: string, args: Record<string, unknown>, ownArgs: Record<string, unknown>, ownNeedle: string) => {
+      exercised.add(name);
+      const r = await call(name, args);
+      const leaked = mentions(r, "VICTIM-", vContact.id, vReminder.id, vEvent.id, vInteraction.id);
+      t.check(`${name}: filtering by B's id returns nothing of B's`, !isToolError(r) && leaked.length === 0, leaked.join(", ") || JSON.stringify(r).slice(0, 120));
+      const own = await call(name, ownArgs);
+      t.check(`${name}: control — filtering by A's own id finds A's row`, mentions(own, ownNeedle).length > 0, JSON.stringify(own).slice(0, 160));
+    };
+    await leakFree("list_reminders", { view: "today", contactId: vContact.id }, { view: "today", contactId: aContact.id }, "ATTACKER-REMINDER");
+    await leakFree("list_open_commitments", { contactId: vContact.id }, { contactId: aContact.id }, "ATTACKER-REMINDER");
+    await leakFree("search_notes", { query: SECRET_WORD, contactId: vContact.id }, { query: SECRET_WORD, contactId: aContact.id }, "ATTACKER-PASSAGE");
+    {
+      exercised.add("upcoming_meetings");
+      const r = await call("upcoming_meetings", { contactId: vContact.id });
+      t.check("upcoming_meetings: filtering by B's contact returns none of B's events", Array.isArray(r) && r.length === 0, JSON.stringify(r).slice(0, 160));
+      const own = await call("upcoming_meetings", { contactId: vContact.id }, VICTIM);
+      t.check("upcoming_meetings: control — B sees the event on B's own key", mentions(own, "VICTIM-MEETING").length > 0, JSON.stringify(own).slice(0, 160));
+    }
+
+    // Writes by id.
+    refused("update_contact", await call("update_contact", { contactId: vContact.id, company: "Pwned Inc", notes: "overwritten" }));
+    control("update_contact", await call("update_contact", { contactId: aContact.id, company: "Attacker Co" }), (r) => (r as { updated: boolean }).updated);
+    refused("add_note", await call("add_note", { contactId: vContact.id, note: "planted note" }));
+    control("add_note", await call("add_note", { contactId: aContact.id, note: "own note", externalId: "xt-own-note" }), (r) => (r as { added: boolean }).added);
+    refused("log_interaction", await call("log_interaction", { contactId: vContact.id, notes: "planted interaction" }));
+    control("log_interaction", await call("log_interaction", { contactId: aContact.id, notes: "own call", externalId: "xt-own-call" }), (r) => (r as { logged: boolean }).logged);
+    refused("create_reminder", await call("create_reminder", { title: "planted reminder", contactId: vContact.id }));
+    control("create_reminder", await call("create_reminder", { title: "own reminder", contactId: aContact.id }), (r) => (r as { created: boolean }).created);
+    refused("complete_reminder", await call("complete_reminder", { reminderId: vReminder.id }));
+    control("complete_reminder", await call("complete_reminder", { reminderId: aReminder.id }), (r) => (r as { completed: boolean }).completed);
+    refused("snooze_reminder", await call("snooze_reminder", { reminderId: vReminder.id, days: 30 }));
+    control("snooze_reminder", await call("snooze_reminder", { reminderId: aReminder2.id, days: 3 }), (r) => (r as { snoozed: boolean }).snoozed);
+    refused("schedule_follow_up", await call("schedule_follow_up", { contactId: vContact.id, days: 3 }));
+    control("schedule_follow_up", await call("schedule_follow_up", { contactId: aContact.id, days: 3 }), (r) => (r as { scheduled: boolean }).scheduled);
+
+    // request_send with B's contact: the draft is A's own and is staged, but must not be linked to B's row.
+    {
+      exercised.add("request_send");
+      const r = (await call("request_send", { to: "someone@example.com", body: "hello", contactId: vContact.id })) as { draftId?: string };
+      const row = r.draftId ? await db.query.agentSendRequests.findFirst({ where: eq(agentSendRequests.id, r.draftId) }) : undefined;
+      t.check("request_send: a draft naming B's contact is A's, with no contact link", row?.userId === ATTACKER && row?.contactId === null, JSON.stringify(row ?? r).slice(0, 160));
+      const own = (await call("request_send", { to: "friend@example.com", body: "hi", contactId: aContact.id })) as { draftId?: string };
+      const ownRow = own.draftId ? await db.query.agentSendRequests.findFirst({ where: eq(agentSendRequests.id, own.draftId) }) : undefined;
+      t.check("request_send: control — A's own contact is linked", ownRow?.contactId === aContact.id);
+      const status = await call("get_send_status", { draftId: own.draftId });
+      t.check("get_send_status: control — A reads A's own draft", !isToolError(status) && (status as { draftId: string }).draftId === own.draftId);
+    }
+
+    // Every tool with an id-shaped argument must have been exercised above.
+    const idTools = ORBIT_TOOLS.filter((x) => Object.keys(x.inputSchema).some((k) => /Id$/.test(k) && k !== "externalId")).map((x) => x.name);
+    const missed = idTools.filter((n) => !exercised.has(n));
+    t.check(`every id-taking tool is exercised (${idTools.length})`, missed.length === 0, `not covered: ${missed.join(", ")}`);
+
+    // --- B is untouched --------------------------------------------------------------------------
+    t.check("B's rows read back identical after every tool call", (await victimState()) === victimBefore);
+    const victimCountsAfter = await rowCountsFor(db, VICTIM);
+    t.check(
+      "B's per-table row counts are unchanged",
+      JSON.stringify(victimCountsAfter) === JSON.stringify(victimCountsBefore),
+      `${JSON.stringify(victimCountsBefore)} → ${JSON.stringify(victimCountsAfter)}`
+    );
+    const crossRefs = await Promise.all([
+      db.select({ id: reminders.id }).from(reminders).where(and(eq(reminders.userId, ATTACKER), eq(reminders.contactId, vContact.id))),
+      db.select({ id: interactions.id }).from(interactions).where(and(eq(interactions.userId, ATTACKER), eq(interactions.contactId, vContact.id))),
+      db.select({ id: agentSendRequests.id }).from(agentSendRequests).where(and(eq(agentSendRequests.userId, ATTACKER), eq(agentSendRequests.contactId, vContact.id))),
+    ]);
+    t.check("A holds no row pointing at B's contact", crossRefs.every((rows) => rows.length === 0), JSON.stringify(crossRefs));
+    const planted = await db
+      .select({ id: interactions.id })
+      .from(interactions)
+      .where(and(inArray(interactions.userId, [VICTIM, ATTACKER]), sql`${interactions.rawNotes} like 'planted%'`));
+    t.check("no planted note or interaction exists anywhere", planted.length === 0);
+
+    // --- v1: DELETE /api/v1/webhook-endpoints/:id ------------------------------------------------
+    console.log("\nv1 API: one account's key cannot delete another's webhook endpoint…");
+    const key = generateApiKey();
+    await db.execute(sql`
+      INSERT INTO api_keys (user_id, name, kind, prefix, key_hash, scopes)
+      VALUES (${ATTACKER}, 'xt key', 'api', ${key.prefix}, ${key.keyHash}, '["read","write"]'::jsonb)
+    `);
+    // The API is a paid feature; comp A so the route is reachable at all.
+    await db.execute(sql`
+      INSERT INTO user_settings (user_id, comped_plan, comped_at) VALUES (${ATTACKER}, 'max', now())
+      ON CONFLICT (user_id) DO UPDATE SET comped_plan = 'max', comped_at = now()
+    `);
+    const [vEndpoint] = await db
+      .insert(webhookEndpoints)
+      .values({ userId: VICTIM, url: "https://hooks.example.com/victim", secretEncrypted: "not-a-real-ciphertext", status: "active" })
+      .returning();
+    const [aEndpoint] = await db
+      .insert(webhookEndpoints)
+      .values({ userId: ATTACKER, url: "https://hooks.example.com/attacker", secretEncrypted: "not-a-real-ciphertext", status: "active" })
+      .returning();
+    const del = (id: string, token: string | null = key.token) =>
+      endpointDelete(
+        new Request(`https://orbit.test/api/v1/webhook-endpoints/${id}`, {
+          method: "DELETE",
+          headers: token ? { authorization: `Bearer ${token}` } : {},
+        })
+      );
+
+    let res = await del(vEndpoint.id, null);
+    t.check("no key → 401", res.status === 401, String(res.status));
+    res = await del(vEndpoint.id);
+    const body = (await res.json()) as { error?: { code?: string } };
+    t.check("A's key on B's endpoint → 404 not_found", res.status === 404 && body.error?.code === "not_found", `${res.status} ${JSON.stringify(body)}`);
+    t.check("…and B's endpoint still exists", Boolean(await db.query.webhookEndpoints.findFirst({ where: eq(webhookEndpoints.id, vEndpoint.id) })));
+
+    const list = await endpointsGet(new Request("https://orbit.test/api/v1/webhook-endpoints", { headers: { authorization: `Bearer ${key.token}` } }));
+    const listed = JSON.stringify(await list.json());
+    t.check("A's endpoint list shows A's endpoint and not B's", listed.includes(aEndpoint.id) && !listed.includes(vEndpoint.id), listed.slice(0, 200));
+
+    res = await del(aEndpoint.id);
+    t.check("control: A's key deletes A's own endpoint → 200", res.status === 200, String(res.status));
+    t.check("…which is gone", !(await db.query.webhookEndpoints.findFirst({ where: eq(webhookEndpoints.id, aEndpoint.id) })));
+    t.check("…while B's is still there", Boolean(await db.query.webhookEndpoints.findFirst({ where: eq(webhookEndpoints.id, vEndpoint.id) })));
+  } finally {
+    await purgeUsers(db, [VICTIM, ATTACKER]);
+  }
+
+  t.done("tenant isolation");
+});
