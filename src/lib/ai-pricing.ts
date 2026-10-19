@@ -116,6 +116,32 @@ const CACHE_WRITE_MULTIPLIER = 1.25;
 const BATCH_MULTIPLIER = 0.5;
 
 /**
+ * What a provider charges per web search, on top of the tokens the results add. USD per 1,000
+ * searches, matched by model-id prefix.
+ *
+ * Entered from the providers' published rates as remembered (Claude API web search $10, OpenAI
+ * `web_search` $10, Gemini grounded search $14 per 1,000) and NOT re-checked against their
+ * pricing pages: confirm before relying on the dollar figure, like every row in this file.
+ * An OpenRouter slug (`vendor/model`) is absent on purpose: OpenRouter reports its own cost,
+ * which already includes the search, and `usageRow` prefers that over this estimate.
+ */
+const SEARCH_FEE_PER_1000_USD: ReadonlyArray<readonly [prefix: string, usd: number]> = [
+  ["claude-", 10],
+  ["gpt-", 10],
+  ["o1", 10],
+  ["o3", 10],
+  ["o4", 10],
+  ["gemini-", 14],
+];
+
+/** Micro-dollars for `searches` web searches by this model; 0 when unknown or none. */
+export function searchFeeMicros(model: string, searches: number | null | undefined): number {
+  if (!searches || searches < 0 || model.includes("/")) return 0;
+  const hit = SEARCH_FEE_PER_1000_USD.find(([prefix]) => model.startsWith(prefix));
+  return hit ? Math.round(searches * hit[1] * 1000) : 0; // $/1000 searches = micros per search
+}
+
+/**
  * Exact id first, then longest matching prefix so dated snapshots resolve
  * (`gemini-3.5-flash-002` → `gemini-3.5-flash`). `at` switches to an announced price once
  * its date has passed.
@@ -162,6 +188,8 @@ export function estimateCostMicros(input: {
   cachedInputTokens?: number | null;
   cacheWriteTokens?: number | null;
   audioInputTokens?: number | null;
+  /** Web searches the call ran, billed per search on top of the tokens. */
+  webSearches?: number | null;
   /** Sent through a provider Batch API, which bills at half price. */
   batch?: boolean;
   /** When the call was made, for announced price changes. Defaults to now. */
@@ -190,7 +218,8 @@ export function estimateCostMicros(input: {
       outTok * price.output) /
     1_000_000;
 
-  return Math.round(usd * (input.batch ? BATCH_MULTIPLIER : 1) * 1_000_000);
+  const tokensMicros = Math.round(usd * (input.batch ? BATCH_MULTIPLIER : 1) * 1_000_000);
+  return tokensMicros + searchFeeMicros(input.model, input.webSearches);
 }
 
 /** Human-readable dollars for the admin UI. Null in, null out — never a fake $0.00. */

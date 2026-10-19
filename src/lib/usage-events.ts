@@ -42,6 +42,8 @@ export type TokenCounts = {
    * path as the token counts above — OpenRouter puts it on the same `usage` object.
    */
   reportedCostMicros?: number | null;
+  /** Web searches the provider ran for this call; billed per search, on top of tokens. */
+  webSearches?: number | null;
 };
 
 /**
@@ -106,12 +108,14 @@ export function usageRow(rec: UsageRecord) {
         cachedInputTokens: rec.cachedInputTokens,
         cacheWriteTokens: rec.cacheWriteTokens,
         audioInputTokens: rec.audioInputTokens,
+        webSearches: rec.webSearches,
         batch: rec.batch,
       }),
     costSource: (reported === null ? "estimated" : "reported") as "estimated" | "reported",
     success: rec.success ? 1 : 0,
     errorKind: rec.errorKind ?? null,
     durationMs: rec.durationMs ?? null,
+    webSearches: rec.webSearches ?? null,
   };
 }
 

@@ -122,6 +122,23 @@ async function main() {
 
   const writeResult = s.sentBack[0]?.find((r) => r.call.name === "create_contact")?.content ?? "";
   check("a model asking for a write tool is told it does not exist", writeResult.includes("No tool named"), writeResult);
+  // "At most one web tool per turn" is a rule the code holds, not just the prompt.
+  const web = scripted([
+    {
+      calls: [
+        call("research_person", { name: "Ada Voss", company: "Halcyon" }),
+        call("find_people", { description: "PMs at Stripe" }),
+        call("research_company", { name: "Halcyon" }),
+      ],
+      text: "",
+    },
+  ]);
+  await gatherEvidence(USER, ctx, { deadline: Date.now() + 30_000, driver: web.driver, steps: recorder().steps });
+  const webResults = web.sentBack[0] ?? [];
+  const refused = webResults.filter((r) => /Only one web lookup/.test(r.content));
+  check("the first web lookup is attempted", webResults.length === 3 && !/Only one web lookup/.test(webResults[0]?.content ?? ""));
+  check("every later web lookup in the turn is refused", refused.length === 2, JSON.stringify(webResults.map((r) => r.content.slice(0, 40))));
+
   const injected = await db.query.contacts.findFirst({
     where: eq(contacts.fullName, "Injected Person"),
   });

@@ -318,9 +318,17 @@ function extractNotePassages(calls: ExecutedCall[]): NotePassage[] {
  * is passed explicitly: the chat surface never writes, and a refusal is recorded — a model
  * reaching for a tool it was not offered is exactly the behaviour worth a row.
  */
+/** The tools that search the public web: slow, and billed per search on the person's key. */
+const WEB_TOOLS = new Set(["research_person", "research_company", "find_people"]);
+
 function executorFor(userId: string, tools: OrbitTool[]) {
   const byName = new Map(tools.map((t) => [t.name, t]));
+  // The prompt says "at most one of them per turn"; a note that says otherwise must not win.
+  let webLookups = 0;
   return async (call: ToolCall) => {
+    if (WEB_TOOLS.has(call.name) && ++webLookups > 1) {
+      return { ok: false, result: { error: "Only one web lookup per question. Answer from what it returned." } };
+    }
     const tool = byName.get(call.name);
     if (!tool) {
       void recordAiSecurityEvent({

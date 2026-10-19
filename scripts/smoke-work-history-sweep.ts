@@ -62,6 +62,8 @@ async function addContact(userId: string, name: string, closeness: number | null
       fullName: name,
       linkedinUrl: `https://www.linkedin.com/in/${name.toLowerCase().replace(/\s+/g, "-")}`,
       closeness,
+      // The sweep keeps up people the account is in touch with; a test contact is one by default.
+      lastInteractionAt: new Date(),
       ...extra,
     })
     .returning();
@@ -137,6 +139,8 @@ async function sweep() {
     closenessTier: "inner",
     workHistoryDueAt: new Date(Date.now() + 10 * DAY),
   });
+  // Nobody has spoken to them in a year: checked on request, not on a timer.
+  await addContact(HEAVY, "Long Dormant", 99, { closenessTier: "inner", lastInteractionAt: new Date(Date.now() - 365 * DAY) });
   // No LinkedIn URL: nothing to anchor a search on.
   await db.insert(contacts).values({ userId: HEAVY, fullName: "No Url", closeness: 99 });
   const lightId = await addContact(LIGHT, "Only Contact", 10, { closenessTier: "outer" });
@@ -159,6 +163,7 @@ async function sweep() {
   check("a small network is not starved by a big one", names.includes("Only Contact"), names.join(", "));
   check("a contact not yet due is left alone", !names.includes("Checked Recently"));
   check("a contact without a LinkedIn URL is left alone", !names.includes("No Url"));
+  check("a contact nobody has been in touch with for 90+ days is not swept", !names.includes("Long Dormant"), names.join(", "));
   check("an account that switched it off is not searched", !names.includes("Switched Off"));
   check("an account with no AI is not searched", !names.includes("No Key") && stats.noAiUsers === 1, String(stats.noAiUsers));
 

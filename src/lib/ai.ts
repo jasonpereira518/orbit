@@ -2856,7 +2856,12 @@ export async function webSearchJson(
               ...geminiThinking(model, operation),
             },
           });
-          report(tokensFromGemini(response));
+          // Gemini has no cap on grounded queries — `maxSearches` is only a request in the prompt
+          // here — so the count is recorded, and billed, rather than limited.
+          report({
+            ...tokensFromGemini(response),
+            webSearches: response.candidates?.[0]?.groundingMetadata?.webSearchQueries?.length ?? 0,
+          });
           assertUsableFinish(geminiFinish(response));
           const content = response.text;
           if (!content) throw new Error("Empty AI response");
@@ -2909,6 +2914,8 @@ export async function webSearchJson(
               // tier — enough to read a profile snippet, which is all a lookup needs.
               tools: [{ type: "web_search", search_context_size: "low" }],
               max_output_tokens: maxOutputTokens,
+              // No ceiling here: the installed SDK's request type has no `max_tool_calls`, so
+              // `maxSearches` is only a request in the prompt on OpenAI. The count is recorded below.
             },
             { signal: callSignal() },
           );
@@ -2916,6 +2923,7 @@ export async function webSearchJson(
             inputTokens: response.usage?.input_tokens ?? null,
             outputTokens: response.usage?.output_tokens ?? null,
             cachedInputTokens: response.usage?.input_tokens_details?.cached_tokens ?? null,
+            webSearches: response.output.filter((item) => item.type === "web_search_call").length,
           });
           assertUsableFinish(openaiResponsesFinish(response));
           const content = response.output_text;
@@ -2935,7 +2943,7 @@ export async function webSearchJson(
 
         const client = await anthropicClient(grant);
         const messages: Anthropic.MessageParam[] = [{ role: "user", content: input.user }];
-        const totals = { input: 0, output: 0, cached: 0 };
+        const totals = { input: 0, output: 0, cached: 0, searches: 0 };
         let response: Anthropic.Message | null = null;
         // A long search can end the turn with `pause_turn`; sending the partial turn back
         // lets it continue where it stopped rather than starting the research over.
@@ -2953,7 +2961,13 @@ export async function webSearchJson(
           totals.input += t.inputTokens ?? 0;
           totals.output += t.outputTokens ?? 0;
           totals.cached += t.cachedInputTokens ?? 0;
-          report({ inputTokens: totals.input, outputTokens: totals.output, cachedInputTokens: totals.cached });
+          totals.searches += response.usage?.server_tool_use?.web_search_requests ?? 0;
+          report({
+            inputTokens: totals.input,
+            outputTokens: totals.output,
+            cachedInputTokens: totals.cached,
+            webSearches: totals.searches,
+          });
           if (response.stop_reason !== "pause_turn") break;
           messages.push({ role: "assistant", content: response.content });
         }

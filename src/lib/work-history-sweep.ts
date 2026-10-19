@@ -44,6 +44,14 @@ export const SWEEP_USERS_PER_RUN = 8;
 export const SWEEP_CLAIM_PER_USER = 3;
 /** Background checks per account per UTC day. */
 export const BACKGROUND_DAILY_LIMIT = RATE_LIMITS.workHistoryBackground.limit;
+/**
+ * The sweep only keeps up the people the account is actually in touch with: a contact whose
+ * last interaction is older than this is checked when the person asks (the foreground action),
+ * not on a timer. Each background check is a web search billed to the account's own key, and a
+ * LinkedIn import of thousands of dormant contacts used to queue all of them.
+ */
+export const SWEEP_ACTIVE_WINDOW_DAYS = 90;
+
 /** How long a claim holds a contact before it comes due again on its own. */
 const LEASE_MS = 10 * 60 * 1000;
 /** People checked at once. Each is 10–40s of searching. */
@@ -72,6 +80,8 @@ export type WorkHistorySweepDeps = {
   random?: () => number;
 };
 
+const activeSince = (now: Date) => new Date(now.getTime() - SWEEP_ACTIVE_WINDOW_DAYS * 86_400_000);
+
 /** Accounts with at least one due contact and the sweep switched on, most overdue first. */
 async function usersWithDueContacts(now: Date, limit: number): Promise<string[]> {
   const db = await getDb();
@@ -82,6 +92,7 @@ async function usersWithDueContacts(now: Date, limit: number): Promise<string[]>
         JOIN user_settings s ON s.user_id = c.user_id
        WHERE s.work_history_auto_enabled = 1
          AND c.linkedin_url IS NOT NULL
+         AND c.last_interaction_at >= ${activeSince(now)}
          AND (c.work_history_due_at IS NULL OR c.work_history_due_at <= ${now})
        GROUP BY c.user_id
        ORDER BY min(coalesce(c.work_history_due_at, '-infinity'::timestamptz)), random()
@@ -105,6 +116,7 @@ async function claimDueContacts(userId: string, limit: number, now: Date): Promi
            SELECT id FROM contacts
             WHERE user_id = ${userId}
               AND linkedin_url IS NOT NULL
+              AND last_interaction_at >= ${activeSince(now)}
               AND (work_history_due_at IS NULL OR work_history_due_at <= ${now})
             ORDER BY work_history_due_at ASC NULLS FIRST, closeness DESC NULLS LAST, id
             LIMIT ${limit}
