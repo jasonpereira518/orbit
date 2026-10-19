@@ -4,7 +4,7 @@
 |---|---|
 | Date | 2026-10-17; Phase 1 implemented 2026-10-18 |
 | Inputs | [`PRIVACY_AUDIT.md`](PRIVACY_AUDIT.md): finding ids F-xx and mismatch ids M-xx |
-| Status | Approved. Phase 1 implemented (see below); Phases 2–4 not started. Not legal advice. ⚖️ marks a decision that needs a lawyer. All policy text in §7 is a **DRAFT for counsel's review**, not final language. |
+| Status | Approved. Phases 1 and 2 implemented (see below); Phases 3–4 not started. Not legal advice. ⚖️ marks a decision that needs a lawyer. All policy text in §7 is a **DRAFT for counsel's review**, not final language. |
 
 ## Phase 1 status (2026-10-18)
 
@@ -20,6 +20,16 @@
 | 1.8 Front door for non-users | **Partly done** | Operator lookup (`scripts/privacy-lookup.ts`, `src/lib/person-lookup.ts`) and runbook procedure. **Needs you:** a monitored privacy email address to publish. **Deferred:** global suppression list (L). | `smoke-person-lookup` |
 | 1.9 No-training enforcement | **Done**, except stored acknowledgement | `store: false` on Responses. Batch cleanup (with cancel) on failed and stale batches. Gemini free-tier warning and BYO-key hand-off sentence in Settings. The plan's stored acknowledgement was not built (no schema change); the notice is shown inline. | `smoke-ai-retention` |
 | 1.10 Extension disclosure | **Done** in code; Chrome Web Store form **U** | Consent copy names the AI provider, plus a privacy-policy link. | extension typecheck and lint |
+
+## Phase 2 status (2026-10-19)
+
+| Item | Status | What shipped | Test |
+|---|---|---|---|
+| 2.1 Retention schedule | **Done, in report mode** | `src/lib/retention.ts`, run hourly, with per-rule counts in `cron_runs`. Nothing is deleted until you set `ORBIT_RETENTION=apply` (after two weeks of counts, as planned). **Counsel** rules (email bodies, audit log, waitlist, broadcast log, raw LinkedIn files, inactive accounts) only ever count. Not built: the inactive-account email-then-delete flow, and nulling page-view session and city after 30 days. | `smoke-retention` |
+| 2.2 Complete export | **Done**, except background export | Every table holding the account is now exported or excluded with a reason (`orbit-export/3`). The file ends with `"complete": true`. **Deferred:** a background export to private Blob for very large accounts (keyset paging dropped: 20k contacts streamed in 42 s). | `smoke-export-coverage` |
+| 2.3 Deletion replay | **Done**; restore drill **U** | `deletion_tombstones` (keyed HMAC, 120 days), `scripts/replay-deletions.ts`, and the restore runbook step. The restore drill still has to be run for real. Schema renumbered to **v176** (another branch took 175). | `smoke-deletion-replay` |
+| 2.4 Disconnect | **Partly done** | Admin and user now share one disconnect sequence (it now revokes Google and clears calendar and scan rows). Luma and Eventbrite can delete synced events and rosters. **Not done:** provenance-based "delete what this mailbox imported" for Gmail/Outlook, generic-connector disconnect, Apple revoke link. | `smoke-disconnect-parity` |
+| 2.5 Private storage | **Done** in code; migration **U** | Capture photos and feedback screenshots are uploaded private and read via `stored-blob.ts`. `scripts/migrate-private-blobs.ts` moves the old ones. SVG covers are refused. **Needs:** a preview check with a real Blob token, then run the migration. | `smoke-blob-access` |
 
 Effort: **S** ≤ ½ day · **M** 1–3 days · **L** > 3 days. Regression risk: what could break for users.
 
