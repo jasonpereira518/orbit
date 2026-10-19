@@ -90,7 +90,7 @@ export function MeetingPrepCard({ offer }: { offer: PrepOffer }) {
           disabled={state.kind === "loading"}
           aria-expanded={state.kind === "open"}
         >
-          {state.kind === "loading" && <Loader2 className="size-3.5 animate-spin" />}
+          {state.kind === "loading" && <Loader2 className="size-3.5 motion-safe:animate-spin" />}
           {state.kind === "open" ? "Hide brief" : "Show brief"}
         </Button>
         <Link href={ask} className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}>
@@ -106,7 +106,7 @@ export function MeetingPrepCard({ offer }: { offer: PrepOffer }) {
 
 function PrepBrief({ prep, eventId }: { prep: MeetingPrep; eventId: string }) {
   return (
-    <div className="max-h-[50vh] space-y-3 overflow-y-auto border-t border-border/60 pt-2 text-xs">
+    <div className="max-h-[50vh] space-y-3 overflow-y-auto border-t border-border-subtle pt-2 text-xs">
       {prep.lastTime && (prep.lastTime.actionItems.length > 0 || prep.lastTime.decisions.length > 0) && (
         <div className="space-y-0.5">
           <p className="text-muted-foreground">Last time ({prep.lastTime.day})</p>
@@ -250,7 +250,7 @@ function GuestRow({ guest, eventId }: { guest: Guest; eventId: string }) {
               disabled={state === "loading"}
               className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline disabled:opacity-60"
             >
-              {state === "loading" ? <Loader2 className="size-3 animate-spin" /> : <Search className="size-3" />} Look up
+              {state === "loading" ? <Loader2 className="size-3 motion-safe:animate-spin" /> : <Search className="size-3" />} Look up
             </button>
           )}
           <button
@@ -259,7 +259,7 @@ function GuestRow({ guest, eventId }: { guest: Guest; eventId: string }) {
             disabled={state === "adding"}
             className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline disabled:opacity-60"
           >
-            {state === "adding" ? <Loader2 className="size-3 animate-spin" /> : <UserPlus className="size-3" />} Add
+            {state === "adding" ? <Loader2 className="size-3 motion-safe:animate-spin" /> : <UserPlus className="size-3" />} Add
           </button>
         </span>
       </div>
@@ -296,7 +296,7 @@ function TalkingPoints({ eventId }: { eventId: string }) {
         }}
         className="inline-flex items-center gap-1 self-start text-xs text-primary underline-offset-2 hover:underline disabled:opacity-60"
       >
-        {state.kind === "loading" ? <Loader2 className="size-3 animate-spin" /> : <Lightbulb className="size-3" />}
+        {state.kind === "loading" ? <Loader2 className="size-3 motion-safe:animate-spin" /> : <Lightbulb className="size-3" />}
         Talking points
       </button>
     );
@@ -304,7 +304,7 @@ function TalkingPoints({ eventId }: { eventId: string }) {
   if (state.kind === "error") return <p className="text-xs text-destructive">{state.message}</p>;
   const { points, source } = state.result;
   return (
-    <div className="space-y-1 border-t border-border/60 pt-2 text-xs">
+    <div className="space-y-1 border-t border-border-subtle pt-2 text-xs">
       <p className="text-muted-foreground">Talking points{source === "facts" ? " · from what Orbit knows" : ""}</p>
       {points.length === 0 ? (
         <p className="text-muted-foreground">Nothing on file yet to bring up with them.</p>

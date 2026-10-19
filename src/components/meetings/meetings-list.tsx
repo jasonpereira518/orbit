@@ -8,9 +8,12 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { CalendarDays, Clock, Loader2, Users } from "lucide-react";
+import { CalendarDays, Clock, Loader2, Mic, Users } from "lucide-react";
 import { listMeetingsPage } from "@/actions/meetings";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { CARD_HOVER } from "@/lib/interaction";
+import { cn } from "@/lib/utils";
 import { formatMeetingDuration } from "@/lib/format-meeting-duration";
 import { formatElapsed } from "@/lib/format-elapsed";
 import type { MeetingListItem, MeetingsPage } from "@/lib/meetings-list";
@@ -52,19 +55,29 @@ export function MeetingsList({ initial, q }: { initial: MeetingsPage; q: string 
 
   if (items.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-border/70 p-8 text-center text-sm text-muted-foreground">
-        {q ? (
-          <>No meeting mentions “{q}”.</>
-        ) : (
-          <>
-            No finished meetings yet. Record one from{" "}
-            <Link href="/capture?mode=meeting" className="font-medium text-primary underline-offset-2 hover:underline">
-              Capture
-            </Link>{" "}
-            and it will be kept here.
-          </>
-        )}
-      </div>
+      q ? (
+        <EmptyState
+          icon={Mic}
+          title={<>No meeting mentions “{q}”</>}
+          description="Try a person, a topic, or a different phrase."
+          action={
+            <Link href="/meetings" className={buttonVariants({ variant: "outline", size: "sm" })}>
+              Clear search
+            </Link>
+          }
+        />
+      ) : (
+        <EmptyState
+          icon={Mic}
+          title="No finished meetings yet"
+          description="Record one from Capture and it will be kept here."
+          action={
+            <Link href="/capture?mode=meeting" className={buttonVariants({ variant: "outline", size: "sm" })}>
+              Record a meeting
+            </Link>
+          }
+        />
+      )
     );
   }
 
@@ -75,24 +88,24 @@ export function MeetingsList({ initial, q }: { initial: MeetingsPage; q: string 
           <li key={m.id}>
             <Link
               href={`/meetings/${m.id}${q ? `?q=${encodeURIComponent(q)}` : ""}`}
-              className="block rounded-2xl border border-border/70 bg-card p-4 transition-colors hover:border-primary/40 hover:bg-primary/[0.02]"
+              className={cn("block rounded-xl border border-border-subtle bg-card p-4", CARD_HOVER)}
             >
               <p className="font-medium text-foreground">{m.title || "Untitled meeting"}</p>
               <p className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                 <span className="inline-flex items-center gap-1.5">
-                  <CalendarDays className="size-3.5" /> {whenLabel(m.startedAt)}
+                  <CalendarDays className="size-3.5" aria-hidden /> {whenLabel(m.startedAt)}
                 </span>
                 <span className="inline-flex items-center gap-1.5">
-                  <Clock className="size-3.5" /> {formatMeetingDuration(m.durationMs)}
+                  <Clock className="size-3.5" aria-hidden /> {formatMeetingDuration(m.durationMs)}
                 </span>
                 {m.attendees.length > 0 && (
                   <span className="inline-flex items-center gap-1.5">
-                    <Users className="size-3.5" /> {guestsLabel(m.attendees)}
+                    <Users className="size-3.5" aria-hidden /> {guestsLabel(m.attendees)}
                   </span>
                 )}
               </p>
               {m.match ? (
-                <p className="mt-2 rounded-lg bg-muted/40 px-3 py-2 text-sm text-foreground">
+                <p className="mt-2 rounded-lg bg-surface-inset px-3 py-2 text-sm text-foreground">
                   <span className="mr-2 font-mono text-xs tabular-nums text-muted-foreground">
                     {formatElapsed(m.match.startMs)}
                   </span>
@@ -108,8 +121,8 @@ export function MeetingsList({ initial, q }: { initial: MeetingsPage; q: string 
       {cursor && (
         <div className="flex justify-center">
           <Button type="button" variant="outline" disabled={pending} onClick={loadMore}>
-            {pending ? <Loader2 className="size-4 animate-spin" /> : null}
-            Load more
+            {pending ? <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> : null}
+            {pending ? "Loading…" : "Load more"}
           </Button>
         </div>
       )}

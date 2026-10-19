@@ -75,7 +75,7 @@ export function ImportDropOverlay({
             active ? "opacity-100" : "opacity-0",
           )}
         >
-          <div className="absolute inset-4 rounded-[1.75rem] border-2 border-dashed border-primary/50 bg-primary/5" />
+          <div className="absolute inset-4 rounded-xl border-2 border-dashed border-primary bg-primary/5" />
           <p className="relative flex items-center gap-2.5 rounded-full border border-primary/30 bg-card px-6 py-3 text-base font-medium text-primary shadow-xl">
             {kind === "text" ? (
               <UserPlus className="size-5" />

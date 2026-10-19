@@ -21,26 +21,28 @@ import { initialsFromName } from "@/lib/initials";
 const PLANET_SRC = "/imports/earth.webp";
 
 /**
- * The people's colours, one per body in turn, taken from the landing page's planets.
+ * The people's colours, one per body in turn, read from the theme's own tokens.
  *
- * Literal hex rather than CSS variables: a canvas `fillStyle` needs a value it can parse, and
- * these are decorative. Each set is tuned for its surface: mid-tones on the light card, lifted
- * ones on the dark card. `edge` is the gold ring round a face.
+ * A canvas `fillStyle` cannot parse `var(--x)`, so the tokens are resolved through
+ * `getComputedStyle` on the root each paint (cheap: a handful of string reads a frame) and
+ * follow the theme without a `dark` lookup of their own. The rings are the muted ink, the
+ * bodies cycle the primary and the chart series, initials sit in the primary's foreground, and
+ * `edge` — the gold ring round a face — is the Max tier's gold.
  */
-const PALETTE = {
-  light: {
-    ring: "#94a3b8",
-    bodies: ["#3f7cc4", "#c65f3c", "#b8874f", "#4a67c9", "#2f9bb0", "#b8912f"],
-    initials: "#ffffff",
-    edge: "#fcd34d",
-  },
-  dark: {
-    ring: "#cbd5e1",
-    bodies: ["#7fb0ea", "#ec8a66", "#dcae7a", "#8aa0f0", "#6fd0e0", "#e6c46a"],
-    initials: "#0f1a2b",
-    edge: "#fde68a",
-  },
-} as const;
+type Palette = { ring: string; bodies: string[]; initials: string; edge: string };
+
+const BODY_TOKENS = ["--primary", "--chart-2", "--chart-3", "--chart-4", "--chart-5", "--tier-max"] as const;
+
+function readPalette(): Palette {
+  const style = getComputedStyle(document.documentElement);
+  const token = (name: string) => style.getPropertyValue(name).trim();
+  return {
+    ring: token("--muted-foreground"),
+    bodies: BODY_TOKENS.map(token),
+    initials: token("--primary-foreground"),
+    edge: token("--tier-max"),
+  };
+}
 
 /** A trail is this many segments, each this many seconds of travel apart. */
 const TRAIL_STEPS = 8;
@@ -147,9 +149,7 @@ export function ImportFinishScene({
     function paint(t: number) {
       if (!scene) return;
       const c = ctx!;
-      const palette = document.documentElement.classList.contains("dark")
-        ? PALETTE.dark
-        : PALETTE.light;
+      const palette = readPalette();
       const { width, height, cx, cy, radii, faceRadius } = scene;
       c.clearRect(0, 0, width, height);
 
@@ -194,7 +194,7 @@ export function ImportFinishScene({
       body: SceneBody,
       pose: { x: number; y: number; depth: number },
       t: number,
-      palette: (typeof PALETTE)["light" | "dark"],
+      palette: Palette,
       faceRadius: number,
       family: string,
     ) {

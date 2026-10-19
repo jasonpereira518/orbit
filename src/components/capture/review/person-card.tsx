@@ -69,8 +69,8 @@ export function PersonCardBody({
             {subline && <p className="mt-0.5 truncate text-sm text-muted-foreground">{subline}</p>}
             <div className="mt-2 flex flex-wrap gap-1.5">
               {draft.mergeContactId && (
-                <Badge variant="secondary" className="text-3xs">
-                  Already in your network
+                <Badge tone="neutral" size="sm">
+                  Already in Orbit
                 </Badge>
               )}
               {/* A combined upload has a card per person per note — say which note. */}
@@ -112,7 +112,7 @@ export function PersonCardBody({
         compact={compact}
       />
 
-      <div className="space-y-3 rounded-xl border border-border/60 bg-muted/30 p-3">
+      <div className="space-y-3 rounded-xl border border-border-subtle bg-surface-inset p-3">
         <SaveTargetChoice
           name={`${idPrefix}-target`}
           candidates={item.duplicates}

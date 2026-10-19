@@ -91,7 +91,7 @@ function IgnoredList({ onCount }: { onCount: (n: number) => void }) {
       ) : (
         <ul className="space-y-2">
           {people.map((p) => (
-            <li key={p.id} className="flex items-start gap-3 rounded-xl border border-border/60 bg-card px-3 py-2">
+            <li key={p.id} className="flex items-start gap-3 rounded-xl border border-border-subtle bg-card px-3 py-2">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <p className="truncate text-sm font-medium text-foreground">{p.displayName}</p>

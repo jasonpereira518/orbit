@@ -49,20 +49,20 @@ export function MeetingWidget() {
 
   return (
     <div
-      className="flex flex-col gap-2 rounded-xl border border-border/70 bg-card/95 p-3 shadow-lg backdrop-blur-md"
+      className="flex flex-col gap-2 rounded-xl border border-border-subtle bg-card/95 p-3 shadow-lg backdrop-blur-md"
       role="status"
     >
       <div className="flex items-center gap-2.5">
       <span className="shrink-0">
         {working || requesting ? (
-          <Loader2 className="size-4 animate-spin text-primary" />
+          <Loader2 className="size-4 motion-safe:animate-spin text-primary" />
         ) : phase === "live" ? (
           <span className="relative flex size-2.5">
-            <span className="absolute inline-flex size-full animate-ping rounded-full bg-red-500 opacity-60 motion-reduce:animate-none" />
-            <span className="relative inline-flex size-2.5 rounded-full bg-red-500" />
+            <span className="absolute inline-flex size-full animate-ping rounded-full bg-destructive opacity-60 motion-reduce:animate-none" />
+            <span className="relative inline-flex size-2.5 rounded-full bg-destructive" />
           </span>
         ) : (
-          <span className={cn("block size-2.5 rounded-full", ready ? "bg-primary" : "bg-amber-500")} />
+          <span className={cn("block size-2.5 rounded-full", ready ? "bg-primary" : "bg-warning")} />
         )}
       </span>
 
@@ -107,7 +107,7 @@ export function MeetingWidget() {
           type="button"
           variant="ghost"
           size="sm"
-          className={cn("px-2", recorder.micMuted ? "text-amber-600 dark:text-warning" : "text-muted-foreground")}
+          className={cn("px-2", recorder.micMuted ? "text-warning" : "text-muted-foreground")}
           aria-pressed={recorder.micMuted}
           aria-label={recorder.micMuted ? "Unmute microphone" : "Mute microphone"}
           title={recorder.micMuted ? "Unmute microphone" : "Mute microphone"}
@@ -154,7 +154,7 @@ function EventEnded({ endIso, quiet }: { endIso: string | null; quiet: boolean }
   const late = now === null ? NaN : now - end;
   if (!(late > 60_000 && late < 3_600_000)) return null;
   return (
-    <p className="truncate text-xs text-amber-600 dark:text-warning">
+    <p className="truncate text-xs text-warning">
       {quiet
         ? "The call sounds over — open to finish"
         : `The meeting ended ${Math.round(late / 60_000)} min ago — finish when you’re done`}

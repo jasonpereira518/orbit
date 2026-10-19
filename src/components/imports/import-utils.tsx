@@ -128,6 +128,8 @@ export function ImportFilePicker({
         multiple={multiple}
         disabled={disabled}
         className="sr-only"
+        tabIndex={-1}
+        aria-hidden
         onChange={(e) => {
           const files = [...(e.target.files ?? [])];
           if (!files.length) return;
@@ -203,16 +205,16 @@ export function ImportProgress({
 
   return (
     <section
-      className="space-y-4 rounded-2xl border border-border/70 bg-card p-5"
+      className="space-y-4 rounded-xl border border-border-subtle bg-card p-5"
       role="status"
       aria-live="polite"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
-          <Loader2 className="size-4 shrink-0 animate-spin text-primary" />
+          <Loader2 className="size-4 shrink-0 motion-safe:animate-spin text-primary" aria-hidden />
           <div className="min-w-0">
             {step && step.total > 1 ? (
-              <p className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+              <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
                 Step {step.index} of {step.total}
               </p>
             ) : null}
@@ -293,7 +295,7 @@ export function ImportWarningBanner({
   if (!warnings.length) return null;
 
   return (
-    <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-warning">
+    <div className="flex items-start gap-2.5 rounded-xl border border-warning-border bg-warning-surface px-4 py-3 text-sm text-warning">
       <AlertTriangle className="mt-0.5 size-4 shrink-0" />
       <ul className="min-w-0 flex-1 space-y-1">
         {warnings.map((w, i) => (
@@ -305,7 +307,7 @@ export function ImportWarningBanner({
           type="button"
           variant="ghost"
           size="icon-sm"
-          className="shrink-0 text-amber-700 hover:text-amber-900 dark:text-warning"
+          className="shrink-0 text-warning hover:text-warning/80"
           onClick={onDismiss}
           aria-label="Dismiss warning"
         >
@@ -324,18 +326,14 @@ export function ImportWarningBanner({
  * The title is real text, since it never depends on the status; only what does is
  * placeholder. Keeps the card's `id`, so a link to its anchor still lands on it.
  */
-export function ConnectedImportSkeleton({ id, title }: { id: string; title: string }) {
+export function ConnectedImportSkeleton({ id, title }: { id?: string; title: string }) {
   return (
-    <section
-      id={id}
-      aria-busy="true"
-      className="space-y-4 rounded-2xl border border-border/70 bg-card p-6"
-    >
+    <section id={id} aria-busy="true" className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-medium text-ink">{title}</h2>
-          {/* The status line: `mt-1`, one `text-sm` line (20px). */}
-          <div className="mt-1 flex h-5 items-center">
+          <span className="sr-only">{title}</span>
+          {/* The status line: one `text-sm` line (20px). */}
+          <div className="flex h-5 items-center">
             <Skeleton className="h-3.5 w-64 max-w-[60vw]" />
           </div>
           <span className="sr-only">Checking the connection…</span>
@@ -349,7 +347,7 @@ export function ConnectedImportSkeleton({ id, title }: { id: string; title: stri
 export function BusyHint({ children }: { children: ReactNode }) {
   return (
     <div className="flex items-center gap-2 text-sm text-muted-foreground">
-      <Loader2 className="size-3.5 shrink-0 animate-spin" />
+      <Loader2 className="size-3.5 shrink-0 motion-safe:animate-spin" aria-hidden />
       <span>{children}</span>
     </div>
   );

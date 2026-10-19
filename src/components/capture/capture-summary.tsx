@@ -128,7 +128,7 @@ export function CaptureSummary({
       className="space-y-5"
     >
       {headerSlot}
-      <div className="space-y-4 rounded-2xl border border-border/70 bg-card p-5 sm:p-6">
+      <div className="space-y-4 rounded-xl border border-border-subtle bg-card p-5 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
             <h2 className="font-heading text-2xl text-ink">Ready to save</h2>
@@ -159,7 +159,7 @@ export function CaptureSummary({
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, x: -24 }}
                     transition={SPRING_PILL}
-                    className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/30 px-3 py-2"
+                    className="flex items-center gap-3 rounded-xl border border-border-subtle bg-surface-inset px-3 py-2"
                   >
                     <PlanetBadge index={index} closeness={draft.closeness} size="sm" />
                     <div className="min-w-0 flex-1">
@@ -242,7 +242,7 @@ export function CaptureSummary({
         />
 
         {error && (
-          <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/[0.04] px-3 py-2 text-sm text-foreground">
+          <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-foreground">
             {error}
           </div>
         )}

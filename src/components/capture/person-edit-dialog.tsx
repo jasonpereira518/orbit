@@ -74,7 +74,7 @@ function EditBody({
             <DialogTitle className="truncate font-heading text-xl font-normal text-ink">
               {draft.fields.name.trim() || "Unnamed person"}
             </DialogTitle>
-            <DialogDescription>Change anything before it&apos;s saved.</DialogDescription>
+            <DialogDescription>Change anything before it’s saved.</DialogDescription>
           </div>
         </div>
       </DialogHeader>
@@ -89,7 +89,7 @@ function EditBody({
         connections={item.parsed.connections ?? []}
         compact
       />
-      <div className="space-y-3 rounded-xl border border-border/60 bg-muted/30 p-3">
+      <div className="space-y-3 rounded-xl border border-border-subtle bg-surface-inset p-3">
         <SaveTargetChoice
           name={`edit-${index}-target`}
           candidates={item.duplicates}

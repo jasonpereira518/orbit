@@ -25,6 +25,7 @@
 
 import { useState } from "react";
 import { ChevronDown, ChevronUp, Sparkles } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import {
@@ -57,9 +58,9 @@ export function SuggestedOpportunitiesReview({
   const checkedCount = items.filter((i) => i.checked).length;
 
   return (
-    <div className="space-y-3 rounded-2xl border border-violet-500/30 bg-violet-500/[0.04] p-4">
+    <div className="space-y-3 rounded-xl border border-primary/25 bg-primary/6 p-4">
       <div className="flex items-center gap-2">
-        <Sparkles className="size-4 text-violet-600 dark:text-violet-300" />
+        <Sparkles className="size-4 text-primary" aria-hidden />
         <h3 className="text-sm font-medium text-foreground">
           Opportunities that will be opened
         </h3>
@@ -91,7 +92,7 @@ function OpportunityRow({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <li className="space-y-2 rounded-xl border border-border/60 bg-card p-3">
+    <li className="space-y-2 rounded-xl border border-border-subtle bg-card p-3">
       <div className="flex items-start gap-2">
         <Checkbox
           checked={item.checked}
@@ -140,18 +141,21 @@ function OpportunityRow({
           {/* Same disclosure as a reminder's source line. Every opportunity is verbatim-
               contained in the note by construction, and this is where you check that. */}
           <div className="space-y-1">
-            <button
+            <Button
               type="button"
+              variant="link"
+              size="xs"
+              aria-expanded={open}
               onClick={() => setOpen((v) => !v)}
-              className="inline-flex items-center gap-1 text-left text-xs text-muted-foreground hover:text-foreground"
+              className="h-auto justify-start gap-1 p-0 text-left text-xs font-normal text-muted-foreground hover:text-foreground"
             >
               {open ? (
-                <ChevronUp className="size-3 shrink-0" />
+                <ChevronUp className="size-3 shrink-0" aria-hidden />
               ) : (
-                <ChevronDown className="size-3 shrink-0" />
+                <ChevronDown className="size-3 shrink-0" aria-hidden />
               )}
               where this came from
-            </button>
+            </Button>
             {open && (
               <p className="rounded-lg bg-muted/50 p-2 text-xs text-muted-foreground">
                 {item.sourceExcerpt}

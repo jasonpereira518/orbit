@@ -324,10 +324,11 @@ export function SettingsPageSkeleton() {
 /** Matches /capture/[batchId]: the results view, not the capture form it's nested under. */
 export function NoteBatchResultSkeleton() {
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
-      <div className="space-y-2">
+    <div className="max-w-3xl space-y-8">
+      <div className="space-y-1">
+        <Skeleton className="mb-2 h-4 w-28" />
         <Skeleton className="h-9 w-72 max-w-full" />
-        <Skeleton className="h-4 w-full max-w-md" />
+        <Skeleton className="h-6 w-full max-w-md" />
       </div>
       <div className="space-y-4">
         <Skeleton className="h-12 w-full rounded-xl" />
@@ -405,7 +406,7 @@ export function ChatPanelSkeleton({ className }: { className?: string }) {
  */
 export function CaptureFormSkeleton() {
   return (
-    <div className="space-y-4 rounded-xl border border-border-subtle p-6">
+    <div className="space-y-4 rounded-xl border border-border-subtle bg-card p-6">
       <Skeleton className="h-9 w-40 rounded-lg" />
       {Array.from({ length: 3 }).map((_, i) => (
         <div key={i} className="space-y-2">
@@ -436,10 +437,11 @@ export function CaptureFormSkeleton() {
 /** Matches /capture: header (no back link, unlike FormPageSkeleton) at the page's own max-w-3xl. */
 export function CapturePageSkeleton() {
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
-      <div className="space-y-2">
-        <Skeleton className="h-9 w-40" />
-        <Skeleton className="h-4 w-full max-w-md" />
+    <div className="max-w-3xl space-y-8">
+      <PageHeaderSkeleton />
+      <div className="space-y-3">
+        <Skeleton className="h-9 w-full rounded-lg sm:w-96" />
+        <Skeleton className="h-4 w-3/4" />
       </div>
       <CaptureFormSkeleton />
     </div>
@@ -478,7 +480,7 @@ export function GraphPageSkeleton() {
 
 export function ImportsPageSkeleton() {
   return (
-    <div className="mx-auto max-w-3xl space-y-8">
+    <div className="max-w-3xl space-y-8">
       <PageHeaderSkeleton />
       <Skeleton className="h-44 w-full rounded-xl" />
       <div className="space-y-2">
@@ -492,6 +494,7 @@ export function ImportsPageSkeleton() {
         <Skeleton className="h-14 w-full rounded-xl" />
         <Skeleton className="h-14 w-full rounded-xl" />
       </div>
+      <Skeleton className="h-64 w-full rounded-xl" />
     </div>
   );
 }

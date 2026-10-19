@@ -56,7 +56,7 @@ export function MeetingCalendarSuggestions({ onUse }: { onUse: (meeting: Meeting
   if (loaded.status !== "ok") {
     return (
       <p className="text-xs text-muted-foreground">
-        Orbit can&apos;t read your Google Calendar yet.{" "}
+        Orbit can’t read your Google Calendar yet.{" "}
         <Link href="/settings" className="font-medium text-primary underline-offset-2 hover:underline">
           Reconnect Google in Settings
         </Link>{" "}
@@ -69,7 +69,7 @@ export function MeetingCalendarSuggestions({ onUse }: { onUse: (meeting: Meeting
 
   const now = loaded.at;
   return (
-    <div className="space-y-2 rounded-xl border border-primary/25 bg-primary/[0.03] p-3">
+    <div className="space-y-2 rounded-xl border border-primary/25 bg-primary/5 p-3">
       <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
         <CalendarClock className="size-4 text-muted-foreground" /> From your calendar
       </p>

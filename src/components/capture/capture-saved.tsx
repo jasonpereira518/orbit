@@ -43,7 +43,7 @@ export function CaptureSaved({
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: DUR.base, ease: EASE_HOUSE }}
-      className="space-y-4 rounded-2xl border border-primary/30 bg-primary/[0.04] p-5 sm:p-6"
+      className="space-y-4 rounded-xl border border-primary/30 bg-primary/5 p-5 sm:p-6"
     >
       <div className="flex items-start gap-4">
         <span className="grid size-10 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground">
@@ -62,7 +62,7 @@ export function CaptureSaved({
       </div>
 
       {single && saved?.contactIdByKey[single.item.key] && (
-        <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-card px-3 py-2">
+        <div className="flex items-center gap-3 rounded-xl border border-border-subtle bg-card px-3 py-2">
           <PlanetBadge index={single.index} closeness={single.decision.relationshipScore} size="sm" />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">{single.decision.edits?.name || single.item.parsed.name}</p>

@@ -4,6 +4,7 @@ import { X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/lib/utils";
 
 export type ReviewPerson = {
@@ -20,7 +21,7 @@ export function ImportPeopleReview({
   selectedIds,
   onSelectedIdsChange,
   onRemove,
-  emptyLabel = "No people left to import.",
+  emptyLabel = "No people left to import",
 }: {
   people: ReviewPerson[];
   selectedIds: Set<string>;
@@ -45,7 +46,7 @@ export function ImportPeopleReview({
   }
 
   if (people.length === 0) {
-    return <p className="text-sm text-muted-foreground">{emptyLabel}</p>;
+    return <EmptyState variant="plain" size="sm" title={emptyLabel} />;
   }
 
   return (
@@ -53,7 +54,7 @@ export function ImportPeopleReview({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">
           {selectedCount} of {people.length} selected
-          {repeatCount > 0 ? ` · ${repeatCount} already in your network` : ""}
+          {repeatCount > 0 ? ` · ${repeatCount} already in Orbit` : ""}
         </p>
         <div className="flex gap-2">
           <Button
@@ -75,8 +76,8 @@ export function ImportPeopleReview({
         </div>
       </div>
 
-      <div className="max-h-[28rem] overflow-auto rounded-xl border border-border/60">
-        <div className="sticky top-0 z-10 flex items-center gap-3 border-b border-border/60 bg-muted/80 px-3 py-2 text-xs font-medium backdrop-blur">
+      <div className="max-h-[28rem] overflow-auto rounded-xl border border-border-subtle">
+        <div className="sticky top-0 z-10 flex items-center gap-3 border-b border-border-subtle bg-muted/80 px-3 py-2 text-xs font-medium backdrop-blur">
           <Checkbox
             checked={allSelected}
             onCheckedChange={(v) => selectAll(v === true)}
@@ -119,7 +120,7 @@ export function ImportPeopleReview({
                 <div className="w-36 shrink-0 text-right sm:w-44">
                   {person.isRepeat ? (
                     <div className="flex flex-col items-end gap-0.5">
-                      <Badge variant="secondary">Already in orbit</Badge>
+                      <Badge tone="neutral">Already in Orbit</Badge>
                       {person.repeatReason ? (
                         <span className="text-3xs text-muted-foreground">
                           {person.repeatReason}
@@ -130,14 +131,16 @@ export function ImportPeopleReview({
                     <Badge variant="outline">New</Badge>
                   )}
                 </div>
-                <button
+                <Button
                   type="button"
-                  className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                  variant="ghost"
+                  size="icon"
+                  className="shrink-0 text-muted-foreground"
                   aria-label={`Remove ${person.name}`}
                   onClick={() => onRemove(person.id)}
                 >
-                  <X className="size-4" />
-                </button>
+                  <X className="size-4" aria-hidden />
+                </Button>
               </li>
             );
           })}

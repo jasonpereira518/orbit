@@ -1,6 +1,7 @@
 "use client";
 
 import { Check, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 /**
@@ -25,11 +26,11 @@ export function MeetingSaveStatus({
   if (failed > 0) {
     return (
       <p className={cn("text-xs text-destructive", className)} role="status">
-        {parts(failed)} couldn&apos;t upload.{" "}
+        {parts(failed)} couldn’t upload.{" "}
         {onRetry && (
-          <button type="button" onClick={onRetry} className="font-medium underline underline-offset-2">
-            Retry
-          </button>
+          <Button type="button" variant="link" size="xs" className="h-auto p-0 text-xs text-destructive" onClick={onRetry}>
+            Try again
+          </Button>
         )}
       </p>
     );
@@ -37,13 +38,13 @@ export function MeetingSaveStatus({
   if (pending > 0) {
     return (
       <p className={cn("flex items-center gap-1.5 text-xs text-muted-foreground", className)} role="status">
-        <Loader2 className="size-3 animate-spin" /> Saving {parts(pending)}…
+        <Loader2 className="size-3 motion-safe:animate-spin" aria-hidden /> Saving {parts(pending)}…
       </p>
     );
   }
   return (
     <p className={cn("flex items-center gap-1.5 text-xs text-muted-foreground", className)} role="status">
-      <Check className="size-3 text-primary" /> Everything&apos;s saved
+      <Check className="size-3 text-success" aria-hidden /> Everything’s saved
     </p>
   );
 }

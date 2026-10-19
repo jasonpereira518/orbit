@@ -170,7 +170,7 @@ export function ScanCamera({
         middle, so what is inside this box is what gets read.
       */}
       <div
-        className="relative mx-auto overflow-hidden rounded-2xl bg-black"
+        className="relative mx-auto overflow-hidden rounded-xl bg-black"
         style={VIEWFINDER_STYLE}
       >
         <video
@@ -249,7 +249,7 @@ export function ScanCamera({
                 <img
                   src={page.previewUrl}
                   alt={`Page ${i + 1}`}
-                  className="h-16 rounded-md border border-border/60 object-cover"
+                  className="h-16 rounded-md border border-border-subtle object-cover"
                   style={{ aspectRatio: VIEWFINDER_STYLE.aspectRatio }}
                 />
                 <span className="absolute bottom-0 left-0 rounded-br-lg rounded-tl-lg bg-black/60 px-1 text-3xs text-white">

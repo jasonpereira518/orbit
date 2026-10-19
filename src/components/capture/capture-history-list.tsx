@@ -9,6 +9,7 @@ import { deleteNoteBatch } from "@/actions/note-batches";
 import type { CaptureHistoryItem, CaptureHistoryPage } from "@/lib/capture-history";
 import { timelineDayLabel } from "@/lib/timeline-date";
 import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
 import { CAPTURE_SOURCE_META, capturePhotoSrc } from "@/components/capture/capture-source-meta";
 import { friendlyError } from "@/lib/errors";
@@ -79,16 +80,18 @@ export function CaptureHistoryList({ initial }: { initial: CaptureHistoryPage })
     <section aria-labelledby="capture-history-heading" className="space-y-3">
       <div className="flex items-center gap-2">
         <History className="size-4 text-muted-foreground" aria-hidden />
-        <h2 id="capture-history-heading" className="text-base font-medium text-ink">
+        <h2 id="capture-history-heading" className="font-heading text-lg font-medium text-ink">
           Recent captures
         </h2>
       </div>
 
       {items.length === 0 ? (
-        <p className="rounded-2xl border border-dashed border-border/70 px-4 py-5 text-sm text-muted-foreground">
-          Nothing captured yet. Every capture you save lands here, with the notes and
-          photos it came from, so you can always go back to the original.
-        </p>
+        <EmptyState
+          icon={History}
+          size="sm"
+          title="Nothing captured yet"
+          description="Every capture you save lands here, with the notes and photos it came from, so you can always go back to the original."
+        />
       ) : (
         <ul className="space-y-2">
           {items.map((item) => (
@@ -146,7 +149,7 @@ function CaptureHistoryRow({
   ].filter(Boolean);
 
   return (
-    <li className="rounded-xl border border-border/60 bg-card transition-colors has-[a:hover]:border-primary/40 has-[a:focus-visible]:border-ring">
+    <li className="rounded-xl border border-border-subtle bg-card transition-colors has-[a:hover]:border-primary/40 has-[a:focus-visible]:border-ring">
       {/* The delete button sits beside the link, not inside it: a button nested in an
           anchor is invalid and unreachable by keyboard. */}
       <div className="flex items-center">
@@ -155,7 +158,7 @@ function CaptureHistoryRow({
           className="group flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-3 text-sm focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
         >
           {item.thumbnailIds.length > 0 ? (
-            <span className="relative size-12 shrink-0 overflow-hidden rounded-lg border border-border/60 bg-muted">
+            <span className="relative size-12 shrink-0 overflow-hidden rounded-lg border border-border-subtle bg-muted">
               {/* eslint-disable-next-line @next/next/no-img-element -- served by an
                   auth-gated API route, not a remote origin next/image can optimise. */}
               <img
@@ -240,7 +243,7 @@ function CaptureHistoryRow({
         )}
       </div>
       {confirming && (
-        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border/60 px-3 py-2">
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border-subtle px-3 py-2">
           <span role="status" className="mr-auto text-xs text-muted-foreground">
             Delete this capture and its photos? The people and notes it saved stay.
           </span>

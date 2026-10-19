@@ -2,6 +2,7 @@
 
 import { type ReactNode } from "react";
 import { ChevronDown, type LucideIcon } from "lucide-react";
+import { IntegrationLogo, type IntegrationKey } from "@/components/integrations/integration-logo";
 import { cn } from "@/lib/utils";
 
 /**
@@ -21,8 +22,8 @@ import { cn } from "@/lib/utils";
  */
 export function ImportSourceRow({
   id,
+  provider,
   icon: Icon,
-  accent,
   title,
   status,
   open,
@@ -32,8 +33,10 @@ export function ImportSourceRow({
 }: {
   /** The anchor an account alert can link at. Never rename one without updating the map. */
   id: string;
-  icon: LucideIcon;
-  accent: string;
+  /** The source's logo; a branded service gets its mark, a file format its glyph. */
+  provider?: IntegrationKey;
+  /** For a source with no provider key (a chat export). Drawn in the same neutral tile. */
+  icon?: LucideIcon;
   title: string;
   status: ReactNode;
   open: boolean;
@@ -44,7 +47,7 @@ export function ImportSourceRow({
   return (
     <li
       id={id}
-      className="scroll-mt-24 rounded-xl border border-border/60 bg-background/60"
+      className="scroll-mt-24 rounded-xl border border-border-subtle bg-card"
     >
       <button
         type="button"
@@ -56,14 +59,13 @@ export function ImportSourceRow({
           "hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-60",
         )}
       >
-        <span
-          className={cn(
-            "flex size-7 shrink-0 items-center justify-center rounded-lg",
-            accent,
-          )}
-        >
-          <Icon className="size-3.5" aria-hidden />
-        </span>
+        {provider ? (
+          <IntegrationLogo provider={provider} size="md" title="" />
+        ) : Icon ? (
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border-subtle bg-card text-muted-foreground">
+            <Icon className="size-4" aria-hidden />
+          </span>
+        ) : null}
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium text-ink">
             {title}
@@ -84,7 +86,7 @@ export function ImportSourceRow({
       {/* Rendered rather than height-animated: the panels inside mount lazily and can change
           height as they load, and an animated wrapper would fight that on every preview. */}
       {open ? (
-        <div className="border-t border-border/60 p-4">{children}</div>
+        <div className="border-t border-border-subtle p-4 sm:p-5">{children}</div>
       ) : null}
     </li>
   );

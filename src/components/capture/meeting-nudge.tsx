@@ -104,27 +104,31 @@ export function MeetingNudgeCard({ snap }: { snap: NudgeSnapshot }) {
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
         {nudge.seriesId && (
-          <button
+          <Button
             type="button"
-            className="underline-offset-2 hover:underline"
+            variant="link"
+            size="xs"
+            className="h-auto p-0 text-xs font-normal text-muted-foreground"
             onClick={() => {
               skipMeetingSeries(nudge.seriesId!);
               toast.info("Won’t ask about this series again on this device");
             }}
           >
             Skip this series
-          </button>
+          </Button>
         )}
-        <button
+        <Button
           type="button"
-          className="ml-auto underline-offset-2 hover:underline"
+          variant="link"
+          size="xs"
+          className="ml-auto h-auto p-0 text-xs font-normal text-muted-foreground"
           onClick={() => {
             setMeetingNudgeOn(false);
             toast.info("Meeting reminders are off — turn them back on in Settings");
           }}
         >
-          Don&apos;t ask again
-        </button>
+          Don’t ask again
+        </Button>
       </div>
     </div>
   );

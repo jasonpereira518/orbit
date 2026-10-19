@@ -184,7 +184,7 @@ export function PersonFields({
         </div>
       )}
       {sharedNoteTexts.length > 0 && (
-        <div className="rounded-xl border border-sky-200/70 bg-sky-50/40 px-3 py-2 text-xs text-muted-foreground dark:border-sky-900/40 dark:bg-sky-950/15">
+        <div className="rounded-xl border border-info/30 bg-info/8 px-3 py-2 text-xs text-muted-foreground">
           <p className="mb-1 font-medium text-foreground">Shared with others in these notes</p>
           {sharedNoteTexts.map((text) => (
             <p key={text.slice(0, 40)} className="whitespace-pre-wrap">
@@ -194,7 +194,7 @@ export function PersonFields({
         </div>
       )}
       {sourceText?.trim() && (
-        <details className="group rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
+        <details className="group rounded-lg border border-border-subtle bg-surface-inset px-3 py-2">
           <summary className="cursor-pointer list-none text-xs font-medium text-muted-foreground marker:hidden hover:text-ink">
             Show what Orbit read for this person
           </summary>
@@ -212,7 +212,7 @@ export function PersonFields({
  */
 function Section({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
   return (
-    <details open={count > 0} className="group rounded-lg border border-border/60 px-3 py-2">
+    <details open={count > 0} className="group rounded-lg border border-border-subtle px-3 py-2">
       <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-medium text-muted-foreground marker:hidden hover:text-ink">
         {title}
         <span className="font-normal">{count > 0 ? "" : "none found · add"}</span>
@@ -330,7 +330,7 @@ function Field({
         {low ? " *" : ""}
         {hint && <span className="ml-1 font-normal text-muted-foreground">· {hint}</span>}
       </Label>
-      <div className={cn(low && "rounded-md ring-1 ring-amber-500/50 ring-offset-1 ring-offset-background")}>{children}</div>
+      <div className={cn(low && "rounded-md ring-1 ring-warning/50 ring-offset-1 ring-offset-background")}>{children}</div>
     </div>
   );
 }

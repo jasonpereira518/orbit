@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { MessageSquare } from "lucide-react";
+import { IntegrationLogo } from "@/components/integrations/integration-logo";
+import { cn } from "@/lib/utils";
 import { toast } from "@/lib/toast";
 import { previewLinkedInMessagesCsv } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
@@ -21,7 +22,8 @@ type PreviewResult = Awaited<ReturnType<typeof previewLinkedInMessagesCsv>>;
 type MessagesPreview = Exclude<PreviewResult, { error: string }>;
 type MessagePerson = MessagesPreview["people"][number];
 
-export function LinkedInMessagesImport() {
+/** `embedded`: see `LinkedInConnectionsImport`. */
+export function LinkedInMessagesImport({ embedded = false }: { embedded?: boolean } = {}) {
   const job = useImportJob();
   const [pending, start] = useTransition();
 
@@ -60,27 +62,32 @@ export function LinkedInMessagesImport() {
   }
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 border-t-2 border-t-import-messages/70 bg-card p-6">
+    <section className={cn("space-y-4", !embedded && "rounded-xl border border-border-subtle bg-card p-6")}>
       {/*
         The export guide shares the title's row, not the whole header's. Beside the full
         text block it took ~120px from a column already sharing a phone with the icon, and
         the description ran four words to a line. Here the description spans the card.
       */}
       <div className="flex items-start gap-3">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-import-messages/10 text-import-messages">
-          <MessageSquare className="h-4 w-4" />
-        </span>
+        {!embedded && <IntegrationLogo provider="linkedin" size="md" title="" />}
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-3">
-            <h2 className="min-w-0 text-lg font-medium text-ink">
-              LinkedIn messages
-            </h2>
+            {embedded ? (
+              <p className="min-w-0 text-sm text-muted-foreground">
+                Upload a Messages CSV or ZIP, review conversation partners, then import message history. Imports keep
+                running if you leave this page.
+              </p>
+            ) : (
+              <h2 className="min-w-0 font-heading text-base font-medium text-ink">LinkedIn messages</h2>
+            )}
             <LinkedInExportGuide variant="messages" />
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Upload a Messages CSV or ZIP, review conversation partners, then
-            import message history. Imports keep running if you leave this page.
-          </p>
+          {!embedded && (
+            <p className="mt-1 text-sm text-muted-foreground">
+              Upload a Messages CSV or ZIP, review conversation partners, then import message history. Imports keep
+              running if you leave this page.
+            </p>
+          )}
         </div>
       </div>
 

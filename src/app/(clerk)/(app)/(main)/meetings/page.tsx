@@ -5,7 +5,9 @@ import { Search } from "lucide-react";
 import { LockedFeature } from "@/components/locked-feature";
 import { MeetingsList } from "@/components/meetings/meetings-list";
 import { RenderStamp } from "@/components/layout/render-stamp";
-import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/layout/page-header";
+import { PageShell } from "@/components/layout/page-shell";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { requireUserId } from "@/lib/auth";
 import { FEATURE_DENIAL, getEntitlements } from "@/lib/entitlements";
@@ -23,9 +25,9 @@ export default async function MeetingsPage({ searchParams }: { searchParams: Pro
 
   if (!canUseMeetings) {
     return (
-      <div className="mx-auto max-w-3xl space-y-6">
+      <PageShell width="default">
         <RenderStamp />
-        <h1 className="font-heading text-3xl text-ink">Meetings</h1>
+        <PageHeader title="Meetings" />
         <LockedFeature
           title="Meeting history"
           description={FEATURE_DENIAL.meetings}
@@ -35,7 +37,7 @@ export default async function MeetingsPage({ searchParams }: { searchParams: Pro
             "Ask Chat what came up in a meeting",
           ]}
         />
-      </div>
+      </PageShell>
     );
   }
 
@@ -46,39 +48,40 @@ export default async function MeetingsPage({ searchParams }: { searchParams: Pro
   ]);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <PageShell width="default">
       <RenderStamp />
-      <div>
-        <h1 className="font-heading text-3xl text-ink">Meetings</h1>
-        <p className="mt-1 text-muted-foreground">
-          Every call you&apos;ve recorded. Search by a person, a topic, or something that was said.
-        </p>
-      </div>
-
-      <Form action="/meetings" className="flex gap-2" role="search">
-        <div className="relative flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            name="q"
-            defaultValue={q}
-            maxLength={100}
-            placeholder="Search meetings — try “pricing” or a name"
-            aria-label="Search meetings"
-            className="pl-9"
-          />
-        </div>
-        <Button type="submit">Search</Button>
-        {q && (
-          <Link href="/meetings" className="inline-flex items-center px-2 text-sm text-muted-foreground hover:text-foreground">
-            Clear
-          </Link>
-        )}
-      </Form>
+      <PageHeader
+        title="Meetings"
+        description="Every call you’ve recorded. Search by a person, a topic, or something that was said."
+        actions={
+          <Form action="/meetings" className="flex w-full gap-2 sm:w-auto" role="search">
+            <div className="relative flex-1 sm:w-64">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                name="q"
+                defaultValue={q}
+                maxLength={100}
+                placeholder="Search meetings — try “pricing” or a name"
+                aria-label="Search meetings"
+                className="pl-9"
+              />
+            </div>
+            <Button type="submit" variant="outline">
+              Search
+            </Button>
+            {q && (
+              <Link href="/meetings" className={buttonVariants({ variant: "ghost" })}>
+                Clear
+              </Link>
+            )}
+          </Form>
+        }
+      />
 
       {unfinished && !q && (unfinished.status === "recording" || unfinished.status === "ended") && (
         <Link
           href="/capture?mode=meeting"
-          className="flex items-center justify-between gap-3 rounded-2xl border border-primary/30 bg-primary/[0.04] p-4 text-sm"
+          className="flex items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/5 p-4 text-sm"
         >
           <span>
             <span className="font-medium text-foreground">
@@ -91,6 +94,6 @@ export default async function MeetingsPage({ searchParams }: { searchParams: Pro
       )}
 
       <MeetingsList key={q} initial={page} q={q} />
-    </div>
+    </PageShell>
   );
 }

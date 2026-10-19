@@ -39,13 +39,12 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
   if (!status) {
     // Not known yet: the card's frame with placeholders, rather than an empty panel that
     // the card then pops into.
-    return <ConnectedImportSkeleton id="import-outlook-contacts" title="Outlook Contacts" />;
+    return <ConnectedImportSkeleton title="Outlook Contacts" />;
   }
 
   if (!status.configured) {
     return (
       <IntegrationUnavailable
-        id="import-outlook-contacts"
         title="Outlook Contacts"
         blurb="Not connected yet. Export your Outlook contacts as a CSV and upload it as a contacts file on the Imports page — no account connection needed."
         envVars={[
@@ -58,11 +57,10 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
   }
 
   return (
-    <section id="import-outlook-contacts" className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
+    <section className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-medium text-ink">Outlook Contacts</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             {status.status === "needs_reauth"
               ? `${SESSION_EXPIRED_LINE} to import contacts again`
               : status.connected
@@ -120,9 +118,9 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
       </div>
 
       {status.connected ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-muted/40 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border-subtle bg-surface-inset px-4 py-3">
           <div className="min-w-0">
-            <h3 className="text-sm font-medium text-ink">Outlook calendar</h3>
+            <h3 className="text-sm font-medium text-ink">Outlook Calendar</h3>
             <p className="mt-0.5 max-w-prose text-sm text-muted-foreground">
               {!status.hasCalendarScope
                 ? "Read-only. Orbit logs meetings with people you know onto their timelines, and keeps them current."
@@ -135,7 +133,7 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
           </div>
           {!status.hasCalendarScope ? (
             <Button variant="outline" disabled={busy} onClick={() => connect("calendar")}>
-              Sync your Outlook calendar
+              Allow calendar access
             </Button>
           ) : null}
         </div>

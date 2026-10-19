@@ -9,6 +9,7 @@
 import { useState } from "react";
 import { Copy, Loader2, Mail } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { getMeetingRecap } from "@/actions/meetings";
 import { openCompose } from "@/lib/compose-events";
 import { recapMailto, type MeetingRecap } from "@/lib/meeting-recap";
@@ -40,24 +41,26 @@ export function MeetingRecapButton({ sessionId, composeLive }: { sessionId: stri
   return (
     <div className="space-y-2">
       <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={load} disabled={loading}>
-        {loading ? <Loader2 className="size-3.5 animate-spin" /> : <Mail className="size-3.5" />}
-        Send recap
+        {loading ? <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden /> : <Mail className="size-3.5" aria-hidden />}
+        {loading ? "Writing…" : "Send recap"}
       </Button>
       {recap && (
-        <div className="space-y-2 rounded-xl border border-border/70 bg-card p-3 text-sm">
-          <p className="text-xs text-muted-foreground">
-            {recap.to.length ? `To ${recap.to.join(", ")}` : "No guest emails on this meeting — add them in your mail app"}
-          </p>
-          <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap font-sans text-sm text-foreground">{recap.body}</pre>
-          <div className="flex flex-wrap gap-2">
-            <a href={recapMailto(recap)} className={buttonVariants({ size: "sm" })}>
-              Open in email
-            </a>
-            <Button type="button" size="sm" variant="ghost" className="gap-1.5" onClick={copy}>
-              <Copy className="size-3.5" /> Copy
-            </Button>
-          </div>
-        </div>
+        <Card size="sm">
+          <CardContent className="space-y-2">
+            <p className="text-xs text-muted-foreground">
+              {recap.to.length ? `To ${recap.to.join(", ")}` : "No guest emails on this meeting — add them in your mail app"}
+            </p>
+            <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap font-sans text-sm text-foreground">{recap.body}</pre>
+            <div className="flex flex-wrap gap-2">
+              <a href={recapMailto(recap)} className={buttonVariants({ size: "sm" })}>
+                Open in email
+              </a>
+              <Button type="button" size="sm" variant="ghost" className="gap-1.5" onClick={copy}>
+                <Copy className="size-3.5" aria-hidden /> Copy
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       )}
     </div>
   );

@@ -78,7 +78,7 @@ export function LinkedInScreenshot({
   return (
     <figure
       className={cn(
-        "relative overflow-hidden rounded-xl border border-border/70 bg-white shadow-sm",
+        "relative overflow-hidden rounded-xl border border-border-subtle bg-white shadow-sm",
         className,
       )}
       style={{ aspectRatio: `${crop.w} / ${crop.h}` }}
@@ -115,15 +115,13 @@ export function LinkedInScreenshot({
         >
           <span
             className={cn(
-              "onboarding-target-ping absolute inset-0 border-2 border-primary",
-              t.shape === "circle" ? "rounded-full" : "rounded-[999px]",
+              "onboarding-target-ping absolute inset-0 rounded-full border-2 border-primary",
             )}
           />
           {!t.annotated && (
             <span
               className={cn(
-                "absolute inset-0 border-2 border-primary/80",
-                t.shape === "circle" ? "rounded-full" : "rounded-[999px]",
+                "absolute inset-0 rounded-full border-2 border-primary/80",
               )}
             />
           )}

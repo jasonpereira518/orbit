@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CalendarDays, Contact, FileQuestion, Users, MessageSquare, Sparkles, UserRound, X } from "lucide-react";
+import { CalendarDays, Contact, FileQuestion, FolderOpen, Users, MessageSquare, UserRound, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import type { Detected, DetectionResult, ImportTarget } from "@/lib/imports/detect-import-file";
 import { RUN_ORDER } from "@/lib/imports/import-constants";
 import { rankCandidates, type RankedCandidate } from "@/lib/imports/rank-candidates";
@@ -17,19 +18,19 @@ import { cn } from "@/lib/utils";
  * most important in each kind, says why, and lets the person swap it. Ticking a file of a
  * kind unticks the other one — that is the engine's one-per-kind rule, shown as a choice.
  */
-const KIND: Record<ImportTarget, { label: string; Icon: typeof Contact; tone: string }> = {
-  linkedin_connections: { label: "LinkedIn connections", Icon: Users, tone: "bg-sky-500/15 text-sky-700 dark:text-sky-300" },
-  linkedin_messages: { label: "LinkedIn messages", Icon: MessageSquare, tone: "bg-violet-500/15 text-violet-700 dark:text-violet-300" },
-  linkedin_profile: { label: "LinkedIn profile", Icon: UserRound, tone: "bg-rose-500/15 text-rose-700 dark:text-rose-300" },
-  linkedin_positions: { label: "LinkedIn current role", Icon: UserRound, tone: "bg-rose-500/15 text-rose-700 dark:text-rose-300" },
-  linkedin_skills: { label: "LinkedIn skills", Icon: UserRound, tone: "bg-rose-500/15 text-rose-700 dark:text-rose-300" },
-  linkedin_alerts: { label: "LinkedIn job alerts", Icon: UserRound, tone: "bg-rose-500/15 text-rose-700 dark:text-rose-300" },
-  linkedin_education: { label: "LinkedIn education", Icon: UserRound, tone: "bg-rose-500/15 text-rose-700 dark:text-rose-300" },
-  linkedin_export: { label: "LinkedIn export files", Icon: Users, tone: "bg-sky-500/15 text-sky-700 dark:text-sky-300" },
-  contacts_file: { label: "Contacts", Icon: Contact, tone: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" },
-  calendar_ics: { label: "Calendar", Icon: CalendarDays, tone: "bg-amber-500/15 text-amber-700 dark:text-amber-300" },
-  calendar_csv: { label: "Calendar", Icon: CalendarDays, tone: "bg-amber-500/15 text-amber-700 dark:text-amber-300" },
-  unknown: { label: "Other", Icon: FileQuestion, tone: "bg-muted text-muted-foreground" },
+const KIND: Record<ImportTarget, { label: string; Icon: typeof Contact }> = {
+  linkedin_connections: { label: "LinkedIn connections", Icon: Users },
+  linkedin_messages: { label: "LinkedIn messages", Icon: MessageSquare },
+  linkedin_profile: { label: "LinkedIn profile", Icon: UserRound },
+  linkedin_positions: { label: "LinkedIn current role", Icon: UserRound },
+  linkedin_skills: { label: "LinkedIn skills", Icon: UserRound },
+  linkedin_alerts: { label: "LinkedIn job alerts", Icon: UserRound },
+  linkedin_education: { label: "LinkedIn education", Icon: UserRound },
+  linkedin_export: { label: "LinkedIn export files", Icon: Users },
+  contacts_file: { label: "Contacts", Icon: Contact },
+  calendar_ics: { label: "Calendar", Icon: CalendarDays },
+  calendar_csv: { label: "Calendar", Icon: CalendarDays },
+  unknown: { label: "Other", Icon: FileQuestion },
 };
 
 function sizeLabel(bytes: number) {
@@ -90,19 +91,19 @@ export function FolderTriageCard({
   return (
     <section
       aria-label="Choose what to import from this folder"
-      className="space-y-4 rounded-2xl border border-border/70 bg-card p-5"
+      className="space-y-4 rounded-xl border border-border-subtle bg-card p-5"
     >
       <header className="flex items-start gap-3">
-        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-          <Sparkles className="size-5" aria-hidden />
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <FolderOpen className="size-5" aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
-          <h2 className="font-medium text-ink">
+          <h2 className="font-heading text-base font-medium text-ink">
             Found {ranked.length} {ranked.length === 1 ? "file" : "files"} Orbit can import
           </h2>
           <p className="text-sm text-muted-foreground">
             The most important one of each kind is ticked for you. Change any of them, then
-            review who&apos;s in it before anything is added.
+            review who’s in it before anything is added.
           </p>
         </div>
         <Button type="button" variant="ghost" size="icon" aria-label="Cancel" onClick={onCancel}>
@@ -116,7 +117,7 @@ export function FolderTriageCard({
           return (
             <div key={target} className="space-y-1.5">
               <p className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                <span className={cn("flex size-6 items-center justify-center rounded-md", kind.tone)}>
+                <span className="flex size-6 items-center justify-center rounded-md bg-muted text-muted-foreground">
                   <kind.Icon className="size-3.5" aria-hidden />
                 </span>
                 {kind.label}
@@ -131,22 +132,17 @@ export function FolderTriageCard({
                       <label
                         className={cn(
                           "flex cursor-pointer items-start gap-3 rounded-xl border px-3 py-2.5 transition-colors",
-                          on ? "border-primary/40 bg-primary/5" : "border-border/60 hover:bg-muted/40"
+                          on ? "border-primary/40 bg-primary/5" : "border-border-subtle hover:bg-muted/40"
                         )}
                       >
-                        <input
-                          type="checkbox"
-                          checked={on}
-                          onChange={() => toggle(r)}
-                          className="mt-1 size-4 accent-[var(--primary)]"
-                        />
+                        <Checkbox checked={on} onCheckedChange={() => toggle(r)} className="mt-1" />
                         <span className="min-w-0 flex-1">
                           <span className="flex flex-wrap items-center gap-2">
                             <span className="truncate text-sm font-medium text-ink">
                               {r.detected.displayName}
                             </span>
                             {r.suggested ? (
-                              <Badge className="bg-emerald-500/15 text-3xs text-emerald-700 dark:text-emerald-300">
+                              <Badge tone="success" size="sm">
                                 Suggested
                               </Badge>
                             ) : null}
@@ -168,7 +164,7 @@ export function FolderTriageCard({
 
       {otherCount > 0 ? (
         <p className="text-xs text-muted-foreground">
-          {otherCount} other {otherCount === 1 ? "file" : "files"} in the folder aren&apos;t
+          {otherCount} other {otherCount === 1 ? "file" : "files"} in the folder aren’t
           something Orbit reads, so {otherCount === 1 ? "it was" : "they were"} left out.
           {result.truncated ? " The folder was large, so only the first files were checked." : ""}
         </p>

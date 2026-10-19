@@ -13,6 +13,7 @@
 import { useState } from "react";
 import { CalendarClock, ChevronDown, ChevronUp, Lightbulb } from "lucide-react";
 import type { SuggestionReviewItem } from "@/components/chat/bulk-notes-panel";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DatePickerButton } from "@/components/ui/date-picker";
 import { Input } from "@/components/ui/input";
@@ -54,9 +55,9 @@ export function SuggestedRemindersReview({
   const implied = items.filter((i) => i.origin === "implied");
 
   return (
-    <div className="space-y-3 rounded-2xl border border-amber-500/30 bg-amber-500/[0.04] p-4">
+    <div className="space-y-3 rounded-xl border border-warning-border bg-warning-surface p-4">
       <div className="flex items-center gap-2">
-        <CalendarClock className="size-4 text-amber-600 dark:text-amber-300" />
+        <CalendarClock className="size-4 text-warning" aria-hidden />
         <h3 className="text-sm font-medium text-foreground">
           Reminders that will be created
         </h3>
@@ -74,7 +75,7 @@ export function SuggestedRemindersReview({
       )}
 
       {implied.length > 0 && (
-        <div className="space-y-2 rounded-xl border border-border/60 bg-background/40 p-3">
+        <div className="space-y-2 rounded-xl border border-border-subtle bg-background/40 p-3">
           <div className="flex items-center gap-2">
             <Lightbulb className="size-4 text-muted-foreground" />
             <h4 className="text-sm font-medium text-foreground">
@@ -110,7 +111,7 @@ function ReminderRow({
   update: (key: string, patch: Partial<SuggestionReviewItem>) => void;
 }) {
   return (
-    <li className="space-y-2 rounded-xl border border-border/60 bg-card p-3">
+    <li className="space-y-2 rounded-xl border border-border-subtle bg-card p-3">
       <div className="flex items-start gap-2">
         <Checkbox
           checked={item.checked}
@@ -133,7 +134,7 @@ function ReminderRow({
                 value={item.dueDateIso}
                 onSelect={(ymd) => update(item.key, { dueDateIso: ymd })}
                 label={item.dueDateIso ? shortDayLabel(item.dueDateIso) : "Pick a date"}
-                className={cn("w-full justify-start font-normal", item.yearInferred && "ring-1 ring-amber-500/50")}
+                className={cn("w-full justify-start font-normal", item.yearInferred && "ring-1 ring-warning/50")}
               />
               {item.yearInferred && (
                 <p className="text-xs text-warning">
@@ -175,18 +176,21 @@ function SourceLine({ item }: { item: SuggestionReviewItem }) {
   const implied = item.origin === "implied";
   return (
     <div className="space-y-1">
-      <button
+      <Button
         type="button"
+        variant="link"
+        size="xs"
+        aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex items-center gap-1 text-left text-xs text-muted-foreground hover:text-foreground"
+        className="h-auto justify-start gap-1 p-0 text-left text-xs font-normal text-muted-foreground hover:text-foreground"
       >
-        {open ? <ChevronUp className="size-3 shrink-0" /> : <ChevronDown className="size-3 shrink-0" />}
+        {open ? <ChevronUp className="size-3 shrink-0" aria-hidden /> : <ChevronDown className="size-3 shrink-0" aria-hidden />}
         {/* An implied step has no date phrase to quote — nobody named a date. The rationale
             takes the slot instead, which is the only answer to "why is this here at all". */}
         {implied
           ? item.rationale || "inferred from what you wrote"
           : `from “${item.rawDatePhrase ?? ""}”`}
-      </button>
+      </Button>
       {!implied && item.dateBasis !== "absolute" && (
         <span className="text-2xs text-muted-foreground">
           {" "}

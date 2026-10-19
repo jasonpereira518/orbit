@@ -40,38 +40,38 @@ const ANCHOR_LABEL: Record<string, string> = {
 
 /**
  * One colour and one symbol per kind of thing a capture makes, so a section is recognisable
- * before its title is read: people you met are green, people only named are blue, things to do
- * are violet, dates are amber. Every tone is a translucent tint plus a text colour that
- * clears contrast on both themes, the pairing the dashboard's reason pills already use.
+ * before its title is read: people you met are the success tone, people only named are info,
+ * things to do are the accent, dates are the warning tone. Every tone is a translucent wash
+ * plus the matching semantic text colour, which `globals.css` keeps at contrast on both themes.
  */
 const TONE = {
   people: {
     Icon: Users,
-    chip: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
-    bar: "border-l-emerald-500",
-    tile: "border-emerald-500/30 bg-emerald-500/[0.07] hover:bg-emerald-500/[0.12]",
-    ink: "text-emerald-700 dark:text-emerald-300",
+    chip: "bg-success/10 text-success",
+    bar: "border-l-success",
+    tile: "border-success/30 bg-success/8 hover:bg-success/12",
+    ink: "text-success",
   },
   mentions: {
     Icon: AtSign,
-    chip: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
-    bar: "border-l-sky-500",
-    tile: "border-sky-500/30 bg-sky-500/[0.07] hover:bg-sky-500/[0.12]",
-    ink: "text-sky-700 dark:text-sky-300",
+    chip: "bg-info/10 text-info",
+    bar: "border-l-info",
+    tile: "border-info/30 bg-info/8 hover:bg-info/12",
+    ink: "text-info",
   },
   actions: {
     Icon: ListChecks,
-    chip: "bg-violet-500/15 text-violet-700 dark:text-violet-300",
-    bar: "border-l-violet-500",
-    tile: "border-violet-500/30 bg-violet-500/[0.07] hover:bg-violet-500/[0.12]",
-    ink: "text-violet-700 dark:text-violet-300",
+    chip: "bg-accent text-accent-foreground",
+    bar: "border-l-primary",
+    tile: "border-primary/25 bg-primary/6 hover:bg-primary/10",
+    ink: "text-primary",
   },
   reminders: {
     Icon: BellRing,
-    chip: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
-    bar: "border-l-amber-500",
-    tile: "border-amber-500/30 bg-amber-500/[0.07] hover:bg-amber-500/[0.12]",
-    ink: "text-amber-700 dark:text-amber-300",
+    chip: "bg-warning/12 text-warning",
+    bar: "border-l-warning",
+    tile: "border-warning-border bg-warning-surface hover:bg-warning/12",
+    ink: "text-warning",
   },
 } as const satisfies Record<string, { Icon: LucideIcon; chip: string; bar: string; tile: string; ink: string }>;
 
@@ -98,7 +98,7 @@ function ResultSection({
     <section
       id={id}
       className={cn(
-        "scroll-mt-8 rounded-2xl border border-l-4 border-border/70 bg-card p-5",
+        "scroll-mt-8 rounded-xl border border-l-4 border-border-subtle bg-card p-5",
         t.bar
       )}
     >
@@ -228,7 +228,7 @@ export function NoteBatchResultView({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border/70 bg-muted/30 px-4 py-3 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border-subtle bg-surface-inset px-4 py-3 text-sm">
         <span className="text-muted-foreground">
           Relative dates counted from <strong className="text-ink">{anchorIso}</strong> ({ANCHOR_LABEL[anchorBasis]}).
         </span>
@@ -278,7 +278,7 @@ export function NoteBatchResultView({
               key={tile.id}
               href={`#${tile.id}`}
               className={cn(
-                "flex flex-col gap-1 rounded-2xl border p-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+                "flex flex-col gap-1 rounded-xl border p-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
                 t.tile
               )}
             >
@@ -308,7 +308,7 @@ export function NoteBatchResultView({
           {result.participants.map((p) => (
             <li
               key={p.contactId}
-              className="flex items-center justify-between gap-3 rounded-xl border border-border/60 px-3 py-2 text-sm"
+              className="flex items-center justify-between gap-3 rounded-xl border border-border-subtle px-3 py-2 text-sm"
             >
               <span className="flex min-w-0 items-center gap-3">
                 <Initial name={p.name} tone="people" />
@@ -316,9 +316,9 @@ export function NoteBatchResultView({
                   {p.name}
                 </IntentLink>
                 {p.created && (
-                  <Badge className="bg-emerald-500/15 text-3xs text-emerald-700 dark:text-emerald-300">New contact</Badge>
+                  <Badge tone="success" size="sm">New contact</Badge>
                 )}
-                {p.duplicate && <Badge variant="secondary" className="text-3xs">Already logged</Badge>}
+                {p.duplicate && <Badge tone="neutral" size="sm">Already logged</Badge>}
               </span>
               {p.created && (
                 <Button variant="ghost" size="sm" disabled={pending} onClick={() => removeContact(p.contactId)}>
@@ -342,14 +342,14 @@ export function NoteBatchResultView({
             {result.mentions.map((m) => (
               <li
                 key={`${m.interactionId}-${m.contactId}`}
-                className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-border/60 px-3 py-2"
+                className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-border-subtle px-3 py-2"
               >
                 <span className="text-muted-foreground">&ldquo;{m.text}&rdquo;</span>
-                <ArrowRight className="size-3.5 text-sky-600 dark:text-sky-300" aria-hidden />
+                <ArrowRight className="size-3.5 text-info" aria-hidden />
                 <IntentLink href={`/contacts/${m.contactId}`} className="font-medium text-primary hover:underline">
                   {name(m.contactId)}
                 </IntentLink>
-                <Badge className="bg-sky-500/15 text-3xs text-sky-700 dark:text-sky-300">
+                <Badge tone="info" size="sm">
                   {Math.round(m.confidence * 100)}% sure
                 </Badge>
               </li>
@@ -357,7 +357,7 @@ export function NoteBatchResultView({
             {result.unresolvedMentions.map((m, index) => (
               <li
                 key={`${index}-${m.text}`}
-                className="flex items-center justify-between gap-2 rounded-xl border border-dashed border-border/70 px-3 py-2"
+                className="flex items-center justify-between gap-2 rounded-xl border border-dashed border-border-subtle px-3 py-2"
               >
                 <span>
                   &ldquo;{m.text}&rdquo;
@@ -383,20 +383,20 @@ export function NoteBatchResultView({
         >
           <ul className="space-y-2">
             {result.actionItems.map((a) => (
-              <li key={a.id} className="flex items-start justify-between gap-3 rounded-xl border border-border/60 px-3 py-2 text-sm">
+              <li key={a.id} className="flex items-start justify-between gap-3 rounded-xl border border-border-subtle px-3 py-2 text-sm">
                 <span className="flex min-w-0 items-start gap-2.5">
-                  <Check className="mt-0.5 size-4 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden />
+                  <Check className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
                   <span>
                     <span className="block">{a.text}</span>
                     <span className="text-xs text-muted-foreground">For {name(a.contactId)}</span>
                   </span>
                 </span>
                 {a.reminderId ? (
-                  <Badge className="shrink-0 gap-1 bg-emerald-500/15 text-3xs text-emerald-700 dark:text-emerald-300">
-                    <BellRing className="size-3" aria-hidden /> Reminder set
+                  <Badge tone="success" size="sm" className="shrink-0">
+                    <BellRing aria-hidden /> Reminder set
                   </Badge>
                 ) : (
-                  <Badge variant="secondary" className="shrink-0 text-3xs">No reminder</Badge>
+                  <Badge tone="neutral" size="sm" className="shrink-0">No reminder</Badge>
                 )}
               </li>
             ))}
@@ -418,13 +418,13 @@ export function NoteBatchResultView({
             {result.reminders.map((r) => {
               const st = local[r.id] ?? "pending";
               return (
-                <li key={r.id} className="flex items-start justify-between gap-3 rounded-xl border border-border/60 px-3 py-2 text-sm">
+                <li key={r.id} className="flex items-start justify-between gap-3 rounded-xl border border-border-subtle px-3 py-2 text-sm">
                   <div className="min-w-0">
                     <p className={st !== "pending" ? "line-through text-muted-foreground" : "font-medium"}>{r.title}</p>
                     <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 font-medium text-amber-700 dark:text-amber-300">
-                        <CalendarDays className="size-3" aria-hidden /> {r.dueIso}
-                      </span>
+                      <Badge tone="warning" size="sm">
+                        <CalendarDays aria-hidden /> {r.dueIso}
+                      </Badge>
                       <span>{name(r.contactId)}</span>
                       {r.dateBasis !== "absolute" && <span>· {BASIS_LABEL[r.dateBasis]} {anchorIso}</span>}
                       {r.rawDatePhrase && <span>· &ldquo;{r.rawDatePhrase}&rdquo;</span>}

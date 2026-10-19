@@ -425,7 +425,7 @@ export function ImportFinishCard({
   return (
     <section
       className={cn(
-        "relative space-y-4 rounded-2xl border border-border/70 bg-card p-6",
+        "relative space-y-4 rounded-xl border border-border-subtle bg-card p-6",
         className,
       )}
     >

@@ -22,11 +22,8 @@ export function IntegrationUnavailable({
   envVars?: string[];
 }) {
   return (
-    <section
-      id={id}
-      className="space-y-2 rounded-2xl border border-dashed border-border/70 bg-card/50 p-6"
-    >
-      <h2 className="text-lg font-medium text-ink">{title}</h2>
+    <section id={id} className="space-y-2 rounded-lg border border-dashed border-border-subtle bg-surface-inset px-4 py-3">
+      <span className="sr-only">{title}</span>
       <p className="text-sm text-muted-foreground">{blurb}</p>
       {process.env.NODE_ENV === "development" && envVars.length > 0 ? (
         <p className="text-xs text-muted-foreground/70">

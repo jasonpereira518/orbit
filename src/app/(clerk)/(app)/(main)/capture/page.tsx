@@ -7,6 +7,8 @@ import { countIgnoredPeople } from "@/actions/ignored-people";
 import { getPlanOverview, getSettings } from "@/actions/settings";
 import { CaptureFlowLazy } from "@/components/capture/capture-flow-lazy";
 import { CaptureHistory, CaptureHistorySkeleton } from "@/components/capture/capture-history";
+import { PageHeader } from "@/components/layout/page-header";
+import { PageShell } from "@/components/layout/page-shell";
 import type { CaptureMode } from "@/components/capture/capture-tabs";
 import { requireUserId } from "@/lib/auth";
 import { FEATURE_DENIAL, getEntitlements } from "@/lib/entitlements";
@@ -108,16 +110,16 @@ export default async function CapturePage({
   const canTranscribe = settings.ai.canTranscribe;
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <PageShell width="default">
       <RenderStamp />
-      <div>
-        <h1 className="font-heading text-3xl text-ink">Capture</h1>
-        <p className="mt-1 text-muted-foreground">
-          {contactName
+      <PageHeader
+        title="Capture"
+        description={
+          contactName
             ? `Log an interaction with ${contactName} — or paste notes that mention others too.`
-            : "Notes, a voice memo, a meeting, or docs from your drive. Orbit pulls out each person; you review them one card at a time."}
-        </p>
-      </div>
+            : "Notes, a voice memo, a meeting, or docs from your drive. Orbit pulls out each person; you review them one card at a time."
+        }
+      />
       <CaptureFlowLazy
         // The toast's and the bell's Review link to this same page: a client navigation would
         // keep the flow's tab state and never open the dialog, so a review link remounts it.
@@ -157,6 +159,6 @@ export default async function CapturePage({
           ) : null
         }
       />
-    </div>
+    </PageShell>
   );
 }

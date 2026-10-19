@@ -2,7 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { IntegrationLogo } from "@/components/integrations/integration-logo";
 import { startImportJob, useImportJob } from "@/lib/import-job-runner";
 import { DRIVE_MIME, triageDriveFile, type PickedDriveFile } from "@/lib/imports/drive-triage";
 import { cn } from "@/lib/utils";
@@ -50,16 +52,17 @@ export function DriveImportCard({
   const n = selectedFiles.length;
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-medium">From Google Drive</h2>
-          <p className="mt-1 text-xs text-muted-foreground">
+    <Card>
+      <CardHeader className="flex flex-row items-start gap-3">
+        <IntegrationLogo provider="google-drive" size="md" title="" />
+        <div className="min-w-0">
+          <CardTitle as="h2">From Google Drive</CardTitle>
+          <CardDescription>
             {n} of {files.length} selected
-          </p>
+          </CardDescription>
         </div>
-      </div>
-
+      </CardHeader>
+      <CardContent className="space-y-4">
       <ul className="space-y-2">
         {triaged.map(({ file, why }) => {
           const checked = selected.has(file.id);
@@ -67,7 +70,7 @@ export function DriveImportCard({
             <li
               key={file.id}
               className={cn(
-                "flex items-start gap-3 rounded-xl border border-border/60 p-3",
+                "flex items-start gap-3 rounded-xl border border-border-subtle p-3",
                 !checked && "opacity-70",
               )}
             >
@@ -109,6 +112,7 @@ export function DriveImportCard({
           Cancel
         </Button>
       </div>
-    </section>
+      </CardContent>
+    </Card>
   );
 }

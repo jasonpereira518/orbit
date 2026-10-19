@@ -1,8 +1,11 @@
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, CalendarDays, Clock, Users } from "lucide-react";
+import { CalendarDays, Circle, CircleCheck, Clock, Users } from "lucide-react";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { PageHeader } from "@/components/layout/page-header";
+import { PageShell } from "@/components/layout/page-shell";
+import { Card, CardContent } from "@/components/ui/card";
 import { formatMeetingDuration } from "@/lib/format-meeting-duration";
 import { requireUserId } from "@/lib/auth";
 import { formatElapsed } from "@/lib/format-elapsed";
@@ -11,6 +14,7 @@ import { getMeetingTranscript } from "@/lib/meeting-sessions";
 import { MeetingRecapButton } from "@/components/meetings/meeting-recap-button";
 import { isSurfaceLive } from "@/lib/surface-visibility";
 import { COMPOSE_SURFACE_KEY } from "@/lib/surfaces";
+import { cn } from "@/lib/utils";
 
 const SEARCH_MAX = 100;
 
@@ -38,7 +42,7 @@ function Section({ title, items }: { title: string; items: string[] }) {
   if (items.length === 0) return null;
   return (
     <section className="space-y-1.5">
-      <h2 className="text-sm font-medium text-ink">{title}</h2>
+      <h3 className="text-sm font-medium text-ink">{title}</h3>
       <ul className="list-disc space-y-1 pl-5 text-sm text-foreground">
         {items.map((item, i) => (
           <li key={i}>{item}</li>
@@ -77,81 +81,90 @@ export default async function MeetingDetailPage({
   const voices = speakerNames(segments, guests);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <PageShell width="default">
       <RenderStamp />
-      <Link
-        href={q ? `/meetings?q=${encodeURIComponent(q)}` : "/meetings"}
-        className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="size-3.5" /> Meetings
-      </Link>
-
-      <div className="space-y-2">
-        <h1 className="font-heading text-3xl text-ink">{title}</h1>
-        <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-          <span className="inline-flex items-center gap-1.5">
-            <CalendarDays className="size-4" />
-            {session.startedAt.toLocaleString(undefined, {
-              weekday: "long",
-              month: "long",
-              day: "numeric",
-              hour: "numeric",
-              minute: "2-digit",
-            })}
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <Clock className="size-4" /> {formatMeetingDuration(session.durationMs)}
-          </span>
-          {guests.length > 0 && (
+      <PageHeader
+        back={{ href: q ? `/meetings?q=${encodeURIComponent(q)}` : "/meetings", label: "Back to Meetings" }}
+        title={title}
+        description={
+          <span className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
             <span className="inline-flex items-center gap-1.5">
-              <Users className="size-4" /> {guests.join(", ")}
+              <CalendarDays className="size-4" aria-hidden />
+              {session.startedAt.toLocaleString(undefined, {
+                weekday: "long",
+                month: "long",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+              })}
             </span>
-          )}
-        </p>
-        {session.noteBatchId && (
-          <Link
-            href={`/capture/${session.noteBatchId}`}
-            className="inline-block text-sm font-medium text-primary underline-offset-2 hover:underline"
-          >
-            See what was saved from this meeting →
-          </Link>
-        )}
-      </div>
+            <span className="inline-flex items-center gap-1.5">
+              <Clock className="size-4" aria-hidden /> {formatMeetingDuration(session.durationMs)}
+            </span>
+            {guests.length > 0 && (
+              <span className="inline-flex items-center gap-1.5">
+                <Users className="size-4" aria-hidden /> {guests.join(", ")}
+              </span>
+            )}
+          </span>
+        }
+      />
+
+      {session.noteBatchId && (
+        <Link
+          href={`/capture/${session.noteBatchId}`}
+          className="inline-block text-sm font-medium text-primary underline-offset-2 hover:underline"
+        >
+          See what was saved from this meeting →
+        </Link>
+      )}
 
       {digest && <MeetingRecapButton sessionId={session.id} composeLive={composeLive} />}
 
       {digest ? (
-        <div className="space-y-5 rounded-2xl border border-border/70 bg-card p-6">
-          <p className="text-sm leading-relaxed text-foreground">{digest.summary}</p>
-          <Section title="Key points" items={digest.keyPoints} />
-          <Section title="Decisions" items={digest.decisions} />
-          <Section
-            title="Action items"
-            items={digest.actionItems.map((a) => (a.owner ? `${a.text} — ${a.owner === "me" ? "you" : a.owner}` : a.text))}
-          />
-          <Section title="Blockers" items={digest.blockers.map((b) => b.text)} />
-          <Section title="Open questions" items={digest.openQuestions.map((o) => o.text)} />
-          {digest.agenda && digest.agenda.length > 0 && (
-            <section className="space-y-1.5">
-              <h2 className="text-sm font-medium text-ink">
-                Agenda <span className="font-normal text-muted-foreground">· from the invite</span>
-              </h2>
-              <ul className="space-y-1 text-sm">
-                {digest.agenda.map((a, i) => (
-                  <li key={i} className={a.covered ? "text-foreground" : "text-muted-foreground"}>
-                    <span aria-hidden className="mr-1.5">{a.covered ? "✓" : "○"}</span>
-                    {a.item}
-                    {!a.covered && <span className="sr-only"> (not covered)</span>}
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-        </div>
+        <Card size="lg">
+          <CardContent className="space-y-5">
+            <h2 className="sr-only">Summary</h2>
+            <p className="text-sm leading-relaxed text-foreground">{digest.summary}</p>
+            <Section title="Key points" items={digest.keyPoints} />
+            <Section title="Decisions" items={digest.decisions} />
+            <Section
+              title="Action items"
+              items={digest.actionItems.map((a) => (a.owner ? `${a.text} — ${a.owner === "me" ? "you" : a.owner}` : a.text))}
+            />
+            <Section title="Blockers" items={digest.blockers.map((b) => b.text)} />
+            <Section title="Open questions" items={digest.openQuestions.map((o) => o.text)} />
+            {digest.agenda && digest.agenda.length > 0 && (
+              <section className="space-y-1.5">
+                <h3 className="text-sm font-medium text-ink">
+                  Agenda <span className="font-normal text-muted-foreground">· from the invite</span>
+                </h3>
+                <ul className="space-y-1 text-sm">
+                  {digest.agenda.map((a, i) => (
+                    <li
+                      key={i}
+                      className={cn("flex items-start gap-1.5", a.covered ? "text-foreground" : "text-muted-foreground")}
+                    >
+                      {a.covered ? (
+                        <CircleCheck className="mt-0.5 size-3.5 shrink-0 text-success" aria-hidden />
+                      ) : (
+                        <Circle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                      )}
+                      <span>
+                        {a.item}
+                        <span className="sr-only">{a.covered ? " (covered)" : " (not covered)"}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+          </CardContent>
+        </Card>
       ) : null}
 
-      <section className="space-y-2">
-        <h2 className="text-sm font-medium text-ink">Transcript</h2>
+      <section className="space-y-4">
+        <h2 className="font-heading text-lg font-medium text-ink">Transcript</h2>
         {missingSeqs.length > 0 && (
           <p className="text-xs text-warning">
             {missingSeqs.length} part{missingSeqs.length === 1 ? "" : "s"} of this transcript never reached Orbit, so
@@ -161,24 +174,26 @@ export default async function MeetingDetailPage({
         {segments.length === 0 ? (
           <p className="text-sm text-muted-foreground">Nothing was transcribed.</p>
         ) : (
-          <div className="space-y-3 rounded-2xl border border-border/70 bg-card p-5 text-sm">
-            {segments
-              .filter((s) => s.text.trim())
-              .map((s) => {
-                const who = (s.speaker && voices.get(s.speaker)) || speakerLabel(s.speaker);
-                return (
-                  <p key={s.seq} className="leading-relaxed">
-                    <span className="mr-2 font-mono text-xs tabular-nums text-muted-foreground">
-                      {formatElapsed(s.startMs)}
-                    </span>
-                    {who && <span className="mr-1.5 font-medium text-foreground">{who}:</span>}
-                    <Highlighted text={s.text} q={q} />
-                  </p>
-                );
-              })}
-          </div>
+          <Card>
+            <CardContent className="space-y-3 text-sm">
+              {segments
+                .filter((s) => s.text.trim())
+                .map((s) => {
+                  const who = (s.speaker && voices.get(s.speaker)) || speakerLabel(s.speaker);
+                  return (
+                    <p key={s.seq} className="leading-relaxed">
+                      <span className="mr-2 font-mono text-xs tabular-nums text-muted-foreground">
+                        {formatElapsed(s.startMs)}
+                      </span>
+                      {who && <span className="mr-1.5 font-medium text-foreground">{who}:</span>}
+                      <Highlighted text={s.text} q={q} />
+                    </p>
+                  );
+                })}
+            </CardContent>
+          </Card>
         )}
       </section>
-    </div>
+    </PageShell>
   );
 }

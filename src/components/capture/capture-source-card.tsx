@@ -72,9 +72,9 @@ export function CaptureSourceCard({
   const current = viewing === null ? null : photos[viewing] ?? null;
 
   return (
-    <Card className="border-l-4 border-border/70 border-l-teal-500 shadow-none">
+    <Card className="border-l-4 border-l-primary">
       <CardHeader className="flex-row items-start gap-3 space-y-0">
-        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-teal-500/15 text-teal-700 dark:text-teal-300">
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
           <FileText className="size-5" aria-hidden />
         </span>
         <div className="min-w-0 space-y-1">
@@ -99,7 +99,7 @@ export function CaptureSourceCard({
                 <button
                   type="button"
                   onClick={() => setViewing(index)}
-                  className="group relative block aspect-square w-full overflow-hidden rounded-xl border border-border/60 bg-muted focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  className="group relative block aspect-square w-full overflow-hidden rounded-xl border border-border-subtle bg-muted focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
                   aria-label={`Open photo ${index + 1}${photo.fileName ? ` (${photo.fileName})` : ""}`}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element -- served by an
@@ -133,7 +133,7 @@ export function CaptureSourceCard({
           </div>
           <div
             className={cn(
-              "relative overflow-hidden rounded-xl border border-border/60 bg-muted/30 px-3 py-2",
+              "relative overflow-hidden rounded-xl border border-border-subtle bg-surface-inset px-3 py-2",
               !expanded && "max-h-56"
             )}
           >

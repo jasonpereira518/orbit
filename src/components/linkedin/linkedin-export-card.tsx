@@ -6,6 +6,8 @@ import { X } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { markLinkedInExportRequested } from "@/actions/linkedin-export";
 import { Button } from "@/components/ui/button";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { IntegrationLogo } from "@/components/integrations/integration-logo";
 import { LinkedInExportInstructions } from "@/components/linkedin/linkedin-export-instructions";
 import { LINKEDIN_DATA_URL } from "@/lib/linkedin-export";
 import { linkedinCardState } from "@/lib/linkedin-export-card";
@@ -45,15 +47,23 @@ export function LinkedInExportCard({ requestedAt: initial, where }: { requestedA
   const link = "font-medium text-primary underline-offset-2 hover:underline";
 
   return (
-    <section aria-labelledby="linkedin-card-title" className="relative rounded-xl border border-border/70 p-4">
-      <button type="button" onClick={dismiss} aria-label="Dismiss" className="absolute top-3 right-3 text-muted-foreground hover:text-foreground">
-        <X className="size-4" />
-      </button>
-      <h2 id="linkedin-card-title" className="font-heading text-base text-ink">
-        Start your LinkedIn export
-      </h2>
+    <Card size="sm" aria-labelledby="linkedin-card-title">
+      <CardHeader>
+        <div className="flex items-center gap-2.5">
+          <IntegrationLogo provider="linkedin" size="sm" title="" />
+          <CardTitle as="h2" id="linkedin-card-title">
+            Start your LinkedIn export
+          </CardTitle>
+        </div>
+        <CardAction>
+          <Button type="button" variant="ghost" size="icon-sm" onClick={dismiss} aria-label="Dismiss" className="-mr-1 -mt-1 text-muted-foreground">
+            <X className="size-4" aria-hidden />
+          </Button>
+        </CardAction>
+      </CardHeader>
+      <CardContent>
       {state.mode === "start" ? (
-        <div className="mt-3 space-y-4">
+        <div className="space-y-4">
           <LinkedInExportInstructions />
           <div className="flex flex-wrap items-center gap-3">
             <a href={LINKEDIN_DATA_URL} target="_blank" rel="noreferrer" className={link}>
@@ -72,12 +82,12 @@ export function LinkedInExportCard({ requestedAt: initial, where }: { requestedA
                 })
               }
             >
-              I’ve requested it
+              {pending ? "Saving…" : "I’ve requested it"}
             </Button>
           </div>
         </div>
       ) : (
-        <p className="mt-2 text-sm text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           Your export should be ready about{" "}
           {new Date(state.readyIso).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })} —{" "}
           {where === "imports" ? (
@@ -93,6 +103,7 @@ export function LinkedInExportCard({ requestedAt: initial, where }: { requestedA
           )}
         </p>
       )}
-    </section>
+      </CardContent>
+    </Card>
   );
 }

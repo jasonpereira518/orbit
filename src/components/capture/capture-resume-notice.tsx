@@ -29,7 +29,7 @@ export function CaptureResumeNotice({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.98 }}
       transition={{ duration: DUR.base, ease: EASE_HOUSE }}
-      className="flex flex-col items-center gap-5 rounded-2xl border border-primary/30 bg-primary/[0.04] p-8 text-center"
+      className="flex flex-col items-center gap-5 rounded-xl border border-primary/30 bg-primary/5 p-8 text-center"
     >
       <div className="flex -space-x-3">
         {Array.from({ length: shown }).map((_, i) => (

@@ -354,24 +354,24 @@ export function NotesSorterDialog({
         <div className="min-h-0 space-y-4 overflow-y-auto pr-1">
           {hashing && (
             <p className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
-              <Loader2 className="size-3.5 animate-spin" /> Checking for files you’ve added before…
+              <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden /> Checking for files you’ve added before…
             </p>
           )}
           {rejected > 0 && (
-            <p className="rounded-lg border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2 text-xs text-foreground">
+            <p className="rounded-lg border border-warning-border bg-warning-surface px-3 py-2 text-xs text-foreground">
               That folder held more than {MAX_STAGED_FILES} files. The first{" "}
               {MAX_STAGED_FILES} are here — sort these, then drop the rest.
             </p>
           )}
           {duplicates > 0 && (
-            <p className="rounded-lg border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2 text-xs text-foreground">
+            <p className="rounded-lg border border-warning-border bg-warning-surface px-3 py-2 text-xs text-foreground">
               {duplicates === 1
                 ? "One file was an exact copy of another, so it’s here once."
                 : `${duplicates} files were exact copies of others, so each is here once.`}
             </p>
           )}
           {Object.keys(captured).length > 0 && (
-            <p className="rounded-lg border border-border/70 bg-muted/30 px-3 py-2 text-xs text-foreground">
+            <p className="rounded-lg border border-border-subtle bg-surface-inset px-3 py-2 text-xs text-foreground">
               {Object.keys(captured).length === 1
                 ? "One file was already captured, so it’s unticked. Tick it to read it again."
                 : `${Object.keys(captured).length} files were already captured, so they’re unticked. Tick any to read it again.`}
@@ -382,7 +382,7 @@ export function NotesSorterDialog({
           <section
             aria-label="Unsorted files"
             className={cn(
-              "rounded-xl border border-dashed border-border/70 bg-muted/20 p-3",
+              "rounded-xl border border-dashed border-border-subtle bg-muted/20 p-3",
               "transition-colors"
             )}
             onDragOver={onZoneDragOver}
@@ -489,7 +489,7 @@ export function NotesSorterDialog({
                   onDrop={onZoneDrop}
                   className={cn(
                     "space-y-2 rounded-xl border p-3 transition-colors",
-                    tooBig ? "border-destructive/50 bg-destructive/[0.04]" : "border-border/70 bg-card"
+                    tooBig ? "border-destructive/50 bg-destructive/5" : "border-border-subtle bg-card"
                   )}
                 >
                   <div className="flex items-center gap-1.5">
@@ -527,7 +527,7 @@ export function NotesSorterDialog({
                   </div>
 
                   {bin.fileIds.length === 0 ? (
-                    <p className="rounded-lg border border-dashed border-border/60 px-2 py-4 text-center text-xs text-muted-foreground">
+                    <p className="rounded-lg border border-dashed border-border-subtle px-2 py-4 text-center text-xs text-muted-foreground">
                       Drop files here
                     </p>
                   ) : (
@@ -576,23 +576,27 @@ export function NotesSorterDialog({
             {/* Inclusion, not selection: these tick and untick every file for reading. */}
             <span className="inline-flex items-center gap-1">
               Read:
-              <button
+              <Button
                 type="button"
-                className="font-medium text-foreground underline-offset-2 hover:underline disabled:opacity-50 disabled:no-underline"
+                variant="link"
+                size="xs"
+                className="h-auto p-0 text-xs text-foreground"
                 disabled={!state.files.length || excludedCount === 0}
                 onClick={() => apply(setExcluded(state, state.files.map((f) => f.id), false))}
               >
                 all
-              </button>
+              </Button>
               <span aria-hidden>·</span>
-              <button
+              <Button
                 type="button"
-                className="font-medium text-foreground underline-offset-2 hover:underline disabled:opacity-50 disabled:no-underline"
+                variant="link"
+                size="xs"
+                className="h-auto p-0 text-xs text-foreground"
                 disabled={!state.files.length || excludedCount === state.files.length}
                 onClick={() => apply(setExcluded(state, state.files.map((f) => f.id), true))}
               >
                 none
-              </button>
+              </Button>
             </span>
           </div>
           <div className="flex gap-2">
@@ -646,12 +650,12 @@ function FileTile({
     <li
       className={cn(
         "group relative w-[8.5rem] overflow-hidden rounded-lg border bg-card transition-colors",
-        selected ? "border-primary ring-2 ring-primary/30" : "border-border/60"
+        selected ? "border-primary ring-2 ring-primary/30" : "border-border-subtle"
       )}
     >
       {/* A sibling of the tile's button, not inside it: a control nested in a button is
           invalid HTML, and its click would also select the tile. */}
-      <span className="absolute top-1 left-1 z-10 inline-flex rounded-[5px] bg-background/85 p-0.5">
+      <span className="absolute top-1 left-1 z-10 inline-flex rounded-md bg-background/85 p-0.5">
         <Checkbox
           checked={included}
           onCheckedChange={(next) => onIncludedChange(next === true)}
@@ -693,7 +697,7 @@ function FileTile({
           </span>
           {capturedBefore && (
             <span
-              className="block truncate text-3xs font-medium text-amber-700 dark:text-amber-400"
+              className="block truncate text-3xs font-medium text-warning"
               title={capturedBefore.label ? `Captured as “${capturedBefore.label}”` : undefined}
             >
               Already captured · {capturedOn(capturedBefore.capturedAt)}

@@ -83,7 +83,7 @@ export function SegmentedControl<K extends string>({
       aria-label={ariaLabel}
       onKeyDown={onKeyDown}
       className={cn(
-        "relative flex shrink-0 rounded-lg p-0.5",
+        "relative flex max-w-full shrink-0 overflow-x-auto rounded-lg p-0.5 whitespace-nowrap",
         fill ? "w-full" : "w-fit",
         variant === "pill" ? "border border-border-subtle bg-card" : "bg-muted",
         size === "sm" ? "text-xs" : "text-sm",

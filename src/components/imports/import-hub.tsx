@@ -9,18 +9,8 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import {
-  BookUser,
-  Calendar as CalendarIcon,
-  CalendarPlus,
-  Contact,
-  FileSpreadsheet,
-  HardDrive,
-  Loader2,
-  MailCheck,
-  MessageCircle,
-  MessageSquare,
-} from "lucide-react";
+import { Loader2, MessageCircle } from "lucide-react";
+import { IntegrationLogo } from "@/components/integrations/integration-logo";
 import {
   ImportHistory,
   type ImportHistoryHandle,
@@ -188,7 +178,7 @@ type CalendarSub = {
 };
 
 const PanelSkeleton = () => (
-  <div className="space-y-3 rounded-xl border border-border/60 p-4">
+  <div className="space-y-3 rounded-xl border border-border-subtle p-4">
     <Skeleton className="h-5 w-40" />
     <Skeleton className="h-24 w-full" />
     <Skeleton className="h-9 w-32" />
@@ -308,9 +298,6 @@ function rowForImportJobKind(kind: ImportJobKind): RowId | null {
   }
 }
 
-const CONNECTIONS_ACCENT = "bg-import-connections/10 text-import-connections";
-const MESSAGES_ACCENT = "bg-import-messages/10 text-import-messages";
-const CALENDAR_ACCENT = "bg-import-calendar/10 text-import-calendar";
 
 export function ImportHub({
   history,
@@ -677,11 +664,11 @@ export function ImportHub({
               }}
             >
               {drivePickerBusy ? (
-                <Loader2 className="size-4 animate-spin" />
+                <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden />
               ) : (
-                <HardDrive className="size-4" />
+                <IntegrationLogo provider="google-drive" size="sm" tile={false} title="" />
               )}
-              Choose from Google Drive
+              {drivePickerBusy ? "Opening Google Drive…" : "Choose from Google Drive"}
             </Button>
           ) : undefined
         }
@@ -736,35 +723,32 @@ export function ImportHub({
       ) : null}
 
       <section className="space-y-3">
-        <h2 className="text-sm font-medium text-muted-foreground">
+        <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
           Your people
         </h2>
         <ul className="space-y-2">
           <ImportSourceRow
             {...row("import-panel-connections")}
-            icon={FileSpreadsheet}
-            accent={CONNECTIONS_ACCENT}
+            provider="linkedin"
             title="LinkedIn connections"
             status="Upload Connections.csv, or your whole export ZIP"
           >
-            <LinkedInConnectionsImport />
+            <LinkedInConnectionsImport embedded />
           </ImportSourceRow>
 
           <ImportSourceRow
             {...row("import-panel-messages")}
-            icon={MessageSquare}
-            accent={MESSAGES_ACCENT}
+            provider="linkedin"
             title="LinkedIn messages"
             status="Who you actually talk to, from the same export"
           >
-            <LinkedInMessagesImport />
+            <LinkedInMessagesImport embedded />
           </ImportSourceRow>
 
           {chatImports ? (
             <ImportSourceRow
               {...row("import-panel-chats")}
               icon={MessageCircle}
-              accent={MESSAGES_ACCENT}
               title="Chat messages"
               status="WhatsApp and iMessage exports, read on your device"
             >
@@ -774,8 +758,7 @@ export function ImportHub({
 
           <ImportSourceRow
             {...row("import-contacts-file")}
-            icon={BookUser}
-            accent={CONNECTIONS_ACCENT}
+            provider="file"
             title="A contacts file"
             status="From your phone, Google, Outlook or anywhere else"
           >
@@ -784,8 +767,7 @@ export function ImportHub({
 
           <ImportSourceRow
             {...row("import-google-contacts")}
-            icon={Contact}
-            accent={CONNECTIONS_ACCENT}
+            provider="google-contacts"
             title="Google Contacts"
             status={
               google?.connected
@@ -800,8 +782,7 @@ export function ImportHub({
               there and the opt-in should not be somewhere the user has to go looking. */}
           <ImportSourceRow
             {...row("import-email-activity")}
-            icon={MailCheck}
-            accent={CONNECTIONS_ACCENT}
+            provider="gmail"
             title="Email activity"
             status={
               google?.connected
@@ -814,8 +795,7 @@ export function ImportHub({
 
           <ImportSourceRow
             {...row("import-outlook-contacts")}
-            icon={Contact}
-            accent={CONNECTIONS_ACCENT}
+            provider="outlook"
             title="Outlook Contacts"
             status={
               outlook?.connected
@@ -829,14 +809,13 @@ export function ImportHub({
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-medium text-muted-foreground">
+        <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
           Your meetings
         </h2>
         <ul className="space-y-2">
           <ImportSourceRow
             {...row("import-panel-calendar")}
-            icon={CalendarIcon}
-            accent={CALENDAR_ACCENT}
+            provider="ics"
             title="Calendars that keep syncing"
             status={
               needsAttention
@@ -870,8 +849,7 @@ export function ImportHub({
 
           <ImportSourceRow
             {...row("import-calendar-file")}
-            icon={CalendarPlus}
-            accent={CALENDAR_ACCENT}
+            provider="ics"
             title="A calendar file, or a link"
             status="Logs meetings onto people you already know"
           >
@@ -882,18 +860,13 @@ export function ImportHub({
         </ul>
       </section>
 
-      <section className="space-y-3">
-        <h2 className="text-sm font-medium text-muted-foreground">
-          Past imports
-        </h2>
-        {/* Target for the "import didn't finish" alerts. */}
-        <div id="import-history" className="scroll-mt-8">
-          <ImportHistory
-            history={history}
-            onUndone={refreshAfterUndo}
-            ref={historyRef}
-          />
-        </div>
+      {/* Target for the "import didn't finish" alerts. The card carries its own heading. */}
+      <section id="import-history" className="scroll-mt-8">
+        <ImportHistory
+          history={history}
+          onUndone={refreshAfterUndo}
+          ref={historyRef}
+        />
       </section>
 
       {queue.truncated ? (

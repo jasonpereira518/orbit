@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { Camera, Check, ChevronLeft, ChevronRight, Images, X } from "lucide-react";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { OFFLINE_MESSAGE, friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
 import { SPRING_PILL } from "@/lib/motion";
@@ -184,15 +185,13 @@ export function ScanPhoneCapture({ token }: { token: string }) {
     return (
       <div className="flex w-full flex-1 flex-col gap-6">
         {header}
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8 text-center">
-          <div className="grid size-14 place-items-center rounded-full bg-import-scan/15">
-            <Check className="size-7 text-import-scan" />
-          </div>
-          <h2 className="font-heading text-xl font-medium text-ink">All sent</h2>
-          <p className="text-sm text-muted-foreground">
-            Finish up on your computer — your notes are already there.
-          </p>
-        </div>
+        <EmptyState
+          icon={Check}
+          variant="plain"
+          className="flex-1 justify-center py-8"
+          title={<span className="font-heading text-xl font-medium">All pages sent</span>}
+          description="You can close this tab and keep going on your computer."
+        />
       </div>
     );
   }
@@ -201,11 +200,31 @@ export function ScanPhoneCapture({ token }: { token: string }) {
     <div className="flex w-full flex-1 flex-col gap-5">
       {header}
 
-      <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={onPick} />
-      <input ref={rollRef} type="file" multiple accept="image/*,application/pdf,.pdf" className="sr-only" onChange={onPick} />
+      {/* Reached only through the two buttons below — out of the tab order and the tree
+          (the same shape as `import-dropzone.tsx`). */}
+      <input
+        ref={cameraRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden
+        onChange={onPick}
+      />
+      <input
+        ref={rollRef}
+        type="file"
+        multiple
+        accept="image/*,application/pdf,.pdf"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden
+        onChange={onPick}
+      />
 
       {sentBatches > 0 && (
-        <p className="rounded-xl bg-import-scan/10 px-3 py-2 text-center text-xs text-foreground">
+        <p role="status" className="rounded-lg border border-success/30 bg-success/8 px-3 py-2 text-center text-xs text-foreground">
           {sentBatches === 1 ? "1 batch sent" : `${sentBatches} batches sent`} — add more pages, or tap Done.
         </p>
       )}
@@ -229,7 +248,7 @@ export function ScanPhoneCapture({ token }: { token: string }) {
                   <img
                     src={page.previewUrl}
                     alt={`Page ${i + 1}`}
-                    className="aspect-[3/4] w-full rounded-lg border border-border/60 object-cover"
+                    className="aspect-[3/4] w-full rounded-lg border border-border-subtle object-cover"
                   />
                   <span className="absolute left-1 top-1 rounded-md bg-black/60 px-1.5 py-0.5 text-2xs font-medium text-white">
                     {i + 1}
@@ -240,7 +259,7 @@ export function ScanPhoneCapture({ token }: { token: string }) {
                     aria-label={`Remove page ${i + 1}`}
                     className="absolute -right-1.5 -top-1.5 grid size-7 place-items-center rounded-full border border-border bg-card text-muted-foreground shadow-sm"
                   >
-                    <X className="size-4" />
+                    <X className="size-4" aria-hidden />
                   </button>
                   <div className="absolute bottom-1 right-1 flex gap-1">
                     <button
@@ -250,7 +269,7 @@ export function ScanPhoneCapture({ token }: { token: string }) {
                       aria-label={`Move page ${i + 1} earlier`}
                       className="grid size-7 place-items-center rounded-full bg-black/60 text-white disabled:opacity-30"
                     >
-                      <ChevronLeft className="size-4" />
+                      <ChevronLeft className="size-4" aria-hidden />
                     </button>
                     <button
                       type="button"
@@ -259,7 +278,7 @@ export function ScanPhoneCapture({ token }: { token: string }) {
                       aria-label={`Move page ${i + 1} later`}
                       className="grid size-7 place-items-center rounded-full bg-black/60 text-white disabled:opacity-30"
                     >
-                      <ChevronRight className="size-4" />
+                      <ChevronRight className="size-4" aria-hidden />
                     </button>
                   </div>
                 </motion.li>
@@ -268,34 +287,42 @@ export function ScanPhoneCapture({ token }: { token: string }) {
           </ul>
         </div>
       ) : (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 px-4 py-10 text-center">
-          <Camera className="size-8 text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">Photograph each page, or pick photos from your camera roll.</p>
-        </div>
+        <EmptyState
+          icon={Camera}
+          className="flex-1 justify-center"
+          title="No pages yet"
+          description="Photograph each page, or pick photos from your camera roll."
+        />
       )}
 
       {/* Thumb-reachable, above the home indicator, always in view. */}
       <div
-        className="sticky bottom-0 -mx-5 mt-auto flex flex-col gap-2 border-t border-border/60 bg-background/95 px-5 pt-3 backdrop-blur"
+        className="sticky bottom-0 -mx-5 mt-auto flex flex-col gap-2 border-t border-border-subtle bg-background/95 px-5 pt-3 backdrop-blur"
         style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom))" }}
       >
         <div className="grid grid-cols-2 gap-2">
-          <Button size="lg" disabled={busy} className="h-14 bg-primary text-base text-primary-foreground hover:bg-primary/90" onClick={() => cameraRef.current?.click()}>
-            <Camera className="size-5" />
+          <Button
+            size="lg"
+            variant={pages.length ? "outline" : "default"}
+            disabled={busy}
+            className="h-14 text-base"
+            onClick={() => cameraRef.current?.click()}
+          >
+            <Camera className="size-5" aria-hidden />
             {pages.length ? "Another photo" : "Take a photo"}
           </Button>
           <Button size="lg" variant="outline" disabled={busy} className="h-14" onClick={() => rollRef.current?.click()}>
-            <Images className="size-4" />
+            <Images className="size-4" aria-hidden />
             Camera roll
           </Button>
         </div>
         {pages.length > 0 ? (
-          <Button size="lg" disabled={busy} className="h-14 w-full bg-import-scan text-base text-white hover:bg-import-scan/90" onClick={() => void send()}>
+          <Button size="lg" disabled={busy} className="h-14 w-full text-base" onClick={() => void send()}>
             {busy ? "Sending…" : pages.length === 1 ? "Send to computer" : `Send ${pages.length} pages`}
           </Button>
         ) : sentBatches > 0 ? (
-          <Button size="lg" disabled={busy} className="h-14 w-full bg-import-scan text-base text-white hover:bg-import-scan/90" onClick={() => void finish()}>
-            <Check className="size-5" /> Done — I&apos;m finished
+          <Button size="lg" disabled={busy} className="h-14 w-full text-base" onClick={() => void finish()}>
+            <Check className="size-5" aria-hidden /> {busy ? "Finishing…" : "Done — I’m finished"}
           </Button>
         ) : null}
       </div>

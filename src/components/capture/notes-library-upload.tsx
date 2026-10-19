@@ -126,14 +126,12 @@ export function NotesLibraryUpload({
         }}
         onDrop={(e) => void onDrop(e)}
         className={cn(
-          "rounded-2xl border border-dashed p-6 text-center transition-colors",
-          dragging ? "border-primary bg-primary/5" : "border-border/70 bg-muted/20"
+          "rounded-xl border border-dashed p-6 text-center transition-colors",
+          dragging ? "border-primary bg-primary/5" : "border-border-subtle bg-surface-inset"
         )}
       >
-        <FileText className="mx-auto size-6 text-muted-foreground" />
-        <p className="mt-2 text-sm font-medium text-foreground">
-          Drop a folder of meeting notes
-        </p>
+        <FileText className="mx-auto size-6 text-muted-foreground" aria-hidden />
+        <p className="mt-2 text-sm font-medium text-foreground">Drop files here</p>
         <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">
           You sort them into notes before anything is read — photos of one whiteboard
           together, everything else on its own. Text, Markdown, PDFs, photos, calendar
@@ -146,6 +144,8 @@ export function NotesLibraryUpload({
           multiple
           accept={CAPTURE_FILE_ACCEPT}
           className="sr-only"
+          tabIndex={-1}
+          aria-hidden
           onChange={(e) => {
             fromPicker(e.target.files);
             // Cleared so re-picking the same files fires `change` again.
@@ -159,6 +159,8 @@ export function NotesLibraryUpload({
           type="file"
           multiple
           className="sr-only"
+          tabIndex={-1}
+          aria-hidden
           {...{ webkitdirectory: "", directory: "" }}
           onChange={(e) => {
             fromPicker(e.target.files);
@@ -174,7 +176,7 @@ export function NotesLibraryUpload({
             disabled={busy || reading}
             onClick={() => filePickerRef.current?.click()}
           >
-            <Upload className="size-4" />
+            <Upload className="size-4" aria-hidden />
             Choose files
           </Button>
           <Button
@@ -184,7 +186,7 @@ export function NotesLibraryUpload({
             disabled={busy || reading}
             onClick={() => folderPickerRef.current?.click()}
           >
-            <FolderOpen className="size-4" />
+            <FolderOpen className="size-4" aria-hidden />
             Choose a folder
           </Button>
           <DriveCaptureButton drive={drive} canUseSync={canUseSync} disabled={busy || reading} onQueued={onQueued} />
@@ -192,7 +194,7 @@ export function NotesLibraryUpload({
 
         {reading && (
           <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Loader2 className="size-3.5 animate-spin" />
+            <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden />
             Reading that folder…
           </p>
         )}
@@ -234,7 +236,7 @@ export function NotesFanoutList({ fanout }: { fanout: ReturnType<typeof useCaptu
   const { entries, summary, running } = fanout;
   if (!entries.length) return null;
   return (
-    <div className="space-y-3 rounded-2xl border border-border/70 p-4">
+    <div className="space-y-3 rounded-xl border border-border-subtle p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-medium text-foreground">
           {entries.length} {entries.length === 1 ? "note" : "notes"}
@@ -262,7 +264,7 @@ export function NotesFanoutList({ fanout }: { fanout: ReturnType<typeof useCaptu
         {entries.map((e) => (
           <li
             key={e.id}
-            className="flex flex-wrap items-center gap-2 rounded-xl border border-border/60 bg-card p-2.5"
+            className="flex flex-wrap items-center gap-2 rounded-xl border border-border-subtle bg-card p-2.5"
           >
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm text-foreground">{e.label}</span>
@@ -274,13 +276,13 @@ export function NotesFanoutList({ fanout }: { fanout: ReturnType<typeof useCaptu
               {/* A note that went up short still went up, so this is not styled as a
                   failure — but it is never left unsaid. */}
               {e.notice && (
-                <span className="mt-0.5 block text-xs text-amber-600 dark:text-warning">
+                <span className="mt-0.5 block text-xs text-warning">
                   {e.notice}
                 </span>
               )}
             </span>
             {e.status === "uploading" && (
-              <Loader2 className="size-4 animate-spin text-muted-foreground" />
+              <Loader2 className="size-4 motion-safe:animate-spin text-muted-foreground" />
             )}
           </li>
         ))}

@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { BookUser } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
   previewContactsFile,
@@ -112,27 +111,13 @@ export function ContactsFileImport() {
   }
 
   return (
-    <section
-      id="import-contacts-file"
-      className="space-y-4 rounded-2xl border border-border/70 bg-card p-6"
-    >
-      <div className="flex items-start gap-3">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-import-connections/10 text-import-connections">
-          <BookUser className="h-4 w-4" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
-            <h2 className="min-w-0 text-lg font-medium text-ink">
-              Contacts file
-            </h2>
-            <ContactsExportGuide />
-          </div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Upload a vCard (.vcf) or contacts CSV from Google Contacts, iPhone,
-            Android or Outlook — no account to connect. Photos aren&apos;t
-            imported.
-          </p>
-        </div>
+    <section className="space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          Upload a vCard (.vcf) or contacts CSV from Google Contacts, iPhone, Android or Outlook — no account to
+          connect. Photos aren’t imported.
+        </p>
+        <ContactsExportGuide />
       </div>
 
       <ImportFilePicker

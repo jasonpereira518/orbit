@@ -41,13 +41,13 @@ const keyOf = (f: File) => `${f.name}|${f.size}|${f.lastModified}`;
 function iconFor(file: File) {
   const name = file.name.toLowerCase();
   if (file.type.startsWith("image/") || /\.(png|jpe?g|heic|heif|webp|gif)$/.test(name)) {
-    return { Icon: ImageIcon, tone: "bg-sky-500/15 text-sky-700 dark:text-sky-300" };
+    return { Icon: ImageIcon, tone: "bg-info/10 text-info" };
   }
   if (file.type.startsWith("audio/") || /\.(mp3|m4a|wav|ogg|webm|aac)$/.test(name)) {
-    return { Icon: FileAudio, tone: "bg-violet-500/15 text-violet-700 dark:text-violet-300" };
+    return { Icon: FileAudio, tone: "bg-accent text-accent-foreground" };
   }
   if (file.type === "application/pdf" || /\.(pdf|txt|md|docx?|rtf|eml|ics)$/.test(name)) {
-    return { Icon: FileText, tone: "bg-amber-500/15 text-amber-700 dark:text-amber-300" };
+    return { Icon: FileText, tone: "bg-warning/12 text-warning" };
   }
   return { Icon: FileIcon, tone: "bg-muted text-muted-foreground" };
 }
@@ -154,7 +154,9 @@ function UploadBody({
         type="file"
         multiple
         accept={CAPTURE_FILE_ACCEPT}
-        className="hidden"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden
         onChange={(e) => {
           const picked = Array.from(e.target.files ?? []);
           e.target.value = "";
@@ -166,16 +168,16 @@ function UploadBody({
         {...dropProps}
         className={cn(
           "flex flex-col items-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors",
-          over ? "border-import-scan bg-import-scan/5" : "border-border/70 bg-muted/20"
+          over ? "border-primary bg-primary/5" : "border-border-subtle bg-surface-inset"
         )}
       >
-        <span className="flex size-10 items-center justify-center rounded-full bg-import-scan/10 text-import-scan">
+        <span className="flex size-10 items-center justify-center rounded-full bg-primary/10 text-primary">
           <UploadCloud className="size-5" aria-hidden />
         </span>
-        <p className="text-sm font-medium text-ink">Drag and drop files here</p>
+        <p className="text-sm font-medium text-ink">Drop files here</p>
         <p className="text-xs text-muted-foreground">or</p>
         <Button type="button" variant="outline" size="sm" onClick={() => inputRef.current?.click()}>
-          Browse files
+          Choose files
         </Button>
       </div>
 
@@ -189,7 +191,7 @@ function UploadBody({
             return (
               <li
                 key={keyOf(file)}
-                className="flex items-center gap-3 rounded-lg border border-border/60 bg-card px-3 py-2"
+                className="flex items-center gap-3 rounded-lg border border-border-subtle bg-card px-3 py-2"
               >
                 <span className={cn("flex size-8 shrink-0 items-center justify-center rounded-md", tone)}>
                   <Icon className="size-4" aria-hidden />
@@ -198,14 +200,16 @@ function UploadBody({
                   <span className="block truncate text-sm font-medium text-ink">{file.name}</span>
                   <span className="text-xs text-muted-foreground">{sizeLabel(file.size)}</span>
                 </span>
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="shrink-0 text-muted-foreground"
                   aria-label={`Remove ${file.name}`}
                   onClick={() => setFiles((prev) => prev.filter((f) => f !== file))}
-                  className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
                 >
                   <X className="size-4" aria-hidden />
-                </button>
+                </Button>
               </li>
             );
           })}
@@ -227,8 +231,8 @@ function UploadBody({
           disabled={!files.length || busy || !canExtract}
           onClick={() => onExtract(files)}
         >
-          {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-          {files.length > 1 ? `Extract people (${files.length})` : "Extract people"}
+          {busy ? <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> : null}
+          {busy ? "Reading…" : files.length > 1 ? `Extract people (${files.length})` : "Extract people"}
         </Button>
       </DialogFooter>
     </>

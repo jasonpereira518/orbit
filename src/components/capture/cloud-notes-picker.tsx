@@ -1,7 +1,11 @@
 "use client";
 
-import { formatDistanceToNow } from "date-fns";
 import { FileText, Loader2, RefreshCw, Search } from "lucide-react";
+import { IntegrationLogo } from "@/components/integrations/integration-logo";
+import { EmptyState } from "@/components/ui/empty-state";
+import { RelativeTime } from "@/components/ui/relative-time";
+import { SegmentedControl } from "@/components/ui/segmented-control";
+import { Switch } from "@/components/ui/switch";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import {
@@ -221,54 +225,49 @@ export function CloudNotesPicker({
   return (
     <div id={panelId} role="tabpanel" aria-labelledby={tabId} className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div role="radiogroup" aria-label="Drive" className="inline-flex rounded-lg bg-muted p-[3px]">
-          {state.drives.map((d) => (
-            <button
-              key={d.provider}
-              type="button"
-              role="radio"
-              aria-checked={provider === d.provider}
-              onClick={() => {
-                setProvider(d.provider);
-                setFiles(null);
-                setNext(null);
-              }}
-              className={cn(
-                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                provider === d.provider ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {DRIVE_LABEL[d.provider]}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          ariaLabel="Drive"
+          variant="subtle"
+          value={provider}
+          onChange={(next) => {
+            setProvider(next);
+            setFiles(null);
+            setNext(null);
+          }}
+          items={state.drives.map((d) => ({
+            key: d.provider,
+            label: DRIVE_LABEL[d.provider],
+            icon: <IntegrationLogo provider={d.provider === "google" ? "google-drive" : "onedrive"} size="sm" tile={false} title="" />,
+          }))}
+        />
         {granted.length > 0 && (
           <Button type="button" variant="ghost" size="sm" disabled={working} onClick={checkNow}>
-            <RefreshCw className={cn("size-4", working && "animate-spin")} />
-            Check now
+            <RefreshCw className={cn("size-4", working && "motion-safe:animate-spin")} aria-hidden />
+            {working ? "Checking…" : "Check now"}
           </Button>
         )}
       </div>
 
       {!drive.granted ? (
-        <div className="rounded-xl border border-dashed border-border/70 p-6 text-center">
-          <FileText className="mx-auto mb-2 size-6 text-muted-foreground" />
-          <p className="font-medium text-ink">
-            {drive.connected ? `Allow Orbit to read ${DRIVE_LABEL[provider]}` : `Connect ${DRIVE_LABEL[provider]}`}
-          </p>
-          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-            Orbit lists your recent docs so you can pick notes here, and checks new ones for meeting notes. It reads a whole doc
-            only when you extract it, and never changes anything in your drive.
-          </p>
-          <Button type="button" className="mt-4" disabled={working} onClick={() => connect(provider)}>
-            {working && <Loader2 className="size-4 animate-spin" />}
-            {drive.connected ? "Allow access" : `Connect ${DRIVE_LABEL[provider]}`}
-          </Button>
-        </div>
+        <EmptyState
+          icon={FileText}
+          title={drive.connected ? `Allow Orbit to read ${DRIVE_LABEL[provider]}` : `Connect ${DRIVE_LABEL[provider]}`}
+          description="Orbit lists your recent docs so you can pick notes here, and checks new ones for meeting notes. It reads a whole doc only when you extract it, and never changes anything in your drive."
+          action={
+            <Button type="button" disabled={working} onClick={() => connect(provider)}>
+              {working ? (
+                <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden />
+              ) : (
+                <IntegrationLogo provider={provider === "google" ? "google-drive" : "onedrive"} size="sm" tile={false} title="" />
+              )}
+              {working ? "Connecting…" : drive.connected ? `Allow ${DRIVE_LABEL[provider]} access` : `Connect ${DRIVE_LABEL[provider]}`}
+            </Button>
+          }
+        />
       ) : (
         <>
           {drive.lastError && (
-            <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/[0.04] px-3 py-2 text-sm">
+            <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm">
               {drive.lastError}
             </p>
           )}
@@ -294,7 +293,7 @@ export function CloudNotesPicker({
 
           {files === null || (loading && files.length === 0) ? (
             <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" /> Loading your docs…
+              <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> Loading your docs…
             </div>
           ) : error ? (
             <p className="py-6 text-sm text-muted-foreground">{error}</p>
@@ -318,37 +317,23 @@ export function CloudNotesPicker({
           ) : null}
           {next && (
             <Button type="button" variant="ghost" size="sm" disabled={loading} onClick={loadMore}>
-              {loading && <Loader2 className="size-4 animate-spin" />}
+              {loading && <Loader2 className="size-4 motion-safe:animate-spin" />}
               Load more
             </Button>
           )}
 
-          <div className="sticky bottom-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-popover/95 px-3 py-2 shadow-sm backdrop-blur">
+          <div className="sticky bottom-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border-subtle bg-popover/95 px-3 py-2 shadow-sm backdrop-blur">
             <div className="flex items-center gap-2 text-sm">
-              <button
-                type="button"
-                role="switch"
-                aria-checked={autoExtract}
+              <Switch
+                checked={autoExtract}
+                onCheckedChange={toggleAuto}
                 aria-labelledby="cloud-notes-auto-label"
                 disabled={working}
-                onClick={toggleAuto}
-                className={cn(
-                  "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50",
-                  autoExtract ? "bg-primary" : "bg-muted-foreground/30",
-                )}
-              >
-                <span
-                  aria-hidden
-                  className={cn(
-                    "pointer-events-none size-4 rounded-full bg-background shadow-sm transition-transform",
-                    autoExtract ? "translate-x-[18px]" : "translate-x-0.5",
-                  )}
-                />
-              </button>
+              />
               <span id="cloud-notes-auto-label">Auto-extract new meeting notes</span>
             </div>
             <Button type="button" disabled={picked.length === 0 || working} onClick={() => extract(picked)}>
-              {working && <Loader2 className="size-4 animate-spin" />}
+              {working && <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden />}
               {picked.length ? `Extract ${picked.length}` : "Extract"}
             </Button>
           </div>
@@ -376,7 +361,7 @@ function FileList({
   return (
     <section className="space-y-1.5">
       <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</h3>
-      <ul className="divide-y rounded-xl border">
+      <ul className="divide-y divide-border-subtle rounded-xl border border-border-subtle">
         {items.map((f) => {
           const key = `${f.provider}:${f.id}`;
           const done = f.status === "queued";
@@ -389,11 +374,15 @@ function FileList({
                   onCheckedChange={(on) => onToggle(f, on === true)}
                   aria-label={`Select ${f.name}`}
                 />
-                <FileText className="size-4 shrink-0 text-muted-foreground" />
+                <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium text-ink">{f.name}</span>
                   <span className="block truncate text-xs text-muted-foreground">
-                    {f.modifiedTime ? `Edited ${formatDistanceToNow(new Date(f.modifiedTime), { addSuffix: true })}` : ""}
+                    {f.modifiedTime ? (
+                      <>
+                        Edited <RelativeTime date={f.modifiedTime} />
+                      </>
+                    ) : null}
                     {done ? " · Already extracted" : f.hint ? ` · ${f.hint}` : ""}
                   </span>
                 </span>
@@ -448,7 +437,7 @@ function ReviewDialog({
             Orbit reads each one you keep ticked and pulls out the people in it. You review them before anything is saved.
           </DialogDescription>
         </DialogHeader>
-        <ul className="max-h-[50vh] divide-y overflow-y-auto rounded-xl border">
+        <ul className="max-h-[50vh] divide-y divide-border-subtle overflow-y-auto rounded-xl border border-border-subtle">
           {found.map((f) => (
             <li key={f.id}>
               <label className="flex cursor-pointer items-center gap-3 px-3 py-2.5 hover:bg-muted/40">
@@ -468,7 +457,12 @@ function ReviewDialog({
                   <span className="block truncate text-sm font-medium text-ink">{f.name}</span>
                   <span className="block truncate text-xs text-muted-foreground">
                     {DRIVE_LABEL[f.provider]}
-                    {f.modifiedAt ? ` · ${formatDistanceToNow(new Date(f.modifiedAt), { addSuffix: true })}` : ""}
+                    {f.modifiedAt ? (
+                      <>
+                        {" · "}
+                        <RelativeTime date={f.modifiedAt} />
+                      </>
+                    ) : null}
                     {f.reason ? ` · ${f.reason}` : ""}
                   </span>
                 </span>
@@ -485,7 +479,7 @@ function ReviewDialog({
             disabled={chosen.length === 0 || working}
             onClick={() => onExtract(chosen.map(fromFound), () => onOpenChange(false))}
           >
-            {working && <Loader2 className="size-4 animate-spin" />}
+            {working && <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden />}
             {chosen.length === found.length ? "Extract all" : `Extract ${chosen.length}`}
           </Button>
         </DialogFooter>

@@ -200,7 +200,9 @@ export function ScanControls({
         type="file"
         multiple
         accept={accept}
-        className="hidden"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden
         onChange={onPick}
       />
       {/*
@@ -212,7 +214,9 @@ export function ScanControls({
         type="file"
         accept="image/*"
         capture="environment"
-        className="hidden"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden
         onChange={onPick}
       />
 
@@ -305,7 +309,7 @@ export function ScanControls({
           <DialogHeader className="items-center text-center">
             <DialogTitle>Use your phone</DialogTitle>
             <DialogDescription>
-              Scan this code with your phone&apos;s camera. It opens a page that sends your
+              Scan this code with your phone’s camera. It opens a page that sends your
               photos straight here — no sign-in.
             </DialogDescription>
           </DialogHeader>
@@ -343,12 +347,12 @@ function ScanTile({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "flex flex-col items-center gap-1.5 rounded-xl border border-border/60 px-3 py-4 text-center",
-        "transition-colors hover:border-import-scan/60 hover:bg-import-scan/5",
+        "flex flex-col items-center gap-1.5 rounded-xl border border-border-subtle px-3 py-4 text-center",
+        "transition-colors hover:border-primary/40 hover:bg-primary/5",
         "disabled:opacity-50"
       )}
     >
-      <Icon className="size-5 text-import-scan" />
+      <Icon className="size-5 text-primary" aria-hidden />
       <span className="text-sm font-medium text-ink">{label}</span>
       <span className="text-xs text-muted-foreground">{hint}</span>
     </button>

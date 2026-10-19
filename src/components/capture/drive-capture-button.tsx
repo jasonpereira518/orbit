@@ -13,7 +13,8 @@
  * Docs go a few at a time, like the notes fan-out, so each parse gets its own request.
  */
 import { useRef, useState } from "react";
-import { HardDrive, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
+import { IntegrationLogo } from "@/components/integrations/integration-logo";
 import { queueDriveCapture } from "@/actions/capture-drive";
 import { checkDriveReadiness } from "@/actions/drive";
 import { startGmailOAuth } from "@/actions/gmail";
@@ -163,8 +164,12 @@ export function DriveCaptureButton({
       onFocus={warm}
       onClick={() => void run()}
     >
-      {busy ? <Loader2 className="size-4 animate-spin" /> : <HardDrive className="size-4" />}
-      {progress ? `Reading ${progress.done}/${progress.total}…` : "From Google Drive"}
+      {busy ? (
+        <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden />
+      ) : (
+        <IntegrationLogo provider="google-drive" size="sm" tile={false} title="" />
+      )}
+      {progress ? `Reading ${progress.done}/${progress.total}…` : busy ? "Opening Google Drive…" : "From Google Drive"}
     </Button>
   );
 }

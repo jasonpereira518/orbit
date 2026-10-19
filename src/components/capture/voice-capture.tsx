@@ -61,7 +61,7 @@ export function VoiceCapture({
   }, []);
 
   return (
-    <div id={panelId} role="tabpanel" aria-labelledby={tabId} className="space-y-4 rounded-2xl border border-border/70 bg-card p-5 sm:p-6">
+    <div id={panelId} role="tabpanel" aria-labelledby={tabId} className="space-y-4 rounded-xl border border-border-subtle bg-card p-5 sm:p-6">
       {!ingest.hasApiKey && <MissingKeyNotice reason={ingest.aiReason} />}
       {!canTranscribe && ingest.hasApiKey && (
         <div className="rounded-xl border border-warning-border bg-warning-surface px-3 py-3 text-sm">
@@ -87,13 +87,15 @@ export function VoiceCapture({
           type="file"
           accept={AUDIO_FILE_ACCEPT}
           className="sr-only"
+          tabIndex={-1}
+          aria-hidden
           onChange={(e) => {
             ingest.handleFilesSelected(Array.from(e.target.files ?? []));
             e.target.value = "";
           }}
         />
         <Button variant="link" size="sm" className="text-muted-foreground" disabled={busy} onClick={() => fileRef.current?.click()}>
-          <Upload className="size-3.5" /> or upload a recording
+          <Upload className="size-3.5" aria-hidden /> or upload a recording
         </Button>
       </motion.div>
 
@@ -131,7 +133,7 @@ export function VoiceCapture({
           <div className="flex flex-wrap items-center gap-2">
             {ingest.busy && (
               <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Loader2 className="size-3.5 animate-spin" /> Transcribing…
+                <Loader2 className="size-3.5 motion-safe:animate-spin" /> Transcribing…
                 <StopReadingButton onStop={ingest.cancel} />
               </span>
             )}

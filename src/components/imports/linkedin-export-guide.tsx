@@ -72,7 +72,7 @@ function GuideImage({ src, alt }: { src?: string; alt: string }) {
     <img
       src={src}
       alt={alt}
-      className="mt-2 w-full rounded-lg border border-border/60 bg-muted/30 object-cover object-top"
+      className="mt-2 w-full rounded-lg border border-border-subtle bg-surface-inset object-cover object-top"
       onError={() => setFailed(true)}
     />
   );

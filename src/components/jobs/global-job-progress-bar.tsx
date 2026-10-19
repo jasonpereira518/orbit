@@ -133,17 +133,17 @@ function JobRow({ job }: { job: BackgroundJob }) {
       dragElastic={0.7}
       onDragEnd={handleDragEnd}
       style={{ touchAction: "pan-y" }}
-      className="flex items-start gap-2.5 rounded-xl border border-border/70 bg-card/95 p-3 shadow-lg backdrop-blur-md active:cursor-grabbing"
+      className="flex items-start gap-2.5 rounded-xl border border-border-subtle bg-card/95 p-3 shadow-lg backdrop-blur-md active:cursor-grabbing"
     >
       <div className="mt-0.5 shrink-0">
         {job.status === "running" ? (
-          <Loader2 className="size-4 animate-spin text-primary" />
+          <Loader2 className="size-4 motion-safe:animate-spin text-primary" aria-hidden />
         ) : job.status === "completed" ? (
-          <CheckCircle2 className="size-4 text-primary" />
+          <CheckCircle2 className="size-4 text-success" aria-hidden />
         ) : job.status === "failed" ? (
-          <XCircle className="size-4 text-destructive" />
+          <XCircle className="size-4 text-destructive" aria-hidden />
         ) : (
-          <XCircle className="size-4 text-muted-foreground" />
+          <XCircle className="size-4 text-muted-foreground" aria-hidden />
         )}
       </div>
 
@@ -156,7 +156,7 @@ function JobRow({ job }: { job: BackgroundJob }) {
             : job.status === "completed"
               ? job.resultMessage || `${job.label} — done`
               : job.status === "failed"
-                ? job.error || `${job.label} failed`
+                ? job.error || `${job.label} didn’t finish`
                 : job.resultMessage || `${job.label} stopped`}
         </p>
 

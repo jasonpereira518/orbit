@@ -29,14 +29,14 @@ export function SaveTargetChoice({
   if (lockedName) {
     return (
       <p className="text-xs text-muted-foreground">
-        Logging on <span className="font-medium text-foreground">{lockedName}</span>&apos;s timeline
+        Logging on <span className="font-medium text-foreground">{lockedName}</span>’s timeline
       </p>
     );
   }
   if (!candidates.length) {
     return (
       <p className="text-xs text-muted-foreground">
-        Nobody by this name yet — they&apos;ll be added as a <span className="font-medium text-foreground">new contact</span>.
+        Nobody by this name yet — they’ll be added as a <span className="font-medium text-foreground">new contact</span>.
       </p>
     );
   }

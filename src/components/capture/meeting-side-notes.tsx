@@ -32,7 +32,7 @@ export function SideNotes({
             Your notes
           </label>
           <p className="text-xs text-muted-foreground">
-            Names, numbers, to-dos — anything. Only you see this. It&apos;s saved in this browser as you
+            Names, numbers, to-dos — anything. Only you see this. It’s saved in this browser as you
             type and goes with the recording when you finish the meeting.
           </p>
         </div>

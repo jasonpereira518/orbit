@@ -2,7 +2,8 @@
 
 import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useEffect, useState, useTransition } from "react";
-import { FileSpreadsheet } from "lucide-react";
+import { IntegrationLogo } from "@/components/integrations/integration-logo";
+import { cn } from "@/lib/utils";
 import { toast } from "@/lib/toast";
 import { previewLinkedInCsv } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
@@ -25,7 +26,12 @@ type PreviewResult = Awaited<ReturnType<typeof previewLinkedInCsv>>;
 type ConnectionsPreview = Exclude<PreviewResult, { error: string }>;
 type ConnectionPerson = ConnectionsPreview["people"][number];
 
-export function LinkedInConnectionsImport() {
+/**
+ * `embedded`: inside an `ImportSourceRow` on /imports, where the row already carries the logo
+ * and the title, so this renders the body alone. Standalone (onboarding, the integrations
+ * dialog) it is its own card.
+ */
+export function LinkedInConnectionsImport({ embedded = false }: { embedded?: boolean } = {}) {
   const job = useImportJob();
   const [pending, start] = useTransition();
 
@@ -66,7 +72,7 @@ export function LinkedInConnectionsImport() {
 
   return (
     <section
-      className="space-y-4 rounded-2xl border border-border/70 border-t-2 border-t-import-connections/70 bg-card p-6"
+      className={cn("space-y-4", !embedded && "rounded-xl border border-border-subtle bg-card p-6")}
       {...tourAnchor("imports.connections")}
     >
       {/*
@@ -75,21 +81,25 @@ export function LinkedInConnectionsImport() {
         the description ran four words to a line. Here the description spans the card.
       */}
       <div className="flex items-start gap-3">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-import-connections/10 text-import-connections">
-          <FileSpreadsheet className="h-4 w-4" />
-        </span>
+        {!embedded && <IntegrationLogo provider="linkedin" size="md" title="" />}
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-3">
-            <h2 className="min-w-0 text-lg font-medium text-ink">
-              LinkedIn connections
-            </h2>
+            {embedded ? (
+              <p className="min-w-0 text-sm text-muted-foreground">
+                Upload LinkedIn’s ZIP or the Connections.csv inside it, review everyone, then import into your orbit.
+                Imports keep running if you leave this page.
+              </p>
+            ) : (
+              <h2 className="min-w-0 font-heading text-base font-medium text-ink">LinkedIn connections</h2>
+            )}
             <LinkedInExportGuide variant="connections" />
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Upload LinkedIn&apos;s ZIP or the Connections.csv inside it, review
-            everyone, then import into your orbit. Imports keep running if you
-            leave this page.
-          </p>
+          {!embedded && (
+            <p className="mt-1 text-sm text-muted-foreground">
+              Upload LinkedIn’s ZIP or the Connections.csv inside it, review everyone, then import into your orbit.
+              Imports keep running if you leave this page.
+            </p>
+          )}
         </div>
       </div>
 

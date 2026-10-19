@@ -257,7 +257,7 @@ export function PersonDeck({
             initial={{ opacity: 0, scale: 0.94, y: 14 }}
             animate={{ opacity: 0.85, scale: 0.96, y: 10 }}
             transition={SPRING_PILL}
-            className="pointer-events-none absolute inset-x-0 top-0 z-0 rounded-2xl border border-border/70 bg-card p-5 shadow-sm sm:p-6"
+            className="pointer-events-none absolute inset-x-0 top-0 z-0 rounded-xl border border-border-subtle bg-card p-5 shadow-sm sm:p-6"
           >
             <div className="flex items-center gap-3 pr-16">
               <div className="min-w-0">
@@ -292,7 +292,7 @@ export function PersonDeck({
       */}
       <div
         ref={actionRowRef}
-        className="sticky bottom-[calc(4.375rem+env(safe-area-inset-bottom))] z-20 -mx-4 flex items-center justify-center gap-3 rounded-2xl border border-border/60 bg-card/95 px-4 py-3 shadow-lg backdrop-blur md:static md:mx-0 md:rounded-none md:border-0 md:bg-transparent md:py-1 md:shadow-none md:backdrop-blur-none"
+        className="sticky bottom-[calc(4.375rem+env(safe-area-inset-bottom))] z-20 -mx-4 flex items-center justify-center gap-3 rounded-xl border border-border-subtle bg-card/95 px-4 py-3 shadow-lg backdrop-blur md:static md:mx-0 md:rounded-none md:border-0 md:bg-transparent md:py-1 md:shadow-none md:backdrop-blur-none"
       >
         <Button
           type="button"
@@ -385,7 +385,7 @@ function DeckCard({
       dragMomentum={false}
       onDragEnd={onDragEnd}
       style={{ x, rotate, touchAction: "pan-y" }}
-      className="relative z-10 rounded-2xl border border-border/70 bg-card p-5 shadow-md sm:p-6"
+      className="relative z-10 rounded-xl border border-border-subtle bg-card p-5 shadow-md sm:p-6"
     >
       <DecisionStamp kind="accept" side="left" opacity={leaving === "accept" ? 1 : keepOpacity} />
       <DecisionStamp kind="reject" side="right" opacity={leaving === "reject" ? 1 : notNowOpacity} />

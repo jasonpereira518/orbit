@@ -168,7 +168,7 @@ export function ChatConversationReview({
   onChoiceChange: (conversationKey: string, memberKey: string, choice: MemberChoice) => void;
 }) {
   return (
-    <ul className="max-h-[32rem] overflow-auto rounded-xl border border-border/60">
+    <ul className="max-h-[32rem] overflow-auto rounded-xl border border-border-subtle">
       {conversations.map((c, i) => (
         <li
           key={c.key}

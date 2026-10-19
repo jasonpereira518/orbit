@@ -29,7 +29,7 @@ export function ImportYouReview({
   }
 
   return (
-    <ul className="divide-y divide-border/50 rounded-xl border border-border/60">
+    <ul className="divide-y divide-border/50 rounded-xl border border-border-subtle">
       {fields.map((field) => {
         const checked = selected.has(field.key);
         const id = `${base}-${field.key}`;

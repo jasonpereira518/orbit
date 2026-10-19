@@ -41,13 +41,12 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
   if (!status) {
     // Not known yet: the card's frame with placeholders, rather than an empty panel that
     // the card then pops into.
-    return <ConnectedImportSkeleton id="import-google-contacts" title="Google Contacts" />;
+    return <ConnectedImportSkeleton title="Google Contacts" />;
   }
 
   if (!status.configured) {
     return (
       <IntegrationUnavailable
-        id="import-google-contacts"
         title="Google Contacts"
         blurb="Not connected yet. Export your Google contacts as a vCard or Google CSV and upload it as a contacts file on the Imports page — no account connection needed."
         envVars={[
@@ -60,14 +59,10 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
   }
 
   return (
-    <section
-      id="import-google-contacts"
-      className="space-y-4 rounded-2xl border border-border/70 bg-card p-6"
-    >
+    <section className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-medium text-ink">Google Contacts</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             {status.status === "needs_reauth"
               ? `${SESSION_EXPIRED_LINE} to import contacts again`
               : status.connected

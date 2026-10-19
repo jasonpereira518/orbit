@@ -125,8 +125,8 @@ export function VoiceRecorder({
 
   if (state === "unsupported") {
     return (
-      <p className="rounded-xl border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground">
-        This browser can&apos;t record audio. The Messy Notes tab takes typed or pasted notes.
+      <p className="rounded-xl border border-border-subtle bg-surface-inset p-4 text-sm text-muted-foreground">
+        This browser can’t record audio. The Messy Notes tab takes typed or pasted notes.
       </p>
     );
   }
@@ -223,7 +223,7 @@ export function VoiceRecorder({
           )}
         >
           {showSpinner || state === "encoding" ? (
-            <Loader2 className={cn("animate-spin", size === "hero" ? "size-9" : "size-7")} />
+            <Loader2 className={cn("motion-safe:animate-spin", size === "hero" ? "size-9" : "size-7")} />
           ) : recording ? (
             // A square, not a second mic: the control's job changes when it is on, and the
             // glyph should say so without reading the label.
@@ -240,7 +240,7 @@ export function VoiceRecorder({
         aria-live="polite"
         className={cn(
           "min-h-5 text-center text-sm tabular-nums",
-          nearCap ? "text-amber-600 dark:text-warning" : "text-muted-foreground",
+          nearCap ? "text-warning" : "text-muted-foreground",
         )}
       >
         {state === "requesting" && "Waiting for microphone…"}
@@ -270,7 +270,7 @@ export function VoiceRecorder({
       {state === "error" && error && (
         <div
           role="alert"
-          className="flex w-full items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/[0.04] p-3 text-left"
+          className="flex w-full items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-left"
         >
           <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
           <div className="min-w-0 space-y-1">

@@ -26,6 +26,7 @@ import { CaptureResumeNotice } from "@/components/capture/capture-resume-notice"
 import { CaptureSaved } from "@/components/capture/capture-saved";
 import { CaptureSummary, choicesFromSuggestions, suggestionsFromChoices } from "@/components/capture/capture-summary";
 import type { OpportunityReviewItem } from "@/lib/capture/types";
+import { Button } from "@/components/ui/button";
 import { CAPTURE_MODES, CaptureTabs, capturePanelId, captureTabId, type CaptureMode } from "@/components/capture/capture-tabs";
 import { NotesLibraryUpload } from "@/components/capture/notes-library-upload";
 import type { DriveCaptureConfig } from "@/components/capture/drive-capture-button";
@@ -539,22 +540,28 @@ export function CaptureFlow({
       )}
 
       {job?.status === "failed" && phase === "input" && (
-        <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-destructive/30 bg-destructive/[0.04] px-3 py-2 text-sm">
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm">
           <span>{job.error ?? "Couldn’t finish that capture"}</span>
-          <div className="flex gap-2">
+          <div className="flex gap-1">
             {job.result ? (
-              <button type="button" className="font-medium text-primary hover:underline" onClick={() => void save(job.id)}>
+              <Button type="button" variant="link" size="sm" className="h-auto px-1" onClick={() => void save(job.id)}>
                 Try saving again
-              </button>
+              </Button>
             ) : canRetry ? (
-              <button type="button" className="font-medium text-primary hover:underline" onClick={retryExtraction}>
+              <Button type="button" variant="link" size="sm" className="h-auto px-1" onClick={retryExtraction}>
                 Try again
-              </button>
+              </Button>
             ) : null}
             {/* An extraction failure dismisses like Stop: the job goes, the notes stay. */}
-            <button type="button" className="font-medium text-muted-foreground hover:underline" onClick={job.result ? () => void startOver() : stopExtraction}>
+            <Button
+              type="button"
+              variant="link"
+              size="sm"
+              className="h-auto px-1 text-muted-foreground"
+              onClick={job.result ? () => void startOver() : stopExtraction}
+            >
               Dismiss
-            </button>
+            </Button>
           </div>
         </div>
       )}

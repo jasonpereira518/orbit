@@ -56,11 +56,11 @@ const ERROR_COPY: Record<MeetingRecorderErrorCode, { title: string; detail: stri
     detail: "Browsers only allow screen and audio capture over HTTPS or on localhost.",
   },
   unsupported: {
-    title: "This browser can't record a call",
+    title: "This browser can’t record a call",
     detail: "Meeting capture needs Chrome, Edge, Arc or Brave on a computer.",
   },
   unknown: {
-    title: "Recording didn't start",
+    title: "Recording didn’t start",
     detail: "Something went wrong starting the capture. Try once more.",
   },
 };
@@ -160,7 +160,7 @@ function PanelBody({
     recorder.state === "error" && recorder.error ? (
       <div
         role="alert"
-        className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/[0.04] p-3"
+        className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/5 p-3"
       >
         <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
         <div className="space-y-1">
@@ -173,11 +173,11 @@ function PanelBody({
   // ── Finishing / analyzing ──────────────────────────────────────────────────────────
   if (s.phase === "finishing" || s.phase === "analyzing" || s.phase === "pausing") {
     return (
-      <div className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
+      <div className="space-y-4 rounded-xl border border-border-subtle bg-card p-6">
         {s.analysisError ? (
           <div role="alert" className="space-y-3">
             <p className="flex items-center gap-2 font-medium text-foreground">
-              <TriangleAlert className="size-4 text-destructive" /> Couldn&apos;t summarize the meeting
+              <TriangleAlert className="size-4 text-destructive" /> Couldn’t summarize the meeting
             </p>
             <p className="text-sm text-muted-foreground">{s.analysisError}</p>
             <p className="text-sm text-muted-foreground">The transcript is saved — nothing is lost.</p>
@@ -194,7 +194,7 @@ function PanelBody({
         ) : s.drainStuck ? (
           <div role="alert" className="space-y-3">
             <p className="font-medium text-foreground">
-              {s.drainStuck.backlog} part{s.drainStuck.backlog === 1 ? "" : "s"} of the meeting haven&apos;t uploaded yet
+              {s.drainStuck.backlog} part{s.drainStuck.backlog === 1 ? "" : "s"} of the meeting haven’t uploaded yet
             </p>
             <p className="text-sm text-muted-foreground">
               They are saved in this browser and will keep trying. You can wait, or summarize what has
@@ -202,14 +202,14 @@ function PanelBody({
             </p>
             <div className="flex flex-wrap gap-2">
               <Button variant="outline" onClick={s.retryUpload}>
-                Retry upload
+                Try the upload again
               </Button>
               <Button onClick={() => s.summarize()}>Summarize anyway</Button>
             </div>
           </div>
         ) : (
           <div aria-live="polite" className="flex items-center gap-3 text-sm text-muted-foreground">
-            <Loader2 className="size-5 animate-spin text-primary" />
+            <Loader2 className="size-5 motion-safe:animate-spin text-primary" aria-hidden />
             {s.phase === "pausing"
               ? "Saving where you left off…"
               : s.phase === "finishing"
@@ -227,9 +227,9 @@ function PanelBody({
   // ── Asking for the share (a new meeting, or a resume) ─────────────────────────────
   if (recorder.state === "requesting") {
     return (
-      <div className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
+      <div className="space-y-4 rounded-xl border border-border-subtle bg-card p-6">
         <p className="flex items-center gap-2 text-sm text-muted-foreground" aria-live="polite">
-          <Loader2 className="size-4 animate-spin" /> Pick your call&apos;s tab or screen, and turn on its audio…
+          <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> Pick your call’s tab or screen, and turn on its audio…
         </p>
       </div>
     );
@@ -239,19 +239,19 @@ function PanelBody({
   if (s.phase === "live") {
     const nearCap = MAX_MEETING_MS - s.totalMs < 5 * 60_000;
     return (
-      <div className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
+      <div className="space-y-4 rounded-xl border border-border-subtle bg-card p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-0.5">
             <p className="flex items-center gap-2 font-medium text-foreground">
               <span className="relative flex size-2.5">
-                <span className="absolute inline-flex size-full animate-ping rounded-full bg-red-500 opacity-60 motion-reduce:animate-none" />
-                <span className="relative inline-flex size-2.5 rounded-full bg-red-500" />
+                <span className="absolute inline-flex size-full animate-ping rounded-full bg-destructive opacity-60 motion-reduce:animate-none" />
+                <span className="relative inline-flex size-2.5 rounded-full bg-destructive" />
               </span>
               Recording
               <span
                 className={cn(
                   "font-mono text-sm tabular-nums",
-                  nearCap ? "text-amber-600 dark:text-warning" : "text-muted-foreground"
+                  nearCap ? "text-warning" : "text-muted-foreground"
                 )}
               >
                 {formatElapsed(s.totalMs)}
@@ -317,7 +317,7 @@ function PanelBody({
 
         {s.micLost && s.includeMic && (
           <p className="text-xs text-muted-foreground">
-            Your microphone isn&apos;t available, so only the other side of the call is being
+            Your microphone isn’t available, so only the other side of the call is being
             transcribed.
           </p>
         )}
@@ -335,15 +335,11 @@ function PanelBody({
         )}
         {s.heardNothing && (
           <p className="rounded-xl border border-warning-border bg-warning-surface px-3 py-2 text-xs text-foreground">
-            Orbit hasn&apos;t heard anything yet. If the call is in progress, the shared tab or screen
+            Orbit hasn’t heard anything yet. If the call is in progress, the shared tab or screen
             may not be the one playing it.{" "}
-            <button
-              type="button"
-              onClick={() => s.pause({ release: true })}
-              className="font-medium underline underline-offset-2"
-            >
+            <Button type="button" variant="link" size="xs" className="h-auto p-0 text-xs" onClick={() => s.pause({ release: true })}>
               Choose a different tab
-            </button>
+            </Button>
           </p>
         )}
         {callSoundsOver && !s.heardNothing && (
@@ -352,9 +348,9 @@ function PanelBody({
             className="rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground"
           >
             The meeting has ended on your calendar and the call has gone quiet.{" "}
-            <button type="button" onClick={s.finish} className="font-medium underline underline-offset-2">
+            <Button type="button" variant="link" size="xs" className="h-auto p-0 text-xs" onClick={s.finish}>
               Finish and summarize
-            </button>
+            </Button>
           </p>
         )}
         {recorder.callQuiet && !callSoundsOver && !s.heardNothing && (
@@ -363,13 +359,9 @@ function PanelBody({
             className="rounded-xl border border-warning-border bg-warning-surface px-3 py-2 text-xs text-foreground"
           >
             No call audio for a minute. Is the right tab shared?{" "}
-            <button
-              type="button"
-              onClick={() => s.pause({ release: true })}
-              className="font-medium underline underline-offset-2"
-            >
+            <Button type="button" variant="link" size="xs" className="h-auto p-0 text-xs" onClick={() => s.pause({ release: true })}>
               Choose a different tab
-            </button>
+            </Button>
           </p>
         )}
 
@@ -398,19 +390,19 @@ function PanelBody({
   // ── Paused ─────────────────────────────────────────────────────────────────────────
   if (s.phase === "paused") {
     return (
-      <div className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
+      <div className="space-y-4 rounded-xl border border-border-subtle bg-card p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-0.5">
             <p className="flex items-center gap-2 font-medium text-foreground">
-              <span className="size-2.5 rounded-full bg-amber-500" />
+              <span className="size-2.5 rounded-full bg-warning" aria-hidden />
               Paused
               <span className="font-mono text-sm tabular-nums text-muted-foreground">{formatElapsed(s.totalMs)}</span>
             </p>
             <p className="text-xs text-muted-foreground">
               {s.shareKept
-                ? "Nothing is being recorded, but Chrome still shows you're sharing and your mic is on. Resume picks up right where you left off."
+                ? "Nothing is being recorded, but Chrome still shows you’re sharing and your mic is on. Resume picks up right where you left off."
                 : "Nothing is being recorded. Resume asks you to pick the tab again and carries on in the same transcript."}{" "}
-              Orbit won&apos;t summarize the meeting until you finish it.
+              Orbit won’t summarize the meeting until you finish it.
             </p>
             <MeetingSaveStatus pending={s.pendingCount} failed={s.failedCount} onRetry={s.retryFailedParts} className="pt-0.5" />
           </div>
@@ -470,7 +462,7 @@ function PanelBody({
   return (
     <div className="space-y-4">
       {resumable && (
-        <div className="space-y-3 rounded-2xl border border-primary/30 bg-primary/[0.04] p-4">
+        <div className="space-y-3 rounded-xl border border-primary/30 bg-primary/5 p-4">
           <div>
             <p className="font-medium text-foreground">
               Unfinished meeting{resumable.title ? `: “${resumable.title}”` : ""}
@@ -488,7 +480,7 @@ function PanelBody({
             </p>
             {resumable.status === "recording" && (
               <p className="mt-1 text-xs text-muted-foreground">
-                If it&apos;s still recording in another tab, stop it there instead.
+                If it’s still recording in another tab, stop it there instead.
               </p>
             )}
           </div>
@@ -497,7 +489,7 @@ function PanelBody({
               disabled={s.busyAction !== null || blocked}
               onClick={() => void s.adoptForAnalysis(resumable)}
             >
-              {s.busyAction === "analyze" ? <Loader2 className="size-4 animate-spin" /> : null}
+              {s.busyAction === "analyze" ? <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> : null}
               Summarize it now
             </Button>
             <Button
@@ -525,22 +517,22 @@ function PanelBody({
         </div>
       )}
 
-      <div className="space-y-5 rounded-2xl border border-border/70 bg-card p-6">
+      <div className="space-y-5 rounded-xl border border-border-subtle bg-card p-6">
         {!captureSupported && micSupported && (
-          <div className="rounded-xl border border-border/60 bg-muted/30 px-3 py-3 text-sm">
-            <p className="font-medium text-foreground">This browser can&apos;t hear the call itself</p>
+          <div className="rounded-xl border border-border-subtle bg-surface-inset px-3 py-3 text-sm">
+            <p className="font-medium text-foreground">This browser can’t hear the call itself</p>
             <p className="mt-1 text-muted-foreground">
-              Safari and phones can&apos;t share a call&apos;s audio, so Orbit will listen through your
+              Safari and phones can’t share a call’s audio, so Orbit will listen through your
               microphone instead. Put the call on speaker, keep this page open and in front, and let
-              everyone know you&apos;re taking notes.
+              everyone know you’re taking notes.
             </p>
           </div>
         )}
         {!captureSupported && !micSupported && (
-          <div className="rounded-xl border border-border/60 bg-muted/30 px-3 py-3 text-sm">
+          <div className="rounded-xl border border-border-subtle bg-surface-inset px-3 py-3 text-sm">
             <p className="font-medium text-foreground">{ERROR_COPY.unsupported.title}</p>
             <p className="mt-1 text-muted-foreground">
-              {ERROR_COPY.unsupported.detail} Browsers only share a call&apos;s audio from a desktop.
+              {ERROR_COPY.unsupported.detail} Browsers only share a call’s audio from a desktop.
             </p>
           </div>
         )}
@@ -552,7 +544,7 @@ function PanelBody({
             <div className="rounded-xl border border-warning-border bg-warning-surface px-3 py-3 text-sm">
               <p className="font-medium text-foreground">Add a key that can transcribe audio</p>
               <p className="mt-1 text-muted-foreground">
-                Meeting capture transcribes with OpenAI or Gemini — Anthropic can&apos;t hear
+                Meeting capture transcribes with OpenAI or Gemini — Anthropic can’t hear
                 audio. Add one in{" "}
                 <Link href="/settings" className="font-medium text-primary underline-offset-2 hover:underline">
                   Settings
@@ -581,7 +573,7 @@ function PanelBody({
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="meeting-attendees">Who&apos;s on the call (optional)</Label>
+            <Label htmlFor="meeting-attendees">Who’s on the call (optional)</Label>
             <Input
               id="meeting-attendees"
               placeholder="Priya Raman, Marcus Lee"
@@ -600,8 +592,8 @@ function PanelBody({
           <span>
             <span className="font-medium text-foreground">Include my microphone</span>
             <span className="block text-xs text-muted-foreground">
-              The call&apos;s audio is only the other people — your own voice comes from the mic. Use
-              headphones so the call isn&apos;t picked up twice.
+              The call’s audio is only the other people — your own voice comes from the mic. Use
+              headphones so the call isn’t picked up twice.
             </span>
           </span>
         </label>
@@ -654,9 +646,9 @@ function PanelBody({
             </Button>
           )}
           <p className="text-xs text-muted-foreground">
-            Let everyone on the call know you&apos;re taking notes — some places require everyone&apos;s
-            consent. Orbit keeps the transcript, never the audio. Transcription runs on Orbit&apos;s
-            own key, within your plan&apos;s monthly meeting hours.
+            Let everyone on the call know you’re taking notes — some places require everyone’s
+            consent. Orbit keeps the transcript, never the audio. Transcription runs on Orbit’s
+            own key, within your plan’s monthly meeting hours.
           </p>
         </div>
       </div>
@@ -716,7 +708,7 @@ const Meter = memo(function Meter({
 }) {
   const scaleX = useTransform(level, [0, 1], [0.02, 1]);
   return (
-    <div className={cn("flex items-center gap-2 rounded-xl border border-border/60 px-3 py-2", muted && "opacity-50")}>
+    <div className={cn("flex items-center gap-2 rounded-xl border border-border-subtle px-3 py-2", muted && "opacity-50")}>
       <span className="text-muted-foreground">
         <Icon className="size-4" />
       </span>
@@ -730,7 +722,7 @@ const Meter = memo(function Meter({
 
 function FatalNotice({ message }: { message: string }) {
   return (
-    <div role="alert" className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/[0.04] p-3">
+    <div role="alert" className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/5 p-3">
       <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
       <p className="text-sm text-foreground">{message}</p>
     </div>
@@ -742,7 +734,7 @@ const STATUS_COPY: Record<ChunkUploadStatus, string> = {
   uploading: "Transcribing…",
   retrying: "Retrying…",
   done: "",
-  failed: "Couldn't upload this part",
+  failed: "Couldn’t upload this part",
 };
 
 /** "you" / "speaker-2" from the speaker map, as a person would read it. */
@@ -783,13 +775,13 @@ function TranscriptList({
         <p className="text-sm font-medium text-ink">Transcript</p>
         {onRetry && (
           <Button variant="ghost" size="sm" onClick={onRetry}>
-            Retry failed parts
+            Try again
           </Button>
         )}
       </div>
       <div
         className={cn(
-          "space-y-3 overflow-y-auto rounded-xl border border-border/60 bg-muted/20 p-3 text-sm",
+          "space-y-3 overflow-y-auto rounded-xl border border-border-subtle bg-muted/20 p-3 text-sm",
           compact ? "max-h-48" : "max-h-96"
         )}
         aria-live="polite"
@@ -829,7 +821,7 @@ const SegmentLines = memo(function SegmentLines({
       {segments.map((s) => (
         <div key={s.seq}>
           {boundarySet.has(s.seq) && (
-            <p className="my-2 border-t border-border/60 pt-2 text-xs text-muted-foreground">
+            <p className="my-2 border-t border-border-subtle pt-2 text-xs text-muted-foreground">
               Reconnected — speakers renumbered from here.
             </p>
           )}

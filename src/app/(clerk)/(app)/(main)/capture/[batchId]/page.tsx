@@ -1,13 +1,13 @@
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
 import { getNoteBatch } from "@/actions/note-batches";
 import { CaptureSourceCard } from "@/components/capture/capture-source-card";
 import { NoteBatchResultView } from "@/components/capture/note-batch-result";
 import { captureSourceKinds } from "@/lib/note-batches";
 import { isoDay } from "@/lib/suggested-reminder-utils";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { PageHeader } from "@/components/layout/page-header";
+import { PageShell } from "@/components/layout/page-shell";
 
 export default async function NoteBatchPage({
   params,
@@ -22,27 +22,15 @@ export default async function NoteBatchPage({
   if (!batch) notFound();
   const fromMeeting = Boolean(batch.result.meeting);
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <PageShell width="default">
       <RenderStamp />
-      <div>
-        {/* This page is reachable from the capture history as well as straight after a
-            save, so it needs a way back that is not the browser's. */}
-        <Link
-          href="/capture"
-          className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
-        >
-          <ArrowLeft className="size-3.5" aria-hidden />
-          Capture
-        </Link>
-        <h1 className="font-heading text-3xl text-ink">
-          {fromMeeting ? "What your meeting produced" : "What your notes produced"}
-        </h1>
-        <p className="mt-1 text-muted-foreground">
-          Here is everything Orbit made from this {fromMeeting ? "meeting" : "capture"}: the
-          people, the things to do, and the reminders. Dismiss anything that looks wrong, or
-          undo the whole batch.
-        </p>
-      </div>
+      {/* This page is reachable from the capture history as well as straight after a
+          save, so it needs a way back that is not the browser's. */}
+      <PageHeader
+        back={{ href: "/capture", label: "Back to Capture" }}
+        title={fromMeeting ? "What your meeting produced" : "What your notes produced"}
+        description={`Here is everything Orbit made from this ${fromMeeting ? "meeting" : "capture"}: the people, the things to do, and the reminders. Dismiss anything that looks wrong, or undo the whole batch.`}
+      />
       <CaptureSourceCard
         createdAt={new Date(batch.createdAt).toISOString()}
         kinds={captureSourceKinds(
@@ -68,6 +56,6 @@ export default async function NoteBatchPage({
         reminderDetails={batch.reminderDetails}
         contactNames={batch.contactNames}
       />
-    </div>
+    </PageShell>
   );
 }

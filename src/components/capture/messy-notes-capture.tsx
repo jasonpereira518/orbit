@@ -321,8 +321,8 @@ export function MessyNotesCapture({
       {...tourAnchor("capture.notes")}
       {...dropProps}
       className={cn(
-        "space-y-4 rounded-2xl border border-border/70 bg-card p-5 transition-colors sm:p-6",
-        dragging && "border-dashed border-import-scan bg-import-scan/5"
+        "space-y-4 rounded-xl border border-border-subtle bg-card p-5 transition-colors sm:p-6",
+        dragging && "border-dashed border-primary bg-primary/5"
       )}
     >
       {!ingest.hasApiKey && (
@@ -342,9 +342,11 @@ export function MessyNotesCapture({
         <div className="flex items-baseline justify-between gap-2">
           <Label htmlFor="capture-notes">Your notes</Label>
           {restored && notes.trim() && (
-            <button
+            <Button
               type="button"
-              className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+              variant="link"
+              size="xs"
+              className="h-auto p-0 text-xs font-normal text-muted-foreground"
               onClick={() => {
                 setNotes("");
                 setMentionPicks([]);
@@ -353,7 +355,7 @@ export function MessyNotesCapture({
               }}
             >
               Restored from your last visit · clear
-            </button>
+            </Button>
           )}
         </div>
         {/* `relative` so the `@` menu — which `MentionComposer` renders as a sibling of the
@@ -406,7 +408,7 @@ export function MessyNotesCapture({
           />
           {(ingest.busy || preparing) && (
             <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Loader2 className="size-3.5 animate-spin" /> Reading…
+              <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden /> Reading…
               {ingest.busy && <StopReadingButton onStop={ingest.cancel} />}
             </span>
           )}
@@ -460,13 +462,9 @@ export function MissingKeyNotice({ reason }: { reason?: AiAccessDenial | null })
  */
 export function StopReadingButton({ onStop }: { onStop: () => void }) {
   return (
-    <button
-      type="button"
-      onClick={onStop}
-      className="ml-1 rounded font-medium text-foreground underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
-    >
+    <Button type="button" variant="link" size="xs" className="ml-1 h-auto p-0 text-xs text-foreground" onClick={onStop}>
       Stop
-    </button>
+    </Button>
   );
 }
 

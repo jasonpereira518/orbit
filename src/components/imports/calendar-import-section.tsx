@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { Calendar as CalendarIcon } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { previewCalendarImport } from "@/actions/imports";
 import { CALENDAR_BACKFILL_DAYS } from "@/lib/calendar-import";
@@ -80,15 +79,10 @@ export function CalendarImportSection({
     <div className="space-y-6">
       <CalendarSubscribePanel initialSubscriptions={calendarSubscriptions} />
 
-      <section className="space-y-4 rounded-2xl border border-border/70 border-t-2 border-t-import-calendar/70 bg-card p-6">
+      <section className="space-y-4 border-t border-border-subtle pt-6">
         <div className="flex items-start gap-3">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-import-calendar/10 text-import-calendar">
-            <CalendarIcon className="h-4 w-4" />
-          </span>
           <div className="min-w-0">
-            <h2 className="text-lg font-medium text-ink">
-              One-time calendar upload
-            </h2>
+            <h3 className="text-sm font-medium text-ink">One-time calendar upload</h3>
             <p className="mt-1 text-sm text-muted-foreground">
               Export an ICS or CSV from Google, Apple, or Outlook. Orbit matches
               attendees to contacts already in your network and logs those
@@ -184,7 +178,7 @@ export function CalendarImportSection({
               {Math.round(CALENDAR_BACKFILL_DAYS / 365)} years / next 14 ·{" "}
               {calendarPreview.matchedEventCount} with contact matches
             </p>
-            <div className="max-h-80 overflow-auto rounded-xl border border-border/60">
+            <div className="max-h-80 overflow-auto rounded-xl border border-border-subtle">
               <table className="w-full text-left text-sm">
                 <thead className="bg-muted/50 text-xs">
                   <tr>

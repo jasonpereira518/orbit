@@ -8,7 +8,7 @@ export function LinkedInExportInstructions() {
       <StaggerItem as="li" className="flex gap-3">
         <NumberChip n={1} />
         <p className="pt-0.5 text-sm text-foreground">
-          On LinkedIn&apos;s page, choose{" "}
+          On LinkedIn’s page, choose{" "}
           <span className="font-medium text-ink">Download larger data archive</span>, then{" "}
           <span className="font-medium text-ink">Request archive</span>.
         </p>

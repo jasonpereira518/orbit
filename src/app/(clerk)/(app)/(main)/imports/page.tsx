@@ -19,6 +19,8 @@ import { CHAT_IMPORTS_SURFACE_KEY } from "@/lib/surfaces";
 import { isSurfaceLive } from "@/lib/surface-visibility";
 import type { ProviderCalendarInput } from "@/lib/imports/calendar-sources";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { PageHeader } from "@/components/layout/page-header";
+import { PageShell } from "@/components/layout/page-shell";
 
 /** Large connections imports process in the background via after(); allow it room to run. */
 export const maxDuration = 300;
@@ -76,24 +78,20 @@ export default async function ImportsPage() {
     : null;
 
   return (
-    <div className="mx-auto max-w-3xl space-y-8">
+    <PageShell width="default">
       <RenderStamp />
-      <div>
-        <h1 className="font-heading text-3xl text-ink">
-          Imports
-        </h1>
-        <p className="mt-1 text-muted-foreground">
-          Drop your exports here and Orbit sorts out the rest. Once
-          they&rsquo;re in, browse everything in{" "}
-          <Link
-            href="/knowledge"
-            className="underline-offset-2 hover:underline"
-          >
-            Knowledge
-          </Link>
-          .
-        </p>
-      </div>
+      <PageHeader
+        title="Imports"
+        description={
+          <>
+            Drop your exports here and Orbit sorts out the rest. Once they’re in, browse everything in{" "}
+            <Link href="/knowledge" className="underline-offset-2 hover:underline">
+              Knowledge
+            </Link>
+            .
+          </>
+        }
+      />
 
       {linkedinCardState({
         imported: linkedinImported,
@@ -118,6 +116,6 @@ export default async function ImportsPage() {
           clientId: process.env.GOOGLE_CLIENT_ID?.trim() || null,
         }}
       />
-    </div>
+    </PageShell>
   );
 }

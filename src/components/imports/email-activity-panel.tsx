@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Mail } from "lucide-react";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
 import {
@@ -38,21 +37,17 @@ export function EmailActivityPanel({ status }: { status: EmailActivityStatus }) 
   }
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
-      <div className="flex items-start gap-3">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-          <Mail className="h-4 w-4" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-lg font-medium text-ink">Email activity</h2>
-            {enabled ? <Badge>On</Badge> : null}
-          </div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Keeps &ldquo;last spoken&rdquo; honest by reading who you exchanged mail with and
-            when, so the follow-up queue stops chasing people you emailed last week.
-          </p>
-        </div>
+    <section className="space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          Keeps “last spoken” honest by reading who you exchanged mail with and when, so the follow-up queue stops
+          chasing people you emailed last week.
+        </p>
+        {enabled ? (
+          <Badge tone="success" className="shrink-0">
+            On
+          </Badge>
+        ) : null}
       </div>
 
       <ul className="space-y-1.5 text-sm text-muted-foreground">
@@ -72,11 +67,11 @@ export function EmailActivityPanel({ status }: { status: EmailActivityStatus }) 
       </ul>
 
       {!status.connected ? (
-        <p className="rounded-xl border border-dashed border-border/70 px-4 py-3 text-sm text-muted-foreground">
+        <p className="rounded-xl border border-dashed border-border-subtle px-4 py-3 text-sm text-muted-foreground">
           Connect Google above first — this reads the mailbox you connect there.
         </p>
       ) : !status.hasScope ? (
-        <p className="rounded-xl border border-dashed border-border/70 px-4 py-3 text-sm text-muted-foreground">
+        <p className="rounded-xl border border-dashed border-border-subtle px-4 py-3 text-sm text-muted-foreground">
           Your Google connection predates mail access. Reconnect Google to enable this.
         </p>
       ) : (

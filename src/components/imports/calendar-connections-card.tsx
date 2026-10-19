@@ -12,6 +12,9 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { IntegrationLogo } from "@/components/integrations/integration-logo";
+import type { Tone } from "@/lib/tone";
 import { startGmailOAuth } from "@/actions/gmail";
 import { startOutlookOAuth } from "@/actions/outlook";
 import {
@@ -39,14 +42,14 @@ import { cn } from "@/lib/utils";
 
 const STATE_BADGE: Record<
   CalendarSourceState,
-  { label: string; tone: string } | null
+  { label: string; tone: Tone } | null
 > = {
   on: null,
-  syncing: { label: "Checking", tone: "text-muted-foreground" },
-  paused: { label: "Paused", tone: "text-muted-foreground" },
-  needs_permission: { label: "Off", tone: "text-muted-foreground" },
-  needs_reconnect: { label: "Needs you", tone: "text-destructive" },
-  trouble: { label: "Needs you", tone: "text-destructive" },
+  syncing: { label: "Checking…", tone: "neutral" },
+  paused: { label: "Paused", tone: "neutral" },
+  needs_permission: { label: "Off", tone: "neutral" },
+  needs_reconnect: { label: "Needs reconnecting", tone: "warning" },
+  trouble: { label: "Needs reconnecting", tone: "warning" },
 };
 
 export function CalendarConnectionsCard({
@@ -100,10 +103,12 @@ export function CalendarConnectionsCard({
           ))}
         </ul>
       ) : (
-        <p className="text-sm text-muted-foreground">
-          Nothing syncing yet — add a calendar and Orbit logs your meetings as
-          they happen
-        </p>
+        <EmptyState
+          variant="plain"
+          size="sm"
+          title="Nothing syncing yet"
+          description="Add a calendar and Orbit logs your meetings as they happen."
+        />
       )}
 
       <div className="flex flex-wrap items-center gap-2">
@@ -118,6 +123,7 @@ export function CalendarConnectionsCard({
             disabled={busy}
             onClick={() => connect("google")}
           >
+            <IntegrationLogo provider="google-calendar" size="sm" tile={false} title="" />
             Google Calendar
           </Button>
         ) : null}
@@ -129,11 +135,12 @@ export function CalendarConnectionsCard({
             disabled={busy}
             onClick={() => connect("outlook")}
           >
-            Outlook or Microsoft 365
+            <IntegrationLogo provider="outlook-calendar" size="sm" tile={false} title="" />
+            Outlook Calendar
           </Button>
         ) : null}
         <Button type="button" variant="outline" size="sm" onClick={onAddLink}>
-          <Link2 className="size-3.5" />
+          <Link2 className="size-3.5" aria-hidden />
           Any other calendar
         </Button>
       </div>
@@ -173,7 +180,7 @@ function CalendarRow({
   }
 
   return (
-    <li className="flex items-center gap-3 rounded-xl border border-border/60 px-4 py-3">
+    <li className="flex items-center gap-3 rounded-xl border border-border-subtle px-4 py-3">
       <span
         className={cn(
           "flex size-7 shrink-0 items-center justify-center rounded-lg",
@@ -183,7 +190,7 @@ function CalendarRow({
         )}
       >
         {source.state === "syncing" ? (
-          <Loader2 className="size-3.5 animate-spin" aria-hidden />
+          <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden />
         ) : needsAttention ? (
           <AlertTriangle className="size-3.5" aria-hidden />
         ) : source.state === "paused" ? (
@@ -203,7 +210,7 @@ function CalendarRow({
       </div>
 
       {badge ? (
-        <Badge variant="outline" className={cn("shrink-0", badge.tone)}>
+        <Badge tone={badge.tone} className="shrink-0">
           {badge.label}
         </Badge>
       ) : null}

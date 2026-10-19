@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { ChevronDown, CircleHelp, Construction, ListTodo } from "lucide-react";
 import { loadMeetingTranscript, type MeetingTranscriptView } from "@/actions/meetings";
 import type { NoteBatchMeeting } from "@/db/schema";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { formatElapsed } from "@/lib/voice-recording";
@@ -83,7 +84,7 @@ export function MeetingSummaryCard({
 
   return (
     <section
-      className={cn("space-y-4 rounded-2xl border border-border/70 bg-card p-5 sm:p-6", className)}
+      className={cn("space-y-4 rounded-xl border border-border-subtle bg-card p-5 sm:p-6", className)}
       aria-label="Meeting summary"
     >
       <header className="space-y-1">
@@ -176,7 +177,7 @@ function ItemGroup({
       </h3>
       <ul className="space-y-1.5">
         {items.map((item) => (
-          <li key={item.key} className="rounded-xl border border-border/60 bg-muted/20 px-3 py-2 text-sm">
+          <li key={item.key} className="rounded-xl border border-border-subtle bg-muted/20 px-3 py-2 text-sm">
             <div className="flex items-start gap-2.5">
               {selectable && (
                 <Checkbox
@@ -218,10 +219,12 @@ function TranscriptDisclosure({ sessionId }: { sessionId: string }) {
   const [pending, start] = useTransition();
 
   return (
-    <div className="border-t border-border/60 pt-3">
-      <button
+    <div className="border-t border-border-subtle pt-3">
+      <Button
         type="button"
-        className="flex items-center gap-1 text-sm font-medium text-primary"
+        variant="link"
+        size="sm"
+        className="h-auto gap-1 p-0"
         aria-expanded={open}
         onClick={() => {
           const next = !open;
@@ -235,9 +238,9 @@ function TranscriptDisclosure({ sessionId }: { sessionId: string }) {
           }
         }}
       >
-        <ChevronDown className={cn("size-4 transition-transform", open && "rotate-180")} />
+        <ChevronDown className={cn("size-4 transition-transform", open && "rotate-180")} aria-hidden />
         {open ? "Hide transcript" : "Show transcript"}
-      </button>
+      </Button>
       {open && (
         <div className="mt-3 max-h-96 space-y-3 overflow-y-auto pr-1 text-sm">
           {pending && <p className="text-muted-foreground">Loading…</p>}

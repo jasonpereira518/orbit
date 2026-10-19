@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { MessageCircle } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { previewChatConversations } from "@/actions/chat-imports";
 import { Button } from "@/components/ui/button";
@@ -311,19 +310,11 @@ export function ChatMessagesImport() {
   }
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 border-t-2 border-t-import-messages/70 bg-card p-6">
-      <div className="flex items-start gap-3">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-import-messages/10 text-import-messages">
-          <MessageCircle className="h-4 w-4" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <h2 className="min-w-0 text-lg font-medium text-ink">Chat messages</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Export a chat from WhatsApp (Export chat → Without media) or with
-            imessage-exporter, then add the files here. Media is never uploaded.
-          </p>
-        </div>
-      </div>
+    <section className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        Export a chat from WhatsApp (Export chat → Without media) or with imessage-exporter, then add the files here.
+        Media is never uploaded.
+      </p>
 
       <ImportFilePicker
         accept=".txt,.zip,text/plain,application/zip"
@@ -347,7 +338,7 @@ export function ChatMessagesImport() {
                 {formatSpan(l.conversation.messages[0].at, l.conversation.messages[l.conversation.messages.length - 1].at)}
               </span>
               {l.conversation.dateOrderGuessed ? (
-                <span className="text-amber-600 dark:text-amber-400">Dates guessed — check them</span>
+                <span className="text-warning">Dates guessed — check them</span>
               ) : null}
             </li>
           ))}
@@ -361,7 +352,7 @@ export function ChatMessagesImport() {
       ) : null}
 
       {preview && unknownSelf.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border/60 px-3 py-2.5 text-sm">
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border-subtle px-3 py-2.5 text-sm">
           <span className="text-muted-foreground">Which sender is you?</span>
           <Select
             value={selfLabel}

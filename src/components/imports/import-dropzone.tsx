@@ -60,7 +60,7 @@ export function ImportDropzone({
         filesInput.current?.click();
       }}
       className={cn(
-        "rounded-2xl border-2 border-dashed border-border bg-card/40 px-6 py-10 text-center",
+        "rounded-xl border-2 border-dashed border-border bg-card/40 px-6 py-10 text-center",
         "transition-colors",
         disabled || busy
           ? "opacity-60"
@@ -70,7 +70,7 @@ export function ImportDropzone({
       <div className="mx-auto flex max-w-md flex-col items-center gap-3">
         <span className="flex size-11 items-center justify-center rounded-full bg-primary/10 text-primary">
           {busy ? (
-            <Loader2 className="size-5 animate-spin" />
+            <Loader2 className="size-5 motion-safe:animate-spin" />
           ) : (
             <Upload className="size-5" />
           )}

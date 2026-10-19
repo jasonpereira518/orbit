@@ -15,7 +15,7 @@ export const ScanCameraLazy = dynamic(
     ssr: false,
     loading: () => (
       <div className="space-y-3">
-        <Skeleton className="mx-auto rounded-2xl" style={VIEWFINDER_STYLE} />
+        <Skeleton className="mx-auto rounded-xl" style={VIEWFINDER_STYLE} />
         <Skeleton className="h-9 w-32" />
       </div>
     ),

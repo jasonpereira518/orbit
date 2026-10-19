@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { Check, ChevronDown, CircleSlash, FileWarning, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import type { Tone } from "@/lib/tone";
 import { Button } from "@/components/ui/button";
 import { ImportFinishCard } from "@/components/imports/import-finish-card";
 import type { FinishArrival } from "@/components/imports/import-finish-scene";
@@ -232,7 +233,7 @@ export function ImportQueueCard({
   return (
     <div className="space-y-3">
       {announcer}
-      <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
+      <section className="space-y-4 rounded-xl border border-border-subtle bg-card p-6">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-sm font-medium">
@@ -349,7 +350,7 @@ function IgnoredList({
   ignored: { name: string; reason: string }[];
 }) {
   return (
-    <div className="rounded-xl border border-border/60 bg-muted/30 p-3">
+    <div className="rounded-xl border border-border-subtle bg-surface-inset p-3">
       <p className="text-xs font-medium text-muted-foreground">
         {IMPORT_COPY.notImported}
       </p>
@@ -404,23 +405,17 @@ function isPeopleImport(item: QueuedImport): boolean {
   );
 }
 
-const STATUS_BADGE: Record<
-  QueuedImport["status"],
-  {
-    label: string;
-    variant: "default" | "secondary" | "outline" | "destructive";
-  } | null
-> = {
-  waiting: { label: "Waiting", variant: "outline" },
-  previewing: { label: "Reading…", variant: "outline" },
+const STATUS_BADGE: Record<QueuedImport["status"], { label: string; tone: Tone } | null> = {
+  waiting: { label: "Waiting", tone: "neutral" },
+  previewing: { label: "Reading…", tone: "info" },
   needs_review: null,
-  running: { label: "Importing", variant: "secondary" },
-  done: { label: "Imported", variant: "secondary" },
-  failed: { label: "Didn’t finish", variant: "destructive" },
-  skipped: { label: "Skipped", variant: "outline" },
+  running: { label: "Importing…", tone: "info" },
+  done: { label: "Imported", tone: "success" },
+  failed: { label: "Didn’t finish", tone: "destructive" },
+  skipped: { label: "Skipped", tone: "neutral" },
 };
 
-const STOPPED_BADGE = { label: "Stopped", variant: "outline" } as const;
+const STOPPED_BADGE = { label: "Stopped", tone: "neutral" } as const;
 
 function QueueRow({
   item,
@@ -453,12 +448,12 @@ function QueueRow({
   const look = item.stopped ? "skipped" : item.status;
 
   return (
-    <li className="rounded-xl border border-border/60">
+    <li className="rounded-xl border border-border-subtle">
       <div className="flex items-center gap-3 p-3">
         <span
           className={cn(
             "flex size-7 shrink-0 items-center justify-center rounded-full",
-            look === "done" && "bg-primary/10 text-primary",
+            look === "done" && "bg-success/10 text-success",
             look === "failed" && "bg-destructive/10 text-destructive",
             look === "skipped" && "bg-muted text-muted-foreground",
             !["done", "failed", "skipped"].includes(look) &&
@@ -466,13 +461,13 @@ function QueueRow({
           )}
         >
           {look === "done" ? (
-            <Check className="size-3.5" />
+            <Check className="size-3.5" aria-hidden />
           ) : look === "failed" ? (
-            <FileWarning className="size-3.5" />
+            <FileWarning className="size-3.5" aria-hidden />
           ) : look === "skipped" ? (
-            <CircleSlash className="size-3.5" />
+            <CircleSlash className="size-3.5" aria-hidden />
           ) : (
-            <span className="text-[0.65rem] font-medium">
+            <span className="text-3xs font-medium">
               {item.label.slice(0, 1)}
             </span>
           )}
@@ -498,7 +493,7 @@ function QueueRow({
         </div>
 
         {badge ? (
-          <Badge variant={badge.variant} className="shrink-0">
+          <Badge tone={badge.tone} size="sm" className="shrink-0">
             {badge.label}
           </Badge>
         ) : null}
@@ -540,7 +535,7 @@ function QueueRow({
       </div>
 
       {expanded && reviewable && fields ? (
-        <div className="border-t border-border/60 p-3">
+        <div className="border-t border-border-subtle p-3">
           <ImportYouReview
             fields={fields}
             selected={new Set(item.ids ?? [])}
@@ -550,7 +545,7 @@ function QueueRow({
       ) : null}
 
       {expanded && reviewable && !fields ? (
-        <div className="border-t border-border/60 p-3">
+        <div className="border-t border-border-subtle p-3">
           <ImportPeopleReview
             people={people}
             selectedIds={new Set(item.ids ?? [])}

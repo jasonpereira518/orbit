@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Calendar as CalendarIcon } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
   addCalendarSubscription,
@@ -44,15 +43,10 @@ export function CalendarSubscribePanel({
   const [pending, start] = useTransition();
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 border-t-2 border-t-import-calendar/70 bg-card p-6">
+    <section className="space-y-4">
       <div className="flex items-start gap-3">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-import-calendar/10 text-import-calendar">
-          <CalendarIcon className="h-4 w-4" />
-        </span>
         <div className="min-w-0">
-          <h2 className="text-lg font-medium text-ink">
-            Calendar subscription
-          </h2>
+          <h3 className="text-sm font-medium text-ink">Calendar subscription</h3>
           <p className="mt-1 text-sm text-muted-foreground">
             Paste a private ICS URL. For Google Calendar: Settings → Integrate
             calendar →{" "}
@@ -141,7 +135,7 @@ export function CalendarSubscribePanel({
           {subs.map((s) => (
             <li
               key={s.id}
-              className="rounded-xl border border-border/60 px-4 py-3 text-sm"
+              className="rounded-xl border border-border-subtle px-4 py-3 text-sm"
             >
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0">

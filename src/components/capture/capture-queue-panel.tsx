@@ -14,11 +14,13 @@
  * here is waiting for the rest, not something to open on its own; only a failed row opens,
  * to show its error and let it be retried. There is still no "save all" — every card is seen.
  */
+import { useState } from "react";
 import { Check, CircleAlert, Loader2 } from "lucide-react";
 import type { CaptureJobView } from "@/lib/capture-jobs";
 import type { CaptureJobStatus } from "@/lib/capture/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { cn } from "@/lib/utils";
 
 /** Statuses where the job is still working and the row should not invite a click yet. */
@@ -33,7 +35,7 @@ const STATUS_LABEL: Partial<Record<CaptureJobStatus, string>> = {
   reviewing: "In review",
   saving: "Saving",
   saved: "Saved",
-  failed: "Failed",
+  failed: "Didn’t finish",
   discarded: "Discarded",
 };
 
@@ -52,6 +54,7 @@ export function CaptureQueuePanel({
   onOpen: (jobId: string) => void;
   onDiscardAll?: () => void;
 }) {
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   if (jobs.length <= 1) return null;
 
   const ready = jobs.filter((j) => j.status === "ready" || j.status === "reviewing").length;
@@ -61,7 +64,7 @@ export function CaptureQueuePanel({
   return (
     <section
       aria-label="Captures from this upload"
-      className="space-y-3 rounded-2xl border border-border/70 p-4"
+      className="space-y-3 rounded-xl border border-border-subtle p-4"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
@@ -71,9 +74,21 @@ export function CaptureQueuePanel({
           </p>
         </div>
         {onDiscardAll && (
-          <Button type="button" variant="ghost" size="sm" onClick={onDiscardAll}>
-            Discard all
-          </Button>
+          <>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setConfirmDiscard(true)}>
+              Discard all
+            </Button>
+            <ConfirmDialog
+              open={confirmDiscard}
+              onOpenChange={setConfirmDiscard}
+              tone="destructive"
+              title={`Discard ${jobs.length} captures?`}
+              description="Everything read from this upload goes, including the people not saved yet. The files on your computer are untouched."
+              confirmLabel="Discard all"
+              pendingLabel="Discarding…"
+              onConfirm={onDiscardAll}
+            />
+          </>
         )}
       </div>
 
@@ -95,7 +110,7 @@ export function CaptureQueuePanel({
                   "flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-left transition-colors",
                   isActive
                     ? "border-primary/40 bg-primary/5"
-                    : "border-border/60 hover:bg-muted/50",
+                    : "border-border-subtle hover:bg-muted/50",
                   !opensAlone && "cursor-default hover:bg-transparent",
                   isBusy && "opacity-70"
                 )}
@@ -114,13 +129,13 @@ export function CaptureQueuePanel({
                 </span>
 
                 {job.status === "saved" ? (
-                  <Check className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                  <Check className="size-4 shrink-0 text-success" aria-hidden />
                 ) : job.status === "failed" ? (
-                  <CircleAlert className="size-4 shrink-0 text-destructive" />
+                  <CircleAlert className="size-4 shrink-0 text-destructive" aria-hidden />
                 ) : isBusy ? (
-                  <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
+                  <Loader2 className="size-4 shrink-0 motion-safe:animate-spin text-muted-foreground" aria-hidden />
                 ) : (
-                  <Badge variant="secondary" className="font-normal">
+                  <Badge tone="neutral" size="sm">
                     {busy > 0 ? "Waiting for the rest" : "Reviewing together"}
                   </Badge>
                 )}
