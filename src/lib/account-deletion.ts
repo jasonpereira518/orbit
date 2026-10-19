@@ -5,6 +5,7 @@ import { isAdminUser } from "@/lib/admin";
 import { isClerkConfigured, isDemoMode } from "@/lib/demo-account";
 import { UserFacingError } from "@/lib/errors";
 import { purgeUserData } from "@/lib/user-data";
+import { recordAccountAudit } from "@/lib/account-audit";
 
 /**
  * Deleting your own account, from Settings.
@@ -14,7 +15,9 @@ import { purgeUserData } from "@/lib/user-data";
  *      deleted account that kept its subscription would be billed with no way back in.
  *      If this fails, nothing else happens.
  *   2. `purgeUserData(userId, { keepSettings: false })` — every table, the settings row,
- *      keys and tokens included. Idempotent.
+ *      keys and tokens included. Idempotent. Its billing step also anonymises the billing
+ *      record, deletes credit grants, drops the matching waitlist row and marks the Stripe
+ *      customer deleted (audit M-09).
  *   3. Delete the Clerk user. Clerk then fires `user.deleted`, whose purge finds nothing.
  *
  * The external calls are injected so `scripts/smoke-delete-my-account.ts` can exercise every
@@ -84,6 +87,10 @@ export async function deleteOwnAccount(
       );
     }
   }
+
+  // Written before the purge and outside it (`account_audit_log` is keyed so the purge leaves
+  // it), so the deletion itself stays on record (audit L-23).
+  await recordAccountAudit({ userId, action: "account.delete", detail: { via: "settings" } });
 
   await purgeUserData(userId, { keepSettings: false });
 

@@ -18,6 +18,7 @@
  */
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
+import { del } from "@/lib/blob-lazy";
 import { eventAttendees, events, type EventRecord } from "@/db/schema";
 import { attendeeIdentityKey } from "@/lib/events/identity";
 import { personKeyOf } from "@/lib/events/people";
@@ -337,10 +338,33 @@ export async function updateEventForUser(
     .where(and(eq(events.id, eventId), eq(events.userId, userId)));
 }
 
-export async function deleteEventForUser(userId: string, eventId: string): Promise<void> {
+/** A cover Orbit stored itself (`src/lib/events/cover.ts`), as opposed to a remote image URL. */
+export function isStoredEventCover(url: string | null | undefined): url is string {
+  return Boolean(url && /^https:\/\/[^/]+\.blob\.vercel-storage\.com\/event-covers\//.test(url));
+}
+
+export async function deleteEventForUser(
+  userId: string,
+  eventId: string,
+  deleteBlob: (url: string) => Promise<unknown> = (url) => del(url)
+): Promise<void> {
   const db = await getDb();
   // Attendees cascade; the contacts they were connected to are deliberately left alone.
-  await db.delete(events).where(and(eq(events.id, eventId), eq(events.userId, userId)));
+  const [gone] = await db
+    .delete(events)
+    .where(and(eq(events.id, eventId), eq(events.userId, userId)))
+    .returning();
+  // The cover sits at a public, guessable path (`event-covers/<eventId>`) with nothing else
+  // pointing at it, so it goes with its event (audit L-08). Best-effort: the event is gone
+  // either way, and an orphaned object is a cost problem, not a reason to fail the delete.
+  const cover = gone?.coverImageUrl;
+  if (isStoredEventCover(cover)) {
+    try {
+      await deleteBlob(cover);
+    } catch {
+      // See above.
+    }
+  }
 }
 
 /**

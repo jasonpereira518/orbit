@@ -1,6 +1,7 @@
 "use server";
 
 import { consumeDailyCap } from "@/lib/rate-limit";
+import { recordAccountAudit } from "@/lib/account-audit";
 import { canConnect, refusedConnectUrl } from "@/lib/connection-limits";
 import { and, desc, eq } from "drizzle-orm";
 import { safeReturnPath } from "@/lib/safe-return-path";
@@ -220,6 +221,7 @@ export async function disconnectOutlook(opts: { alsoDelete?: boolean } = {}) {
   if (await isDemoWorkspace(userId)) return;
   const db = await getDb();
   await db.delete(outlookConnections).where(eq(outlookConnections.userId, userId));
+  await recordAccountAudit({ userId, action: "integration.disconnect", resourceType: "outlook" });
   // Explicit, not a cascade: calendar_sources has no FK to any connection table (they are
   // deliberately separate — see provider-connections.ts), so a reconnect's fresh connection
   // id would otherwise never dedupe against the orphaned row and seedCalendarSources would

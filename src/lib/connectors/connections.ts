@@ -25,7 +25,10 @@
 import { and, eq, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { connectorConnections, type ConnectorSyncCursor } from "@/db/schema";
-import { decryptOrNull, encrypt } from "@/lib/crypto";
+import type { PgColumn } from "drizzle-orm/pg-core";
+import { encrypt } from "@/lib/crypto";
+import { decryptAndRewrap } from "@/lib/crypto-rewrap";
+import { recordAccountAudit } from "@/lib/account-audit";
 import { MAX_SYNC_FAILURES, SYNC_LEASE_MS, backoffMs } from "@/lib/provider-connections";
 
 /** Cadence for a healthy connection. A floor, never a promise — GitHub cron lags 5-30 min. */
@@ -102,21 +105,25 @@ export async function claimDueConnectorConnections(
                 sync_cursor, sync_failures
     `)
   );
-  return rows.map((row) => ({
+  // Re-encrypts a legacy or previous-secret ciphertext on the way past (audit L-06).
+  const open = (stored: string | null, column: PgColumn, id: string) =>
+    decryptAndRewrap(stored, { table: connectorConnections, column, idColumn: connectorConnections.id, id });
+  return Promise.all(rows.map(async (row) => ({
     id: row.id,
     userId: row.user_id,
     connectorId: row.connector_id,
     authKind: row.auth_kind,
     accountRef: row.account_ref,
-    accessToken: decryptOrNull(
-      row.auth_kind === "oauth2" ? row.access_token_encrypted : row.api_key_encrypted
-    ),
-    refreshToken: decryptOrNull(row.refresh_token_encrypted),
+    accessToken:
+      row.auth_kind === "oauth2"
+        ? await open(row.access_token_encrypted, connectorConnections.accessTokenEncrypted, row.id)
+        : await open(row.api_key_encrypted, connectorConnections.apiKeyEncrypted, row.id),
+    refreshToken: await open(row.refresh_token_encrypted, connectorConnections.refreshTokenEncrypted, row.id),
     scopes: row.scopes,
     capabilities: parseJson<string[]>(row.capabilities) ?? [],
     cursor: parseJson<ConnectorSyncCursor>(row.sync_cursor),
     syncFailures: row.sync_failures,
-  }));
+  })));
 }
 
 export type ConnectorSyncOutcome =
@@ -421,4 +428,5 @@ export async function deleteConnectorConnection(
         eq(connectorConnections.connectorId, connectorId)
       )
     );
+  await recordAccountAudit({ userId, action: "integration.disconnect", resourceType: connectorId });
 }

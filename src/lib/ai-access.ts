@@ -9,7 +9,8 @@ import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { usageEvents, userSettings } from "@/db/schema";
 import { getAppBaseUrl } from "@/lib/app-url";
-import { decryptOrNull } from "@/lib/crypto";
+import type { PgColumn } from "drizzle-orm/pg-core";
+import { decryptAndRewrap } from "@/lib/crypto-rewrap";
 import { isDemoAccount, isLocalhost } from "@/lib/demo-account";
 import { resolvePlan, type BillingColumns } from "@/lib/entitlements";
 import { classifyAiError } from "@/lib/errors";
@@ -572,12 +573,17 @@ export class AiAccess {
     const plan = resolvePlan(row).plan;
 
     const personal: Partial<Record<AiProvider, string>> = {};
-    const decrypted = {
-      gemini: decryptOrNull(row?.geminiApiKeyEncrypted),
-      openai: decryptOrNull(row?.openaiApiKeyEncrypted),
-      anthropic: decryptOrNull(row?.anthropicApiKeyEncrypted),
-      openrouter: decryptOrNull(row?.openrouterApiKeyEncrypted),
-    };
+    // Re-encrypts a legacy or previous-secret ciphertext on the way past (audit L-06).
+    const settingsKey = (stored: string | null | undefined, column: PgColumn) =>
+      decryptAndRewrap(stored, { table: userSettings, column, idColumn: userSettings.userId, id: row?.userId });
+    const [gemini, openai, anthropic, openrouter, ownDecisionKey] = await Promise.all([
+      settingsKey(row?.geminiApiKeyEncrypted, userSettings.geminiApiKeyEncrypted),
+      settingsKey(row?.openaiApiKeyEncrypted, userSettings.openaiApiKeyEncrypted),
+      settingsKey(row?.anthropicApiKeyEncrypted, userSettings.anthropicApiKeyEncrypted),
+      settingsKey(row?.openrouterApiKeyEncrypted, userSettings.openrouterApiKeyEncrypted),
+      settingsKey(row?.typesafeApiKeyEncrypted, userSettings.typesafeApiKeyEncrypted),
+    ]);
+    const decrypted = { gemini, openai, anthropic, openrouter };
     for (const [provider, key] of Object.entries(decrypted)) {
       if (key) personal[provider as AiProvider] = key;
     }
@@ -598,7 +604,6 @@ export class AiAccess {
     // BYOK only. The one exception is the dev server's own `.env.local`, on the same terms
     // as every other provider there (a localhost demo account) — so it can never become an
     // Orbit-paid key.
-    const ownDecisionKey = decryptOrNull(row?.typesafeApiKeyEncrypted);
     const devDecisionKey =
       eligibility === "demo" && localDevAiEnabled()
         ? process.env[LOCAL_TYPESAFE_ENV]?.trim() || null

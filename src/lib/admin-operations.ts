@@ -168,9 +168,11 @@ export async function recordContactView(
 
 /**
  * How long a minted link stays valid before its first (only) use. A leaked link is a sign-in
- * as that account, admins included, so a week (room to hand a demo over) rather than a month.
+ * as that account, admins included, so two hours (audit L-16): long enough to hand over in a
+ * call or a message, short enough that one forwarded or logged is soon worthless. Mint a new
+ * one for anything later.
  */
-const SIGN_IN_LINK_EXPIRES_SECONDS = 7 * 24 * 60 * 60;
+export const SIGN_IN_LINK_EXPIRES_SECONDS = 2 * 60 * 60;
 
 /**
  * Mint a one-click sign-in URL for any account, for the operator to hand to whoever needs

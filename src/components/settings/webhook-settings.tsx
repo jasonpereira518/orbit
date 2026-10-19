@@ -13,11 +13,12 @@
  * result rather than a hopeful "saved".
  */
 import { useCallback, useEffect, useState, useTransition } from "react";
-import { Copy, RefreshCw, Trash2, Webhook } from "lucide-react";
+import { Copy, KeyRound, RefreshCw, Trash2, Webhook } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
   createWebhookEndpoint,
   deleteWebhookEndpoint,
+  rotateWebhookEndpointSecret,
   listWebhookEndpoints,
   retryWebhookEndpoint,
   type WebhookEndpointSummary,
@@ -129,6 +130,19 @@ export function WebhookSettings() {
       setConfirmingDelete(null);
       toast.success("Webhook removed");
       load();
+    });
+  }
+
+  function onRotate(id: string, url: string) {
+    if (!window.confirm(`Replace the signing secret for ${url}? Deliveries are signed with the new one straight away, so update your receiver with it.`)) return;
+    startTransition(async () => {
+      const result = await rotateWebhookEndpointSecret(id);
+      if (result.ok) {
+        setRevealedSecret(result.secret);
+        toast.success("New signing secret — copy it now");
+      } else {
+        toast.error(result.message);
+      }
     });
   }
 
@@ -263,6 +277,16 @@ export function WebhookSettings() {
                     Retry
                   </Button>
                 )}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={pending}
+                  onClick={() => onRotate(endpoint.id, endpoint.url)}
+                  aria-label={`Rotate the signing secret for ${endpoint.url}`}
+                  title="Rotate signing secret"
+                >
+                  <KeyRound className="size-4" />
+                </Button>
                 {confirmingDelete === endpoint.id ? (
                   <>
                     <Button

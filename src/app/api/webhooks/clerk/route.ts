@@ -1,7 +1,9 @@
 import { verifyWebhook } from "@clerk/nextjs/webhooks";
 import type { NextRequest } from "next/server";
 import { purgeUserData } from "@/lib/user-data";
+import { recordAccountAudit } from "@/lib/account-audit";
 import {
+  claimClerkUserEvent,
   ensureUserSettings,
   recordTermsAcceptance,
   setUserEmail,
@@ -14,6 +16,7 @@ import { shouldRecordThrottled } from "@/lib/error-events";
 import {
   WEBHOOK_REASONS,
   recordWebhookDelivery,
+  wasDeliveryHandled,
   type WebhookOutcome,
 } from "@/lib/webhook-deliveries";
 
@@ -84,17 +87,26 @@ export async function POST(req: NextRequest) {
     // the Clerk Dashboard — handling them in code alone is not enough.
     if (evt.type === "user.created" || evt.type === "user.updated") {
       const userId = evt.data.id;
-      if (userId) {
+      if (userId && (await wasDeliveryHandled("clerk", eventId))) {
+        // A redelivery or dashboard replay of an event already applied (audit L-07).
+        result = { outcome: "ignored", reason: WEBHOOK_REASONS.staleUserEvent, targetUserId: userId, resourceId: userId };
+      } else if (userId) {
         await ensureUserSettings(userId);
-        await setUserEmail(userId, primaryEmail(evt.data));
-        // Name and avatar arrive in this same payload, so mirroring them costs nothing
-        // beyond the write — and it is what lets the admin roster show a person rather
-        // than a `user_2abc…` id without ever calling the Clerk API.
-        await setUserIdentity(userId, {
-          firstName: evt.data.first_name,
-          lastName: evt.data.last_name,
-          imageUrl: evt.data.image_url,
-        });
+        // Out-of-order delivery: an event older than the identity already mirrored would
+        // revert a newer email or name, so the mirror is skipped for it (audit L-07). The
+        // write-once user.created records below are still made.
+        const fresh = await claimClerkUserEvent(userId, evt.data.updated_at);
+        if (fresh) {
+          await setUserEmail(userId, primaryEmail(evt.data));
+          // Name and avatar arrive in this same payload, so mirroring them costs nothing
+          // beyond the write — and it is what lets the admin roster show a person rather
+          // than a `user_2abc…` id without ever calling the Clerk API.
+          await setUserIdentity(userId, {
+            firstName: evt.data.first_name,
+            lastName: evt.data.last_name,
+            imageUrl: evt.data.image_url,
+          });
+        }
         // Clerk's "require express legal consent" checkbox stamps legal_accepted_at at
         // sign-up. Recorded from user.created only, write-once, so a later user.updated
         // can never attribute today's TERMS_VERSION to an old acceptance.
@@ -108,7 +120,9 @@ export async function POST(req: NextRequest) {
           // for founding pricing (no longer a comp).
           await recordSiteInvite(userId, evt.data.public_metadata as Record<string, unknown>);
         }
-        result = { outcome: "handled", targetUserId: userId, resourceId: userId };
+        result = fresh || evt.type === "user.created"
+          ? { outcome: "handled", targetUserId: userId, resourceId: userId }
+          : { outcome: "ignored", reason: WEBHOOK_REASONS.staleUserEvent, targetUserId: userId, resourceId: userId };
       } else {
         result = { outcome: "ignored", reason: WEBHOOK_REASONS.missingUserId };
       }
@@ -119,6 +133,7 @@ export async function POST(req: NextRequest) {
         // `keepSettings: false` deletes the settings row too — email, name, avatar, every
         // encrypted provider key and the Stripe customer id. The Settings "Delete data" path
         // keeps that row on purpose (its person is still signed in); this one must not.
+        await recordAccountAudit({ userId, action: "account.delete", actor: "clerk", detail: { via: "clerk" } });
         await purgeUserData(userId, { keepSettings: false });
         result = { outcome: "handled", targetUserId: userId, resourceId: userId };
       } else {

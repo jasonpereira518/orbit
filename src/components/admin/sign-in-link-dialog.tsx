@@ -146,8 +146,8 @@ export function SignInLinkButton({
               <p className="text-xs text-muted-foreground">
                 Single-use — it stops working the instant it&apos;s opened once, whichever
                 way you open it. Stays valid unused for{" "}
-                {Math.round(link.expiresInSeconds / 86400)} days, so it&apos;s fine to mint
-                ahead of time; mint a fresh one here anytime you need another.
+                {Math.round(link.expiresInSeconds / 3600)} hours, so mint it when you are
+                about to hand it over; mint a fresh one here anytime you need another.
               </p>
             </div>
           )}

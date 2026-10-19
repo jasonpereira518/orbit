@@ -31,7 +31,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { outboundWebhookDeliveries, webhookEndpoints } from "@/db/schema";
-import { decryptOrNull } from "@/lib/crypto";
+import { decryptAndRewrap } from "@/lib/crypto-rewrap";
 import { buildEnvelope, signPayload, type WebhookEventType } from "@/lib/webhooks/sign";
 
 /** Per-attempt HTTP timeout. A slow endpoint must not consume the drain's budget. */
@@ -273,7 +273,12 @@ export async function attemptDelivery(row: DueRow, now: Date = new Date()): Prom
 
   try {
     await assertDeliverable(row.url);
-    const secret = decryptOrNull(row.secret_encrypted);
+    const secret = await decryptAndRewrap(row.secret_encrypted, {
+      table: webhookEndpoints,
+      column: webhookEndpoints.secretEncrypted,
+      idColumn: webhookEndpoints.id,
+      id: row.endpoint_id,
+    });
     if (!secret) throw new Error("Endpoint secret could not be read");
 
     const timestamp = Math.floor(now.getTime() / 1000);
@@ -401,7 +406,12 @@ export async function verifyEndpoint(
 
   try {
     await assertDeliverable(endpoint.url);
-    const secret = decryptOrNull(endpoint.secretEncrypted);
+    const secret = await decryptAndRewrap(endpoint.secretEncrypted, {
+      table: webhookEndpoints,
+      column: webhookEndpoints.secretEncrypted,
+      idColumn: webhookEndpoints.id,
+      id: endpoint.id,
+    });
     if (!secret) throw new Error("Endpoint secret could not be read");
 
     const res = await fetch(endpoint.url, {
