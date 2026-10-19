@@ -23,7 +23,7 @@
 import { z, type ZodRawShape } from "zod";
 import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
-import type { Content, FunctionDeclaration } from "@google/genai";
+import { FunctionCallingConfigMode, type Content, type FunctionDeclaration } from "@google/genai";
 import {
   anthropicClient,
   geminiClient,
@@ -71,8 +71,16 @@ export type ToolStep = {
   text: string;
 };
 
+export type ToolStepOptions = {
+  /**
+   * The model may not call a tool this round: it must answer from what it has. The answer
+   * loop's last round, when the lookup budget or the time for lookups has run out.
+   */
+  noTools?: boolean;
+};
+
 export type ToolDriver = {
-  step(signal: AbortSignal): Promise<ToolStep>;
+  step(signal: AbortSignal, options?: ToolStepOptions): Promise<ToolStep>;
   /** One result per call from the last step, in any order. */
   addResults(results: Array<{ call: ToolCall; content: string }>): void;
 };
@@ -146,7 +154,7 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
     const messages: Anthropic.MessageParam[] = [{ role: "user", content: input.user }];
     const onText = input.onText;
     return {
-      async step(signal) {
+      async step(signal, stepOptions) {
         const response = await metered(signal, async (report) => {
           const params = {
             model,
@@ -154,6 +162,7 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
             ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
             system: input.system,
             tools,
+            ...(stepOptions?.noTools ? { tool_choice: { type: "none" as const } } : {}),
             messages,
           };
           if (onText) {
@@ -205,7 +214,7 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
     ];
     const onText = input.onText;
     return {
-      async step(signal) {
+      async step(signal, stepOptions) {
         if (onText) {
           const round = await metered(signal, async (report) => {
             const stream = await client.chat.completions.create(
@@ -217,6 +226,7 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
                   thinking: aiOperationThinking(input.operation),
                 }),
                 tools,
+                ...(stepOptions?.noTools ? { tool_choice: "none" as const } : {}),
                 messages,
                 stream: true,
                 stream_options: { include_usage: true },
@@ -248,6 +258,7 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
                 thinking: aiOperationThinking(input.operation),
               }),
               tools,
+              ...(stepOptions?.noTools ? { tool_choice: "none" as const } : {}),
               messages,
             }),
             { signal }
@@ -293,7 +304,7 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
   const contents: Content[] = [{ role: "user", parts: [{ text: input.user }] }];
   const onText = input.onText;
   return {
-    async step(signal) {
+    async step(signal, stepOptions) {
       if (onText) {
         const round = await metered(signal, async (report) => {
           const stream = await client.models.generateContentStream({
@@ -305,6 +316,7 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
               maxOutputTokens,
               systemInstruction: input.system,
               tools: [{ functionDeclarations }],
+              ...(stepOptions?.noTools ? { toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.NONE } } } : {}),
               ...geminiThinking(model, input.operation),
             },
           });
@@ -325,6 +337,7 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
             maxOutputTokens,
             systemInstruction: input.system,
             tools: [{ functionDeclarations }],
+            ...(stepOptions?.noTools ? { toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.NONE } } } : {}),
             ...geminiThinking(model, input.operation),
           },
         });
