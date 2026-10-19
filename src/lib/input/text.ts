@@ -20,6 +20,20 @@
 const CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 
 /**
+ * Invisible formatting that can disguise text (audit L-03 / EC-UNI-1): bidi embeddings,
+ * overrides and isolates (U+202A–202E, U+2066–2069) reorder what a name shows ("Al‮ecila"
+ * renders as "Alalice"), and zero-width spaces, word joiners, the BOM and LRM/RLM marks hide
+ * characters inside otherwise identical text. Zero-width joiner and non-joiner (U+200C,
+ * U+200D) are kept on purpose: emoji sequences, Persian and Indic scripts need them.
+ */
+const INVISIBLE_FORMATTING = /[\u200B\u200E\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF\u180E]/g;
+
+/** Remove the invisible formatting above; everything visible is untouched. */
+export function stripInvisibleFormatting(value: string): string {
+  return value.replace(INVISIBLE_FORMATTING, "");
+}
+
+/**
  * Caps per field kind. Chosen well above anything a person types, and below the point where
  * a single row starts costing real money to scan or index. Capture's own input ceiling is
  * 100k characters, so a note written from a capture always fits.
@@ -47,9 +61,12 @@ export const TEXT_LIMITS = {
 export const MAX_LIST_ITEMS = 100;
 export const MAX_TAGS = 50;
 
-/** Storable text: controls stripped, line endings normalised, NFC, truncated to `max`. */
+/**
+ * Storable text: controls and invisible formatting stripped, line endings normalised, NFC,
+ * truncated to `max`.
+ */
 export function cleanText(value: string, max: number): string {
-  let out = value.replace(/\r\n?/g, "\n").replace(CONTROL, "");
+  let out = value.replace(/\r\n?/g, "\n").replace(CONTROL, "").replace(INVISIBLE_FORMATTING, "");
   try {
     out = out.normalize("NFC");
   } catch {

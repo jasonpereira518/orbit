@@ -63,7 +63,8 @@ export function normalizeLinkedinUrl(
     const path = u.pathname.replace(/\/+$/, "").toLowerCase();
     return `https://www.linkedin.com${path}`;
   } catch {
-    return t.toLowerCase();
+    // Unparseable is not a LinkedIn URL; storing it lowercased let any string through.
+    return null;
   }
 }
 

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ContactInput } from "@/lib/contact-writes";
 import { MAX_LIST_ITEMS, MAX_TAGS, TEXT_LIMITS, cleanText, cleanTextList } from "@/lib/input/text";
+import { safeHttpUrl } from "@/lib/safe-links";
 
 /**
  * The server-side input contract for contacts.
@@ -65,17 +66,17 @@ function optionalText(max: number) {
  * into the LinkedIn field.
  */
 export function isLinkedInProfileUrl(url: string) {
-  const trimmed = url.trim();
-  if (!trimmed) return false;
-  try {
-    const parsed = new URL(
-      trimmed.startsWith("http") ? trimmed : `https://${trimmed}`
-    );
-    const host = parsed.hostname.toLowerCase();
-    return host === "linkedin.com" || host.endsWith(".linkedin.com");
-  } catch {
-    return /linkedin\.com\//i.test(trimmed);
-  }
+  // http(s) only, no credentials (`safeHttpUrl`). The unparseable fallback that used to
+  // accept anything containing "linkedin.com/" let `javascript:…//linkedin.com/x` through.
+  const safe = safeHttpUrl(url);
+  if (!safe) return false;
+  const host = new URL(safe).hostname.toLowerCase();
+  return host === "linkedin.com" || host.endsWith(".linkedin.com");
+}
+
+/** A website link safe to store and render: http(s) only (audit EC-URL-1). */
+export function isSafeWebsiteUrl(url: string) {
+  return safeHttpUrl(url) !== null;
 }
 
 const baseShape = {
@@ -99,7 +100,9 @@ const baseShape = {
     { message: "That doesn't look like a LinkedIn profile URL" }
   ),
   xHandle: optionalText(LIMITS.handle),
-  website: optionalText(LIMITS.url),
+  website: optionalText(LIMITS.url).refine((v) => v === undefined || isSafeWebsiteUrl(v), {
+    message: "That website link doesn’t look right — use an http or https address",
+  }),
 };
 
 /**
@@ -192,7 +195,17 @@ export function normalizeContactInput(
     };
   }
 
-  return { ok: true, value: { ...input, fullName: name.data.fullName } };
+  // The one exception to "left exactly as supplied": a link with a scheme that executes
+  // (`javascript:`, `data:`) is dropped rather than stored, so an import can never plant one.
+  // The row still lands; only the unsafe link is left out.
+  const value: ContactInput = { ...input, fullName: name.data.fullName };
+  if (typeof value.website === "string" && value.website.trim() && !isSafeWebsiteUrl(value.website)) {
+    value.website = undefined;
+  }
+  if (typeof value.linkedinUrl === "string" && value.linkedinUrl.trim() && !safeHttpUrl(value.linkedinUrl)) {
+    value.linkedinUrl = undefined;
+  }
+  return { ok: true, value };
 }
 
 /**

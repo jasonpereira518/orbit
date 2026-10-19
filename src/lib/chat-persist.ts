@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { chatMessages, chatThreads, type ChatRecommendation } from "@/db/schema";
 import type { EvidenceSource } from "@/lib/chat-evidence";
@@ -61,6 +61,11 @@ export async function persistAssistantTurn(
      * can never happen.
      */
     version?: { slot: string; version: number; userMessageId: string };
+    /**
+     * A dropped connection cut this answer off; `answer` is what had streamed (audit L-25).
+     * Carries the turn id so a Stop that lands afterwards can still find and discard it.
+     */
+    interrupted?: { clientTurnId: string | null };
   }
 ): Promise<{ messageId: string | null; title: string | null }> {
   if (!threadId) return { messageId: null, title: existingTitle };
@@ -76,6 +81,7 @@ export async function persistAssistantTurn(
       activity: turn.activity ?? [],
       evidence: turn.evidence ?? {},
       proposedActions: turn.proposedActions ?? [],
+      ...(turn.interrupted ? { interrupted: true, clientTurnId: turn.interrupted.clientTurnId } : {}),
       ...(turn.version
         ? { slot: turn.version.slot, version: turn.version.version, isActive: false }
         : {}),
@@ -156,6 +162,19 @@ export async function markTurnStopped(userId: string, threadId: string, turnId: 
     .update(chatThreads)
     .set({ stoppedTurnId: turnId })
     .where(and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)));
+  // A partial answer the route kept because it saw the abort before this mark: a Stop
+  // discards it too. Only an interrupted one, so a finished answer is never touched.
+  await db
+    .delete(chatMessages)
+    .where(
+      and(
+        eq(chatMessages.threadId, threadId),
+        eq(chatMessages.userId, userId),
+        eq(chatMessages.clientTurnId, turnId),
+        eq(chatMessages.role, "assistant"),
+        eq(chatMessages.interrupted, true)
+      )
+    );
   const row = await db.query.chatMessages.findFirst({
     where: and(
       eq(chatMessages.threadId, threadId),
@@ -188,11 +207,23 @@ export async function wasTurnStopped(userId: string, threadId: string | null, tu
 export async function supersedeDanglingQuestion(userId: string, threadId: string | null, content: string) {
   if (!threadId) return;
   const db = await getDb();
-  const last = await db.query.chatMessages.findFirst({
-    where: and(eq(chatMessages.threadId, threadId), eq(chatMessages.userId, userId)),
+  const [last, previous] = await db.query.chatMessages.findMany({
+    where: and(eq(chatMessages.threadId, threadId), eq(chatMessages.userId, userId), eq(chatMessages.isActive, true)),
     orderBy: [desc(chatMessages.createdAt)],
-    columns: { id: true, role: true, content: true, isActive: true },
+    limit: 2,
+    columns: { id: true, role: true, content: true, interrupted: true },
   });
-  if (!last || last.role !== "user" || !last.isActive || last.content !== content) return;
-  await db.delete(chatMessages).where(and(eq(chatMessages.id, last.id), eq(chatMessages.userId, userId)));
+  if (!last) return;
+  // The question alone, kept with nothing under it.
+  if (last.role === "user") {
+    if (last.content !== content) return;
+    await db.delete(chatMessages).where(and(eq(chatMessages.id, last.id), eq(chatMessages.userId, userId)));
+    return;
+  }
+  // The question and the partial answer a dropped connection kept: the new answer replaces both.
+  if (last.interrupted && previous?.role === "user" && previous.content === content) {
+    await db
+      .delete(chatMessages)
+      .where(and(inArray(chatMessages.id, [last.id, previous.id]), eq(chatMessages.userId, userId)));
+  }
 }

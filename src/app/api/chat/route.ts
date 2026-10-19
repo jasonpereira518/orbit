@@ -18,10 +18,11 @@ import {
   wasTurnStopped,
 } from "@/lib/chat-persist";
 import { isUuid } from "@/lib/input/ids";
+import { persistInterruptedAnswer } from "@/lib/chat-interrupted";
 import { createStepEmitter, deriveFollowUps, plural } from "@/lib/chat-steps";
 import { generateChatTitle, settleWithin, TITLE_GRACE_MS } from "@/lib/chat-title";
 import { formatSse, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
-import { citedIds, stripUnresolvedMarkers } from "@/lib/chat-evidence";
+import { citedIds, stripUnresolvedMarkers, type EvidenceSource } from "@/lib/chat-evidence";
 import { validateProposedActions } from "@/lib/chat-proposed-actions";
 import { friendlyError } from "@/lib/errors";
 import { traced } from "@/lib/perf-trace";
@@ -154,6 +155,13 @@ export async function POST(request: Request) {
       const steps = createStepEmitter((step) => send({ type: "step", step }));
       // Hoisted out of the try so the failure path can clear a question nothing answered.
       let persistedUserMessageId: string | null = null;
+      // What a dropped connection keeps (audit L-25): the redacted text already shown, the
+      // evidence ids and blocks it may reference, and the question it answers.
+      let streamedAnswer = "";
+      let shownEvidence: Record<string, EvidenceSource> = {};
+      let shownBlocks: ReturnType<typeof buildChatBlocks> | null = null;
+      let askedQuestion: string | null = null;
+      let threadTitle: string | null = null;
       try {
         // The account's AI access, resolved ONCE for the whole question from the row the
         // auth gate already read — the decider, query embedding, parse, rerank, writing
@@ -228,6 +236,9 @@ export async function POST(request: Request) {
         // a block renders the moment its line arrives. Built after research, which can add
         // people the answer may name.
         const blocks = buildChatBlocks(ctx);
+        shownBlocks = blocks;
+        askedQuestion = ctx.q;
+        threadTitle = ctx.thread?.title ?? null;
         send({ type: "blocks", blocks });
 
         steps.start("answer", "Writing the answer");
@@ -248,7 +259,10 @@ export async function POST(request: Request) {
               ctx.modelRecruiters,
               (delta) => {
                 const safe = redactor.push(delta);
-                if (safe) send({ type: "answer", delta: safe });
+                if (safe) {
+                  streamedAnswer += safe;
+                  send({ type: "answer", delta: safe });
+                }
               },
               ctx.focusProfile,
               ctx.attachedContext,
@@ -270,6 +284,7 @@ export async function POST(request: Request) {
                 // Every id the prompt minted, so `[eN]` becomes a chip as it streams. The cited
                 // subset replaces this once the answer is done.
                 onEvidence: (all) => {
+                  shownEvidence = all;
                   if (Object.keys(all).length) send({ type: "evidence", items: all });
                 },
               }
@@ -409,6 +424,24 @@ export async function POST(request: Request) {
           request.signal.aborted &&
           !versionTarget &&
           !(await wasTurnStopped(userId, threadId, turnId).catch(() => false));
+        if (keep && persistedUserMessageId && streamedAnswer.trim() && shownBlocks && askedQuestion) {
+          // Keep what the person already watched arrive, marked as cut off, rather than a
+          // question with nothing under it. Cleaned the way a finished answer is: no citation
+          // or block the server never offered survives into storage.
+          await persistInterruptedAnswer({
+            userId,
+            threadId,
+            turnId,
+            question: askedQuestion,
+            title: threadTitle,
+            answer: streamedAnswer,
+            evidence: shownEvidence,
+            blocks: shownBlocks,
+            activity: steps.snapshot(),
+          }).catch((persistErr) => {
+            reportError(persistErr, { where: "route.chat.interrupted", userId, level: "warning" });
+          });
+        }
         if (!keep) {
           await discardUnansweredQuestion(userId, threadId, persistedUserMessageId).catch(() => {});
           // A first message that never got an answer leaves the thread empty: remove it too
@@ -439,3 +472,4 @@ export async function POST(request: Request) {
     },
   });
 }
+

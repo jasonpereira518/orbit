@@ -43,6 +43,7 @@ import {
   supersedeDanglingQuestion,
   wasTurnStopped,
 } from "../src/lib/chat-persist";
+import { persistInterruptedAnswer } from "../src/lib/chat-interrupted";
 
 const USER = "smoke-data-loss-user";
 
@@ -331,6 +332,63 @@ async function main() {
     await markTurnStopped(USER, first.id, firstTurn);
     check("a Stop on the first message leaves no empty 'New chat'",
       !(await db.query.chatThreads.findFirst({ where: eq(chatThreads.id, first.id) })));
+
+    // The part of an answer that streamed before a drop is kept, marked cut off, and
+    // cleaned like a finished one: an invented citation or a block the server never
+    // offered does not survive into storage.
+    const emptyBlocks = { people: {}, lists: {} } as never;
+    const [partial] = await db.insert(chatThreads).values({ userId: USER }).returning();
+    const partialTurn = crypto.randomUUID();
+    await ask(partial.id, partialTurn);
+    await persistInterruptedAnswer({
+      userId: USER, threadId: partial.id, turnId: partialTurn, question: "Who do I know at Stripe?", title: null,
+      answer: "Ana Ruiz runs payments [e99] and", evidence: {}, blocks: emptyBlocks, activity: [],
+    });
+    const partialRows = await rowsIn(partial.id);
+    const kept = partialRows.find((m) => m.role === "assistant");
+    check("a dropped answer is kept as far as it streamed, marked interrupted",
+      Boolean(kept?.interrupted) && Boolean(kept?.content.startsWith("Ana Ruiz runs payments")), JSON.stringify(kept?.content));
+    check("an invented citation is stripped before it is stored", !kept?.content.includes("[e99]"));
+    check("the question it answers is still there", partialRows.some((m) => m.role === "user"));
+
+    // Asking again replaces the kept question AND its partial answer.
+    await supersedeDanglingQuestion(USER, partial.id, "Who do I know at Stripe?");
+    check("a re-ask replaces both the kept question and its partial answer", (await rowsIn(partial.id)).length === 0);
+
+    // A Stop that lands after the partial answer was saved discards both.
+    const [stoppedLate] = await db.insert(chatThreads).values({ userId: USER }).returning();
+    await persistAssistantTurn(USER, stoppedLate.id, null, "Earlier question", { answer: "Earlier answer.", recommendations: [] });
+    const stoppedLateTurn = crypto.randomUUID();
+    await ask(stoppedLate.id, stoppedLateTurn);
+    await persistInterruptedAnswer({
+      userId: USER, threadId: stoppedLate.id, turnId: stoppedLateTurn, question: "Who do I know at Stripe?", title: null,
+      answer: "Half an answer", evidence: {}, blocks: emptyBlocks, activity: [],
+    });
+    await markTurnStopped(USER, stoppedLate.id, stoppedLateTurn);
+    const afterStop = await rowsIn(stoppedLate.id);
+    check("a late Stop removes the partial answer and its question, and nothing older",
+      afterStop.length === 1 && afterStop[0]!.content === "Earlier answer.", JSON.stringify(afterStop.map((m) => m.content)));
+
+    // A Stop marked before the save: the save itself sees the mark and backs out.
+    const [stoppedFirst] = await db.insert(chatThreads).values({ userId: USER }).returning();
+    await persistAssistantTurn(USER, stoppedFirst.id, null, "Earlier question", { answer: "Earlier answer.", recommendations: [] });
+    const stoppedFirstTurn = crypto.randomUUID();
+    await ask(stoppedFirst.id, stoppedFirstTurn);
+    await db.update(chatThreads).set({ stoppedTurnId: stoppedFirstTurn }).where(eq(chatThreads.id, stoppedFirst.id));
+    await persistInterruptedAnswer({
+      userId: USER, threadId: stoppedFirst.id, turnId: stoppedFirstTurn, question: "Who do I know at Stripe?", title: null,
+      answer: "Half an answer", evidence: {}, blocks: emptyBlocks, activity: [],
+    });
+    check("a Stop that raced the save still leaves nothing of the turn",
+      (await rowsIn(stoppedFirst.id)).length === 1);
+
+    // A finished answer is never touched by a Stop for its turn id.
+    const [finished] = await db.insert(chatThreads).values({ userId: USER }).returning();
+    const finishedTurn = crypto.randomUUID();
+    await ask(finished.id, finishedTurn);
+    await persistAssistantTurn(USER, finished.id, null, "Who do I know at Stripe?", { answer: "Two people.", recommendations: [] });
+    await markTurnStopped(USER, finished.id, finishedTurn);
+    check("a Stop after the answer finished deletes nothing", (await rowsIn(finished.id)).length === 2);
 
     // Someone else's Stop reaches nothing.
     const [mine] = await db.insert(chatThreads).values({ userId: USER }).returning();

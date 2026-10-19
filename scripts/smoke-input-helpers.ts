@@ -4,7 +4,10 @@
  */
 import { optionalClientDate, parseClientDate, requireClientDate } from "../src/lib/input/dates";
 import { isUuid } from "../src/lib/input/ids";
-import { TEXT_LIMITS, cleanText, cleanTextList } from "../src/lib/input/text";
+import { TEXT_LIMITS, cleanText, cleanTextList, stripInvisibleFormatting } from "../src/lib/input/text";
+import { isLinkedInProfileUrl, isSafeWebsiteUrl } from "../src/lib/contact-input";
+import { normalizeLinkedinUrl } from "../src/lib/recruiters";
+import { toSpreadsheetCsv } from "../src/lib/csv-export";
 import { cleanContactFreeText, normalizeContactInput } from "../src/lib/contact-input";
 
 let failures = 0;
@@ -64,6 +67,44 @@ check("strict normalisation stores the cleaned name", strict.ok && strict.value.
 const lenient = normalizeContactInput({ fullName: "Grace", notes: "x\u0000y" } as never, "lenient");
 check("lenient normalisation cleans too", lenient.ok && lenient.value.notes === "xy");
 check("a name that is only control characters is still refused", !normalizeContactInput({ fullName: "\u0000\u0001" }).ok);
+
+
+console.log("Invisible formatting (audit L-03, EC-UNI-1)...");
+check("a bidi override is stripped", cleanText("Al\u202Eecila\u202C Smith", 100) === "Alecila Smith");
+check("zero-width spaces are stripped", cleanText("\u200B\u200Bhidden", 100) === "hidden");
+check("isolates, LRM/RLM, word joiner and BOM are stripped", stripInvisibleFormatting("a\u2066b\u2069c\u200Ed\u200Fe\u2060f\uFEFF") === "abcdef");
+check("a ZWJ emoji sequence survives", cleanText("👩\u200D💻 dev", 100) === "👩\u200D💻 dev");
+check("a Persian ZWNJ survives", cleanText("می\u200Cخواهم", 100) === "می\u200Cخواهم");
+check("Hebrew, Arabic and CJK text is untouched", cleanText("מישהו عربي 名字", 100) === "מישהו عربي 名字");
+
+console.log("URL schemes (audit EC-URL-1)...");
+for (const bad of ["javascript:alert(1)", "data:text/html,<script>x</script>", "vbscript:msgbox", "https://user:pw@example.com"]) {
+  check(`website ${JSON.stringify(bad)} is refused`, !isSafeWebsiteUrl(bad));
+}
+for (const good of ["https://example.com", "http://example.com/a?b=1", "example.com"]) {
+  check(`website ${JSON.stringify(good)} is accepted`, isSafeWebsiteUrl(good));
+}
+check("a javascript: link mentioning linkedin.com/ is not a LinkedIn URL", !isLinkedInProfileUrl("javascript:alert(1)//linkedin.com/in/x"));
+check("a real LinkedIn URL still is", isLinkedInProfileUrl("uk.linkedin.com/in/ada") && isLinkedInProfileUrl("https://www.linkedin.com/in/ada"));
+check("a LinkedIn URL on another host is not", !isLinkedInProfileUrl("https://evil.example.com/in/ada"));
+check("an unparseable recruiter LinkedIn URL normalises to null", normalizeLinkedinUrl("javascript:alert(1)") === null);
+{
+  const strict = normalizeContactInput({ fullName: "Ada", website: "javascript:alert(1)" }, "strict");
+  check("strict mode refuses a javascript: website", !strict.ok);
+  const lenient = normalizeContactInput({ fullName: "Ada", website: "javascript:alert(1)", linkedinUrl: "data:text/html,x" }, "lenient");
+  check("lenient mode keeps the row but drops the unsafe links",
+    lenient.ok && lenient.value.website === undefined && lenient.value.linkedinUrl === undefined);
+  const fine = normalizeContactInput({ fullName: "Ada", website: "example.com" }, "lenient");
+  check("lenient mode keeps a safe website exactly as typed", fine.ok && fine.value.website === "example.com");
+}
+
+console.log("CSV export (audit INJ-CSV)...");
+{
+  const csv = toSpreadsheetCsv([{ name: "=HYPERLINK(\"https://x.example\")", n: "+1", at: "@SUM(A1)", ok: "Ada" }]);
+  const line = csv.split("\n")[1] ?? "";
+  check("formula-looking cells are prefixed so they read as text", line.startsWith(`"'=HYPERLINK`) && line.includes("'+1") && line.includes("'@SUM"), line);
+  check("ordinary cells are unchanged", line.endsWith(",Ada"), line);
+}
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import Papa from "papaparse";
+import { toSpreadsheetCsv } from "@/lib/csv-export";
 import { AdminForbiddenError, requireAdminUserId } from "@/lib/admin";
 import { recordAdminAction } from "@/lib/admin-operations";
 import {
@@ -88,7 +88,7 @@ export async function GET(request: NextRequest) {
   const stamp = new Date().toISOString().slice(0, 10);
   const filename = `orbit-${dataset}-${stamp}.${format}`;
   const body =
-    format === "json" ? JSON.stringify(rows, null, 2) : Papa.unparse(rows);
+    format === "json" ? JSON.stringify(rows, null, 2) : toSpreadsheetCsv(rows);
 
   return new NextResponse(body, {
     status: 200,

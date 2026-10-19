@@ -3598,6 +3598,11 @@ export const chatMessages = pgTable(
      */
     clientTurnId: text("client_turn_id"),
     /**
+     * An answer cut off by a dropped connection, stored as far as it had streamed (audit
+     * L-25). Always false for a finished answer; a Stop discards the turn instead.
+     */
+    interrupted: boolean("interrupted").default(false).notNull(),
+    /**
      * Groups the versions of one turn — a user row and its assistant reply share a `slot`.
      * Every row created from SCHEMA_VERSION 80 onward gets one at insert; a row from before
      * that has `slot` null and is its own slot, backfilled the first time it is edited or

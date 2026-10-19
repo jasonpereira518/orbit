@@ -832,6 +832,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   feedback text,
   feedback_note text,
   client_turn_id text,
+  interrupted boolean NOT NULL DEFAULT false,
   slot uuid,
   version integer NOT NULL DEFAULT 1,
   is_active boolean NOT NULL DEFAULT true,
@@ -2743,7 +2744,11 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 174 = chat_threads.stopped_turn_id + chat_messages.client_turn_id: a dropped chat connection
 // keeps the person's question; only an explicit Stop discards it (audit L-25). Rescanned
 // Oct 17 2026: 173 (this branch) was the highest claimed anywhere.
-export const SCHEMA_VERSION = 174;
+//
+// 175 = chat_messages.interrupted: the part of an answer that streamed before a dropped
+// connection is kept, marked as cut off (audit L-25). Rescanned Oct 19 2026: 174 (this
+// branch) was the highest claimed anywhere.
+export const SCHEMA_VERSION = 175;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2958,6 +2963,8 @@ export const SCALE_DDL: string[] = [
   // v174: Stop versus a dropped connection (audit L-25). See `markTurnStopped`.
   `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS stopped_turn_id text`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS client_turn_id text`,
+  // v175: a dropped connection keeps the partial answer (audit L-25).
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS interrupted boolean NOT NULL DEFAULT false`,
   `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
   // Backs BOTH the "Last spoken" sort on /contacts and the composer's pickers, which open
   // on "who have I actually spoken to lately" rather than whoever is alphabetically first

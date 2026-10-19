@@ -108,7 +108,7 @@ import {
 import { cn } from "@/lib/utils";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import type { ChatRecommendation } from "@/db/schema";
-import { streamChat, type DoneInfo } from "@/lib/chat-stream-client";
+import { CHAT_DROPPED_MESSAGE, streamChat, type DoneInfo } from "@/lib/chat-stream-client";
 import { directivesAsText, peopleIdsIn, type ChatBlocks } from "@/lib/chat-directives";
 import {
   createStreamSmoother,
@@ -213,6 +213,13 @@ type AssistantMessage = {
   stopped?: boolean;
   /** The stream failed partway, with this message; what arrived before it stays on screen. */
   failed?: string;
+  /**
+   * The connection dropped (not a Stop, not a server error): the server keeps the question
+   * and whatever had streamed, so the copy must not say the turn was lost (audit L-25).
+   */
+  dropped?: boolean;
+  /** A reloaded answer that a dropped connection cut off; stored as far as it got. */
+  interrupted?: boolean;
   /**
    * What this answer's `::people` / `::list` blocks show, from the stream. Absent on a
    * reloaded answer, whose lists are stored expanded and whose people are `recommendations`.
@@ -770,6 +777,7 @@ export function ChatPanel({
             // It came out of the database, so by definition there is a row to rate.
             persisted: true,
             sentTo: sent[row.id],
+            interrupted: row.interrupted || undefined,
           }
     );
     messagesRef.current = next;
@@ -1076,12 +1084,16 @@ export function ChatPanel({
               // A stop is the user's own doing, not a failure: keep whatever arrived and
               // say plainly that it was cut short rather than deleting it and apologising.
               if (controller.signal.aborted) return;
-              if (placed) {
+              // A broken connection, not an answer the server refused: the server saw the
+              // abort and kept the question and what had streamed, so keep both on screen too.
+              const dropped = message === CHAT_DROPPED_MESSAGE;
+              if (placed || dropped) {
                 // Work already reached the screen — the trail, maybe half an answer. Keep it,
                 // say what went wrong beneath it, and put the question back to try again,
                 // rather than wiping everything the person just watched happen.
                 smoother.flush();
-                patch((m) => ({ ...m, streaming: false, failed: message }));
+                ensurePlaceholder();
+                patch((m) => ({ ...m, streaming: false, failed: message, dropped }));
               } else {
                 // Nothing arrived; there is nothing to keep or reveal into.
                 smoother.cancel();
@@ -2160,7 +2172,15 @@ const AssistantBubble = memo(function AssistantBubble({
         )}
         {msg.failed && (
           <p role="alert" className="text-xs text-destructive">
-            {msg.failed.replace(/[.!?]?$/, ".")} This turn wasn’t saved — your question is back in the box to try again.
+            {msg.failed.replace(/[.!?]?$/, ".")}{" "}
+            {msg.dropped
+              ? "Your question and what arrived so far are saved in this chat. It’s also back in the box to ask again."
+              : "This turn wasn’t saved — your question is back in the box to try again."}
+          </p>
+        )}
+        {msg.interrupted && !msg.failed && (
+          <p className="text-xs text-muted-foreground">
+            The connection dropped before this answer finished. It’s saved as far as it got.
           </p>
         )}
         {gridRecs.length > 0 && <div className="grid gap-2 sm:grid-cols-2">{gridRecs.map(renderCard)}</div>}
