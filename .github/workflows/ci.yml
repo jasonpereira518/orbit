@@ -22,12 +22,11 @@ name: ci
 #   GitHub scopes a PR's caches to that PR, so without it each PR's first run starts cold.
 # - Draft PRs are skipped. A PR runs CI when it is opened ready, or when a draft is marked
 #   ready for review, and on every push after that. A ready PR gets every job.
-# - `paths-ignore` skips the run for changes no job reads: docs, agent skills, the
-#   extension (extension.yml covers it), and the workflows that do not touch the app.
-#   docs/RUNBOOK.md is re-included because scripts/smoke-schedules.ts parses it. There are
-#   no required status checks on main (Protected Main Branch only blocks deletion and
-#   force-pushes); if `check`/`smoke` are ever made required, drop `paths-ignore`, or a
-#   docs-only PR waits forever on checks that never start.
+# - Every ready PR runs, docs-only ones included. There used to be a `paths-ignore` that
+#   skipped docs, agent skills and the extension; it was dropped so these jobs can be
+#   required status checks on `main` (docs/TESTING.md → branch protection). With it, a
+#   docs-only PR would have waited forever on required checks that never started. The
+#   cost is one ~5-minute run on PRs that change nothing these jobs read.
 #
 # The repository is public, so hosted runners are free. This workflow is written to stay
 # safe there: it triggers on `pull_request` (never `pull_request_target` or `workflow_run`),
@@ -37,21 +36,8 @@ name: ci
 on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
-    paths-ignore: &ignore
-      - "**.md"
-      - "docs/**"
-      - "!docs/RUNBOOK.md"
-      - ".agents/**"
-      - ".claude/**"
-      - "extension/**"
-      - ".github/workflows/ops.yml"
-      - ".github/workflows/backup.yml"
-      - ".github/workflows/extension.yml"
-      - ".github/workflows/post-deploy.yml"
-      - "LICENSE"
   push:
     branches: [main]
-    paths-ignore: *ignore
   workflow_dispatch:
 
 concurrency:

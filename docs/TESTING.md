@@ -192,8 +192,8 @@ above a real gate:
 2. **Require status checks to pass**, with "require branches to be up to date": `typecheck · lint ·
    build`, `smoke suite (PGlite) 1/3`, `2/3`, `3/3`, `known bugs (expected failures)`,
    `audit · dependency review · secret scan`, `browser flows (Playwright)`.
-3. **Drop `paths-ignore` from `ci.yml` at the same time**, or a docs-only PR waits forever on
-   checks that never start (the comment at the top of `ci.yml` explains).
+3. `ci.yml` has no `paths-ignore`, so every PR reports these checks — docs-only ones too —
+   and requiring them cannot leave a PR waiting on checks that never start.
 4. Keep **block force-pushes and deletion** (already on). Not linear history: PRs merge with
    merge commits here.
 5. Turn on **Dependency graph**, then set the repository variable `DEPENDENCY_REVIEW=true` so
