@@ -414,6 +414,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-import-revert": "pglite",
   "smoke-import-row-staging": "pglite",
   "smoke-linkedin-connections-chunked": "pglite",
+  "smoke-touch-counts": "pglite",
   "smoke-capture-upload-parts": "pglite",
   "smoke-import-people": "pglite",
   "smoke-drive-import": "pglite",

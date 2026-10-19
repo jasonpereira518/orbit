@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { EXCHANGE_TOUCH_TYPES, MEETING_TOUCH_TYPES, NOTE_TOUCH_TYPES, sqlList } from "@/lib/touch-kinds";
 import { after } from "next/server";
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
@@ -71,12 +72,10 @@ export type ClosenessCohortInputs = {
   calendarConnected?: boolean;
 };
 
-/**
- * Two-way channels: a thread counts when both sides showed up (`messagesQualify`). Gmail sync
- * and the chat importers stamp `direction`; forwarded mail and pre-direction LinkedIn rows
- * land undirected and fall to the volume rule.
- */
-const EXCHANGE_TYPES = sql.raw(`('linkedin_message', 'email', 'message')`);
+/** The touch kinds as SQL lists (`src/lib/touch-kinds.ts`). */
+const NOTE_TYPES = sql.raw(sqlList(NOTE_TOUCH_TYPES));
+const MEETING_TYPES = sql.raw(sqlList(MEETING_TOUCH_TYPES));
+const EXCHANGE_TYPES = sql.raw(sqlList(EXCHANGE_TOUCH_TYPES));
 
 /**
  * Constellation-eligibility tallies, as extra aggregates on the per-contact interaction
@@ -97,10 +96,10 @@ const EXCHANGE_TYPES = sql.raw(`('linkedin_message', 'email', 'message')`);
  */
 export const constellationSignalAggregates = {
   noteInteractions: sql<number>`count(*) filter (
-    where ${interactions.interactionType} in ('note', 'meeting_note')
+    where ${interactions.interactionType} in ${NOTE_TYPES}
   )::int`,
   meetingInteractions: sql<number>`count(*) filter (
-    where ${interactions.interactionType} in ('meeting', 'in_person', 'call')
+    where ${interactions.interactionType} in ${MEETING_TYPES}
   )::int`,
   messageInbound: sql<number>`count(*) filter (
     where ${interactions.interactionType} in ${EXCHANGE_TYPES}

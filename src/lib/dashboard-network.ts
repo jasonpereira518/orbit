@@ -1,11 +1,9 @@
 import { sql, type SQL } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { contacts, contactTags, interactions, tags } from "@/db/schema";
+import { contacts, contactTags, contactTouchCounts, tags } from "@/db/schema";
 import { ABSOLUTE_TIER_CUTOFFS } from "@/lib/closeness";
-import { constellationSignalAggregates, type ClosenessScalars } from "@/lib/closeness-cohort";
-import { contactHasNotesSql } from "@/lib/contact-notes-sql";
+import type { ClosenessScalars } from "@/lib/closeness-cohort";
 import { IMPORT_SOURCE_TAGS, type ConstellationThresholds } from "@/lib/constellation-eligibility";
-import { countsAsTouch } from "@/lib/interaction-provenance";
 import { METRICS_MAX_CONTACTS } from "@/lib/network-metrics";
 
 /**
@@ -81,6 +79,15 @@ export type ChartGroup = {
 
 type ChartOptions = { filterActive: boolean; thresholds: ConstellationThresholds };
 
+/**
+ * One user's contacts that have notes, as `contacts_with_notes_idx` covers them: the same
+ * predicate as `contactHasNotesSql`, spelled exactly as the index's so the planner uses it,
+ * which answers "has notes" without reading the notes themselves.
+ */
+function contactsWithNotes(userId: string): SQL {
+  return sql`(select id from ${contacts} where user_id = ${userId} and notes is not null and btrim(notes) <> '')`;
+}
+
 /** The import source tags, which never count as a user's own (`userTagCount`). */
 function importSourceTagList(): SQL {
   return sql.join(IMPORT_SOURCE_TAGS.map((t) => sql`${t}`), sql`, `);
@@ -88,10 +95,10 @@ function importSourceTagList(): SQL {
 
 /**
  * `constellationEligibility`, in SQL, over a row of `contacts` joined to its tallies as
- * `touch` (`constellationSignalAggregates` columns, null when it has none) and its user-tag
- * count as `tagn.n`.
+ * `touch` (a `contact_touch_counts` row, null when it has none) and its user-tag count as
+ * `tagn.n`. `hasNotes` is how the caller knows the contact has notes.
  */
-function eligibleSql({ minInbound, minOutbound }: ConstellationThresholds, hasNotes: SQL = contactHasNotesSql): SQL {
+function eligibleSql({ minInbound, minOutbound }: ConstellationThresholds, hasNotes: SQL): SQL {
   const n = (column: string) => sql.raw(`coalesce(touch.${column}, 0)`);
   return sql`(case
       when contacts.constellation_pin = 'out' then false
@@ -112,27 +119,14 @@ function eligibleSql({ minInbound, minOutbound }: ConstellationThresholds, hasNo
 
 /**
  * The FROM and the eligibility predicate for the whole network: `contacts` with each
- * contact's touch tallies (`constellationSignalAggregates` under `countsAsTouch`, as the
- * cohort read computed them) and user-tag count (import source tags excluded, as the
+ * contact's touch tallies (`contact_touch_counts`: `constellationSignalAggregates` under
+ * `countsAsTouch`, kept by triggers) and user-tag count (import source tags excluded, as the
  * dashboard counted them). `eligible` is `constellationEligibility`, written in SQL.
  */
 function chartSource(userId: string, { thresholds }: ChartOptions) {
-  const a = constellationSignalAggregates;
-  const eligible = eligibleSql(thresholds);
+  const eligible = eligibleSql(thresholds, sql`(noted.id is not null)`);
   const ctes = sql`
-      with touch as (
-        select ${interactions.contactId} as contact_id,
-               ${a.noteInteractions} as note_interactions,
-               ${a.meetingInteractions} as meeting_interactions,
-               ${a.messageInbound} as message_inbound,
-               ${a.messageOutbound} as message_outbound,
-               ${a.messageUndirected} as message_undirected,
-               count(*)::int as total
-          from ${interactions}
-         where ${interactions.userId} = ${userId} and ${countsAsTouch()}
-         group by ${interactions.contactId}
-      ),
-      tagn as (
+      with tagn as (
         select ${contactTags.contactId} as contact_id, count(*)::int as n
           from ${contactTags}
           join ${contacts} on ${contacts.id} = ${contactTags.contactId}
@@ -141,9 +135,14 @@ function chartSource(userId: string, { thresholds }: ChartOptions) {
            and lower(trim(${tags.name})) not in (${importSourceTagList()})
          group by ${contactTags.contactId}
       )`;
+  // The touch tallies are stored (`contact_touch_counts`, kept by triggers): aggregating
+  // every interaction in the account here was ~350 ms of this statement at 100k contacts.
+  // Who has notes comes from `contacts_with_notes_idx` rather than reading every contact's
+  // notes to test them, which was another ~380 ms.
   const from = sql`${contacts}
-        left join touch on touch.contact_id = contacts.id
-        left join tagn on tagn.contact_id = contacts.id`;
+        left join ${contactTouchCounts} as touch on touch.contact_id = contacts.id
+        left join tagn on tagn.contact_id = contacts.id
+        left join ${contactsWithNotes(userId)} as noted on noted.id = contacts.id`;
   return { ctes, from, eligible };
 }
 
@@ -189,11 +188,15 @@ export async function loadChartContacts(
   // The same order inside (by output column) and outside (by the subquery's column).
   const innerOrder = sql.raw(`${opts.byOrbitScore ? "sort_key desc, " : ""}updated_at desc, id desc`);
   const order = sql.raw(`${opts.byOrbitScore ? "contacts.sort_key desc, " : ""}contacts.updated_at desc, contacts.id desc`);
-  const a = constellationSignalAggregates;
-  const eligible = eligibleSql(opts.thresholds, sql`contacts.has_notes`);
-  // The candidates in the preview's order first, then each one's tallies by index as it is
-  // reached, stopping at `limit` drawable contacts: the tallies for the whole network are
-  // what made one statement of this 2 s at 100k contacts, for 150 rows.
+  // Who has notes, probed per row as the outer query reaches it (`contacts_with_notes_idx`):
+  // inside the ordered subquery it was worked out for every candidate before the sort.
+  const eligible = eligibleSql(
+    opts.thresholds,
+    sql`exists (select 1 from ${contactsWithNotes(userId)} as noted where noted.id = contacts.id)`
+  );
+  // The candidates in the preview's order first, then each one's stored tallies as it is
+  // reached, stopping at `limit` drawable contacts: aggregating the tallies for the whole
+  // network is what made one statement of this 2 s at 100k contacts, for 150 rows.
   return rowsOf<ChartContactRow>(
     await db.execute(sql`
       select contacts.id, contacts.company, contacts.school, contacts.industry,
@@ -207,7 +210,6 @@ export async function loadChartContacts(
           select contacts.id, contacts.company, contacts.school, contacts.industry,
                  contacts.relationship_score, contacts.next_follow_up_at, contacts.constellation_pin,
                  contacts.stated_closeness, contacts.priority_level, contacts.updated_at,
-                 ${contactHasNotesSql} as has_notes,
                  ${scalar("raw")} as s_raw, ${scalar("closeness")} as s_closeness, ${scalar("orbitScore")} as s_orbit_score,
                  (contacts.closeness_breakdown->>'tier') as s_tier, (contacts.closeness_breakdown is not null) as s_scored,
                  coalesce(${scalar("orbitScore")}, 2) as sort_key
@@ -218,18 +220,7 @@ export async function loadChartContacts(
            order by ${innerOrder}
           offset 0
         ) as contacts
-        left join lateral (
-          select ${a.noteInteractions} as note_interactions,
-                 ${a.meetingInteractions} as meeting_interactions,
-                 ${a.messageInbound} as message_inbound,
-                 ${a.messageOutbound} as message_outbound,
-                 ${a.messageUndirected} as message_undirected,
-                 count(*)::int as total
-            from ${interactions}
-           where ${interactions.userId} = ${userId}
-             and ${interactions.contactId} = contacts.id
-             and ${countsAsTouch()}
-        ) as touch on true
+        left join ${contactTouchCounts} as touch on touch.contact_id = contacts.id
         left join lateral (
           select count(*)::int as n
             from ${contactTags}
