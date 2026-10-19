@@ -11,6 +11,7 @@
  *
  * Run: npx tsx scripts/smoke-ddl-contract.ts
  */
+import "./smoke/_env";
 import { readFileSync } from "node:fs";
 import { SCHEMA_VERSION } from "../src/db";
 
