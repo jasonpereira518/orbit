@@ -86,11 +86,16 @@ export function nameSimilarity(a: string | null | undefined, b: string | null | 
  * MUST stay equal to the `linkedin_slug` generated column in `src/db/index.ts`
  * (`lower(split_part(linkedin_url, '/in/', 2) …)`) — the column and this function are two
  * spellings of one rule, and `contact_identities` rows are written from this one.
+ *
+ * Returns "" when there is no `/in/<slug>`, exactly where the column is NULL. It used to fall
+ * back to the whole normalised URL, which gave a company or school page a non-empty "slug":
+ * two different people pasted with their employer's page then matched at 0.98 and
+ * auto-merged. "" is "no signal" to every caller (no identity key, no duplicate match).
  */
 export function linkedinSlug(url: string | null | undefined) {
   if (!url) return "";
   const match = url.match(/linkedin\.com\/in\/([^/?#]+)/i);
-  return match ? match[1].toLowerCase() : normalize(url);
+  return match ? match[1].toLowerCase() : "";
 }
 
 /**

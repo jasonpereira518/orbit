@@ -927,6 +927,8 @@ export async function fetchGmailMessageLinks(
           timeoutMs: 15_000,
         }
       );
+      // A 401 is the session, not the message — same reasoning as `fetchGmailHeaders`.
+      if (res.status === 401) throw new ReauthRequiredError("Gmail session expired — reconnect");
       if (!res.ok) return null;
       const msg = (await res.json()) as RawGmailMessage;
       const internal = Number(msg.internalDate);
@@ -945,11 +947,12 @@ export async function fetchGmailMessageLinks(
         authenticationResults: headerValue(msg, "Authentication-Results"),
         links: collectLinks(msg.payload, []).slice(0, 200),
       } satisfies GmailLinkMessage;
-    } catch {
+    } catch (err) {
+      if (err instanceof ReauthRequiredError) throw err;
       return null;
     }
   });
-    return results.filter((r): r is NonNullable<typeof r> => r !== null);
+  return results.filter((r): r is NonNullable<typeof r> => r !== null);
 }
 
 export type GmailMessageContent = GmailHeaderSummary & { body: string };
@@ -968,6 +971,10 @@ export async function fetchGmailMessages(
           timeoutMs: 15_000,
         }
       );
+      // A 401 is the session, not the message. Returning null here let a revoked grant read
+      // as "this sender has no mail", so the recruiter scan rejected every sender and moved
+      // its watermark past them. Thrown, it fails the scan with needs_reconnect instead.
+      if (res.status === 401) throw new ReauthRequiredError("Gmail session expired — reconnect");
       if (!res.ok) return null;
       const msg = (await res.json()) as RawGmailMessage;
       const internal = Number(msg.internalDate);
@@ -986,7 +993,8 @@ export async function fetchGmailMessages(
         // characters and add nothing the classifier needs.
         body: extractBody(msg.payload).slice(0, 4000),
       } satisfies GmailMessageContent;
-    } catch {
+    } catch (err) {
+      if (err instanceof ReauthRequiredError) throw err;
       return null;
     }
   });
@@ -1183,9 +1191,12 @@ export async function fetchGmailThread(
         timeoutMs: 15_000,
       }
     );
+    // A 401 is the session, not the thread — same reasoning as `fetchGmailHeaders`.
+    if (res.status === 401) throw new ReauthRequiredError("Gmail session expired — reconnect");
     if (!res.ok) return null;
     return parseThread((await res.json()) as RawGmailThread, threadId);
-  } catch {
+  } catch (err) {
+    if (err instanceof ReauthRequiredError) throw err;
     return null;
   }
 }

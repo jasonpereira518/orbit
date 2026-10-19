@@ -135,7 +135,18 @@ export type MirrorInstruction =
    * A full refund or lost dispute of a subscription charge: status `canceled`, paid through
    * `periodEnd` (epoch seconds, = now), so `resolvePlan` drops to free immediately.
    */
-  | { type: "subscription_revoked"; userId: string; periodEnd: number; reason: RevocationReason }
+  | {
+      type: "subscription_revoked";
+      userId: string;
+      periodEnd: number;
+      reason: RevocationReason;
+      /**
+       * The refund / dispute event's `created`. Advances `subscription_event_at` like any
+       * other subscription write, so a subscription event created before the revocation but
+       * delivered after it is ignored as stale instead of re-granting the refunded plan.
+       */
+      eventAt?: Date | null;
+    }
   | null;
 
 export type StripeDecision = {
@@ -159,6 +170,11 @@ export type DecideContext = {
   lastSubscriptionEventAt?: Date | null;
   /** The mirror's current status, for the same-second tie-break. */
   currentSubscriptionStatus?: "active" | "past_due" | "canceled" | null;
+  /**
+   * The mirror's current `subscription_period_end`. Read so a cancellation can never extend
+   * a subscription that has already ended — above all one a full refund revoked.
+   */
+  currentSubscriptionPeriodEnd?: Date | null;
   /**
    * What the charge behind a full refund or a lost dispute paid for. Only read for
    * `charge.refunded` and `charge.dispute.closed`. Absent means "unknown" — which is what
@@ -498,7 +514,7 @@ const NO_REVOCATION: Revocation = { mirror: null, bookings: [] };
  */
 function revocationFor(
   reason: RevocationReason,
-  event: Pick<Stripe.Event, "id">,
+  event: Pick<Stripe.Event, "id" | "created">,
   ctx: DecideContext,
   userId: string,
   eventAt: Date,
@@ -528,6 +544,8 @@ function revocationFor(
         userId,
         reason,
         periodEnd: Math.floor(ctx.now.getTime() / 1000),
+        // Only a real `created` moves the ordering watermark, as for subscription events.
+        eventAt: typeof event.created === "number" ? new Date(event.created * 1000) : null,
       },
       // Keyed by the EVENT and carrying only MRR; the cash rows beside it are keyed by
       // their own objects and carry only cash.
@@ -815,6 +833,23 @@ export function decideStripeEvent(
       const monthlyCents = Math.max(0, listCents - offCents);
 
       /*
+       * A cancellation never extends a mirror that is already canceled. Stripe's
+       * `current_period_end` on a `deleted` (or an `updated` with status canceled) is the
+       * period the subscriber PAID for, and normally equals what the mirror already holds, so
+       * a normal cancel still keeps access to the period end. The case it changes is a full
+       * refund or lost dispute: the revocation ended the period at the refund, and the
+       * operator's "refund, then cancel" must not hand back the refunded period.
+       */
+      const currentEnd = ctx.currentSubscriptionPeriodEnd ?? null;
+      const periodEnd =
+        mirrorStatus === "canceled" &&
+        ctx.currentSubscriptionStatus === "canceled" &&
+        currentEnd &&
+        shape.periodEnd !== null
+          ? Math.min(shape.periodEnd, Math.floor(currentEnd.getTime() / 1000))
+          : shape.periodEnd;
+
+      /*
        * A terminal event forces the recurring value to zero rather than re-deriving it.
        *
        * `customer.subscription.deleted` fires AT the period end, so `periodEnd > now` is a
@@ -828,7 +863,7 @@ export function decideStripeEvent(
         : mirrorStatus === null
           ? 0
           : mirrorStatus === "canceled"
-            ? shape.periodEnd && shape.periodEnd * 1000 > eventAt.getTime()
+            ? periodEnd && periodEnd * 1000 > eventAt.getTime()
               ? monthlyCents
               : 0
             : monthlyCents;
@@ -842,7 +877,7 @@ export function decideStripeEvent(
           plan,
           status: mirrorStatus,
           periodStart: shape.periodStart,
-          periodEnd: shape.periodEnd,
+          periodEnd,
           monthlyCents: plan ? monthlyCents : null,
           interval: plan ? shape.interval : null,
           stripeCustomerId: customerIdOf(subscription),
