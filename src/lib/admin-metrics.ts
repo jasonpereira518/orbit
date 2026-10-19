@@ -1,6 +1,7 @@
 import { desc, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { managedKeysConfigured } from "@/lib/ai-access";
+import { initialsFromName } from "@/lib/initials";
 import {
   chatMessages,
   contacts,
@@ -115,11 +116,10 @@ export function initialsFor(row: {
 }): string {
   const first = row.firstName?.trim();
   const last = row.lastName?.trim();
-  if (first || last) {
-    return `${first?.[0] ?? ""}${last?.[0] ?? ""}`.toUpperCase();
-  }
+  // Grapheme-safe and letter-only: `first[0]` split emoji and accented names in half.
+  if (first || last) return initialsFromName(`${first ?? ""} ${last ?? ""}`);
   const email = row.email?.trim();
-  if (email) return email.slice(0, 2).toUpperCase();
+  if (email) return initialsFromName(email.split("@")[0] ?? email);
   // `user_2abc…` — the prefix is identical for everyone, so skip it.
   return row.userId.replace(/^user_/, "").slice(0, 2).toUpperCase();
 }

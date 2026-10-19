@@ -38,7 +38,7 @@ export function ReminderDoneSnooze({ id }: { id: string }) {
     <div className="flex items-center gap-1 pointer-coarse:gap-4">
       {queued && (
         <span
-          className="flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+          className="flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-2xs font-medium text-muted-foreground"
           title="Saved on this device — it syncs when you’re back online"
         >
           <CloudUpload className="size-3" aria-hidden />

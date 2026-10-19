@@ -183,10 +183,11 @@ export function PlanSettings({
               accent.badge
             )}
           >
+            {/* Two sweeps, then it rests off-frame: an endless loop needs a pause control (SC 2.2.2). */}
             {accent.glint && (
               <span
                 aria-hidden="true"
-                className="plan-badge-glint pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/70 to-transparent"
+                className="plan-badge-glint pointer-events-none absolute [animation-iteration-count:2]! [animation-fill-mode:forwards]! inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/70 to-transparent"
               />
             )}
             {/* Above the glint, which is positioned. */}

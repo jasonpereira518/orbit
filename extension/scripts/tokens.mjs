@@ -1,10 +1,10 @@
 /**
  * Keeps the extension's design tokens in step with the Orbit app.
  *
- * The app's globals.css can't just be imported: it pulls in shadcn's Tailwind
- * layer, Clerk's theme CSS, landing-page gradients, and graph styles — tens of
- * KB of irrelevance for a 400px panel, plus a hard dependency on the Next app's
- * node_modules from a separate Vite project.
+ * The app's stylesheet can't just be imported: globals.css pulls in shadcn's Tailwind
+ * layer and Clerk's theme CSS, and theme.css (where the token blocks live) carries
+ * landing-page gradients and graph styles — tens of KB of irrelevance for a 400px panel,
+ * plus a hard dependency on the Next app's node_modules from a separate Vite project.
  *
  * So the token blocks are copied, and this script is what stops the copy from
  * drifting. `sync` regenerates, `check` fails the build on divergence.
@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const SOURCE = join(here, "../../src/app/globals.css");
+const SOURCE = join(here, "../../src/app/theme.css");
 const TARGET = join(here, "../src/styles/tokens.css");
 
 /** Pull a top-level block by its selector, brace-matched. */
@@ -50,7 +50,7 @@ function generate() {
   return [
     "/*",
     " * GENERATED — do not edit by hand.",
-    " * Copied from src/app/globals.css by scripts/tokens.mjs.",
+    " * Copied from src/app/theme.css by scripts/tokens.mjs.",
     " * Run `npm run tokens:sync` after changing the app's tokens;",
     " * `npm run check:tokens` fails the build if these drift.",
     " */",
@@ -73,7 +73,7 @@ if (mode === "sync") {
   }
   if (readFileSync(TARGET, "utf8") !== generated) {
     console.error(
-      "tokens.css has drifted from the app's globals.css — run `npm run tokens:sync`."
+      "tokens.css has drifted from the app's theme.css — run `npm run tokens:sync`."
     );
     process.exit(1);
   }

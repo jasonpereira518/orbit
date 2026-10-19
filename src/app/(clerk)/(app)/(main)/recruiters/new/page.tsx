@@ -8,6 +8,8 @@ import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
+export const metadata = { title: "Log a recruiter" };
+
 export default async function NewRecruiterPage() {
   const gate = await pageVisibilityGate("page.recruiters");
   if (gate) return gate;

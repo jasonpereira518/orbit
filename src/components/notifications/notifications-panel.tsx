@@ -43,7 +43,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
-import { companyBrandColor } from "@/lib/company-brand";
+import { companyBrandText } from "@/lib/company-brand";
 import { playDing } from "@/lib/ding";
 import { ExtensionPromo } from "@/components/notifications/extension-promo";
 import { AccountAlerts } from "@/components/notifications/account-alerts";
@@ -249,7 +249,7 @@ export function NotificationsPanelButton({
           className="t-badge absolute -right-1 -top-1"
           data-open={badgeCount > 0}
         >
-          <span className="t-badge-dot flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
+          <span className="t-badge-dot flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-3xs font-semibold text-primary-foreground">
             {shownCount > 99 ? "99+" : shownCount}
           </span>
         </span>
@@ -540,7 +540,7 @@ function KeptRow({
         size="icon"
         variant="ghost"
         className={ICON_BTN}
-        aria-label="Dismiss notification"
+        aria-label={`Dismiss notification: ${entry.title}`}
         onClick={() => dismissKeptNotification(entry.id)}
       >
         <X className="h-3.5 w-3.5" />
@@ -615,7 +615,7 @@ function JobRow({ job }: { job: BackgroundJob }) {
           size="icon"
           variant="ghost"
           className={ICON_BTN}
-          aria-label="Dismiss"
+          aria-label={`Dismiss: ${job.label}`}
           onClick={() => dismissBackgroundJob(job.id)}
         >
           <X className="h-3.5 w-3.5" />
@@ -704,12 +704,12 @@ function NotificationRow({
           {item.company ? (
             <>
               {item.contactTitle ? ` · ${item.contactTitle}` : ""} ·{" "}
-              <span
-                className="font-medium"
-                style={{ color: companyBrandColor(item.company) ?? undefined }}
+              <bdi
+                className={cn("font-medium", companyBrandText(item.company)?.className)}
+                style={companyBrandText(item.company)?.style}
               >
                 {item.company}
-              </span>
+              </bdi>
             </>
           ) : item.body ? (
             ` · ${item.body}`
@@ -724,7 +724,7 @@ function NotificationRow({
           variant="ghost"
           className={ICON_BTN}
           disabled={pending}
-          aria-label="Snooze 7 days"
+          aria-label={`Snooze 7 days: ${item.title}`}
           title="Snooze 7 days"
           onClick={onSnooze}
         >
@@ -737,7 +737,7 @@ function NotificationRow({
           variant="ghost"
           className={ICON_BTN}
           disabled={pending}
-          aria-label="Mark done"
+          aria-label={`Mark done: ${item.title}`}
           title="Mark done"
           onClick={() => {
             playDing();

@@ -160,7 +160,7 @@ export function ConnectStep({
         <Stagger as="ol" className="grid gap-2 sm:grid-cols-3">
           {HOW_IT_WORKS.map((line, i) => (
             <StaggerItem as="li" key={line} className="flex gap-2.5 rounded-xl border border-border/60 bg-card/60 p-3 text-sm">
-              <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
+              <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-2xs font-semibold text-primary">
                 {i + 1}
               </span>
               <span className="text-foreground">{line}</span>

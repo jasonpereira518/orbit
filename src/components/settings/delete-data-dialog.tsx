@@ -182,7 +182,7 @@ export function DeleteDataDialog({ trigger }: { trigger: React.ReactNode }) {
           </div>
         </div>
 
-        <ul className="-mx-1 max-h-[45vh] space-y-1 overflow-y-auto px-1">
+        <ul className="-mx-1 max-h-[45dvh] space-y-1 overflow-y-auto px-1">
           {DATA_CATEGORY_META.map((category) => {
             const isLocked = locked.has(category.id);
             const checked = effective.has(category.id);

@@ -314,7 +314,7 @@ export default async function AdminMoneyPage() {
 
           {credits.managedAi.topSpenders.length > 0 && (
             <div className="mt-4 border-t border-border/60 pt-4">
-              <AdminTable
+              <AdminTable label="Credits and included AI, last 30 days"
                 minWidth="sm"
                 head={
                   <>
@@ -350,7 +350,7 @@ export default async function AdminMoneyPage() {
           {needsAttention.length === 0 ? (
             <EmptyState>Every subscription is current.</EmptyState>
           ) : (
-            <AdminTable minWidth="sm"
+            <AdminTable label="Subscription health" minWidth="sm"
               head={
                 <>
                   <Th>Account</Th>
@@ -402,7 +402,7 @@ export default async function AdminMoneyPage() {
               subscription lands here.
             </EmptyState>
           ) : (
-            <AdminTable
+            <AdminTable label="Recent movements"
               head={
                 <>
                   <Th>When</Th>

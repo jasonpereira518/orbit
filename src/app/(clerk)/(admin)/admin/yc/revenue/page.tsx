@@ -78,7 +78,7 @@ export default async function RevenuePage() {
             </span>
           }
         >
-          <AdminTable minWidth="none"
+          <AdminTable label="MRR movement (30d)" minWidth="none"
             head={
               <>
                 <Th>Movement</Th>

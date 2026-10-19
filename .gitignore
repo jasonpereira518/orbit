@@ -69,3 +69,11 @@ extension/public/inject/
 
 # node:test golden mismatches (src/test-support/golden.ts writes <golden>.actual)
 *.actual
+
+# latency harness (latency/README.md): per-tier PGlite databases, API keys, and raw runs
+/latency/.data/
+/latency/results/*
+!/latency/results/baseline/
+/latency/results/baseline/*.log
+!/latency/results/after/
+/latency/results/after/*.log

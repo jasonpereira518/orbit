@@ -32,7 +32,7 @@ export function RemindersShortcutsHelp({
                 {s.keys.map((k) => (
                   <kbd
                     key={k}
-                    className="min-w-5 rounded border border-border/80 bg-muted/60 px-1 py-px text-center font-mono text-[11px] text-foreground"
+                    className="min-w-5 rounded border border-border/80 bg-muted/60 px-1 py-px text-center font-mono text-2xs text-foreground"
                   >
                     {k}
                   </kbd>

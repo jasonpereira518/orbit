@@ -88,7 +88,7 @@ export const CoachRail = forwardRef<
       >
         <div
           className={cn(
-            "liquid-glass flex max-h-[min(60vh,32rem)] flex-col overflow-y-auto rounded-2xl",
+            "liquid-glass flex max-h-[min(60dvh,32rem)] flex-col overflow-y-auto rounded-2xl",
             desktopCollapsed ? "w-auto max-w-[24rem] p-1.5" : "w-[20rem] p-4",
           )}
         >
@@ -172,7 +172,7 @@ export const CoachRail = forwardRef<
             )}
           </button>
           {!collapsed && (
-            <div className="max-h-[50vh] overflow-y-auto px-4 pb-4">
+            <div className="max-h-[50dvh] overflow-y-auto px-4 pb-4">
               <RailBody {...props} compact />
             </div>
           )}
@@ -213,7 +213,7 @@ function RailBody({
     <div className="relative flex flex-col gap-3">
       {!compact && (
         <div className="flex items-start justify-between gap-2">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
             Stop {index + 1} of {total}
           </p>
           <div className="-mr-1 -mt-1 flex items-center">
@@ -405,7 +405,7 @@ function ExitConfirm({
         }
       }}
     >
-      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+      <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
         Leaving the tour
       </p>
       <h2

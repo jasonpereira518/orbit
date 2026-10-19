@@ -62,6 +62,7 @@ export default async function AdminAvatarsPage({
           <EmptyState>{q ? "No shared photo row for that slug." : "Nothing is blocked."}</EmptyState>
         ) : (
           <AdminTable
+            label="Shared photos"
             minWidth="sm"
             head={
               <>

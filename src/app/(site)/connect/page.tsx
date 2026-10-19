@@ -20,7 +20,7 @@ import { isClerkConfigured, isDemoMode } from "@/lib/auth";
  * it reads as part of the same family without joining that set.
  */
 export const metadata: Metadata = {
-  title: "Use Orbit from Claude and ChatGPT — Orbit",
+  title: "Use Orbit from Claude and ChatGPT",
   description:
     "Connect Orbit to Claude, ChatGPT, Claude Code or Cursor. Ask who you know, log what you discussed, and let your assistant draft a message you approve before it sends.",
 };

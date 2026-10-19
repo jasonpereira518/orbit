@@ -45,7 +45,7 @@ export function SectionTabs({
       <span aria-hidden className="absolute inset-x-0 bottom-0 h-px bg-border/60" />
       <div
         ref={scroller}
-        className="relative flex gap-1 overflow-x-auto [scrollbar-width:none]"
+        className="relative flex gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {tabs.map((tab) => {
           const active =

@@ -25,6 +25,8 @@ import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { fetchRadarBriefing } from "@/actions/radar";
 
+export const metadata = { title: "Dashboard" };
+
 async function AgentDraftsSection() {
   const drafts = await listPendingAgentSends(await requireUserId());
   return <AgentDraftsCard drafts={drafts} />;

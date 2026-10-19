@@ -6,6 +6,7 @@ import { isTourExampleSource } from "@/lib/onboarding-examples/marker";
 import { ComposeButton } from "@/components/email/compose-button";
 import { AskAboutButton } from "@/components/chat/ask-about-button";
 import {
+  Fragment,
   useEffect,
   useRef,
   useState,
@@ -17,6 +18,7 @@ import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { ContactChannelIcons } from "@/components/contacts/contact-profile-icons";
 import { ContactEditSheet } from "@/components/contacts/contact-edit-sheet";
 import {
+  avatarRouteUrl,
   isUnusableAvatarUrl,
   resolveContactPhotoUrl,
 } from "@/lib/contact-avatar-url";
@@ -45,7 +47,7 @@ function resolvePreviewSrc(input: {
     Boolean(input.profileImageUrl?.trim()) &&
     !isUnusableAvatarUrl(input.profileImageUrl);
   if (hasStored || input.linkedinUrl?.trim()) {
-    return `/api/avatars/${input.contactId}`;
+    return avatarRouteUrl(input.contactId, hasStored ? input.profileImageUrl : null);
   }
   const resolved = resolveContactPhotoUrl(input.profileImageUrl);
   if (resolved) return resolved;
@@ -172,7 +174,10 @@ function StickyMiniBar({
         left: frame.left,
         width: frame.width,
       }}
-      aria-hidden={!visible}
+      // `inert`, not `aria-hidden`: while slid away its buttons were still in the tab order.
+      inert={!visible}
+      role="region"
+      aria-label={`${fullName}, pinned summary`}
     >
       <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-2.5 md:px-10">
         <ContactAvatar
@@ -185,15 +190,15 @@ function StickyMiniBar({
           className="size-9 shrink-0"
         />
         <p className="min-w-0 flex-1 truncate font-[family-name:var(--font-display)] text-lg text-ink">
-          {displayName}
+          <bdi>{displayName}</bdi>
           {role ? (
             <>
-              <span className="mx-1.5 text-muted-foreground/70" aria-hidden>
+              <span className="mx-1.5 text-muted-foreground-subtle" aria-hidden>
                 ·
               </span>
-              <span className="font-sans text-base font-normal text-muted-foreground">
+              <bdi className="font-sans text-base font-normal text-muted-foreground">
                 {role}
-              </span>
+              </bdi>
             </>
           ) : null}
         </p>
@@ -260,8 +265,9 @@ export function ContactProfileHero({
   const hasRealPhoto =
     Boolean(profileImageUrl?.trim()) && !isUnusableAvatarUrl(profileImageUrl);
 
-  const roleLine =
-    [title, company].filter(Boolean).join(" · ") || "No role yet";
+  // Each part isolated (<bdi>): an Arabic title beside a Latin company otherwise reorders
+  // the whole line, separator included, for both kinds of reader.
+  const roleParts = [title, company].filter((part): part is string => Boolean(part));
   const metaBits = [school, location].filter(Boolean);
 
   useEffect(() => {
@@ -294,8 +300,10 @@ export function ContactProfileHero({
 
     function measureChrome() {
       const el = sentinelRef.current;
+      // The app's scroll column, not the <main> landmark inside it: the landmark is the
+      // centred max-width content, and the compact bar spans the whole column.
       const main =
-        el?.closest("main") ?? document.querySelector("main");
+        el?.closest("#app-main-scroll") ?? document.getElementById("app-main-scroll");
       const next =
         main instanceof HTMLElement
           ? main.getBoundingClientRect()
@@ -419,16 +427,37 @@ export function ContactProfileHero({
             {/* `break-words` so a pasted URL or an over-long name wraps instead of
                 running off the right edge, past the Edit button and out of the card. */}
             <h1 className="flex flex-wrap items-center gap-x-2 font-[family-name:var(--font-display)] text-3xl break-words text-ink sm:text-4xl">
-              {displayName}
+              {/* Its own box with `min-w-0` + `wrap-anywhere`: as a bare flex item the name's
+                  minimum width was its whole unbroken length, so a 120-character name
+                  pushed the page 1,600px wider than a phone. */}
+              <span className="min-w-0 max-w-full wrap-anywhere">
+                <bdi>{displayName}</bdi>
+              </span>
               {isTourExampleSource(source) && <ExampleTag className="align-middle" />}
             </h1>
             {preferredName && preferredName !== fullName ? (
-              <p className="mt-0.5 text-sm text-muted-foreground">{fullName}</p>
+              <p className="mt-0.5 text-sm wrap-anywhere text-muted-foreground">
+                <bdi>{fullName}</bdi>
+              </p>
             ) : null}
-            <p className="mt-1.5 text-base text-muted-foreground">{roleLine}</p>
+            <p className="mt-1.5 text-base wrap-anywhere text-muted-foreground">
+              {roleParts.length > 0
+                ? roleParts.map((part, i) => (
+                    <Fragment key={i}>
+                      {i > 0 ? " · " : null}
+                      <bdi>{part}</bdi>
+                    </Fragment>
+                  ))
+                : "No role yet"}
+            </p>
             {metaBits.length > 0 ? (
-              <p className="mt-1 text-sm text-muted-foreground/90">
-                {metaBits.join(" · ")}
+              <p className="mt-1 text-sm wrap-anywhere text-muted-foreground">
+                {metaBits.map((part, i) => (
+                  <Fragment key={i}>
+                    {i > 0 ? " · " : null}
+                    <bdi>{part}</bdi>
+                  </Fragment>
+                ))}
               </p>
             ) : null}
           </div>

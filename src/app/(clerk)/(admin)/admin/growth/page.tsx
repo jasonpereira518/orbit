@@ -451,7 +451,7 @@ export default async function AdminGrowthPage({
           {activation.every((p) => p.signed === 0) ? (
             <EmptyState>No signups in this window.</EmptyState>
           ) : (
-            <AdminTable
+            <AdminTable label="Activation by signup cohort"
               minWidth="sm"
               head={
                 <>
