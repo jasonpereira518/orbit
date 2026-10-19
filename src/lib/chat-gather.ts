@@ -494,8 +494,8 @@ export function answerDeadlineMs(requestStartedAt: number, now = Date.now()): nu
 }
 
 /**
- * The one entry point both chat paths call — the streaming route and the `askNetwork`
- * action — so the routing decision cannot drift between them.
+ * The one entry point for the chat routing decision, called by the streaming route and the
+ * eval harness, so it cannot drift between them.
  *
  * Mutates `ctx.allowedContacts` on purpose: `ctx.filterRecommendations` closes over that set,
  * and a person the research step found must survive the filter like anyone retrieval found.

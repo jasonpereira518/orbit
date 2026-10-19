@@ -12,8 +12,8 @@
  *
  * The threat here is not the obvious one. Text written through `log_interaction`, `add_note`
  * or `update_contact` lands in `interactions.raw_notes` and `contacts.notes`, which
- * `prepareChatContext` then feeds verbatim into Orbit's OWN chat prompt on every `askNetwork`
- * call, and which `buildContactEmbeddingContent` folds into the embedding. So one poisoned
+ * `prepareChatContext` then feeds verbatim into Orbit's OWN chat prompt on every chat
+ * request, and which `buildContactEmbeddingContent` folds into the embedding. So one poisoned
  * note becomes a standing instruction that fires later, on a surface the attacker never
  * touched, for as long as the note exists. Sanitising the input helps; fencing the output
  * helps; neither is a fix.

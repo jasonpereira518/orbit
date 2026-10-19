@@ -187,27 +187,6 @@ export async function endMeetingSessionRow(
     .returning();
   return row;
 }
-
-export async function updateMeetingDetails(
-  userId: string,
-  sessionId: string,
-  input: { title?: string | null; attendees?: MeetingAttendee[] },
-): Promise<MeetingSessionRow | null> {
-  const session = await getMeetingSession(userId, sessionId);
-  if (!session) return null;
-  const db = await getDb();
-  const [row] = await db
-    .update(meetingSessions)
-    .set({
-      ...(input.title !== undefined ? { title: cleanTitle(input.title) } : {}),
-      ...(input.attendees !== undefined ? { attendees: cleanAttendees(input.attendees) } : {}),
-      updatedAt: new Date(),
-    })
-    .where(eq(meetingSessions.id, session.id))
-    .returning();
-  return row;
-}
-
 /** A provider event or series id from the client: shape-checked, since it is only ever compared. */
 function calendarIdOrNull(v: unknown): string | null {
   return typeof v === "string" && /^[\w@.-]{1,256}$/.test(v) ? v : null;

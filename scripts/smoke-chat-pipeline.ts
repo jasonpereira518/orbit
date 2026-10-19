@@ -1,11 +1,12 @@
 /**
- * Structural checks that askNetwork runs the new pipeline: parallel
+ * Structural checks that the chat route runs the new pipeline: parallel
  * embed+understand, hybrid retrieval at CANDIDATE_POOL, rerank, budget.
  *
  * Retrieval itself lives in `src/lib/chat-context.ts`, not `src/actions/chat.ts` —
- * `prepareChatContext` is shared by the JSON action and the streaming route so the two
- * cannot drift, which is exactly what a copy of this pipeline inlined in chat.ts alone
- * would risk. The checks below scan both files rather than assuming one.
+ * `prepareChatContext` is the single retrieval entry point (the JSON action that used
+ * to share it was removed), and a copy of this pipeline inlined in chat.ts would
+ * reintroduce the drift it exists to prevent. The checks below scan the files rather than
+ * assuming one.
  *
  * Run: npx tsx scripts/smoke-chat-pipeline.ts
  */
@@ -54,28 +55,12 @@ async function main() {
   // The retrieval pipeline must live in the shared module, not be re-inlined into the
   // action — that duplication is exactly what prepareChatContext exists to prevent.
   check("retrieval lives in chat-context.ts, not re-inlined in the action", !actionSrc.includes("hybridSearchContacts"));
-  check("askNetwork delegates to prepareChatContext", actionSrc.includes("prepareChatContext"));
+  check("the streaming route delegates to prepareChatContext", routeSrc.includes("prepareChatContext"));
 
-  // Both new chatWithNetwork/chatWithNetworkStream parameters are optional-with-default,
-  // so a call site that simply omits the argument compiles clean and silently reverts that
-  // path to no focused profile — exactly the streaming/action divergence prepareChatContext
-  // exists to prevent. tsc cannot catch a missing trailing optional, so this is a real gap
-  // to guard structurally, the same way the checks above guard the rest of the pipeline.
-  const actionCall = extractCall(actionSrc, "chatWithNetwork");
-  check("the chatWithNetwork call site exists in the action", actionCall.length > 0, actionSrc);
-  check(
-    "askNetwork passes ctx.focusProfile to chatWithNetwork",
-    actionCall.includes("ctx.focusProfile"),
-    actionCall
-  );
-  // Same trailing-optional hole, and a costlier one: an omitted writing-preferences argument
-  // silently makes one of the two chat paths ignore the user's notes.
-  check(
-    "askNetwork passes ctx.writingInstructions to chatWithNetwork",
-    actionCall.includes("ctx.writingInstructions"),
-    actionCall
-  );
-
+  // `chatWithNetworkStream`'s trailing parameters are optional-with-default, so a call site
+  // that simply omits one compiles clean and silently reverts the chat path to no focused
+  // profile or no writing preferences. tsc cannot catch a missing trailing optional, so this
+  // guards it structurally, the same way the checks above guard the rest of the pipeline.
   const routeCall = extractCall(routeSrc, "chatWithNetworkStream");
   check("the chatWithNetworkStream call site exists in the streaming route", routeCall.length > 0, routeSrc);
   check(

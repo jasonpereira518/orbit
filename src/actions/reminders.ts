@@ -435,42 +435,6 @@ export async function createReminderList(name: string) {
     return row;
   });
 }
-
-export async function renameReminderList(id: string, name: string) {
-  return asActionResult(async () => {
-    const userId = await requireUserId();
-    const db = await getDb();
-
-    const list = await findReminderListForUser(userId, id);
-    if (!list) throw new Error("List not found");
-    if (list.isInbox === 1) throw new UserFacingError("The Inbox can’t be renamed");
-
-    const display = displayListName(name);
-    if (!display) throw new UserFacingError("Give the list a name first");
-    const normalized = normalizeListName(display);
-    if (normalized === "inbox") throw new UserFacingError("Inbox is taken — pick another name");
-
-    const clash = await db.query.reminderLists.findFirst({
-      where: and(
-        eq(reminderLists.userId, userId),
-        eq(reminderLists.nameNormalized, normalized)
-      ),
-    });
-    if (clash && clash.id !== id) {
-      throw new UserFacingError("You already have a list with that name");
-    }
-
-    const [row] = await db
-      .update(reminderLists)
-      .set({ name: display, nameNormalized: normalized })
-      .where(and(eq(reminderLists.id, id), eq(reminderLists.userId, userId)))
-      .returning();
-
-    revalidatePathIfRequestScoped("/reminders");
-    return row;
-  });
-}
-
 /**
  * The list editor's save: any of name, icon and colour. `null` resets icon or colour to the
  * default. The Inbox keeps its name (Jason's call — it's the list Orbit files things into),

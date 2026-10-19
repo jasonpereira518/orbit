@@ -28,9 +28,7 @@ import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { listActiveGoalTexts } from "@/actions/goals";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { settle, unwrap } from "@/lib/settled";
-import { type CompanyResolver } from "@/lib/companies";
 import {
-  createContactsBulkForUser,
   deleteInteractionForUser,
   logInteractionForUser,
   updateContactForUser,
@@ -720,26 +718,6 @@ export async function createContactDetailed(
     .limit(1);
   return { contact, outcome, reason: reason ?? null };
 }
-
-/**
- * Bulk-create contacts in a single insert, using a preloaded `CompanyResolver`
- * (see `createCompanyResolver`) instead of a per-row company lookup, and a
- * single batched embedding pass instead of one embedding call per contact.
- * For bulk imports only — general callers should use `createContact`.
- */
-export async function createContactsBulk(
-  inputs: ContactInput[],
-  companyResolve: CompanyResolver,
-  options?: ContactWriteOptions
-) {
-  return createContactsBulkForUser(
-    await requireUserId(),
-    inputs.map(clientContactInput),
-    companyResolve,
-    options
-  );
-}
-
 export async function updateContact(
   id: string,
   input: Partial<ContactInput>,

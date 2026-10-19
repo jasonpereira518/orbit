@@ -32,7 +32,6 @@ import {
   loadMeetingSelf,
   resumeMeetingSessionRow,
   storeMeetingDigest,
-  updateMeetingDetails,
   type MeetingAttendee,
 } from "@/lib/meeting-sessions";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
@@ -142,21 +141,6 @@ export async function endMeetingSession(
     return { ok: false, error: await actionFailure(err, "Couldn’t stop the meeting", "meetings.end-meeting-session") };
   }
 }
-
-export async function saveMeetingDetails(
-  id: string,
-  input: { title?: string | null; attendees?: MeetingAttendee[] }
-): Promise<{ ok: true } | Fail> {
-  try {
-    const userId = await requireUserId();
-    const row = await updateMeetingDetails(userId, id, input);
-    if (!row) return { ok: false, error: "That meeting no longer exists" };
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: await actionFailure(err, "Couldn’t update the meeting", "meetings.save-meeting-details") };
-  }
-}
-
 export type MeetingTranscriptView = {
   id: string;
   title: string | null;

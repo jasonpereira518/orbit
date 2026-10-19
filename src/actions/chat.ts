@@ -9,15 +9,9 @@ import {
   interactions,
   meetingSessions,
   meetingTranscriptSegments,
-  type ChatRecommendation,
 } from "@/db/schema";
-import { chatWithNetwork } from "@/lib/ai";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { requireUserId } from "@/lib/auth";
-import { prepareChatContext } from "@/lib/chat-context";
-import { maybeGather } from "@/lib/chat-gather";
-import { citedIds, stripUnresolvedMarkers } from "@/lib/chat-evidence";
-import { validateProposedActions } from "@/lib/chat-proposed-actions";
 import {
   buildChatSuggestions,
   GENERIC_SUGGESTIONS,
@@ -25,19 +19,14 @@ import {
   type ChatSuggestion,
 } from "@/lib/chat-suggestions";
 import { loadSuggestionSignals } from "@/lib/chat-suggestions-data";
-import { discardUnansweredQuestion, persistAssistantTurn } from "@/lib/chat-persist";
-import { discardCountAfter, loadVersions, switchVersion } from "@/lib/chat-versions";
+import { loadVersions, switchVersion } from "@/lib/chat-versions";
 import { isRefineKind, refineDraft } from "@/lib/chat-refine";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 import { requireUserForSurface } from "@/lib/plan-guards";
-import { traced } from "@/lib/perf-trace";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { actionFailure } from "@/lib/action-failure";
-
-
-
 
 /** How many threads the history list reads at a time. */
 const CHAT_THREAD_PAGE = 100;
@@ -322,20 +311,6 @@ export async function getEvidenceSnippet(messageId: string, id: string) {
     snippet: (row.aiSummary || row.rawNotes || "").trim().slice(0, 600),
   };
 }
-
-/** How many messages editing `assistantMessageId` would discard — for the confirm dialog. */
-export async function previewEditDiscard(assistantMessageId: string) {
-  const userId = await requireUserForSurface("page.chat");
-  const db = await getDb();
-  const message = await db.query.chatMessages.findFirst({
-    where: and(eq(chatMessages.id, assistantMessageId), eq(chatMessages.userId, userId), eq(chatMessages.role, "assistant")),
-    columns: { threadId: true },
-  });
-  if (!message) throw new Error("Answer not found");
-  const discardCount = await discardCountAfter(db, userId, message.threadId, assistantMessageId);
-  return { discardCount };
-}
-
 /** Show a different version of the last turn — the `‹ 2/3 ›` switcher. */
 export async function switchChatVersion(threadId: string, slot: string, version: number) {
   const userId = await requireUserForSurface("page.chat");
@@ -358,136 +333,6 @@ export async function deleteChatThread(threadId: string) {
     .where(and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)));
   return { ok: true as const };
 }
-
-export async function askNetwork(
-  question: string,
-  options?: { threadId?: string; contactId?: string; contextContactIds?: string[] }
-) {
-  // Traced because this is the one action with no upper bound of its own: retrieval plus
-  // a full model completion, on a user's own key. A slow provider used to be invisible.
-  return traced("chat.askNetwork", () => askNetworkInner(question, options));
-}
-
-async function askNetworkInner(
-  question: string,
-  options?: { threadId?: string; contactId?: string; contextContactIds?: string[] }
-) {
-  const requestStartedAt = Date.now();
-  // Hoisted so the failure path below can reach them: the question is written before the
-  // model runs, and if nothing answers it, it has to go.
-  let askedUserId: string | null = null;
-  let askedMessageId: string | null = null;
-  try {
-    const userId = await requireUserForSurface("page.chat");
-    askedUserId = userId;
-    await consumeBucket("chat", userId, RATE_LIMITS.chat);
-    const db = await getDb();
-    const threadId = options?.threadId ?? null;
-
-    // Everything the model is shown, with the independent lookups running side by side.
-    // Shared with the streaming route so the two paths cannot drift.
-    const ctx = await prepareChatContext(userId, question, {
-      threadId,
-      focusContactId: options?.contactId,
-      contextContactIds: options?.contextContactIds,
-    });
-
-    if (threadId) {
-      const [userRow] = await db
-        .insert(chatMessages)
-        .values({
-          threadId,
-          userId,
-          role: "user",
-          content: ctx.q,
-          attachedContacts: ctx.attachedPeople.map((p) => ({ id: p.id, name: p.name })),
-        })
-        .returning();
-      askedMessageId = userRow?.id ?? null;
-    }
-
-    // The same routing as the streaming route, so the two paths cannot answer differently.
-    const { evidence, notePassages } = await maybeGather(userId, ctx, { requestStartedAt });
-
-    const result = await chatWithNetwork(
-      userId,
-      ctx.scopedQuestion,
-      ctx.modelContacts,
-      ctx.priorTurns,
-      ctx.orgRosters,
-      ctx.attention,
-      ctx.modelRecruiters,
-      ctx.focusProfile,
-      ctx.attachedContext,
-      ctx.goals,
-      ctx.attentionLite,
-      evidence,
-      notePassages,
-      ctx.writingInstructions,
-      ctx.openReminders ?? null,
-      ctx.calendar?.text ?? null
-    );
-    const recommendations = ctx.filterRecommendations(
-      (result.recommendations || []) as ChatRecommendation[]
-    );
-    // No stream to clean up after here — the non-streaming path never shows an invented
-    // citation before it can be stripped, so this simply never persists one.
-    const validIds = new Set(Object.keys(result.evidence));
-    const { text: cleanAnswer } = stripUnresolvedMarkers(result.answer, validIds);
-    const citedEvidence = Object.fromEntries(citedIds(cleanAnswer).map((id) => [id, result.evidence[id]]));
-    const proposedActions = validateProposedActions(
-      result.proposedActions,
-      ctx.allowedContacts,
-      ctx.contactNames,
-      ctx.reminderTitles
-    );
-
-    const saved = await persistAssistantTurn(userId, threadId, ctx.thread?.title ?? null, ctx.q, {
-      answer: cleanAnswer,
-      recommendations,
-      evidence: citedEvidence,
-      proposedActions,
-    });
-
-    return {
-      ok: true as const,
-      threadId,
-      title: saved.title,
-      messageId: saved.messageId,
-      answer: cleanAnswer,
-      recommendations,
-      proposedActions,
-      retrieved: ctx.retrieved.map((c) => ({
-        id: c.id,
-        fullName: c.fullName,
-        company: c.company,
-        title: c.title,
-        relevance: c.relevance,
-      })),
-      focusedContactId: options?.contactId?.trim() || null,
-    };
-  } catch (err) {
-    // The question is already in the thread (it is written before the model runs, carrying
-    // the people attached to it). Nothing answered it, so it does not stay — see
-    // `discardUnansweredQuestion`.
-    if (askedUserId) {
-      await discardUnansweredQuestion(
-        askedUserId,
-        options?.threadId ?? null,
-        askedMessageId
-      ).catch(() => {});
-    }
-    // Returned as data, so unlike a throw it is never stripped in production — which
-    // made `toUserFacingError` (it keeps `err.message`) a leak that reached users. On the
-    // server the real error is still in hand, so `friendlyError` can recognise a genuine
-    // missing key; the key message is no longer the fallback for every other failure.
-    return {
-      ok: false as const,
-      error: await actionFailure(err, TOAST_COPY.chatFailed, "chat.ask-network"),
-    };
-  }
-}
-
 /**
  * The personalised cards under the composer, best first.
  *

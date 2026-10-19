@@ -27,7 +27,7 @@ import { useViewerPlan } from "@/components/viewer-plan";
 import { aiDenialFromMessage, FREE_LOW_CREDITS } from "@/lib/ai-access-copy";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 import { getFreeCreditsLeft } from "@/actions/credits";
-import { askNetwork, createChatThread } from "@/actions/chat";
+import { createChatThread } from "@/actions/chat";
 import { streamChat } from "@/lib/chat-stream-client";
 import {
   createStreamSmoother,
@@ -49,6 +49,7 @@ import type { KeywordSearchHit } from "@/lib/keyword-search";
 import { companyBrandText } from "@/lib/company-brand";
 import { cn } from "@/lib/utils";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import type { ChatResult } from "@/lib/chat-result";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
 /**
@@ -70,10 +71,6 @@ function preloadChatMarkdown() {
   void import("@/components/chat/chat-markdown");
 }
 
-type ChatResult = Extract<
-  Awaited<ReturnType<typeof askNetwork>>,
-  { ok: true }
->;
 
 type AskBarContact = NonNullable<Awaited<ReturnType<typeof getAskBarContact>>>;
 

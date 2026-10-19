@@ -94,7 +94,7 @@ export type BucketPolicy = { limit: number; windowSec: number };
 
 /** Standard budgets, so call sites read as intent rather than numbers. */
 export const RATE_LIMITS = {
-  /** `askNetwork` / `/api/chat`: a full retrieval plus a model completion per call. */
+  /** `/api/chat`: a full retrieval plus a model completion per call. */
   chat: { limit: 20, windowSec: 60 },
   /**
    * Any person-to-person email through the outbox (`src/lib/email/outbox.ts`) — Chat,

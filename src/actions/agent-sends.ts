@@ -13,19 +13,9 @@
  */
 import { revalidatePath } from "next/cache";
 import { approveAgentSend } from "@/lib/agent-send-approve";
-import {
-  listPendingAgentSends,
-  rejectAgentSend,
-  type AgentSendSummary,
-} from "@/lib/agent-sends";
+import { rejectAgentSend } from "@/lib/agent-sends";
 import { getCurrentUserProfile, requireUserId } from "@/lib/auth";
 import { asActionResult, UserFacingError } from "@/lib/errors";
-
-export async function listAgentDrafts(): Promise<AgentSendSummary[]> {
-  const userId = await requireUserId();
-  return listPendingAgentSends(userId);
-}
-
 export async function approveAgentDraft(
   draftId: string,
   edits?: { subject?: string; body?: string; confirmRecipient?: boolean }

@@ -872,7 +872,7 @@ export async function runImportJob(importId: string): Promise<void> {
           { outcome: ImportRowOutcome; snapshot: ImportRevertSnapshot | null }
         >();
 
-        // `createContactsBulk` admits only what the plan's contact headroom allows, taking
+        // `createContactsBulkForUser` admits only what the plan's contact headroom allows, taking
         // from the front, so anything past `created.length` was refused by the cap rather
         // than failed. These rows must reach a terminal status: the loop re-queries pending
         // rows every pass, so leaving them pending would spin until the time budget and then

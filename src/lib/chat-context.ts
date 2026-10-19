@@ -68,7 +68,7 @@ import { sanitizeDraft } from "@/lib/chat-draft";
  * Everything the model is shown for one question, assembled with the independent lookups
  * running side by side.
  *
- * Shared by the streaming route (`/api/chat`) and the `askNetwork` server action so the
+ * Shared by the streaming route (`/api/chat`) and the eval harness so the
  * two cannot drift. The chain used to run strictly in sequence — search, then rosters,
  * then the attention brief, then recruiters, then the thread — although only the knowledge
  * snippets depend on the search results; the rest read `q` and `userId` alone.
@@ -239,8 +239,8 @@ export type ChatContext = {
   focusProfile: string | null;
   /**
    * The user's own notes on how answers should read (`user_settings.writing_instructions`),
-   * or null. Read here, beside the rest of the request's context, so the streaming route and
-   * `askNetwork` cannot disagree about whether it applies. The client never sends it.
+   * or null. Read here, beside the rest of the request's context, so every caller
+   * agrees about whether it applies. The client never sends it.
    */
   writingInstructions: string | null;
   /**
@@ -719,7 +719,7 @@ export async function prepareChatContext(
     contextContactIds?: readonly string[] | null;
     /**
      * Narrates each stage as it runs. Supplied by the streaming route; omitted by
-     * `askNetwork`, which has no channel to report on. See `@/lib/chat-steps`.
+     * callers with no channel to report on (the eval harness). See `@/lib/chat-steps`.
      */
     steps?: StepEmitter;
     /**

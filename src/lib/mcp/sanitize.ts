@@ -4,7 +4,7 @@
  * The reason this exists is second-order and specific to Orbit. Text written through
  * `log_interaction` or the public API lands in `interactions.raw_notes` and `contacts.notes`.
  * Those columns are read back by `prepareChatContext` and fed verbatim into Orbit's OWN chat
- * prompt on every `askNetwork` call, and by `buildContactEmbeddingContent` into the embedding.
+ * prompt on every chat request, and by `buildContactEmbeddingContent` into the embedding.
  * So a single poisoned note is not a one-shot attack on the agent that wrote it — it is a
  * standing instruction that fires later, on a surface the attacker never touched, every time
  * the user asks a question that retrieves that contact.

@@ -122,7 +122,7 @@ export function AppShell({
   const isKnowledge = pathname === "/knowledge";
   const isViewportLocked = isChat || isConstellation || isReminders || isKnowledge;
   const smallSky = useSmallSky();
-  // The ask bar is not a link to /chat — it calls `askNetwork` inline, so it IS chat.
+  // The ask bar is not a link to /chat — it streams from /api/chat inline, so it IS chat.
   // Hiding the Chat page while leaving the bar up would leave the feature fully reachable
   // from every screen, which is the whole thing hiding is supposed to prevent.
   const showAskBar =
