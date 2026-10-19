@@ -19,7 +19,7 @@ import { isToolError, releasedTools, runTool, toolsFor, type OrbitTool } from "@
 
 /** "Searching your notes…" → "Searched your notes…", for a lookup that finished. */
 export function pastTense(label: string): string {
-  return label.replace(/^(Search|Check|Look)ing\b/, "$1ed").replace(/^Reading\b/, "Read");
+  return label.replace(/^(Search|Check|Look|Count)ing\b/, "$1ed").replace(/^Reading\b/, "Read");
 }
 
 /** What one lookup came back with, as the end of its step line. */
@@ -86,6 +86,10 @@ export function describeCall(call: ToolCall, ctx: ChatContext): string {
       return "Checking when you're free";
     case "meeting_context":
       return text("query") ? `Preparing for “${text("query")}”` : "Preparing for your meeting";
+    case "query_contacts":
+      return typeof args.group_by === "string" ? `Counting your contacts by ${text("group_by")}` : "Counting your contacts";
+    case "query_interactions":
+      return typeof args.group_by === "string" ? `Counting your interactions by ${text("group_by")}` : "Counting your interactions";
     default:
       return "Looking something up";
   }
@@ -102,6 +106,22 @@ export function contactsIn(name: string, result: unknown): Array<{ id: string; n
   switch (name) {
     case "search_contacts":
       return rows.flatMap((r) => (str(r?.id) ? [{ id: r.id, name: str(r.name) }] : []));
+    case "query_contacts": {
+      const listed = (result as { rows?: unknown } | null)?.rows;
+      return (Array.isArray(listed) ? listed : []).flatMap((r: { id?: unknown; name?: unknown }) =>
+        str(r?.id) ? [{ id: r.id as string, name: str(r.name) }] : []
+      );
+    }
+    case "query_interactions": {
+      const r = result as { rows?: unknown; groups?: unknown } | null;
+      const fromRows = (Array.isArray(r?.rows) ? r.rows : []).flatMap((x: { contactId?: unknown; contactName?: unknown }) =>
+        str(x?.contactId) ? [{ id: x.contactId as string, name: str(x.contactName) }] : []
+      );
+      const fromGroups = (Array.isArray(r?.groups) ? r.groups : []).flatMap((g: { contactId?: unknown; key?: unknown }) =>
+        str(g?.contactId) ? [{ id: g.contactId as string, name: str(g.key) }] : []
+      );
+      return [...fromRows, ...fromGroups];
+    }
     case "get_contact": {
       const r = result as { id?: unknown; name?: unknown } | null;
       return r && str(r.id) ? [{ id: r.id as string, name: str(r.name) }] : [];

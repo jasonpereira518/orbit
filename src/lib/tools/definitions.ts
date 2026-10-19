@@ -50,6 +50,7 @@ import {
   MAX_BODY_CHARS,
 } from "@/lib/agent-sends";
 import { toolError, type OrbitTool } from "@/lib/tools/registry";
+import { FEATURE_TOOLS } from "@/lib/tools/definitions-features";
 import { searchMemories } from "@/lib/memory-search";
 import { getQueryEmbedding } from "@/lib/embedding-cache";
 import { searchMeetingPassagesFor } from "@/lib/meetings-list";
@@ -1519,4 +1520,7 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       }
     },
   },
+
+  // Counts, breakdowns and every other feature's reads — see `definitions-features.ts`.
+  ...FEATURE_TOOLS,
 ];

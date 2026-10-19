@@ -20,6 +20,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { randomUUID } from "node:crypto";
 import { calendarEvents, calendarSources, contacts, interactions } from "../src/db/schema";
+import { FEATURE_TOOLS } from "../src/lib/tools/definitions-features";
 import { ORBIT_TOOLS } from "../src/lib/tools/definitions";
 import {
   isToolError,
@@ -118,9 +119,11 @@ async function main() {
     chatTools.every((t) => t.scope === "read"),
     chatTools.filter((t) => t.scope !== "read").map((t) => t.name).join(", ")
   );
+  // Nine of its own, plus the counts and feature reads in definitions-features.ts.
+  const featureTools = FEATURE_TOOLS.map((t) => t.name);
   check(
-    "chat gets every shared read tool plus its own nine",
-    chatTools.length === 18,
+    "chat gets every shared read tool, its own nine, and every feature read",
+    chatTools.length === 18 + featureTools.length && featureTools.every((n) => chatTools.some((t) => t.name === n)),
     chatTools.map((t) => t.name).join(", ")
   );
   check(
