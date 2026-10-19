@@ -25,6 +25,8 @@ Counts: **5 High, 18 Medium, 26 Low** security and integrity findings; **13 edge
 
 **Update 2026-10-17 (Phase 2):** M-02, M-03, M-04, M-05, M-12, M-13, M-14, M-15, L-11, L-15, L-20, L-25 and L-26 are fixed on this branch, each pinned by a smoke test. For L-25, a dropped connection now keeps the question and only an explicit Stop discards it; the partial answer is still not saved. SCALE-GRAPH waits on decision 12 in `FIX_PLAN.md`. Remaining stress findings (EC-UNI-1, EC-URL-1, INJ-CSV) are Phase 3.
 
+**Update 2026-10-19 (Phase 3):** EC-UNI-1, EC-URL-1 and INJ-CSV are fixed and every stress proof prints `ok` except the 20k-contact scale test, which was not re-run. Phase 3 of `FIX_PLAN.md` is implemented (see its status note), including M-07, M-08, M-09, M-10, M-11, M-16, M-18, L-01 to L-05, L-07, L-08, L-13 to L-17, L-19, L-22 and L-23, and the partial-answer half of L-25. Open: L-09's CSP enforcement and nonce migration, and SCALE-GRAPH (decision 12).
+
 ---
 
 ## 1. Method

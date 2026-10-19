@@ -6,11 +6,11 @@ Every script imports `scripts/smoke/_env.ts`, so it runs against a throwaway PGl
 
 | Script | What it exercises | Result on `eb5d69d` |
 |---|---|---|
-| `input-extremes.ts` | garbage dates, NUL bytes, 1–2 MB fields, bidi/zero-width text, URL schemes, a forged `options.entitlements` | 11 findings (AZ-OPT-1 fixed in Phase 1; dates, NUL and lengths in Phase 2 → 2: EC-UNI-1, EC-URL-1) |
+| `input-extremes.ts` | garbage dates, NUL bytes, 1–2 MB fields, bidi/zero-width text, URL schemes, a forged `options.entitlements` | 11 findings (all fixed: Phase 1, 2 and 3 → 0) |
 | `net-guard-edge.ts` | every IPv4/IPv6 literal form, private hostnames, schemes, credentials | all held |
 | `recurrence-edge.ts` | Jan 31 monthly, DST, spring-forward gap, runaway `INTERVAL`/`COUNT` | 1 finding (hang; fixed in Phase 1 → 0) |
 | `concurrency-races.ts` | limiter exactness, credit-hold serialisation, free contact cap, inbox creation, upgrade claim, bucket growth | 1 finding (cap race; fixed in Phase 2 → 0) |
 | `scale-20k.ts` | 20,000 contacts / 40,000 interactions: graph, dashboard, knowledge, notifications, closeness rescore, full pagination walk, LIKE metacharacters, export | 3 findings (not re-run after Phase 2; SCALE-GRAPH waits on decision 12) |
-| `resilience-repros.ts` | NULL-closeness paging, duplicate concurrent creates, overlapping webhook drains, import double-run, partial capture save, CSV formula injection, `.docx` inflate bomb | 6 findings (import double-run and partial save fixed in Phase 1; NULL paging, duplicate creates, webhook overlap and the `.docx` bomb in Phase 2 → 1: INJ-CSV) |
+| `resilience-repros.ts` | NULL-closeness paging, duplicate concurrent creates, overlapping webhook drains, import double-run, partial capture save, CSV formula injection, `.docx` inflate bomb | 6 findings (all fixed: Phase 1, 2 and 3 → 0) |
 
 Run one: `npx tsx stress-tests/<name>.ts`. `_harness.ts` prints `ok` for a property that held, `BUG` for a confirmed finding and `FAIL` for a harness problem; only `FAIL` sets a non-zero exit code. `_probes/` holds scripts a test spawns under a hard timeout.
