@@ -31,6 +31,13 @@ export type DuplicateSubject = Pick<
  */
 export const DUPLICATE_MERGE_CONFIDENCE = 0.85;
 
+/**
+ * The most a name match can score against someone with a different LinkedIn profile, unless
+ * it looks like one person who changed their profile URL (see `findDuplicateCandidatesIndexed`).
+ * The bare-name tier: a question for the review page, never an automatic merge.
+ */
+export const DIFFERENT_PROFILE_CONFIDENCE = 0.6;
+
 function normalize(s: string | null | undefined) {
   return (s || "").trim().toLowerCase();
 }
@@ -380,6 +387,31 @@ export function findDuplicateCandidatesIndexed(
   const matched = new Set<DuplicateSubject>();
   const matches: DuplicateMatch[] = [];
 
+  /**
+   * A name match against someone on a DIFFERENT LinkedIn profile. Two profiles are two
+   * people unless it looks like one person who changed their profile URL: the exact same
+   * name at the same company. Anything else is held below `DUPLICATE_MERGE_CONFIDENCE`, so it
+   * is asked about rather than merged: similar names sharing a title ("Jon Smith"/"John
+   * Smith", both "Software Engineer") were being folded into one contact. A similar name is
+   * never enough on its own here, even at the same company in the same role: two colleagues
+   * can be one letter apart, and a wrong merge costs more than one review prompt.
+   */
+  const nameMatch = (contact: DuplicateSubject, reason: string, confidence: number): DuplicateMatch => {
+    const theirs = linkedin ? linkedinSlug(contact.linkedinUrl) : "";
+    if (!theirs || theirs === linkedin) return { contact, reason, confidence, strong: false };
+    const sameCompany = Boolean(company) && company === normalize(contact.company);
+    const exactName = Boolean(name) && name === normalize(contact.fullName);
+    if (sameCompany && exactName) {
+      return { contact, reason: `${reason} (LinkedIn profile changed)`, confidence, strong: false };
+    }
+    return {
+      contact,
+      reason: `${reason}, different LinkedIn profile`,
+      confidence: Math.min(confidence, DIFFERENT_PROFILE_CONFIDENCE),
+      strong: false,
+    };
+  };
+
   const addAll = (
     contacts: DuplicateSubject[] | undefined,
     reason: string,
@@ -389,7 +421,7 @@ export function findDuplicateCandidatesIndexed(
     for (const contact of contacts || []) {
       if (matched.has(contact)) continue;
       matched.add(contact);
-      matches.push({ contact, reason, confidence, strong });
+      matches.push(strong ? { contact, reason, confidence, strong } : nameMatch(contact, reason, confidence));
     }
   };
 
@@ -412,21 +444,21 @@ export function findDuplicateCandidatesIndexed(
   for (const key of fuzzyBucketKeys(incoming.fullName)) {
     for (const contact of index.fuzzyBuckets.get(key) || []) {
       if (matched.has(contact)) continue;
-      const fuzzy = nameSimilarity(incoming.fullName, contact.fullName);
-      if (fuzzy < 0.88) continue;
+      // A similar name only counts alongside a shared company or title, so those two string
+      // comparisons go first and the edit distance runs only when one of them holds. Same
+      // matches, same order; but buckets grow with the network, and computing the distance
+      // for every member was 53% of an import's CPU (20k-row LinkedIn import, --cpu-prof).
       const sameCompany = company && company === normalize(contact.company);
       const sameTitle = title && title === normalize(contact.title);
+      if (!sameCompany && !sameTitle) continue;
+      const fuzzy = nameSimilarity(incoming.fullName, contact.fullName);
+      if (fuzzy < 0.88) continue;
       if (sameCompany) {
         matched.add(contact);
-        matches.push({
-          contact,
-          reason: "Similar name + company",
-          confidence: 0.87,
-          strong: false,
-        });
+        matches.push(nameMatch(contact, "Similar name + company", 0.87));
       } else if (sameTitle) {
         matched.add(contact);
-        matches.push({ contact, reason: "Similar name + title", confidence: 0.85, strong: false });
+        matches.push(nameMatch(contact, "Similar name + title", 0.85));
       }
     }
   }
