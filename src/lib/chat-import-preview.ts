@@ -10,6 +10,7 @@
  * lives in `src/actions/chat-imports.ts`. Every refusal is a `UserFacingError`, which the
  * action returns as `{ error }` data (a thrown message does not survive production).
  */
+import { consumeDailyCap } from "@/lib/rate-limit";
 import { and, eq, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, rowsOf } from "@/db";
@@ -483,6 +484,7 @@ export async function beginStaging(
   gate?: Gate,
 ): Promise<{ importId: string }> {
   await requireLive(userId, gate);
+  await consumeDailyCap("importDaily", userId);
   const parsed = beginSchema.safeParse(input);
   if (!parsed.success) throw new UserFacingError("Couldn’t start that import — try again");
   const { source, fileName, selfNames } = parsed.data;

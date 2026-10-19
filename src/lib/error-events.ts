@@ -1,6 +1,7 @@
 import { getDb } from "@/db";
 import { errorEvents } from "@/db/schema";
 import { toUserFacingError } from "@/lib/errors";
+import { scrubText } from "@/lib/sentry-scrub";
 
 /**
  * Failures that would otherwise vanish into a `catch {}`.
@@ -157,8 +158,12 @@ export type ErrorEventInput = {
 /** Context past this is diagnostics no one reads, and a place for personal data to pile up. */
 const MAX_CONTEXT_CHARS = 4_000;
 
-function boundedContext(context: Record<string, unknown> | undefined): Record<string, unknown> {
-  if (!context) return {};
+function boundedContext(raw: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  // Top-level strings are scrubbed like the message (audit L-14); nested values are ids and counts.
+  const context = Object.fromEntries(
+    Object.entries(raw).map(([k, v]) => [k, typeof v === "string" ? scrubText(v) : v])
+  );
   try {
     const json = JSON.stringify(context);
     if (json.length <= MAX_CONTEXT_CHARS) return context;
@@ -175,8 +180,10 @@ export async function recordErrorEvent(input: ErrorEventInput): Promise<void> {
       source: input.source,
       kind: input.kind,
       userId: input.userId ?? null,
+      // Scrubbed before it is stored (audit L-14): a parse failure quotes the model's answer
+      // and a provider error its raw body; both can repeat a person's notes back.
       message: input.message
-        ? toUserFacingError(input.message, "Unknown error").message.slice(0, 500)
+        ? scrubText(toUserFacingError(input.message, "Unknown error").message).slice(0, 500)
         : null,
       context: boundedContext(input.context),
     });

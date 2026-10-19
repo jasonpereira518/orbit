@@ -3,6 +3,7 @@ import { auth, verifyToken } from "@clerk/nextjs/server";
 import { isDemoMode } from "@/lib/auth";
 import { isInternalUser } from "@/lib/analytics-internal";
 import { reportError } from "@/lib/report-error";
+import { sameOriginGuard } from "@/lib/api/same-origin";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { clerkJwtKey } from "@/lib/clerk-jwt-key";
 import { attributionFromUrl } from "@/lib/attribution-parse";
@@ -219,6 +220,9 @@ const isUuid = (value: unknown): value is string =>
 
 export async function POST(request: Request) {
   if (!analyticsEnabled() || !recordsHere()) return OK();
+  // Reads the session cookie to attribute the view, so a cross-site post is dropped (L-01).
+  // Always 204, as before: the beacon cannot read a response.
+  if (sameOriginGuard(request, { json: true })) return OK();
   if (overRateLimit(clientIp(request.headers), Date.now())) return OK();
 
   try {

@@ -1,5 +1,6 @@
 "use server";
 
+import { consumeDailyCap } from "@/lib/rate-limit";
 import { and, asc, desc, eq, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
@@ -179,6 +180,7 @@ export async function getChatThread(threadId: string) {
 export async function createChatThread() {
   try {
     const userId = await requireUserForSurface("page.chat");
+    await consumeDailyCap("chatThreadDaily", userId);
     const db = await getDb();
     const [row] = await db.insert(chatThreads).values({ userId }).returning();
     if (!row) throw new Error("Could not create chat thread");

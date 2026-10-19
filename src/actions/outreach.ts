@@ -31,6 +31,7 @@ import {
 } from "@/lib/outreach-metrics";
 import { campaignMetricAggregates, metricsFromAggregates } from "@/lib/outreach-metrics-sql";
 import {
+  chargeOutreachDraftRun,
   generateOutreachDraft,
   generateOutreachDraftsBatch,
 } from "@/lib/outreach-drafts";
@@ -1212,6 +1213,9 @@ export async function generateDueFollowUps(campaignId: string) {
       .where(inArray(outreachMessages.id, skippedIds));
   }
 
+  // One click drafts every due follow-up: charged up front per ten, like the bulk path, so a
+  // long campaign is never refused part-way with half its follow-ups written (audit M-07).
+  await chargeOutreachDraftRun(userId, toGenerate.length);
   for (const message of toGenerate) {
     const steps = (campaign.sequenceSteps ?? []) as SequenceStep[];
     const step = steps[(message.stepIndex ?? 1) - 1];
@@ -1243,7 +1247,7 @@ export async function generateDueFollowUps(campaignId: string) {
         ? parentBodies.get(message.parentMessageId)
         : undefined,
       writingInstructions,
-    });
+    }, { metered: false });
 
     await db
       .update(outreachMessages)

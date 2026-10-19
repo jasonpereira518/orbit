@@ -10,7 +10,15 @@ import { getDb } from "../src/db";
 import { speechUsage, userSettings } from "../src/db/schema";
 import { isSpeechTagId } from "../src/lib/deepgram-params";
 import { speechKindForOperation } from "../src/lib/speech-limits";
-import { recordSpeechSeconds, speechAllowance } from "../src/lib/speech-quota";
+import {
+  DICTATION_GRANT_PENDING,
+  DICTATION_SESSION_SECONDS,
+  chargeDictationGrant,
+  recordSpeechSeconds,
+  settleDictationGrants,
+  speechAllowance,
+  voidDictationGrant,
+} from "../src/lib/speech-quota";
 import { mintSpeechTagId, speechTagIdFor, userIdForSpeechTagId } from "../src/lib/speech-tag-id";
 
 const USER = "demo-user";
@@ -114,6 +122,59 @@ async function main() {
   check("still only this user's seconds", allowance.used === 120);
 
   await db.delete(speechUsage).where(eq(speechUsage.userId, "someone-else"));
+
+  // Audit M-18: the chat mic's seconds used to arrive only by the browser's end beacon, so a
+  // blocked or tampered beacon was free dictation. Each minted token is now charged a full
+  // session up front, and the beacon can only lower it.
+  console.log("\nchat-mic tokens are charged when minted, lowered by the beacon (M-18)");
+  {
+    const GRANT_USER = "smoke-speech-grants";
+    await db.delete(speechUsage).where(eq(speechUsage.userId, GRANT_USER));
+    const usedBy = async () => (await speechAllowance(GRANT_USER, "shortform")).used;
+
+    const first = await chargeDictationGrant(GRANT_USER);
+    check("a minted token is charged one full session", (await usedBy()) === DICTATION_SESSION_SECONDS, String(await usedBy()));
+    check("…one session is MAX_SESSION_MS", DICTATION_SESSION_SECONDS === 300);
+
+    await settleDictationGrants(GRANT_USER, [first], 42);
+    check("the end beacon lowers it to what streamed", (await usedBy()) === 42, String(await usedBy()));
+    await settleDictationGrants(GRANT_USER, [first], 1);
+    check("…once: a replayed beacon cannot lower it again", (await usedBy()) === 42, String(await usedBy()));
+
+    const a = await chargeDictationGrant(GRANT_USER);
+    const b = await chargeDictationGrant(GRANT_USER);
+    check("a reconnect's second token is charged too", (await usedBy()) === 42 + 600, String(await usedBy()));
+    await settleDictationGrants(GRANT_USER, [a, b], 9_999);
+    check("a session's total is capped at one session, spread oldest first", (await usedBy()) === 42 + 300, String(await usedBy()));
+
+    const unbeaconed = await chargeDictationGrant(GRANT_USER);
+    void unbeaconed;
+    check("a session whose beacon never arrives stays charged in full", (await usedBy()) === 42 + 300 + 300, String(await usedBy()));
+
+    const stranger = await chargeDictationGrant("someone-else");
+    await settleDictationGrants(GRANT_USER, [stranger], 0);
+    const theirs = await db.select().from(speechUsage).where(eq(speechUsage.userId, "someone-else"));
+    check("another account's grant cannot be settled", theirs[0]?.seconds === 300 && theirs[0]?.requestId === DICTATION_GRANT_PENDING, JSON.stringify(theirs[0]));
+
+    const voided = await chargeDictationGrant(GRANT_USER);
+    await voidDictationGrant(GRANT_USER, voided);
+    check("a token that never reached the browser is taken back", (await usedBy()) === 42 + 300 + 300, String(await usedBy()));
+
+    // A tab that loaded before grants existed sends no ids: it settles its newest pending grant.
+    await settleDictationGrants(GRANT_USER, [], 10);
+    check("a beacon with no grant ids settles the newest pending grant", (await usedBy()) === 42 + 300 + 10, String(await usedBy()));
+    await db.delete(speechUsage).where(eq(speechUsage.userId, GRANT_USER));
+    await settleDictationGrants(GRANT_USER, [], 25);
+    check("…and with none pending, records the seconds the old way", (await usedBy()) === 25, String(await usedBy()));
+
+    await db.delete(speechUsage).where(eq(speechUsage.userId, GRANT_USER));
+    await db.delete(speechUsage).where(eq(speechUsage.userId, "someone-else"));
+
+    const route = readFileSync("src/app/api/speech/token/route.ts", "utf8");
+    check("the token route charges before it mints and returns the grant id", /chargeDictationGrant\(userId\)/.test(route) && /grantId,/.test(route));
+    const hook = readFileSync("src/lib/use-dictation.ts", "utf8");
+    check("the dictation hook sends its grants with the beacon", /JSON\.stringify\(\{ seconds, grants \}\)/.test(hook));
+  }
 
   if (failures) { console.error(`\n${failures} check(s) failed`); process.exit(1); }
   console.log("\nAll speech quota checks passed");

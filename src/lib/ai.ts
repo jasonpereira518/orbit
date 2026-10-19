@@ -2924,25 +2924,38 @@ export async function webSearchJson(
         const messages: Anthropic.MessageParam[] = [{ role: "user", content: input.user }];
         const totals = { input: 0, output: 0, cached: 0 };
         let response: Anthropic.Message | null = null;
+        // Each resume is another billed round on the same grant; it reserves its own credits
+        // (audit L-15), released once the call is done — the settle releases only the first.
+        const stepHolds: string[] = [];
         // A long search can end the turn with `pause_turn`; sending the partial turn back
         // lets it continue where it stopped rather than starting the research over.
-        for (let attempt = 0; attempt <= MAX_WEB_SEARCH_RESUMES; attempt++) {
-          response = await client.messages.create({
-            model,
-            max_tokens: maxOutputTokens,
-            ...(anthropicAcceptsTemperature(model) ? { temperature: 0.1 } : {}),
-            ...anthropicEffort(model),
-            system,
-            messages,
-            tools: [{ type: anthropicWebSearchToolType(model), name: "web_search", max_uses: maxSearches }],
-          }, { signal: callSignal() });
-          const t = tokensFromAnthropic(response);
-          totals.input += t.inputTokens ?? 0;
-          totals.output += t.outputTokens ?? 0;
-          totals.cached += t.cachedInputTokens ?? 0;
-          report({ inputTokens: totals.input, outputTokens: totals.output, cachedInputTokens: totals.cached });
-          if (response.stop_reason !== "pause_turn") break;
-          messages.push({ role: "assistant", content: response.content });
+        try {
+          for (let attempt = 0; attempt <= MAX_WEB_SEARCH_RESUMES; attempt++) {
+            if (attempt > 0) {
+              // A balance that cannot cover another round ends the research with what it has.
+              const hold = await access.holdStep(grant).catch(() => undefined);
+              if (hold === undefined) break;
+              if (hold) stepHolds.push(hold);
+            }
+            response = await client.messages.create({
+              model,
+              max_tokens: maxOutputTokens,
+              ...(anthropicAcceptsTemperature(model) ? { temperature: 0.1 } : {}),
+              ...anthropicEffort(model),
+              system,
+              messages,
+              tools: [{ type: anthropicWebSearchToolType(model), name: "web_search", max_uses: maxSearches }],
+            }, { signal: callSignal() });
+            const t = tokensFromAnthropic(response);
+            totals.input += t.inputTokens ?? 0;
+            totals.output += t.outputTokens ?? 0;
+            totals.cached += t.cachedInputTokens ?? 0;
+            report({ inputTokens: totals.input, outputTokens: totals.output, cachedInputTokens: totals.cached });
+            if (response.stop_reason !== "pause_turn") break;
+            messages.push({ role: "assistant", content: response.content });
+          }
+        } finally {
+          for (const id of stepHolds) await access.releaseStepHold(grant, id).catch(() => {});
         }
         if (!response || response.stop_reason === "refusal") throw new Error("Empty AI response");
 

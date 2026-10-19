@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { friendlyError, isMissingAiApiKeyError, MISSING_AI_API_KEY_MESSAGE } from "@/lib/errors";
+import { authErrorResponse, routeError } from "@/lib/api/route-error";
+import { sameOriginGuard } from "@/lib/api/same-origin";
+import { isMissingAiApiKeyError, MISSING_AI_API_KEY_MESSAGE } from "@/lib/errors";
 import { requireUserForReleasedSurface } from "@/lib/plan-guards";
-import { reportedFailure } from "@/lib/report-error";
 import { discoverPeople, researchCompany, researchPerson } from "@/lib/web-research";
 
 export const dynamic = "force-dynamic";
@@ -34,8 +35,10 @@ export async function POST(request: Request) {
   try {
     userId = await requireUserForReleasedSurface("page.find");
   } catch (err) {
-    return NextResponse.json({ error: friendlyError(err, "Sign in to research people") }, { status: 401 });
+    return authErrorResponse(err, "Sign in to research people");
   }
+  const refused = sameOriginGuard(request, { json: true });
+  if (refused) return refused;
   if (request.headers.get("x-orbit-research") !== "1") {
     return NextResponse.json({ error: "Missing research header" }, { status: 400 });
   }
@@ -70,11 +73,12 @@ export async function POST(request: Request) {
     if (isMissingAiApiKeyError(err instanceof Error ? err.message : null)) {
       return NextResponse.json({ error: MISSING_AI_API_KEY_MESSAGE, reason: "no_ai" }, { status: 402 });
     }
-    const { error } = reportedFailure(err, "The search didn’t finish — try again in a moment", {
+    return routeError(err, {
+      fallback: "The search didn’t finish — try again in a moment",
       where: "api.research",
       extra: { kind: body.kind === "company" || body.kind === "discover" ? body.kind : "person" },
       userId,
+      faultStatus: 502,
     });
-    return NextResponse.json({ error }, { status: 502 });
   }
 }

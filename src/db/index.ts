@@ -1213,6 +1213,7 @@ CREATE TABLE IF NOT EXISTS rate_limit_buckets (
   window_started_at timestamptz NOT NULL DEFAULT now(),
   count integer NOT NULL DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS rate_limit_buckets_window_started_idx ON rate_limit_buckets(window_started_at);
 CREATE TABLE IF NOT EXISTS job_feed_sources (
   id text PRIMARY KEY,
   label text NOT NULL,
@@ -2748,7 +2749,12 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 175 = chat_messages.interrupted: the part of an answer that streamed before a dropped
 // connection is kept, marked as cut off (audit L-25). Rescanned Oct 19 2026: 174 (this
 // branch) was the highest claimed anywhere.
-export const SCHEMA_VERSION = 175;
+//
+// 176 = rate_limit_buckets_window_started_idx: the bucket prune deletes by window age, which
+// was a sequential scan of a table that gains a row per (scope, key); the new per-user AI
+// buckets and daily caps (audit M-07, L-22) grow it faster. 177–179 are claimed by parallel
+// Phase 3 branches (Oct 19 2026); 175 was the highest on this branch.
+export const SCHEMA_VERSION = 176;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2965,6 +2971,8 @@ export const SCALE_DDL: string[] = [
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS client_turn_id text`,
   // v175: a dropped connection keeps the partial answer (audit L-25).
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS interrupted boolean NOT NULL DEFAULT false`,
+  // v176: the rate-limit prune's range scan (FIX_PLAN 3.3). See `pruneRateLimitBuckets`.
+  `CREATE INDEX IF NOT EXISTS rate_limit_buckets_window_started_idx ON rate_limit_buckets(window_started_at)`,
   `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
   // Backs BOTH the "Last spoken" sort on /contacts and the composer's pickers, which open
   // on "who have I actually spoken to lately" rather than whoever is alphabetically first

@@ -380,7 +380,10 @@ export async function asActionResult<T>(
     // A plan denial is already written for the person who hit it, and a thrown one would reach
     // the client as a digest. Returned as data it survives — the same shape webhook-endpoints
     // and api-keys already use for this case.
-    if (isUserFacingError(err) || (err instanceof Error && err.name === "PaywallError")) {
+    if (
+      isUserFacingError(err) ||
+      (err instanceof Error && (err.name === "PaywallError" || err.name === "RateLimitedError"))
+    ) {
       return { ok: false, error: err.message };
     }
     throw err;
@@ -448,6 +451,9 @@ export function friendlyError(err: unknown, fallback: string): string {
   // the one server-thrown message worth showing verbatim. Matched by name, not `instanceof`:
   // a second module instance would break the class check, and this file imports nothing.
   if (err instanceof Error && err.name === "PaywallError" && err.message) return err.message;
+  // A rate limit's message is Orbit's own words too ("You've hit the AI draft limit. Try
+  // again in 4 minutes.") — far more use than the caller's generic fallback.
+  if (err instanceof Error && err.name === "RateLimitedError" && err.message) return err.message;
 
   if (raw && OWN_WORDS.has(raw)) return raw;
   if (raw && isMissingAiApiKeyError(raw)) return MISSING_AI_API_KEY_MESSAGE;

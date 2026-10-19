@@ -38,7 +38,7 @@ import { listenParams } from "@/lib/deepgram-params";
 import { TARGET_SAMPLE_RATE, createDownsampler } from "@/lib/voice-recording";
 
 /** What `POST /api/speech/token` hands back on success. See Task 7's route. */
-type SpeechToken = { accessToken: string; keyterms?: string[]; tag?: string | null };
+type SpeechToken = { accessToken: string; keyterms?: string[]; tag?: string | null; grantId?: string | null };
 
 const DEEPGRAM_WORKLET_URL = "/orbit-pcm-worklet.js";
 const DEEPGRAM_WORKLET_NAME = "orbit-pcm-recorder";
@@ -76,14 +76,16 @@ function canCaptureForDeepgram(): boolean {
  * last one's lifetime under-counted every dropped stretch. `dgBilledMsRef` banks the earlier
  * ones (see `bankSpeechUsage`).
  */
-function reportSpeechUsage(billedMs: number) {
+function reportSpeechUsage(billedMs: number, grants: string[]) {
   if (typeof navigator === "undefined" || typeof navigator.sendBeacon !== "function") return;
   const seconds = Math.max(0, Math.round(billedMs / 1000));
-  if (!seconds) return;
+  // With grants, a zero still matters: each token was charged a full session when it was
+  // minted, and this is what brings that charge down to what was really streamed (M-18).
+  if (!seconds && grants.length === 0) return;
   try {
     navigator.sendBeacon(
       "/api/speech/usage",
-      new Blob([JSON.stringify({ seconds })], { type: "application/json" }),
+      new Blob([JSON.stringify({ seconds, grants })], { type: "application/json" }),
     );
   } catch {
     /* best effort — losing one session's usage report is not worth surfacing */
@@ -293,6 +295,8 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
    * Orbit paid for the rest unmetered.
    */
   const dgBilledMsRef = useRef(0);
+  /** This session's token grant ids, for the end beacon to settle (`/api/speech/token`). */
+  const dgGrantIdsRef = useRef<string[]>([]);
 
   /** The one place that sets `engineRef` — keeps the render-visible `engine` state in sync. */
   const setEngine = useCallback((next: "deepgram" | "browser" | null) => {
@@ -425,6 +429,7 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
     dgFoldRef.current = EMPTY_FOLD;
     dgSuppressCloseRef.current = false;
     dgBilledMsRef.current = 0;
+    dgGrantIdsRef.current = [];
   }, [teardownDeepgramConnection]);
 
   /** A connection is being replaced: keep the seconds it streamed. */
@@ -443,7 +448,9 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
     const open = handle ? Math.max(0, Date.now() - handle.openedAt) : 0;
     const total = dgBilledMsRef.current + open;
     dgBilledMsRef.current = 0;
-    reportSpeechUsage(total);
+    const grants = dgGrantIdsRef.current;
+    dgGrantIdsRef.current = [];
+    reportSpeechUsage(total, grants);
   }, []);
 
   const buildRecognition = useCallback(
@@ -658,6 +665,9 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
       if (abandoned()) return;
       if (!res.ok) throw new Error(`speech-token-${res.status}`);
       const token = (await res.json()) as SpeechToken;
+      // Banked before the abandoned check: the token was charged whether or not it is used,
+      // and only the end beacon can take that charge back down.
+      if (typeof token?.grantId === "string") dgGrantIdsRef.current.push(token.grantId);
       if (abandoned()) return;
       if (!token?.accessToken) throw new Error("speech-token-empty");
 

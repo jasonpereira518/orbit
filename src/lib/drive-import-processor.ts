@@ -13,6 +13,7 @@
  * reminders, the generic follow-up is dropped once it would already be overdue, and a
  * recently-passed, high-confidence date is only flagged on the import.
  */
+import { consumeDailyCap } from "@/lib/rate-limit";
 import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { stageImportRows } from "@/lib/import-job-rows";
@@ -146,6 +147,7 @@ export async function stageDriveImport(
 ): Promise<{ importId: string; totalRows: number }> {
   const usable = validatePicks(files, now).filter((f) => SUPPORTED.has(f.mimeType));
   if (!usable.length) throw new UserFacingError("Pick a Google Doc or Slides deck to import");
+  await consumeDailyCap("importDaily", userId);
 
   const db = await getDb();
   const [row] = await db

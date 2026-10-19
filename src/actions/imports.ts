@@ -1,5 +1,6 @@
 "use server";
 
+import { consumeDailyCap } from "@/lib/rate-limit";
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
@@ -310,6 +311,7 @@ export async function startLinkedInImport(
   selectedIds?: string[],
 ): Promise<{ importId: string; totalRows: number }> {
   const userId = await requireUserId();
+  await consumeDailyCap("importDaily", userId);
   const db = await getDb();
 
   const { rows } = parseLinkedInConnectionsCsv(csvText);
@@ -922,6 +924,7 @@ export async function startLinkedInMessagesImport(
   selectedConversationIds?: string[],
 ): Promise<{ importId: string; totalRows: number }> {
   const userId = await requireUserId();
+  await consumeDailyCap("importDaily", userId);
   const db = await getDb();
 
   const { messages } = parseLinkedInMessagesCsv(csvText);
@@ -1242,6 +1245,7 @@ export async function confirmCalendarImport(payload: {
   createFollowUps?: boolean;
 }): Promise<{ importId: string; totalRows: number }> {
   const userId = await requireUserId();
+  await consumeDailyCap("importDaily", userId);
   const db = await getDb();
   const createFollowUps = payload.createFollowUps !== false;
 
@@ -1439,6 +1443,7 @@ export async function confirmGoogleContactsImport(
   selectedIds: string[],
 ): Promise<{ importId: string; totalRows: number }> {
   const userId = await requireUserId();
+  await consumeDailyCap("importDaily", userId);
   if (await isDemoWorkspace(userId)) {
     return recordDemoContactsImport(userId, "google_contacts", selectedIds.length);
   }
@@ -1588,6 +1593,7 @@ export async function confirmOutlookContactsImport(
   selectedIds: string[],
 ): Promise<{ importId: string; totalRows: number }> {
   const userId = await requireUserId();
+  await consumeDailyCap("importDaily", userId);
   if (await isDemoWorkspace(userId)) {
     return recordDemoContactsImport(userId, "outlook_contacts", selectedIds.length);
   }
@@ -1781,6 +1787,7 @@ export async function confirmContactsFileImport(
   selectedIds: string[],
 ): Promise<{ importId: string; totalRows: number }> {
   const userId = await requireUserId();
+  await consumeDailyCap("importDaily", userId);
   const db = await getDb();
 
   // Throws on a file the preview would have refused — the client only gets here from a

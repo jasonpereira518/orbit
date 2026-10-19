@@ -15,6 +15,7 @@
  * Nothing here merges anything. It reads.
  */
 
+import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, duplicateSuggestions, interactions } from "@/db/schema";
@@ -258,9 +259,20 @@ export async function getDuplicateReview(
 
   // Every name-only pair scores 0.6, so without a model the queue has no real order. With
   // one, the pairs it thinks are the same person come first, and each carries its read.
+  // Ranking with a model is metered per page load (`duplicateHints`, audit M-07); past it the
+  // queue still loads, in rule order.
+  let engines = opts.engines ?? NO_ENGINES;
+  if (opts.engines && proposed.length) {
+    try {
+      await consumeBucket("duplicateHints", userId, RATE_LIMITS.duplicateHints);
+    } catch (err) {
+      if (!isRateLimitedError(err)) throw err;
+      engines = NO_ENGINES;
+    }
+  }
   const decisions = await rankDuplicatePairs(
     userId,
-    opts.engines ?? NO_ENGINES,
+    engines,
     proposed.map((p) => ({ a: p.keep.id, b: p.merge.id }))
   ).catch(() => proposed.map(() => null));
   proposed.forEach((pair, i) => {
