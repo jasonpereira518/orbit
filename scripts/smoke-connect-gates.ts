@@ -40,7 +40,34 @@ export function callsIn(file: string, fn: string): Set<string> {
   };
   ts.forEachChild(source, (node) => walk(node, false));
   if (!found) throw new Error(`${fn} not found in ${file}`);
+  // `defineAction({ ... })` with no `auth` (or `auth: "user"`) resolves the caller with
+  // `requireUserId` itself (FIX_PLAN 3.1), so count it as that call.
+  if (calls.has("defineAction") && defaultUserGate(source, fn)) calls.add("requireUserId");
   return calls;
+}
+
+function defaultUserGate(source: ts.SourceFile, fn: string): boolean {
+  let result = false;
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === fn &&
+      node.initializer &&
+      ts.isCallExpression(node.initializer)
+    ) {
+      const cfg = node.initializer.arguments[0];
+      if (cfg && ts.isObjectLiteralExpression(cfg)) {
+        const auth = cfg.properties.find(
+          (p): p is ts.PropertyAssignment => ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && p.name.text === "auth"
+        );
+        result = !auth || (ts.isStringLiteral(auth.initializer) && auth.initializer.text === "user");
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return result;
 }
 
 function main() {

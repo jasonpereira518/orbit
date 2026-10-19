@@ -4,8 +4,9 @@ import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { gmailConnections, userSettings } from "@/db/schema";
-import { requireUserId } from "@/lib/auth";
 import { hasMailReadScope } from "@/lib/gmail";
+import { z } from "zod";
+import { defineAction } from "@/lib/input/action";
 
 export type EmailActivityStatus = {
   /** Whether a Google account is connected at all. */
@@ -18,28 +19,30 @@ export type EmailActivityStatus = {
   lastSyncedAt: string | null;
 };
 
-export async function getEmailActivityStatus(): Promise<EmailActivityStatus> {
-  const userId = await requireUserId();
-  const db = await getDb();
-  const [conn, settings] = await Promise.all([
-    db.query.gmailConnections.findFirst({
-      where: eq(gmailConnections.userId, userId),
-      columns: { emailAddress: true, scopes: true, lastSyncedAt: true },
-    }),
-    db.query.userSettings.findFirst({
-      where: eq(userSettings.userId, userId),
-      columns: { emailActivitySync: true },
-    }),
-  ]);
+export const getEmailActivityStatus = defineAction(
+  {},
+  async (userId): Promise<EmailActivityStatus> => {
+    const db = await getDb();
+    const [conn, settings] = await Promise.all([
+      db.query.gmailConnections.findFirst({
+        where: eq(gmailConnections.userId, userId),
+        columns: { emailAddress: true, scopes: true, lastSyncedAt: true },
+      }),
+      db.query.userSettings.findFirst({
+        where: eq(userSettings.userId, userId),
+        columns: { emailActivitySync: true },
+      }),
+    ]);
 
-  return {
-    connected: Boolean(conn),
-    emailAddress: conn?.emailAddress ?? null,
-    hasScope: hasMailReadScope(conn?.scopes),
-    enabled: (settings?.emailActivitySync ?? 0) === 1,
-    lastSyncedAt: conn?.lastSyncedAt ? new Date(conn.lastSyncedAt).toISOString() : null,
-  };
-}
+    return {
+      connected: Boolean(conn),
+      emailAddress: conn?.emailAddress ?? null,
+      hasScope: hasMailReadScope(conn?.scopes),
+      enabled: (settings?.emailActivitySync ?? 0) === 1,
+      lastSyncedAt: conn?.lastSyncedAt ? new Date(conn.lastSyncedAt).toISOString() : null,
+    };
+  }
+);
 
 /**
  * Turn mailbox activity sync on or off.
@@ -50,16 +53,18 @@ export async function getEmailActivityStatus(): Promise<EmailActivityStatus> {
  * the interactions already recorded, which are the user's own relationship history and are
  * removable per contact like any other.
  */
-export async function setEmailActivitySync(enabled: boolean) {
-  const userId = await requireUserId();
-  const db = await getDb();
-  await db
-    .insert(userSettings)
-    .values({ userId, emailActivitySync: enabled ? 1 : 0 })
-    .onConflictDoUpdate({
-      target: userSettings.userId,
-      set: { emailActivitySync: enabled ? 1 : 0, updatedAt: new Date() },
-    });
-  revalidatePath("/imports");
-  return { enabled };
-}
+export const setEmailActivitySync = defineAction(
+  { schema: z.tuple([z.boolean()]) },
+  async (userId, enabled: boolean) => {
+    const db = await getDb();
+    await db
+      .insert(userSettings)
+      .values({ userId, emailActivitySync: enabled ? 1 : 0 })
+      .onConflictDoUpdate({
+        target: userSettings.userId,
+        set: { emailActivitySync: enabled ? 1 : 0, updatedAt: new Date() },
+      });
+    revalidatePath("/imports");
+    return { enabled };
+  }
+);

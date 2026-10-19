@@ -89,8 +89,10 @@ async function main() {
     routeCall
   );
 
-  // The action module must remain a valid "use server" file (async exports only).
-  const exportsNonAsync = /export (function|const|let|var) /.test(actionSrc);
+  // The action module must remain a valid "use server" file (async exports only). An
+  // `export const x = defineAction(...)` is an async function too (FIX_PLAN 3.1).
+  const exportsNonAsync =
+    /export (function|let|var) /.test(actionSrc) || /export const \w+ = (?!defineAction\()/.test(actionSrc);
   check("no non-async exports in use-server file", !exportsNonAsync);
 }
 

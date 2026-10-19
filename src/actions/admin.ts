@@ -44,6 +44,9 @@ import {
 } from "@/lib/site-invites";
 import { UserFacingError } from "@/lib/errors";
 import { blockSharedAvatar, unblockSharedAvatar } from "@/lib/admin-avatars";
+import { z } from "zod";
+import { defineAction } from "@/lib/input/action";
+import { anyNumber } from "@/lib/input/schemas";
 
 /**
  * Every export here re-asserts `requireAdminUserId()`.
@@ -68,50 +71,51 @@ export type CompResult = {
  * `updated_at` is bumped by a dozen unrelated writers, so this table is the only record
  * that the change happened.
  */
-export async function setCompAction(input: {
-  targetUserId: string;
-  plan: "orbit" | "max" | null;
-  reason: string;
-}): Promise<CompResult> {
-  const adminUserId = await requireAdminUserId();
+export const setCompAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ targetUserId: z.string(), plan: z.enum(["orbit", "max"]).nullable(), reason: z.string() })]) },
+  async (adminUserId, input: {
+    targetUserId: string;
+    plan: "orbit" | "max" | null;
+    reason: string;
+  }): Promise<CompResult> => {
+    const reason = input.reason.trim();
+    if (!reason) throw new Error("A reason is required.");
+    // Lifetime has its own audited path (grantLifetimeAction), which also ends a live
+    // subscription at its period end. A comp is Pro or Max only.
+    if (input.plan !== null && input.plan !== "orbit" && input.plan !== "max") {
+      throw new Error("Comp Pro or Max here; Lifetime has its own Grant action.");
+    }
 
-  const reason = input.reason.trim();
-  if (!reason) throw new Error("A reason is required.");
-  // Lifetime has its own audited path (grantLifetimeAction), which also ends a live
-  // subscription at its period end. A comp is Pro or Max only.
-  if (input.plan !== null && input.plan !== "orbit" && input.plan !== "max") {
-    throw new Error("Comp Pro or Max here; Lifetime has its own Grant action.");
+    const db = await getDb();
+    const before = await db.query.userSettings.findFirst({
+      where: eq(userSettings.userId, input.targetUserId),
+      columns: { compedPlan: true },
+    });
+    if (!before) throw new Error("No such account.");
+
+    const row = await setCompedPlan(input.targetUserId, input.plan, {
+      note: reason,
+      adminUserId,
+    });
+
+    await recordAdminAction({
+      adminUserId,
+      action: input.plan ? "comp.grant" : "comp.revoke",
+      targetUserId: input.targetUserId,
+      detail: { from: before.compedPlan ?? null, to: input.plan },
+      reason,
+    });
+
+    revalidatePath("/admin");
+    revalidatePath("/admin/users");
+    revalidatePath(`/admin/users/${input.targetUserId}`);
+    revalidatePath("/admin/billing");
+
+    // Resolved from the returned row, NOT from getEntitlements(): that helper is a React
+    // cache() memo and may still hold the pre-write value within this same request.
+    return { ok: true, plan: resolvePlan(row).plan };
   }
-
-  const db = await getDb();
-  const before = await db.query.userSettings.findFirst({
-    where: eq(userSettings.userId, input.targetUserId),
-    columns: { compedPlan: true },
-  });
-  if (!before) throw new Error("No such account.");
-
-  const row = await setCompedPlan(input.targetUserId, input.plan, {
-    note: reason,
-    adminUserId,
-  });
-
-  await recordAdminAction({
-    adminUserId,
-    action: input.plan ? "comp.grant" : "comp.revoke",
-    targetUserId: input.targetUserId,
-    detail: { from: before.compedPlan ?? null, to: input.plan },
-    reason,
-  });
-
-  revalidatePath("/admin");
-  revalidatePath("/admin/users");
-  revalidatePath(`/admin/users/${input.targetUserId}`);
-  revalidatePath("/admin/billing");
-
-  // Resolved from the returned row, NOT from getEntitlements(): that helper is a React
-  // cache() memo and may still hold the pre-write value within this same request.
-  return { ok: true, plan: resolvePlan(row).plan };
-}
+);
 
 /* ------------------------------------------------------------- Lifetime (admin) ------- */
 // Admin-assigned only (pricing v2). The bodies live in `src/lib/admin-lifetime.ts`.
@@ -119,33 +123,39 @@ export async function setCompAction(input: {
 export type { LifetimePreview } from "@/lib/admin-lifetime";
 
 /** What granting or revoking would do to this account — shown before anything changes. */
-export async function previewLifetimeAction(targetUserId: string): Promise<LifetimePreview> {
-  await requireAdminUserId();
-  return previewLifetime(targetUserId);
-}
+export const previewLifetimeAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.string()]) },
+  async (_caller, targetUserId: string): Promise<LifetimePreview> => {
+    return previewLifetime(targetUserId);
+  }
+);
 
 /** Grant Lifetime; a live subscription is set to end at its period end. Audited. */
-export async function grantLifetimeAction(input: {
-  targetUserId: string;
-  reason: string;
-}): Promise<{ ok: true; subscription: "scheduled" | "none" | "error" }> {
-  const adminUserId = await requireAdminUserId();
-  const result = await grantLifetime(adminUserId, input);
-  revalidateAccount(input.targetUserId);
-  return result;
-}
+export const grantLifetimeAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ targetUserId: z.string(), reason: z.string() })]) },
+  async (adminUserId, input: {
+    targetUserId: string;
+    reason: string;
+  }): Promise<{ ok: true; subscription: "scheduled" | "none" | "error" }> => {
+    const result = await grantLifetime(adminUserId, input);
+    revalidateAccount(input.targetUserId);
+    return result;
+  }
+);
 
 /** Revoke a comped Lifetime (and, only when asked, a purchased one). Audited. */
-export async function revokeLifetimeAction(input: {
-  targetUserId: string;
-  reason: string;
-  includePurchase?: boolean;
-}): Promise<CompResult> {
-  const adminUserId = await requireAdminUserId();
-  const result = await revokeLifetime(adminUserId, input);
-  revalidateAccount(input.targetUserId);
-  return result;
-}
+export const revokeLifetimeAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ targetUserId: z.string(), reason: z.string(), includePurchase: z.boolean().optional() })]) },
+  async (adminUserId, input: {
+    targetUserId: string;
+    reason: string;
+    includePurchase?: boolean;
+  }): Promise<CompResult> => {
+    const result = await revokeLifetime(adminUserId, input);
+    revalidateAccount(input.targetUserId);
+    return result;
+  }
+);
 
 function revalidateAccount(targetUserId: string) {
   revalidatePath("/admin");
@@ -159,25 +169,28 @@ function revalidateAccount(targetUserId: string) {
  * actually is (a single-use Clerk sign-in token) and why the expiry is generous but the
  * link is not reusable regardless.
  */
-export async function mintSignInLinkAction(input: {
-  targetUserId: string;
-  reason: string;
-}): Promise<{ url: string; expiresInSeconds: number }> {
-  const adminUserId = await requireAdminUserId();
-  return ops.mintSignInLink(adminUserId, input);
-}
+export const mintSignInLinkAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ targetUserId: z.string(), reason: z.string() })]) },
+  async (adminUserId, input: {
+    targetUserId: string;
+    reason: string;
+  }): Promise<{ url: string; expiresInSeconds: number }> => {
+    return ops.mintSignInLink(adminUserId, input);
+  }
+);
 
 /** Audit history for one account, shown on their inspector page. */
-export async function getAuditTrail(targetUserId: string) {
-  await requireAdminUserId();
-
-  const db = await getDb();
-  return db.query.adminAuditLog.findMany({
-    where: eq(adminAuditLog.targetUserId, targetUserId),
-    orderBy: [desc(adminAuditLog.createdAt)],
-    limit: 25,
-  });
-}
+export const getAuditTrail = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.string()]) },
+  async (_caller, targetUserId: string) => {
+    const db = await getDb();
+    return db.query.adminAuditLog.findMany({
+      where: eq(adminAuditLog.targetUserId, targetUserId),
+      orderBy: [desc(adminAuditLog.createdAt)],
+      limit: 25,
+    });
+  }
+);
 
 /* ======================================================================================
  * Operator actions
@@ -209,102 +222,118 @@ function revalidateAdmin(targetUserId?: string) {
   if (targetUserId) revalidatePath(`/admin/users/${targetUserId}`);
 }
 
-export async function retryImportAction(input: {
-  targetUserId: string;
-  importId: string;
-  reason: string;
-}): Promise<{ ok: true }> {
-  const adminUserId = await requireAdminUserId();
-  const { importId } = await ops.retryImport(adminUserId, input);
+export const retryImportAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ targetUserId: z.string(), importId: z.string(), reason: z.string() })]) },
+  async (adminUserId, input: {
+    targetUserId: string;
+    importId: string;
+    reason: string;
+  }): Promise<{ ok: true }> => {
+    const { importId } = await ops.retryImport(adminUserId, input);
 
-  // Not awaited: the processor is time-boxed with self-continuation and can outlive any
-  // reasonable action. `after()` needs a request scope, which is why it is here rather
-  // than in the operation.
-  after(() => ops.runImportJob(importId));
+    // Not awaited: the processor is time-boxed with self-continuation and can outlive any
+    // reasonable action. `after()` needs a request scope, which is why it is here rather
+    // than in the operation.
+    after(() => ops.runImportJob(importId));
 
-  revalidateAdmin(input.targetUserId);
-  revalidatePath("/imports");
-  return { ok: true };
-}
+    revalidateAdmin(input.targetUserId);
+    revalidatePath("/imports");
+    return { ok: true };
+  }
+);
 
-export async function cancelImportAction(input: {
-  targetUserId: string;
-  importId: string;
-  reason: string;
-}): Promise<{ ok: true }> {
-  const adminUserId = await requireAdminUserId();
-  await ops.cancelImport(adminUserId, input);
-  revalidateAdmin(input.targetUserId);
-  revalidatePath("/imports");
-  return { ok: true };
-}
+export const cancelImportAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ targetUserId: z.string(), importId: z.string(), reason: z.string() })]) },
+  async (adminUserId, input: {
+    targetUserId: string;
+    importId: string;
+    reason: string;
+  }): Promise<{ ok: true }> => {
+    await ops.cancelImport(adminUserId, input);
+    revalidateAdmin(input.targetUserId);
+    revalidatePath("/imports");
+    return { ok: true };
+  }
+);
 
-export async function resetOnboardingAction(input: {
-  targetUserId: string;
-  scope: "onboarding" | "wizard" | "both";
-  reason: string;
-}): Promise<{ ok: true }> {
-  const adminUserId = await requireAdminUserId();
-  await ops.resetOnboarding(adminUserId, input);
-  revalidateAdmin(input.targetUserId);
-  return { ok: true };
-}
+export const resetOnboardingAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ targetUserId: z.string(), scope: z.enum(["onboarding", "wizard", "both"]), reason: z.string() })]) },
+  async (adminUserId, input: {
+    targetUserId: string;
+    scope: "onboarding" | "wizard" | "both";
+    reason: string;
+  }): Promise<{ ok: true }> => {
+    await ops.resetOnboarding(adminUserId, input);
+    revalidateAdmin(input.targetUserId);
+    return { ok: true };
+  }
+);
 
-export async function disconnectIntegrationAction(input: {
-  targetUserId: string;
-  provider: "gmail" | "outlook";
-  reason: string;
-}): Promise<{ ok: true }> {
-  const adminUserId = await requireAdminUserId();
-  await ops.disconnectIntegration(adminUserId, input);
-  revalidateAdmin(input.targetUserId);
-  return { ok: true };
-}
+export const disconnectIntegrationAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ targetUserId: z.string(), provider: z.enum(["gmail", "outlook"]), reason: z.string() })]) },
+  async (adminUserId, input: {
+    targetUserId: string;
+    provider: "gmail" | "outlook";
+    reason: string;
+  }): Promise<{ ok: true }> => {
+    await ops.disconnectIntegration(adminUserId, input);
+    revalidateAdmin(input.targetUserId);
+    return { ok: true };
+  }
+);
 
-export async function setCalendarFeedEnabledAction(input: {
-  targetUserId: string;
-  subscriptionId: string;
-  enabled: boolean;
-  reason: string;
-}): Promise<{ ok: true }> {
-  const adminUserId = await requireAdminUserId();
-  await ops.setCalendarFeedEnabled(adminUserId, input);
-  revalidateAdmin(input.targetUserId);
-  return { ok: true };
-}
+export const setCalendarFeedEnabledAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ targetUserId: z.string(), subscriptionId: z.string(), enabled: z.boolean(), reason: z.string() })]) },
+  async (adminUserId, input: {
+    targetUserId: string;
+    subscriptionId: string;
+    enabled: boolean;
+    reason: string;
+  }): Promise<{ ok: true }> => {
+    await ops.setCalendarFeedEnabled(adminUserId, input);
+    revalidateAdmin(input.targetUserId);
+    return { ok: true };
+  }
+);
 
-export async function setAccountSuspendedAction(input: {
-  targetUserId: string;
-  suspended: boolean;
-  reason: string;
-}): Promise<{ ok: true; suspendedAt: string | null }> {
-  const adminUserId = await requireAdminUserId();
-  const result = await ops.setAccountSuspended(adminUserId, input);
-  revalidateAdmin(input.targetUserId);
-  return { ok: true, suspendedAt: result.suspendedAt?.toISOString() ?? null };
-}
+export const setAccountSuspendedAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ targetUserId: z.string(), suspended: z.boolean(), reason: z.string() })]) },
+  async (adminUserId, input: {
+    targetUserId: string;
+    suspended: boolean;
+    reason: string;
+  }): Promise<{ ok: true; suspendedAt: string | null }> => {
+    const result = await ops.setAccountSuspended(adminUserId, input);
+    revalidateAdmin(input.targetUserId);
+    return { ok: true, suspendedAt: result.suspendedAt?.toISOString() ?? null };
+  }
+);
 
-export async function deleteAccountAction(input: {
-  targetUserId: string;
-  confirmEmail: string;
-  reason: string;
-}): Promise<{ ok: true }> {
-  const adminUserId = await requireAdminUserId();
-  await ops.deleteAccount(adminUserId, input);
-  revalidateAdmin();
-  return { ok: true };
-}
+export const deleteAccountAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ targetUserId: z.string(), confirmEmail: z.string(), reason: z.string() })]) },
+  async (adminUserId, input: {
+    targetUserId: string;
+    confirmEmail: string;
+    reason: string;
+  }): Promise<{ ok: true }> => {
+    await ops.deleteAccount(adminUserId, input);
+    revalidateAdmin();
+    return { ok: true };
+  }
+);
 
-export async function hardDeleteAccountAction(input: {
-  targetUserId: string;
-  confirmEmail: string;
-  reason: string;
-}): Promise<{ ok: true }> {
-  const adminUserId = await requireAdminUserId();
-  await ops.hardDeleteAccount(adminUserId, input);
-  revalidateAdmin();
-  return { ok: true };
-}
+export const hardDeleteAccountAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ targetUserId: z.string(), confirmEmail: z.string(), reason: z.string() })]) },
+  async (adminUserId, input: {
+    targetUserId: string;
+    confirmEmail: string;
+    reason: string;
+  }): Promise<{ ok: true }> => {
+    await ops.hardDeleteAccount(adminUserId, input);
+    revalidateAdmin();
+    return { ok: true };
+  }
+);
 
 /**
  * Hide or unhide one surface for every user at once.
@@ -319,64 +348,68 @@ export async function hardDeleteAccountAction(input: {
  * hidden set to build the sidebar, so a stale layout cache would keep serving a nav item
  * for a page that now refuses to render.
  */
-export async function setSurfaceHiddenAction(input: {
-  surfaceKey: string;
-  hidden: boolean;
-}): Promise<{ ok: true }> {
-  const adminUserId = await requireAdminUserId();
+export const setSurfaceHiddenAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ surfaceKey: z.string(), hidden: z.boolean() })]) },
+  async (adminUserId, input: {
+    surfaceKey: string;
+    hidden: boolean;
+  }): Promise<{ ok: true }> => {
+    await setSurfaceHidden(adminUserId, input.surfaceKey, input.hidden);
 
-  await setSurfaceHidden(adminUserId, input.surfaceKey, input.hidden);
-
-  revalidatePath("/", "layout");
-  revalidatePath("/admin/product");
-  return { ok: true };
-}
+    revalidatePath("/", "layout");
+    revalidatePath("/admin/product");
+    return { ok: true };
+  }
+);
 
 /**
  * Mark a page coming soon (or release it) for everyone. Same shape and invalidation as
  * `setSurfaceHiddenAction`: the app shell builds the sidebar's "Soon" tags from this, and
  * the dashboard, settings and radar jobs all key off it.
  */
-export async function setSurfaceComingSoonAction(input: {
-  surfaceKey: string;
-  soon: boolean;
-}): Promise<{ ok: true }> {
-  const adminUserId = await requireAdminUserId();
+export const setSurfaceComingSoonAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ surfaceKey: z.string(), soon: z.boolean() })]) },
+  async (adminUserId, input: {
+    surfaceKey: string;
+    soon: boolean;
+  }): Promise<{ ok: true }> => {
+    await setSurfaceComingSoon(adminUserId, input.surfaceKey, input.soon);
 
-  await setSurfaceComingSoon(adminUserId, input.surfaceKey, input.soon);
-
-  revalidatePath("/", "layout");
-  revalidatePath("/admin/product");
-  return { ok: true };
-}
+    revalidatePath("/", "layout");
+    revalidatePath("/admin/product");
+    return { ok: true };
+  }
+);
 
 /**
  * Limit a page to some tiers, or open it to all of them. Same shape and invalidation as the
  * two toggles above: the app shell tags and locks the sidebar from these rules.
  */
-export async function setSurfaceTiersAction(input: {
-  surfaceKey: string;
-  plans: string[];
-}): Promise<{ ok: true }> {
-  const adminUserId = await requireAdminUserId();
+export const setSurfaceTiersAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ surfaceKey: z.string(), plans: z.array(z.string()) })]) },
+  async (adminUserId, input: {
+    surfaceKey: string;
+    plans: string[];
+  }): Promise<{ ok: true }> => {
+    await setSurfaceTiers(adminUserId, input.surfaceKey, input.plans);
 
-  await setSurfaceTiers(adminUserId, input.surfaceKey, input.plans);
-
-  revalidatePath("/", "layout");
-  revalidatePath("/admin/product");
-  return { ok: true };
-}
+    revalidatePath("/", "layout");
+    revalidatePath("/admin/product");
+    return { ok: true };
+  }
+);
 
 /** Save the sidebar order for everyone. See `setNavOrder`. */
-export async function setNavOrderAction(input: { order: string[] }): Promise<{ ok: true }> {
-  const adminUserId = await requireAdminUserId();
+export const setNavOrderAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ order: z.array(z.string()) })]) },
+  async (adminUserId, input: { order: string[] }): Promise<{ ok: true }> => {
+    await setNavOrder(adminUserId, input.order);
 
-  await setNavOrder(adminUserId, input.order);
-
-  revalidatePath("/", "layout");
-  revalidatePath("/admin/product");
-  return { ok: true };
-}
+    revalidatePath("/", "layout");
+    revalidatePath("/admin/product");
+    return { ok: true };
+  }
+);
 
 /**
  * Change the constellation filter for everyone.
@@ -389,21 +422,22 @@ export async function setNavOrderAction(input: { order: string[] }): Promise<{ o
  * an operator nudging a number field into nonsense should land on the nearest sane value, not
  * on a stack trace.
  */
-export async function setConstellationConfigAction(input: {
-  enabled?: boolean;
-  minInbound?: number;
-  minOutbound?: number;
-}): Promise<ConstellationConfig> {
-  const adminUserId = await requireAdminUserId();
+export const setConstellationConfigAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ enabled: z.boolean().optional(), minInbound: anyNumber.optional(), minOutbound: anyNumber.optional() })]) },
+  async (adminUserId, input: {
+    enabled?: boolean;
+    minInbound?: number;
+    minOutbound?: number;
+  }): Promise<ConstellationConfig> => {
+    const next = await setConstellationConfig(adminUserId, input);
 
-  const next = await setConstellationConfig(adminUserId, input);
-
-  revalidatePath("/", "layout");
-  revalidatePath("/admin/product");
-  revalidatePath("/graph");
-  revalidatePath("/dashboard");
-  return next;
-}
+    revalidatePath("/", "layout");
+    revalidatePath("/admin/product");
+    revalidatePath("/graph");
+    revalidatePath("/dashboard");
+    return next;
+  }
+);
 
 /**
  * Enter or leave "view as a general user" for this browser session.
@@ -424,34 +458,36 @@ export async function setConstellationConfigAction(input: {
  * to pick up; setting/deleting a cookie already re-renders the current page on its own, and
  * callers additionally `router.refresh()` to be sure every server component above them re-runs.
  */
-export async function setViewAsUserAction(input: {
-  on: boolean;
-}): Promise<{ ok: true }> {
-  const adminUserId = await requireAdminUserId();
-  const store = await cookies();
+export const setViewAsUserAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ on: z.boolean() })]) },
+  async (adminUserId, input: {
+    on: boolean;
+  }): Promise<{ ok: true }> => {
+    const store = await cookies();
 
-  if (input.on) {
-    store.set(VIEW_AS_USER_COOKIE, "1", {
-      httpOnly: true,
-      sameSite: "lax",
-      path: "/",
-      secure: process.env.NODE_ENV === "production",
+    if (input.on) {
+      store.set(VIEW_AS_USER_COOKIE, "1", {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: process.env.NODE_ENV === "production",
+      });
+    } else {
+      store.delete(VIEW_AS_USER_COOKIE);
+    }
+
+    await recordAdminAction({
+      adminUserId,
+      action: input.on ? "product.view_as_user.enter" : "product.view_as_user.exit",
     });
-  } else {
-    store.delete(VIEW_AS_USER_COOKIE);
-  }
 
-  await recordAdminAction({
-    adminUserId,
-    action: input.on ? "product.view_as_user.enter" : "product.view_as_user.exit",
-  });
-
-  revalidatePath("/", "layout");
-  if (input.on) {
-    redirect("/dashboard");
+    revalidatePath("/", "layout");
+    if (input.on) {
+      redirect("/dashboard");
+    }
+    return { ok: true };
   }
-  return { ok: true };
-}
+);
 
 /**
  * Toggle whether the calling admin sees real pages behind a coming-soon screen.
@@ -466,33 +502,35 @@ export async function setViewAsUserAction(input: {
  * caller, since turning this on does not change what the caller could already reach, only
  * what an unreleased page shows them once they are there.
  */
-export async function setPreviewUnreleasedAction(input: {
-  on: boolean;
-}): Promise<{ ok: true }> {
-  const adminUserId = await requireAdminUserId();
-  const store = await cookies();
+export const setPreviewUnreleasedAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ on: z.boolean() })]) },
+  async (adminUserId, input: {
+    on: boolean;
+  }): Promise<{ ok: true }> => {
+    const store = await cookies();
 
-  if (input.on) {
-    store.set(PREVIEW_UNRELEASED_COOKIE, "1", {
-      httpOnly: true,
-      sameSite: "lax",
-      path: "/",
-      secure: process.env.NODE_ENV === "production",
+    if (input.on) {
+      store.set(PREVIEW_UNRELEASED_COOKIE, "1", {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: process.env.NODE_ENV === "production",
+      });
+    } else {
+      store.delete(PREVIEW_UNRELEASED_COOKIE);
+    }
+
+    await recordAdminAction({
+      adminUserId,
+      action: input.on
+        ? "product.preview_unreleased.enter"
+        : "product.preview_unreleased.exit",
     });
-  } else {
-    store.delete(PREVIEW_UNRELEASED_COOKIE);
+
+    revalidatePath("/", "layout");
+    return { ok: true };
   }
-
-  await recordAdminAction({
-    adminUserId,
-    action: input.on
-      ? "product.preview_unreleased.enter"
-      : "product.preview_unreleased.exit",
-  });
-
-  revalidatePath("/", "layout");
-  return { ok: true };
-}
+);
 
 /**
  * Toggle YC Startup console mode for the calling admin.
@@ -508,21 +546,23 @@ export async function setPreviewUnreleasedAction(input: {
  * Scoped to `/admin` rather than `/`, `"layout"` — this setting is never read outside the
  * console, so invalidating the whole site on every toggle bought nothing.
  */
-export async function setYcModeAction(input: { on: boolean }): Promise<never> {
-  const adminUserId = await requireAdminUserId();
-  const db = await getDb();
+export const setYcModeAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ on: z.boolean() })]) },
+  async (adminUserId, input: { on: boolean }): Promise<never> => {
+    const db = await getDb();
 
-  await db
-    .insert(userSettings)
-    .values({ userId: adminUserId, ycModeEnabled: input.on })
-    .onConflictDoUpdate({
-      target: userSettings.userId,
-      set: { ycModeEnabled: input.on, updatedAt: new Date() },
-    });
+    await db
+      .insert(userSettings)
+      .values({ userId: adminUserId, ycModeEnabled: input.on })
+      .onConflictDoUpdate({
+        target: userSettings.userId,
+        set: { ycModeEnabled: input.on, updatedAt: new Date() },
+      });
 
-  revalidatePath("/admin", "layout");
-  redirect(input.on ? "/admin/yc" : "/admin");
-}
+    revalidatePath("/admin", "layout");
+    redirect(input.on ? "/admin/yc" : "/admin");
+  }
+);
 
 /**
  * Interest-list removals.
@@ -537,169 +577,179 @@ export async function setYcModeAction(input: { on: boolean }): Promise<never> {
  * rather than the operator's screen, and a delete has no other record that it happened —
  * `interest_list_signups` is the only place that address ever existed.
  */
-export async function unsubscribeInterestListAction(input: {
-  id: string;
-  reason: string;
-}): Promise<{ ok: true; email: string }> {
-  const adminUserId = await requireAdminUserId();
-  const reason = ops.requireReason(input.reason);
+export const unsubscribeInterestListAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ id: z.string(), reason: z.string() })]) },
+  async (adminUserId, input: {
+    id: string;
+    reason: string;
+  }): Promise<{ ok: true; email: string }> => {
+    const reason = ops.requireReason(input.reason);
 
-  const removed = await interestList.unsubscribeInterestListRow(input.id);
-  // Throws rather than returning a failure shape: ConfirmActionDialog reports success for
-  // any resolved promise and only surfaces a rejection, so a returned {ok:false} would
-  // toast "done" over an operation that did nothing. UserFacingError so the message
-  // survives production digests and friendlyError can show it.
-  if (!removed) throw new UserFacingError("That signup no longer exists");
+    const removed = await interestList.unsubscribeInterestListRow(input.id);
+    // Throws rather than returning a failure shape: ConfirmActionDialog reports success for
+    // any resolved promise and only surfaces a rejection, so a returned {ok:false} would
+    // toast "done" over an operation that did nothing. UserFacingError so the message
+    // survives production digests and friendlyError can show it.
+    if (!removed) throw new UserFacingError("That signup no longer exists");
 
-  await recordAdminAction({
-    adminUserId,
-    action: "interest_list.unsubscribe",
-    resourceType: "interest_list_signup",
-    resourceId: input.id,
-    detail: { email: removed.email },
-    reason,
-  });
+    await recordAdminAction({
+      adminUserId,
+      action: "interest_list.unsubscribe",
+      resourceType: "interest_list_signup",
+      resourceId: input.id,
+      detail: { email: removed.email },
+      reason,
+    });
 
-  revalidateInterestList();
-  return { ok: true, email: removed.email };
-}
+    revalidateInterestList();
+    return { ok: true, email: removed.email };
+  }
+);
 
-export async function resubscribeInterestListAction(input: {
-  id: string;
-  reason: string;
-}): Promise<{ ok: true; email: string }> {
-  const adminUserId = await requireAdminUserId();
-  const reason = ops.requireReason(input.reason);
+export const resubscribeInterestListAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ id: z.string(), reason: z.string() })]) },
+  async (adminUserId, input: {
+    id: string;
+    reason: string;
+  }): Promise<{ ok: true; email: string }> => {
+    const reason = ops.requireReason(input.reason);
 
-  const restored = await interestList.resubscribeInterestListRow(input.id);
-  if (!restored) throw new UserFacingError("That signup no longer exists");
+    const restored = await interestList.resubscribeInterestListRow(input.id);
+    if (!restored) throw new UserFacingError("That signup no longer exists");
 
-  await recordAdminAction({
-    adminUserId,
-    action: "interest_list.resubscribe",
-    resourceType: "interest_list_signup",
-    resourceId: input.id,
-    detail: { email: restored.email },
-    reason,
-  });
+    await recordAdminAction({
+      adminUserId,
+      action: "interest_list.resubscribe",
+      resourceType: "interest_list_signup",
+      resourceId: input.id,
+      detail: { email: restored.email },
+      reason,
+    });
 
-  revalidateInterestList();
-  return { ok: true, email: restored.email };
-}
+    revalidateInterestList();
+    return { ok: true, email: restored.email };
+  }
+);
 
 /** In-person event signup: adds the row, names on the pass, welcome email names the event. */
-export async function addManualInterestListSignupAction(input: {
-  email: string;
-  firstName: string;
-  lastName: string;
-  eventLabel: string;
-  reason: string;
-}): Promise<{ ok: true; email: string }> {
-  const adminUserId = await requireAdminUserId();
-  const reason = ops.requireReason(input.reason);
+export const addManualInterestListSignupAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ email: z.string(), firstName: z.string(), lastName: z.string(), eventLabel: z.string(), reason: z.string() })]) },
+  async (adminUserId, input: {
+    email: string;
+    firstName: string;
+    lastName: string;
+    eventLabel: string;
+    reason: string;
+  }): Promise<{ ok: true; email: string }> => {
+    const reason = ops.requireReason(input.reason);
 
-  const added = await interestList.addManualInterestListSignup({
-    email: input.email,
-    firstName: input.firstName,
-    lastName: input.lastName,
-    eventLabel: input.eventLabel,
-  });
+    const added = await interestList.addManualInterestListSignup({
+      email: input.email,
+      firstName: input.firstName,
+      lastName: input.lastName,
+      eventLabel: input.eventLabel,
+    });
 
-  await recordAdminAction({
-    adminUserId,
-    action: "interest_list.manual_add",
-    resourceType: "interest_list_signup",
-    resourceId: added.id,
-    detail: { email: added.email, eventLabel: input.eventLabel.trim() },
-    reason,
-  });
+    await recordAdminAction({
+      adminUserId,
+      action: "interest_list.manual_add",
+      resourceType: "interest_list_signup",
+      resourceId: added.id,
+      detail: { email: added.email, eventLabel: input.eventLabel.trim() },
+      reason,
+    });
 
-  revalidateInterestList();
-  return { ok: true, email: added.email };
-}
+    revalidateInterestList();
+    return { ok: true, email: added.email };
+  }
+);
 
 /** Spreadsheet paste from an event: many people, one event label, join order preserved. */
-export async function addManualInterestListPasteAction(input: {
-  paste: string;
-  eventLabel: string;
-  reason: string;
-}): Promise<{
-  ok: true;
-  added: number;
-  skipped: number;
-  parseErrors: string[];
-  skippedEmails: Array<{ email: string; reason: string }>;
-}> {
-  const adminUserId = await requireAdminUserId();
-  const reason = ops.requireReason(input.reason);
+export const addManualInterestListPasteAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ paste: z.string(), eventLabel: z.string(), reason: z.string() })]) },
+  async (adminUserId, input: {
+    paste: string;
+    eventLabel: string;
+    reason: string;
+  }): Promise<{
+    ok: true;
+    added: number;
+    skipped: number;
+    parseErrors: string[];
+    skippedEmails: Array<{ email: string; reason: string }>;
+  }> => {
+    const reason = ops.requireReason(input.reason);
 
-  const result = await interestList.addManualInterestListSignupsFromPaste({
-    paste: input.paste,
-    eventLabel: input.eventLabel,
-  });
+    const result = await interestList.addManualInterestListSignupsFromPaste({
+      paste: input.paste,
+      eventLabel: input.eventLabel,
+    });
 
-  if (result.added.length === 0 && result.skipped.length === 0) {
-    throw new UserFacingError(
-      result.parseErrors[0] ?? "Paste at least one row: timestamp, name, and email."
-    );
-  }
+    if (result.added.length === 0 && result.skipped.length === 0) {
+      throw new UserFacingError(
+        result.parseErrors[0] ?? "Paste at least one row: timestamp, name, and email."
+      );
+    }
 
-  await recordAdminAction({
-    adminUserId,
-    action: "interest_list.manual_add_bulk",
-    resourceType: "interest_list_signup",
-    resourceId: result.added[0]?.id ?? "bulk",
-    detail: {
-      eventLabel: input.eventLabel.trim(),
-      added: result.added.map((a) => a.email),
-      skipped: result.skipped,
+    await recordAdminAction({
+      adminUserId,
+      action: "interest_list.manual_add_bulk",
+      resourceType: "interest_list_signup",
+      resourceId: result.added[0]?.id ?? "bulk",
+      detail: {
+        eventLabel: input.eventLabel.trim(),
+        added: result.added.map((a) => a.email),
+        skipped: result.skipped,
+        parseErrors: result.parseErrors,
+      },
+      reason,
+    });
+
+    revalidateInterestList();
+    return {
+      ok: true,
+      added: result.added.length,
+      skipped: result.skipped.length,
       parseErrors: result.parseErrors,
-    },
-    reason,
-  });
-
-  revalidateInterestList();
-  return {
-    ok: true,
-    added: result.added.length,
-    skipped: result.skipped.length,
-    parseErrors: result.parseErrors,
-    skippedEmails: result.skipped,
-  };
-}
-
-export async function deleteInterestListAction(input: {
-  id: string;
-  /** Must match the row's address. Guards against deleting whatever was scrolled to. */
-  confirmEmail: string;
-  reason: string;
-}): Promise<{ ok: true; email: string }> {
-  const adminUserId = await requireAdminUserId();
-  const reason = ops.requireReason(input.reason);
-
-  // The audit entry records the address, so it is captured before the row is gone — and
-  // checked against what the operator typed, so a stale page cannot delete the wrong row.
-  const existing = await interestList.loadInterestListRow(input.id);
-  if (!existing) throw new UserFacingError("That signup no longer exists");
-  if (existing.email.trim().toLowerCase() !== input.confirmEmail.trim().toLowerCase()) {
-    throw new UserFacingError("That address does not match this signup");
+      skippedEmails: result.skipped,
+    };
   }
+);
 
-  const deleted = await interestList.deleteInterestListRow(input.id);
-  if (!deleted) throw new UserFacingError("That signup no longer exists");
+export const deleteInterestListAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ id: z.string(), confirmEmail: z.string(), reason: z.string() })]) },
+  async (adminUserId, input: {
+    id: string;
+    /** Must match the row's address. Guards against deleting whatever was scrolled to. */
+    confirmEmail: string;
+    reason: string;
+  }): Promise<{ ok: true; email: string }> => {
+    const reason = ops.requireReason(input.reason);
 
-  await recordAdminAction({
-    adminUserId,
-    action: "interest_list.delete",
-    resourceType: "interest_list_signup",
-    resourceId: input.id,
-    detail: { email: deleted.email },
-    reason,
-  });
+    // The audit entry records the address, so it is captured before the row is gone — and
+    // checked against what the operator typed, so a stale page cannot delete the wrong row.
+    const existing = await interestList.loadInterestListRow(input.id);
+    if (!existing) throw new UserFacingError("That signup no longer exists");
+    if (existing.email.trim().toLowerCase() !== input.confirmEmail.trim().toLowerCase()) {
+      throw new UserFacingError("That address does not match this signup");
+    }
 
-  revalidateInterestList();
-  return { ok: true, email: deleted.email };
-}
+    const deleted = await interestList.deleteInterestListRow(input.id);
+    if (!deleted) throw new UserFacingError("That signup no longer exists");
+
+    await recordAdminAction({
+      adminUserId,
+      action: "interest_list.delete",
+      resourceType: "interest_list_signup",
+      resourceId: input.id,
+      detail: { email: deleted.email },
+      reason,
+    });
+
+    revalidateInterestList();
+    return { ok: true, email: deleted.email };
+  }
+);
 
 /**
  * Bulk removals.
@@ -708,51 +758,55 @@ export async function deleteInterestListAction(input: {
  * every address rather than a count — after a bulk delete that entry is the only thing that
  * can answer "who did that take out".
  */
-export async function bulkUnsubscribeInterestListAction(input: {
-  ids: string[];
-  reason: string;
-}): Promise<{ ok: true; count: number }> {
-  const adminUserId = await requireAdminUserId();
-  const reason = ops.requireReason(input.reason);
-  if (input.ids.length === 0) throw new UserFacingError("Nothing selected");
+export const bulkUnsubscribeInterestListAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ ids: z.array(z.string()), reason: z.string() })]) },
+  async (adminUserId, input: {
+    ids: string[];
+    reason: string;
+  }): Promise<{ ok: true; count: number }> => {
+    const reason = ops.requireReason(input.reason);
+    if (input.ids.length === 0) throw new UserFacingError("Nothing selected");
 
-  const emails = await interestList.bulkUnsubscribeInterestListRows(input.ids);
-  if (emails.length === 0) throw new UserFacingError("None of those signups still exist");
+    const emails = await interestList.bulkUnsubscribeInterestListRows(input.ids);
+    if (emails.length === 0) throw new UserFacingError("None of those signups still exist");
 
-  await recordAdminAction({
-    adminUserId,
-    action: "interest_list.bulk_unsubscribe",
-    resourceType: "interest_list_signup",
-    detail: { emails, count: emails.length },
-    reason,
-  });
+    await recordAdminAction({
+      adminUserId,
+      action: "interest_list.bulk_unsubscribe",
+      resourceType: "interest_list_signup",
+      detail: { emails, count: emails.length },
+      reason,
+    });
 
-  revalidateInterestList();
-  return { ok: true, count: emails.length };
-}
+    revalidateInterestList();
+    return { ok: true, count: emails.length };
+  }
+);
 
-export async function bulkDeleteInterestListAction(input: {
-  ids: string[];
-  reason: string;
-}): Promise<{ ok: true; count: number }> {
-  const adminUserId = await requireAdminUserId();
-  const reason = ops.requireReason(input.reason);
-  if (input.ids.length === 0) throw new UserFacingError("Nothing selected");
+export const bulkDeleteInterestListAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ ids: z.array(z.string()), reason: z.string() })]) },
+  async (adminUserId, input: {
+    ids: string[];
+    reason: string;
+  }): Promise<{ ok: true; count: number }> => {
+    const reason = ops.requireReason(input.reason);
+    if (input.ids.length === 0) throw new UserFacingError("Nothing selected");
 
-  const emails = await interestList.bulkDeleteInterestListRows(input.ids);
-  if (emails.length === 0) throw new UserFacingError("None of those signups still exist");
+    const emails = await interestList.bulkDeleteInterestListRows(input.ids);
+    if (emails.length === 0) throw new UserFacingError("None of those signups still exist");
 
-  await recordAdminAction({
-    adminUserId,
-    action: "interest_list.bulk_delete",
-    resourceType: "interest_list_signup",
-    detail: { emails, count: emails.length },
-    reason,
-  });
+    await recordAdminAction({
+      adminUserId,
+      action: "interest_list.bulk_delete",
+      resourceType: "interest_list_signup",
+      detail: { emails, count: emails.length },
+      reason,
+    });
 
-  revalidateInterestList();
-  return { ok: true, count: emails.length };
-}
+    revalidateInterestList();
+    return { ok: true, count: emails.length };
+  }
+);
 
 /**
  * Broadcasts — the operator-composed note to the interest list.
@@ -761,152 +815,166 @@ export async function bulkDeleteInterestListAction(input: {
  * so it is deliberately a two-step: compose saves a draft, and a separate send with its own
  * confirmation is what actually mails it. There is no compose-and-send-in-one-click path.
  */
-export async function createBroadcastAction(input: {
-  subject: string;
-  body: string;
-}): Promise<{ ok: true; id: string }> {
-  const adminUserId = await requireAdminUserId();
-  const invalid = broadcast.validateBroadcast(input);
-  if (invalid) throw new Error(invalid);
+export const createBroadcastAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ subject: z.string(), body: z.string() })]) },
+  async (adminUserId, input: {
+    subject: string;
+    body: string;
+  }): Promise<{ ok: true; id: string }> => {
+    const invalid = broadcast.validateBroadcast(input);
+    if (invalid) throw new Error(invalid);
 
-  const created = await broadcast.createBroadcast({ ...input, createdBy: adminUserId });
-  await recordAdminAction({
-    adminUserId,
-    action: "broadcast.create",
-    resourceType: "broadcast",
-    resourceId: created.id,
-    detail: { subject: created.subject },
-  });
+    const created = await broadcast.createBroadcast({ ...input, createdBy: adminUserId });
+    await recordAdminAction({
+      adminUserId,
+      action: "broadcast.create",
+      resourceType: "broadcast",
+      resourceId: created.id,
+      detail: { subject: created.subject },
+    });
 
-  revalidateBroadcasts();
-  return { ok: true, id: created.id };
-}
-
-export async function sendBroadcastTestAction(input: {
-  subject: string;
-  body: string;
-  to: string;
-}): Promise<{ ok: true }> {
-  await requireAdminUserId();
-  const invalid = broadcast.validateBroadcast(input);
-  if (invalid) throw new Error(invalid);
-  if (!input.to.includes("@")) throw new Error("That doesn't look like an address.");
-
-  const result = await broadcast.sendBroadcastTest(input);
-  if (!result.ok) throw new Error(result.error ?? "The test send failed.");
-  return { ok: true };
-}
-
-export async function sendBroadcastAction(input: {
-  id: string;
-  /** Must match the subject. The guard against sending the wrong draft to everyone. */
-  confirmSubject: string;
-  reason: string;
-}): Promise<{ ok: true; sent: number; failed: number; remaining: number }> {
-  const adminUserId = await requireAdminUserId();
-  const reason = ops.requireReason(input.reason);
-
-  const draft = await broadcast.loadBroadcast(input.id);
-  if (!draft) throw new Error("That broadcast no longer exists.");
-  if (draft.subject.trim() !== input.confirmSubject.trim()) {
-    throw new Error("That subject does not match this broadcast.");
+    revalidateBroadcasts();
+    return { ok: true, id: created.id };
   }
+);
 
-  // Logged BEFORE the send, unlike every other action here: this one mails real people, and
-  // if the invocation dies partway the audit must still show that a send was started.
-  await recordAdminAction({
-    adminUserId,
-    action: "broadcast.send",
-    resourceType: "broadcast",
-    resourceId: draft.id,
-    detail: { subject: draft.subject },
-    reason,
-  });
+export const sendBroadcastTestAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ subject: z.string(), body: z.string(), to: z.string() })]) },
+  async (_caller, input: {
+    subject: string;
+    body: string;
+    to: string;
+  }): Promise<{ ok: true }> => {
+    const invalid = broadcast.validateBroadcast(input);
+    if (invalid) throw new Error(invalid);
+    if (!input.to.includes("@")) throw new Error("That doesn't look like an address.");
 
-  const stats = await broadcast.sendBroadcast(input.id);
-  revalidateBroadcasts();
-  return { ok: true, sent: stats.sent, failed: stats.failed, remaining: stats.remaining };
-}
+    const result = await broadcast.sendBroadcastTest(input);
+    if (!result.ok) throw new Error(result.error ?? "The test send failed.");
+    return { ok: true };
+  }
+);
 
-export async function deleteBroadcastAction(input: {
-  id: string;
-  reason: string;
-}): Promise<{ ok: true }> {
-  const adminUserId = await requireAdminUserId();
-  const reason = ops.requireReason(input.reason);
+export const sendBroadcastAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ id: z.string(), confirmSubject: z.string(), reason: z.string() })]) },
+  async (adminUserId, input: {
+    id: string;
+    /** Must match the subject. The guard against sending the wrong draft to everyone. */
+    confirmSubject: string;
+    reason: string;
+  }): Promise<{ ok: true; sent: number; failed: number; remaining: number }> => {
+    const reason = ops.requireReason(input.reason);
 
-  const removed = await broadcast.deleteDraftBroadcast(input.id);
-  if (!removed) throw new Error("Only an unsent draft can be deleted.");
+    const draft = await broadcast.loadBroadcast(input.id);
+    if (!draft) throw new Error("That broadcast no longer exists.");
+    if (draft.subject.trim() !== input.confirmSubject.trim()) {
+      throw new Error("That subject does not match this broadcast.");
+    }
 
-  await recordAdminAction({
-    adminUserId,
-    action: "broadcast.delete",
-    resourceType: "broadcast",
-    resourceId: input.id,
-    detail: { subject: removed.subject },
-    reason,
-  });
+    // Logged BEFORE the send, unlike every other action here: this one mails real people, and
+    // if the invocation dies partway the audit must still show that a send was started.
+    await recordAdminAction({
+      adminUserId,
+      action: "broadcast.send",
+      resourceType: "broadcast",
+      resourceId: draft.id,
+      detail: { subject: draft.subject },
+      reason,
+    });
 
-  revalidateBroadcasts();
-  return { ok: true };
-}
+    const stats = await broadcast.sendBroadcast(input.id);
+    revalidateBroadcasts();
+    return { ok: true, sent: stats.sent, failed: stats.failed, remaining: stats.remaining };
+  }
+);
+
+export const deleteBroadcastAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ id: z.string(), reason: z.string() })]) },
+  async (adminUserId, input: {
+    id: string;
+    reason: string;
+  }): Promise<{ ok: true }> => {
+    const reason = ops.requireReason(input.reason);
+
+    const removed = await broadcast.deleteDraftBroadcast(input.id);
+    if (!removed) throw new Error("Only an unsent draft can be deleted.");
+
+    await recordAdminAction({
+      adminUserId,
+      action: "broadcast.delete",
+      resourceType: "broadcast",
+      resourceId: input.id,
+      detail: { subject: removed.subject },
+      reason,
+    });
+
+    revalidateBroadcasts();
+    return { ok: true };
+  }
+);
 
 /**
  * Run the known-condition sweep now, from the console, rather than waiting up to ten
  * minutes for the scheduler. Audited like every other privileged action.
  */
-export async function runOpsSweepAction(): Promise<{
-  ok: true;
-  opened: string[];
-  reminded: string[];
-  recovered: string[];
-  active: string[];
-}> {
-  const adminUserId = await requireAdminUserId();
-  const result = await runOpsSweep({ trigger: "manual" });
-  await recordAdminAction({
-    adminUserId,
-    action: "ops.sweep",
-    detail: {
+export const runOpsSweepAction = defineAction(
+  { auth: () => requireAdminUserId() },
+  async (adminUserId): Promise<{
+    ok: true;
+    opened: string[];
+    reminded: string[];
+    recovered: string[];
+    active: string[];
+  }> => {
+    const result = await runOpsSweep({ trigger: "manual" });
+    await recordAdminAction({
+      adminUserId,
+      action: "ops.sweep",
+      detail: {
+        opened: result.opened,
+        reminded: result.reminded,
+        recovered: result.recovered,
+        active: result.active.length,
+        deliveryFailures: result.deliveryFailures,
+      },
+    });
+    revalidatePath("/admin/health");
+    return {
+      ok: true,
       opened: result.opened,
       reminded: result.reminded,
       recovered: result.recovered,
-      active: result.active.length,
-      deliveryFailures: result.deliveryFailures,
-    },
-  });
-  revalidatePath("/admin/health");
-  return {
-    ok: true,
-    opened: result.opened,
-    reminded: result.reminded,
-    recovered: result.recovered,
-    active: result.active,
-  };
-}
+      active: result.active,
+    };
+  }
+);
 
 /** Prove the Slack webhook is wired, from the console. */
-export async function sendTestAlertAction(): Promise<{ ok: true }> {
-  const adminUserId = await requireAdminUserId();
-  await notifySlack(
-    `:mega: Test alert from the Orbit admin console (sent by \`${adminUserId}\`). If you can read this, ops alerts reach Slack.`
-  );
-  await recordAdminAction({ adminUserId, action: "ops.test_alert" });
-  return { ok: true };
-}
+export const sendTestAlertAction = defineAction(
+  { auth: () => requireAdminUserId() },
+  async (adminUserId): Promise<{ ok: true }> => {
+    await notifySlack(
+      `:mega: Test alert from the Orbit admin console (sent by \`${adminUserId}\`). If you can read this, ops alerts reach Slack.`
+    );
+    await recordAdminAction({ adminUserId, action: "ops.test_alert" });
+    return { ok: true };
+  }
+);
 
 /** Prove the Slack bot can DM you specifically, from the console. */
-export async function sendTestSlackDMAction(): Promise<{ ok: true }> {
-  const adminUserId = await requireAdminUserId();
-  if (!process.env.SLACK_BOT_TOKEN || !process.env.SLACK_ALERT_USER_ID) {
-    throw new Error("SLACK_BOT_TOKEN / SLACK_ALERT_USER_ID is not set");
+export const sendTestSlackDMAction = defineAction(
+  { auth: () => requireAdminUserId() },
+  async (adminUserId): Promise<{ ok: true }> => {
+    if (!process.env.SLACK_BOT_TOKEN || !process.env.SLACK_ALERT_USER_ID) {
+      throw new Error("SLACK_BOT_TOKEN / SLACK_ALERT_USER_ID is not set");
+    }
+    await sendSlackDM(
+      `:wave: Test DM from the Orbit admin console (sent by \`${adminUserId}\`). If you can read this, critical-error and feedback alerts will reach you here.`
+    );
+    await recordAdminAction({ adminUserId, action: "ops.test_dm" });
+    return { ok: true };
   }
-  await sendSlackDM(
-    `:wave: Test DM from the Orbit admin console (sent by \`${adminUserId}\`). If you can read this, critical-error and feedback alerts will reach you here.`
-  );
-  await recordAdminAction({ adminUserId, action: "ops.test_dm" });
-  return { ok: true };
-}
+);
 
 /**
  * Both paths the feedback console can change, plus the nav badge.
@@ -927,46 +995,48 @@ function revalidateFeedback() {
  * `ConfirmActionDialog` reports success for any resolved promise and surfaces only a
  * rejection's message.
  */
-export async function setFeedbackStatusAction(input: {
-  id: string;
-  status: "new" | "triaged" | "resolved";
-  reason: string;
-  resolutionNote?: string;
-}): Promise<{ ok: true; from: string }> {
-  const adminUserId = await requireAdminUserId();
-  const reason = ops.requireReason(input.reason);
+export const setFeedbackStatusAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ id: z.string(), status: z.enum(["new", "triaged", "resolved"]), reason: z.string(), resolutionNote: z.string().optional() })]) },
+  async (adminUserId, input: {
+    id: string;
+    status: "new" | "triaged" | "resolved";
+    reason: string;
+    resolutionNote?: string;
+  }): Promise<{ ok: true; from: string }> => {
+    const reason = ops.requireReason(input.reason);
 
-  const moved = await adminFeedback.setFeedbackStatus({
-    id: input.id,
-    status: input.status,
-    adminUserId,
-    resolutionNote: input.resolutionNote?.trim() || undefined,
-  });
-  if (!moved) throw new Error("That feedback entry no longer exists.");
-  if (moved.from === input.status) throw new Error(`That entry is already ${input.status}.`);
+    const moved = await adminFeedback.setFeedbackStatus({
+      id: input.id,
+      status: input.status,
+      adminUserId,
+      resolutionNote: input.resolutionNote?.trim() || undefined,
+    });
+    if (!moved) throw new Error("That feedback entry no longer exists.");
+    if (moved.from === input.status) throw new Error(`That entry is already ${input.status}.`);
 
-  await recordAdminAction({
-    adminUserId,
-    action:
-      input.status === "resolved"
-        ? "feedback.resolve"
-        : input.status === "triaged"
-          ? "feedback.triage"
-          : "feedback.reopen",
-    resourceType: "feedback",
-    resourceId: input.id,
-    detail: {
-      from: moved.from,
-      to: input.status,
-      excerpt: moved.excerpt,
-      ...(input.resolutionNote ? { resolutionNote: input.resolutionNote } : {}),
-    },
-    reason,
-  });
+    await recordAdminAction({
+      adminUserId,
+      action:
+        input.status === "resolved"
+          ? "feedback.resolve"
+          : input.status === "triaged"
+            ? "feedback.triage"
+            : "feedback.reopen",
+      resourceType: "feedback",
+      resourceId: input.id,
+      detail: {
+        from: moved.from,
+        to: input.status,
+        excerpt: moved.excerpt,
+        ...(input.resolutionNote ? { resolutionNote: input.resolutionNote } : {}),
+      },
+      reason,
+    });
 
-  revalidateFeedback();
-  return { ok: true, from: moved.from };
-}
+    revalidateFeedback();
+    return { ok: true, from: moved.from };
+  }
+);
 
 /**
  * Delete one screenshot, and then its blob object.
@@ -974,39 +1044,41 @@ export async function setFeedbackStatusAction(input: {
  * The row is the contract and the blob is cleanup: a Blob outage must not stop an operator
  * removing something that should never have been captured in the first place.
  */
-export async function deleteFeedbackScreenshotAction(input: {
-  id: string;
-  reason: string;
-}): Promise<{ ok: true }> {
-  const adminUserId = await requireAdminUserId();
-  const reason = ops.requireReason(input.reason);
+export const deleteFeedbackScreenshotAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ id: z.string(), reason: z.string() })]) },
+  async (adminUserId, input: {
+    id: string;
+    reason: string;
+  }): Promise<{ ok: true }> => {
+    const reason = ops.requireReason(input.reason);
 
-  const removed = await adminFeedback.deleteFeedbackScreenshot(input.id);
-  if (!removed) throw new Error("That screenshot no longer exists.");
+    const removed = await adminFeedback.deleteFeedbackScreenshot(input.id);
+    if (!removed) throw new Error("That screenshot no longer exists.");
 
-  let blobDeleted = false;
-  if (removed.blobUrl) {
-    try {
-      const { del } = await import("@vercel/blob");
-      await del(removed.blobUrl);
-      blobDeleted = true;
-    } catch {
-      // See above.
+    let blobDeleted = false;
+    if (removed.blobUrl) {
+      try {
+        const { del } = await import("@vercel/blob");
+        await del(removed.blobUrl);
+        blobDeleted = true;
+      } catch {
+        // See above.
+      }
     }
+
+    await recordAdminAction({
+      adminUserId,
+      action: "feedback.screenshot_delete",
+      resourceType: "feedback_screenshot",
+      resourceId: input.id,
+      detail: { feedbackId: removed.feedbackId, storage: removed.storage, blobDeleted },
+      reason,
+    });
+
+    revalidateFeedback();
+    return { ok: true };
   }
-
-  await recordAdminAction({
-    adminUserId,
-    action: "feedback.screenshot_delete",
-    resourceType: "feedback_screenshot",
-    resourceId: input.id,
-    detail: { feedbackId: removed.feedbackId, storage: removed.storage, blobDeleted },
-    reason,
-  });
-
-  revalidateFeedback();
-  return { ok: true };
-}
+);
 
 /* ------------------------------------------------------------------- provider status */
 
@@ -1018,12 +1090,14 @@ export async function deleteFeedbackScreenshotAction(input: {
  * nothing to validate — but the gate still comes first, because a route that hits four
  * third-party APIs on demand is one an unauthenticated caller should not be able to ring.
  */
-export async function refreshProvidersAction(): Promise<{ ok: true }> {
-  await requireAdminUserId();
-  await loadProviderStatuses({ force: true });
-  revalidatePath("/admin/health");
-  return { ok: true };
-}
+export const refreshProvidersAction = defineAction(
+  { auth: () => requireAdminUserId() },
+  async (_caller): Promise<{ ok: true }> => {
+    await loadProviderStatuses({ force: true });
+    revalidatePath("/admin/health");
+    return { ok: true };
+  }
+);
 
 /* ------------------------------------------------------------------------ site access */
 
@@ -1037,16 +1111,18 @@ function revalidateAccess() {
  * (seconds), on every instance, with no deploy. Confirmed and reasoned in the UI because
  * turning it off opens every page to the public.
  */
-export async function setSiteStealthAction(input: {
-  enabled: boolean;
-  reason: string;
-}): Promise<{ ok: true; stealth: boolean }> {
-  const adminUserId = await requireAdminUserId();
-  ops.requireReason(input.reason);
-  const mode = await setStealth(adminUserId, input.enabled);
-  revalidateAccess();
-  return { ok: true, stealth: mode.stealth };
-}
+export const setSiteStealthAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ enabled: z.boolean(), reason: z.string() })]) },
+  async (adminUserId, input: {
+    enabled: boolean;
+    reason: string;
+  }): Promise<{ ok: true; stealth: boolean }> => {
+    ops.requireReason(input.reason);
+    const mode = await setStealth(adminUserId, input.enabled);
+    revalidateAccess();
+    return { ok: true, stealth: mode.stealth };
+  }
+);
 
 /**
  * Show or hide the waitlist page's "Take it for a spin" product demo. Low stakes and easy to
@@ -1054,63 +1130,71 @@ export async function setSiteStealthAction(input: {
  * The public page reads it through a ten-second cache; `/interest` is revalidated so the
  * instance that made the change shows it at once.
  */
-export async function setWaitlistDemoAction(input: {
-  enabled: boolean;
-}): Promise<{ ok: true; enabled: boolean }> {
-  const adminUserId = await requireAdminUserId();
-  const enabled = await setWaitlistDemoEnabled(adminUserId, input.enabled === true);
-  revalidatePath("/interest");
-  revalidatePath("/");
-  revalidatePath("/admin/growth/interest-list");
-  return { ok: true, enabled };
-}
+export const setWaitlistDemoAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ enabled: z.boolean() })]) },
+  async (adminUserId, input: {
+    enabled: boolean;
+  }): Promise<{ ok: true; enabled: boolean }> => {
+    const enabled = await setWaitlistDemoEnabled(adminUserId, input.enabled === true);
+    revalidatePath("/interest");
+    revalidatePath("/");
+    revalidatePath("/admin/growth/interest-list");
+    return { ok: true, enabled };
+  }
+);
 
 /**
  * Invite someone to create an account, stealth or not. Returns the result rather than
  * throwing for a bad address, so the form can say what was wrong in place; Clerk and
  * database failures still throw.
  */
-export async function inviteToSiteAction(input: {
-  email: string;
-  notify: boolean;
-  firstName?: string | null;
-}): Promise<SiteInviteResult | { kind: "error"; message: string }> {
-  const adminUserId = await requireAdminUserId();
-  const firstName = input.firstName?.trim().slice(0, 60) || null;
-  try {
-    const result = await inviteToSite({ adminUserId, email: input.email, notify: input.notify, firstName });
-    revalidateAccess();
-    return result;
-  } catch (err) {
-    if (err instanceof SiteInviteError) return { kind: "error", message: err.message };
-    throw err;
+export const inviteToSiteAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ email: z.string(), notify: z.boolean(), firstName: z.string().nullish() })]) },
+  async (adminUserId, input: {
+    email: string;
+    notify: boolean;
+    firstName?: string | null;
+  }): Promise<SiteInviteResult | { kind: "error"; message: string }> => {
+    const firstName = input.firstName?.trim().slice(0, 60) || null;
+    try {
+      const result = await inviteToSite({ adminUserId, email: input.email, notify: input.notify, firstName });
+      revalidateAccess();
+      return result;
+    } catch (err) {
+      if (err instanceof SiteInviteError) return { kind: "error", message: err.message };
+      throw err;
+    }
   }
-}
+);
 
-export async function revokeSiteInviteAction(input: {
-  invitationId: string;
-  reason: string;
-}): Promise<{ ok: true; email: string }> {
-  const adminUserId = await requireAdminUserId();
-  ops.requireReason(input.reason);
-  const { email } = await revokeSiteInvite({ adminUserId, invitationId: input.invitationId });
-  revalidateAccess();
-  return { ok: true, email };
-}
+export const revokeSiteInviteAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ invitationId: z.string(), reason: z.string() })]) },
+  async (adminUserId, input: {
+    invitationId: string;
+    reason: string;
+  }): Promise<{ ok: true; email: string }> => {
+    ops.requireReason(input.reason);
+    const { email } = await revokeSiteInvite({ adminUserId, invitationId: input.invitationId });
+    revalidateAccess();
+    return { ok: true, email };
+  }
+);
 
 /**
  * Pause or resume included AI on Pro and Max. Audited; takes effect on this instance at once
  * and on every other within 30 seconds. Free and Lifetime are never affected.
  */
-export async function setManagedAiPausedAction(input: {
-  paused: boolean;
-  reason: string;
-}): Promise<ManagedAiSwitchState> {
-  const adminUserId = await requireAdminUserId();
-  const state = await setManagedAiPaused(adminUserId, input.paused === true, input.reason);
-  revalidatePath("/admin/billing");
-  return state;
-}
+export const setManagedAiPausedAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ paused: z.boolean(), reason: z.string() })]) },
+  async (adminUserId, input: {
+    paused: boolean;
+    reason: string;
+  }): Promise<ManagedAiSwitchState> => {
+    const state = await setManagedAiPaused(adminUserId, input.paused === true, input.reason);
+    revalidatePath("/admin/billing");
+    return state;
+  }
+);
 
 /* ------------------------------------------------- Shared LinkedIn photo takedown ------- */
 
@@ -1120,16 +1204,20 @@ function revalidateAvatars() {
 }
 
 /** Remove a shared LinkedIn photo and block the slug from being re-fetched or re-contributed. */
-export async function blockSharedAvatarAction(input: { slug: string; reason: string }): Promise<{ ok: true }> {
-  const adminUserId = await requireAdminUserId();
-  await blockSharedAvatar(adminUserId, input);
-  revalidateAvatars();
-  return { ok: true };
-}
+export const blockSharedAvatarAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ slug: z.string(), reason: z.string() })]) },
+  async (adminUserId, input: { slug: string; reason: string }): Promise<{ ok: true }> => {
+    await blockSharedAvatar(adminUserId, input);
+    revalidateAvatars();
+    return { ok: true };
+  }
+);
 
-export async function unblockSharedAvatarAction(input: { slug: string; reason: string }): Promise<{ ok: true }> {
-  const adminUserId = await requireAdminUserId();
-  await unblockSharedAvatar(adminUserId, input);
-  revalidateAvatars();
-  return { ok: true };
-}
+export const unblockSharedAvatarAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ slug: z.string(), reason: z.string() })]) },
+  async (adminUserId, input: { slug: string; reason: string }): Promise<{ ok: true }> => {
+    await unblockSharedAvatar(adminUserId, input);
+    revalidateAvatars();
+    return { ok: true };
+  }
+);

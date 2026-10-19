@@ -23,7 +23,6 @@ import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { chatMessages, contacts, emailSends, interactions } from "@/db/schema";
 import { getCurrentUserProfile } from "@/lib/auth";
-import { requireUserForSurface } from "@/lib/plan-guards";
 import { UNDO_DELAY_MS } from "@/lib/email/config";
 import { ENQUEUE_COPY, enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
 import { scheduleDispatch } from "@/lib/email/schedule";
@@ -35,6 +34,8 @@ import {
   chatSendExternalId,
   isUuid,
 } from "@/lib/chat-send";
+import { z } from "zod";
+import { defineAction } from "@/lib/input/action";
 
 export type ChatSendReason =
   | "not_connected"
@@ -139,81 +140,85 @@ export type ChatSendContext = {
 };
 
 /** Everything the confirm dialog shows before anything is sent. Read-only. */
-export async function getChatSendContext(messageId: string, contactId: string): Promise<ChatSendContext | null> {
-  const userId = await requireUserForSurface("page.chat");
-  const contact = await loadTarget(userId, messageId, contactId);
-  if (!contact) return null;
-  const db = await getDb();
-  const key = chatSendExternalId(messageId, contactId);
+export const getChatSendContext = defineAction(
+  { auth: { surface: "page.chat" }, schema: z.tuple([z.string(), z.string()]) },
+  async (userId, messageId: string, contactId: string): Promise<ChatSendContext | null> => {
+    const contact = await loadTarget(userId, messageId, contactId);
+    if (!contact) return null;
+    const db = await getDb();
+    const key = chatSendExternalId(messageId, contactId);
 
-  const [capability, profile] = await Promise.all([
-    getSendCapability(userId),
-    getCurrentUserProfile().catch(() => null),
-  ]);
-  const check = checkRecipient(contact.email);
-  const [logged, pending] = await Promise.all([
-    db.query.interactions.findFirst({
-      where: and(eq(interactions.userId, userId), eq(interactions.externalId, key)),
-      columns: { interactionDate: true },
-    }),
-    // A send still inside its undo window, or mid-flight, has no interaction yet.
-    db.query.emailSends.findFirst({
-      where: and(
-        eq(emailSends.userId, userId),
-        eq(emailSends.idempotencyKey, key),
-        inArray(emailSends.status, ["queued", "sending"])
-      ),
-      columns: { sendAt: true },
-    }),
-  ]);
-  const sentAt = logged?.interactionDate ?? pending?.sendAt ?? null;
+    const [capability, profile] = await Promise.all([
+      getSendCapability(userId),
+      getCurrentUserProfile().catch(() => null),
+    ]);
+    const check = checkRecipient(contact.email);
+    const [logged, pending] = await Promise.all([
+      db.query.interactions.findFirst({
+        where: and(eq(interactions.userId, userId), eq(interactions.externalId, key)),
+        columns: { interactionDate: true },
+      }),
+      // A send still inside its undo window, or mid-flight, has no interaction yet.
+      db.query.emailSends.findFirst({
+        where: and(
+          eq(emailSends.userId, userId),
+          eq(emailSends.idempotencyKey, key),
+          inArray(emailSends.status, ["queued", "sending"])
+        ),
+        columns: { sendAt: true },
+      }),
+    ]);
+    const sentAt = logged?.interactionDate ?? pending?.sendAt ?? null;
 
-  return {
-    identity: {
-      canSend: capability.ok,
-      sendingAs: capability.ok ? capability.fromEmail : null,
-      displayName: profile?.name?.trim() || null,
-      block: capability.ok ? null : { reason: capability.reason, provider: capability.provider },
-      outlookAvailable: capability.outlookAvailable,
-    },
-    contactName: contact.preferredName || contact.fullName,
-    to: check.ok ? check.email : (contact.email?.trim() || null),
-    recipientProblem: check.ok ? null : check.reason,
-    defaultSubject: DEFAULT_SEND_SUBJECT,
-    alreadySent: sentAt ? { at: sentAt.toISOString(), to: check.ok ? check.email : null } : null,
-  };
-}
+    return {
+      identity: {
+        canSend: capability.ok,
+        sendingAs: capability.ok ? capability.fromEmail : null,
+        displayName: profile?.name?.trim() || null,
+        block: capability.ok ? null : { reason: capability.reason, provider: capability.provider },
+        outlookAvailable: capability.outlookAvailable,
+      },
+      contactName: contact.preferredName || contact.fullName,
+      to: check.ok ? check.email : (contact.email?.trim() || null),
+      recipientProblem: check.ok ? null : check.reason,
+      defaultSubject: DEFAULT_SEND_SUBJECT,
+      alreadySent: sentAt ? { at: sentAt.toISOString(), to: check.ok ? check.email : null } : null,
+    };
+  }
+);
 
-export async function sendChatDraftViaGmail(input: {
-  messageId: string;
-  contactId: string;
-  subject?: string | null;
-  body: string;
-  /** The address the dialog showed. Compared only; it is never where the mail goes. */
-  shownTo: string;
-}): Promise<ChatSendResult> {
-  const userId = await requireUserForSurface("page.chat");
-  const contact = await loadTarget(userId, input.messageId, input.contactId);
-  if (!contact) return fail("invalid");
-  const recipient = checkRecipient(contact.email);
-  if (!recipient.ok) return fail(recipient.reason === "placeholder" ? "placeholder" : recipient.reason);
-  if (recipient.email.toLowerCase() !== (input.shownTo ?? "").trim().toLowerCase()) return fail("changed_recipient");
-  const content = checkContent({ subject: input.subject, body: input.body });
-  if (!content.ok) return fail("invalid");
+export const sendChatDraftViaGmail = defineAction(
+  { auth: { surface: "page.chat" }, schema: z.tuple([z.looseObject({ messageId: z.string(), contactId: z.string(), subject: z.string().nullish(), body: z.string(), shownTo: z.string() })]) },
+  async (userId, input: {
+    messageId: string;
+    contactId: string;
+    subject?: string | null;
+    body: string;
+    /** The address the dialog showed. Compared only; it is never where the mail goes. */
+    shownTo: string;
+  }): Promise<ChatSendResult> => {
+    const contact = await loadTarget(userId, input.messageId, input.contactId);
+    if (!contact) return fail("invalid");
+    const recipient = checkRecipient(contact.email);
+    if (!recipient.ok) return fail(recipient.reason === "placeholder" ? "placeholder" : recipient.reason);
+    if (recipient.email.toLowerCase() !== (input.shownTo ?? "").trim().toLowerCase()) return fail("changed_recipient");
+    const content = checkContent({ subject: input.subject, body: input.body });
+    if (!content.ok) return fail("invalid");
 
-  const profile = await getCurrentUserProfile().catch(() => null);
-  const queued = await enqueueEmail(userId, {
-    to: [recipient.email],
-    subject: content.subject,
-    bodyText: content.body,
-    fromName: profile?.name?.trim() || null,
-    origin: "chat",
-    originRef: input.messageId,
-    idempotencyKey: chatSendExternalId(input.messageId, input.contactId),
-    contactIds: [input.contactId],
-    delayMs: UNDO_DELAY_MS,
-  });
-  if (!queued.ok) return fail(CHAT_REASON_FOR[queued.reason]);
-  scheduleDispatch(queued.id, queued.sendAt);
-  return { ok: true, sendId: queued.id, sendAt: queued.sendAt.toISOString(), to: recipient.email };
-}
+    const profile = await getCurrentUserProfile().catch(() => null);
+    const queued = await enqueueEmail(userId, {
+      to: [recipient.email],
+      subject: content.subject,
+      bodyText: content.body,
+      fromName: profile?.name?.trim() || null,
+      origin: "chat",
+      originRef: input.messageId,
+      idempotencyKey: chatSendExternalId(input.messageId, input.contactId),
+      contactIds: [input.contactId],
+      delayMs: UNDO_DELAY_MS,
+    });
+    if (!queued.ok) return fail(CHAT_REASON_FOR[queued.reason]);
+    scheduleDispatch(queued.id, queued.sendAt);
+    return { ok: true, sendId: queued.id, sendAt: queued.sendAt.toISOString(), to: recipient.email };
+  }
+);

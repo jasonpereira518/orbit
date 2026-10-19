@@ -4,7 +4,6 @@ import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { calendarSubscriptions } from "@/db/schema";
-import { requireUserId } from "@/lib/auth";
 import { requireSyncUser } from "@/lib/plan-guards";
 import {
   maskIcsUrl,
@@ -14,6 +13,8 @@ import {
 } from "@/lib/calendar-sync";
 import { asActionResult, UserFacingError } from "@/lib/errors";
 import { actionFailure } from "@/lib/action-failure";
+import { z } from "zod";
+import { defineAction, failResult } from "@/lib/input/action";
 
 function normalizeIcsUrl(raw: string) {
   let url = raw.trim();
@@ -55,130 +56,139 @@ function forClient<T extends { icsUrl: string }>(row: T): T {
   return { ...row, icsUrl: maskIcsUrl(row.icsUrl) };
 }
 
-export async function listCalendarSubscriptions() {
-  const userId = await requireUserId();
-  const db = await getDb();
-  const rows = await db.query.calendarSubscriptions.findMany({
-    where: eq(calendarSubscriptions.userId, userId),
-    orderBy: (s, { desc }) => [desc(s.createdAt)],
-  });
-  return rows.map(forClient);
-}
-
-export async function addCalendarSubscription(input: {
-  icsUrl: string;
-  label?: string;
-  selfEmail?: string;
-}) {
-  return asActionResult(async () => {
-    const userId = await requireSyncUser();
+export const listCalendarSubscriptions = defineAction(
+  {},
+  async (userId) => {
     const db = await getDb();
-    const icsUrl = normalizeIcsUrl(input.icsUrl);
+    const rows = await db.query.calendarSubscriptions.findMany({
+      where: eq(calendarSubscriptions.userId, userId),
+      orderBy: (s, { desc }) => [desc(s.createdAt)],
+    });
+    return rows.map(forClient);
+  }
+);
+
+export const addCalendarSubscription = defineAction(
+  { auth: () => requireSyncUser(), schema: z.tuple([z.looseObject({ icsUrl: z.string(), label: z.string().optional(), selfEmail: z.string().optional() })]), invalid: failResult, onGateError: (err) => asActionResult(() => Promise.reject(err)) },
+  async (userId, input: {
+    icsUrl: string;
+    label?: string;
+    selfEmail?: string;
+  }) => {
+    return asActionResult(async () => {
+      const db = await getDb();
+      const icsUrl = normalizeIcsUrl(input.icsUrl);
+
+      const [row] = await db
+        .insert(calendarSubscriptions)
+        .values({
+          userId,
+          icsUrl: sealIcsUrl(icsUrl),
+          label: input.label?.trim() || "Calendar",
+          selfEmail: input.selfEmail?.trim().toLowerCase() || null,
+          enabled: 1,
+        })
+        .returning();
+
+      // First sync immediately so the user sees results
+      let syncError: string | null = null;
+      let stats = null;
+      try {
+        stats = await syncCalendarSubscription(userId, row.id);
+      } catch (err) {
+        // Returned as data, so never stripped — and a sync failure can carry a provider's
+        // raw response body (`Google Calendar 403: {…}`). Sanitise it here.
+        syncError = await actionFailure(err, "the first sync didn’t finish", "calendar.first-sync", {
+          subscriptionId: row.id,
+        });
+      }
+
+      const subscription =
+        (await db.query.calendarSubscriptions.findFirst({
+          where: eq(calendarSubscriptions.id, row.id),
+        })) || row;
+
+      revalidatePath("/imports");
+      revalidatePath("/");
+      revalidatePath("/contacts");
+
+      return { subscription: forClient(subscription), stats, syncError };
+    });
+  }
+);
+
+export const updateCalendarSubscription = defineAction(
+  { schema: z.tuple([z.string(), z.looseObject({ label: z.string().optional(), icsUrl: z.string().optional(), selfEmail: z.string().nullish(), enabled: z.boolean().optional() })]) },
+  async (userId, id: string, input: {
+      label?: string;
+      icsUrl?: string;
+      selfEmail?: string | null;
+      enabled?: boolean;
+    }) => {
+    const db = await getDb();
 
     const [row] = await db
-      .insert(calendarSubscriptions)
-      .values({
-        userId,
-        icsUrl: sealIcsUrl(icsUrl),
-        label: input.label?.trim() || "Calendar",
-        selfEmail: input.selfEmail?.trim().toLowerCase() || null,
-        enabled: 1,
+      .update(calendarSubscriptions)
+      .set({
+        ...(input.label !== undefined ? { label: input.label.trim() || "Calendar" } : {}),
+        ...(input.icsUrl !== undefined
+          ? { icsUrl: sealIcsUrl(normalizeIcsUrl(input.icsUrl)) }
+          : {}),
+        ...(input.selfEmail !== undefined
+          ? { selfEmail: input.selfEmail?.trim().toLowerCase() || null }
+          : {}),
+        ...(input.enabled !== undefined ? { enabled: input.enabled ? 1 : 0 } : {}),
+        updatedAt: new Date(),
       })
+      .where(
+        and(
+          eq(calendarSubscriptions.id, id),
+          eq(calendarSubscriptions.userId, userId)
+        )
+      )
       .returning();
 
-    // First sync immediately so the user sees results
-    let syncError: string | null = null;
-    let stats = null;
-    try {
-      stats = await syncCalendarSubscription(userId, row.id);
-    } catch (err) {
-      // Returned as data, so never stripped — and a sync failure can carry a provider's
-      // raw response body (`Google Calendar 403: {…}`). Sanitise it here.
-      syncError = await actionFailure(err, "the first sync didn’t finish", "calendar.first-sync", {
-        subscriptionId: row.id,
-      });
+    revalidatePath("/imports");
+    return row ? forClient(row) : row;
+  }
+);
+
+export const removeCalendarSubscription = defineAction(
+  { schema: z.tuple([z.string()]) },
+  async (userId, id: string) => {
+    const db = await getDb();
+    await db
+      .delete(calendarSubscriptions)
+      .where(
+        and(
+          eq(calendarSubscriptions.id, id),
+          eq(calendarSubscriptions.userId, userId)
+        )
+      );
+    revalidatePath("/imports");
+  }
+);
+
+export const syncCalendarSubscriptionNow = defineAction(
+  { auth: () => requireSyncUser(), schema: z.tuple([z.string()]) },
+  async (userId, id: string) => {
+    const stats = await syncCalendarSubscription(userId, id);
+    revalidatePath("/imports");
+    revalidatePath("/");
+    revalidatePath("/contacts");
+    return stats;
+  }
+);
+
+export const syncStaleCalendarSubscriptions = defineAction(
+  { auth: () => requireSyncUser() },
+  async (userId) => {
+    const results = await syncDueCalendarSubscriptions(userId);
+    if (results.length) {
+      revalidatePath("/imports");
+      revalidatePath("/");
+      revalidatePath("/contacts");
     }
-
-    const subscription =
-      (await db.query.calendarSubscriptions.findFirst({
-        where: eq(calendarSubscriptions.id, row.id),
-      })) || row;
-
-    revalidatePath("/imports");
-    revalidatePath("/");
-    revalidatePath("/contacts");
-
-    return { subscription: forClient(subscription), stats, syncError };
-  });
-}
-
-export async function updateCalendarSubscription(
-  id: string,
-  input: {
-    label?: string;
-    icsUrl?: string;
-    selfEmail?: string | null;
-    enabled?: boolean;
+    return results;
   }
-) {
-  const userId = await requireUserId();
-  const db = await getDb();
-
-  const [row] = await db
-    .update(calendarSubscriptions)
-    .set({
-      ...(input.label !== undefined ? { label: input.label.trim() || "Calendar" } : {}),
-      ...(input.icsUrl !== undefined
-        ? { icsUrl: sealIcsUrl(normalizeIcsUrl(input.icsUrl)) }
-        : {}),
-      ...(input.selfEmail !== undefined
-        ? { selfEmail: input.selfEmail?.trim().toLowerCase() || null }
-        : {}),
-      ...(input.enabled !== undefined ? { enabled: input.enabled ? 1 : 0 } : {}),
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(calendarSubscriptions.id, id),
-        eq(calendarSubscriptions.userId, userId)
-      )
-    )
-    .returning();
-
-  revalidatePath("/imports");
-  return row ? forClient(row) : row;
-}
-
-export async function removeCalendarSubscription(id: string) {
-  const userId = await requireUserId();
-  const db = await getDb();
-  await db
-    .delete(calendarSubscriptions)
-    .where(
-      and(
-        eq(calendarSubscriptions.id, id),
-        eq(calendarSubscriptions.userId, userId)
-      )
-    );
-  revalidatePath("/imports");
-}
-
-export async function syncCalendarSubscriptionNow(id: string) {
-  const userId = await requireSyncUser();
-  const stats = await syncCalendarSubscription(userId, id);
-  revalidatePath("/imports");
-  revalidatePath("/");
-  revalidatePath("/contacts");
-  return stats;
-}
-
-export async function syncStaleCalendarSubscriptions() {
-  const userId = await requireSyncUser();
-  const results = await syncDueCalendarSubscriptions(userId);
-  if (results.length) {
-    revalidatePath("/imports");
-    revalidatePath("/");
-    revalidatePath("/contacts");
-  }
-  return results;
-}
+);

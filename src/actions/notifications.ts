@@ -3,8 +3,9 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
-import { requireUserId } from "@/lib/auth";
 import { ensureUserSettings } from "@/lib/user-settings";
+import { z } from "zod";
+import { defineAction } from "@/lib/input/action";
 
 const MAX_NOTIFIED_IDS = 200;
 
@@ -13,15 +14,21 @@ function trimIds(ids: string[]) {
 }
 
 /** Ids already delivered as desktop notifications for this account. */
-export async function getDesktopNotifiedIds(): Promise<string[]> {
-  const userId = await requireUserId();
-  const settings = await ensureUserSettings(userId);
-  return trimIds(settings.desktopNotifiedIds ?? []);
-}
+export const getDesktopNotifiedIds = defineAction(
+  {},
+  async (userId): Promise<string[]> => {
+    const settings = await ensureUserSettings(userId);
+    return trimIds(settings.desktopNotifiedIds ?? []);
+  }
+);
 
 /** Merge ids into the account's delivered-notification list (bounded). */
-export async function mergeDesktopNotifiedIds(ids: string[]): Promise<string[]> {
-  const userId = await requireUserId();
+export const mergeDesktopNotifiedIds = defineAction(
+  { schema: z.tuple([z.array(z.string())]) },
+  async (userId, ids: string[]): Promise<string[]> => mergeDesktopNotifiedIdsFor(userId, ids)
+);
+
+async function mergeDesktopNotifiedIdsFor(userId: string, ids: string[]): Promise<string[]> {
   const db = await getDb();
   const settings = await ensureUserSettings(userId);
   const merged = trimIds([...(settings.desktopNotifiedIds ?? []), ...ids]);
@@ -37,23 +44,28 @@ export async function mergeDesktopNotifiedIds(ids: string[]): Promise<string[]> 
   return merged;
 }
 
-export async function markDesktopNotificationsSent(ids: string[]) {
-  if (ids.length === 0) return;
-  await mergeDesktopNotifiedIds(ids);
-}
+export const markDesktopNotificationsSent = defineAction(
+  { schema: z.tuple([z.array(z.string())]) },
+  async (userId, ids: string[]) => {
+    if (ids.length === 0) return;
+    await mergeDesktopNotifiedIdsFor(userId, ids);
+  }
+);
 
 /**
  * Record whether this account wants desktop notifications. Every signed-in tab picks the
  * value up on its next app pulse, so turning them off on a laptop quiets the desktop too.
  */
-export async function setDesktopNotificationsEnabled(enabled: boolean) {
-  const userId = await requireUserId();
-  const db = await getDb();
-  await db
-    .insert(userSettings)
-    .values({ userId, desktopNotificationsEnabled: enabled })
-    .onConflictDoUpdate({
-      target: userSettings.userId,
-      set: { desktopNotificationsEnabled: enabled, updatedAt: new Date() },
-    });
-}
+export const setDesktopNotificationsEnabled = defineAction(
+  { schema: z.tuple([z.boolean()]) },
+  async (userId, enabled: boolean) => {
+    const db = await getDb();
+    await db
+      .insert(userSettings)
+      .values({ userId, desktopNotificationsEnabled: enabled })
+      .onConflictDoUpdate({
+        target: userSettings.userId,
+        set: { desktopNotificationsEnabled: enabled, updatedAt: new Date() },
+      });
+  }
+);

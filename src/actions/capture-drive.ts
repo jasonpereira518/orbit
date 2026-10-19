@@ -30,49 +30,54 @@ import { getValidAccessToken } from "@/lib/gmail";
 import { DRIVE_MIME, type PickedDriveFile } from "@/lib/imports/drive-triage";
 import { requireSyncUser } from "@/lib/plan-guards";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
+import { z } from "zod";
+import { defineAction, failResult } from "@/lib/input/action";
+
+// Argument shapes, generated from the handlers' parameter types.
+const PickedDriveFileSchema = z.looseObject({ id: z.string(), name: z.string(), mimeType: z.string(), modifiedTime: z.string() });
 
 export type DriveCaptureOutcome = CaptureFromTextOutcome;
 
 const DRIVE_ID = /^[A-Za-z0-9_-]{10,200}$/;
 const ALLOWED_MIME = new Set<string>(Object.values(DRIVE_MIME));
 
-export async function queueDriveCapture(input: {
-  file: PickedDriveFile;
-  batchGroupId: string;
-  /** Capture it again even though the same text was captured before. */
-  force?: boolean;
-}): Promise<ActionResult<DriveCaptureOutcome>> {
-  // Outside the wrap for the reason `startDriveImport` gives: a plan denial is a
-  // `PaywallError`, which `asActionResult` returns as data anyway.
-  const userId = await requireSyncUser();
-  return asActionResult(async () => {
-    const { file } = input;
-    // Browser-supplied: the id goes into a Google URL and the name onto the job.
-    if (!DRIVE_ID.test(file?.id ?? "") || !ALLOWED_MIME.has(file?.mimeType ?? "")) {
-      throw new UserFacingError("Pick a Google Doc or Slides deck to capture");
-    }
-    if (typeof input.batchGroupId !== "string" || !/^[\w-]{8,64}$/.test(input.batchGroupId)) {
-      throw new UserFacingError("Couldn’t start that — try picking the files again");
-    }
-    if (await isDemoWorkspace(userId)) {
-      throw new UserFacingError("Google Drive isn’t connected in the demo workspace");
-    }
-    await consumeBucket("capture", userId, RATE_LIMITS.capture);
+export const queueDriveCapture = defineAction(
+  { auth: () => requireSyncUser(), schema: z.tuple([z.looseObject({ file: PickedDriveFileSchema, batchGroupId: z.string(), force: z.boolean().optional() })]), invalid: failResult },
+  async (userId, input: {
+    file: PickedDriveFile;
+    batchGroupId: string;
+    /** Capture it again even though the same text was captured before. */
+    force?: boolean;
+  }): Promise<ActionResult<DriveCaptureOutcome>> => {
+    return asActionResult(async () => {
+      const { file } = input;
+      // Browser-supplied: the id goes into a Google URL and the name onto the job.
+      if (!DRIVE_ID.test(file?.id ?? "") || !ALLOWED_MIME.has(file?.mimeType ?? "")) {
+        throw new UserFacingError("Pick a Google Doc or Slides deck to capture");
+      }
+      if (typeof input.batchGroupId !== "string" || !/^[\w-]{8,64}$/.test(input.batchGroupId)) {
+        throw new UserFacingError("Couldn’t start that — try picking the files again");
+      }
+      if (await isDemoWorkspace(userId)) {
+        throw new UserFacingError("Google Drive isn’t connected in the demo workspace");
+      }
+      await consumeBucket("capture", userId, RATE_LIMITS.capture);
 
-    const text = await readDoc(userId, file.id);
-    if (!text.trim()) throw new UserFacingError(`“${file.name}” is empty`);
+      const text = await readDoc(userId, file.id);
+      if (!text.trim()) throw new UserFacingError(`“${file.name}” is empty`);
 
-    // The same doc picked twice — or the same text captured some other way — is not read again.
-    const outcome = await createCaptureFromText(userId, {
-      text,
-      label: file.name,
-      batchGroupId: input.batchGroupId,
-      force: input.force,
+      // The same doc picked twice — or the same text captured some other way — is not read again.
+      const outcome = await createCaptureFromText(userId, {
+        text,
+        label: file.name,
+        batchGroupId: input.batchGroupId,
+        force: input.force,
+      });
+      if (outcome.status === "queued") after(() => runCaptureJobById(outcome.jobId).catch(() => null));
+      return outcome;
     });
-    if (outcome.status === "queued") after(() => runCaptureJobById(outcome.jobId).catch(() => null));
-    return outcome;
-  });
-}
+  }
+);
 
 /** Export the doc as text, with every way Google says no worded for the person. */
 async function readDoc(userId: string, fileId: string): Promise<string> {
