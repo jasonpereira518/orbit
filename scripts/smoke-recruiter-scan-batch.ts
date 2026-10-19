@@ -9,7 +9,7 @@
 import "./smoke/_env";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { imports, importJobRows, recruiterScanState, userRecruiterLinks, userSettings } from "../src/db/schema";
+import { aiResultCache, imports, importJobRows, recruiterScanState, userRecruiterLinks, userSettings } from "../src/db/schema";
 import { encrypt } from "../src/lib/crypto";
 import type { GmailMessageContent } from "../src/lib/gmail";
 import {
@@ -19,6 +19,7 @@ import {
 } from "../src/lib/gmail-scan-processor";
 import { runAiBatchSweep } from "../src/lib/ai-batch-apply";
 import { submitAiBatch } from "../src/lib/ai-batch";
+import { classifyRecruiterSender } from "../src/lib/recruiter-scan";
 import { aiBatchJobs } from "../src/db/schema";
 
 const USER = "smoke-scan-batch-user";
@@ -132,6 +133,9 @@ const state = async (importId: string) => {
 
 async function main() {
   const db = await getDb();
+  // These scenarios scan the same senders several times to exercise the batch; a verdict
+  // remembered from the first would answer the rest. The cache has its own scenario at the end.
+  process.env.ORBIT_AI_RESULT_CACHE = "off";
 
   console.log("Senders go out as one batch, and the scan waits for them");
   batchDone = false;
@@ -196,6 +200,38 @@ async function main() {
     check("  while the scan stays cancelled", after.status === "cancelled", String(after.status));
   }
 
+  console.log("\nA sender already classified is not sent again");
+  {
+    delete process.env.ORBIT_AI_RESULT_CACHE;
+    await db.delete(aiResultCache).where(eq(aiResultCache.userId, USER));
+    batchDone = false;
+    batchFails = false;
+    const firstId = await seedJob(2);
+    await runGmailRecruiterScanJob(firstId, deps);
+    batchDone = true;
+    await runAiBatchSweep();
+    const remembered = await db.select().from(aiResultCache).where(eq(aiResultCache.userId, USER));
+    check("a batched verdict is remembered when it lands", remembered.length === 2 && remembered.every((r) => r.operation === "recruiter.scan"), String(remembered.length));
+
+    // The same senders, byte-identical mail, a scan later. Nothing may go out as a batch, and the
+    // inline classifier (the real one, which reads the cache) answers them without a model call.
+    batchDone = false;
+    let submitted = 0;
+    const secondId = await seedJob(2);
+    await runGmailRecruiterScanJob(secondId, {
+      ...deps,
+      classify: classifyRecruiterSender,
+      submit: async (...args) => {
+        submitted++;
+        return submitAiBatch(...args);
+      },
+    });
+    const again = await state(secondId);
+    check("no batch is submitted for senders with a verdict on file", submitted === 0 && (await db.select().from(aiBatchJobs).where(eq(aiBatchJobs.userId, USER))).length === 0, String(submitted));
+    check("they are settled from the cache, and the scan completes", again.rows.every((r) => r === "done") && again.status === "completed", `${again.rows.join(",")} ${again.status}`);
+  }
+
+  await db.delete(aiResultCache).where(eq(aiResultCache.userId, USER));
   await db.delete(importJobRows).where(eq(importJobRows.userId, USER));
   await db.delete(imports).where(eq(imports.userId, USER));
   await db.delete(recruiterScanState).where(eq(recruiterScanState.userId, USER));

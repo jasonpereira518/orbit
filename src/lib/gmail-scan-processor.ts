@@ -25,12 +25,14 @@ import {
 } from "@/lib/gmail";
 import {
   RECRUITER_CONFIDENCE_FLOOR,
-  RECRUITER_SYSTEM,
-  buildRecruiterUserPrompt,
+  RECRUITER_VERDICT_TTL_DAYS,
+  acceptRecruiterContent,
   classifyRecruiterSender,
+  recruiterCallInput,
   recruiterResultFromContent,
   type RecruiterScanResult,
 } from "@/lib/recruiter-scan";
+import { completionCacheKey, readAiResult, writeAiResult } from "@/lib/ai-result-cache";
 import { submitAiBatch } from "@/lib/ai-batch";
 import { openDecider, type Decider } from "@/lib/decisions/jev";
 import { admitRecruiterCandidates, ruleOutRecruiters } from "@/lib/decisions/recruiter";
@@ -450,7 +452,14 @@ export const SCAN_ROW_QUEUED = "queued";
 /** What a submitted classification batch needs to map its answers back onto. */
 export type RecruiterBatchPayload = {
   importId: string;
-  items: Array<{ customId: string; rowId: string; payload: GmailSenderRowPayload; meta: SenderMailMeta }>;
+  items: Array<{
+    customId: string;
+    rowId: string;
+    payload: GmailSenderRowPayload;
+    meta: SenderMailMeta;
+    /** Where the verdict is remembered, so the next scan of this sender costs nothing. */
+    cacheKey?: string;
+  }>;
 };
 
 /**
@@ -642,27 +651,35 @@ export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps 
         }
       }
 
+      // A sender whose mail is byte-identical to a scan that already got a verdict is not sent
+      // to the provider again. It stays out of the batch and the inline loop below answers it
+      // from the cache, which costs nothing. Everyone else goes out under the key their verdict
+      // will be stored at when the batch lands.
+      const calls = batchable.map((b) =>
+        recruiterCallInput({ senderName: b.payload.name, senderEmail: b.payload.email, firmGuess: b.payload.firm, messages: b.messages })
+      );
+      const keys = await Promise.all(calls.map((c) => completionCacheKey(userId, c)));
+      const known = await Promise.all(keys.map((k) => readAiResult<string>(userId, "recruiter.scan", k, RECRUITER_VERDICT_TTL_DAYS)));
+      const fresh = batchable.flatMap((b, i) => (known[i] === undefined ? [{ b, call: calls[i]!, key: keys[i]! }] : []));
+      batchable = fresh.map((f) => f.b);
+
       if (batchable.length > 0) {
-        const items = batchable.map((b, i) => ({
+        const items = fresh.map(({ b, key }, i) => ({
           customId: `s${i}`,
           rowId: b.row.id,
           payload: b.payload,
           meta: mailMetaOf(b.payload, b.messages),
+          cacheKey: key,
         }));
         const jobId = await deps.submit(
           userId,
           "recruiter.scan",
-          batchable.map((b, i) => ({
+          fresh.map(({ call }, i) => ({
             customId: `s${i}`,
-            system: RECRUITER_SYSTEM,
-            user: buildRecruiterUserPrompt({
-              senderName: b.payload.name,
-              senderEmail: b.payload.email,
-              firmGuess: b.payload.firm,
-              messages: b.messages,
-            }),
-            temperature: 0.2,
-            maxOutputTokens: 700,
+            system: call.system,
+            user: call.user,
+            temperature: call.temperature,
+            maxOutputTokens: call.maxOutputTokens,
           })),
           { importId, items } satisfies RecruiterBatchPayload
         );
@@ -772,6 +789,11 @@ export async function applyRecruiterScanOutcome(
   try {
     if (!content) throw new Error("The classifier returned nothing for this sender");
     outcome = await applyRecruiterVerdict(userId, item.payload, item.meta, recruiterResultFromContent(content));
+    // Remembered only once it parsed and applied, like the inline path: a malformed reply is
+    // never replayed for ninety days.
+    if (item.cacheKey && acceptRecruiterContent(content)) {
+      await writeAiResult(userId, "recruiter.scan", item.cacheKey, content);
+    }
   } catch (err) {
     errorMessage = truncateStoredError(
       err instanceof Error ? err.message : "Couldn’t read this sender"

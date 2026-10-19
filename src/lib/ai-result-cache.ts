@@ -58,39 +58,42 @@ function acceptSafely<T>(accept: (value: T) => boolean, value: T): boolean {
   }
 }
 
-export async function withAiResultCache<T>(
+/** A stored answer for this exact key if one is younger than `ttlDays`, else undefined. Never throws. */
+export async function readAiResult<T>(
   userId: string,
   operation: AiOperationId,
-  keyParts: unknown,
-  run: () => Promise<T>,
-  opts: CacheOptions<T>
-): Promise<T> {
-  if (!cacheEnabled()) return run();
-  const inputHash = aiResultCacheKey(operation, keyParts);
-  const ttlDays = Math.min(opts.ttlDays, AI_RESULT_CACHE_MAX_DAYS);
-
-  if (!opts.fresh) {
-    try {
-      const db = await getDb();
-      const hit = await db.query.aiResultCache.findFirst({
-        where: and(
-          eq(aiResultCache.userId, userId),
-          eq(aiResultCache.operation, operation),
-          eq(aiResultCache.inputHash, inputHash),
-          gt(aiResultCache.createdAt, new Date(Date.now() - ttlDays * DAY_MS))
-        ),
-        columns: { result: true },
-      });
-      if (hit && typeof hit.result === "object" && hit.result !== null && "v" in hit.result) {
-        return (hit.result as { v: T }).v;
-      }
-    } catch {
-      // A cache that cannot be read is a cache miss, never a failed feature.
+  inputHash: string,
+  ttlDays: number
+): Promise<T | undefined> {
+  if (!cacheEnabled()) return undefined;
+  try {
+    const db = await getDb();
+    const hit = await db.query.aiResultCache.findFirst({
+      where: and(
+        eq(aiResultCache.userId, userId),
+        eq(aiResultCache.operation, operation),
+        eq(aiResultCache.inputHash, inputHash),
+        gt(aiResultCache.createdAt, new Date(Date.now() - Math.min(ttlDays, AI_RESULT_CACHE_MAX_DAYS) * DAY_MS))
+      ),
+      columns: { result: true },
+    });
+    if (hit && typeof hit.result === "object" && hit.result !== null && "v" in hit.result) {
+      return (hit.result as { v: T }).v;
     }
+  } catch {
+    // A cache that cannot be read is a cache miss, never a failed feature.
   }
+  return undefined;
+}
 
-  const value = await run();
-  if (opts.accept && !acceptSafely(opts.accept, value)) return value;
+/** Stores an answer under a key. Never throws: not storing costs one repeat call later. */
+export async function writeAiResult<T>(
+  userId: string,
+  operation: AiOperationId,
+  inputHash: string,
+  value: T
+): Promise<void> {
+  if (!cacheEnabled()) return;
   try {
     const db = await getDb();
     // Always an envelope, never the bare value: a bare string in a jsonb parameter is read
@@ -107,6 +110,24 @@ export async function withAiResultCache<T>(
   } catch {
     // Not storing costs one repeat call later; failing here would cost the answer now.
   }
+}
+
+export async function withAiResultCache<T>(
+  userId: string,
+  operation: AiOperationId,
+  keyParts: unknown,
+  run: () => Promise<T>,
+  opts: CacheOptions<T>
+): Promise<T> {
+  if (!cacheEnabled()) return run();
+  const inputHash = aiResultCacheKey(operation, keyParts);
+  if (!opts.fresh) {
+    const hit = await readAiResult<T>(userId, operation, inputHash, opts.ttlDays);
+    if (hit !== undefined) return hit;
+  }
+  const value = await run();
+  if (opts.accept && !acceptSafely(opts.accept, value)) return value;
+  await writeAiResult(userId, operation, inputHash, value);
   return value;
 }
 
@@ -119,24 +140,40 @@ export async function withAiResultCache<T>(
  *
  * The account is opened once here and handed on, so keying on the model costs no second read.
  */
+function completionKeyParts(access: Awaited<ReturnType<typeof resolveAiAccess>>, input: Parameters<typeof completeJson>[1]) {
+  const { system, user, temperature, maxOutputTokens, sharedPrefix } = input;
+  return {
+    provider: access.selectedProvider,
+    model: access.selectedModel,
+    system,
+    user: `${sharedPrefix?.text ?? ""}${user}`,
+    temperature: temperature ?? null,
+    maxOutputTokens: maxOutputTokens ?? null,
+  };
+}
+
+/**
+ * The key `cachedCompleteJson` would store this call under, for a caller that submits the call
+ * some other way (the Batch API) and still wants its answer cached for the next ask.
+ */
+export async function completionCacheKey(
+  userId: string,
+  input: Parameters<typeof completeJson>[1]
+): Promise<string> {
+  const access = input.access?.forUser(userId) ?? (await resolveAiAccess(userId));
+  return aiResultCacheKey(input.operation, completionKeyParts(access, input));
+}
+
 export async function cachedCompleteJson(
   userId: string,
   input: Parameters<typeof completeJson>[1],
   opts: CacheOptions<string>
 ): Promise<string> {
-  const { system, user, temperature, maxOutputTokens, sharedPrefix } = input;
   const access = input.access?.forUser(userId) ?? (await resolveAiAccess(userId));
   return withAiResultCache(
     userId,
     input.operation,
-    {
-      provider: access.selectedProvider,
-      model: access.selectedModel,
-      system,
-      user: `${sharedPrefix?.text ?? ""}${user}`,
-      temperature: temperature ?? null,
-      maxOutputTokens: maxOutputTokens ?? null,
-    },
+    completionKeyParts(access, input),
     () => completeJson(userId, { ...input, access }),
     opts
   );
