@@ -17,7 +17,7 @@ import { generateChatTitle, settleWithin, TITLE_GRACE_MS } from "@/lib/chat-titl
 import { formatSse, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
 import { labelAnswer } from "@/lib/chat-abstention";
 import { citedIds, stripUnresolvedMarkers } from "@/lib/chat-evidence";
-import { validateProposedActions } from "@/lib/chat-proposed-actions";
+import { validateProposedActions, type StoredProposedAction } from "@/lib/chat-proposed-actions";
 import { friendlyError } from "@/lib/errors";
 import { traced } from "@/lib/perf-trace";
 import { isPaywallError } from "@/lib/entitlements";
@@ -250,6 +250,8 @@ export async function POST(request: Request) {
                     blocks = buildChatBlocks(ctx);
                     send({ type: "blocks", blocks });
                   },
+                  // Cards appear as the loop drafts them, not only once the answer is done.
+                  onProposed: (items) => send({ type: "actions", items }),
                 }),
               { userId }
             )
@@ -360,12 +362,12 @@ export async function POST(request: Request) {
             level: "warning",
           });
         }
-        const proposedActions = validateProposedActions(
-          result.proposedActions,
-          ctx.allowedContacts,
-          ctx.contactNames,
-          ctx.reminderTitles
-        );
+        // The loop's proposals come from its change tools, already validated against the ids
+        // the turn saw (`@/lib/tools/chat-proposals`); the one-pass answer's from its JSON tail.
+        const proposedActions: StoredProposedAction[] = [
+          ...("proposals" in result ? (result.proposals as StoredProposedAction[]) : []),
+          ...validateProposedActions(result.proposedActions, ctx.allowedContacts, ctx.contactNames, ctx.reminderTitles),
+        ];
         if (proposedActions.length > 0) send({ type: "actions", items: proposedActions });
 
         // A beat for a title that is nearly there, never longer: if it is not ready the thread

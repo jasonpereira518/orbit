@@ -2441,6 +2441,28 @@ after the JSON. "recommendations" is for recruiters only: objects with "contact_
 the provided lists.
 ${PROPOSED_ACTIONS_TAIL}`;
 
+/**
+ * The output format for the answer loop (`@/lib/chat-agent-loop`): the same blocks and
+ * recruiter recommendations, but no `proposed_actions` — in the loop a change is proposed by
+ * calling one of the chat writes (`@/lib/tools/chat-writes`), never written into the answer.
+ */
+export const CHAT_STREAM_TAIL_LOOP = `
+Write the answer as prose (markdown is fine). Two blocks can sit between paragraphs, each on a
+line of its own and nothing else on that line:
+- ::people[<id>,<id>] shows up to 6 contacts as cards the user can act on (draft a message, set
+  a reminder). Use it when the answer recommends specific people to reach out to or ask, after
+  the sentence that says why. Ids come from the [id=…] values in the provided lists.
+- ::list[r1] shows a whole "Complete roster" section as a table with its exact count. Use it
+  when the question asks who or how many — never type that list out yourself.
+Otherwise name people in the prose; most answers need no block at all, and a block never
+replaces saying in words why those people.
+Only when you recommend recruiters, end with a line containing exactly
+${RECOMMENDATIONS_MARKER}
+followed by a JSON object: {"recommendations": [...]}, and nothing
+after the JSON. "recommendations" is for recruiters only: objects with "contact_id" (null),
+"recruiter_id", "name", "reason", "suggested_action" and "draft_message" (string|null), ids from
+the provided lists.`;
+
 
 /**
  * Every chat answer passes through here before anyone stores, replays or acts on it.

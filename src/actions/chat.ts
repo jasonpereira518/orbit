@@ -19,7 +19,7 @@ import { maybeGather } from "@/lib/chat-gather";
 import { labelAnswer } from "@/lib/chat-abstention";
 import { answerWithLookups, chatLoopEnabled } from "@/lib/chat-agent-loop";
 import { citedIds, stripUnresolvedMarkers } from "@/lib/chat-evidence";
-import { validateProposedActions } from "@/lib/chat-proposed-actions";
+import { validateProposedActions, type StoredProposedAction } from "@/lib/chat-proposed-actions";
 import {
   buildChatSuggestions,
   GENERIC_SUGGESTIONS,
@@ -443,12 +443,10 @@ async function askNetworkInner(
     const validIds = new Set(Object.keys(result.evidence));
     const { text: cleanAnswer } = stripUnresolvedMarkers(result.answer, validIds);
     const citedEvidence = Object.fromEntries(citedIds(cleanAnswer).map((id) => [id, result.evidence[id]]));
-    const proposedActions = validateProposedActions(
-      result.proposedActions,
-      ctx.allowedContacts,
-      ctx.contactNames,
-      ctx.reminderTitles
-    );
+    const proposedActions: StoredProposedAction[] = [
+      ...("proposals" in result ? (result.proposals as StoredProposedAction[]) : []),
+      ...validateProposedActions(result.proposedActions, ctx.allowedContacts, ctx.contactNames, ctx.reminderTitles),
+    ];
 
     const saved = await persistAssistantTurn(userId, threadId, ctx.thread?.title ?? null, ctx.q, {
       answer: cleanAnswer,
