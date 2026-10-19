@@ -385,3 +385,54 @@ type AiFinish = "stop" | "length" | "refusal" | "safety" | "tool" | "other";
 | D7 | Relationship-digest policy for imperatives written *by the other party* ("remind yourself to…") | create the reminder · drop it · create it flagged "from them" | Flag "from them" |
 
 **Approval needed:** reply with approval (all of it, or by ID) and answers to D1–D7. Implementation starts with the P0 items.
+
+---
+
+## Implementation status (updated 2026-10-26)
+
+Branch `claude/gallant-ramanujan-hh5j0s`. Everything below is covered by smoke tests against
+stubbed providers; **nothing has been run against a live provider or the live eval**.
+
+### P0, all done
+
+| Item | Done | Differs from the plan |
+|---|---|---|
+| P0-1 batch double-charge | Usage recorded on the first ready poll only; job retired after 3 failed applies | Reuses the existing `attempts` column, no new one |
+| P0-2 Drive import | Contact details grounded in the doc; no merge on an ungrounded identifier; merges only fill blanks | Name rule kept at "one shared word" (a test covers "Priya" → "Priya Raman"); no suggested-update storage |
+| P0-3 embedding models | `embedding_model` stamped on every vector write; backfill reconciles a different model's vectors; key change clears passage vectors | Queries are not filtered by model |
+| P0-4 truncation and refusal | `ai-finish.ts`; typed errors; truncated JSON retried once at 2x cap; chat notes a cut-off answer | Not the gather tool driver, Gemini audio transcription, or a `finish_reason` column (P3-4) |
+| P0-5 abandoned calls | Understand, title and refine cancel their request; 1.5 s soft deadline on the question's embedding | Gather tool execution still ignores Stop |
+| P0-6 logs | Starters warning logs a length; hygiene smoke scans for model-text logging; Resend/Twilio patterns | Deepgram/TypeSafe/Apollo keys have no distinctive shape |
+| P0-7 web search | `web_searches` recorded and priced; one web lookup per gather turn enforced; sweep limited to contacts active in 90 days | No per-call cap on OpenAI or Gemini (the installed OpenAI SDK has no request parameter; Gemini has none). **Fee rates are from memory: verify.** |
+
+### P1, all done, several narrower than written
+
+| Item | Done | Not done |
+|---|---|---|
+| P1-1 schemas | Machinery for Gemini, OpenAI and Anthropic with a prompt-only fallback; piloted on `outreach.draft`, `events.why`, `chat.title`, `followup.draft`/`radar.draft` | The other ~25 JSON operations (each schema needs checking against strict mode with a live key) |
+| P1-2 retries | Gemini client retries like the other SDKs (the Gemini SDK retries nothing by default); embeddings exempt | Retry count on `usage_events`; `Retry-After` |
+| P1-3 failover | One retry on the next managed provider for JSON completions | Streaming, tool driver, web search. Only a spent pool changes provider |
+| P1-4 deadlines | Extension calls end at 25 s; chunk route 180 s | Claiming a chunk before transcribing it |
+| P1-5 concurrency | Outreach batch isolates failures; due follow-ups loop bounded | Batching mentions (Jev is calibrated per mention) |
+| P1-6 capture | Details matched by name, unanswered people re-asked, later batches two at a time | Keeping single-pass details on escalation; sharing a cache prefix (system prompts differ) |
+| P1-7 cache key | Keyed on provider and model | `LlmDecider` cache still keys on provider only |
+| P1-8 background | Drive import uses `.bg` operation ids; `duplicates.same_person.llm` no longer background | Cloud-notes auto-extract (needs a `capture_jobs` column); Batch API for either |
+
+### P2, the parts that need no live eval
+
+| Item | Done |
+|---|---|
+| P2-3 routing | BYOK Anthropic **fast** tier: Haiku 4.5 → Haiku 5.5 |
+| P2-4 redundant calls | `contact.brief` no longer mints a second grant (and a stray credit hold); Gmail batch path reads and fills the verdict cache |
+| P2-1 caching | Anthropic prompt caching across the research step's rounds only |
+| P2-5 rerank | LLM rerank uses `c01`-style ids instead of UUIDs |
+
+### Still to do, and why it waits
+
+All of these change what a model is shown or how well it answers, so each needs a run of
+`scripts/eval-ai.ts` (and the managed Haiku 5.5 baseline, section 2.6, which has never been recorded):
+thinking-level sweep (P2-2), chat answer prompt stabilisation for caching (its system prompt varies
+with which sections a turn has, so a cache rarely hits as is), model changes for existing
+accounts (Sonnet 5.5 default, OpenAI vision/fast, `outreach.apollo` and `radar.draft` tiers),
+enabling the brief gate, trimming chat rosters or digest inputs, Gemini embedding dimensions
+(unverified that a native 1536 matches today's sliced 3072), and all of P3.
