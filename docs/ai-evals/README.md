@@ -232,3 +232,21 @@ detail, handles, connections and promises. It adds six metrics the older baselin
 `promiseRecall`. Every existing capture metric held at 100% against `2026-09-19-gemini-baseline`
 (`GATE: PASS`); promise recall was 92.9% (13/14). Compare capture changes against this one.
 
+
+## Abstention (`chat`, Oct 19 2026)
+
+`chat` now asks about facts that live only in a contact's details, the reminders, or the
+commitments taken from notes (`ai-chat-eval.json` cases 21–29, seeded from its `records`), and
+about four things the records do not hold (cases 30–33, `mustAbstain`). Every answer is
+labelled by `labelAnswer` (`src/lib/chat-abstention.ts`), the same rule the product stores on
+each chat answer:
+
+- `abstainAccuracy`: share of `mustAbstain` cases that said they did not know and placed no
+  people. Gated: may not drop.
+- `falseAbstentions`: cases with an answer in the records that came back labelled
+  `abstained`. Gated: may not rise.
+
+The cases were added with the Phase 0 chat changes (richer contact rows, reminders across
+views, commitments and events in every prompt, the "look before you abstain" rule). The
+before/after baseline for them has not been recorded yet: run `chat` (and `--network large`)
+on `main` and on the branch with a key, and save both here.

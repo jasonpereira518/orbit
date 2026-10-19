@@ -138,7 +138,24 @@ export type ChatEvalFixture = {
     expectCount?: number;
     /** A person question: this contact (by email) must resolve and be the focused contact. */
     expectPerson?: string;
+    /**
+     * The records hold no answer: the answer must say so — labelled `abstained` or `partial`
+     * by `labelAnswer` (src/lib/chat-abstention.ts) — and place no people. Without it, an
+     * `abstained` label on a case is a false "I don't know".
+     */
+    mustAbstain?: boolean;
   }>;
+  /**
+   * Records seeded beside the network, so a case can ask about a field or section that is
+   * not on the contact card the search fixture writes. Contacts are named by email.
+   */
+  records?: {
+    details?: Array<{ email: string; phone?: string; linkedinUrl?: string; howMet?: string; dateMet?: string; nextFollowUpInDays?: number }>;
+    /** `dueInDays` relative to the run; null is a reminder with no date. */
+    reminders?: Array<{ title: string; email?: string; dueInDays: number | null }>;
+    /** Open action items, each on a seeded note with the contact. */
+    actionItems?: Array<{ email: string; text: string; owedBy: "me" | "them" }>;
+  };
 };
 
 /**
