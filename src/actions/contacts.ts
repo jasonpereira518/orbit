@@ -1,12 +1,13 @@
 "use server";
 
-import { and, asc, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { relatedSqlLower } from "@/lib/related-contacts-sql";
+import { and, asc, desc, eq, gte, inArray, sql, type SQL } from "drizzle-orm";
 import { listSchools } from "@/lib/events/target-companies";
 import { contactSearchCondition, nameMatchTierSql } from "@/lib/contact-search-rank";
 import { deleteReplacedAvatar } from "@/lib/avatar-blob";
 import { deleteContactForUser } from "@/lib/contact-delete";
 import { revalidatePath } from "next/cache";
-import { getDb } from "@/db";
+import { getDb, rowsOf } from "@/db";
 import {
   actionItems,
   contactTags,
@@ -79,11 +80,16 @@ import { reindexInteractionPassages } from "@/lib/memory-backfill";
 import { traced } from "@/lib/perf-trace";
 import {
   findRelatedContacts,
+  interestTextPattern,
+  JS_WHITESPACE,
+  JS_WHITESPACE_AS_SPACES,
+  likeBody,
   mentionLikePatterns,
   nameAliases,
+  relatedCandidateFilter,
   type RelatedContact,
+  type RelatedContactCandidate,
 } from "@/lib/related-contacts";
-import { relatedSqlLower } from "@/lib/related-contacts-sql";
 import { UNDO_DELAY_MS } from "@/lib/email/config";
 import { enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
 import { scheduleDispatch } from "@/lib/email/schedule";
@@ -144,7 +150,7 @@ export async function searchContactsForPicker(
 
   const conditions = [eq(contacts.userId, userId)];
   const term = q?.trim();
-  if (term) conditions.push(contactSearchCondition(term));
+  if (term) conditions.push(contactSearchCondition(term, userId));
 
   const rows = await db
     .select({
@@ -1564,36 +1570,16 @@ export async function sendContactFollowUpEmail(
   return { ok: true, sendId: queued.id, sendAt: queued.sendAt.toISOString(), to: queued.to[0]! };
 }
 
-/**
- * A jsonb string-array column as the text of its elements joined by spaces ('' when it is
- * not an array). Null elements drop out, which only removes text the JS corpus renders as
- * "". Non-string elements are never trusted to render the way JS renders them — see
- * {@link unusualJsonArraySql}.
- */
-function jsonArrayTextSql(column: typeof contacts.keyFacts | typeof contacts.sharedInterests) {
-  return sql`(case when jsonb_typeof(${column}) = 'array'
-    then coalesce((select string_agg(t.e, ' ') from jsonb_array_elements_text(${column}) as t(e)), '')
-    else '' end)`;
-}
-
-/**
- * True when a jsonb column is anything but NULL / JSON null / an array of strings (and
- * nulls). JS spreads a string into characters, stringifies numbers its own way and throws
- * on an object, so such a row always gets its wide text fetched and goes through the JS
- * scoring exactly as it used to — including throwing where it used to throw. CASE, not OR,
- * so `jsonb_array_elements` is never evaluated on a scalar (which would raise).
- */
-function unusualJsonArraySql(column: typeof contacts.keyFacts | typeof contacts.sharedInterests) {
-  return sql`(case
-    when ${column} is null then false
-    when jsonb_typeof(${column}) = 'null' then false
-    when jsonb_typeof(${column}) <> 'array' then true
-    else exists (
-      select 1 from jsonb_array_elements(${column}) as u(v)
-       where jsonb_typeof(u.v) not in ('string', 'null')
-    )
-  end)`;
-}
+// The related-contacts SQL lives in two IMMUTABLE functions defined with the schema
+// (`RELATED_CORPUS_FUNCTIONS` in src/db/index.ts) so that it can be indexed:
+//   - orbit_related_corpus(ai_summary, notes, key_facts, shared_interests): the corpus the
+//     mention prefilter LIKEs, lowered with RELATED_SQL_LOWER. A jsonb string array becomes
+//     its elements joined by spaces ('' when it is not an array); null elements drop out,
+//     which only removes text the JS corpus renders as "".
+//   - orbit_unusual_json_array(jsonb): true when the column is anything but NULL / JSON null
+//     / an array of strings (and nulls). JS spreads a string into characters, stringifies
+//     numbers its own way and throws on an object, so such a row always gets its wide text
+//     fetched and goes through the JS scoring exactly as it used to.
 
 /**
  * Contacts related by company, school, howMet, mentions, tags, or interests.
@@ -1612,17 +1598,19 @@ function unusualJsonArraySql(column: typeof contacts.keyFacts | typeof contacts.
  *   2. the goal-token boost, which only applies to a candidate that already has a reason.
  *
  * So, in three steps:
- *   - Round 1 (parallel): the narrow scan with no text columns; the SOURCE's own text as one
- *     row; goals; the source's tags and the bounded `GROUP BY … HAVING count(*) >= 2` tags
- *     aggregate.
- *   - Round 2: the wide text only for the rows that could need it — every row whose text
- *     might mention the source (a SQL superset prefilter: `mentionLikePatterns`, whose
- *     comment proves it never misses a row the JS test would match), plus, only when the
- *     user has active goals, every row that already has a reason from the narrow data.
+ *   - Round 1 (parallel): the source row whole; goals; the source's tags and the bounded
+ *     `GROUP BY … HAVING count(*) >= 2` tags aggregate.
+ *   - Round 2: one pass over the account in SQL that keeps only the rows that could earn a
+ *     reason (superset prefilters on the narrow columns, plus the indexed mention and
+ *     unusual-jsonb arms), with the wide text for the rows that could need it — every row
+ *     whose text might mention the source (`mentionLikePatterns`, whose comment proves it
+ *     never misses a row the JS test would match), plus, only when the user has active
+ *     goals, every candidate.
  *   - Round 3: the display columns for the winners only.
  *
- * The result is exactly what scoring every contact's full text produced: a row left without
- * its text cannot be mentioned-by (the prefilter would have caught it), a mention found in
+ * The result is exactly what scoring every contact's full text produced: a row left out
+ * has no reason (each prefilter is a superset of its JS test), a row left without its
+ * text cannot be mentioned-by (the prefilter would have caught it), a mention found in
  * its remaining corpus (`sharedInterests`) is also in its full corpus, and every row that
  * can earn a goal boost has its full text. `scripts/smoke-related-contacts-parity.ts`
  * checks this against the old full-text scoring on adversarial data.
@@ -1638,33 +1626,31 @@ export async function listRelatedContacts(
   // ForUser variant is what `listActiveGoalTexts()` calls after its own `requireUserId()`,
   // which this function has just done — in a Server Action that repeat is not deduped.
   const goalsRead = settle(listActiveGoalTextsForUser(userId));
-  const narrowRead = settle(db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    columns: {
-      id: true,
-      fullName: true,
-      preferredName: true,
-      company: true,
-      companyId: true,
-      school: true,
-      howMet: true,
-      sharedInterests: true,
-      relationshipScore: true,
-    },
-  }));
-  // The source's own text: one row, so it is read whole. Scoped to the caller's account and
-  // only consumed after the ownership gate below (an invalid id rejects here and is never
-  // unwrapped, exactly like the tag reads).
-  const sourceTextRead = settle(
+  // The source itself, whole: its narrow columns decide which other contacts can be
+  // related at all, and its text is the corpus their names are looked for in. Scoped to
+  // the caller's account, so a contact outside it reads as nothing.
+  const sourceRead = settle(
     db.query.contacts.findFirst({
       where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
-      columns: { notes: true, aiSummary: true, keyFacts: true },
+      columns: {
+        id: true,
+        fullName: true,
+        preferredName: true,
+        company: true,
+        companyId: true,
+        school: true,
+        howMet: true,
+        sharedInterests: true,
+        relationshipScore: true,
+        notes: true,
+        aiSummary: true,
+        keyFacts: true,
+      },
     })
   );
-  // The two tag reads start alongside the scan too. They used to wait for the ownership gate
-  // below; scoping them to the caller's account in SQL makes them safe to start first — for a
-  // contact outside this account both return nothing — and they are only consumed after
-  // the gate, so a contact you do not own still reads to [] exactly as before.
+  // The two tag reads start alongside the source read. Scoping them to the caller's account
+  // in SQL makes them safe to start first — for a contact outside this account both return
+  // nothing — and they are only consumed after the ownership gate below.
   //
   // Tags share is the one reason findRelatedContacts needs that isn't in the narrow scan.
   // Answered as a bounded aggregate over the join table rather than hydrating every
@@ -1695,114 +1681,148 @@ export async function listRelatedContacts(
       .having(sql`count(*) >= 2`)
   );
   const goals = unwrap(await goalsRead);
-  const narrowRows = unwrap(await narrowRead);
   // Ownership gate: nothing below (the source's tag ids included) is used for a contact
   // outside this account.
-  const sourceNarrow = narrowRows.find((r) => r.id === contactId);
-  if (!sourceNarrow) return [];
+  const sourceRow = unwrap(await sourceRead);
+  if (!sourceRow) return [];
 
-  const sourceText = unwrap(await sourceTextRead);
   const sourceTagIds = unwrap(await sourceTagsRead).map((r) => r.tagId);
   // Empty when the source has no tags — the subquery matches nothing — as it always was.
   const sharedTagCounts = unwrap(await sharedCountsRead);
   const sharesTwoTags = new Set(sharedTagCounts.map((r) => r.contactId));
 
-  type Candidate = (typeof narrowRows)[number] & {
-    notes?: string | null;
-    aiSummary?: string | null;
-    keyFacts?: string[] | null;
-    tags: string[];
-  };
-  const withTags = (
-    r: (typeof narrowRows)[number],
-    text?: { notes: string | null; aiSummary: string | null; keyFacts: string[] | null }
-  ): Candidate => ({
-    ...r,
-    ...(text ?? {}),
-    // A placeholder, not a real tag list: `bestReason` only ever compares the source's
-    // own `tags` against a candidate's `tagSet` (never the reverse), via
-    // `sharedCountFromSignals(...) >= 2`. So the source needs a two-element placeholder
-    // whenever it has any tags at all, and each *other* contact needs the same
-    // placeholder exactly when the aggregate above found it shares >= 2 real tags with
-    // the source — `sharesTwoTags` excludes the source's own id, which is why it is
-    // special-cased rather than checked directly.
-    tags:
-      r.id === contactId
-        ? sourceTagIds.length > 0
-          ? ["__shared__", "__shared__"]
-          : []
-        : sharesTwoTags.has(r.id)
-          ? ["__shared__", "__shared__"]
-          : [],
-  });
-  const sourceTextColumns = {
-    notes: sourceText?.notes ?? null,
-    aiSummary: sourceText?.aiSummary ?? null,
-    keyFacts: sourceText?.keyFacts ?? null,
-  };
-
-  // Rows that already have a reason without anyone's text but the source's — only needed
-  // when a goal boost could apply to them, since that boost reads their full text.
-  const reasonIds =
-    goals.length > 0
-      ? findRelatedContacts(
-          contactId,
-          narrowRows.map((r) =>
-            withTags(r, r.id === contactId ? sourceTextColumns : undefined)
-          ),
-          Number.POSITIVE_INFINITY,
-          goals
-        ).map((r) => r.id)
-      : [];
-
-  const patterns = mentionLikePatterns(nameAliases(sourceNarrow));
-  // The JS lowering at every position that matters to an ASCII match. See
-  // `mentionLikePatterns` for why this is exact enough.
+  // Which contacts to score. Scoring used to read every contact's narrow columns (100k
+  // rows at 100k contacts, most of a profile's 2.9 s); now SQL keeps the rows that could
+  // earn a reason, as superset prefilters (`relatedCandidateFilter`), and JS still decides
+  // exactly. A candidate can be related by:
+  //   - its text mentioning the source: the trigram-indexed corpus arm (`mentionLikePatterns`);
+  //   - the source's text mentioning its name: any alias found there contains the name's
+  //     last whitespace-free run (split on exactly JS's whitespace), so that run is looked
+  //     for in the source's corpus;
+  //   - company id, company, howMet, school, two shared tags, or a shared interest.
+  // Rows whose jsonb is not an array of strings are always kept, as is the source.
+  const filter = relatedCandidateFilter(sourceRow);
+  const patterns = mentionLikePatterns(nameAliases(sourceRow));
+  // `RELATED_SQL_LOWER`, cheaply: `lower()` under the "C" collation lowers A-Z and nothing
+  // else, which is the `translate()`; the two `replace`s are its KELVIN SIGN and the U+0130
+  // step. Through `orbit_related_corpus`, or with `translate()`, this one pass over the
+  // account cost 1.8 s at 100k contacts on Postgres 16; this way it is ~0.3 s.
   const lowered = relatedSqlLower;
-  const mayMentionSource = patterns.length
-    ? sql`${lowered(
-        sql`coalesce(${contacts.aiSummary}, '') || ' ' || coalesce(${contacts.notes}, '') || ' ' || ${jsonArrayTextSql(contacts.keyFacts)} || ' ' || ${jsonArrayTextSql(contacts.sharedInterests)}`
-      )} like any (array[${sql.join(
-        patterns.map((p) => sql`${p}::text`),
-        sql`, `
-      )}])`
+  const unusual = sql`(orbit_unusual_json_array(c.key_facts) or orbit_unusual_json_array(c.shared_interests))`;
+  const mentionsSource = patterns.length
+    ? sql`orbit_related_corpus(c.ai_summary, c.notes, c.key_facts, c.shared_interests)
+            like any (array[${sql.join(patterns.map((p) => sql`${p}::text`), sql`, `)}])`
     : sql`false`;
+  const likeAny = (value: SQL, bodies: string[]) =>
+    sql`${value} like any (array[${sql.join(bodies.map((p) => sql`${p}::text`), sql`, `)}])`;
+  // Anything but ASCII other than `%`, `\` and `_` becomes a `_` in a LIKE body.
+  const notPlainAscii = "[^\\x01-\\x24\\x26-\\x5b\\x5d\\x5e\\x60-\\x7f]";
+  const corpus = filter?.corpus ?? "";
+  /**
+   * A name's last whitespace-free run, lowered, found in the source's corpus. An all-ASCII
+   * name (`octet_length = char_length`, the common case) needs only `lower()` and the ASCII
+   * whitespace, and its run is looked for literally; each branch computes the run once.
+   */
+  const nameInCorpus = (column: SQL) => {
+    const lastRun = (low: SQL, whitespace: string, spaces: string) =>
+      sql`split_part(rtrim(translate(${low}, ${whitespace}, ${spaces}), ' '), ' ', -1)`;
+    return sql`(case when octet_length(${column}) = char_length(${column})
+                  then strpos(${corpus}::text, ${lastRun(sql`lower(${column} collate "C")`, "\t\n\v\f\r", "     ")}) > 0
+                  else ${corpus}::text like '%' || regexp_replace(
+                    ${lastRun(lowered(column), JS_WHITESPACE, JS_WHITESPACE_AS_SPACES)}, ${notPlainAscii}, '_', 'g') || '%' end)`;
+  };
+  const interestArm = (interests: string[]) => {
+    const asText = interests.map(interestTextPattern);
+    if (asText.every((p): p is string => p !== null)) {
+      return sql`(jsonb_typeof(c.shared_interests) = 'array' and ${likeAny(lowered(sql`c.shared_interests::text`), asText)})`;
+    }
+    return sql`(jsonb_typeof(c.shared_interests) = 'array' and exists (
+      select 1 from jsonb_array_elements_text(c.shared_interests) as si(v)
+       where ${likeAny(lowered(sql`si.v`), interests.map((t) => `%${likeBody(t)}%`))}))`;
+  };
+  // Cheap tests on narrow columns, one pass over the account's rows.
+  const narrowArms: SQL[] = filter
+    ? [
+        sql`c.id = ${contactId}::uuid`,
+        ...(filter.companyId ? [sql`c.company_id = ${filter.companyId}::uuid`] : []),
+        ...(filter.company ? [sql`${lowered(sql`c.company`)} like ${filter.company}`] : []),
+        ...(filter.howMet ? [sql`${lowered(sql`c.how_met`)} like ${filter.howMet}`] : []),
+        ...(filter.school ? [sql`${lowered(sql`c.school`)} like ${filter.school}`] : []),
+        ...(sharesTwoTags.size > 0 ? [inArray(sql`c.id`, [...sharesTwoTags])] : []),
+        ...(filter.interests ? [interestArm(filter.interests)] : []),
+        ...(corpus.trim() ? [nameInCorpus(sql`c.full_name`), nameInCorpus(sql`c.preferred_name`)] : []),
+      ]
+    : [sql`true`];
 
-  const textRows = await db
-    .select({
-      id: contacts.id,
-      notes: contacts.notes,
-      aiSummary: contacts.aiSummary,
-      keyFacts: contacts.keyFacts,
-    })
-    .from(contacts)
-    .where(
-      and(
-        eq(contacts.userId, userId),
-        sql`${contacts.id} <> ${contactId}::uuid`,
-        sql`(${sql.join(
-          [
-            ...(reasonIds.length > 0 ? [inArray(contacts.id, reasonIds)] : []),
-            unusualJsonArraySql(contacts.keyFacts),
-            unusualJsonArraySql(contacts.sharedInterests),
-            mayMentionSource,
-          ],
-          sql` or `
-        )})`
-      )
-    );
-  const textById = new Map(textRows.map((r) => [r.id, r]));
-
-  const ranked = findRelatedContacts(
-    contactId,
-    // Same rows, same order as the scan; only the text columns differ, and only where
-    // they cannot change the outcome (see this function's comment).
-    narrowRows.map((r) =>
-      withTags(r, r.id === contactId ? sourceTextColumns : textById.get(r.id))
-    ),
-    limit,
-    goals
+  // The rows that get their wide text (and are always candidates): a row whose text might
+  // mention the source, and a row whose jsonb is unusual. Each is its own index scan
+  // (`contacts_related_corpus_trgm`, `contacts_unusual_json_idx`); folded into the pass
+  // above, the corpus test would detoast every row's notes again. When goals are active
+  // every candidate gets its text, since a goal boost reads the text of any row with a
+  // reason. More text than needed never changes the outcome: the old scoring read every row's.
+  const textArms = [
+    sql`select c.id from contacts c where c.user_id = ${userId} and ${unusual}`,
+    ...(patterns.length ? [sql`select c.id from contacts c where c.user_id = ${userId} and ${mentionsSource}`] : []),
+  ];
+  const hasText = goals.length > 0 ? sql`true` : sql`c.id in (select id from wide)`;
+  const candidateRows = rowsOf<{
+    id: string;
+    full_name: string;
+    preferred_name: string | null;
+    company: string | null;
+    company_id: string | null;
+    school: string | null;
+    how_met: string | null;
+    shared_interests: string[] | null;
+    relationship_score: number | null;
+    notes: string | null;
+    ai_summary: string | null;
+    key_facts: string[] | null;
+    has_text: boolean;
+  }>(
+    await db.execute(sql`
+      with wide as (${sql.join(textArms, sql` union `)})
+      select c.id, c.full_name, c.preferred_name, c.company, c.company_id, c.school, c.how_met,
+             c.shared_interests, c.relationship_score, ${hasText} as has_text,
+             case when ${hasText} then c.notes end as notes,
+             case when ${hasText} then c.ai_summary end as ai_summary,
+             case when ${hasText} then c.key_facts end as key_facts
+        from contacts c
+       where c.user_id = ${userId}
+         and (c.id in (select id from wide) or ${sql.join(narrowArms, sql` or `)})
+    `)
   );
+
+  type Candidate = RelatedContactCandidate & { tags: string[] };
+  // A placeholder, not a real tag list: `bestReason` only ever compares the source's own
+  // `tags` against a candidate's `tagSet` (never the reverse), via
+  // `sharedCountFromSignals(...) >= 2`. So the source needs a two-element placeholder
+  // whenever it has any tags at all, and each *other* contact needs the same placeholder
+  // exactly when the aggregate above found it shares >= 2 real tags with the source.
+  const placeholderTags = (id: string) =>
+    (id === contactId ? sourceTagIds.length > 0 : sharesTwoTags.has(id)) ? ["__shared__", "__shared__"] : [];
+  const candidates: Candidate[] = candidateRows.map((r) =>
+    r.id === contactId
+      ? { ...sourceRow, tags: placeholderTags(r.id) }
+      : {
+          id: r.id,
+          fullName: r.full_name,
+          preferredName: r.preferred_name,
+          company: r.company,
+          companyId: r.company_id,
+          school: r.school,
+          howMet: r.how_met,
+          sharedInterests: r.shared_interests,
+          relationshipScore: r.relationship_score,
+          ...(r.has_text ? { notes: r.notes, aiSummary: r.ai_summary, keyFacts: r.key_facts } : {}),
+          tags: placeholderTags(r.id),
+        }
+  );
+  // The source is always a candidate (its own arm); this only guards a row that vanished
+  // between the two reads.
+  if (!candidates.some((c) => c.id === contactId)) return [];
+
+  const ranked = findRelatedContacts(contactId, candidates, limit, goals);
   if (ranked.length === 0) return ranked;
 
   // The scans above never selected the display columns the card actually renders (avatar,

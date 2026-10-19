@@ -10,6 +10,8 @@ How Orbit stays fast, what guards it, and how to measure before guessing.
 | `scripts/smoke-write-path.ts` | CI | An embedding-provider call sneaking back onto the request path of a contact save. |
 | `scripts/smoke-import-perf.ts` | by hand (`npm run test:smoke`) | Per-row statements in the import engine (wall-clock budgets, so not in CI). |
 | `scripts/smoke-behavior-golden.ts` | CI | ANY change in what the MCP server (`tools/list` + every tool), the extension API, `/api/v1`, the page loaders, the contact/settings actions return, or in what their writes leave in the database. A characterization snapshot (`scripts/fixtures/behavior-golden.json`) for behavior-preserving work: re-record with `--update` only on code you trust, ideally in a worktree at the commit before your change. |
+| `scripts/smoke-dashboard-parity.ts` | CI | The dashboard's whole-network answers in SQL (`src/lib/dashboard-network.ts`: who is on the chart, cluster counts, preview, metrics sample, histogram) drifting from the JavaScript they replaced. |
+| `scripts/smoke-related-contacts-parity.ts` | CI | Related contacts' SQL prefilters losing a candidate full-text scoring would find. |
 | `scripts/smoke-due-follow-ups-parity.ts` | CI | `loadDueFollowUps` (MCP, `/api/v1/followups`, the `followup.due` webhook) drifting from the dashboard's due list. |
 | `perf.slow` rows in `error_events` | production | Any traced call (`src/lib/perf-trace.ts`) over 10 s, by account. The ops sweep alerts on a burst. |
 | Vercel Speed Insights | production | Core Web Vitals per route, in the Vercel dashboard. |
@@ -50,6 +52,7 @@ Set in route segment configs, not `vercel.json`. Hobby's ceiling with Fluid Comp
 
 ## Measuring
 
+- At account sizes from empty to 100k contacts: `scripts/dev/perf/` (see its README) — seeding, per-statement profiles with real-parameter EXPLAINs, import throughput. `PERFORMANCE_AUDIT.md` is the baseline it produced.
 - Statement shape and count: `DEBUG_QUERIES=1 npx tsx scripts/smoke-page-budgets.ts` lists every statement a page issues.
 - Real plans: enable Drizzle's `logger: true` locally, paste the SQL into Neon's SQL editor with `EXPLAIN (ANALYZE, BUFFERS)`, and read `shared read` — that is the cold-storage cost.
 - Bundles: `npm run analyze` (`next experimental-analyze`, Turbopack-native). For numbers per route, `node scripts/dev/bundle-report.mjs` after a build: first-load client JS (raw and gzip), preloaded fonts, and the server JS each route's function traces (what a cold start evaluates), API routes included.

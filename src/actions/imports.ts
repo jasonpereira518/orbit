@@ -18,6 +18,7 @@ import {
   type FinishSummary,
 } from "@/lib/imports/import-finish";
 import { importIdsFrom, isImportId } from "@/lib/imports/import-ids";
+import { readImportJobStatus, type ImportJobStatus } from "@/lib/imports/import-job-status";
 import { MAX_FACES } from "@/lib/imports/finish-scene-geometry";
 import {
   performUndo,
@@ -57,6 +58,8 @@ import {
   runImportJobById,
 } from "@/lib/import-job-dispatch";
 import {
+  ENCODING_ARTIFACTS_WARNING,
+  hasEncodingArtifacts,
   LinkedInExportError,
   parseLinkedInConnectionsCsv,
 } from "@/lib/linkedin-connections";
@@ -120,23 +123,6 @@ function linkedInMessageExternalId(
   return `li-msg:${conversationId}:${date ? date.toISOString() : "unknown"}:${simpleHash(content.slice(0, 240))}`;
 }
 
-/** Replacement-character artifacts from decoding a non-UTF8 export as UTF-8. */
-function hasEncodingArtifacts(
-  rows: {
-    firstName: string;
-    lastName: string;
-    company: string;
-    position: string;
-  }[],
-) {
-  return rows.some(
-    (r) =>
-      r.firstName.includes("�") ||
-      r.lastName.includes("�") ||
-      r.company.includes("�") ||
-      r.position.includes("�"),
-  );
-}
 
 /**
  * What a LinkedIn preview tells the person when the parser refuses a file. Only a
@@ -237,11 +223,7 @@ export async function previewLinkedInCsv(csvText: string) {
     );
   }
   const { columns, rows, warnings } = parsed;
-  if (hasEncodingArtifacts(rows)) {
-    warnings.push(
-      "Some characters may not have decoded correctly — if names look garbled, re-export the CSV with UTF-8 encoding.",
-    );
-  }
+  if (hasEncodingArtifacts(rows)) warnings.push(ENCODING_ARTIFACTS_WARNING);
   const db = await getDb();
   const existing = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
@@ -294,8 +276,6 @@ export async function previewLinkedInCsv(csvText: string) {
     people,
     duplicateCount: people.filter((p) => p.isRepeat).length,
     warnings,
-    // keep legacy key for any callers
-    preview: people,
   };
 }
 
@@ -364,39 +344,7 @@ export async function startLinkedInImport(
   return { importId: importRow.id, totalRows: selectedIndexes.length };
 }
 
-export type ImportJobStatus = {
-  id: string;
-  status: string;
-  totalRows: number;
-  rowsProcessed: number;
-  contactsCreated: number;
-  contactsUpdated: number;
-  duplicatesFound: number;
-  errorMessage: string | null;
-  /**
-   * The engine's own counters (`ImportStats.interactionsLogged`/`remindersCreated` —
-   * see `src/db/schema.ts`) for how many interaction/reminder rows this job's bulk inserts
-   * actually wrote. Surfaced here so the poll UI can report the number a calendar or
-   * LinkedIn-messages import's user actually cares about — meetings/messages logged — rather
-   * than only `contactsCreated`/`contactsUpdated`, which for a `createsContacts: false`
-   * import like calendar never move the "created" half at all.
-   */
-  interactionsLogged: number;
-  remindersCreated: number;
-  /**
-   * Rows the engine isolated and marked `failed` rather than failing the whole import
-   * (`ImportStats.failedRows`). Surfaced so a user whose file contained unwritable rows is
-   * actually told — chunk narrowing's entire purpose is to drop those rows instead of the
-   * job, and a "completed" toast that never mentions them hides the loss.
-   */
-  failedRows: number;
-  /** Drive imports: docs actually read (skipped and unchanged ones excluded). */
-  docsRead: number;
-  /** LinkedIn export: files kept, and what its extras added (see `ImportStats.filesSaved`). */
-  filesSaved: number;
-  targetsAdded: number;
-  backgroundAdded: number;
-};
+export type { ImportJobStatus } from "@/lib/imports/import-job-status";
 
 /** One row's worth of trouble, named for the person rather than for the database. */
 export type ImportRowProblem = {
@@ -725,30 +673,9 @@ export async function getImportJobStatus(
   importId: string,
 ): Promise<ImportJobStatus> {
   const userId = await requireUserId();
-  if (!isImportId(importId)) throw new Error("Import session not found");
-  const db = await getDb();
-  const row = await db.query.imports.findFirst({
-    where: and(eq(imports.id, importId), eq(imports.userId, userId)),
-  });
-  if (!row) throw new Error("Import session not found");
-
-  return {
-    id: row.id,
-    status: row.status,
-    totalRows: row.totalRows ?? 0,
-    rowsProcessed: row.rowsProcessed ?? 0,
-    contactsCreated: row.contactsCreated ?? 0,
-    contactsUpdated: row.contactsUpdated ?? 0,
-    duplicatesFound: row.duplicatesFound ?? 0,
-    errorMessage: row.errorMessage,
-    interactionsLogged: row.stats?.interactionsLogged ?? 0,
-    remindersCreated: row.stats?.remindersCreated ?? 0,
-    failedRows: row.stats?.failedRows ?? 0,
-    docsRead: row.stats?.docsRead ?? 0,
-    filesSaved: row.stats?.filesSaved ?? 0,
-    targetsAdded: row.stats?.targetsAdded ?? 0,
-    backgroundAdded: row.stats?.backgroundAdded ?? 0,
-  };
+  const status = await readImportJobStatus(userId, importId);
+  if (!status) throw new Error("Import session not found");
+  return status;
 }
 
 /** Stop a processing import; rows already written are kept. */

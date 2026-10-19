@@ -500,7 +500,7 @@ function accumulatedStats(
 export async function runImportJob(importId: string): Promise<void> {
   const db = await getDb();
   const jobStart = Date.now();
-  startQueryCount();
+  startQueryCount({ captureText: false });
 
   // Everything below runs inside this try so the `finally` is the *only* thing any exit
   // path — an early return, a caught failure, cancellation mid-loop, or a bug that throws

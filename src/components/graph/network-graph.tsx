@@ -11,6 +11,7 @@ import {
 } from "react";
 import {
   getFullGraphData,
+  getGraphContactDetail,
   getGraphData,
   refreshConstellationBatch,
 } from "@/actions/graph";
@@ -181,6 +182,38 @@ export function NetworkGraph({
   const [peekPersonId, setPeekPersonId] = useState<string | null>(null);
   const [peekToken, setPeekToken] = useState(0);
   const [selection, setSelection] = useState<InspectSelection>(null);
+  // How you met and contact details are not in the chart payload (see `loadGraphData`): they
+  // are read for the one star the inspect panel opens, and merged in when they arrive.
+  const selectedContactId = selection?.type === "contact" ? selection.id : null;
+  useEffect(() => {
+    if (!selectedContactId) return;
+    let live = true;
+    getGraphContactDetail(selectedContactId)
+      .then((detail) => {
+        if (!live || !detail) return;
+        setSelection((prev) =>
+          prev?.type === "contact" && prev.id === selectedContactId
+            ? {
+                ...prev,
+                data: {
+                  ...prev.data,
+                  howMet: detail.howMet,
+                  metContext: detail.metContext,
+                  dateMet: detail.dateMet ? new Date(detail.dateMet).toISOString() : null,
+                  email: detail.email,
+                  phone: detail.phone,
+                  linkedinUrl: detail.linkedinUrl,
+                  website: detail.website,
+                },
+              }
+            : prev
+        );
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [selectedContactId]);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [keyOpen, setKeyOpen] = useState(false);
@@ -1146,11 +1179,6 @@ export function NetworkGraph({
                                   nextFollowUpAt: c.nextFollowUpAt
                                     ? String(c.nextFollowUpAt)
                                     : null,
-                                  email: c.email,
-                                  phone: c.phone,
-                                  linkedinUrl: c.linkedinUrl,
-                                  website: c.website,
-                                  howMet: c.howMet,
                                 };
                                 setSelection({
                                   type: "contact",

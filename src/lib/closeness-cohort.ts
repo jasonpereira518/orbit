@@ -1,9 +1,12 @@
 import { cache } from "react";
+import { EXCHANGE_TOUCH_TYPES, MEETING_TOUCH_TYPES, NOTE_TOUCH_TYPES, sqlList } from "@/lib/touch-kinds";
+import { after } from "next/server";
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { contacts, interactions, userGoals, userSettings } from "@/db/schema";
 import { countsAsTouch } from "@/lib/interaction-provenance";
 import {
+  ABSOLUTE_TIER_CUTOFFS,
   applyClosenessCohort,
   buildClosenessCohort,
   computeRawCloseness,
@@ -17,10 +20,11 @@ import type { ContactSignalCounts } from "@/lib/constellation-eligibility";
 import {
   buildSnapshot,
   cohortFromSnapshot,
-  countUnscoredContacts,
   isUsableSnapshot,
+  listUnscoredContactIds,
   persistClosenessScores,
   readCohortRow,
+  rescoreContact,
   saveCohortSnapshot,
 } from "@/lib/closeness-materialize";
 
@@ -68,12 +72,10 @@ export type ClosenessCohortInputs = {
   calendarConnected?: boolean;
 };
 
-/**
- * Two-way channels: a thread counts when both sides showed up (`messagesQualify`). Gmail sync
- * and the chat importers stamp `direction`; forwarded mail and pre-direction LinkedIn rows
- * land undirected and fall to the volume rule.
- */
-const EXCHANGE_TYPES = sql.raw(`('linkedin_message', 'email', 'message')`);
+/** The touch kinds as SQL lists (`src/lib/touch-kinds.ts`). */
+const NOTE_TYPES = sql.raw(sqlList(NOTE_TOUCH_TYPES));
+const MEETING_TYPES = sql.raw(sqlList(MEETING_TOUCH_TYPES));
+const EXCHANGE_TYPES = sql.raw(sqlList(EXCHANGE_TOUCH_TYPES));
 
 /**
  * Constellation-eligibility tallies, as extra aggregates on the per-contact interaction
@@ -92,12 +94,12 @@ const EXCHANGE_TYPES = sql.raw(`('linkedin_message', 'email', 'message')`);
  * the LinkedIn adapter writes each message body into `raw_notes`, so a presence test would
  * count every imported message as a note and qualify every messaged contact.
  */
-const constellationSignalAggregates = {
+export const constellationSignalAggregates = {
   noteInteractions: sql<number>`count(*) filter (
-    where ${interactions.interactionType} in ('note', 'meeting_note')
+    where ${interactions.interactionType} in ${NOTE_TYPES}
   )::int`,
   meetingInteractions: sql<number>`count(*) filter (
-    where ${interactions.interactionType} in ('meeting', 'in_person', 'call')
+    where ${interactions.interactionType} in ${MEETING_TYPES}
   )::int`,
   messageInbound: sql<number>`count(*) filter (
     where ${interactions.interactionType} in ${EXCHANGE_TYPES}
@@ -193,6 +195,74 @@ export type ClosenessScalars = Pick<ClosenessBreakdown, "raw" | "closeness" | "o
 export type ClosenessCohortSlimResult = Omit<ClosenessCohortResult, "byId"> & {
   byId: Map<string, ClosenessScalars>;
 };
+
+/**
+ * True when every contact's stored breakdown is what `getClosenessCohortSlim` would return
+ * for it: a usable distribution exists and nobody is unscored — the same gate
+ * `resolveCohortResult` applies before answering from storage. Lets a reader that needs a
+ * few contacts' tiers read `closeness_breakdown->>'tier'` for just those rows instead of
+ * loading the whole network's scores (two indexed point reads instead of 100k rows).
+ */
+export async function storedScoresAreCurrent(userId: string): Promise<boolean> {
+  const [cohortRow, unscored] = await Promise.all([
+    readCohortRow(userId),
+    listUnscoredContactIds(userId, 1),
+  ]);
+  return Boolean(cohortRow && isUsableSnapshot(cohortRow.snapshot) && unscored.length === 0);
+}
+
+/**
+ * Bring the stored scores to what `getClosenessCohortSlim` would answer with, without
+ * reading them: the same rescore-a-few, recalibrate-after-the-response or rebuild decision
+ * `resolveCohortResult` makes. For a reader that then asks Postgres about the stored
+ * breakdowns directly (the dashboard) instead of loading every contact's into memory.
+ * Contacts left unscored by a deferred recalibration read as unscored, as they would from
+ * the cohort. True when it changed stored scores, so reads taken alongside it are stale.
+ */
+export async function ensureStoredScoresCurrent(userId: string): Promise<boolean> {
+  const [cohortRow, unscored] = await Promise.all([
+    readCohortRow(userId),
+    listUnscoredContactIds(userId, RESCORE_ON_READ_MAX + 1),
+  ]);
+  if (cohortRow && isUsableSnapshot(cohortRow.snapshot)) {
+    if (unscored.length === 0) return false;
+    if (unscored.length <= RESCORE_ON_READ_MAX) {
+      await Promise.all(unscored.map((id) => rescoreContact(userId, id).catch(() => false)));
+      return true;
+    }
+    deferRecalibration(userId);
+    return false;
+  }
+  // No usable distribution: only the full build can score anyone, and it persists every score.
+  await getClosenessCohortSlim(userId);
+  return true;
+}
+
+/**
+ * The two whole-network figures `getNetworkStats` takes from the cohort — how many contacts
+ * score inner by ABSOLUTE closeness (`closenessTier(raw)`) and the stored mean raw score —
+ * answered in SQL from stored scores, or null when they are not current (see
+ * `storedScoresAreCurrent`) and the caller must load the cohort as before. One count instead
+ * of every contact's scores crossing the wire.
+ */
+export async function storedCohortSummary(
+  userId: string
+): Promise<{ innerCircle: number; averageRaw: number } | null> {
+  const db = await getDb();
+  const [cohortRow, unscored, inner] = await Promise.all([
+    readCohortRow(userId),
+    listUnscoredContactIds(userId, 1),
+    db.execute(sql`
+      select count(*)::int as n from contacts
+       where user_id = ${userId}
+         and (closeness_breakdown->>'raw')::float8 >= ${ABSOLUTE_TIER_CUTOFFS.inner}`),
+  ]);
+  if (!cohortRow || !isUsableSnapshot(cohortRow.snapshot) || unscored.length > 0) return null;
+  return {
+    innerCircle: Number(rowsOf<{ n: number }>(inner)[0]?.n ?? 0),
+    averageRaw: cohortRow.snapshot.averageRaw ?? 0,
+  };
+}
 
 /** Separate from `cohortStore`, so a slim result can never be handed to a full reader. */
 const slimCohortStore = cache(() => new Map<string, Promise<ClosenessCohortSlimResult>>());
@@ -301,6 +371,36 @@ export async function getContactCloseness(
   };
 }
 
+/** Above this many unscored contacts a read stops scoring them one by one (~5 statements each). */
+const RESCORE_ON_READ_MAX = 5;
+
+/** Users with a recalibration already scheduled by this instance, so a burst of reads queues one. */
+const recalibrating = new Set<string>();
+
+/**
+ * Recalibrate after the response (or on the next macrotask outside a request), at most once
+ * per user at a time on this instance. A failure leaves the rows unscored for the next read or
+ * the hourly sweep in /api/imports/process-stalled.
+ */
+function deferRecalibration(userId: string) {
+  if (recalibrating.has(userId)) return;
+  recalibrating.add(userId);
+  const task = async () => {
+    try {
+      await recalibrateCloseness(userId);
+    } catch {
+      // Left unscored on purpose; see above.
+    } finally {
+      recalibrating.delete(userId);
+    }
+  };
+  try {
+    after(task);
+  } catch {
+    setTimeout(() => void task(), 0);
+  }
+}
+
 /**
  * Read the scores this user already has, or compute them if there are none worth reading.
  *
@@ -320,14 +420,27 @@ async function resolveCohortResult(
   // the checks that decide whether they are wanted. When the checks send us to the rebuild
   // instead — no usable distribution, or unscored contacts, which is rare because contacts
   // are scored as they are written — the speculative reads are simply discarded.
-  const stored = readStoredParts(userId, options.slim ?? false);
+  let stored = readStoredParts(userId, options.slim ?? false);
   stored.catch(() => {});
   const [cohortRow, unscored] = await Promise.all([
     readCohortRow(userId),
-    countUnscoredContacts(userId),
+    listUnscoredContactIds(userId, RESCORE_ON_READ_MAX + 1),
   ]);
 
-  if (cohortRow && isUsableSnapshot(cohortRow.snapshot) && unscored === 0) {
+  if (cohortRow && isUsableSnapshot(cohortRow.snapshot)) {
+    if (unscored.length === 0) return assembleStoredResult(await stored, cohortRow.snapshot);
+    // A usable distribution exists, so a handful of new contacts does not justify rescoring
+    // the whole network inside this read: one unscored contact used to turn a 0.9 s dashboard
+    // into 3.6 s at 10k contacts, and 12 s into 64 s at 100k. Bulk writers (sync, inbound
+    // mail, MCP creates, event ingest) leave rows unscored, so this was not a rare path.
+    if (unscored.length <= RESCORE_ON_READ_MAX) {
+      await Promise.all(unscored.map((id) => rescoreContact(userId, id).catch(() => false)));
+      stored = readStoredParts(userId, options.slim ?? false);
+      return assembleStoredResult(await stored, cohortRow.snapshot);
+    }
+    // Many: answer from what is stored (the new rows read as unscored for a moment) and
+    // recalibrate after the response.
+    deferRecalibration(userId);
     return assembleStoredResult(await stored, cohortRow.snapshot);
   }
 
