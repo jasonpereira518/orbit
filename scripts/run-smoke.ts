@@ -298,6 +298,11 @@ const MANIFEST: Record<string, Tier> = {
   // pglite ----------------------------------------------------------------------------
   "smoke-contact-create-race": "pglite",
   "smoke-mcp-body-cap": "pglite",
+  "smoke-stress-input-extremes": "pglite", // stress-tests/input-extremes.ts under STRESS_STRICT (Phase 4.1)
+  "smoke-stress-concurrency-races": "pglite", // stress-tests/concurrency-races.ts under STRESS_STRICT (Phase 4.1)
+  "smoke-stress-resilience-repros": "pglite", // stress-tests/resilience-repros.ts under STRESS_STRICT (Phase 4.1)
+  "smoke-stress-recurrence-edge": "pure", // stress-tests/recurrence-edge.ts under STRESS_STRICT (Phase 4.1)
+  "smoke-stress-net-guard-edge": "pure", // stress-tests/net-guard-edge.ts under STRESS_STRICT (Phase 4.1)
   "smoke-account-alerts": "pglite",
   "smoke-import-history": "pglite",
   "smoke-account-deletion": "pglite",
