@@ -22,6 +22,8 @@
  */
 export const TOAST_COPY = {
   saveFailed: "That didn’t save — try again?",
+  loadFailed: "Couldn’t load this — try again?",
+  scanFailed: "Couldn’t scan that mailbox — try again?",
   sendFailed: "That didn’t send — try again?",
   deleteFailed: "Couldn’t delete that — try again?",
   undoFailed: "Couldn’t undo that — try again?",

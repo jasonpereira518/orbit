@@ -153,6 +153,7 @@ export function DatePickerButton({
   minDate,
   label = "Calendar",
   className,
+  id,
 }: {
   /** YYYY-MM-DD */
   value?: string | null;
@@ -162,6 +163,8 @@ export function DatePickerButton({
   minDate?: Date | null;
   label?: string;
   className?: string;
+  /** Lets a `<Label htmlFor>` target the trigger. */
+  id?: string;
 }) {
   const [open, setOpen] = useState(false);
   const selected = value ? parseLocalYmd(value) : null;
@@ -179,6 +182,7 @@ export function DatePickerButton({
     >
       <PopoverTrigger
         type="button"
+        id={id}
         disabled={disabled}
         className={cn(
           "inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-sm font-medium transition-colors",
@@ -191,7 +195,7 @@ export function DatePickerButton({
       </PopoverTrigger>
       <PopoverContent
         align="start"
-        className="w-auto rounded-2xl border border-border/70 bg-card p-3 shadow-lg ring-0"
+        className="w-auto rounded-xl border border-border-subtle bg-card p-3 shadow-lg ring-0"
       >
         <MonthCalendar
           month={month}

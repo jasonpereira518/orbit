@@ -107,6 +107,7 @@ export function ConfirmDialog({
               id={inputId}
               value={typed}
               onChange={(e) => setTyped(e.target.value)}
+              placeholder={typedConfirmation}
               autoComplete="off"
               spellCheck={false}
               onKeyDown={(e) => {

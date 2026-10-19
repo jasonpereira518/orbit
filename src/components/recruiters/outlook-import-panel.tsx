@@ -1,3 +1,4 @@
+import { TOAST_COPY } from "@/lib/toast-copy";
 "use client";
 
 import { useTransition } from "react";
@@ -193,7 +194,7 @@ export function OutlookImportPanel({
           <p role="alert" className="rounded-lg bg-destructive/10 p-4 text-sm text-destructive">
             {friendlyError(
               scan.errorMessage ? new Error(scan.errorMessage) : null,
-              "Couldn’t scan that mailbox — try again?"
+              TOAST_COPY.scanFailed
             )}
           </p>
         </CardContent>

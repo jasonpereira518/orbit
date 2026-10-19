@@ -1096,20 +1096,7 @@
   }
 }
 
-@keyframes delete-confirm-pulse {
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 color-mix(in oklch, var(--destructive) 35%, transparent);
-  }
-  50% {
-    box-shadow: 0 0 0 6px
-      color-mix(in oklch, var(--destructive) 0%, transparent);
-  }
-}
 
-.delete-confirm-btn {
-  animation: delete-confirm-pulse 1.6s ease-in-out infinite;
-}
 
 /* ── Constellation / solar system ── */
 

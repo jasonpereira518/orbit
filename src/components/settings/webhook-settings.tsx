@@ -1,3 +1,4 @@
+import { TIMED_OUT, withTimeout } from "@/lib/with-timeout";
 "use client";
 
 /**
@@ -34,25 +35,9 @@ import { useConfirmFocus } from "@/components/settings/use-confirm-focus";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
 const LOAD_TIMEOUT_MS = 12_000;
-const TIMED_OUT = "orbit:timed-out";
 /** The same line `api-settings.tsx` and `calendar-feed-settings.tsx` show; a shared helper is wanted. */
-const LOAD_FAILED = "Couldn’t load this — try again?";
+const LOAD_FAILED = TOAST_COPY.loadFailed;
 
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(TIMED_OUT)), ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      }
-    );
-  });
-}
 
 const EVENTS = [
   { id: "contact.created", label: "A contact is added" },

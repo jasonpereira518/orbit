@@ -1,3 +1,4 @@
+import { withTimeout } from "@/lib/with-timeout";
 "use client";
 
 import { useState, useTransition } from "react";
@@ -19,21 +20,6 @@ import { toast } from "@/lib/toast";
  */
 const SAVE_TIMEOUT_MS = 12_000;
 
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(TIMEOUT_MESSAGE)), ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      }
-    );
-  });
-}
 
 /**
  * Signature and sending account for email written in Orbit's Compose. The initial values are
@@ -53,7 +39,7 @@ export function EmailSettings({
   function chooseDefault(id: MailboxId) {
     startSwitch(async () => {
       try {
-        const next = await withTimeout(saveDefaultSendProviderAction(id), SAVE_TIMEOUT_MS);
+        const next = await withTimeout(saveDefaultSendProviderAction(id), SAVE_TIMEOUT_MS, TIMEOUT_MESSAGE);
         setCapability(next);
         const email = next.mailboxes.find((m) => m.id === id)?.email;
         toast.success(email ? `Sending from ${email}` : "Default mailbox saved");
@@ -66,7 +52,7 @@ export function EmailSettings({
   function save() {
     start(async () => {
       try {
-        const res = await withTimeout(saveEmailSignatureAction(text), SAVE_TIMEOUT_MS);
+        const res = await withTimeout(saveEmailSignatureAction(text), SAVE_TIMEOUT_MS, TIMEOUT_MESSAGE);
         setSaved(res.signature ?? "");
         setText(res.signature ?? "");
         toast.success(res.signature ? "Signature saved" : "Signature cleared");
