@@ -340,10 +340,14 @@ export async function getMeetingContext(
   // With no contact on it the reads below are `false` queries: cheap, and research still runs.
   const db = await getDb();
   const [people, briefs, todos, items, recent, notes] = await Promise.all([
-    db.query.contacts.findMany({
-      where: and(eq(contacts.userId, userId), inArray(contacts.id, ids)),
-      columns: { id: true, fullName: true, preferredName: true, email: true, company: true, title: true, linkedinUrl: true },
-    }),
+    db.query.contacts
+      .findMany({
+        where: and(eq(contacts.userId, userId), inArray(contacts.id, ids)),
+        columns: { id: true, fullName: true, preferredName: true, email: true, company: true, title: true, linkedinUrl: true },
+      })
+      // In the event's own attendee order: an IN list comes back in whatever order the table
+      // does, which decided who got the two research slots and who was left out.
+      .then((rows) => rows.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id))),
     db.query.contactBriefs.findMany({
       where: and(eq(contactBriefs.userId, userId), inArray(contactBriefs.contactId, ids)),
       columns: { contactId: true, standing: true, nextStep: true },
