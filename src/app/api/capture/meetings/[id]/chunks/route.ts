@@ -10,7 +10,8 @@ import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit
 
 export const dynamic = "force-dynamic";
 // One chunk is one transcription, whose own deadline is 90s (`TRANSCRIBE_TIMEOUT_MS`).
-export const maxDuration = 120;
+// Deepgram (90 s) then the fallback engine (90 s) can both run for one chunk.
+export const maxDuration = 180;
 
 /**
  * One chunk of a live meeting: raw 16 kHz WAV in, its transcript out.

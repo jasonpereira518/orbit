@@ -38,6 +38,13 @@ import {
   type ContactRow,
 } from "@/lib/follow-up-drafts";
 
+/**
+ * How long an extension route lets its model call run. The routes' `maxDuration` is 30 s and the
+ * transport's own deadline 45 s, so a slow provider used to be ended by the platform with
+ * nothing recorded; this ends it first and the panel falls back.
+ */
+export const EXTENSION_AI_DEADLINE_MS = 25_000;
+
 export type StarterContact = {
   id: string;
   fullName: string;
@@ -690,6 +697,8 @@ export async function generateConversationStarters(
       userId,
       {
         operation: "extension.starters",
+        // See extension/parse-profile.ts: the route's 30 s limit, so end before it.
+        signal: AbortSignal.timeout(EXTENSION_AI_DEADLINE_MS),
         system: systemPrompt(ctx.mode, limit),
         user: userPrompt(ctx, limit),
         temperature: 0.6,

@@ -22,7 +22,7 @@
 import { z } from "zod";
 import { parseAiJson, userCanUseAi } from "@/lib/ai";
 import { cachedCompleteJson } from "@/lib/ai-result-cache";
-import { untrustedPageBlock } from "@/lib/conversation-starters";
+import { EXTENSION_AI_DEADLINE_MS, untrustedPageBlock } from "@/lib/conversation-starters";
 import type { PageContext, ParsedProfileFields } from "./contract";
 
 const nullStr = z
@@ -95,6 +95,9 @@ export async function parseProfileFields(
     // back into view, and the page has not changed.
     content = await cachedCompleteJson(userId, {
       operation: "extension.parse",
+      // The route's maxDuration is 30 s; a call allowed 45 s would be cut off by the platform
+      // with nothing recorded. Ends first, so the panel gets its fallback instead.
+      signal: AbortSignal.timeout(EXTENSION_AI_DEADLINE_MS),
       system: SYSTEM,
       user: [
         // What the adapter already knows, so the model corroborates rather than
