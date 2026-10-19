@@ -26,6 +26,7 @@ verified by the test named. **Not yet deployed or merged**: nothing below protec
 | **P1.8** retention + `db.storage` alert (R-07) | ✅ partly: pruning of 3 logs and the alert done; embedding double-storage, Blob requirement, other 10 tables **not** done | `smoke-log-retention`, `smoke-ops-alerts` |
 | **P3.4 step 1** real-Postgres CI job (R-05) | ✅ done | Steps replayed locally in 63 s; the gate fails on the pre-fix code. Not yet run on GitHub |
 | **P4.4** runbooks | ✅ partly: search-broken, storage-full, DB-unreachable, PITR written into `docs/RUNBOOK.md`; provider-outage, leaked-credential, scheduler-stopped still only in Appendix A below | — |
+| **P1.5** migration safety (R-04), partly | ✅ `MIGRATION_DATABASE_URL`; data backfills/merges moved out of the build into the hourly housekeeping; CI guard against unreviewed `DROP`s (`smoke-ddl-contract`). **Not done:** `CONCURRENTLY` for new indexes on big tables, removing DDL rights from the app role (needs the role set up first, see RUNBOOK → Migration role), runtime-never-sweeps, apply-once migrations (D7) | `smoke-migration-guards`, `smoke-ddl-contract` (fails on a planted DROP); real-Postgres run: build via the migration URL touched 0 identity rows (was +2,000 per build) |
 | **P2.3** Clerk | ✅ `CLERK_JWT_KEY` now an expected production variable (warns). Clerk health probe **not** done | `smoke-env` |
 
 **Needs you (dashboards or decisions, cannot be done from code):** P1.1 read the real database state; P1.2 prove a backup exists

@@ -22,11 +22,16 @@ config();
 import { BUILD_MIGRATION_LOCK_WAIT_MS, SCHEMA_VERSION, reconcileSchema } from "../src/db";
 import { checkMigrationTarget, type VercelEnv } from "../src/lib/env";
 import { schemaCoverage } from "./lib/schema-coverage";
-import { backfillContactIdentities } from "../src/lib/contact-identity";
-import { mergeConfidentDuplicates } from "../src/lib/duplicate-sweep";
 
 async function main() {
-  const target = process.env.DATABASE_URL?.trim() ? "DATABASE_URL" : "local PGlite";
+  // Migrate through a dedicated connection when one is given. The app role carries
+  // `statement_timeout` (docs/RUNBOOK.md) and has no business holding DDL rights; the
+  // migration role can carry a long statement_timeout and a short lock_timeout of its own.
+  // Unset, the build migrates through DATABASE_URL exactly as before.
+  const migrationUrl = process.env.MIGRATION_DATABASE_URL?.trim();
+  if (migrationUrl) process.env.DATABASE_URL = migrationUrl;
+
+  const target = migrationUrl ? "MIGRATION_DATABASE_URL" : process.env.DATABASE_URL?.trim() ? "DATABASE_URL" : "local PGlite";
   if (process.env.VERCEL && !process.env.DATABASE_URL?.trim()) {
     console.error("migrate: DATABASE_URL is unset in a Vercel build — refusing to guess.");
     process.exit(1);
@@ -61,34 +66,11 @@ async function main() {
     process.exit(1);
   }
 
-  // Populate `contact_identities` for contacts that predate it.
-  //
-  // Bounded per run, and re-runs on every deploy until it reports nothing left — an
-  // unbounded pass over a large account would hold the build open, and a build is not the
-  // place to discover how long a full-table scan takes. `scripts/backfill-contact-identities.ts`
-  // is the same routine without the cap, for finishing the job by hand.
-  //
-  // Never fatal. A contact without identity rows is not protected from being duplicated, but
-  // it is not broken either, and blocking a deploy over it would be the wrong trade: the
-  // review page still finds those duplicates, and the next deploy retries.
-  try {
-    const backfill = await backfillContactIdentities({ limit: 2000 });
-    if (backfill.scanned > 0) {
-      console.log(
-        `migrate: claimed ${backfill.claimed} contact identities across ${backfill.scanned} contacts` +
-          (backfill.more ? " (more remain; the next deploy continues)" : "")
-      );
-    }
-    // Merge the pre-existing duplicates that are unambiguous. Bounded per account so a
-    // deploy cannot turn into an unbounded job; the review page sweeps again on render, so
-    // whatever is left over is picked up the next time anyone looks.
-    for (const userId of backfill.contestedUserIds) {
-      const { merged } = await mergeConfidentDuplicates(userId, { maxMerges: 100 });
-      if (merged) console.log(`migrate: merged ${merged} confident duplicate(s) for ${userId}`);
-    }
-  } catch (err) {
-    console.error("migrate: contact-identity backfill failed (non-fatal)\n", err);
-  }
+  // No data work here. The contact-identity backfill and the confident-duplicate merges used
+  // to run at this point on every build: they rewrote customer data even when the `next build`
+  // after them then failed (the database moves on, the old code keeps serving), and a merge is
+  // hard to undo. They run from the hourly housekeeping now (`runIdentityMaintenance`,
+  // called by /api/imports/process-stalled), bounded the same way.
 
   console.log(
     `migrate: schema version ${SCHEMA_VERSION} ${result.applied ? "applied" : "already current"}; ${target} matches schema.ts.`

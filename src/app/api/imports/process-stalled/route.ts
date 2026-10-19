@@ -5,6 +5,7 @@ import { getDb } from "@/db";
 import { contacts, errorEvents } from "@/db/schema";
 import { pruneAiResultCache } from "@/lib/ai-result-cache";
 import { pruneRateLimitBuckets } from "@/lib/rate-limit";
+import { runIdentityMaintenance } from "@/lib/duplicate-sweep";
 import { pruneLogTables, pruneOlderThan, pruneUsageEvents } from "@/lib/event-prune";
 import { runAiBatchSweep } from "@/lib/ai-batch-apply";
 import { resumeStalledImports } from "@/lib/import-stall";
@@ -137,6 +138,8 @@ export async function GET(request: Request) {
     captureAbandoned: 0,
     usageEventsPruned: 0,
     logRowsPruned: 0,
+    identitiesClaimed: 0,
+    duplicatesMerged: 0,
     errorEventsPruned: 0,
     /** Unsaved captures' photos past `UNATTACHED_PHOTO_TTL_MS`. */
     capturePhotosPruned: 0,
@@ -241,6 +244,17 @@ export async function GET(request: Request) {
       // run instead of vanishing, and says why.
       status = "partial";
       reportError(err, { where: "job.process-stalled.housekeeping" });
+    }
+
+    try {
+      // Moved out of the build (scripts/migrate.ts): bounded identity backfill and the
+      // unambiguous duplicate merges, a slice per hour until nothing is left.
+      const identity = await runIdentityMaintenance();
+      stats.identitiesClaimed = identity.claimed;
+      stats.duplicatesMerged = identity.merged;
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.identity" });
     }
 
     try {

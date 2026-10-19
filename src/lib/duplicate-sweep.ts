@@ -318,3 +318,27 @@ export async function mergeConfidentDuplicates(
 
   return { merged, leftForReview: Number(remaining?.n ?? 0), ...(vetoed ? { vetoed } : {}) };
 }
+
+/**
+ * The identity backfill and the unambiguous-duplicate merges, as bounded housekeeping.
+ *
+ * They used to run inside every Vercel build (`scripts/migrate.ts`), which meant a deploy
+ * rewrote and merged customer rows even when the `next build` after it failed and the old code
+ * kept serving. Run from the hourly `/api/imports/process-stalled` instead, with the same
+ * bounds: 2,000 contacts scanned per run, at most 100 merges per account and 20 accounts, so
+ * each run is short and a large backlog drains over a few hours rather than inside one request.
+ * Never throws for a bad account: one account's failure is reported and the rest continue.
+ */
+export async function runIdentityMaintenance(): Promise<{ scanned: number; claimed: number; merged: number; more: boolean }> {
+  const { backfillContactIdentities } = await import("@/lib/contact-identity");
+  const backfill = await backfillContactIdentities({ limit: 2000 });
+  let merged = 0;
+  for (const userId of backfill.contestedUserIds.slice(0, 20)) {
+    try {
+      merged += (await mergeConfidentDuplicates(userId, { maxMerges: 100 })).merged;
+    } catch (err) {
+      console.error(`[identity-maintenance] merge failed for ${userId}`, err);
+    }
+  }
+  return { scanned: backfill.scanned, claimed: backfill.claimed, merged, more: backfill.more };
+}

@@ -307,6 +307,24 @@ returns, trigger `/api/imports/process-stalled` by hand and check `import.wedged
 5. Full recovery: preview against the branch, then promote it or switch `DATABASE_URL`. Writes
    between the target time and now are lost; take a fresh dump of `main` first as evidence.
 
+## Migration role (optional, recommended)
+
+The build runs DDL as whatever `DATABASE_URL` is, which is the app role, and that role carries the
+20 s `statement_timeout`. Give migrations their own role instead:
+
+1. Neon → Roles → create `orbit_migrator`; let it own the schema (or `GRANT` it the app tables).
+2. `ALTER ROLE orbit_migrator SET lock_timeout = '5s'; ALTER ROLE orbit_migrator SET statement_timeout = '15min';`
+   A short `lock_timeout` makes a DDL statement that would queue behind a long query fail the
+   build instead of blocking every query on that table.
+3. Vercel → set `MIGRATION_DATABASE_URL` (Production and Preview) to that role's connection string.
+   `scripts/migrate.ts` uses it for the build; the app keeps `DATABASE_URL`.
+4. Later, remove DDL rights from the app role. Check with `reliability/tests/migration-under-load.sh`.
+
+The build no longer backfills contact identities or merges duplicates; the hourly
+`/api/imports/process-stalled` does (bounded: 2,000 contacts, 100 merges per account, 20 accounts).
+`scripts/smoke-ddl-contract.ts` fails CI on a new `DROP TABLE` / `DROP COLUMN` unless a
+`// contract-of: v<N>` comment names an earlier release that removed its last reader.
+
 ## Neon one-time settings
 
 - `ALTER ROLE <app role> SET statement_timeout = '20s';` — bounds a runaway query; the

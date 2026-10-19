@@ -93,6 +93,20 @@ function targetChecks() {
   );
 }
 
+async function buildHasNoDataWork() {
+  console.log("\nThe build migrates the schema and nothing else...");
+  const migrate = readFileSync("scripts/migrate.ts", "utf8");
+  check("scripts/migrate.ts no longer backfills or merges customer data",
+    !/backfillContactIdentities|mergeConfidentDuplicates/.test(migrate.replace(/\/\/.*$/gm, "")));
+  check("it connects through MIGRATION_DATABASE_URL when given", migrate.includes("MIGRATION_DATABASE_URL"));
+  const { runIdentityMaintenance } = await import("../src/lib/duplicate-sweep");
+  const idle = await runIdentityMaintenance();
+  check("the hourly housekeeping runs the bounded maintenance instead",
+    typeof idle.scanned === "number" && typeof idle.merged === "number" && typeof idle.more === "boolean", JSON.stringify(idle));
+  check("the housekeeping route calls it",
+    readFileSync("src/app/api/imports/process-stalled/route.ts", "utf8").includes("runIdentityMaintenance()"));
+}
+
 async function leaseChecks() {
   console.log("\nMigration lease...");
   const db = await getDb();
@@ -161,6 +175,7 @@ async function leaseChecks() {
 async function main() {
   targetChecks();
   await leaseChecks();
+  await buildHasNoDataWork();
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
