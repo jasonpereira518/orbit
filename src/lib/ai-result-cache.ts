@@ -3,6 +3,7 @@ import { and, eq, gt, like, lt, or } from "drizzle-orm";
 import { getDb } from "@/db";
 import { aiResultCache } from "@/db/schema";
 import { completeJson } from "@/lib/ai";
+import { resolveAiAccess } from "@/lib/ai-access";
 import type { AiOperationId } from "@/lib/ai-operations";
 
 /**
@@ -111,25 +112,32 @@ export async function withAiResultCache<T>(
 
 /**
  * `completeJson`, answered from the cache when the identical prompt was asked before.
- * The key is the operation plus everything that shapes the reply: system, user, model
- * tier, temperature and output cap.
+ * The key is the operation plus everything that shapes the reply: system, user, the provider
+ * and model the account has chosen, temperature and output cap. Who answers is part of the
+ * question: without it, switching model replayed the old model's drafts and recruiter
+ * verdicts (up to 90 days) as if the new one had written them.
+ *
+ * The account is opened once here and handed on, so keying on the model costs no second read.
  */
-export function cachedCompleteJson(
+export async function cachedCompleteJson(
   userId: string,
   input: Parameters<typeof completeJson>[1],
   opts: CacheOptions<string>
 ): Promise<string> {
   const { system, user, temperature, maxOutputTokens, sharedPrefix } = input;
+  const access = input.access?.forUser(userId) ?? (await resolveAiAccess(userId));
   return withAiResultCache(
     userId,
     input.operation,
     {
+      provider: access.selectedProvider,
+      model: access.selectedModel,
       system,
       user: `${sharedPrefix?.text ?? ""}${user}`,
       temperature: temperature ?? null,
       maxOutputTokens: maxOutputTokens ?? null,
     },
-    () => completeJson(userId, input),
+    () => completeJson(userId, { ...input, access }),
     opts
   );
 }
