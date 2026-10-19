@@ -194,10 +194,10 @@ const ALLOWLIST: Record<string, string> = {
   "src/lib/ai-tools.ts:131": OPENROUTER_ROUTED_AWAY + " (createToolDriver's anthropic arm; " +
     "openai and openrouter both now take the isOpenAiShaped branch below, leaving only " +
     "Gemini as this arm's fallthrough.)",
-  "src/lib/admin-metrics.ts:328": "the \"openai\" arm of the four-way ternary that now also " +
+  "src/lib/admin-metrics.ts:329": "the \"openai\" arm of the four-way ternary that now also " +
     "checks \"anthropic\" and \"openrouter\" explicitly (this commit added the openrouter " +
     "arm and its query column), defaulting to gemini — exhaustive over AiProvider.",
-  "src/lib/admin-metrics.ts:330": "the \"anthropic\" arm of the same ternary — see line 328.",
+  "src/lib/admin-metrics.ts:331": "the \"anthropic\" arm of the same ternary — see line 329.",
   // Task 3 widened the completion arms of these cascades — completeJson,
   // completeMultimodalJsonInner and streamText, but NOT transcribeAudioWithAI, reverted in
   // fix round 1 (see its own entry below) — to `isOpenAiShaped(...)`, which already admits
