@@ -45,6 +45,12 @@ type OperationSpec = {
    * credits remain (`src/lib/managed-ai-policy.ts`).
    */
   background?: boolean;
+  /**
+   * What a JSON call does when the model ran into its output cap. `retry` (the default) asks
+   * once more with double the cap, then fails; `fail` fails at once. Never "accept": a reply
+   * cut off mid-JSON used to be patched into a valid, shorter one and recorded as a success.
+   */
+  onTruncate?: "retry" | "fail";
 };
 
 /**
@@ -200,6 +206,10 @@ export function aiOperationTier(operation: AiOperationId): AiTier {
 
 export function aiOperationThinking(operation: string): ThinkingLevel | undefined {
   return isAiOperationId(operation) ? (AI_OPERATIONS[operation] as OperationSpec).thinking : undefined;
+}
+
+export function aiOperationOnTruncate(operation: string): "retry" | "fail" {
+  return (isAiOperationId(operation) ? (AI_OPERATIONS[operation] as OperationSpec).onTruncate : undefined) ?? "retry";
 }
 
 export const BACKGROUND_AI_OPERATIONS: ReadonlySet<string> = new Set(

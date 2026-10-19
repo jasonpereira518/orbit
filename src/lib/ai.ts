@@ -62,7 +62,16 @@ import {
   type SplitResult,
 } from "@/lib/chat-stream-protocol";
 import type { AiProvider, EmbeddingBackend } from "@/lib/ai-providers";
-import { aiOperationThinking, type AiOperationId } from "@/lib/ai-operations";
+import { aiOperationOnTruncate, aiOperationThinking, type AiOperationId } from "@/lib/ai-operations";
+import {
+  AiFinishError,
+  anthropicFinish,
+  assertUsableFinish,
+  geminiFinish,
+  openaiFinish,
+  openaiResponsesFinish,
+  type AiFinish,
+} from "@/lib/ai-finish";
 import { geminiThinkingConfig, openaiCompletionOptions } from "@/lib/ai-request-options";
 import { EMBEDDING_MODELS, modelForOperation } from "@/lib/ai-models";
 import type { ThinkingConfig } from "@google/genai";
@@ -534,7 +543,7 @@ export type MultimodalPart =
   | { type: "image"; mimeType: string; base64: string }
   | { type: "audio"; mimeType: string; base64: string };
 
-export async function completeJson(
+async function completeJsonOnce(
   userId: string,
   input: {
     system: string;
@@ -603,6 +612,7 @@ export async function completeJson(
             },
           });
           report(tokensFromGemini(response));
+          assertUsableFinish(geminiFinish(response));
           const content = response.text;
           if (!content) throw new Error("Empty AI response");
           return normalizeJsonResponse(content);
@@ -621,6 +631,7 @@ export async function completeJson(
             ...(input.sharedPrefix ? { prompt_cache_key: input.sharedPrefix.cacheKey } : {}),
           }), { signal: callSignal() });
           report({ ...tokensFromOpenAi(response), reportedCostMicros: reportedCostMicros(response as OpenAiUsageWithCost) });
+          assertUsableFinish(openaiFinish(response.choices[0]));
           const content = response.choices[0]?.message?.content;
           if (!content) throw new Error("Empty AI response");
           return normalizeJsonResponse(content);
@@ -648,12 +659,14 @@ export async function completeJson(
           ],
         }, { signal: callSignal() });
         report(tokensFromAnthropic(response));
+        assertUsableFinish(anthropicFinish(response.stop_reason));
         const block = response.content.find((b) => b.type === "text");
         if (!block || block.type !== "text" || !block.text) {
           throw new Error("Empty AI response");
         }
         return normalizeJsonResponse(block.text);
       } catch (err) {
+        if (err instanceof AiFinishError) throw err;
         if (err instanceof Error && err.message === "Empty AI response")
           throw err;
         if (
@@ -669,6 +682,38 @@ export async function completeJson(
   ));
 }
 
+/** A truncation retry never asks for more than this; capture's own cap is 12,288. */
+const TRUNCATION_RETRY_MAX_OUTPUT_TOKENS = 32_768;
+
+/**
+ * Re-runs a call the model cut off at its output cap, once, with twice the room. The first
+ * attempt is its own `usage_events` row (a failure, `error_kind = 'truncated'`) because it was
+ * billed; what the caller gets is a whole answer or an honest error, never a repaired fragment.
+ */
+async function retryingOnTruncation<I extends { operation: AiOperationId; maxOutputTokens?: number; signal?: AbortSignal }, T>(
+  input: I,
+  run: (input: I) => Promise<T>,
+  defaultCap: number,
+): Promise<T> {
+  try {
+    return await run(input);
+  } catch (err) {
+    if (!(err instanceof AiFinishError) || err.kind !== "truncated") throw err;
+    if (aiOperationOnTruncate(input.operation) !== "retry" || input.signal?.aborted) throw err;
+    const was = input.maxOutputTokens ?? defaultCap;
+    const next = Math.min(was * 2, TRUNCATION_RETRY_MAX_OUTPUT_TOKENS);
+    if (next <= was) throw err;
+    return run({ ...input, maxOutputTokens: next });
+  }
+}
+
+export async function completeJson(
+  userId: string,
+  input: Parameters<typeof completeJsonOnce>[1],
+): Promise<string> {
+  return retryingOnTruncation(input, (i) => completeJsonOnce(userId, i), 4096);
+}
+
 /**
  * `completeJson` with the account already resolved for this request, for the helpers that
  * take an injectable `completeFn` (`understandQuery`, the rerank, `generateChatTitle`).
@@ -681,6 +726,13 @@ export function completeJsonOn(access: AiAccess | undefined): typeof completeJso
 
 /** Multimodal JSON completion for vision OCR / image+text prompts. */
 export async function completeMultimodalJson(
+  userId: string,
+  input: MultimodalInput,
+): Promise<string> {
+  return retryingOnTruncation(input, (i) => completeMultimodalJsonOnce(userId, i), 4096);
+}
+
+async function completeMultimodalJsonOnce(
   userId: string,
   input: MultimodalInput,
 ): Promise<string> {
@@ -751,6 +803,7 @@ async function completeMultimodalJsonInner(
         },
       });
       report(tokensFromGemini(response));
+      assertUsableFinish(geminiFinish(response));
       const content = response.text;
       if (!content) throw new Error("Empty AI response");
       return normalizeJsonResponse(content);
@@ -790,6 +843,7 @@ async function completeMultimodalJsonInner(
         ],
       }), { signal: aiSignal() });
       report({ ...tokensFromOpenAi(response), reportedCostMicros: reportedCostMicros(response as OpenAiUsageWithCost) });
+      assertUsableFinish(openaiFinish(response.choices[0]));
       const out = response.choices[0]?.message?.content;
       if (!out) throw new Error("Empty AI response");
       return normalizeJsonResponse(out);
@@ -843,12 +897,14 @@ async function completeMultimodalJsonInner(
       messages: [{ role: "user", content }],
     }, { signal: aiSignal() });
     report(tokensFromAnthropic(response));
+    assertUsableFinish(anthropicFinish(response.stop_reason));
     const block = response.content.find((b) => b.type === "text");
     if (!block || block.type !== "text" || !block.text) {
       throw new Error("Empty AI response");
     }
     return normalizeJsonResponse(block.text);
   } catch (err) {
+    if (err instanceof AiFinishError) throw err;
     if (err instanceof Error && err.message === "Empty AI response") throw err;
     if (
       err instanceof Error &&
@@ -2255,6 +2311,7 @@ async function streamText(
     { userId, operation: input.operation, provider, model, kind: "completion", keyOwner },
     (report) => translatingProviderErrors(aiProviderLabel(provider), async () => {
       let full = "";
+      let finish: AiFinish = "stop";
       const emit = (t: string | undefined | null) => {
         if (!t) return;
         full += t;
@@ -2278,6 +2335,7 @@ async function streamText(
         for await (const chunk of stream) {
           emit(chunk.text);
           last = chunk;
+          if (chunk.candidates?.[0]?.finishReason) finish = geminiFinish(chunk);
         }
         if (last) report(tokensFromGemini(last));
       } else if (isOpenAiShaped(provider)) {
@@ -2298,6 +2356,7 @@ async function streamText(
         let usage: unknown = null;
         for await (const chunk of stream) {
           emit(chunk.choices[0]?.delta?.content);
+          if (chunk.choices[0]?.finish_reason) finish = openaiFinish(chunk.choices[0]);
           if (chunk.usage) usage = chunk.usage;
         }
         if (usage) {
@@ -2325,14 +2384,26 @@ async function streamText(
             emit(event.delta.text);
           }
         }
-        report(tokensFromAnthropic(await stream.finalMessage()));
+        const finalMessage = await stream.finalMessage();
+        report(tokensFromAnthropic(finalMessage));
+        finish = anthropicFinish(finalMessage.stop_reason);
       }
 
       // OpenAI's stream iterator treats an abort as "the caller stopped the stream" and simply
       // ENDS, so a cut-off answer would come back as a finished (shorter) one. Rethrow the abort:
       // a deadline reads as a timeout, a Stop is filed as cancelled. (Gemini and Anthropic throw.)
       signal.throwIfAborted();
-      if (!full.trim()) throw new Error("Empty AI response");
+      // A refusal or a safety stop with nothing written is not an "empty response": say so.
+      if (!full.trim()) {
+        assertUsableFinish(finish === "length" ? "other" : finish);
+        throw new Error("Empty AI response");
+      }
+      // Cut off at the output cap: the person has already read it, and it is about to be stored
+      // as the answer. Say so in the answer rather than let it pass as finished. (Not after the
+      // recommendations marker — there it would land inside the JSON.)
+      if (finish === "length" && !full.includes(RECOMMENDATIONS_MARKER)) {
+        emit("\n\n_The answer was cut short. Ask me to continue._");
+      }
       return full;
     }),
     { cancelSignal: input.signal }
@@ -2786,6 +2857,7 @@ export async function webSearchJson(
             },
           });
           report(tokensFromGemini(response));
+          assertUsableFinish(geminiFinish(response));
           const content = response.text;
           if (!content) throw new Error("Empty AI response");
           const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
@@ -2813,6 +2885,7 @@ export async function webSearchJson(
             { signal: callSignal() },
           );
           report({ ...tokensFromOpenAi(response), reportedCostMicros: reportedCostMicros(response as OpenAiUsageWithCost) });
+          assertUsableFinish(openaiFinish(response.choices[0]));
           const message = response.choices[0]?.message;
           if (!message?.content) throw new Error("Empty AI response");
           const annotations =
@@ -2844,6 +2917,7 @@ export async function webSearchJson(
             outputTokens: response.usage?.output_tokens ?? null,
             cachedInputTokens: response.usage?.input_tokens_details?.cached_tokens ?? null,
           });
+          assertUsableFinish(openaiResponsesFinish(response));
           const content = response.output_text;
           if (!content) throw new Error("Empty AI response");
           const sources: WebSource[] = [];
@@ -2883,7 +2957,9 @@ export async function webSearchJson(
           if (response.stop_reason !== "pause_turn") break;
           messages.push({ role: "assistant", content: response.content });
         }
-        if (!response || response.stop_reason === "refusal") throw new Error("Empty AI response");
+        if (!response) throw new Error("Empty AI response");
+        // A refusal is a refusal, and a reply cut off at the cap is not research to cache.
+        assertUsableFinish(anthropicFinish(response.stop_reason));
 
         // Citations split the answer into several text blocks; the JSON may span them.
         const text = response.content
@@ -2897,6 +2973,7 @@ export async function webSearchJson(
         }
         return { json: normalizeJsonResponse(text), sources };
       } catch (err) {
+        if (err instanceof AiFinishError) throw err;
         if (err instanceof Error && err.message === "Empty AI response") throw err;
         if (err instanceof Error && err.message.startsWith("Failed to parse AI JSON")) {
           throw new Error(AI_INCOMPLETE_MESSAGE);
