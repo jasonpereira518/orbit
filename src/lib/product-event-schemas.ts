@@ -102,7 +102,7 @@ export const eventSchemas = {
 
   // Quality and trust
   error_shown: z.object({ where: z.string().regex(/^[a-z_.]{1,48}$/), error_kind: z.string().regex(/^[a-z_]{1,32}$/) }),
-  sync_failed: z.object({ provider: z.enum(["gmail", "outlook", "google_calendar", "microsoft_calendar", "icloud", "caldav", "eventbrite", "luma"]), error_kind: z.string().regex(/^[a-z_]{1,32}$/) }),
+  sync_failed: z.object({ provider: z.enum(["gmail", "outlook", "google_calendar", "microsoft_calendar", "icloud", "caldav", "eventbrite", "luma", "ics_feed"]), error_kind: z.string().regex(/^[a-z_]{1,32}$/) }),
   email_send_failed: z.object({ provider: z.enum(["resend", "gmail", "outlook"]), kind: z.enum(["outreach", "followup", "digest", "notice"]) }),
   survey_shown: z.object({ survey_id: z.enum(SURVEYS) }),
   survey_dismissed: z.object({ survey_id: z.enum(SURVEYS) }),

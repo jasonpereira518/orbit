@@ -230,7 +230,7 @@ Everything in §0 to §4 is built except the items under "Not done". Schema is a
 
 ### Not done / known gaps
 
-- `confirmBulkCapture` records no `capture_saved`; `error_shown` (client errors) has no hook; ICS, Luma and Eventbrite sync failures are not tracked as `sync_failed`.
-- `requireEntitlement` callers outside the main paths do not pass a `route` to the gate log.
+- Client-side `error_shown` has no hook (it needs an ingest endpoint for browser errors; Sentry already holds them). Calendar subscriptions (`/imports` ICS URLs) have no terminal state, so they cannot record `sync_failed`; the recruiter inbox scans do not either.
+- (Closed 2026-10-19: bulk capture now records `capture_saved`; Luma, Eventbrite and event iCal feeds record `sync_failed`; plan guards and API-key and webhook actions pass a `route` to the gate log.)
 - `signup_session_id` is accepted only within two days of signup.
 - Operator actions: set `STRIPE_SECRET_KEY` for the reconcile job; set `account_kind` for yourself and testers (`scripts/seed-account-kind.ts` or the admin control). Deploying forces every user to re-accept the terms because the version changed.

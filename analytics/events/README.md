@@ -64,7 +64,7 @@ Format per event: **fires when** / **must not fire when** / **read by**. Propert
 - Added: v171.
 
 ## capture_saved
-- Fires when: the capture runner finishes a save (`runCaptureJobById`, after `saveCaptureJob` moved the job to saving); once per job (the event id hashes the event name and the job id, so a resumed save lands on the same row).
+- Fires when: the capture runner finishes a save (`runCaptureJobById`, after `saveCaptureJob` moved the job to saving); once per job (the event id hashes the event name and the job id, so a resumed save lands on the same row). The reviewed-and-confirmed path (`confirmBulkCapture`) records it too, with the note batch id in place of a job id (`source_kind` is `meeting` for a recorded meeting, otherwise from the input labels).
 - Must not fire when: the job is discarded or the save is retried.
 - Read by: Activation (F9), capture depth.
 - Added: v171.
@@ -178,7 +178,7 @@ Format per event: **fires when** / **must not fire when** / **read by**. Propert
 - Added: v171.
 
 ## sync_failed
-- Fires when: a Google, Outlook or iCloud calendar/contacts connection's sync stops for good: a dead grant (disarmed at once), or the failure that spends the last retry (`MAX_SYNC_FAILURES`). Recorded by `runSyncPass`. Not yet recorded for ICS feeds, Luma, Eventbrite or the recruiter inbox scans.
+- Fires when: a Google, Outlook or iCloud calendar/contacts connection's sync stops for good: a dead grant (disarmed at once), or the failure that spends the last retry (`MAX_SYNC_FAILURES`). Recorded by `runSyncPass`. Luma, Eventbrite and the event iCal feeds (`event_provider_connections`) record it the same way from `markEventSyncResult`, with provider `ics_feed` for the iCal kinds. Calendar subscriptions (`/imports` ICS URLs) have no terminal state (a failing feed just waits out the stale window), so they record nothing; the recruiter inbox scans are not recorded either.
 - Must not fire when: a retried-then-recovered run.
 - Read by: Sync failure rate.
 - Added: v171.

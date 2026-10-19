@@ -503,6 +503,27 @@ async function main() {
   check("a reason outside the closed list is dropped, not stored", sc.length === 2 && !("reason" in props(sc[1]!)));
 
   /* ------------------------------------------------------------------------------------- */
+  console.log("\n5b. an event provider that gives up is a sync failure");
+  {
+    const { markEventSyncResult } = await import("../src/lib/events/connections");
+    const { MAX_SYNC_FAILURES } = await import("../src/lib/provider-connections");
+    const { sql } = await import("drizzle-orm");
+    await db.execute(sql`DELETE FROM event_provider_connections WHERE user_id = ${SHOPPER}`);
+    const inserted = await db.execute(sql`
+      INSERT INTO event_provider_connections (user_id, provider, auth_kind, status, next_sync_at, sync_failures)
+      VALUES (${SHOPPER}, 'luma', 'api_key', 'active', now(), 0) RETURNING id`);
+    const id = String((inserted as unknown as { rows: { id: string }[] }).rows[0]!.id);
+    await markEventSyncResult(id, { ok: false, error: "fetch failed: ECONNRESET to luma.com/secret-path", retryable: true });
+    check("a first retryable failure records nothing", (await events(SHOPPER, "sync_failed")).length === 0);
+    await db.execute(sql`UPDATE event_provider_connections SET sync_failures = ${MAX_SYNC_FAILURES - 1} WHERE id = ${id}`);
+    await markEventSyncResult(id, { ok: false, error: "fetch failed: ECONNRESET to luma.com/secret-path", retryable: true });
+    const gaveUp = await events(SHOPPER, "sync_failed");
+    check("the failure that spends the last retry is recorded once", gaveUp.length === 1, gaveUp.length);
+    check("…with a provider and a code, never the message", JSON.stringify(props(gaveUp[0]!)) === JSON.stringify({ provider: "luma", error_kind: "network" }), props(gaveUp[0]!));
+    await db.execute(sql`DELETE FROM event_provider_connections WHERE user_id = ${SHOPPER}`);
+  }
+
+  /* ------------------------------------------------------------------------------------- */
   console.log("\n6. nothing free-text anywhere");
   const all = await db.select().from(productEvents).where(inArray(productEvents.userId, ALL_USERS));
   const text = JSON.stringify(all.map((r) => r.properties));

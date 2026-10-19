@@ -95,7 +95,7 @@ export async function createApiKey(
 ): Promise<CreatedApiKey | ApiKeyRefusal> {
   const userId = await requireUserId();
   try {
-    await requireEntitlement(userId, "api");
+    await requireEntitlement(userId, "api", { route: "action.api-keys.create" });
   } catch (err) {
     if (isPaywallError(err)) {
       return { ok: false, reason: "payment_required", message: err.message };
