@@ -70,7 +70,8 @@ export async function persistEventCover(
   if (!res) return null;
 
   const contentType = (res.headers.get("content-type") || "").split(";")[0]!.trim();
-  if (!contentType.startsWith("image/")) {
+  // SVG is an image type that can carry script, and covers are stored on a public origin.
+  if (!contentType.startsWith("image/") || contentType === "image/svg+xml") {
     await res.body?.cancel().catch(() => {});
     return null;
   }

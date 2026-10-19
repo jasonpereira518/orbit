@@ -15,6 +15,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { del, put } from "@/lib/blob-lazy";
+import { PRIVATE_BLOB_ACCESS } from "@/lib/stored-blob";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { capturePhotos } from "@/db/schema";
@@ -113,11 +114,11 @@ export async function storeCapturePhotos(
     let blobUrl: string | null = null;
     try {
       if (useBlob) {
-        // Random suffix, like feedback screenshots and unlike avatars: the id is in the DOM,
-        // and a guessable public URL for a photo of someone's notes is not acceptable. The
-        // URL never reaches the browser either way — `/api/capture/photos/[id]` proxies it.
+        // Private, and with a random suffix: a photo of someone's notes must not be readable
+        // by anyone holding its URL (`stored-blob.ts`). The URL never reaches the browser —
+        // `/api/capture/photos/[id]` checks the owner and reads it with the store's token.
         const blob = await put(`capture-photos/${id}.jpg`, encoded.buf, {
-          access: "public",
+          access: PRIVATE_BLOB_ACCESS,
           contentType: "image/jpeg",
           addRandomSuffix: true,
         });

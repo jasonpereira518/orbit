@@ -4,6 +4,7 @@ import { getDb } from "@/db";
 import { feedbackScreenshots } from "@/db/schema";
 import { isAdminUser } from "@/lib/admin";
 import { requireUserId } from "@/lib/auth";
+import { readStoredBlob } from "@/lib/stored-blob";
 
 type Params = { params: Promise<{ shotId: string }> };
 
@@ -65,9 +66,10 @@ export async function GET(_req: Request, { params }: Params) {
 
   if (shot.storage === "blob") {
     if (!shot.blobUrl) return new NextResponse(null, { status: 404 });
-    const upstream = await fetch(shot.blobUrl, { cache: "no-store" });
-    if (!upstream.ok || !upstream.body) return new NextResponse(null, { status: 404 });
-    return new NextResponse(upstream.body, { headers });
+    // Private since the privacy work (public for older rows) — see stored-blob.ts.
+    const body = await readStoredBlob(shot.blobUrl);
+    if (!body) return new NextResponse(null, { status: 404 });
+    return new NextResponse(body, { headers });
   }
 
   if (!shot.inlineData) return new NextResponse(null, { status: 404 });

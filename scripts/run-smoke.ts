@@ -75,6 +75,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-ai-key-check": "pure",
   "smoke-ai-providers": "pure",
   "smoke-ai-retention": "pure",
+  "smoke-blob-access": "pure",
   "smoke-apple-calendar-map": "pure",
   "smoke-provider-exhaustive": "pure",
   "smoke-avatar-blob": "pure",

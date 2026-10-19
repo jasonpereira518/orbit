@@ -14,6 +14,7 @@
  */
 
 import { put } from "@/lib/blob-lazy";
+import { PRIVATE_BLOB_ACCESS } from "@/lib/stored-blob";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { feedback, feedbackScreenshots } from "@/db/schema";
@@ -215,7 +216,9 @@ async function persistScreenshot(
   const blob = await put(
     `feedback/${feedbackId}/${index}.${extensionFor(shot.contentType)}`,
     shot.buf,
-    { access: "public", contentType: shot.contentType, addRandomSuffix: true }
+    // Private: a screenshot shows the person's CRM. Served only by the owner/admin-checked
+    // proxy (`stored-blob.ts`).
+    { access: PRIVATE_BLOB_ACCESS, contentType: shot.contentType, addRandomSuffix: true }
   );
   return { storage: "blob", blobUrl: blob.url, inlineData: null };
 }

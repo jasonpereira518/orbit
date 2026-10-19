@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { capturePhotos } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { readStoredBlob } from "@/lib/stored-blob";
 
 type Params = { params: Promise<{ photoId: string }> };
 
@@ -70,9 +71,10 @@ export async function GET(req: Request, { params }: Params) {
 
   if (photo.storage === "blob") {
     if (!photo.blobUrl) return new NextResponse(null, { status: 404 });
-    const upstream = await fetch(photo.blobUrl, { cache: "no-store" });
-    if (!upstream.ok || !upstream.body) return new NextResponse(null, { status: 404 });
-    return new NextResponse(upstream.body, { headers });
+    // Private since the privacy work (public for older rows) — see stored-blob.ts.
+    const body = await readStoredBlob(photo.blobUrl);
+    if (!body) return new NextResponse(null, { status: 404 });
+    return new NextResponse(body, { headers });
   }
 
   if (!photo.inlineData) return new NextResponse(null, { status: 404 });
