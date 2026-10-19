@@ -84,7 +84,14 @@ check(
 const runnerSource = readFileSync("src/lib/import-job-runner.ts", "utf8");
 check(
   "the runner uploads connections in batches",
-  /case "connections":\s*return stageAndStartConnections\(/.test(runnerSource),
+  /case "connections":[\s\S]{0,300}?stageAndStartConnections\(job\.csvText/.test(runnerSource),
+);
+// The runner is in every signed-in page's first load (the import watcher); the uploader
+// brings the CSV parser, so it is loaded only when a connections import starts.
+check(
+  "the runner loads the connections uploader on demand, not up front",
+  !/^import[^;]*linkedin-connections-client/m.test(runnerSource) &&
+    /import\("@\/lib\/imports\/linkedin-connections-client"\)/.test(runnerSource),
 );
 check(
   "the card reads a connections file without the one-request check",
