@@ -65,6 +65,16 @@ export type RankedContact = {
   relationshipScore: number;
   priorityLevel: number;
   closenessTier: string | null;
+  /**
+   * Contact details and relationship dates chat shows on a contact's row. Optional because
+   * only `hydrate` (and the focused contact in `chat-context.ts`) read them; every other
+   * builder of a `RankedContact` — fixtures, the recall-guard merge — can leave them out.
+   */
+  phone?: string | null;
+  linkedinUrl?: string | null;
+  howMet?: string | null;
+  dateMet?: Date | null;
+  nextFollowUpAt?: Date | null;
   tags: string[];
   rrfScore: number;
   relevance: number;
@@ -771,6 +781,11 @@ async function hydrate(
       relationshipScore: true,
       priorityLevel: true,
       closenessTier: true,
+      phone: true,
+      linkedinUrl: true,
+      howMet: true,
+      dateMet: true,
+      nextFollowUpAt: true,
     },
     with: { contactTags: { with: { tag: true } } },
   });
@@ -800,6 +815,11 @@ async function hydrate(
       relationshipScore: row.relationshipScore ?? 0,
       priorityLevel: row.priorityLevel ?? 0,
       closenessTier: row.closenessTier,
+      phone: row.phone,
+      linkedinUrl: row.linkedinUrl,
+      howMet: row.howMet,
+      dateMet: row.dateMet,
+      nextFollowUpAt: row.nextFollowUpAt,
       tags: row.contactTags?.map((ct) => ct.tag.name) ?? [],
       rrfScore: entry.score,
       relevance: 0, // normalized by caller

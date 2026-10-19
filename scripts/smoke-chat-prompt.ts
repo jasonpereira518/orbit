@@ -755,6 +755,40 @@ check(
   laned.user
 );
 
+console.log("\nContact details reach the model");
+{
+  const row = (id: string, details: string | null) => ({
+    id,
+    fullName: `Person ${id}`,
+    company: null,
+    title: null,
+    relationshipScore: 50,
+    aiSummary: null,
+    notes: null,
+    keyFacts: [],
+    timeline: [],
+    tags: [],
+    relevance: 0.9,
+    details,
+  });
+  const built = buildChatPrompt({
+    ...baseChatPromptArgs(),
+    question: "what's Maya's email?",
+    contactsContext: [row("m1", "email maya@stripe.example | met AWS Summit, 2026-03-02"), row("m2", null)],
+    focusProfile: null,
+  });
+  check(
+    "a contact with details gets a Details line inside the contacts fence",
+    /\[id=m1\][^\n]*\nDetails: email maya@stripe\.example \| met AWS Summit, 2026-03-02\n/.test(built.user),
+    built.user
+  );
+  check("a contact without details gets no Details line", !/\[id=m2\][^\n]*\nDetails:/.test(built.user));
+  const fenceStart = built.user.indexOf("<<<CONTACTS_");
+  const fenceEnd = built.user.lastIndexOf("CONTACTS_");
+  const detailsAt = built.user.indexOf("Details: email");
+  check("the Details line sits inside the CONTACTS fence", detailsAt > fenceStart && detailsAt < fenceEnd);
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);
   process.exit(1);
