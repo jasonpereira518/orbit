@@ -45,6 +45,12 @@ export const ERROR_SOURCES = {
    * events mean "Orbit's key was refused" and page as such.
    */
   managedAiOutage: "ai.managed_outage",
+  /**
+   * A stored secret was present but no configured ENCRYPTION_SECRET (current or previous)
+   * opened it (`decryptOrNull`). One row means a corrupt value; many mean a wrong or rotated
+   * secret, which silently turns every saved API key and token into "not set".
+   */
+  cryptoDecryptFailed: "crypto.decrypt_failed",
   oauthGmailCallback: "oauth.gmail.callback",
   oauthOutlookCallback: "oauth.outlook.callback",
   searchPgvector: "search.pgvector",

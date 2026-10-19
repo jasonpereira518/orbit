@@ -219,7 +219,23 @@ the delivery detail when it happened.
 |---|---|
 | `CRON_SECRET` | Update Vercel AND the GitHub `ops` workflow secret. |
 | `CLERK_WEBHOOK_SIGNING_SECRET`, `STRIPE_WEBHOOK_SECRET` | Roll in the dashboard, paste into Vercel, redeploy. |
-| `ENCRYPTION_SECRET` | Do not rotate casually: it decrypts every user's BYOK key and OAuth token. Rotation means re-encrypting them all. |
+| `ENCRYPTION_SECRET` | See "Rotate ENCRYPTION_SECRET" below. Never just replace it: every stored BYOK key and OAuth token would read as "not set". |
+
+## Rotate ENCRYPTION_SECRET
+
+It encrypts every stored BYOK key, OAuth token and webhook secret (22 columns), and keys the HMAC
+behind unsubscribe links, OAuth state and log tags (those are not stored, so old unsubscribe links
+simply stop verifying). Do it when it may have leaked, or on a schedule.
+
+1. Take a fresh dump first (Restore the database).
+2. Vercel: `ENCRYPTION_PREVIOUS_SECRETS` = the current value; `ENCRYPTION_SECRET` = a new random
+   value (at least 32 characters). Redeploy. Reads now fall back to the old secret, so nothing breaks.
+3. Dry run, then apply, against production (`DATABASE_URL` in your shell, with both variables set):
+   `npx tsx scripts/reencrypt-secrets.ts` then `... --apply`. Repeat until it says nothing is left.
+   It prints counts only. Exit 1 means some value is opened by NO configured secret: stop, do not
+   remove the old secret, and find out why.
+4. Remove `ENCRYPTION_PREVIOUS_SECRETS` and redeploy.
+5. Watch `errors.burst` for `crypto.decrypt_failed` events for a day: any means a value was missed.
 
 ## Restore the database
 

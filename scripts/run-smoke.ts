@@ -229,6 +229,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-linkedin-slug-guard": "pglite",
   "smoke-search-tsv-guard": "pglite",
   "smoke-neon-fetch": "pure",
+  "smoke-crypto-rotation": "pglite",
   "smoke-job-kill-switches": "pglite",
   "smoke-ddl-contract": "pglite",
   "smoke-log-retention": "pglite",
