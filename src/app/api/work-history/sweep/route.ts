@@ -9,6 +9,8 @@
  *
  * `POST` because it mutates.
  */
+import { WORK_HISTORY_SWEEP_SURFACE_KEY } from "@/lib/surfaces";
+import { getHiddenSurfaceKeys } from "@/lib/surface-visibility";
 import { NextResponse } from "next/server";
 import { finishCronRun, startCronRun } from "@/lib/cron-runs";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
@@ -33,6 +35,11 @@ export async function POST(request: Request) {
   const started = Date.now();
   const handle = await startCronRun("work-history.sweep");
   try {
+    // Kill switch (/admin/product): stand down without touching anything.
+    if ((await getHiddenSurfaceKeys()).has(WORK_HISTORY_SWEEP_SURFACE_KEY)) {
+      await finishCronRun(handle, { status: "ok", stats: { standDown: true } });
+      return NextResponse.json({ ok: true, standDown: true });
+    }
     const stats = await runWorkHistorySweep({ deadline: started + START_DEADLINE_MS });
 
     // A saved history changes the search text (career line) and the brief's prompt.

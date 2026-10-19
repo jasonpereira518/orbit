@@ -266,6 +266,24 @@ against a disposable Postgres 18 (guard, pinned install, pipefail, dump → encr
 restore of 250 rows, Slack page). That is not a drill: it never touched production or GitHub's
 runner. The first real drill needs the secrets set.
 
+## Kill switches for scheduled work
+
+`/admin/product` → hide one of these and its cron route stands down within about 15 s, with no
+deploy (it records a `standDown` run in `cron_runs`). Show it again to resume; nothing is lost,
+the work stays due. Use them during a provider outage, a cost spike or a bad release, instead of
+disabling the whole `ops` workflow (which would also stop the alerting sweep).
+
+| Switch (surface key) | Stops |
+|---|---|
+| `feature.background-sync` | the scheduled Google/Microsoft/Apple/connector sync (`/api/sync/run`) |
+| `feature.email-drain` | email retries and scheduled sends (`/api/email/drain`) |
+| `feature.webhook-drain` | outbound webhook delivery (`/api/webhooks/outbound/drain`) |
+| `feature.work-history-sweep` | the hourly job-change check on users' own AI keys |
+| `page.radar`, `feature.cloud-notes` | Radar's passes; the Drive/OneDrive notes scan (already existed) |
+
+A switch left hidden is easy to forget: check `/admin/product` after any incident. Hiding a
+switch does not stop a sync a user starts by hand.
+
 ## Incident procedures
 
 ### Contact search is broken after a deploy (`column "search_tsv" does not exist`)

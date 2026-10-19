@@ -9,6 +9,8 @@
  * Driven by the ten-minute GitHub Actions schedule in .github/workflows/ops.yml, the only
  * scheduler.
  */
+import { WEBHOOK_DRAIN_SURFACE_KEY } from "@/lib/surfaces";
+import { getHiddenSurfaceKeys } from "@/lib/surface-visibility";
 import { NextResponse } from "next/server";
 import { finishCronRun, startCronRun } from "@/lib/cron-runs";
 import { isInternalRequest } from "@/lib/internal-auth";
@@ -32,6 +34,11 @@ export async function POST(request: Request) {
 
   const handle = await startCronRun("webhooks.drain");
   try {
+    // Kill switch (/admin/product): stand down without touching anything.
+    if ((await getHiddenSurfaceKeys()).has(WEBHOOK_DRAIN_SURFACE_KEY)) {
+      await finishCronRun(handle, { status: "ok", stats: { standDown: true } });
+      return NextResponse.json({ ok: true, standDown: true });
+    }
     // Queue "this relationship has gone cold" events BEFORE draining, so anything queued here
     // goes out in the same run. Deduplicated per contact per day by its deterministic event
     // id, so a ten-minute sweep does not become 144 identical webhooks.

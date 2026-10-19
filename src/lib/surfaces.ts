@@ -259,7 +259,44 @@ export const REPLY_INBOX_SURFACE_KEY = "feature.reply-inbox";
 export const CHAT_IMPORTS_SURFACE_KEY = "feature.chat-imports";
 /** Cloud notes: watch Drive/OneDrive for meeting notes, and the /capture Drive & OneDrive tab. */
 export const CLOUD_NOTES_SURFACE_KEY = "feature.cloud-notes";
+/**
+ * Kill switches for scheduled work. Hiding one in /admin/product stands its cron route down
+ * within ~15 s, with no deploy (the cloud-notes pattern): the route records a `standDown` run
+ * and does nothing. They exist so an incident (a provider outage, a runaway cost, a bad
+ * release) has a lever smaller than disabling the whole scheduler, which would also stop the
+ * alerting sweep.
+ */
+export const BACKGROUND_SYNC_SURFACE_KEY = "feature.background-sync";
+export const EMAIL_DRAIN_SURFACE_KEY = "feature.email-drain";
+export const WEBHOOK_DRAIN_SURFACE_KEY = "feature.webhook-drain";
+export const WORK_HISTORY_SWEEP_SURFACE_KEY = "feature.work-history-sweep";
 const FEATURES: Surface[] = [
+  {
+    key: BACKGROUND_SYNC_SURFACE_KEY,
+    kind: "feature",
+    label: "Background sync (switch)",
+    description:
+      "Kill switch: hide to pause the scheduled Google, Microsoft, Apple and connector sync for everyone. Manual syncs and everything else keep working.",
+  },
+  {
+    key: EMAIL_DRAIN_SURFACE_KEY,
+    kind: "feature",
+    label: "Email outbox retries (switch)",
+    description:
+      "Kill switch: hide to stop the scheduled email drain (retries and scheduled sends). Sends still go out when their undo window ends.",
+  },
+  {
+    key: WEBHOOK_DRAIN_SURFACE_KEY,
+    kind: "feature",
+    label: "Outbound webhook delivery (switch)",
+    description: "Kill switch: hide to stop delivering outbound webhooks. Events keep queueing and deliver when it is shown again.",
+  },
+  {
+    key: WORK_HISTORY_SWEEP_SURFACE_KEY,
+    kind: "feature",
+    label: "Work-history sweep (switch)",
+    description: "Kill switch: hide to stop the hourly job-change check, which spends people's own AI keys.",
+  },
   {
     key: COMPOSE_SURFACE_KEY,
     kind: "feature",

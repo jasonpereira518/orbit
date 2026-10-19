@@ -7,6 +7,8 @@
  * `POST` because it mutates. Route Handlers are uncached by default and `POST` can never be
  * cached, so no cache configuration is needed here.
  */
+import { BACKGROUND_SYNC_SURFACE_KEY } from "@/lib/surfaces";
+import { getHiddenSurfaceKeys } from "@/lib/surface-visibility";
 import { NextResponse, after } from "next/server";
 import { finishCronRun, startCronRun } from "@/lib/cron-runs";
 import { internalFetch, isInternalRequest } from "@/lib/internal-auth";
@@ -24,6 +26,11 @@ export async function POST(request: Request) {
 
   const handle = await startCronRun("sync.run");
   try {
+    // Kill switch (/admin/product): stand down without touching anything.
+    if ((await getHiddenSurfaceKeys()).has(BACKGROUND_SYNC_SURFACE_KEY)) {
+      await finishCronRun(handle, { status: "ok", stats: { standDown: true } });
+      return NextResponse.json({ ok: true, standDown: true });
+    }
     const stats = await runSyncPass();
 
     // More work is waiting: this invocation ran out of budget, or a claim came back full.
