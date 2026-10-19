@@ -53,10 +53,10 @@ export function ReminderCreateForm({
         align="end"
         side="bottom"
         sideOffset={8}
-        className="w-[min(calc(100vw-2rem),28rem)] rounded-xl border border-border/70 bg-card p-4 shadow-lg ring-0"
+        className="w-[min(calc(100vw-2rem),28rem)] rounded-xl border border-border-subtle bg-card p-4 shadow-sm ring-0"
       >
         <div className="mb-3">
-          <p className="font-heading text-base font-medium">New reminder</p>
+          <p className="font-heading text-base font-medium text-ink">New reminder</p>
         </div>
         <ReminderFormFields
           open={open}

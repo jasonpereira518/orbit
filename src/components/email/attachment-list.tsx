@@ -1,6 +1,7 @@
 "use client";
 
 import { AlertCircle, Paperclip, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { formatUploadSize } from "@/lib/capture-limits";
 
 export type ComposeAttachment = {
@@ -33,7 +34,7 @@ export function AttachmentList({
           <li
             key={a.id}
             className={`relative flex max-w-full min-w-0 items-center gap-1.5 overflow-hidden rounded-lg border px-2 py-1 text-xs ${
-              a.error ? "border-destructive/50 text-destructive" : "border-border/70"
+              a.error ? "border-destructive/50 text-destructive" : "border-border-subtle"
             }`}
           >
             {a.error ? <AlertCircle className="size-3.5 shrink-0" aria-hidden /> : <Paperclip className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />}
@@ -41,15 +42,17 @@ export function AttachmentList({
             <span className="shrink-0 text-muted-foreground">
               {a.error ?? (uploading ? `${Math.round(a.progress)}%` : formatUploadSize(a.size))}
             </span>
-            <button
+            <Button
               type="button"
-              className="-mr-1 shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-50"
+              variant="ghost"
+              size="icon-xs"
+              className="-mr-1 size-5 shrink-0 text-muted-foreground"
               aria-label={`Remove ${a.filename}`}
               onClick={() => onRemove(a.id)}
               disabled={disabled}
             >
               <X className="size-3" aria-hidden />
-            </button>
+            </Button>
             {uploading && (
               <span
                 aria-hidden

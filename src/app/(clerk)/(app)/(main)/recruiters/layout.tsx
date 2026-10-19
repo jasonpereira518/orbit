@@ -7,7 +7,7 @@ import { LockedFeature } from "@/components/locked-feature";
  *
  * See the sibling layout under /outreach for why this is a layout: gating only
  * the index left `/recruiters/new` and `/recruiters/[id]` reachable, so a free
- * user got the full "Log a recruiter" form and a 500 on submit.
+ * user got the full "Add recruiter" form and a 500 on submit.
  *
  * The server actions keep their own `requireRecruitersUser()` checks — a layout
  * does not run for action POSTs, so this is a UI gate, not the security boundary.

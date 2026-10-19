@@ -1,6 +1,7 @@
 "use client";
 
 import { X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { useEffect, useId, useRef, useState } from "react";
 import { searchRecipientsAction } from "@/actions/email-compose";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
@@ -71,7 +72,7 @@ export function RecipientField({
   }
 
   return (
-    <div className="flex items-start gap-2 border-b border-border/60 py-1.5">
+    <div className="flex items-start gap-2 border-b border-border-subtle py-1.5">
       <label htmlFor={id} className="w-10 shrink-0 pt-1 text-xs font-medium text-muted-foreground">
         {label}
       </label>
@@ -88,14 +89,16 @@ export function RecipientField({
               title={bad ? "This doesn’t look like an email address" : undefined}
             >
               <span className="truncate">{email}</span>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="size-4 rounded-full"
                 aria-label={`Remove ${email}`}
-                className="rounded-full p-0.5 hover:bg-foreground/10"
                 onClick={() => onChange(value.filter((v) => v !== email))}
               >
-                <X className="size-3" />
-              </button>
+                <X className="size-3" aria-hidden />
+              </Button>
             </span>
           );
         })}

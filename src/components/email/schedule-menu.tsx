@@ -43,7 +43,7 @@ export function ScheduleMenu({
   return (
     <div className="flex items-center">
       <Button type="button" size="sm" onClick={onSendNow} disabled={disabled} className="rounded-r-none">
-        {sending ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+        {sending ? <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden /> : <Send className="size-3.5" />}
         Send
       </Button>
       <DropdownMenu>
@@ -104,7 +104,7 @@ export function SchedulePicker({
         : null;
 
   return (
-    <div role="group" aria-label="Pick a send time" className="ml-auto w-full max-w-72 rounded-xl border border-border/70 p-2">
+    <div role="group" aria-label="Pick a send time" className="ml-auto w-full max-w-72 rounded-xl border border-border-subtle p-2">
       <MonthCalendar month={month} selected={day} onSelect={setDay} onMonthChange={setMonth} minDate={new Date()} />
       <div className="mt-2 flex items-center gap-2">
         <Select value={time} onValueChange={(v) => typeof v === "string" && setTime(v)} items={options}>

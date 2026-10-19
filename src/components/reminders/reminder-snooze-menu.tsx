@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Clock } from "lucide-react";
 import { MonthCalendar, toLocalYmd } from "@/components/ui/date-picker";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { shortDayLabel, snoozePresets } from "@/lib/reminder-due-bucket";
 import { cn } from "@/lib/utils";
@@ -67,8 +68,8 @@ export function ReminderSnoozeMenu({
         aria-label={triggerLabel ? undefined : "Snooze"}
         title={triggerLabel ? undefined : "Snooze (s)"}
         className={cn(
-          "tap-target relative inline-flex items-center justify-center gap-1.5 rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50",
-          triggerLabel ? "h-7 px-2 text-xs font-medium" : "size-7",
+          buttonVariants({ variant: "ghost", size: triggerLabel ? "sm" : "icon-sm" }),
+          "tap-target relative text-muted-foreground",
           triggerClassName
         )}
       >
@@ -77,28 +78,30 @@ export function ReminderSnoozeMenu({
       </PopoverTrigger>
       <PopoverContent
         align={align}
-        className="w-auto rounded-2xl border border-border/70 bg-card p-2 shadow-lg ring-0"
+        className="w-auto rounded-xl border border-border-subtle bg-card p-2 shadow-sm ring-0"
       >
-        <p className="px-2 pb-1 pt-0.5 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+        <p className="px-2 pb-1 pt-0.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
           Snooze until
         </p>
         <ul className="mb-2">
           {options.map((o) => (
             <li key={o.label}>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="sm"
                 onClick={() => pick(o.ymd, o.phrase)}
-                className="flex w-full items-center justify-between gap-6 rounded-lg px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
+                className="w-full justify-between gap-6 font-normal"
               >
                 <span>{o.label}</span>
                 <span className="text-xs tabular-nums text-muted-foreground">
                   {shortDayLabel(o.ymd)}
                 </span>
-              </button>
+              </Button>
             </li>
           ))}
         </ul>
-        <div className="border-t border-border/60 px-1 pt-2">
+        <div className="border-t border-border-subtle px-1 pt-2">
           <MonthCalendar
             month={month}
             onMonthChange={setMonth}

@@ -1,5 +1,6 @@
 "use client";
 
+import { IntegrationLogo } from "@/components/integrations/integration-logo";
 import { Button } from "@/components/ui/button";
 import { useConnectGoogle, useConnectMicrosoft } from "@/components/settings/use-provider-connection";
 import type { MailboxId, SendBlockReason } from "@/lib/email/sender";
@@ -33,11 +34,13 @@ export function ConnectMailboxButton({
     return (
       <span className="inline-flex flex-wrap gap-2">
         <Button type="button" size={size} variant="outline" disabled={busy} onClick={() => connect("gmail")}>
-          Connect Gmail
+          <IntegrationLogo provider="gmail" size="sm" tile={false} title="" />
+          {busy ? "Connecting…" : "Connect Gmail"}
         </Button>
         {outlookAvailable && (
           <Button type="button" size={size} variant="outline" disabled={busy} onClick={() => connect("outlook")}>
-            Connect Outlook
+            <IntegrationLogo provider="outlook" size="sm" tile={false} title="" />
+            {busy ? "Connecting…" : "Connect Outlook"}
           </Button>
         )}
       </span>
@@ -45,7 +48,8 @@ export function ConnectMailboxButton({
   }
   return (
     <Button type="button" size={size} variant="outline" disabled={busy} onClick={() => connect(provider)}>
-      {reason === "needs_reauth" ? `Reconnect ${NAME[provider]}` : `Allow ${NAME[provider]} to send`}
+      <IntegrationLogo provider={provider} size="sm" tile={false} title="" />
+      {busy ? "Connecting…" : reason === "needs_reauth" ? "Reconnect" : `Allow ${NAME[provider]} to send`}
     </Button>
   );
 }

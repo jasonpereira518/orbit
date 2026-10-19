@@ -17,9 +17,9 @@ import { cn } from "@/lib/utils";
 import { friendlyError } from "@/lib/errors";
 
 const PRESETS = [
-  { days: 3, label: "3d" },
-  { days: 7, label: "7d" },
-  { days: 14, label: "14d" },
+  { days: 3, label: "3 days" },
+  { days: 7, label: "7 days" },
+  { days: 14, label: "14 days" },
 ] as const;
 
 export function EasyFollowUp({
@@ -112,14 +112,14 @@ export function EasyFollowUp({
     <div className={cn("space-y-2", className)}>
       {!compact && (
         <div className="flex items-center justify-between gap-2">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Easy follow-up
           </p>
           {dueLabel && (
             <p
               className={cn(
                 "text-xs",
-                overdue ? "font-medium text-chart-4" : "text-muted-foreground"
+                overdue ? "font-medium text-warning" : "text-muted-foreground"
               )}
             >
               {overdue ? "Overdue" : "Due"} {dueLabel}
@@ -130,7 +130,7 @@ export function EasyFollowUp({
 
       {/* Hierarchy, in the order a user actually wants them:
           1. Follow-up  — the goal. Doing the thing. Was the WEAKEST control here.
-          2. Remind in… — postpone. Lowest stakes, and was the LOUDEST (outline).
+          2. Snooze …   — postpone. Lowest stakes, and was the LOUDEST (outline).
           3. Clear      — destructive: it also closes every pending reminder for
                           this contact. Was a ghost button with no confirmation. */}
       <div className="flex flex-wrap items-center gap-1.5">
@@ -149,11 +149,13 @@ export function EasyFollowUp({
           </Button>
         )}
 
-        {/* "3d" alone reads as "3 days from the due date", which is not what these
+        {/* "3 days" alone reads as "3 days from the due date", which is not what these
             do — they schedule N days from TODAY. On a row saying "Overdue 31 days"
             those are opposite outcomes, so the group is labelled rather than left
-            to be guessed at. */}
-        <span className="ml-0.5 text-xs text-muted-foreground">Remind in</span>
+            to be guessed at; each button's accessible name carries the whole phrase. */}
+        <span className="ml-0.5 text-xs text-muted-foreground" aria-hidden>
+          Snooze
+        </span>
         {PRESETS.map((p) => (
           <Button
             key={p.days}
@@ -162,6 +164,7 @@ export function EasyFollowUp({
             variant="ghost"
             disabled={pending}
             className="h-8 px-2.5"
+            aria-label={`Snooze ${p.label}`}
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
@@ -185,7 +188,9 @@ export function EasyFollowUp({
               e.stopPropagation();
               // Two-step, because this is not just "clear the date": it marks every
               // pending reminder for the contact done and completes their linked
-              // action items. One stray click used to do all of that silently.
+              // action items. One stray click used to do all of that silently. It stays
+              // inline rather than a dialog because this control lives inside Popovers,
+              // where a portaled dialog's clicks would count as "outside" and close them.
               if (!confirmClear) {
                 setConfirmClear(true);
                 return;

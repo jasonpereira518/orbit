@@ -7,11 +7,45 @@ import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { OutreachLocked } from "@/components/locked-feature";
 import { CampaignEditor } from "@/components/outreach/campaign-editor";
 import { CampaignWorkspace } from "@/components/outreach/campaign-workspace";
+import { PageHeader } from "@/components/layout/page-header";
+import { PageShell } from "@/components/layout/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { channelLabel } from "@/lib/outreach-channels";
 import { formatReplyRate } from "@/lib/outreach-metrics";
-import type { SequenceStep } from "@/lib/outreach-types";
+import {
+  REPLY_CTA_LABELS,
+  type OutreachChannel,
+  type OutreachReplyCta,
+  type SequenceStep,
+} from "@/lib/outreach-types";
 import { RenderStamp } from "@/components/layout/render-stamp";
+
+/** Stored campaign status → the word on the chip. The stored values never change. */
+function labelForCampaignStatus(status: string): { label: string; tone: "neutral" | "success" | "info" } {
+  switch (status) {
+    case "active":
+      return { label: "Active", tone: "success" };
+    case "completed":
+      return { label: "Completed", tone: "info" };
+    case "archived":
+      return { label: "Archived", tone: "neutral" };
+    default:
+      return { label: "Draft", tone: "neutral" };
+  }
+}
+
+function labelForTone(tone: string) {
+  return tone.charAt(0).toUpperCase() + tone.slice(1);
+}
+
+function labelForChannel(channel: string) {
+  return channelLabel(channel as OutreachChannel);
+}
+
+function labelForReplyCta(cta: string) {
+  return REPLY_CTA_LABELS[cta as OutreachReplyCta] ?? cta.replaceAll("_", " ");
+}
 
 export default async function OutreachCampaignPage({
   params,
@@ -44,45 +78,53 @@ export default async function OutreachCampaignPage({
     status: campaign.status,
   };
 
+  const status = labelForCampaignStatus(campaign.status);
+
   return (
-    <div className="space-y-6">
+    <PageShell width="wide">
       <RenderStamp />
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <Link
-            href="/outreach"
-            className="text-sm text-muted-foreground hover:text-foreground"
-          >
-            ← All campaigns
-          </Link>
-          <h1 className="mt-2 font-heading text-3xl text-ink">
-            {campaign.name}
-          </h1>
-          <p className="mt-1 max-w-2xl text-muted-foreground">
+      <PageHeader
+        back={{ href: "/outreach", label: "Back to outreach" }}
+        title={campaign.name}
+        description={
+          <>
             {campaign.audienceQuery}
-          </p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <Badge variant="outline">{campaign.status}</Badge>
-            <Badge variant="outline">{campaign.defaultChannel || "email"}</Badge>
-            <Badge variant="outline">{campaign.tone || "professional"}</Badge>
-            {campaign.replyCta && (
-              <Badge variant="outline">{campaign.replyCta.replaceAll("_", " ")}</Badge>
-            )}
-            {campaign.lastSearchSource === "demo" && (
-              <Badge variant="outline">Demo search</Badge>
-            )}
-            <Badge variant="outline">
-              Reply rate {formatReplyRate(campaign.metrics.successfulReplyRate)}
-            </Badge>
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <CampaignEditor campaign={editorCampaign} />
-          <Link href="/outreach/new" className={buttonVariants({ variant: "outline" })}>
-            New campaign
-          </Link>
-        </div>
-      </div>
+            {/* Spans, not divs: this sits inside the header's description paragraph. */}
+            <span className="mt-2 flex flex-wrap gap-2">
+              <Badge tone={status.tone} size="sm">
+                {status.label}
+              </Badge>
+              <Badge tone="neutral" size="sm">
+                {labelForChannel(campaign.defaultChannel || "email")}
+              </Badge>
+              <Badge tone="neutral" size="sm">
+                {labelForTone(campaign.tone || "professional")}
+              </Badge>
+              {campaign.replyCta && (
+                <Badge tone="neutral" size="sm">
+                  {labelForReplyCta(campaign.replyCta)}
+                </Badge>
+              )}
+              {campaign.lastSearchSource === "demo" && (
+                <Badge tone="warning" size="sm">
+                  Demo search
+                </Badge>
+              )}
+              <Badge tone="accent" size="sm">
+                Reply rate {formatReplyRate(campaign.metrics.successfulReplyRate)}
+              </Badge>
+            </span>
+          </>
+        }
+        actions={
+          <>
+            <CampaignEditor campaign={editorCampaign} />
+            <Link href="/outreach/new" className={buttonVariants({ variant: "outline" })}>
+              New campaign
+            </Link>
+          </>
+        }
+      />
 
       <CampaignWorkspace
         campaign={{
@@ -90,6 +132,6 @@ export default async function OutreachCampaignPage({
           sequenceSteps: (campaign.sequenceSteps ?? []) as SequenceStep[],
         }}
       />
-    </div>
+    </PageShell>
   );
 }

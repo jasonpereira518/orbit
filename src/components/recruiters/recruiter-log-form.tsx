@@ -4,19 +4,27 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { logRecruiter } from "@/actions/recruiters";
 import { Button } from "@/components/ui/button";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import type { RecruiterLinkStatus } from "@/db/schema";
 import { friendlyError } from "@/lib/errors";
 
-const STATUSES: RecruiterLinkStatus[] = [
-  "planned",
-  "contacted",
-  "active",
-  "archived",
+/** Stored link status → the word in the menu. The stored values never change. */
+const STATUS_ITEMS: Array<{ value: RecruiterLinkStatus; label: string }> = [
+  { value: "planned", label: "Planned" },
+  { value: "contacted", label: "Contacted" },
+  { value: "active", label: "Active" },
+  { value: "archived", label: "Archived" },
 ];
 
 export function RecruiterLogForm({
@@ -101,8 +109,7 @@ export function RecruiterLogForm({
       }}
     >
       <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-1.5 sm:col-span-2">
-          <Label htmlFor="fullName">Name</Label>
+        <FormField label="Name" id="fullName" required={!recruiterId} className="sm:col-span-2">
           <Input
             id="fullName"
             required={!recruiterId}
@@ -111,70 +118,65 @@ export function RecruiterLogForm({
             placeholder="Jordan Lee"
             disabled={Boolean(recruiterId) && Boolean(initial?.fullName)}
           />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="firm">Firm / agency</Label>
+        </FormField>
+        <FormField label="Firm / agency" id="firm">
           <Input
             id="firm"
             value={form.firm}
             onChange={(e) => set("firm", e.target.value)}
             placeholder="Acme Talent"
           />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="specialty">Specialty (comma-separated)</Label>
+        </FormField>
+        <FormField label="Specialty" id="specialty" hint="Comma-separated.">
           <Input
             id="specialty"
             value={form.specialty}
             onChange={(e) => set("specialty", e.target.value)}
             placeholder="Engineering, AI"
           />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="email">Email</Label>
+        </FormField>
+        <FormField label="Email" id="email">
           <Input
             id="email"
             type="email"
             value={form.email}
             onChange={(e) => set("email", e.target.value)}
           />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="phone">Phone</Label>
+        </FormField>
+        <FormField label="Phone" id="phone">
           <Input
             id="phone"
             value={form.phone}
             onChange={(e) => set("phone", e.target.value)}
           />
-        </div>
-        <div className="space-y-1.5 sm:col-span-2">
-          <Label htmlFor="linkedinUrl">LinkedIn</Label>
+        </FormField>
+        <FormField label="LinkedIn" id="linkedinUrl" className="sm:col-span-2">
           <Input
             id="linkedinUrl"
             value={form.linkedinUrl}
             onChange={(e) => set("linkedinUrl", e.target.value)}
             placeholder="https://linkedin.com/in/…"
           />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="status">Status</Label>
-          <select
-            id="status"
-            className="flex h-9 w-full rounded-lg border border-input bg-transparent px-3 text-sm"
+        </FormField>
+        <FormField label="Status" id="status">
+          <Select
             value={form.status}
-            onChange={(e) =>
-              set("status", e.target.value as RecruiterLinkStatus)
-            }
+            onValueChange={(v) => set("status", (v ?? "planned") as RecruiterLinkStatus)}
+            items={STATUS_ITEMS}
           >
-            {STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="rating">Your rating (1–5)</Label>
+            <SelectTrigger id="status" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {STATUS_ITEMS.map((s) => (
+                <SelectItem key={s.value} value={s.value}>
+                  {s.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </FormField>
+        <FormField label="Your rating (1–5)" id="rating">
           <Input
             id="rating"
             type="number"
@@ -183,9 +185,8 @@ export function RecruiterLogForm({
             value={form.personalRating}
             onChange={(e) => set("personalRating", e.target.value)}
           />
-        </div>
-        <div className="space-y-1.5 sm:col-span-2">
-          <Label htmlFor="notes">Private notes</Label>
+        </FormField>
+        <FormField label="Private notes" id="notes" className="sm:col-span-2">
           <Textarea
             id="notes"
             value={form.notes}
@@ -193,11 +194,13 @@ export function RecruiterLogForm({
             rows={3}
             placeholder="Where you met, roles they place, etc."
           />
-        </div>
+        </FormField>
       </div>
-      <Button type="submit" disabled={pending}>
-        {pending ? "Saving…" : recruiterId ? "Log interaction" : "Add recruiter"}
-      </Button>
+      <div className="flex justify-end">
+        <Button type="submit" disabled={pending}>
+          {pending ? "Saving…" : recruiterId ? "Log interaction" : "Add recruiter"}
+        </Button>
+      </div>
     </form>
   );
 }

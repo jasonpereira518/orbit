@@ -33,6 +33,8 @@ import type {
   SequenceStep,
 } from "@/lib/outreach-types";
 import { friendlyError } from "@/lib/errors";
+import { TONE } from "@/lib/tone";
+import { cn } from "@/lib/utils";
 
 export function CampaignWorkspace({
   campaign,
@@ -92,6 +94,7 @@ export function CampaignWorkspace({
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const [running, setRunning] = useState<"search" | "regenerate" | "followUps" | null>(null);
   const [pipeline, setPipeline] = useState<PipelineFilter>("all");
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState<AudienceFilters>(
@@ -197,6 +200,7 @@ export function CampaignWorkspace({
   }
 
   function rerunSearch() {
+    setRunning("search");
     start(async () => {
       try {
         await updateCampaign(campaign.id, {
@@ -224,11 +228,14 @@ export function CampaignWorkspace({
         refresh();
       } catch (err) {
         toast.error(friendlyError(err, "That search didn’t work — try again?"));
+      } finally {
+        setRunning(null);
       }
     });
   }
 
   function regenerateSelected() {
+    setRunning("regenerate");
     start(async () => {
       try {
         await generateOutreachDrafts({
@@ -241,11 +248,14 @@ export function CampaignWorkspace({
         refresh();
       } catch (err) {
         toast.error(friendlyError(err, "Couldn’t regenerate that draft — try again?"));
+      } finally {
+        setRunning(null);
       }
     });
   }
 
   function generateFollowUps() {
+    setRunning("followUps");
     start(async () => {
       try {
         const result = await generateDueFollowUps(campaign.id);
@@ -257,6 +267,8 @@ export function CampaignWorkspace({
         refresh();
       } catch (err) {
         toast.error(friendlyError(err, "Couldn’t write those follow-ups — try again?"));
+      } finally {
+        setRunning(null);
       }
     });
   }
@@ -264,13 +276,13 @@ export function CampaignWorkspace({
   return (
     <div className="space-y-4">
       {isDemo && (
-        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
+        <div className={cn("rounded-lg border px-4 py-3 text-sm", TONE.warning.box, TONE.warning.text)}>
           <strong>Demo results.</strong> These prospects are fake placeholders, not live
           Apollo people. Add an Apollo API key in{" "}
           <Link href="/settings" className="underline underline-offset-2">
             Settings → Outreach
           </Link>{" "}
-          and re-run search for real Capital One (or other) recruiters.
+          and re-run search for real people.
         </div>
       )}
 
@@ -296,7 +308,7 @@ export function CampaignWorkspace({
           onClick={regenerateSelected}
           disabled={pending || !selectedIds.length}
         >
-          Regenerate selected drafts
+          {running === "regenerate" ? "Regenerating…" : "Regenerate selected drafts"}
         </Button>
         <Button
           variant="outline"
@@ -304,10 +316,13 @@ export function CampaignWorkspace({
           onClick={generateFollowUps}
           disabled={pending}
         >
-          Generate due follow-ups
-          {campaign.metrics.pendingFollowUpCount
-            ? ` (${campaign.metrics.pendingFollowUpCount})`
-            : ""}
+          {running === "followUps"
+            ? "Generating…"
+            : `Generate due follow-ups${
+                campaign.metrics.pendingFollowUpCount
+                  ? ` (${campaign.metrics.pendingFollowUpCount})`
+                  : ""
+              }`}
         </Button>
       </div>
 
@@ -319,7 +334,7 @@ export function CampaignWorkspace({
             showDemoWarning={isDemo}
           />
           <Button size="sm" onClick={rerunSearch} disabled={pending}>
-            Re-run search with these filters
+            {running === "search" ? "Searching…" : "Re-run search with these filters"}
           </Button>
         </div>
       )}

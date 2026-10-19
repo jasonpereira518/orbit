@@ -1,6 +1,6 @@
 "use client";
 
-import { cn } from "@/lib/utils";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import type { PipelineFilter } from "@/lib/outreach-types";
 
 const FILTERS: Array<{ id: PipelineFilter; label: string }> = [
@@ -24,27 +24,17 @@ export function PipelineFilters({
   onChange: (value: PipelineFilter) => void;
 }) {
   return (
-    <div className="flex flex-wrap gap-2">
-      {FILTERS.map((filter) => {
-        const count = counts[filter.id];
-        const active = value === filter.id;
-        return (
-          <button
-            key={filter.id}
-            type="button"
-            onClick={() => onChange(filter.id)}
-            className={cn(
-              "rounded-full border px-3 py-1 text-xs transition-colors",
-              active
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-border/70 bg-card text-muted-foreground hover:text-foreground"
-            )}
-          >
-            {filter.label}
-            {typeof count === "number" ? ` (${count})` : ""}
-          </button>
-        );
-      })}
-    </div>
+    <SegmentedControl
+      ariaLabel="Pipeline stage"
+      size="sm"
+      className="flex-wrap"
+      value={value}
+      onChange={(key) => onChange(key)}
+      items={FILTERS.map((filter) => ({
+        key: filter.id,
+        label: filter.label,
+        count: counts[filter.id],
+      }))}
+    />
   );
 }

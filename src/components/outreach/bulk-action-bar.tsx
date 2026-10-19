@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { Copy, ExternalLink, Send } from "lucide-react";
+import { Copy, ExternalLink, Send, X } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
   bulkSendOutreach,
@@ -10,6 +10,7 @@ import {
   updateProspectSelection,
 } from "@/actions/outreach";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   buildLinkedInUrl,
   buildMailtoUrl,
@@ -19,7 +20,7 @@ import {
 } from "@/lib/outreach-channels";
 import type { OutreachChannel } from "@/lib/outreach-types";
 import { DangerSendDialog } from "@/components/outreach/danger-send-dialog";
-import { friendlyError } from "@/lib/errors";
+import { UserFacingError, friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
 type Row = {
@@ -34,6 +35,12 @@ type Row = {
   linkedinUrl: string | null;
 };
 
+/**
+ * Select-all and the bulk actions for a selection — the same shape as the reminders
+ * queue's bar: a tri-state checkbox, a count, the actions, and "clear" on the right. It
+ * reserves its height whether or not anything is selected, so the first row does not
+ * jump down as someone reaches for the second checkbox.
+ */
 export function BulkActionBar({
   campaignId,
   rows,
@@ -56,24 +63,31 @@ export function BulkActionBar({
   );
 
   const sendable = activeRows.filter((r) => canAutoSend(r.channel, r));
+  const selecting = activeRows.length > 0;
+  const allSelected = rows.length > 0 && activeRows.length === rows.length;
 
   function refresh() {
     onUpdated?.();
   }
 
-  function handleSelectAll() {
+  function setSelection(prospectIds: string[], status: "selected" | "suggested") {
     start(async () => {
       try {
-        await updateProspectSelection({
-          campaignId,
-          prospectIds: rows.map((r) => r.prospectId),
-          status: "selected",
-        });
+        await updateProspectSelection({ campaignId, prospectIds, status });
         refresh();
       } catch (err) {
         toast.error(friendlyError(err, TOAST_COPY.saveFailed));
       }
     });
+  }
+
+  function handleToggleAll() {
+    if (allSelected) setSelection(rows.map((r) => r.prospectId), "suggested");
+    else setSelection(rows.map((r) => r.prospectId), "selected");
+  }
+
+  function handleClear() {
+    setSelection(activeRows.map((r) => r.prospectId), "suggested");
   }
 
   function handleCopyAll() {
@@ -158,82 +172,88 @@ export function BulkActionBar({
     });
   }
 
-  function handleBulkSend() {
-    start(async () => {
-      try {
-        const result = await bulkSendOutreach({
-          campaignId,
-          messageIds: sendable.map((r) => r.messageId),
-          ignoreWarnings: ignoreWarnings || !qualityNote,
-        });
-        if (result.status === "blocked") {
-          toast.error(result.reason);
-          return;
-        }
-        if (result.status === "needs_confirmation") {
-          setQualityNote(`Quality warning: ${result.warning}`);
-          setIgnoreWarnings(true);
-          // Not a failure — the send is waiting on the person. A quiet message, so it
-          // is not red and is not filed under Missed as though something broke.
-          toast.message("Check the warning, then confirm the send again");
-          return;
-        }
-        const { sent, failed } = result;
-        if (sent === 0 && failed > 0) {
-          toast.error(`None of those sent — try again?`);
-        } else if (failed > 0) {
-          toast.success(`Sent ${sent} — ${failed} didn’t go through`);
-        } else {
-          toast.success(`Sent ${sent} ${sent === 1 ? "message" : "messages"}`);
-        }
-        setDangerOpen(false);
-        refresh();
-      } catch (err) {
-        toast.error(friendlyError(err, TOAST_COPY.sendFailed));
-      }
+  /**
+   * Awaited by the confirm dialog: it closes on success and shows a thrown message inline.
+   * A send that is waiting on the person (a new quality warning) throws too, so the dialog
+   * stays open with the warning for them to confirm again.
+   */
+  async function sendSelected() {
+    const result = await bulkSendOutreach({
+      campaignId,
+      messageIds: sendable.map((r) => r.messageId),
+      ignoreWarnings: ignoreWarnings || !qualityNote,
     });
+    if (result.status === "blocked") throw new UserFacingError(result.reason);
+    if (result.status === "needs_confirmation") {
+      setQualityNote(`Quality warning: ${result.warning}`);
+      setIgnoreWarnings(true);
+      throw new UserFacingError("Check the warning, then confirm the send again");
+    }
+    const { sent, failed } = result;
+    if (sent === 0 && failed > 0) {
+      throw new UserFacingError("None of those sent — try again?");
+    }
+    if (failed > 0) {
+      toast.success(`Sent ${sent} — ${failed} didn’t go through`);
+    } else {
+      toast.success(`Sent ${sent} ${sent === 1 ? "message" : "messages"}`);
+    }
+    refresh();
   }
 
   if (!rows.length) return null;
 
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-muted/30 p-3">
-        <span className="text-sm text-muted-foreground">
-          {selectedProspectIds.length} selected — review & personalize before sending
-        </span>
-        <Button size="sm" variant="outline" onClick={handleSelectAll} disabled={pending}>
-          Select all
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={handleCopyAll}
-          disabled={pending || !activeRows.length}
-        >
-          <Copy className="mr-1 h-3.5 w-3.5" />
-          Copy selected
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={handleOpenAll}
-          disabled={pending || !activeRows.length}
-        >
-          <ExternalLink className="mr-1 h-3.5 w-3.5" />
-          Open selected
-        </Button>
-        {sendable.length > 0 && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="border-destructive text-destructive hover:bg-destructive/10"
-            onClick={openSendDialog}
+    <>
+      <div className="flex min-h-10 flex-wrap items-center gap-1 rounded-xl border border-border-subtle bg-card px-3">
+        <div className="flex h-6 w-4 items-center">
+          <Checkbox
+            checked={allSelected}
+            indeterminate={selecting && !allSelected}
             disabled={pending}
-          >
-            <Send className="mr-1 h-3.5 w-3.5" />
-            Send selected ({sendable.length})
-          </Button>
+            onCheckedChange={handleToggleAll}
+            aria-label={allSelected ? "Deselect all" : "Select all drafts"}
+          />
+        </div>
+        {selecting ? (
+          <>
+            <span
+              className="ml-2 mr-1 shrink-0 whitespace-nowrap text-xs font-medium tabular-nums text-foreground"
+              aria-live="polite"
+            >
+              {activeRows.length} selected
+            </span>
+            <Button size="sm" variant="ghost" onClick={handleCopyAll} disabled={pending}>
+              <Copy className="size-3.5" />
+              Copy
+            </Button>
+            <Button size="sm" variant="ghost" onClick={handleOpenAll} disabled={pending}>
+              <ExternalLink className="size-3.5" />
+              Open
+            </Button>
+            {sendable.length > 0 && (
+              <Button size="sm" variant="destructive" onClick={openSendDialog} disabled={pending}>
+                <Send className="size-3.5" />
+                Send {sendable.length}
+              </Button>
+            )}
+            <div className="flex-1" />
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Clear selection"
+              title="Clear selection"
+              onClick={handleClear}
+              disabled={pending}
+            >
+              <X className="size-3.5" />
+            </Button>
+          </>
+        ) : (
+          <div className="ml-2 flex min-w-0 flex-1 items-center text-xs text-muted-foreground">
+            {rows.length} draft{rows.length === 1 ? "" : "s"} — select rows to copy, open or send
+            them together
+          </div>
         )}
       </div>
 
@@ -242,12 +262,14 @@ export function BulkActionBar({
         onOpenChange={setDangerOpen}
         recipientCount={sendable.length}
         channel="email/SMS"
-        onConfirm={handleBulkSend}
-        pending={pending}
-      />
-      {dangerOpen && qualityNote && (
-        <p className="text-xs text-warning">{qualityNote}</p>
-      )}
-    </div>
+        onConfirm={sendSelected}
+      >
+        {qualityNote && (
+          <p role="status" className="text-xs text-warning">
+            {qualityNote}
+          </p>
+        )}
+      </DangerSendDialog>
+    </>
   );
 }

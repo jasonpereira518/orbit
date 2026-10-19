@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, FolderInput, Trash2, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu,
@@ -15,8 +15,8 @@ import { ListGlyph } from "@/components/reminders/list-glyph";
 import type { ListOption } from "@/components/reminders/reminder-row";
 import { cn } from "@/lib/utils";
 
-const BAR_BUTTON =
-  "tap-target relative inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50";
+/** The bar's buttons: ghost, small, muted until hovered — one recipe for all of them. */
+const BAR_BUTTON = cn(buttonVariants({ variant: "ghost", size: "sm" }), "tap-target relative text-muted-foreground");
 
 /**
  * Select-all and the bulk actions for a selection.
@@ -68,7 +68,7 @@ export function ReminderBulkBar({
 }) {
   const selecting = count > 0;
   return (
-    <div className="flex min-h-10 shrink-0 items-center gap-1 border-b border-border/60 px-3 sm:px-4">
+    <div className="flex min-h-10 shrink-0 items-center gap-1 border-b border-border-subtle px-3 sm:px-4">
       <div className="flex h-6 w-4 items-center">
         <Checkbox
           checked={allVisibleSelected && visibleCount > 0}
@@ -84,9 +84,9 @@ export function ReminderBulkBar({
             {count} selected
           </span>
           {canAct && (
-            <button type="button" className={BAR_BUTTON} onClick={onDone} disabled={busy}>
+            <Button variant="ghost" size="sm" className="tap-target relative text-muted-foreground" onClick={onDone} disabled={busy}>
               <Check className="size-3.5" /> Done
-            </button>
+            </Button>
           )}
           {canAct && (
             <ReminderSnoozeMenu
@@ -117,14 +117,15 @@ export function ReminderBulkBar({
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          <button
-            type="button"
-            className={cn(BAR_BUTTON, "hover:text-destructive")}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="tap-target relative text-muted-foreground hover:text-destructive"
             onClick={onDelete}
             disabled={busy}
           >
             <Trash2 className="size-3.5" /> Delete
-          </button>
+          </Button>
           <div className="flex-1" />
           <Button variant="ghost" size="icon-xs" aria-label="Clear selection" title="Clear selection (Esc)" className="tap-target relative" onClick={onClear}>
             <X className="size-3.5" />

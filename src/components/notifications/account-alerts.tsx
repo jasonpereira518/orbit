@@ -13,6 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { WarpLink } from "@/components/warp/warp-link";
 import { flashSection } from "@/components/layout/section-flash";
+import { TONE } from "@/lib/tone";
 import { cn } from "@/lib/utils";
 import {
   ALERTS_COLLAPSED_VISIBLE,
@@ -70,7 +71,7 @@ export function AccountAlerts({
   return (
     <section className={cn("space-y-2", className)}>
       <div className="flex items-center justify-between px-0.5">
-        <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
           Alerts
         </h3>
         <span className="text-xs text-muted-foreground">{live.length}</span>
@@ -102,12 +103,12 @@ export function AccountAlerts({
         >
           {showAll ? (
             <>
-              <ChevronUp className="h-3.5 w-3.5" />
+              <ChevronUp className="size-3.5" />
               Show less
             </>
           ) : (
             <>
-              <ChevronDown className="h-3.5 w-3.5" />
+              <ChevronDown className="size-3.5" />
               {hiddenCount} more
             </>
           )}
@@ -143,7 +144,7 @@ function AlertRow({
     "flex items-center rounded-lg border text-sm transition-colors",
     isError
       ? "border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/15"
-      : "border-amber-500/30 bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 dark:text-warning"
+      : cn(TONE.warning.box, TONE.warning.text, "hover:bg-warning/15")
   );
   const body = cn(
     "flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-2.5 text-left",
@@ -201,16 +202,18 @@ function AlertRow({
       )}
 
       {onDismiss && (
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon-xs"
           // Names the alert, so a screen reader reaching a row of these can tell the
           // dismiss buttons apart.
           aria-label={`Dismiss: ${alert.title}`}
-          className="mr-1 flex size-6 shrink-0 items-center justify-center rounded-md opacity-60 transition-opacity hover:opacity-100"
+          className="mr-1 shrink-0 text-current opacity-60 hover:bg-transparent hover:text-current hover:opacity-100"
           onClick={onDismiss}
         >
           <X className="size-3.5" />
-        </button>
+        </Button>
       )}
     </div>
   );

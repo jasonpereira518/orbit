@@ -1,6 +1,6 @@
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import Link from "next/link";
-import { PenLine, Plus } from "lucide-react";
+import { PenLine, Plus, Users } from "lucide-react";
 import {
   getRecruiterSharing,
   listDiscoverRecruiters,
@@ -20,7 +20,8 @@ import { GmailImportPanel } from "@/components/recruiters/gmail-import-panel";
 import { OutlookImportPanel } from "@/components/recruiters/outlook-import-panel";
 import { RecruiterSharingToggle } from "@/components/recruiters/sharing-toggle";
 import { buttonVariants } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { EmptyState } from "@/components/ui/empty-state";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
 export default async function RecruitersPage({
@@ -67,6 +68,8 @@ export default async function RecruitersPage({
         })
       : mine;
 
+  const qs = q ? `?q=${encodeURIComponent(q)}` : "";
+
   return (
     <PeopleListShell
       active="recruiters"
@@ -75,21 +78,15 @@ export default async function RecruitersPage({
       actions={
         <>
           {mine.length > 0 && (
-            <Link
-              href="/recruiters/compose"
-              className={cn(buttonVariants({ variant: "outline" }))}
-            >
-              <PenLine className="mr-1 h-4 w-4" />
+            <Link href="/recruiters/compose" className={buttonVariants({ variant: "outline" })}>
+              <PenLine className="size-4" />
               Compose
             </Link>
           )}
-        <Link
-          href="/recruiters/new"
-          className={buttonVariants()}
-        >
-          <Plus className="mr-1 h-4 w-4" />
-          Log recruiter
-        </Link>
+          <Link href="/recruiters/new" className={buttonVariants()}>
+            <Plus className="size-4" />
+            Add recruiter
+          </Link>
         </>
       }
     >
@@ -102,54 +99,36 @@ export default async function RecruitersPage({
         <OutlookImportPanel connection={outlook} initialScan={outlookScan} returnTo="/recruiters" />
 
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex rounded-lg border border-border/70 bg-card p-0.5 text-sm">
-            <Link
-              href={`/recruiters${q ? `?q=${encodeURIComponent(q)}` : ""}`}
-              className={cn(
-                "rounded-md px-3 py-1.5",
-                tab === "mine"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              My recruiters ({mine.length})
-            </Link>
-            <Link
-              href={`/recruiters?tab=discover${q ? `&q=${encodeURIComponent(q)}` : ""}`}
-              className={cn(
-                "rounded-md px-3 py-1.5",
-                tab === "discover"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              Discover
-            </Link>
-          </div>
+          <SegmentedControl
+            ariaLabel="Recruiter lists"
+            value={tab}
+            items={[
+              { key: "mine", label: "My recruiters", count: mine.length, href: `/recruiters${qs}` },
+              { key: "discover", label: "Discover", href: `/recruiters?tab=discover${q ? `&q=${encodeURIComponent(q)}` : ""}` },
+            ]}
+          />
           <RecruiterSearch initialQ={q} className="min-w-[16rem] flex-1" />
         </div>
 
         {tab === "discover" && !sharing ? (
           // The empty Discover tab is the incentive made visible. Hiding it entirely
           // would also hide the offer, so it renders the reason instead of a list.
-          <div className="rounded-2xl border border-dashed border-border/70 bg-card px-5 py-12 text-center">
-            <p className="font-medium text-ink">Nothing to discover yet</p>
-            <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-              Discover shows recruiters other people have logged. It fills up
-              when you share your own list — that&apos;s the trade. Your notes and
-              interaction summaries stay private either way.
-            </p>
-          </div>
+          <EmptyState
+            variant="card"
+            icon={Users}
+            title="Nothing to discover yet"
+            description="Discover shows recruiters other people have logged. It fills up when you share your own list — that’s the trade. Your notes and interaction summaries stay private either way."
+          />
         ) : (
-          <div className="rounded-2xl border border-border/70 bg-card">
+          <div className="rounded-xl border border-border-subtle bg-card">
             <RecruiterList
               recruiters={tab === "mine" ? filteredMine : discover}
               emptyMessage={
                 tab === "mine"
                   ? q
-                    ? "No recruiters match that search."
-                    : "You haven’t logged any recruiters yet."
-                  : "No recruiters in the pool match yet."
+                    ? "No recruiters match that search"
+                    : "No recruiters yet"
+                  : "No recruiters in the pool match yet"
               }
             />
           </div>

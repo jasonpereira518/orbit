@@ -73,7 +73,7 @@ export function ReminderListEditor({
         side="right"
         align="start"
         sideOffset={8}
-        className="w-72 rounded-2xl border border-border/70 bg-card p-3 shadow-lg ring-0"
+        className="w-72 rounded-xl border border-border-subtle bg-card p-3 shadow-sm ring-0"
       >
         <form
           onSubmit={(e) => {
@@ -112,7 +112,7 @@ export function ReminderListEditor({
           )}
 
           <fieldset>
-            <legend className="mb-1.5 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+            <legend className="mb-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Icon
             </legend>
             <div className="grid grid-cols-6 gap-1">
@@ -142,7 +142,7 @@ export function ReminderListEditor({
           </fieldset>
 
           <fieldset>
-            <legend className="mb-1.5 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+            <legend className="mb-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Color
             </legend>
             <div className="flex flex-wrap gap-1.5">
@@ -179,7 +179,7 @@ export function ReminderListEditor({
             </div>
           </fieldset>
 
-          <div className="flex items-center gap-2 border-t border-border/60 pt-3">
+          <div className="flex items-center gap-2 border-t border-border-subtle pt-3">
             {!list.isInbox && (
               <Button
                 type="button"

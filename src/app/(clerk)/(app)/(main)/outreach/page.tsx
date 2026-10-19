@@ -6,9 +6,12 @@ import { getEntitlements } from "@/lib/entitlements";
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { OutreachLocked } from "@/components/locked-feature";
 import { OutreachCampaignCard } from "@/components/outreach/outreach-campaign-card";
+import { PageHeader } from "@/components/layout/page-header";
+import { PageShell } from "@/components/layout/page-shell";
 import { buttonVariants } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
 import { formatReplyRate } from "@/lib/outreach-metrics";
-import { cn } from "@/lib/utils";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
 export default async function OutreachPage() {
@@ -52,52 +55,45 @@ export default async function OutreachPage() {
   });
 
   return (
-    <div className="space-y-6">
+    <PageShell width="wide">
       <RenderStamp />
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="font-heading text-3xl text-ink">
-            Outreach
-          </h1>
-          <p className="mt-1 text-muted-foreground">
-            Optimize for successful replies — quality ICP, personalized drafts, and logged outcomes
-          </p>
-        </div>
-        <Link
-          href="/outreach/new"
-          className={buttonVariants()}
-        >
-          <Plus className="mr-1 h-4 w-4" />
-          New campaign
-        </Link>
-      </div>
+      <PageHeader
+        title="Outreach"
+        description="Optimize for successful replies — quality ICP, personalized drafts, and logged outcomes."
+        actions={
+          <Link href="/outreach/new" className={buttonVariants()}>
+            <Plus className="size-4" />
+            New campaign
+          </Link>
+        }
+      />
 
       {campaigns.length > 0 && (
-        <div className="rounded-2xl border border-border/70 bg-card px-5 py-4">
-          <div className="text-xs text-muted-foreground">Account successful reply rate</div>
-          <div className="mt-1 flex flex-wrap items-baseline gap-4">
-            <span className="font-heading text-3xl text-ink">
-              {formatReplyRate(accountRate)}
-            </span>
-            <span className="text-sm text-muted-foreground">
-              {totals.positive} positive · {totals.sent} sent
-            </span>
-          </div>
-        </div>
+        <Card size="sm">
+          <CardContent>
+            <p className="text-xs text-muted-foreground">Account successful reply rate</p>
+            <div className="mt-1 flex flex-wrap items-baseline gap-4">
+              <span className="font-heading text-3xl text-ink">
+                {formatReplyRate(accountRate)}
+              </span>
+              <span className="text-sm text-muted-foreground">
+                {totals.positive} positive · {totals.sent} sent
+              </span>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {ranked.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-border/70 p-12 text-center">
-          <p className="text-muted-foreground">
-            No campaigns yet. Start with a tight ICP and a clear reply ask.
-          </p>
-          <Link
-            href="/outreach/new"
-            className={cn(buttonVariants({ variant: "outline" }), "mt-4 inline-flex")}
-          >
-            Start your first reply-optimized campaign
-          </Link>
-        </div>
+        <EmptyState
+          title="No campaigns yet"
+          description="Start with a tight ICP and a clear reply ask."
+          action={
+            <Link href="/outreach/new" className={buttonVariants({ variant: "outline" })}>
+              Start your first campaign
+            </Link>
+          }
+        />
       ) : (
         <div className="grid gap-4">
           {ranked.map((campaign) => (
@@ -118,6 +114,6 @@ export default async function OutreachPage() {
           ))}
         </div>
       )}
-    </div>
+    </PageShell>
   );
 }

@@ -96,7 +96,7 @@ export function ReminderContactPicker({
       </PopoverTrigger>
       <PopoverContent
         align={align}
-        className="w-64 rounded-xl border border-border/70 bg-card p-1.5 shadow-lg ring-0"
+        className="w-64 rounded-xl border border-border-subtle bg-card p-1.5 shadow-sm ring-0"
       >
         <input
           autoFocus

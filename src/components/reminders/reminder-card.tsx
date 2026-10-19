@@ -24,7 +24,15 @@ import { dueDayOf, dueLabelFor, ymdInZone } from "@/lib/reminder-due-bucket";
 import { reminderTypeLabel, reminderTypeStyle } from "@/lib/reminder-display";
 import { ReminderDoneSnooze } from "@/components/reminders/reminder-done-snooze";
 import { ReminderFormDialog } from "@/components/reminders/reminder-form-dialog";
+import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ExpandableText } from "@/components/ui/expandable-text";
 import { cn } from "@/lib/utils";
 import { friendlyError } from "@/lib/errors";
@@ -120,35 +128,28 @@ export function ReminderCard({
   );
 
   return (
-    <div className="rounded-xl border border-border/60 bg-card p-4">
+    <div className="rounded-xl border border-border-subtle bg-card p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="font-medium">{title}</p>
             {noteBatchId ? (
-              <Link
-                href={`/capture/${noteBatchId}`}
-                className={cn(
-                  "rounded-full px-2 py-0.5 text-3xs font-medium uppercase tracking-wide hover:underline",
-                  reminderTypeStyle(reminderType)
-                )}
+              <Badge
+                size="sm"
+                className={cn("hover:underline", reminderTypeStyle(reminderType))}
+                render={<Link href={`/capture/${noteBatchId}`} />}
               >
                 {typeLabel}
-              </Link>
+              </Badge>
             ) : (
-              <span
-                className={cn(
-                  "rounded-full px-2 py-0.5 text-3xs font-medium uppercase tracking-wide",
-                  reminderTypeStyle(reminderType)
-                )}
-              >
+              <Badge size="sm" className={reminderTypeStyle(reminderType)}>
                 {typeLabel}
-              </span>
+              </Badge>
             )}
             {!compact && (
-              <span className="rounded-full bg-muted/80 px-2 py-0.5 text-3xs font-medium uppercase tracking-wide text-muted-foreground">
+              <Badge tone="neutral" size="sm">
                 {kindLabel}
-              </span>
+              </Badge>
             )}
           </div>
           {contactId && contactName && (
@@ -191,16 +192,16 @@ export function ReminderCard({
                 className={actionClass}
               >
                 {actionKind === "meet" ? (
-                  <Coffee className="mr-1.5 h-3.5 w-3.5" />
+                  <Coffee className="size-3.5" />
                 ) : (
-                  <NotebookPen className="mr-1.5 h-3.5 w-3.5" />
+                  <NotebookPen className="size-3.5" />
                 )}
                 {actionKind === "meet" ? "Log meeting" : "Log"}
               </Link>
             )}
             {actionKind === "call" && contactPhone && (
               <a href={`tel:${contactPhone}`} className={actionClass}>
-                <Phone className="mr-1.5 h-3.5 w-3.5" />
+                <Phone className="size-3.5" />
                 Call
               </a>
             )}
@@ -209,7 +210,7 @@ export function ReminderCard({
                 href={`mailto:${contactEmail}?subject=${encodeURIComponent(title)}`}
                 className={actionClass}
               >
-                <Mail className="mr-1.5 h-3.5 w-3.5" />
+                <Mail className="size-3.5" />
                 Email
               </a>
             )}
@@ -222,7 +223,7 @@ export function ReminderCard({
                 className="h-8"
                 onClick={generateDraft}
               >
-                <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+                <Sparkles className="size-3.5" />
                 {pending
                   ? "Drafting…"
                   : draft
@@ -237,13 +238,12 @@ export function ReminderCard({
               <label className="sr-only" htmlFor={`move-${id}`}>
                 Move to list
               </label>
-              <select
-                id={`move-${id}`}
-                className="h-8 rounded-lg border border-input bg-transparent px-2 text-xs"
-                disabled={moving}
+              <Select
                 value={listId ?? ""}
-                onChange={(e) => {
-                  const next = e.target.value;
+                items={lists.map((l) => ({ value: l.id, label: l.name }))}
+                disabled={moving}
+                onValueChange={(v) => {
+                  const next = typeof v === "string" ? v : "";
                   if (!next || next === listId) return;
                   const previous = listId;
                   const nextName = lists.find((l) => l.id === next)?.name;
@@ -261,12 +261,17 @@ export function ReminderCard({
                   );
                 }}
               >
-                {lists.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger id={`move-${id}`} size="sm" aria-label="Move to list">
+                  <SelectValue placeholder="Move to list" />
+                </SelectTrigger>
+                <SelectContent alignItemWithTrigger={false} className="p-1">
+                  {lists.map((l) => (
+                    <SelectItem key={l.id} value={l.id} className="py-1.5 pl-2">
+                      {l.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           )}
         </div>
@@ -304,22 +309,22 @@ export function ReminderCard({
       />
 
       {draft && (
-        <div className="mt-3 rounded-lg bg-muted/50 p-3">
+        <div className="mt-3 rounded-lg border border-border-subtle bg-surface-inset p-3">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <p className="text-3xs font-medium uppercase tracking-wide text-muted-foreground">
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Draft follow-up
             </p>
             <Button
               type="button"
               size="sm"
               variant="ghost"
-              className="h-7 px-2 text-xs"
+              className="h-7 px-2"
               onClick={() => {
                 void navigator.clipboard.writeText(draft);
                 toast.success(TOAST_COPY.copied);
               }}
             >
-              <Copy className="mr-1 h-3 w-3" />
+              <Copy className="size-3" />
               Copy
             </Button>
           </div>

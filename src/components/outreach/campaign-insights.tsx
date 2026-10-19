@@ -1,4 +1,7 @@
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { channelLabel } from "@/lib/outreach-channels";
 import { formatReplyRate } from "@/lib/outreach-metrics";
+import type { OutreachChannel } from "@/lib/outreach-types";
 
 export function CampaignInsights({
   channelBreakdown,
@@ -32,9 +35,11 @@ export function CampaignInsights({
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      <div className="rounded-2xl border border-border/70 bg-card p-4">
-        <h3 className="text-sm font-medium text-ink">By channel</h3>
-        <div className="mt-3 space-y-2">
+      <Card size="sm">
+        <CardHeader>
+          <CardTitle as="h3">By channel</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
           {channelBreakdown.length === 0 ? (
             <p className="text-sm text-muted-foreground">No sends yet.</p>
           ) : (
@@ -43,8 +48,8 @@ export function CampaignInsights({
                 key={row.channel}
                 className="flex items-center justify-between text-sm"
               >
-                <span className="capitalize text-muted-foreground">
-                  {row.channel}
+                <span className="text-muted-foreground">
+                  {channelLabel(row.channel as OutreachChannel)}
                 </span>
                 <span>
                   {formatReplyRate(row.successfulReplyRate)} · {row.positiveReplies}/
@@ -53,17 +58,19 @@ export function CampaignInsights({
               </div>
             ))
           )}
-        </div>
-      </div>
+        </CardContent>
+      </Card>
 
-      <div className="rounded-2xl border border-border/70 bg-card p-4">
-        <h3 className="text-sm font-medium text-ink">By step</h3>
-        {followUpShare != null && (
-          <p className="mt-1 text-xs text-muted-foreground">
-            Follow-ups drive {Math.round(followUpShare * 100)}% of positive replies
-          </p>
-        )}
-        <div className="mt-3 space-y-2">
+      <Card size="sm">
+        <CardHeader>
+          <CardTitle as="h3">By step</CardTitle>
+          {followUpShare != null && (
+            <CardDescription className="text-xs">
+              Follow-ups drive {Math.round(followUpShare * 100)}% of positive replies
+            </CardDescription>
+          )}
+        </CardHeader>
+        <CardContent className="space-y-2">
           {stepBreakdown.length === 0 ? (
             <p className="text-sm text-muted-foreground">No sends yet.</p>
           ) : (
@@ -80,8 +87,8 @@ export function CampaignInsights({
               </div>
             ))
           )}
-        </div>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

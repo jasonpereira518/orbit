@@ -1,5 +1,6 @@
 "use client";
 
+import { PageHeader } from "@/components/layout/page-header";
 import { emitTourEvent } from "@/lib/tour/tour-events";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -633,13 +634,14 @@ export function RemindersStage({
 
   return (
     <div data-fill-route className="flex min-h-0 flex-1 flex-col gap-4">
-      <header className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        {/* Calendar sync lives at the foot of the rail now, with its status. */}
-        <h1 className="font-heading text-3xl text-ink">Reminders</h1>
-        <div className="flex items-center gap-1">
-          <RemindersShortcutsHelp open={helpOpen} onOpenChange={setHelpOpen} />
-        </div>
-      </header>
+      {/* Calendar sync lives at the foot of the rail now, with its status. */}
+      <PageHeader
+        as="h1"
+        reveal={false}
+        title="Reminders"
+        className="shrink-0"
+        actions={<RemindersShortcutsHelp open={helpOpen} onOpenChange={setHelpOpen} />}
+      />
 
       <div className="flex min-h-0 flex-1 gap-4 xl:gap-5">
         <aside className="hidden w-52 shrink-0 overflow-y-auto overscroll-contain pb-4 lg:block">
@@ -648,9 +650,9 @@ export function RemindersStage({
 
         <section
           aria-labelledby="reminders-queue-title"
-          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/70 bg-card"
+          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border-subtle bg-card"
         >
-          <div className="flex shrink-0 flex-col gap-3 border-b border-border/60 p-3 sm:p-4">
+          <div className="flex shrink-0 flex-col gap-3 border-b border-border-subtle p-3 sm:p-4">
             <div className="flex items-center gap-2">
               <Button
                 variant="outline"
@@ -662,7 +664,7 @@ export function RemindersStage({
                 <ListFilter className="size-3.5" />
                 <span className="max-w-28 truncate">{title}</span>
                 {counts.overdue > 0 && (
-                  <span className="size-1.5 rounded-full bg-amber-500" title={`${counts.overdue} overdue`} />
+                  <span className="size-1.5 rounded-full bg-warning" title={`${counts.overdue} overdue`} />
                 )}
               </Button>
               <h2
@@ -728,7 +730,7 @@ export function RemindersStage({
                       {total} {total === 1 ? "reminder" : "reminders"}
                       {filtered ? " match" : ""}
                     </span>
-                    {navigating && <Loader2 className="size-3 animate-spin" aria-label="Loading" />}
+                    {navigating && <Loader2 className="size-3 motion-safe:animate-spin" aria-label="Loading" />}
                   </span>
                 }
               />
@@ -766,7 +768,7 @@ export function RemindersStage({
                         <h3
                           id={`bucket-${group.bucket}`}
                           className={cn(
-                            "sticky top-0 z-10 flex items-center gap-2 border-b border-border/50 bg-card/95 px-3 py-1.5 text-2xs font-medium uppercase tracking-wide backdrop-blur-sm sm:px-4",
+                            "sticky top-0 z-10 flex items-center gap-2 border-b border-border-subtle bg-card/95 px-3 py-1.5 text-2xs font-medium uppercase tracking-wide backdrop-blur-sm sm:px-4",
                             group.bucket === "overdue" ? "text-warning" : "text-muted-foreground"
                           )}
                         >
@@ -826,7 +828,7 @@ export function RemindersStage({
         {detailPane && (
           <aside
             aria-label="Reminder details"
-            className="hidden w-[22rem] shrink-0 overflow-hidden rounded-2xl border border-border/70 bg-card xl:flex xl:flex-col"
+            className="hidden w-[22rem] shrink-0 overflow-hidden rounded-xl border border-border-subtle bg-card xl:flex xl:flex-col"
           >
             {inlineDetail ? detailPane : null}
           </aside>

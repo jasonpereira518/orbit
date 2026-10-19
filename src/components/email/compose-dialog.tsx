@@ -251,7 +251,7 @@ export function ComposeDialog({
 
         {ctx === null ? (
           <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-            <Loader2 className="size-4 animate-spin" aria-hidden /> Getting ready…
+            <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> Getting ready…
           </p>
         ) : ctx === "unavailable" ? (
           <p className="text-sm text-muted-foreground" role="alert">
@@ -265,7 +265,7 @@ export function ComposeDialog({
             }}
             onDrop={onDrop}
           >
-            <div className="flex min-h-9 items-center gap-2 border-b border-border/60 py-1.5">
+            <div className="flex min-h-9 items-center gap-2 border-b border-border-subtle py-1.5">
               <span className="w-10 shrink-0 text-xs font-medium text-muted-foreground">From</span>
               {capability?.ok && sendable.length > 1 ? (
                 <MailboxSelect mailboxes={capability.mailboxes} value={fromProvider ?? sendable[0]!.id} onChange={setFromProvider} disabled={sending} />
@@ -294,13 +294,15 @@ export function ComposeDialog({
                 />
               </div>
               {!showCopies && (
-                <button
+                <Button
                   type="button"
-                  className="shrink-0 px-1 pt-2.5 text-xs text-muted-foreground hover:text-foreground"
+                  variant="ghost"
+                  size="xs"
+                  className="mt-1.5 shrink-0 text-muted-foreground"
                   onClick={() => setShowCopies(true)}
                 >
                   Cc/Bcc
-                </button>
+                </Button>
               )}
             </div>
             {showCopies && (
@@ -318,7 +320,7 @@ export function ComposeDialog({
             />
             {replyTo ? (
               // The server fixes a reply's subject (Gmail threads only on a matching one).
-              <p aria-label="Subject" className="min-w-0 truncate border-b border-border/60 py-2">
+              <p aria-label="Subject" className="min-w-0 truncate border-b border-border-subtle py-2">
                 {replySubject(ready?.replyTargets.find((t) => t.key === replyTo)?.subject ?? subject)}
               </p>
             ) : (
@@ -328,7 +330,7 @@ export function ComposeDialog({
                 value={subject}
                 maxLength={200}
                 onChange={(e) => setSubject(e.target.value)}
-                className="rounded-none border-0 border-b border-border/60 px-0 shadow-none focus-visible:ring-0"
+                className="rounded-none border-0 border-b border-border-subtle px-0 shadow-none focus-visible:ring-0"
                 autoFocus={to.length > 0 && !subject}
               />
             )}
@@ -365,8 +367,8 @@ export function ComposeDialog({
               <div className="flex items-center gap-2">
                 {request.contactId && (
                   <Button type="button" variant="outline" size="sm" onClick={draftWithAi} disabled={drafting || sending}>
-                    {drafting ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
-                    Draft with AI
+                    {drafting ? <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden /> : <Sparkles className="size-3.5" />}
+                    {drafting ? "Drafting…" : "Draft with AI"}
                   </Button>
                 )}
                 {ready?.attachmentsAvailable && (

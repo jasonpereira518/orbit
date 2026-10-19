@@ -12,9 +12,20 @@ import {
 } from "@/actions/outreach";
 import { AudienceFiltersEditor } from "@/components/outreach/audience-filters-editor";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { channelLabel } from "@/lib/outreach-channels";
 import {
   DEFAULT_SEQUENCE_STEPS,
   OUTREACH_CHANNELS,
@@ -26,9 +37,49 @@ import {
   type OutreachReplyCta,
   type SequenceStep,
 } from "@/lib/outreach-types";
+import { TONE } from "@/lib/tone";
+import { cn } from "@/lib/utils";
 import { friendlyError } from "@/lib/errors";
 
 const STEPS = ["Audience", "Prospects", "Message", "Review"] as const;
+
+/** Stored tone → Title-cased word. The stored values never change. */
+function labelForTone(tone: string) {
+  return tone.charAt(0).toUpperCase() + tone.slice(1);
+}
+
+const CTA_ITEMS = OUTREACH_REPLY_CTAS.map((c) => ({ value: c, label: REPLY_CTA_LABELS[c] }));
+const TONE_ITEMS = OUTREACH_TONES.map((t) => ({ value: t, label: labelForTone(t) }));
+const CHANNEL_ITEMS = OUTREACH_CHANNELS.map((c) => ({ value: c, label: channelLabel(c) }));
+
+function ReplyCtaSelect({
+  id,
+  value,
+  onChange,
+}: {
+  id: string;
+  value: OutreachReplyCta;
+  onChange: (next: OutreachReplyCta) => void;
+}) {
+  return (
+    <Select
+      value={value}
+      onValueChange={(v) => onChange((v ?? "book_intro") as OutreachReplyCta)}
+      items={CTA_ITEMS}
+    >
+      <SelectTrigger id={id} className="w-full">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {CTA_ITEMS.map((cta) => (
+          <SelectItem key={cta.value} value={cta.value}>
+            {cta.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
 
 export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?: string }) {
   const router = useRouter();
@@ -193,13 +244,14 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
             <div key={label} role="listitem" className="min-w-0 space-y-1.5">
               <div className="flex items-baseline justify-between gap-2">
                 <span
-                  className={`truncate text-xs font-medium ${
+                  className={cn(
+                    "truncate text-xs font-medium",
                     isCurrent
                       ? "text-primary"
                       : isDone
                         ? "text-foreground"
                         : "text-muted-foreground"
-                  }`}
+                  )}
                 >
                   {i + 1}. {label}
                 </span>
@@ -219,9 +271,10 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                 aria-label={`${label} progress`}
               >
                 <div
-                  className={`h-full rounded-full transition-[width] duration-slow ease-house ${
+                  className={cn(
+                    "h-full rounded-full transition-[width] duration-slow ease-house",
                     isCurrent || isDone ? "bg-primary" : "bg-muted-foreground/30"
-                  }`}
+                  )}
                   style={{ width: `${Math.round(value * 100)}%` }}
                 />
               </div>
@@ -231,201 +284,182 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
       </div>
 
       {step === 0 && (
-        <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
-          <div className="space-y-1.5">
-            <Label htmlFor="campaign-name">Campaign name</Label>
-            <Input
-              id="campaign-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Q3 fintech founders outreach"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="audience">Who do you want to reach?</Label>
-            <Textarea
-              id="audience"
-              value={audienceQuery}
-              onChange={(e) => setAudienceQuery(e.target.value)}
-              rows={4}
-              placeholder="Capital One recruiters for SWE or PM internship roles"
-            />
-            <p className="text-xs text-muted-foreground">
-              Name the company explicitly — tighter ICPs usually earn higher reply rates.
-            </p>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="reply-cta">Desired reply</Label>
-            <select
-              id="reply-cta"
-              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
-              value={replyCta}
-              onChange={(e) => setReplyCta(e.target.value as OutreachReplyCta)}
-            >
-              {OUTREACH_REPLY_CTAS.map((cta) => (
-                <option key={cta} value={cta}>
-                  {REPLY_CTA_LABELS[cta]}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="space-y-3 rounded-xl border border-border/60 p-4">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={enableSequence}
-                onChange={(e) => setEnableSequence(e.target.checked)}
+        <Card size="lg">
+          <CardContent className="space-y-4">
+            <FormField label="Campaign name" id="campaign-name">
+              <Input
+                id="campaign-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Q3 fintech founders outreach"
               />
-              Enable follow-up sequence (improves reply rate)
-            </label>
-            {enableSequence && (
-              <div className="grid gap-3 sm:grid-cols-2">
-                {sequenceSteps.map((s, index) => (
-                  <div key={index} className="space-y-1.5">
-                    <Label>Follow-up {index + 1} delay (days)</Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      value={s.delayDays}
-                      onChange={(e) => {
-                        const next = [...sequenceSteps];
-                        next[index] = {
-                          ...next[index],
-                          delayDays: Math.max(1, Number(e.target.value) || 1),
-                        };
-                        setSequenceSteps(next);
-                      }}
-                    />
-                  </div>
-                ))}
+            </FormField>
+            <FormField
+              label="Who do you want to reach?"
+              id="audience"
+              required
+              hint="Name the company explicitly — tighter ICPs usually earn higher reply rates."
+            >
+              <Textarea
+                id="audience"
+                value={audienceQuery}
+                onChange={(e) => setAudienceQuery(e.target.value)}
+                rows={4}
+                placeholder="Capital One recruiters for SWE or PM internship roles"
+              />
+            </FormField>
+            <FormField label="Desired reply" id="reply-cta">
+              <ReplyCtaSelect id="reply-cta" value={replyCta} onChange={setReplyCta} />
+            </FormField>
+            <div className="space-y-3 rounded-lg border border-border-subtle bg-surface-inset p-4">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="enable-sequence"
+                  checked={enableSequence}
+                  onCheckedChange={(checked) => setEnableSequence(Boolean(checked))}
+                />
+                <Label htmlFor="enable-sequence" className="text-sm font-normal">
+                  Enable follow-up sequence (improves reply rate)
+                </Label>
               </div>
-            )}
-          </div>
-          <Button
-            onClick={handleAudienceNext}
-            disabled={pending || !audienceQuery.trim()}
-          >
-            Continue
-          </Button>
-        </section>
+              {enableSequence && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {sequenceSteps.map((s, index) => (
+                    <FormField key={index} label={`Follow-up ${index + 1} delay (days)`}>
+                      {(id) => (
+                        <Input
+                          id={id}
+                          type="number"
+                          min={1}
+                          value={s.delayDays}
+                          onChange={(e) => {
+                            const next = [...sequenceSteps];
+                            next[index] = {
+                              ...next[index],
+                              delayDays: Math.max(1, Number(e.target.value) || 1),
+                            };
+                            setSequenceSteps(next);
+                          }}
+                        />
+                      )}
+                    </FormField>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end">
+              <Button onClick={handleAudienceNext} disabled={pending || !audienceQuery.trim()}>
+                {pending ? "Saving…" : "Continue"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {step === 1 && (
-        <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
-          <AudienceFiltersEditor
-            filters={filters}
-            onChange={setFilters}
-            showDemoWarning={hasApollo === false}
-          />
-          {searchTotal !== null && (
-            <p className="text-sm text-muted-foreground">
-              Last search total: {searchTotal}
-              {lastSearchSource ? ` (${lastSearchSource})` : ""}
-            </p>
-          )}
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => setStep(0)} disabled={pending}>
-              Back
-            </Button>
-            <Button
-              onClick={handleSearch}
-              disabled={pending}
-            >
-              Search prospects
-            </Button>
-          </div>
-        </section>
+        <Card size="lg">
+          <CardContent className="space-y-4">
+            <AudienceFiltersEditor
+              filters={filters}
+              onChange={setFilters}
+              showDemoWarning={hasApollo === false}
+            />
+            {searchTotal !== null && (
+              <p className="text-sm text-muted-foreground">
+                Last search total: {searchTotal}
+                {lastSearchSource ? ` (${lastSearchSource === "demo" ? "demo" : "Apollo"})` : ""}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setStep(0)} disabled={pending}>
+                Back
+              </Button>
+              <Button onClick={handleSearch} disabled={pending}>
+                {pending ? "Searching…" : "Search prospects"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {step === 2 && (
-        <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
-          {lastSearchSource === "demo" && (
-            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
-              Drafts will use demo prospects. Add an Apollo key in Settings for live people.
-            </div>
-          )}
-          <div className="space-y-1.5">
-            <Label htmlFor="intent">Message intent</Label>
-            <Textarea
+        <Card size="lg">
+          <CardContent className="space-y-4">
+            {lastSearchSource === "demo" && (
+              <div className={cn("rounded-lg border px-3 py-2 text-xs", TONE.warning.box, TONE.warning.text)}>
+                Drafts will use demo prospects. Add an Apollo key in Settings for live people.
+              </div>
+            )}
+            <FormField
+              label="Message intent"
               id="intent"
-              value={messageIntent}
-              onChange={(e) => setMessageIntent(e.target.value)}
-              rows={3}
-              placeholder="Ask Capital One recruiters about SWE/PM internship hiring and the best next step"
-            />
-            <p className="text-xs text-muted-foreground">
-              This drives the draft — say if you are job-seeking, not selling a product.
-            </p>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="reply-cta-2">Desired reply / CTA</Label>
-            <select
-              id="reply-cta-2"
-              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
-              value={replyCta}
-              onChange={(e) => setReplyCta(e.target.value as OutreachReplyCta)}
+              required
+              hint="This drives the draft — say if you are job-seeking, not selling a product."
             >
-              {OUTREACH_REPLY_CTAS.map((cta) => (
-                <option key={cta} value={cta}>
-                  {REPLY_CTA_LABELS[cta]}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="tone">Tone</Label>
-              <select
-                id="tone"
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
-                value={tone}
-                onChange={(e) => setTone(e.target.value)}
-              >
-                {OUTREACH_TONES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
+              <Textarea
+                id="intent"
+                value={messageIntent}
+                onChange={(e) => setMessageIntent(e.target.value)}
+                rows={3}
+                placeholder="Ask Capital One recruiters about SWE/PM internship hiring and the best next step"
+              />
+            </FormField>
+            <FormField label="Desired reply / CTA" id="reply-cta-2">
+              <ReplyCtaSelect id="reply-cta-2" value={replyCta} onChange={setReplyCta} />
+            </FormField>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FormField label="Tone" id="tone">
+                <Select value={tone} onValueChange={(v) => setTone(String(v ?? "professional"))} items={TONE_ITEMS}>
+                  <SelectTrigger id="tone" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TONE_ITEMS.map((t) => (
+                      <SelectItem key={t.value} value={t.value}>
+                        {t.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </FormField>
+              <FormField label="Default channel" id="channel">
+                <Select
+                  value={channel}
+                  onValueChange={(v) => setChannel((v ?? "email") as OutreachChannel)}
+                  items={CHANNEL_ITEMS}
+                >
+                  <SelectTrigger id="channel" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CHANNEL_ITEMS.map((c) => (
+                      <SelectItem key={c.value} value={c.value}>
+                        {c.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </FormField>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="channel">Default channel</Label>
-              <select
-                id="channel"
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
-                value={channel}
-                onChange={(e) => setChannel(e.target.value as OutreachChannel)}
-              >
-                {OUTREACH_CHANNELS.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
+            <FormField label="Template seed" id="seed" optional>
+              <Textarea
+                id="seed"
+                value={templateSeed}
+                onChange={(e) => setTemplateSeed(e.target.value)}
+                rows={3}
+                placeholder="Hi {{name}}, I’m reaching out about internship recruiting…"
+              />
+            </FormField>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setStep(1)} disabled={pending}>
+                Back
+              </Button>
+              <Button onClick={handleMessageNext} disabled={pending || !messageIntent.trim()}>
+                {pending ? "Generating…" : "Generate drafts & open campaign"}
+              </Button>
             </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="seed">Template seed (optional)</Label>
-            <Textarea
-              id="seed"
-              value={templateSeed}
-              onChange={(e) => setTemplateSeed(e.target.value)}
-              rows={3}
-              placeholder="Hi {{name}}, I'm reaching out about internship recruiting..."
-            />
-          </div>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => setStep(1)} disabled={pending}>
-              Back
-            </Button>
-            <Button
-              onClick={handleMessageNext}
-              disabled={pending || !messageIntent.trim()}
-            >
-              Generate drafts & open campaign
-            </Button>
-          </div>
-        </section>
+          </CardContent>
+        </Card>
       )}
     </div>
   );

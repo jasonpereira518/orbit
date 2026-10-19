@@ -2,18 +2,19 @@
 
 import Link from "next/link";
 import { useState, useTransition } from "react";
-import { formatDistanceToNow } from "date-fns";
 import { CalendarSync, Check, Copy, ExternalLink } from "lucide-react";
 import {
   enableCalendarFeed,
   regenerateCalendarFeedToken,
   type CalendarFeedStatus,
 } from "@/actions/calendar-feed";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { RelativeTime } from "@/components/ui/relative-time";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { integrationHref } from "@/components/settings/sections";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
+import { TONE } from "@/lib/tone";
 import { cn } from "@/lib/utils";
 
 export type CalendarSyncSummary = { enabled: boolean; lastFetchedAt: string | null };
@@ -45,11 +46,15 @@ export function ReminderCalendarSync({ initial }: { initial: CalendarSyncSummary
   }
 
   const lastFetched = summary.lastFetchedAt ? new Date(summary.lastFetchedAt) : null;
-  const statusText = !summary.enabled
-    ? "Off"
-    : lastFetched
-      ? `Updated ${formatDistanceToNow(lastFetched, { addSuffix: true })}`
-      : "Waiting for your calendar";
+  const statusText = !summary.enabled ? (
+    "Off"
+  ) : lastFetched ? (
+    <>
+      Updated <RelativeTime date={lastFetched} />
+    </>
+  ) : (
+    "Waiting for your calendar"
+  );
 
   function mint(fn: () => Promise<CalendarFeedStatus>, success: string) {
     start(async () => {
@@ -75,9 +80,7 @@ export function ReminderCalendarSync({ initial }: { initial: CalendarSyncSummary
     }
   }
 
-  const linkAction = cn(
-    "inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-border/70 px-2.5 text-xs font-medium transition-colors hover:bg-muted"
-  );
+  const linkAction = buttonVariants({ variant: "outline", size: "sm" });
 
   return (
     <Popover
@@ -104,7 +107,7 @@ export function ReminderCalendarSync({ initial }: { initial: CalendarSyncSummary
           aria-hidden
           className={cn(
             "size-1.5 shrink-0 rounded-full",
-            !summary.enabled ? "bg-border" : lastFetched ? "bg-emerald-500" : "bg-amber-500"
+            !summary.enabled ? "bg-border" : lastFetched ? "bg-success" : "bg-warning"
           )}
         />
       </PopoverTrigger>
@@ -112,10 +115,10 @@ export function ReminderCalendarSync({ initial }: { initial: CalendarSyncSummary
         side="right"
         align="end"
         sideOffset={8}
-        className="w-80 space-y-3 rounded-2xl border border-border/70 bg-card p-4 shadow-lg ring-0"
+        className="w-80 space-y-3 rounded-xl border border-border-subtle bg-card p-4 shadow-sm ring-0"
       >
         <div>
-          <p className="text-sm font-medium">Reminders in your calendar</p>
+          <p className="text-sm font-medium text-ink">Reminders in your calendar</p>
           <p className="mt-1 text-xs text-muted-foreground">
             Dated reminders appear in Google, Apple or Outlook calendar as all-day events.
             One-way: each calendar checks for changes on its own schedule — Google can take
@@ -124,7 +127,7 @@ export function ReminderCalendarSync({ initial }: { initial: CalendarSyncSummary
         </div>
 
         {fresh?.url ? (
-          <div className="space-y-2 rounded-xl bg-muted/50 p-3">
+          <div className="space-y-2 rounded-lg border border-border-subtle bg-surface-inset p-3">
             <p className="text-xs font-medium">Add it now — Orbit won’t show this link again.</p>
             <div className="flex flex-wrap gap-1.5">
               {fresh.googleAddUrl && (
@@ -137,10 +140,10 @@ export function ReminderCalendarSync({ initial }: { initial: CalendarSyncSummary
                   <CalendarSync className="size-3.5" /> Apple Calendar
                 </a>
               )}
-              <button type="button" onClick={() => copy(fresh.url!)} className={linkAction}>
+              <Button type="button" variant="outline" size="sm" onClick={() => copy(fresh.url!)}>
                 {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
                 {copied ? "Copied" : "Copy link"}
-              </button>
+              </Button>
             </div>
             <p className="text-2xs text-muted-foreground">
               For Outlook, choose “Subscribe from web” and paste the link.
@@ -156,7 +159,7 @@ export function ReminderCalendarSync({ initial }: { initial: CalendarSyncSummary
             {pending ? "Creating…" : "Create calendar link"}
           </Button>
         ) : confirmingNew ? (
-          <div className="space-y-2 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] p-3">
+          <div className={cn("space-y-2 rounded-lg border p-3", TONE.warning.box)}>
             <p className="text-xs">
               This makes a new link. Calendars using the current one will stop updating until
               you add the new one to them.
@@ -178,9 +181,13 @@ export function ReminderCalendarSync({ initial }: { initial: CalendarSyncSummary
         ) : (
           <div className="space-y-2">
             <p className="text-xs text-muted-foreground">
-              {lastFetched
-                ? `Your calendar last checked ${formatDistanceToNow(lastFetched, { addSuffix: true })}.`
-                : "The link exists, but no calendar has checked it yet."}
+              {lastFetched ? (
+                <>
+                  Your calendar last checked <RelativeTime date={lastFetched} />.
+                </>
+              ) : (
+                "The link exists, but no calendar has checked it yet."
+              )}
             </p>
             <Button size="sm" variant="outline" className="w-full" onClick={() => setConfirmingNew(true)}>
               Add to another calendar

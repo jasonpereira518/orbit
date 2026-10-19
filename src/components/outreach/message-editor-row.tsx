@@ -33,10 +33,12 @@ export function MessageEditorRow({
 }) {
   const [localSubject, setLocalSubject] = useState(subject || "");
   const [localBody, setLocalBody] = useState(body);
-  const [pending, start] = useTransition();
+  const [saving, startSave] = useTransition();
+  const [regenerating, startRegenerate] = useTransition();
+  const pending = saving || regenerating;
 
   function save() {
-    start(async () => {
+    startSave(async () => {
       try {
         await updateOutreachMessage({
           messageId,
@@ -52,7 +54,7 @@ export function MessageEditorRow({
   }
 
   function regenerate() {
-    start(async () => {
+    startRegenerate(async () => {
       try {
         const updated = await regenerateOutreachDraft({
           campaignId,
@@ -70,15 +72,17 @@ export function MessageEditorRow({
   }
 
   return (
-    <div className="space-y-2 rounded-lg border border-border/60 bg-background/50 p-3">
+    <div className="space-y-2 rounded-lg border border-border-subtle bg-surface-inset p-3">
       {channel === "email" && (
         <Input
+          aria-label="Subject"
           value={localSubject}
           onChange={(e) => setLocalSubject(e.target.value)}
           placeholder="Subject"
         />
       )}
       <Textarea
+        aria-label="Message draft"
         value={localBody}
         onChange={(e) => setLocalBody(e.target.value)}
         rows={channel === "sms" ? 3 : 5}
@@ -86,11 +90,11 @@ export function MessageEditorRow({
       />
       <div className="flex gap-2">
         <Button size="sm" variant="outline" onClick={save} disabled={pending}>
-          Save
+          {saving ? "Saving…" : "Save"}
         </Button>
         <Button size="sm" variant="ghost" onClick={regenerate} disabled={pending}>
-          <RefreshCw className="mr-1 h-3.5 w-3.5" />
-          Regenerate
+          <RefreshCw className={regenerating ? "size-3.5 motion-safe:animate-spin" : "size-3.5"} />
+          {regenerating ? "Regenerating…" : "Regenerate"}
         </Button>
       </div>
     </div>

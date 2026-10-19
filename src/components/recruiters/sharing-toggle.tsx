@@ -6,6 +6,7 @@ import { Globe2, Lock } from "lucide-react";
 import { setRecruiterSharing } from "@/actions/recruiters";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { friendlyError } from "@/lib/errors";
 
 /**
@@ -50,26 +51,22 @@ export function RecruiterSharingToggle({ enabled }: { enabled: boolean }) {
   }
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-5">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+    <Card>
+      <CardHeader className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex gap-3">
           <div
             className={
               on
-                ? "mt-0.5 h-9 w-9 shrink-0 rounded-full bg-primary/10 p-2 text-primary"
-                : "mt-0.5 h-9 w-9 shrink-0 rounded-full bg-muted p-2 text-muted-foreground"
+                ? "mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
+                : "mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground"
             }
           >
-            {on ? (
-              <Globe2 className="h-5 w-5" />
-            ) : (
-              <Lock className="h-5 w-5" />
-            )}
+            {on ? <Globe2 className="size-5" aria-hidden /> : <Lock className="size-5" aria-hidden />}
           </div>
           <div className="min-w-0">
-            <h2 className="font-medium text-ink">
+            <CardTitle as="h2">
               {on ? "Sharing with the pool" : "Your list is private"}
-            </h2>
+            </CardTitle>
             <p className="mt-1 max-w-prose text-sm text-muted-foreground">
               {on
                 ? "Your recruiters are in the shared pool, so you can see everyone else’s too."
@@ -82,32 +79,33 @@ export function RecruiterSharingToggle({ enabled }: { enabled: boolean }) {
           type="button"
           disabled={pending}
           variant={on ? "outline" : "default"}
-          className={on ? undefined : "bg-primary text-primary-foreground"}
           onClick={() => toggle(!on)}
         >
           {pending ? "Saving…" : on ? "Make private" : "Share my list"}
         </Button>
-      </div>
+      </CardHeader>
 
-      <dl className="grid gap-3 border-t border-border/60 pt-4 text-sm sm:grid-cols-2">
-        <div>
-          <dt className="font-medium text-foreground">Shared while you share</dt>
-          <dd className="mt-1 text-muted-foreground">
-            Each recruiter’s name, firm and specialty, and your star rating as
-            part of the community average. Their work email, phone and LinkedIn
-            are shown only to other people who share their lists too — including
-            an address Orbit found in your inbox.
-          </dd>
-        </div>
-        <div>
-          <dt className="font-medium text-foreground">Never shared</dt>
-          <dd className="mt-1 text-muted-foreground">
-            Your notes, your AI interaction summaries, your status and the text
-            of your emails. While your list is private, the contact details and
-            ratings you log stay out of the pool too.
-          </dd>
-        </div>
-      </dl>
-    </section>
+      <CardContent>
+        <dl className="grid gap-3 border-t border-border-subtle pt-4 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="font-medium text-foreground">Shared while you share</dt>
+            <dd className="mt-1 text-muted-foreground">
+              Each recruiter’s name, firm and specialty, and your star rating as
+              part of the community average. Their work email, phone and LinkedIn
+              are shown only to other people who share their lists too — including
+              an address Orbit found in your inbox.
+            </dd>
+          </div>
+          <div>
+            <dt className="font-medium text-foreground">Never shared</dt>
+            <dd className="mt-1 text-muted-foreground">
+              Your notes, your AI interaction summaries, your status and the text
+              of your emails. While your list is private, the contact details and
+              ratings you log stay out of the pool too.
+            </dd>
+          </div>
+        </dl>
+      </CardContent>
+    </Card>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { CornerUpLeft, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { stripReply } from "@/lib/email/reply-subject";
 import type { ReplyTarget } from "@/lib/email/reply-targets";
@@ -48,7 +49,7 @@ export function ReplyPicker({
     })),
   ];
   return (
-    <div className="flex min-h-9 min-w-0 items-center gap-2 border-b border-border/60 py-1">
+    <div className="flex min-h-9 min-w-0 items-center gap-2 border-b border-border-subtle py-1">
       <CornerUpLeft className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
       <Select
         value={value ?? NEW}
@@ -71,15 +72,17 @@ export function ReplyPicker({
         </SelectContent>
       </Select>
       {value && (
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon-xs"
+          className="shrink-0 text-muted-foreground"
           aria-label="Send as a new email"
-          className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-50"
           onClick={() => onChange(null)}
           disabled={disabled}
         >
           <X className="size-3.5" aria-hidden />
-        </button>
+        </Button>
       )}
     </div>
   );

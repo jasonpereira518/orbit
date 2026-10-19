@@ -12,6 +12,16 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { EmptyState } from "@/components/ui/empty-state";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableFrame,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { MessageEditorRow } from "@/components/outreach/message-editor-row";
 import { OutcomeControls } from "@/components/outreach/outcome-controls";
 import { OutreachActions } from "@/components/outreach/outreach-actions";
@@ -20,6 +30,8 @@ import type { WarmPath } from "@/lib/warm-paths";
 import { buildLinkedInSearchUrl, buildLinkedInUrl, channelLabel } from "@/lib/outreach-channels";
 import { isAwaitingReply, isDeliveredMessage } from "@/lib/outreach-metrics";
 import type { OutreachChannel, PipelineFilter } from "@/lib/outreach-types";
+import { TONE, type Tone } from "@/lib/tone";
+import { cn } from "@/lib/utils";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
@@ -55,6 +67,54 @@ export type ProspectRow = {
   }>;
 };
 
+/** Stored prospect status → chip. The stored values never change. */
+function labelForProspectStatus(status: string): { label: string; tone: Tone } {
+  switch (status) {
+    case "selected":
+      return { label: "Selected", tone: "accent" };
+    case "excluded":
+      return { label: "Excluded", tone: "neutral" };
+    default:
+      return { label: "Suggested", tone: "neutral" };
+  }
+}
+
+/** Stored message status → chip. */
+function labelForMessageStatus(status: string): { label: string; tone: Tone } {
+  switch (status) {
+    case "sent":
+      return { label: "Sent", tone: "success" };
+    case "scheduled":
+      return { label: "Scheduled", tone: "info" };
+    case "failed":
+      return { label: "Didn’t send", tone: "destructive" };
+    case "copied":
+      return { label: "Copied", tone: "neutral" };
+    case "opened":
+      return { label: "Opened", tone: "neutral" };
+    case "skipped":
+      return { label: "Skipped", tone: "neutral" };
+    case "generated":
+      return { label: "Drafted", tone: "neutral" };
+    default:
+      return { label: "Draft", tone: "neutral" };
+  }
+}
+
+const PIPELINE_LABELS: Record<PipelineFilter, string> = {
+  all: "All",
+  needs_draft: "Needs draft",
+  ready: "Ready",
+  sent: "Sent",
+  awaiting_reply: "Awaiting reply",
+  follow_up_due: "Follow-up due",
+  replied: "Replied",
+  closed: "Closed",
+};
+
+function labelForPipeline(pipeline: PipelineFilter) {
+  return PIPELINE_LABELS[pipeline] ?? pipeline.replaceAll("_", " ");
+}
 
 /**
  * "You already know 2 people at Stripe" — the line that should stop a cold email being sent.
@@ -77,7 +137,7 @@ function WarmPathNote({
   if (!paths?.length) return null;
 
   return (
-    <div className="mt-1.5 rounded-lg border border-primary/30 bg-primary/5 px-2 py-1.5 text-xs">
+    <div className={cn("mt-1.5 rounded-lg border px-2 py-1.5 text-xs", TONE.accent.box)}>
       <span className="font-medium text-ink">
         You know {paths.length} {paths.length === 1 ? "person" : "people"} here
       </span>
@@ -98,6 +158,16 @@ function WarmPathNote({
     </div>
   );
 }
+
+/**
+ * The column name, shown inside the cell only while the table is reflowed into cards —
+ * the header row that normally names these columns is hidden below `md`.
+ */
+const CELL_LABEL =
+  "mb-1 block text-xs font-medium uppercase tracking-wider text-muted-foreground md:hidden";
+
+/** A cell in the reflowed layout: no padding of its own below `md`, the row carries it. */
+const CELL = "p-0 align-top md:table-cell md:px-4 md:py-3";
 
 export function ProspectTable({
   campaignId,
@@ -164,14 +234,15 @@ export function ProspectTable({
 
   if (!prospects.length) {
     return (
-      <div className="rounded-2xl border border-dashed border-border/70 p-10 text-center text-sm text-muted-foreground">
-        No prospects in this view. Adjust filters or run a search from the campaign wizard.
-      </div>
+      <EmptyState
+        title="No prospects in this view"
+        description="Adjust the filters or run a search from the campaign wizard."
+      />
     );
   }
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-border/70 bg-card">
+    <TableFrame className="overflow-hidden md:overflow-x-auto">
       {/*
         A table from `md` up, and the same markup reflowed into stacked cards below it.
 
@@ -182,225 +253,239 @@ export function ProspectTable({
         with CSS rather than rendering a second, card-shaped copy of each row keeps one
         instance of the draft editor and the send controls, which both hold state.
       */}
-      <div className="md:overflow-x-auto">
-        <table className="block w-full text-sm md:table md:min-w-[980px]">
-          <thead className="hidden border-b border-border/70 bg-muted/30 text-left text-muted-foreground md:table-header-group">
-            <tr>
-              <th className="px-4 py-3 w-10" />
-              <th className="px-4 py-3">Person</th>
-              <th className="px-4 py-3">Contact</th>
-              <th className="px-4 py-3">Draft</th>
-              <th className="px-4 py-3">Actions / outcome</th>
-            </tr>
-          </thead>
-          <tbody className="block md:table-row-group">
-            {prospects.map((prospect) => {
-              const message = prospect.message;
-              const channel = (message?.channel || defaultChannel) as OutreachChannel;
-              const isSelected = prospect.status === "selected";
-              const awaiting =
-                message &&
-                isAwaitingReply({
-                  id: message.id,
-                  status: message.status,
-                  outcome: message.outcome ?? null,
-                  sentAt: message.sentAt ?? null,
-                });
-              const delivered =
-                message &&
-                isDeliveredMessage({
-                  id: message.id,
-                  status: message.status,
-                  outcome: message.outcome ?? null,
-                  sentAt: message.sentAt ?? null,
-                });
-              const profileUrl = prospect.linkedinUrl
-                ? buildLinkedInUrl(prospect.linkedinUrl)
-                : null;
-              const searchUrl = buildLinkedInSearchUrl(
-                prospect.fullName,
-                prospect.company
-              );
+      <Table className="block md:table md:min-w-[980px]">
+        <TableHeader className="hidden bg-surface-inset md:table-header-group">
+          <TableRow className="hover:bg-transparent">
+            <TableHead className="w-10 px-4 py-3" />
+            <TableHead className="px-4 py-3">Person</TableHead>
+            <TableHead className="px-4 py-3">Contact</TableHead>
+            <TableHead className="px-4 py-3">Draft</TableHead>
+            <TableHead className="px-4 py-3">Actions / outcome</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody className="block md:table-row-group">
+          {prospects.map((prospect) => {
+            const message = prospect.message;
+            const channel = (message?.channel || defaultChannel) as OutreachChannel;
+            const isSelected = prospect.status === "selected";
+            const awaiting =
+              message &&
+              isAwaitingReply({
+                id: message.id,
+                status: message.status,
+                outcome: message.outcome ?? null,
+                sentAt: message.sentAt ?? null,
+              });
+            const delivered =
+              message &&
+              isDeliveredMessage({
+                id: message.id,
+                status: message.status,
+                outcome: message.outcome ?? null,
+                sentAt: message.sentAt ?? null,
+              });
+            const profileUrl = prospect.linkedinUrl
+              ? buildLinkedInUrl(prospect.linkedinUrl)
+              : null;
+            const searchUrl = buildLinkedInSearchUrl(
+              prospect.fullName,
+              prospect.company
+            );
+            const prospectStatus = labelForProspectStatus(prospect.status);
+            const messageStatus = message?.status ? labelForMessageStatus(message.status) : null;
 
-              return (
-                <tr
-                  key={prospect.id}
-                  className={`grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-4 border-b border-border/50 px-4 py-4 align-top last:border-b-0 md:table-row md:p-0 md:last:border-b ${
-                    awaiting ? "bg-primary/[0.03]" : ""
-                  }`}
-                >
-                  <td className="pt-0.5 md:table-cell md:px-4 md:py-3">
-                    <Checkbox
-                      checked={isSelected}
-                      onCheckedChange={(checked) =>
-                        toggleSelection(prospect.id, Boolean(checked))
-                      }
-                      disabled={pending}
-                    />
-                  </td>
-                  <td className="min-w-0 md:table-cell md:px-4 md:py-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium text-ink">
-                        {prospect.fullName}
-                      </span>
-                      {profileUrl ? (
+            return (
+              <TableRow
+                key={prospect.id}
+                className={cn(
+                  "grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-4 px-4 py-4 align-top md:table-row md:p-0",
+                  awaiting && "bg-primary/[0.03]"
+                )}
+              >
+                <TableCell className={cn(CELL, "pt-0.5")}>
+                  <Checkbox
+                    checked={isSelected}
+                    onCheckedChange={(checked) =>
+                      toggleSelection(prospect.id, Boolean(checked))
+                    }
+                    disabled={pending}
+                    aria-label={`Select ${prospect.fullName}`}
+                  />
+                </TableCell>
+                <TableCell className={cn(CELL, "min-w-0")}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-ink">
+                      {prospect.fullName}
+                    </span>
+                    {profileUrl ? (
+                      <a
+                        href={profileUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline"
+                        title="Open LinkedIn profile"
+                      >
+                        <ExternalLink className="size-3.5" aria-hidden />
+                        LinkedIn
+                      </a>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5">
                         <a
-                          href={profileUrl}
+                          href={searchUrl}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline"
-                          title="Open LinkedIn profile"
+                          className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-primary hover:underline"
+                          title="Search LinkedIn for this person"
                         >
-                          <ExternalLink className="h-3.5 w-3.5" />
-                          LinkedIn
+                          <ExternalLink className="size-3.5" aria-hidden />
+                          Find on LinkedIn
                         </a>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5">
-                          <a
-                            href={searchUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-primary hover:underline"
-                            title="Search LinkedIn for this person"
-                          >
-                            <ExternalLink className="h-3.5 w-3.5" />
-                            Find on LinkedIn
-                          </a>
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            disabled={pending}
-                            onClick={() => enrich(prospect.id)}
-                          >
-                            Enrich
-                          </Button>
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-muted-foreground">
-                      {prospect.title || "—"}
-                      {prospect.company ? ` @ ${prospect.company}` : ""}
-                    </div>
-                    {/* The warm path, directly under the company it belongs to.
-                        This is the whole point of the feature: the moment a person decides
-                        whether to send a cold email is the moment they need to know they do
-                        not have to. Putting it anywhere else on the page — a panel, a tab —
-                        would be putting it somewhere they are not looking. */}
-                    <WarmPathNote company={prospect.company} warmPaths={warmPaths} />
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      <Badge variant="outline">{prospect.status}</Badge>
-                      {prospect.isDemo && <Badge variant="outline">Demo</Badge>}
-                      {prospect.companyMismatch && (
-                        <Badge variant="outline">Company mismatch</Badge>
-                      )}
-                      {prospect.pipeline && prospect.pipeline !== "all" && (
-                        <Badge variant="outline">
-                          {prospect.pipeline.replaceAll("_", " ")}
-                        </Badge>
-                      )}
-                      {message?.status && (
-                        <Badge variant="outline">{message.status}</Badge>
-                      )}
-                      {(message?.stepIndex ?? 0) > 0 && (
-                        <Badge variant="outline">Follow-up {message?.stepIndex}</Badge>
-                      )}
-                    </div>
-                  </td>
-                  <td className="col-start-2 min-w-0 text-muted-foreground md:table-cell md:px-4 md:py-3">
-                    <span className={CELL_LABEL}>Contact</span>
-                    <div>{prospect.email || "—"}</div>
-                    <div>{prospect.phone || "—"}</div>
-                    <div className="mt-2">
-                      {prospect.contactId ? (
-                        <IntentLink
-                          href={`/contacts/${prospect.contactId}`}
-                          className="text-primary underline-offset-2 hover:underline"
-                        >
-                          View contact
-                        </IntentLink>
-                      ) : (
                         <Button
                           size="xs"
-                          variant="outline"
-                          onClick={() => saveContact(prospect.id)}
+                          variant="ghost"
                           disabled={pending}
+                          onClick={() => enrich(prospect.id)}
                         >
-                          <UserPlus className="mr-1 h-3 w-3" />
-                          Save to Orbit
+                          Enrich
                         </Button>
-                      )}
-                    </div>
-                  </td>
-                  <td className="col-start-2 min-w-0 md:table-cell md:px-4 md:py-3">
-                    <span className={CELL_LABEL}>Draft</span>
-                    {message ? (
-                      <div className="space-y-2">
-                        <Badge variant="outline">{channelLabel(channel)}</Badge>
-                        {expanded === prospect.id ? (
-                          <MessageEditorRow
-                            campaignId={campaignId}
-                            prospectId={prospect.id}
-                            messageId={message.id}
-                            channel={channel}
-                            subject={message.subject}
-                            body={message.body}
-                            onUpdated={onUpdated}
-                          />
-                        ) : (
-                          <button
-                            type="button"
-                            className="line-clamp-3 text-left text-muted-foreground hover:text-foreground"
-                            onClick={() => setExpanded(prospect.id)}
-                          >
-                            {message.body || "Empty draft — click to edit"}
-                          </button>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-muted-foreground">No draft</span>
+                      </span>
                     )}
-                  </td>
-                  <td className="col-start-2 min-w-0 max-md:has-[>div:empty]:hidden md:table-cell md:px-4 md:py-3">
-                    <div className="space-y-3">
-                      {message && !delivered && (
-                        <OutreachActions
+                  </div>
+                  <div className="text-muted-foreground">
+                    {prospect.title || "—"}
+                    {prospect.company ? ` @ ${prospect.company}` : ""}
+                  </div>
+                  {/* The warm path, directly under the company it belongs to.
+                      This is the whole point of the feature: the moment a person decides
+                      whether to send a cold email is the moment they need to know they do
+                      not have to. Putting it anywhere else on the page — a panel, a tab —
+                      would be putting it somewhere they are not looking. */}
+                  <WarmPathNote company={prospect.company} warmPaths={warmPaths} />
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    <Badge tone={prospectStatus.tone} size="sm">
+                      {prospectStatus.label}
+                    </Badge>
+                    {prospect.isDemo && (
+                      <Badge tone="warning" size="sm">
+                        Demo
+                      </Badge>
+                    )}
+                    {prospect.companyMismatch && (
+                      <Badge tone="warning" size="sm">
+                        Company mismatch
+                      </Badge>
+                    )}
+                    {prospect.pipeline && prospect.pipeline !== "all" && (
+                      <Badge tone="neutral" size="sm">
+                        {labelForPipeline(prospect.pipeline)}
+                      </Badge>
+                    )}
+                    {messageStatus && (
+                      <Badge tone={messageStatus.tone} size="sm">
+                        {messageStatus.label}
+                      </Badge>
+                    )}
+                    {(message?.stepIndex ?? 0) > 0 && (
+                      <Badge tone="neutral" size="sm">
+                        Follow-up {message?.stepIndex}
+                      </Badge>
+                    )}
+                  </div>
+                </TableCell>
+                <TableCell className={cn(CELL, "col-start-2 min-w-0 text-muted-foreground")}>
+                  <span className={CELL_LABEL}>Contact</span>
+                  <div>{prospect.email || "—"}</div>
+                  <div>{prospect.phone || "—"}</div>
+                  <div className="mt-2">
+                    {prospect.contactId ? (
+                      <IntentLink
+                        href={`/contacts/${prospect.contactId}`}
+                        className="text-primary underline-offset-2 hover:underline"
+                      >
+                        View contact
+                      </IntentLink>
+                    ) : (
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() => saveContact(prospect.id)}
+                        disabled={pending}
+                      >
+                        <UserPlus className="size-3" />
+                        Save to Orbit
+                      </Button>
+                    )}
+                  </div>
+                </TableCell>
+                <TableCell className={cn(CELL, "col-start-2 min-w-0")}>
+                  <span className={CELL_LABEL}>Draft</span>
+                  {message ? (
+                    <div className="space-y-2">
+                      <Badge tone="neutral" size="sm">
+                        {channelLabel(channel)}
+                      </Badge>
+                      {expanded === prospect.id ? (
+                        <MessageEditorRow
+                          campaignId={campaignId}
+                          prospectId={prospect.id}
                           messageId={message.id}
                           channel={channel}
                           subject={message.subject}
                           body={message.body}
-                          prospect={{
-                            email: prospect.email,
-                            phone: prospect.phone,
-                            linkedinUrl: prospect.linkedinUrl,
-                          }}
                           onUpdated={onUpdated}
                         />
-                      )}
-                      {message && delivered && (
-                        <OutcomeControls
-                          messageId={message.id}
-                          currentOutcome={message.outcome}
-                          onUpdated={onUpdated}
-                        />
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-auto w-full justify-start px-0 py-0 text-left font-normal whitespace-normal text-muted-foreground hover:bg-transparent"
+                          onClick={() => setExpanded(prospect.id)}
+                          aria-label="Edit draft"
+                        >
+                          <span className="line-clamp-3">
+                            {message.body || "Empty draft — click to edit"}
+                          </span>
+                        </Button>
                       )}
                     </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
+                  ) : (
+                    <span className="text-muted-foreground">No draft</span>
+                  )}
+                </TableCell>
+                <TableCell className={cn(CELL, "col-start-2 min-w-0 max-md:has-[>div:empty]:hidden")}>
+                  <div className="space-y-3">
+                    {message && !delivered && (
+                      <OutreachActions
+                        messageId={message.id}
+                        channel={channel}
+                        subject={message.subject}
+                        body={message.body}
+                        prospect={{
+                          email: prospect.email,
+                          phone: prospect.phone,
+                          linkedinUrl: prospect.linkedinUrl,
+                        }}
+                        onUpdated={onUpdated}
+                      />
+                    )}
+                    {message && delivered && (
+                      <OutcomeControls
+                        messageId={message.id}
+                        currentOutcome={message.outcome}
+                        onUpdated={onUpdated}
+                      />
+                    )}
+                  </div>
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </TableFrame>
   );
 }
-
-/**
- * The column name, shown inside the cell only while the table is reflowed into cards —
- * the header row that normally names these columns is hidden below `md`.
- */
-const CELL_LABEL =
-  "mb-1 block text-2xs font-medium uppercase tracking-wide text-muted-foreground/80 md:hidden";
 
 export function useSelectedProspectIds(prospects: ProspectRow[]) {
   return useMemo(

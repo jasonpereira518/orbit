@@ -67,20 +67,20 @@ export function ReminderDoneSnooze({ id }: { id: string }) {
           )
         }
       >
-        <Check className="h-3.5 w-3.5" />
+        <Check className="size-3.5" />
       </Button>
       <Button
         size="icon-sm"
         variant="ghost"
         disabled={pending}
-        aria-label="Snooze for a week"
+        aria-label="Snooze 7 days"
         className="tap-target relative"
-        title="Snooze for a week"
+        title="Snooze 7 days"
         onClick={() =>
           start(() =>
             runToastAction({
               run: () => snoozeReminderAction(id, 7),
-              success: "Snoozed for a week",
+              success: "Snoozed 7 days",
               failure: "Couldn’t snooze that — try again?",
               refresh: () => router.refresh(),
               undo: (snap) => (snap ? () => unsnoozeReminderAction(snap) : null),
@@ -89,7 +89,7 @@ export function ReminderDoneSnooze({ id }: { id: string }) {
           )
         }
       >
-        <Clock className="h-3.5 w-3.5" />
+        <Clock className="size-3.5" />
       </Button>
     </div>
   );

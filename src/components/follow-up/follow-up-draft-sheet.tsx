@@ -194,7 +194,7 @@ export function FollowUpDraftSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="flex w-full flex-col gap-0 overflow-y-auto sm:max-w-md"
+        className="flex w-full flex-col gap-0 overflow-y-auto sm:max-w-lg"
       >
         <SheetHeader>
           <SheetTitle>{title ?? `Follow up with ${contactName}`}</SheetTitle>
@@ -212,7 +212,7 @@ export function FollowUpDraftSheet({
               disabled={pending}
               onClick={regenerate}
             >
-              <RefreshCw className={`size-3.5 ${pending ? "animate-spin" : ""}`} />
+              <RefreshCw className={pending ? "size-3.5 motion-safe:animate-spin" : "size-3.5"} aria-hidden />
               {pending ? "Drafting…" : draft ? "Regenerate" : "Generate"}
             </Button>
           </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { Copy, ExternalLink, Send } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
@@ -18,8 +18,7 @@ import {
 } from "@/lib/outreach-channels";
 import type { OutreachChannel } from "@/lib/outreach-types";
 import { DangerSendDialog } from "@/components/outreach/danger-send-dialog";
-import { useState } from "react";
-import { friendlyError } from "@/lib/errors";
+import { UserFacingError, friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
 type ProspectInfo = {
@@ -94,28 +93,22 @@ export function OutreachActions({
     });
   }
 
-  function handleSend() {
-    start(async () => {
-      try {
-        const res = await sendOutreachMessageAction(messageId);
-        if (!res.ok) {
-          toast.error(res.error);
-          return;
-        }
-        toast.success(`${channelLabel(channel)} sent`);
-        setDangerOpen(false);
-        refresh();
-      } catch (err) {
-        toast.error(friendlyError(err, TOAST_COPY.sendFailed));
-      }
-    });
+  /**
+   * Awaited by the confirm dialog, which closes on success and shows the thrown message
+   * inline otherwise — so a declined send keeps the dialog open rather than toasting.
+   */
+  async function sendNow() {
+    const res = await sendOutreachMessageAction(messageId);
+    if (!res.ok) throw new UserFacingError(res.error);
+    toast.success(`${channelLabel(channel)} sent`);
+    refresh();
   }
 
   return (
     <>
       <div className="flex flex-wrap gap-1.5">
         <Button size="sm" variant="outline" onClick={handleCopy} disabled={pending}>
-          <Copy className="mr-1 h-3.5 w-3.5" />
+          <Copy className="size-3.5" />
           Copy
         </Button>
         <Button
@@ -124,18 +117,17 @@ export function OutreachActions({
           onClick={handleOpen}
           disabled={pending || !canOpen}
         >
-          <ExternalLink className="mr-1 h-3.5 w-3.5" />
+          <ExternalLink className="size-3.5" />
           Open
         </Button>
         {canSend && (
           <Button
             size="sm"
-            variant="outline"
-            className="border-destructive text-destructive hover:bg-destructive/10"
+            variant="destructive"
             onClick={() => setDangerOpen(true)}
             disabled={pending}
           >
-            <Send className="mr-1 h-3.5 w-3.5" />
+            <Send className="size-3.5" />
             Send
           </Button>
         )}
@@ -146,8 +138,7 @@ export function OutreachActions({
         onOpenChange={setDangerOpen}
         recipientCount={1}
         channel={channelLabel(channel)}
-        onConfirm={handleSend}
-        pending={pending}
+        onConfirm={sendNow}
       />
     </>
   );

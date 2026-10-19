@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import { useMemo, useState, useTransition } from "react";
-import { formatDistanceToNow } from "date-fns";
 import {
   Check,
   Coffee,
@@ -18,7 +17,9 @@ import {
   X,
 } from "lucide-react";
 import { draftFollowUpResponse } from "@/actions/reminders";
+import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { RelativeTime } from "@/components/ui/relative-time";
 import { ReminderFormFields } from "@/components/reminders/reminder-form-dialog";
 import { ReminderSnoozeMenu } from "@/components/reminders/reminder-snooze-menu";
 import { friendlyError } from "@/lib/errors";
@@ -26,6 +27,7 @@ import { dueLabelFor } from "@/lib/reminder-due-bucket";
 import { reminderTypeLabel, reminderTypeStyle } from "@/lib/reminder-display";
 import type { ReminderRow } from "@/lib/reminders-page";
 import { toast } from "@/lib/toast";
+import { TOAST_COPY } from "@/lib/toast-copy";
 import { cn } from "@/lib/utils";
 import { DraftLinkWarning } from "@/components/follow-up/draft-link-warning";
 
@@ -80,15 +82,15 @@ export function ReminderDetailPane({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex shrink-0 items-center gap-1 border-b border-border/60 px-3 py-2 pointer-coarse:gap-4">
+      <header className="flex shrink-0 items-center gap-1 border-b border-border-subtle px-3 py-2 pointer-coarse:gap-4">
         <h2 className="sr-only">Reminder details</h2>
         {!isDone && (
-          <Button size="sm" variant="ghost" className="tap-target relative h-7 gap-1.5 px-2 text-xs" onClick={() => onDone(item.id)}>
+          <Button size="sm" variant="ghost" className="tap-target relative" onClick={() => onDone(item.id)}>
             <Check className="size-3.5" /> Done
           </Button>
         )}
         {isDone && (
-          <Button size="sm" variant="ghost" className="tap-target relative h-7 gap-1.5 px-2 text-xs" onClick={() => onReopen(item.id)}>
+          <Button size="sm" variant="ghost" className="tap-target relative" onClick={() => onReopen(item.id)}>
             <RotateCcw className="size-3.5" /> Reopen
           </Button>
         )}
@@ -155,7 +157,7 @@ export function ReminderDetailPane({
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="mb-2 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+    <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
       {children}
     </h3>
   );
@@ -184,14 +186,18 @@ function ContactSection({ item }: { item: ReminderRow }) {
       <SectionHeading>
         <span id={`contact-${item.id}`}>Person</span>
       </SectionHeading>
-      <div className="rounded-xl border border-border/70 p-3">
+      <div className="rounded-lg border border-border-subtle p-3">
         <IntentLink href={`/contacts/${item.contactId}`} className="text-sm font-medium text-primary hover:underline">
           {item.contactName ?? "Linked contact"}
         </IntentLink>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          {item.contactLastTouch
-            ? `Last in touch ${formatDistanceToNow(new Date(item.contactLastTouch), { addSuffix: true })}`
-            : "No logged conversations yet"}
+          {item.contactLastTouch ? (
+            <>
+              Last in touch <RelativeTime date={item.contactLastTouch} />
+            </>
+          ) : (
+            "No interactions yet"
+          )}
         </p>
         <div className="mt-3 flex flex-wrap gap-1.5">
           <Link href={`/capture?contactId=${item.contactId}`} className={action}>
@@ -219,17 +225,17 @@ function ContactSection({ item }: { item: ReminderRow }) {
           )}
         </div>
         {draft && (
-          <div className="mt-3 rounded-lg bg-muted/50 p-3">
+          <div className="mt-3 rounded-lg border border-border-subtle bg-surface-inset p-3">
             <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="text-3xs font-medium uppercase tracking-wide text-muted-foreground">Draft</p>
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Draft</p>
               <Button
                 type="button"
                 size="sm"
                 variant="ghost"
-                className="h-7 gap-1 px-2 text-xs"
+                className="h-7 px-2"
                 onClick={() => {
                   void navigator.clipboard.writeText(draft);
-                  toast.success("Copied to clipboard", { keep: false });
+                  toast.success(TOAST_COPY.copied, { keep: false });
                 }}
               >
                 <Copy className="size-3" /> Copy
@@ -256,26 +262,22 @@ function ProvenanceSection({ item }: { item: ReminderRow }) {
       </SectionHeading>
       <div className="space-y-2 text-sm">
         <div className="flex flex-wrap items-center gap-1.5">
-          <span
-            className={cn(
-              "rounded-full px-2 py-0.5 text-3xs font-medium uppercase tracking-wide",
-              reminderTypeStyle(item.reminderType)
-            )}
-          >
+          <Badge size="sm" className={reminderTypeStyle(item.reminderType)}>
             {label}
-          </span>
+          </Badge>
           {item.origin === "implied" && (
-            <span
-              className="rounded-full bg-muted px-2 py-0.5 text-3xs font-medium uppercase tracking-wide text-muted-foreground"
-              title="Orbit inferred this from what was discussed; the notes didn't say it outright."
+            <Badge
+              tone="neutral"
+              size="sm"
+              title="Orbit inferred this from what was discussed; the notes didn’t say it outright."
             >
               Implied
               {item.confidenceScore != null ? ` · ${item.confidenceScore}%` : ""}
-            </span>
+            </Badge>
           )}
         </div>
         {item.sourceExcerpt && (
-          <blockquote className="rounded-lg border-l-2 border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          <blockquote className="rounded-lg border-l-2 border-border bg-surface-inset px-3 py-2 text-xs text-muted-foreground">
             {item.rawDatePhrase && (
               <span className="mb-1 block font-medium text-foreground">“{item.rawDatePhrase}”</span>
             )}

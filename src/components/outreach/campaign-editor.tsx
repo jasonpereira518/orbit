@@ -6,8 +6,15 @@ import { useRouter } from "next/navigation";
 import { toast } from "@/lib/toast";
 import { updateCampaign } from "@/actions/outreach";
 import { Button } from "@/components/ui/button";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Sheet,
   SheetContent,
@@ -17,6 +24,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
+import { channelLabel } from "@/lib/outreach-channels";
 import {
   OUTREACH_CHANNELS,
   OUTREACH_TONES,
@@ -31,6 +39,14 @@ const CAMPAIGN_STATUSES = [
   { value: "completed", label: "Completed" },
   { value: "archived", label: "Archived" },
 ] as const;
+
+/** Stored tone → Title-cased word. The stored values never change. */
+function labelForTone(tone: string) {
+  return tone.charAt(0).toUpperCase() + tone.slice(1);
+}
+
+const TONE_ITEMS = OUTREACH_TONES.map((t) => ({ value: t, label: labelForTone(t) }));
+const CHANNEL_ITEMS = OUTREACH_CHANNELS.map((c) => ({ value: c, label: channelLabel(c) }));
 
 export type CampaignEditorInitial = {
   id: string;
@@ -100,7 +116,7 @@ export function CampaignEditor({
             ? () => trigger as ReactElement
             : () => (
                 <Button variant="outline" size="sm">
-                  <Pencil className="mr-1 h-3.5 w-3.5" />
+                  <Pencil className="size-3.5" />
                   Edit campaign
                 </Button>
               )
@@ -115,34 +131,32 @@ export function CampaignEditor({
           </SheetDescription>
         </SheetHeader>
 
-        <div className="mt-6 space-y-4 px-1">
-          <div className="space-y-1.5">
-            <Label htmlFor="edit-name">Campaign name</Label>
-            <Input
-              id="edit-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
+        <div className="space-y-4 px-4 pb-4">
+          <FormField label="Campaign name" id="edit-name">
+            <Input id="edit-name" value={name} onChange={(e) => setName(e.target.value)} />
+          </FormField>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="edit-status">Status</Label>
-            <select
-              id="edit-status"
-              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
-              value={status}
-              onChange={(e) => setStatus(e.target.value)}
-            >
-              {CAMPAIGN_STATUSES.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </div>
+          <FormField label="Status" id="edit-status">
+            <Select value={status} onValueChange={(v) => setStatus(String(v ?? "draft"))} items={CAMPAIGN_STATUSES}>
+              <SelectTrigger id="edit-status" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {CAMPAIGN_STATUSES.map((s) => (
+                  <SelectItem key={s.value} value={s.value}>
+                    {s.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FormField>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="edit-audience">Audience</Label>
+          <FormField
+            label="Audience"
+            id="edit-audience"
+            required
+            hint="Saving updates search filters. Use “Re-run search” to fetch new prospects."
+          >
             <Textarea
               id="edit-audience"
               value={audienceQuery}
@@ -150,64 +164,58 @@ export function CampaignEditor({
               rows={4}
               placeholder="Who you want to reach"
             />
-            <p className="text-xs text-muted-foreground">
-              Saving updates search filters. Use &quot;Re-run search&quot; to fetch new
-              prospects.
-            </p>
-          </div>
+          </FormField>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="edit-intent">Message intent / CTA</Label>
+          <FormField label="Message intent / CTA" id="edit-intent">
             <Textarea
               id="edit-intent"
               value={messageIntent}
               onChange={(e) => setMessageIntent(e.target.value)}
               rows={3}
             />
-          </div>
+          </FormField>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="edit-tone">Tone</Label>
-              <select
-                id="edit-tone"
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
-                value={tone}
-                onChange={(e) => setTone(e.target.value)}
-              >
-                {OUTREACH_TONES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="edit-channel">Default channel</Label>
-              <select
-                id="edit-channel"
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+            <FormField label="Tone" id="edit-tone">
+              <Select value={tone} onValueChange={(v) => setTone(String(v ?? "professional"))} items={TONE_ITEMS}>
+                <SelectTrigger id="edit-tone" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TONE_ITEMS.map((t) => (
+                    <SelectItem key={t.value} value={t.value}>
+                      {t.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FormField>
+            <FormField label="Default channel" id="edit-channel">
+              <Select
                 value={channel}
-                onChange={(e) => setChannel(e.target.value as OutreachChannel)}
+                onValueChange={(v) => setChannel((v ?? "email") as OutreachChannel)}
+                items={CHANNEL_ITEMS}
               >
-                {OUTREACH_CHANNELS.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </div>
+                <SelectTrigger id="edit-channel" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CHANNEL_ITEMS.map((c) => (
+                    <SelectItem key={c.value} value={c.value}>
+                      {c.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FormField>
           </div>
 
-          <div className="flex gap-2 pt-2">
-            <Button
-              onClick={save}
-              disabled={pending || !audienceQuery.trim()}
-            >
-              Save changes
-            </Button>
+          <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => setOpen(false)} disabled={pending}>
               Cancel
+            </Button>
+            <Button onClick={save} disabled={pending || !audienceQuery.trim()}>
+              {pending ? "Saving…" : "Save changes"}
             </Button>
           </div>
         </div>

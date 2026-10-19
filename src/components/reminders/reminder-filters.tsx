@@ -73,7 +73,7 @@ export const ReminderFilters = forwardRef<
     <div
       role="search"
       className={cn(
-        "flex h-10 w-full min-w-0 items-center gap-1 rounded-full border border-border/70 bg-card pl-3 pr-1 shadow-sm",
+        "flex h-10 w-full min-w-0 items-center gap-1 rounded-full border border-border-subtle bg-card pl-3 pr-1 shadow-xs",
         "focus-within:border-primary/40 focus-within:ring-[3px] focus-within:ring-primary/15"
       )}
     >

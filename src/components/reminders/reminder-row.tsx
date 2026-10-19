@@ -16,6 +16,8 @@ import {
   Trash2,
 } from "lucide-react";
 import type { ReminderActionKind } from "@/db/schema";
+import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu,
@@ -203,7 +205,7 @@ export const ReminderRow = memo(function ReminderRow({
               isDone
                 ? "border-primary bg-primary text-primary-foreground"
                 : due?.bucket === "overdue"
-                  ? "border-amber-500/70 hover:border-primary hover:bg-primary/10"
+                  ? "border-warning/70 hover:border-primary hover:bg-primary/10"
                   : "border-border hover:border-primary hover:bg-primary/10"
             )}
           >
@@ -249,14 +251,9 @@ export const ReminderRow = memo(function ReminderRow({
                 </span>
               )}
               {isNoteworthyType(item.reminderType, item.noteBatchId) && (
-                <span
-                  className={cn(
-                    "rounded-full px-1.5 py-px text-3xs font-medium uppercase tracking-wide",
-                    reminderTypeStyle(item.reminderType)
-                  )}
-                >
+                <Badge size="sm" className={reminderTypeStyle(item.reminderType)}>
                   {reminderTypeLabel(item.reminderType, item.noteBatchId)}
-                </span>
+                </Badge>
               )}
             </div>
           </div>
@@ -287,7 +284,7 @@ export const ReminderRow = memo(function ReminderRow({
               <DropdownMenuTrigger
                 aria-label="More actions"
                 title="More actions"
-                className="tap-target relative inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                className={cn(buttonVariants({ variant: "ghost", size: "icon-sm" }), "tap-target relative text-muted-foreground")}
               >
                 <MoreHorizontal className="size-3.5" />
               </DropdownMenuTrigger>

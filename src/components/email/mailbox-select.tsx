@@ -1,9 +1,8 @@
 "use client";
 
+import { IntegrationLogo } from "@/components/integrations/integration-logo";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Mailbox, MailboxId } from "@/lib/email/sender";
-
-const NAME: Record<MailboxId, string> = { gmail: "Gmail", outlook: "Outlook" };
 
 /** Pick which connected mailbox sends. Only mailboxes that can send right now are offered. */
 export function MailboxSelect({
@@ -21,7 +20,15 @@ export function MailboxSelect({
 }) {
   const items = mailboxes
     .filter((m) => m.canSend)
-    .map((m) => ({ value: m.id, label: `${m.email} (${NAME[m.id]})` }));
+    .map((m) => ({
+      value: m.id,
+      label: (
+        <span className="inline-flex min-w-0 items-center gap-1.5">
+          <IntegrationLogo provider={m.id} size="sm" tile={false} title="" />
+          <span className="truncate">{m.email}</span>
+        </span>
+      ),
+    }));
   return (
     <Select
       value={value}

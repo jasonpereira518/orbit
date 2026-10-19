@@ -40,6 +40,7 @@ import type {
   ReminderRailCounts,
   ReminderView,
 } from "@/lib/reminders-page";
+import { TONE } from "@/lib/tone";
 import { cn } from "@/lib/utils";
 
 /** What the queue is showing. `suggested` is the review queue for note-extracted dates. */
@@ -153,7 +154,7 @@ export function ReminderRail({
                       className="flex items-center gap-1.5 font-medium tabular-nums text-warning"
                       title={`${counts.overdue} overdue`}
                     >
-                      <span aria-hidden className="size-1.5 rounded-full bg-amber-500" />
+                      <span aria-hidden className="size-1.5 rounded-full bg-warning" />
                       {n}
                       <span className="sr-only">, {counts.overdue} overdue</span>
                     </span>
@@ -170,11 +171,10 @@ export function ReminderRail({
             <RailButton
               active={target.kind === "view" && target.view === "suggested"}
               onClick={() => onSelect({ kind: "view", view: "suggested" })}
-              icon={<Sparkles className="size-4 text-amber-600 dark:text-amber-300" />}
+              icon={<Sparkles className="size-4 text-warning" />}
               label="Suggested"
-              className="text-amber-900 dark:text-amber-100"
               trailing={
-                <span className="rounded-full bg-amber-500/15 px-1.5 text-2xs font-medium tabular-nums text-amber-800 dark:text-amber-200">
+                <span className={cn("rounded-full px-1.5 text-2xs font-medium tabular-nums", TONE.warning.chip)}>
                   {counts.suggested}
                   <span className="sr-only"> to review</span>
                 </span>
@@ -185,7 +185,7 @@ export function ReminderRail({
       </ul>
 
       <div>
-        <h2 className="mb-1.5 px-2.5 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+        <h2 className="mb-1.5 px-2.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
           Lists
         </h2>
         <ul className="space-y-0.5">
@@ -278,7 +278,7 @@ export function ReminderRail({
       </div>
 
       {calendar && (
-        <div className="border-t border-border/60 pt-3">
+        <div className="border-t border-border-subtle pt-3">
           <ReminderCalendarSync initial={calendar} />
         </div>
       )}

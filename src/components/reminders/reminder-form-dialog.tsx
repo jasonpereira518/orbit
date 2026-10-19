@@ -28,8 +28,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
@@ -174,8 +174,7 @@ export function ReminderFormFields({
 
   return (
     <div className="space-y-3">
-      <div className="space-y-2">
-        <Label htmlFor={`${idPrefix}-title`}>Title</Label>
+      <FormField label="Title" id={`${idPrefix}-title`} required>
         <Input
           id={`${idPrefix}-title`}
           value={title}
@@ -186,10 +185,9 @@ export function ReminderFormFields({
           placeholder="Call Alex about intro"
           autoFocus={autoFocusTitle}
         />
-      </div>
+      </FormField>
 
-      <div className="space-y-2">
-        <Label htmlFor={`${idPrefix}-notes`}>Notes</Label>
+      <FormField label="Notes" id={`${idPrefix}-notes`}>
         <Textarea
           id={`${idPrefix}-notes`}
           value={description}
@@ -197,11 +195,10 @@ export function ReminderFormFields({
           rows={compact ? 3 : 2}
           placeholder="Optional context"
         />
-      </div>
+      </FormField>
 
       <div className={compact ? "grid gap-3" : "grid gap-3 sm:grid-cols-2"}>
-        <div className="space-y-2">
-          <Label htmlFor={`${idPrefix}-due`}>Due date</Label>
+        <FormField label="Due date" id={`${idPrefix}-due`}>
           <div className="flex items-center gap-1.5">
             <DatePickerButton
               value={dueDate || null}
@@ -223,10 +220,9 @@ export function ReminderFormFields({
               </Button>
             ) : null}
           </div>
-        </div>
+        </FormField>
         {lists.length > 0 ? (
-          <div className="space-y-2">
-            <Label htmlFor={`${idPrefix}-list`}>List</Label>
+          <FormField label="List" id={`${idPrefix}-list`}>
             <Select
               value={selectedListId}
               onValueChange={(v) => setSelectedListId(String(v ?? ""))}
@@ -243,10 +239,9 @@ export function ReminderFormFields({
                 ))}
               </SelectContent>
             </Select>
-          </div>
+          </FormField>
         ) : null}
-        <div className="space-y-2">
-          <Label htmlFor={`${idPrefix}-contact`}>Contact</Label>
+        <FormField label="Contact" id={`${idPrefix}-contact`}>
           <ReminderContactPicker
             id={`${idPrefix}-contact`}
             value={contact}
@@ -254,9 +249,8 @@ export function ReminderFormFields({
             placeholder="None"
             triggerClassName="w-full"
           />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor={`${idPrefix}-kind`}>Action type</Label>
+        </FormField>
+        <FormField label="Action type" id={`${idPrefix}-kind`}>
           <Select
             value={actionKind}
             onValueChange={(v) => setActionKind((v ?? "auto") as ReminderActionKind | "auto")}
@@ -273,7 +267,7 @@ export function ReminderFormFields({
               ))}
             </SelectContent>
           </Select>
-        </div>
+        </FormField>
       </div>
 
       <div className="flex justify-end gap-2 pt-1">
@@ -315,7 +309,7 @@ export function ReminderFormDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg" showCloseButton>
+      <DialogContent className="sm:max-w-md" showCloseButton>
         <DialogHeader>
           <DialogTitle>
             {mode === "edit" ? "Edit reminder" : "New reminder"}

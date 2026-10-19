@@ -3,6 +3,8 @@ import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { OutreachLocked } from "@/components/locked-feature";
+import { PageHeader } from "@/components/layout/page-header";
+import { PageShell } from "@/components/layout/page-shell";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
 export default async function NewOutreachPage() {
@@ -15,17 +17,14 @@ export default async function NewOutreachPage() {
   if (!canUseOutreach) return <OutreachLocked />;
 
   return (
-    <div className="space-y-6">
+    <PageShell width="wide">
       <RenderStamp />
-      <div>
-        <h1 className="font-heading text-3xl text-ink">
-          New outreach campaign
-        </h1>
-        <p className="mt-1 text-muted-foreground">
-          Define a tight audience, a desired reply, and personalized drafts optimized for response rate
-        </p>
-      </div>
+      <PageHeader
+        back={{ href: "/outreach", label: "Back to outreach" }}
+        title="New outreach campaign"
+        description="Define a tight audience, a desired reply, and personalized drafts optimized for response rate."
+      />
       <OutreachWizard />
-    </div>
+    </PageShell>
   );
 }

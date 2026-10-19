@@ -46,7 +46,7 @@ export function PendingSends({
     });
 
   return (
-    <section aria-label="Emails in progress" className="flex flex-col gap-2 rounded-2xl border border-border/70 p-3">
+    <section aria-label="Emails in progress" className="flex flex-col gap-2 rounded-xl border border-border-subtle p-3">
       {sends.map((s) => {
         const failed = s.status === "failed";
         const maybeSent = failed && s.failureKind === "ambiguous";
@@ -133,7 +133,7 @@ export function PendingSends({
                     })
                   }
                 >
-                  Retry
+                  Try again
                 </Button>
               )}
               {retryable && canEdit && (

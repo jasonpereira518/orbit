@@ -34,6 +34,7 @@ import {
   unsnoozeReminderAction,
 } from "@/actions/reminders";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Sheet,
@@ -208,7 +209,7 @@ export function NotificationsPanelButton({
         variant="outline"
         size="icon"
         className={cn(
-          "relative size-10 rounded-full border-border/70 bg-background/90 shadow-md backdrop-blur-md transition-opacity hover:bg-background",
+          "relative size-10 rounded-full border-border-subtle bg-background/90 shadow-md backdrop-blur-md transition-opacity hover:bg-background",
           // The open window covers this exact spot, and the glass is see-through enough
           // that the bell would read as a smudge underneath it. Hiding it also sells the
           // illusion that the button became the panel. Opacity rather than `hidden` so it
@@ -240,7 +241,7 @@ export function NotificationsPanelButton({
           setOpen(true);
         }}
       >
-        <Bell className="h-4 w-4" />
+        <Bell className="size-4" />
         {/* Always mounted so the count can pop OUT as well as in (`.t-badge` in
             globals.css). `shownCount` holds the last non-zero value through the exit, or
             the number would blank to nothing while the badge is still shrinking. */}
@@ -282,7 +283,7 @@ export function NotificationsPanelButton({
           style={{ transformOrigin: origin }}
           showCloseButton
         >
-          <SheetHeader className="border-b border-border/60 pr-12">
+          <SheetHeader className="border-b border-border-subtle pr-12">
             <SheetTitle className="font-heading text-lg text-ink">
               Notifications
             </SheetTitle>
@@ -297,15 +298,11 @@ export function NotificationsPanelButton({
             {loading && !data ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
             ) : !hasAnything ? (
-              <div className="rounded-2xl border border-dashed border-border/70 px-4 py-10 text-center">
-                <Bell className="mx-auto h-5 w-5 text-muted-foreground" />
-                <p className="mt-3 text-sm font-medium text-ink">
-                  {alerts.length > 0 ? "Nothing due" : "You're all caught up"}
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  New reminders and follow-ups will show up here.
-                </p>
-              </div>
+              <EmptyState
+                icon={Bell}
+                title={alerts.length > 0 ? "Nothing due" : "You’re all caught up"}
+                description="New reminders and follow-ups will show up here."
+              />
             ) : (
               <div className="space-y-4">
                 <Section title="Due now" count={dueItems.length}>
@@ -333,16 +330,18 @@ export function NotificationsPanelButton({
                     />
                   ))}
                   {dueItems.length > DUE_VISIBLE && (
-                    <button
+                    <Button
                       type="button"
-                      className="px-0.5 text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                      variant="link"
+                      size="xs"
+                      className="px-0.5 text-muted-foreground hover:text-foreground"
                       aria-expanded={showAllDue}
                       onClick={() => setShowAllDue((v) => !v)}
                     >
                       {showAllDue
                         ? "See less"
                         : `See ${dueItems.length - DUE_VISIBLE} more`}
-                    </button>
+                    </Button>
                   )}
                 </Section>
 
@@ -386,13 +385,15 @@ export function NotificationsPanelButton({
                     />
                   ))}
                   {kept.length > 1 && (
-                    <button
+                    <Button
                       type="button"
-                      className="px-0.5 text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                      variant="link"
+                      size="xs"
+                      className="px-0.5 text-muted-foreground hover:text-foreground"
                       onClick={() => clearKeptNotifications()}
                     >
                       Clear all
-                    </button>
+                    </Button>
                   )}
                 </Section>
               </div>
@@ -415,10 +416,10 @@ export function NotificationsPanelButton({
           <AccountAlerts
             alerts={alerts}
             onNavigate={() => setOpen(false)}
-            className="max-h-[30%] shrink-0 overflow-y-auto border-t border-border/60 px-4 py-3"
+            className="max-h-[30%] shrink-0 overflow-y-auto border-t border-border-subtle px-4 py-3"
           />
 
-          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border/60 p-4">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border-subtle p-4">
             <Link
               href="/dashboard"
               onClick={() => setOpen(false)}
@@ -439,7 +440,7 @@ export function NotificationsPanelButton({
                   "h-7 gap-1.5 px-2.5 text-xs"
                 )}
               >
-                <Shield className="h-3.5 w-3.5" />
+                <Shield className="size-3.5" />
                 Admin console
               </Link>
             )}
@@ -463,7 +464,7 @@ function Section({
   return (
     <section className="space-y-2">
       <div className="flex items-center justify-between px-0.5">
-        <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
           {title}
         </h3>
         <span className="text-xs text-muted-foreground">{count}</span>
@@ -477,7 +478,7 @@ function Section({
  * Rows are one or two lines: a title, a single muted meta line, and icon-only actions on
  * the right. The old cards stacked an icon disc, a body paragraph and a button row.
  */
-const ROW = "flex items-center gap-3 rounded-lg border border-border/30 bg-popover px-3.5 py-3";
+const ROW = "flex items-center gap-3 rounded-lg border border-border-subtle bg-popover px-3.5 py-3";
 /** Soft disc behind each row's leading icon. */
 function IconDisc({ children }: { children: React.ReactNode }) {
   return (
@@ -486,7 +487,7 @@ function IconDisc({ children }: { children: React.ReactNode }) {
     </span>
   );
 }
-const ICON_BTN = "size-7 shrink-0 text-muted-foreground";
+const ICON_BTN = "shrink-0 text-muted-foreground";
 
 /**
  * A toast that timed out before it was dealt with. The icon carries the tone: a failure
@@ -510,9 +511,9 @@ function KeptRow({
     <div className={ROW}>
       <IconDisc>
         {entry.tone === "error" ? (
-          <XCircle className="h-4 w-4 text-destructive" />
+          <XCircle className="size-4 text-destructive" />
         ) : (
-          <Clock className="h-4 w-4 text-muted-foreground" />
+          <Clock className="size-4 text-muted-foreground" />
         )}
       </IconDisc>
       <div className="min-w-0 flex-1">
@@ -537,13 +538,13 @@ function KeptRow({
       )}
       <Button
         type="button"
-        size="icon"
+        size="icon-sm"
         variant="ghost"
         className={ICON_BTN}
         aria-label="Dismiss notification"
         onClick={() => dismissKeptNotification(entry.id)}
       >
-        <X className="h-3.5 w-3.5" />
+        <X className="size-3.5" />
       </Button>
     </div>
   );
@@ -558,13 +559,13 @@ function JobRow({ job }: { job: BackgroundJob }) {
     <div className={ROW}>
       <IconDisc>
       {running ? (
-        <Loader2 className="h-4 w-4 animate-spin text-primary" />
+        <Loader2 className="size-4 text-primary motion-safe:animate-spin" aria-hidden />
       ) : job.status === "completed" ? (
-        <CheckCircle2 className="h-4 w-4 text-primary" />
+        <CheckCircle2 className="size-4 text-primary" />
       ) : job.status === "failed" ? (
-        <XCircle className="h-4 w-4 text-destructive" />
+        <XCircle className="size-4 text-destructive" />
       ) : (
-        <XCircle className="h-4 w-4 text-muted-foreground" />
+        <XCircle className="size-4 text-muted-foreground" />
       )}
       </IconDisc>
       <div className="min-w-0 flex-1">
@@ -581,11 +582,11 @@ function JobRow({ job }: { job: BackgroundJob }) {
         </p>
         {running && (
           <div className="mt-1 flex items-center gap-2">
-            <div className="h-1 flex-1 overflow-hidden rounded-full bg-border/80">
+            <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
               <div
                 className={cn(
-                  "h-full rounded-full bg-primary transition-[width] duration-300 ease-out",
-                  !determinate && "w-1/3 animate-pulse"
+                  "h-full rounded-full bg-primary transition-[width] duration-slow ease-out",
+                  !determinate && "w-1/3 motion-safe:animate-pulse"
                 )}
                 style={determinate ? { width: `${pct}%` } : undefined}
               />
@@ -612,13 +613,13 @@ function JobRow({ job }: { job: BackgroundJob }) {
       {!running && (
         <Button
           type="button"
-          size="icon"
+          size="icon-sm"
           variant="ghost"
           className={ICON_BTN}
           aria-label="Dismiss"
           onClick={() => dismissBackgroundJob(job.id)}
         >
-          <X className="h-3.5 w-3.5" />
+          <X className="size-3.5" />
         </Button>
       )}
     </div>
@@ -643,7 +644,7 @@ function RadarRow({
   return (
     <div className={cn(ROW, "bg-popover")}>
       <IconDisc>
-        <Radar className="h-4 w-4 text-muted-foreground" />
+        <Radar className="size-4 text-muted-foreground" />
       </IconDisc>
       <Link href="/radar" onClick={onNavigate} className="min-w-0 flex-1 hover:underline">
         <span className="block truncate text-sm font-medium text-ink">
@@ -689,7 +690,7 @@ function NotificationRow({
   return (
     <div className={cn(ROW, "border-primary/15 bg-popover")}>
       <IconDisc>
-        <Icon className="h-4 w-4 text-muted-foreground" />
+        <Icon className="size-4 text-muted-foreground" />
       </IconDisc>
       <Link
         href={item.url}
@@ -720,7 +721,7 @@ function NotificationRow({
       </Link>
       {item.kind === "reminder" && onSnooze && (
         <Button
-          size="icon"
+          size="icon-sm"
           variant="ghost"
           className={ICON_BTN}
           disabled={pending}
@@ -728,12 +729,12 @@ function NotificationRow({
           title="Snooze 7 days"
           onClick={onSnooze}
         >
-          <Clock className="h-3.5 w-3.5" />
+          <Clock className="size-3.5" />
         </Button>
       )}
       {onDone && (
         <Button
-          size="icon"
+          size="icon-sm"
           variant="ghost"
           className={ICON_BTN}
           disabled={pending}
@@ -744,7 +745,7 @@ function NotificationRow({
             onDone();
           }}
         >
-          <Check className="h-3.5 w-3.5" />
+          <Check className="size-3.5" />
         </Button>
       )}
     </div>

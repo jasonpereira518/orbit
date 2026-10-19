@@ -14,6 +14,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DatePickerButton } from "@/components/ui/date-picker";
 import { shortDayLabel } from "@/lib/reminder-due-bucket";
+import { TONE } from "@/lib/tone";
+import { TOAST_COPY } from "@/lib/toast-copy";
 import { cn } from "@/lib/utils";
 
 function isoDayValue(d: Date) {
@@ -59,12 +61,12 @@ export function SuggestedRemindersPanel({
     <section
       className={cn(
         "space-y-3",
-        !embedded && "rounded-2xl border border-amber-500/30 bg-amber-500/[0.04] p-5"
+        !embedded && cn("rounded-xl border p-5", TONE.warning.box)
       )}
     >
       {!embedded && (
         <div className="flex items-center gap-2">
-          <Sparkles className="size-4 text-amber-600 dark:text-amber-300" />
+          <Sparkles className="size-4 text-warning" aria-hidden />
           <h2 className="text-sm font-medium text-foreground">
             Suggested from your notes
           </h2>
@@ -144,7 +146,7 @@ function SuggestionRow({
   }
 
   return (
-    <li className="rounded-xl border border-border/70 bg-card p-3">
+    <li className="rounded-xl border border-border-subtle bg-card p-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1 space-y-1">
           {editing ? (
@@ -160,7 +162,7 @@ function SuggestionRow({
                 label={shortDayLabel(dueDate)}
                 className={cn(
                   "h-8 font-normal",
-                  item.yearInferred && "ring-1 ring-amber-500/50"
+                  item.yearInferred && "ring-1 ring-warning/50"
                 )}
               />
             </div>
@@ -183,20 +185,23 @@ function SuggestionRow({
             </p>
           )}
 
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="xs"
+            className="h-auto px-0 py-0 font-normal text-muted-foreground hover:bg-transparent"
+            aria-expanded={showSource}
             onClick={() => setShowSource((v) => !v)}
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
           >
             {showSource ? (
-              <ChevronUp className="size-3" />
+              <ChevronUp className="size-3" aria-hidden />
             ) : (
-              <ChevronDown className="size-3" />
+              <ChevronDown className="size-3" aria-hidden />
             )}
             from &ldquo;{item.rawDatePhrase}&rdquo;
-          </button>
+          </Button>
           {showSource && (
-            <p className="rounded-lg bg-muted/50 p-2 text-xs text-muted-foreground">
+            <p className="rounded-lg border border-border-subtle bg-surface-inset p-2 text-xs text-muted-foreground">
               {item.sourceExcerpt}
             </p>
           )}
@@ -220,7 +225,7 @@ function SuggestionRow({
             className="tap-target relative"
             disabled={pending || !title.trim()}
             onClick={() =>
-              run("Reminder added", "Couldn’t add that reminder — try again?", () =>
+              run(TOAST_COPY.reminderSet, "Couldn’t add that reminder — try again?", () =>
                 confirmSuggestedReminder(item.id, {
                   title: title.trim(),
                   dueDate,

@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
-import { AlertTriangle, Loader2, Mail, Send, Trash2 } from "lucide-react";
+import { AlertTriangle, Loader2, Send, Trash2 } from "lucide-react";
 import {
   discardRecruiterDrafts,
   generateRecruiterDrafts,
@@ -11,10 +11,20 @@ import {
 } from "@/actions/recruiter-messages";
 import type { RecruiterDraft } from "@/lib/recruiter-message-types";
 import { startGmailOAuth, type GmailSendIdentity } from "@/actions/gmail";
+import { IntegrationLogo } from "@/components/integrations/integration-logo";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { EmptyState } from "@/components/ui/empty-state";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
@@ -78,42 +88,43 @@ export function ComposeWorkspace({
         <SendIdentityCard identity={identity} />
         {identity.connected && !canSend && <ReconnectBanner />}
 
-        <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-5">
-          <div>
-            <h2 className="font-medium text-ink">1. What do you want to say?</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
+        <Card>
+          <CardHeader>
+            <CardTitle as="h2">1. What do you want to say?</CardTitle>
+            <CardDescription>
               Orbit writes each email from your history with that recruiter. You review
               every one before anything sends.
-            </p>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="compose-intent">Message intent</Label>
-            <select
-              id="compose-intent"
-              className="flex h-9 w-full max-w-sm rounded-lg border border-input bg-transparent px-3 text-sm"
-              value={intent}
-              onChange={(e) => setIntent(e.target.value)}
-            >
-              {intents.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </section>
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <FormField label="Message intent" id="compose-intent" className="max-w-sm">
+              <Select value={intent} onValueChange={(v) => setIntent(String(v ?? intent))} items={intents}>
+                <SelectTrigger id="compose-intent" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {intents.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FormField>
+          </CardContent>
+        </Card>
 
-        <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
+        <Card>
+          <CardHeader className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 className="font-medium text-ink">2. Who should get it?</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
+              <CardTitle as="h2">2. Who should get it?</CardTitle>
+              <CardDescription className="mt-1">
                 {sendable.length} recruiter{sendable.length === 1 ? "" : "s"} with an
                 email address.
                 {missingEmail > 0
                   ? ` ${missingEmail} hidden — no address on file.`
                   : ""}
-              </p>
+              </CardDescription>
             </div>
             <Button
               variant="outline"
@@ -127,80 +138,84 @@ export function ComposeWorkspace({
                 )
               }
             >
-              {picked.size === sendable.length ? "Clear all" : "Select all"}
+              {picked.size === sendable.length ? "Clear selection" : "Select all"}
             </Button>
-          </div>
-
-          {sendable.length === 0 ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">
-              None of your recruiters have an email address yet. Scan Gmail or add one
-              on a recruiter&apos;s page.
-            </p>
-          ) : (
-            <ul className="divide-y divide-border/60 rounded-xl border border-border/60">
-              {sendable.map((r) => (
-                <li key={r.id}>
-                  <label className="flex cursor-pointer items-start gap-3 px-3 py-2.5">
-                    <Checkbox
-                      checked={picked.has(r.id)}
-                      onCheckedChange={() => setPicked((p) => toggle(p, r.id))}
-                    />
-                    <span className="min-w-0 flex-1 text-sm">
-                      <span className="block font-medium">{r.fullName}</span>
-                      <span className="block text-muted-foreground">
-                        {r.firm || "Unknown firm"} · {r.email}
-                      </span>
-                      {!r.hasHistory && (
-                        <span className="mt-0.5 block text-xs text-muted-foreground/80">
-                          No history yet — the draft will be more generic.
-                        </span>
-                      )}
-                    </span>
-                  </label>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          <Button
-            disabled={pending || picked.size === 0}
-            className="bg-primary text-primary-foreground"
-            onClick={() =>
-              start(async () => {
-                try {
-                  const res = await generateRecruiterDrafts(
-                    Array.from(picked),
-                    intent
-                  );
-                  if (!res.ok) {
-                    toast.error(res.error);
-                    return;
-                  }
-                  const created = res.value;
-                  setDrafts(created);
-                  setSelectedDrafts(new Set(created.map((d) => d.id)));
-                  setPicked(new Set());
-                  toast.success(
-                    `Drafted ${created.length} email${created.length === 1 ? "" : "s"}`
-                  );
-                } catch (err) {
-                  toast.error(
-                    friendlyError(err, "Couldn’t write those drafts — try again?")
-                  );
-                }
-              })
-            }
-          >
-            {pending ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Drafting…
-              </>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {sendable.length === 0 ? (
+              <EmptyState
+                variant="plain"
+                size="sm"
+                title="No recruiters with an email address"
+                description="Scan your inbox or add an address on a recruiter’s page."
+              />
             ) : (
-              `Draft ${picked.size || ""} email${picked.size === 1 ? "" : "s"}`.trim()
+              <ul className="divide-y divide-border-subtle rounded-lg border border-border-subtle">
+                {sendable.map((r) => (
+                  <li key={r.id}>
+                    <label className="flex cursor-pointer items-start gap-3 px-3 py-2.5">
+                      <Checkbox
+                        checked={picked.has(r.id)}
+                        onCheckedChange={() => setPicked((p) => toggle(p, r.id))}
+                      />
+                      <span className="min-w-0 flex-1 text-sm">
+                        <span className="block font-medium">{r.fullName}</span>
+                        <span className="block text-muted-foreground">
+                          {r.firm || "Unknown firm"} · {r.email}
+                        </span>
+                        {!r.hasHistory && (
+                          <span className="mt-0.5 block text-xs text-muted-foreground/80">
+                            No history yet — the draft will be more generic.
+                          </span>
+                        )}
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
             )}
-          </Button>
-        </section>
+
+            <div className="flex justify-end">
+              <Button
+                disabled={pending || picked.size === 0}
+                onClick={() =>
+                  start(async () => {
+                    try {
+                      const res = await generateRecruiterDrafts(
+                        Array.from(picked),
+                        intent
+                      );
+                      if (!res.ok) {
+                        toast.error(res.error);
+                        return;
+                      }
+                      const created = res.value;
+                      setDrafts(created);
+                      setSelectedDrafts(new Set(created.map((d) => d.id)));
+                      setPicked(new Set());
+                      toast.success(
+                        `Drafted ${created.length} email${created.length === 1 ? "" : "s"}`
+                      );
+                    } catch (err) {
+                      toast.error(
+                        friendlyError(err, "Couldn’t write those drafts — try again?")
+                      );
+                    }
+                  })
+                }
+              >
+                {pending ? (
+                  <>
+                    <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden />
+                    Drafting…
+                  </>
+                ) : (
+                  `Draft ${picked.size || ""} email${picked.size === 1 ? "" : "s"}`.trim()
+                )}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -210,90 +225,88 @@ export function ComposeWorkspace({
       <SendIdentityCard identity={identity} />
       {identity.connected && !canSend && <ReconnectBanner />}
 
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border/70 bg-card p-5">
-        <div>
-          <h2 className="font-medium text-ink">
-            {drafts.length} draft{drafts.length === 1 ? "" : "s"} ready
-          </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Read each one before sending. {quota.remaining} of {quota.limit} sends left
-            today.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            disabled={pending}
-            onClick={() =>
-              start(async () => {
-                await discardRecruiterDrafts(drafts.map((d) => d.id));
-                setDrafts([]);
-                setSelectedDrafts(new Set());
-                toast.success("Drafts discarded");
-                router.refresh();
-              })
-            }
-          >
-            <Trash2 className="mr-1.5 h-4 w-4" />
-            Discard all
-          </Button>
-          <Button
-            className="bg-primary text-primary-foreground"
-            disabled={pending || selectedDrafts.size === 0 || !canSend}
-            onClick={() =>
-              start(async () => {
-                try {
-                  const res = await sendRecruiterDrafts(
-                    Array.from(selectedDrafts)
-                  );
-                  if (!res.ok) {
-                    toast.error(res.error);
-                    return;
-                  }
-                  const result = res.value;
-                  if (result.sent > 0) {
-                    toast.success(
-                      `Sent ${result.sent} email${result.sent === 1 ? "" : "s"}`
+      <Card>
+        <CardHeader className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <CardTitle as="h2">
+              {drafts.length} draft{drafts.length === 1 ? "" : "s"} ready
+            </CardTitle>
+            <CardDescription className="mt-1">
+              Read each one before sending. {quota.remaining} of {quota.limit} sends left
+              today.
+            </CardDescription>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              disabled={pending}
+              onClick={() =>
+                start(async () => {
+                  await discardRecruiterDrafts(drafts.map((d) => d.id));
+                  setDrafts([]);
+                  setSelectedDrafts(new Set());
+                  toast.success("Drafts discarded");
+                  router.refresh();
+                })
+              }
+            >
+              <Trash2 className="size-4" />
+              Discard all
+            </Button>
+            <Button
+              disabled={pending || selectedDrafts.size === 0 || !canSend}
+              onClick={() =>
+                start(async () => {
+                  try {
+                    const res = await sendRecruiterDrafts(
+                      Array.from(selectedDrafts)
+                    );
+                    if (!res.ok) {
+                      toast.error(res.error);
+                      return;
+                    }
+                    const result = res.value;
+                    if (result.sent > 0) {
+                      toast.success(
+                        `Sent ${result.sent} email${result.sent === 1 ? "" : "s"}`
+                      );
+                    }
+                    // Each failure is already a whole sentence that names the person.
+                    for (const f of result.failed) {
+                      toast.error(f.error);
+                    }
+                    setDrafts((prev) =>
+                      prev.filter((d) => !selectedDrafts.has(d.id))
+                    );
+                    setSelectedDrafts(new Set());
+                    router.refresh();
+                  } catch (err) {
+                    toast.error(
+                      friendlyError(err, TOAST_COPY.sendFailed)
                     );
                   }
-                  // Each failure is already a whole sentence that names the person.
-                  for (const f of result.failed) {
-                    toast.error(f.error);
-                  }
-                  setDrafts((prev) =>
-                    prev.filter((d) => !selectedDrafts.has(d.id))
-                  );
-                  setSelectedDrafts(new Set());
-                  router.refresh();
-                } catch (err) {
-                  toast.error(
-                    friendlyError(err, TOAST_COPY.sendFailed)
-                  );
-                }
-              })
-            }
-          >
-            {pending ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Sending…
-              </>
-            ) : (
-              <>
-                <Send className="mr-1.5 h-4 w-4" />
-                Send {selectedDrafts.size} selected
-              </>
-            )}
-          </Button>
-        </div>
-      </div>
+                })
+              }
+            >
+              {pending ? (
+                <>
+                  <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden />
+                  Sending…
+                </>
+              ) : (
+                <>
+                  <Send className="size-4" />
+                  Send {selectedDrafts.size} selected
+                </>
+              )}
+            </Button>
+          </div>
+        </CardHeader>
+      </Card>
 
       <ul className="space-y-4">
         {drafts.map((d) => (
-          <li
-            key={d.id}
-            className="space-y-3 rounded-2xl border border-border/70 bg-card p-5"
-          >
+          <li key={d.id} className="space-y-3 rounded-xl border border-border-subtle bg-card p-5">
             <div className="flex items-start gap-3">
               <Checkbox
                 checked={selectedDrafts.has(d.id)}
@@ -301,6 +314,7 @@ export function ComposeWorkspace({
                   setSelectedDrafts((p) => toggle(p, d.id))
                 }
                 className="mt-1"
+                aria-label={`Send to ${d.recruiterName}`}
               />
               <div className="min-w-0 flex-1">
                 <p className="font-medium text-ink">{d.recruiterName}</p>
@@ -311,8 +325,7 @@ export function ComposeWorkspace({
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor={`subject-${d.id}`}>Subject</Label>
+            <FormField label="Subject" id={`subject-${d.id}`}>
               <Input
                 id={`subject-${d.id}`}
                 value={d.subject}
@@ -323,9 +336,8 @@ export function ComposeWorkspace({
                   })
                 }
               />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor={`body-${d.id}`}>Message</Label>
+            </FormField>
+            <FormField label="Message" id={`body-${d.id}`}>
               <Textarea
                 id={`body-${d.id}`}
                 rows={8}
@@ -337,7 +349,7 @@ export function ComposeWorkspace({
                   })
                 }
               />
-            </div>
+            </FormField>
           </li>
         ))}
       </ul>
@@ -357,9 +369,12 @@ function SendIdentityCard({ identity }: { identity: GmailSendIdentity }) {
 
   if (!identity.connected || !identity.sendingAs) {
     return (
-      <div className="rounded-2xl border border-dashed border-border/70 bg-card/50 px-5 py-4 text-sm text-muted-foreground">
-        Gmail isn&apos;t connected, so there&apos;s no address to send from yet. You can
-        still draft — connect Gmail from the Recruiters page before sending.
+      <div className="flex items-start gap-3 rounded-xl border border-dashed border-border-subtle bg-card px-5 py-4 text-sm text-muted-foreground">
+        <IntegrationLogo provider="gmail" size="sm" />
+        <p>
+          Gmail isn’t connected, so there’s no address to send from yet. You can still
+          draft — connect Gmail from the Recruiters page before sending.
+        </p>
       </div>
     );
   }
@@ -367,18 +382,12 @@ function SendIdentityCard({ identity }: { identity: GmailSendIdentity }) {
   const mismatch = !identity.matchesLogin;
 
   return (
-    <section
-      className={
-        mismatch
-          ? "rounded-2xl border border-border/70 bg-muted/40 p-5"
-          : "rounded-2xl border border-border/70 bg-card p-5"
-      }
-    >
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <Card variant={mismatch ? "inset" : "default"}>
+      <CardHeader className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 gap-3">
-          <Mail className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+          <IntegrationLogo provider="gmail" size="md" className="mt-0.5" />
           <div className="min-w-0">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Sending as
             </p>
             <p className="mt-1 break-words font-medium text-foreground">
@@ -388,9 +397,9 @@ function SendIdentityCard({ identity }: { identity: GmailSendIdentity }) {
             </p>
             {mismatch ? (
               <p className="mt-2 flex max-w-prose items-start gap-2 text-sm text-muted-foreground">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
                 <span>
-                  This isn&apos;t the address you sign into Orbit with
+                  This isn’t the address you sign into Orbit with
                   {identity.loginEmail ? ` (${identity.loginEmail})` : ""}. Recruiters
                   will see the Gmail address above, and replies go to that inbox.
                 </span>
@@ -418,11 +427,11 @@ function SendIdentityCard({ identity }: { identity: GmailSendIdentity }) {
               })
             }
           >
-            Use a different account
+            {pending ? "Connecting…" : "Use a different account"}
           </Button>
         )}
-      </div>
-    </section>
+      </CardHeader>
+    </Card>
   );
 }
 
@@ -430,33 +439,35 @@ function SendIdentityCard({ identity }: { identity: GmailSendIdentity }) {
 function ReconnectBanner() {
   const [pending, start] = useTransition();
   return (
-    <div className="flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-border/70 bg-muted/40 p-5">
-      <div className="flex gap-3">
-        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
-        <div>
-          <p className="font-medium text-foreground">Allow Gmail to send</p>
-          <p className="mt-1 max-w-prose text-sm text-muted-foreground">
-            You can draft now. Sending from your own address needs Google’s permission to
-            send as you, which Orbit asks for only when you want it.
-          </p>
+    <Card variant="inset">
+      <CardHeader className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex gap-3">
+          <AlertTriangle className="mt-0.5 size-5 shrink-0 text-muted-foreground" aria-hidden />
+          <div>
+            <p className="font-medium text-foreground">Allow Gmail to send</p>
+            <p className="mt-1 max-w-prose text-sm text-muted-foreground">
+              You can draft now. Sending from your own address needs Google’s permission to
+              send as you, which Orbit asks for only when you want it.
+            </p>
+          </div>
         </div>
-      </div>
-      <Button
-        variant="outline"
-        disabled={pending}
-        onClick={() =>
-          start(async () => {
-            try {
-              const { url } = await startGmailOAuth({ purpose: "send", returnTo: "/recruiters/compose" });
-              window.location.href = url;
-            } catch (err) {
-              toast.error(friendlyError(err, TOAST_COPY.connectFailed));
-            }
-          })
-        }
-      >
-        Reconnect
-      </Button>
-    </div>
+        <Button
+          variant="outline"
+          disabled={pending}
+          onClick={() =>
+            start(async () => {
+              try {
+                const { url } = await startGmailOAuth({ purpose: "send", returnTo: "/recruiters/compose" });
+                window.location.href = url;
+              } catch (err) {
+                toast.error(friendlyError(err, TOAST_COPY.connectFailed));
+              }
+            })
+          }
+        >
+          {pending ? "Connecting…" : "Reconnect"}
+        </Button>
+      </CardHeader>
+    </Card>
   );
 }

@@ -90,28 +90,28 @@ export function ExtensionPromo() {
         // half. Written as an arbitrary property rather than `bg-card`, which
         // tailwind-merge folds into the same group as `bg-gradient-to-br` and
         // drops.
-        "relative overflow-hidden rounded-2xl border border-import-connections/40 [background-color:var(--card)] bg-gradient-to-br from-import-connections/[0.14] via-import-connections/[0.05] to-card p-3",
+        "relative overflow-hidden rounded-xl border border-import-connections/40 [background-color:var(--card)] bg-gradient-to-br from-import-connections/[0.14] via-import-connections/[0.05] to-card p-3",
         LIGHT_ON_DARK
       )}
     >
       <Button
         type="button"
         variant="ghost"
-        size="icon"
-        className="absolute right-1 top-1 size-6 text-muted-foreground hover:text-foreground"
+        size="icon-xs"
+        className="absolute right-1 top-1 text-muted-foreground hover:text-foreground"
         aria-label="Dismiss extension announcement"
         onClick={() => {
           rememberDismissed();
           setDismissed(true);
         }}
       >
-        <X className="h-3.5 w-3.5" />
+        <X className="size-3.5" />
       </Button>
 
       <div className="flex items-start gap-3 pr-6">
         <OrbitLogo size="md" className="mt-0.5" />
         <div className="min-w-0 flex-1">
-          <p className="font-heading text-[15px] leading-snug text-primary">
+          <p className="font-heading text-base leading-snug text-primary">
             Get the Orbit browser extension
           </p>
           <p className="mt-0.5 text-sm leading-snug text-muted-foreground">
@@ -127,7 +127,7 @@ export function ExtensionPromo() {
               className={CTA_CLASS}
             >
               Add to Chrome
-              <ExternalLink className="h-3.5 w-3.5" />
+              <ExternalLink className="size-3.5" />
             </a>
           </div>
         </div>
