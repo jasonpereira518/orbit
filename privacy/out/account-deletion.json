@@ -1,13 +1,13 @@
 {
   "seed": {
     "user_privA7f3e": {
-      "seeded": 121,
+      "seeded": 122,
       "failed": {
         "schema_migrations": "duplicate key value violates unique constraint \"schema_migrations_pkey\""
       }
     },
     "user_privB91c2": {
-      "seeded": 106,
+      "seeded": 107,
       "failed": {
         "admin_provider_snapshots": "duplicate key value violates unique constraint \"admin_provider_snapshots_pkey\"",
         "app_surface_flags": "duplicate key value violates unique constraint \"app_surface_flags_pkey\"",
@@ -28,7 +28,7 @@
       }
     },
     "user_privC55d0": {
-      "seeded": 106,
+      "seeded": 107,
       "failed": {
         "admin_provider_snapshots": "duplicate key value violates unique constraint \"admin_provider_snapshots_pkey\"",
         "app_surface_flags": "duplicate key value violates unique constraint \"app_surface_flags_pkey\"",
@@ -264,7 +264,7 @@
   "survivorSamples": {
     "admin_audit_log": [
       {
-        "id": "df5610b4-53df-4883-ba80-390e9d300852",
+        "id": "d12de9d1-2136-4fd6-955e-38e5e96ab026",
         "admin_user_id": "user_privA7f3e|admin_audit_log.admin_user_id",
         "action": "user_privA7f3e|admin_audit_log.action",
         "target_user_id": "user_privA7f3e",
@@ -274,67 +274,67 @@
           "m": "user_privA7f3e|admin_audit_log.detail"
         },
         "reason": "user_privA7f3e|admin_audit_log.reason",
-        "created_at": "2026-10-18 07:29:05.896+00"
+        "created_at": "2026-10-19 06:58:41.561+00"
       }
     ],
     "billing_events": [
       {
-        "id": "b576fda7-ca36-4ed5-bef7-b985fd33ee19",
+        "id": "8978fee8-936e-4913-8f31-61afec458f0f",
         "source": "user_privA7f3e|billing_events.source",
         "event_id": "user_privA7f3e|billing_events.event_id",
         "kind": "user_privA7f3e|billing_events.kind",
         "user_id": null,
         "amount_cents": 1,
         "mrr_delta_cents": 1,
-        "effective_at": "2026-10-18 07:29:05.915+00",
+        "effective_at": "2026-10-19 06:58:41.589+00",
         "detail": {
           "m": "user_privA7f3e|billing_events.detail"
         },
-        "created_at": "2026-10-18 07:29:05.915+00"
+        "created_at": "2026-10-19 06:58:41.589+00"
       }
     ],
     "credit_grants": [
       {
-        "id": "35492898-d185-49c1-9789-b5886ce8510b",
+        "id": "0f7f046f-d9f9-4068-8c4d-649d7de7ebd5",
         "user_id": null,
         "kind": "user_privA7f3e|credit_grants.kind",
         "grant_key": "user_privA7f3e|credit_grants.grant_key",
         "plan": "user_privA7f3e|credit_grants.plan",
         "micros_granted": 1,
         "micros_remaining": 0,
-        "period_start": "2026-10-18 07:29:05.978+00",
-        "period_end": "2026-10-18 07:29:05.978+00",
+        "period_start": "2026-10-19 06:58:41.671+00",
+        "period_end": "2026-10-19 06:58:41.671+00",
         "amount_cents": 1,
         "stripe_ref": "user_privA7f3e|credit_grants.stripe_ref",
         "status": "revoked",
-        "revoked_at": "2026-10-18 07:29:05.978+00",
+        "revoked_at": "2026-10-19 06:58:41.671+00",
         "revoked_reason": "user_privA7f3e|credit_grants.revoked_reason",
         "micros_revoked": 2,
-        "created_at": "2026-10-18 07:29:05.978+00",
-        "updated_at": "2026-10-18 07:29:09.406+00"
+        "created_at": "2026-10-19 06:58:41.671+00",
+        "updated_at": "2026-10-19 06:58:45.651+00"
       }
     ],
     "data_purge_runs": [
       {
-        "id": "c85fad87-b3c7-4980-beb0-a55e74fc0706",
+        "id": "9547505f-b2cb-4ba4-a17c-6a616a7d4006",
         "target_user_id": "user_privA7f3e",
-        "categories": {
-          "m": "user_privA7f3e|data_purge_runs.categories"
-        },
+        "categories": [
+          "user_privA7f3e|data_purge_runs.categories"
+        ],
         "keep_settings": false,
         "full_purge": false,
-        "completed_steps": {
-          "m": "user_privA7f3e|data_purge_runs.completed_steps"
-        },
+        "completed_steps": [
+          "user_privA7f3e|data_purge_runs.completed_steps"
+        ],
         "status": "user_privA7f3e|data_purge_runs.status",
         "attempts": 1,
         "last_error": "user_privA7f3e|data_purge_runs.last_error",
-        "requested_at": "2026-10-18 07:29:05.984+00",
-        "last_attempt_at": "2026-10-18 07:29:05.984+00",
-        "finished_at": "2026-10-18 07:29:05.984+00"
+        "requested_at": "2026-10-19 06:58:41.676+00",
+        "last_attempt_at": "2026-10-19 06:58:41.676+00",
+        "finished_at": "2026-10-19 06:58:41.676+00"
       },
       {
-        "id": "e4b93f73-0b6b-4efe-8f54-854679ab8313",
+        "id": "b13e2843-35bd-4171-9425-ceff7d0ecf66",
         "target_user_id": "user_privA7f3e",
         "categories": [
           "insights",
@@ -379,9 +379,9 @@
         "status": "done",
         "attempts": 1,
         "last_error": null,
-        "requested_at": "2026-10-18 07:29:09.008+00",
-        "last_attempt_at": "2026-10-18 07:29:09.008+00",
-        "finished_at": "2026-10-18 07:29:09.418+00"
+        "requested_at": "2026-10-19 06:58:45.141+00",
+        "last_attempt_at": "2026-10-19 06:58:45.141+00",
+        "finished_at": "2026-10-19 06:58:45.677+00"
       }
     ],
     "linkedin_avatars": [
@@ -389,14 +389,14 @@
         "slug": "user_privA7f3e|linkedin_avatars.slug",
         "image_url": "user_privA7f3e|linkedin_avatars.image_url",
         "source": "user_privA7f3e|linkedin_avatars.source",
-        "resolved_at": "2026-10-18 07:29:06.059+00",
-        "blocked_at": "2026-10-18 07:29:06.059+00",
+        "resolved_at": "2026-10-19 06:58:41.803+00",
+        "blocked_at": "2026-10-19 06:58:41.803+00",
         "blocked_by": "user_privA7f3e|linkedin_avatars.blocked_by"
       }
     ],
     "page_views": [
       {
-        "id": "217acc47-92db-43c4-95f2-bc4fd0e3d10f",
+        "id": "8596a7cd-f529-43e0-9c3a-e05cc592ff7a",
         "visitor_hash": "user_privA7f3e|page_views.visitor_hash",
         "session_id": "user_privA7f3e|page_views.session_id",
         "user_id": null,
@@ -414,32 +414,32 @@
         "dwell_ms": 1,
         "load_ms": 1,
         "nav_type": "user_privA7f3e|page_views.nav_type",
-        "created_at": "2026-10-18 07:29:06.088+00"
+        "created_at": "2026-10-19 06:58:41.838+00"
       }
     ],
     "rate_limit_buckets": [
       {
         "bucket": "user_privA7f3e|rate_limit_buckets.bucket",
-        "window_started_at": "2026-10-18 07:29:06.098+00",
+        "window_started_at": "2026-10-19 06:58:41.847+00",
         "count": 1
       }
     ],
     "waitlist_poll_votes": [
       {
-        "id": "e09d59c5-cb5e-467d-b6ed-3f91de19796c",
+        "id": "ad0b0bf5-ccb6-4411-929a-d39e4cc70169",
         "option_id": "user_privA7f3e|waitlist_poll_votes.option_id",
         "voter_key": "user_privA7f3e|waitlist_poll_votes.voter_key",
-        "signup_id": "6df4b66e-f6bd-4310-abee-d1460565bbc8",
+        "signup_id": "f1e7597b-d474-405a-b045-e6660c497d99",
         "stars": {
           "m": "user_privA7f3e|waitlist_poll_votes.stars"
         },
-        "created_at": "2026-10-18 07:29:06.153+00",
-        "updated_at": "2026-10-18 07:29:06.153+00"
+        "created_at": "2026-10-19 06:58:41.898+00",
+        "updated_at": "2026-10-19 06:58:41.898+00"
       }
     ],
     "webhook_deliveries": [
       {
-        "id": "6cdc094b-3842-48ac-97e7-05916c47753c",
+        "id": "d317f562-9b52-4357-8de3-9b98d38abd1f",
         "source": "user_privA7f3e|webhook_deliveries.source",
         "event_id": "user_privA7f3e|webhook_deliveries.event_id",
         "event_type": "user_privA7f3e|webhook_deliveries.event_type",
@@ -452,7 +452,7 @@
         },
         "error": "user_privA7f3e|webhook_deliveries.error",
         "duration_ms": 1,
-        "created_at": "2026-10-18 07:29:06.154+00"
+        "created_at": "2026-10-19 06:58:41.9+00"
       }
     ]
   }

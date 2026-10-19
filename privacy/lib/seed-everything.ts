@@ -106,7 +106,8 @@ function literalFor(col: Column, marker: string, owner: string, allowed?: string
   if (allowed?.length) return allowed[0];
   if (/email/i.test(col.column) && /^(text|character varying.*|citext)$/.test(t)) return `${owner}@example.test`;
   if (/^(text|character varying.*|citext)$/.test(t)) return marker;
-  if (t === "jsonb" || t === "json") return { m: marker };
+  // Match the column's shape: an array column read with jsonb_array_elements breaks on an object.
+  if (t === "jsonb" || t === "json") return /^'\[/.test(col.defaultExpr ?? "") ? [marker] : { m: marker };
   if (/\[\]$/.test(t) && /^(text|character varying)/.test(t)) return [marker];
   if (t === "uuid") return randomUUID();
   if (t === "uuid[]") return [randomUUID()];
@@ -126,7 +127,7 @@ function sqlValue(v: unknown, col: Column) {
   if (v === null) return sql`NULL`;
   if (v instanceof Date) return sql`${v.toISOString()}::timestamptz`;
   if (Buffer.isBuffer(v)) return sql`decode(${v.toString("hex")}, 'hex')`;
-  if (Array.isArray(v)) return sql`${`{${v.map((x) => JSON.stringify(String(x))).join(",")}}`}::${sql.raw(col.type)}`;
+  if (Array.isArray(v) && !/^jsonb?$/.test(col.type)) return sql`${`{${v.map((x) => JSON.stringify(String(x))).join(",")}}`}::${sql.raw(col.type)}`;
   if (typeof v === "object") return sql`${JSON.stringify(v)}::${sql.raw(col.type)}`;
   return sql`${v}::${sql.raw(col.type)}`;
 }

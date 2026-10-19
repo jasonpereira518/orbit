@@ -15,6 +15,7 @@ export type Column = {
   type: string; // format_type(), e.g. "text", "jsonb", "text[]", "uuid", "vector(768)"
   notNull: boolean;
   hasDefault: boolean;
+  defaultExpr: string | null; // pg_get_expr of the column default, e.g. "'[]'::jsonb"
   generated: boolean;
   identity: boolean;
 };
@@ -43,6 +44,7 @@ export async function readCatalog(): Promise<Catalog> {
     type: string;
     not_null: boolean;
     has_default: boolean;
+    default_expr: string | null;
     generated: string;
     identity: string;
   }>(
@@ -50,10 +52,12 @@ export async function readCatalog(): Promise<Catalog> {
       SELECT c.relname AS table_name, a.attname AS column_name,
              format_type(a.atttypid, a.atttypmod) AS type,
              a.attnotnull AS not_null, a.atthasdef AS has_default,
+             pg_get_expr(d.adbin, d.adrelid) AS default_expr,
              a.attgenerated::text AS generated, a.attidentity::text AS identity
         FROM pg_attribute a
         JOIN pg_class c ON c.oid = a.attrelid
         JOIN pg_namespace n ON n.oid = c.relnamespace
+        LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
        WHERE n.nspname = 'public' AND c.relkind = 'r' AND a.attnum > 0 AND NOT a.attisdropped
        ORDER BY c.relname, a.attnum`)
   );
@@ -66,6 +70,7 @@ export async function readCatalog(): Promise<Catalog> {
       type: r.type,
       notNull: r.not_null,
       hasDefault: r.has_default,
+      defaultExpr: r.default_expr ?? null,
       generated: (r.generated ?? "") !== "",
       identity: (r.identity ?? "") !== "",
     });

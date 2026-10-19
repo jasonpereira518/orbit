@@ -1,6 +1,6 @@
 {
   "E1": {
-    "format": "orbit-export/2",
+    "format": "orbit-export/3",
     "categoryCount": 16,
     "categories": [
       "insights",
@@ -20,7 +20,7 @@
       "tags",
       "preferences"
     ],
-    "datasets": 81
+    "datasets": 94
   },
   "E2": {
     "occurrencesOfOtherUser": 0
@@ -36,47 +36,11 @@
         "rows": 1
       },
       {
-        "table": "cloud_note_sources",
-        "rows": 1
-      },
-      {
-        "table": "contact_opportunities",
-        "rows": 1
-      },
-      {
-        "table": "credit_accounts",
-        "rows": 1
-      },
-      {
-        "table": "credit_grants",
-        "rows": 1
-      },
-      {
-        "table": "credit_holds",
-        "rows": 1
-      },
-      {
         "table": "data_purge_runs",
         "rows": 1
       },
       {
-        "table": "embedding_failures",
-        "rows": 1
-      },
-      {
-        "table": "interest_list_signups",
-        "rows": 1
-      },
-      {
-        "table": "job_posting_matches",
-        "rows": 1
-      },
-      {
         "table": "linkedin_avatars",
-        "rows": 1
-      },
-      {
-        "table": "plan_meter_usage",
         "rows": 1
       },
       {
@@ -104,7 +68,7 @@
     "contacts": 20000,
     "interactions": 60000,
     "passages": 60000,
-    "seconds": 42.01,
+    "seconds": 56.369,
     "megabytes": 169.2,
     "routeMaxDurationSeconds": 300
   }

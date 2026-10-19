@@ -235,9 +235,9 @@
       "relationship_digests": true
     },
     "merge": {
-      "mergeId": "239bfc36-2bf8-49d9-bd23-4ad1813874c1",
-      "winnerId": "a1337e00-73af-46ff-a29a-14b7512bacc1",
-      "loserId": "84865041-344b-405f-9ab3-1798c5e1f1f3"
+      "mergeId": "d76506ea-4aa7-4f6b-9f98-443208d19ff3",
+      "winnerId": "24376fe4-416a-44d0-a45a-40ba04a24fb1",
+      "loserId": "3cfd6c4f-092d-4405-a9e9-98fe54fb4388"
     },
     "archivedKeys": [
       "contact_tags",
@@ -254,9 +254,9 @@
     },
     "mergeArchivesHoldingDerivedRows": 2,
     "unmerge": {
-      "mergeId": "239bfc36-2bf8-49d9-bd23-4ad1813874c1",
-      "winnerId": "a1337e00-73af-46ff-a29a-14b7512bacc1",
-      "loserId": "84865041-344b-405f-9ab3-1798c5e1f1f3"
+      "mergeId": "d76506ea-4aa7-4f6b-9f98-443208d19ff3",
+      "winnerId": "24376fe4-416a-44d0-a45a-40ba04a24fb1",
+      "loserId": "3cfd6c4f-092d-4405-a9e9-98fe54fb4388"
     },
     "loserDerivedRowsAfterUnmerge": {
       "contact_embeddings": 0,
