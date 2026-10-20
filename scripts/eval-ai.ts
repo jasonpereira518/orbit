@@ -81,7 +81,7 @@ import { FIXTURE_DIR, TASKS, TASK_NAMES, type TaskName, type TaskResult } from "
 import { AI_OPERATIONS, AI_OPERATION_IDS, type AiOperationId, type AiTier } from "../src/lib/ai-operations";
 import { FAST_MODELS, VISION_MODELS } from "../src/lib/ai";
 import type { ThinkingLevel } from "../src/lib/ai-request-options";
-import { formatMetric, gate, median, type GateRules, type TaskMetrics } from "./lib/eval-ai-score";
+import { formatMetric, gate, gatedMetrics, median, type GateRules, type TaskMetrics } from "./lib/eval-ai-score";
 
 const USER = "eval-ai-user";
 /** Tasks that never call a chat model. */
@@ -488,9 +488,7 @@ async function main() {
     if (baseline.fixtures !== report.fixtures) {
       console.warn(`\nWARNING: the fixtures changed since the baseline (${baseline.fixtures} → ${report.fixtures}); re-run the baseline before trusting this comparison.`);
     }
-    const pick = (r: EvalReport) =>
-      Object.fromEntries(Object.entries(r.tasks).map(([k, v]) => [k, v.metrics])) as Record<string, TaskMetrics>;
-    const findings = gate(rules, pick(baseline), pick(report));
+    const findings = gate(rules, gatedMetrics(baseline.tasks), gatedMetrics(report.tasks));
 
     console.log(`\nCompared with ${baseline.label} (${baseline.model}):`);
     for (const [task, t] of Object.entries(report.tasks)) {
@@ -506,7 +504,7 @@ async function main() {
     } else {
       console.log("\nGATE: FAIL");
       for (const f of findings) {
-        console.log(`  ${f.task}.${f.metric}: ${f.baseline.toFixed(3)} → ${f.candidate.toFixed(3)} (allowed ${f.allowed})`);
+        console.log(`  ${f.task}.${f.metric}: ${Number.isNaN(f.baseline) ? "—" : f.baseline.toFixed(3)} → ${f.candidate.toFixed(3)} (allowed ${f.allowed})`);
       }
       process.exit(1);
     }

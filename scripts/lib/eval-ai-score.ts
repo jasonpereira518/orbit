@@ -138,9 +138,10 @@ export function calibrationBins(
 
 /**
  * One gate rule. `higherIsBetter` metrics may not drop by more than `maxDrop`; the others
- * (error rates, hallucination counts) may not rise by more than `maxRise`.
+ * (error rates, hallucination counts) may not rise by more than `maxRise`. `max` is a ceiling
+ * on the candidate alone, whatever the baseline was — a budget, like lookups per answer.
  */
-export type GateRule = { maxDrop?: number; maxRise?: number };
+export type GateRule = { maxDrop?: number; maxRise?: number; max?: number };
 export type GateRules = Record<string, Record<string, GateRule>>;
 export type TaskMetrics = Record<string, number | null>;
 
@@ -151,6 +152,20 @@ export type GateFinding = {
   candidate: number;
   allowed: string;
 };
+
+/**
+ * A report's metrics per task, plus the two numbers every task reports beside them — cost per
+ * case and p50 latency — so the thresholds can gate those like any other metric.
+ */
+export function gatedMetrics(
+  tasks: Record<string, { metrics: TaskMetrics; costPerCaseMicros?: number | null; p50LatencyMs?: number | null } | undefined>
+): Record<string, TaskMetrics> {
+  return Object.fromEntries(
+    Object.entries(tasks).flatMap(([task, t]) =>
+      t ? [[task, { ...t.metrics, costPerCaseMicros: t.costPerCaseMicros ?? null, p50LatencyMs: t.p50LatencyMs ?? null }]] : []
+    )
+  );
+}
 
 /**
  * Compares a candidate run to a baseline run. A metric either side left null (task not run,
@@ -166,6 +181,9 @@ export function gate(
     for (const [metric, rule] of Object.entries(metrics)) {
       const b = baseline[task]?.[metric];
       const c = candidate[task]?.[metric];
+      if (rule.max != null && c != null && c > rule.max + 1e-9) {
+        findings.push({ task, metric, baseline: b ?? Number.NaN, candidate: c, allowed: `≤ ${rule.max}` });
+      }
       if (b == null || c == null) continue;
       // A hair of float tolerance so 0.7 - 0.02 is not "below" 0.68.
       if (rule.maxDrop != null && c < b - rule.maxDrop - 1e-9) {
