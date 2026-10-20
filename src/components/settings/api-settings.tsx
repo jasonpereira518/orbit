@@ -30,25 +30,10 @@ import { SettingsSection } from "@/components/settings/settings-section";
 import { useConfirmFocus } from "@/components/settings/use-confirm-focus";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { withTimeout } from "@/lib/async";
 
 const LOAD_TIMEOUT_MS = 12_000;
 const TIMED_OUT = "orbit:timed-out";
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(TIMED_OUT)), ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      }
-    );
-  });
-}
 
 async function copy(value: string, what: string) {
   try {
@@ -73,7 +58,7 @@ export function ApiSettings() {
   // Deliberately does not clear the error synchronously: doing so inside the mount effect
   // triggers a cascading render, and clearing it on success reads the same to the user.
   const load = useCallback(() => {
-    withTimeout(listApiKeys(), LOAD_TIMEOUT_MS).then(
+    withTimeout(listApiKeys(), LOAD_TIMEOUT_MS, TIMED_OUT).then(
       (rows) => {
         setKeys(rows);
         setError(null);

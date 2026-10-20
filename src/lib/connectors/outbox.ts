@@ -63,6 +63,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { connectorOutbox, externalLinks } from "@/db/schema";
+import { withTimeout as sharedWithTimeout } from "@/lib/async";
 
 /** Attempts before an item is abandoned. Mirrors MAX_DELIVERY_ATTEMPTS in dispatch.ts. */
 export const MAX_OUTBOX_ATTEMPTS = 7;
@@ -280,22 +281,12 @@ const ITEM_BUDGET_FLOOR_MS = MIN_ROUND_TRIP_BUDGET_MS + MIN_DELIVER_WINDOW_MS;
  * A real P2 `deliver` should still apply its own request timeout internally for that reason.
  */
 function withTimeout(promise: Promise<DeliverResult>, ms: number): Promise<DeliverResult> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(
-      () => resolve({ ok: false, error: `Delivery timed out after ${ms}ms` }),
-      ms
-    );
-    promise.then(
-      (result) => {
-        clearTimeout(timer);
-        resolve(result);
-      },
-      (err: unknown) => {
-        clearTimeout(timer);
-        resolve({ ok: false, error: err instanceof Error ? err.message : String(err) });
-      }
-    );
-  });
+  return sharedWithTimeout(promise, ms, `Delivery timed out after ${ms}ms`).catch(
+    (err: unknown): DeliverResult => ({
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  );
 }
 
 /** What the claim statement hands back. Deliberately no timestamps: raw SQL returns those as

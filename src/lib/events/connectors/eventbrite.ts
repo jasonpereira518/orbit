@@ -24,6 +24,8 @@
  */
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import type { ProviderAttendee, ProviderEvent, ProviderPage } from "@/lib/events/types";
+import { sleep } from "@/lib/async";
+import { backoffMs } from "@/lib/http/retry";
 
 const BASE = "https://www.eventbriteapi.com/v3";
 const TIMEOUT_MS = 10_000;
@@ -32,14 +34,6 @@ const MAX_ATTEMPTS = 3;
 export type EventbriteDeps = { fetch: typeof fetch };
 
 export class EventbriteAuthError extends Error {}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function jitteredBackoffMs(attempt: number) {
-  return 300 * 2 ** attempt + Math.floor(Math.random() * 250);
-}
 
 async function eventbriteFetch(
   path: string,
@@ -82,7 +76,7 @@ async function eventbriteFetch(
     await sleep(
       Number.isFinite(retryAfter) && retryAfter > 0
         ? Math.min(retryAfter * 1000, 8_000)
-        : jitteredBackoffMs(attempt)
+        : backoffMs(attempt)
     );
   }
   throw new Error("Eventbrite request failed");

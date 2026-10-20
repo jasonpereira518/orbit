@@ -3,6 +3,7 @@ import { RERANK_TUNING, rerankQuestion } from "@/lib/decisions/catalog";
 import { askPerItem, type Decider } from "@/lib/decisions/jev";
 import type { RankedContact, SearchFilters } from "@/lib/hybrid-search";
 import { pickNoteWindow } from "@/lib/note-window";
+import { withTimeout } from "@/lib/async";
 
 /**
  * What kind of answer the question needs — each shape gets its own retrieval lane:
@@ -69,20 +70,6 @@ const VALID_TIERS = new Set(["inner", "mid", "outer"]);
 
 export function fallbackParsedQuery(question: string): ParsedQuery {
   return { semanticQuery: question, filters: {}, expansionTerms: [], shape: "open" };
-}
-
-async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("stage timeout")), ms);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 function cleanStringArray(value: unknown, max = MAX_FILTER_VALUES): string[] {
@@ -279,7 +266,8 @@ export async function understandQuery(
         system: UNDERSTAND_SYSTEM,
         user: `${todayBlock}${aboutBlock}${goalsBlock}${historyBlock}Question: ${question}`,
       }),
-      UNDERSTAND_TIMEOUT_MS
+      UNDERSTAND_TIMEOUT_MS,
+      "stage timeout"
     );
     return sanitizeParsedQuery(parseAiJson(content), question);
   } catch {
@@ -450,7 +438,8 @@ export async function rerankCandidatesWithEngine(
           .filter(Boolean)
           .join("\n"),
       }),
-      remaining
+      remaining,
+      "stage timeout"
     );
     const parsed = parseAiJson<{ scores?: Array<{ id?: unknown; relevance?: unknown }> }>(content);
     const byId = new Map(candidates.map((c) => [c.id, c]));

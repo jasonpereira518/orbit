@@ -16,20 +16,14 @@ import {
   type OutreachSearchSource,
 } from "@/lib/outreach-types";
 import { entitlementsFromSettings, getEntitlements } from "@/lib/entitlements";
+import { sleep } from "@/lib/async";
+import { backoffMs } from "@/lib/http/retry";
 
 const APOLLO_SEARCH_URL = "https://api.apollo.io/api/v1/mixed_people/search";
 const APOLLO_MATCH_URL = "https://api.apollo.io/api/v1/people/match";
 const APOLLO_TIMEOUT_MS = 10_000;
 const APOLLO_MAX_ATTEMPTS = 3;
 const APOLLO_BATCH_CONCURRENCY = 3;
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function jitteredBackoffMs(attempt: number) {
-  return 300 * 2 ** attempt + Math.floor(Math.random() * 250);
-}
 
 async function apolloFetch(
   url: string,
@@ -67,7 +61,7 @@ async function apolloFetch(
     const waitMs =
       Number.isFinite(retryAfter) && retryAfter > 0
         ? Math.min(retryAfter * 1000, 8_000)
-        : jitteredBackoffMs(attempt);
+        : backoffMs(attempt);
     await sleep(waitMs);
   }
   return lastResponse!;

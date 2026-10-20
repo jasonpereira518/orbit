@@ -9,6 +9,7 @@ import {
   startBackgroundJob,
   updateBackgroundJob,
 } from "@/lib/background-jobs";
+import { sleep } from "@/lib/async";
 
 const BATCH_PAUSE_MS = 750;
 const MAX_WAIT_MS = 15 * 60_000;
@@ -22,26 +23,6 @@ export const AVATARS_UPDATED_EVENT = "orbit:avatars-updated";
 export type AvatarsUpdatedDetail = {
   contactIds: string[];
 };
-
-function sleep(ms: number, signal: AbortSignal) {
-  return new Promise<void>((resolve) => {
-    if (signal.aborted) {
-      resolve();
-      return;
-    }
-    const onAbort = () => {
-      window.clearTimeout(timer);
-      resolve();
-    };
-    // A normal wake-up removes the listener too: `once` only fires on abort, so every batch
-    // used to leave one closure on the signal for as long as the component was mounted.
-    const timer = window.setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-}
 
 /**
  * One batch, through a route handler rather than the Server Action: actions run one at a time

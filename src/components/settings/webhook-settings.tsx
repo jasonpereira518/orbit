@@ -28,25 +28,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SettingsSection } from "@/components/settings/settings-section";
 import { useConfirmFocus } from "@/components/settings/use-confirm-focus";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { withTimeout } from "@/lib/async";
 
 const LOAD_TIMEOUT_MS = 12_000;
 const TIMED_OUT = "orbit:timed-out";
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(TIMED_OUT)), ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      }
-    );
-  });
-}
 
 const EVENTS = [
   { id: "contact.created", label: "A contact is added" },
@@ -66,7 +51,7 @@ export function WebhookSettings() {
 
   const load = useCallback(() => {
     setError(null);
-    withTimeout(listWebhookEndpoints(), LOAD_TIMEOUT_MS)
+    withTimeout(listWebhookEndpoints(), LOAD_TIMEOUT_MS, TIMED_OUT)
       .then(setEndpoints)
       .catch((err: unknown) => {
         setEndpoints([]);

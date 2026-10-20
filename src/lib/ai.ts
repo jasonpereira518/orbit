@@ -87,6 +87,7 @@ export {
   resolveAiModel,
   resolveAiProvider,
 } from "@/lib/ai-providers";
+import { sleep } from "@/lib/async";
 
 /** AI often omits unknown fields; accept missing/null. */
 /**
@@ -137,7 +138,7 @@ export async function withRateLimitBackoff<T>(fn: () => Promise<T>): Promise<T> 
       }
       const backoff = RATE_LIMIT_BASE_DELAY_MS * 2 ** attempt;
       const jitter = backoff * (0.5 + Math.random() * 0.5);
-      await new Promise((resolve) => setTimeout(resolve, jitter));
+      await sleep(jitter);
     }
   }
 }

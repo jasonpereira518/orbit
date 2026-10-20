@@ -1,4 +1,5 @@
 import { completeJson, parseAiJson } from "@/lib/ai";
+import { withTimeout } from "@/lib/async";
 
 /**
  * A short name for a conversation, written from the first message the user sent.
@@ -77,20 +78,6 @@ export function sanitizeChatTitle(raw: unknown): string | null {
   return `${(at > 20 ? cut.slice(0, at) : cut.slice(0, TITLE_MAX_CHARS)).trimEnd()}…`;
 }
 
-async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("title timeout")), ms);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 /**
  * Summarise `question` into a title, or null when that is not possible or not worth it.
  *
@@ -114,7 +101,8 @@ export async function generateChatTitle(
         // The question alone. Nothing about the user's network is needed to name a chat.
         user: `First message:\n${text.slice(0, 1500)}`,
       }),
-      TITLE_TIMEOUT_MS
+      TITLE_TIMEOUT_MS,
+      "title timeout"
     );
     const parsed = parseAiJson<{ title?: unknown } | null>(content);
     return sanitizeChatTitle(parsed?.title);

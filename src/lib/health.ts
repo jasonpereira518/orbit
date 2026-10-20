@@ -6,6 +6,7 @@ import { errorEvents, opsAlertState } from "@/db/schema";
 import { ERROR_SOURCES } from "@/lib/error-events";
 import { getEnvReport } from "@/lib/env";
 import { getCronHealth, getSystemIssues, isSweepQuiet, recentWebhookOutcomes } from "@/lib/admin-system";
+import { TimeoutError, withTimeout } from "@/lib/async";
 
 /**
  * The health probe behind `GET /api/health`.
@@ -62,16 +63,6 @@ export type HealthReport = {
 };
 
 const DEFAULT_TIMEOUT_MS = 4_000;
-
-class TimeoutError extends Error {}
-
-function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new TimeoutError("timed out")), ms);
-  });
-  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
-}
 
 /** The recorded schema version, via one statement on the real database. */
 async function probeSchemaVersion(): Promise<{ recorded: number | null }> {

@@ -33,6 +33,8 @@
  */
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { assertDeliverable } from "@/lib/net-guard";
+import { sleep } from "@/lib/async";
+import { backoffMs } from "@/lib/http/retry";
 
 /** One page is plenty for `<head>` metadata; anything larger is a document we do not want. */
 export const MAX_HTML_BYTES = 512_000;
@@ -140,15 +142,6 @@ export type GuardedFetchResult = {
   notModified: boolean;
 };
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/** Same ladder as `apolloFetch` in `src/lib/apollo.ts`, deliberately. */
-function jitteredBackoffMs(attempt: number) {
-  return 300 * 2 ** attempt + Math.floor(Math.random() * 250);
-}
-
 /**
  * Read at most `maxBytes` of the body, then stop.
  *
@@ -244,7 +237,7 @@ async function attemptOnce(
       if (attempt === MAX_ATTEMPTS - 1) {
         throw new EventPageError("unreachable", "That page could not be reached.");
       }
-      await sleep(jitteredBackoffMs(attempt));
+      await sleep(backoffMs(attempt));
       continue;
     }
     last = res;
@@ -299,7 +292,7 @@ async function attemptOnce(
     const waitMs =
       Number.isFinite(retryAfter) && retryAfter > 0
         ? Math.min(retryAfter * 1000, 8_000)
-        : jitteredBackoffMs(attempt);
+        : backoffMs(attempt);
     await sleep(waitMs);
   }
   throw new EventPageError("http_error", `That page returned ${last?.status ?? "no response"}.`);

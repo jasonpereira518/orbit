@@ -1,3 +1,5 @@
+import { fetchWithRetry } from "@/lib/http/retry";
+
 /**
  * `fetch` for Microsoft Graph: backoff on throttling and a fresh timeout per attempt.
  *
@@ -32,28 +34,10 @@ function isRetryableGraphStatus(status: number): boolean {
  * attempts pre-aborted. Honours `Retry-After` (capped), otherwise exponential backoff with
  * jitter. Returns the last response when retries run out; callers decide what a non-2xx means.
  */
-export async function graphFetchWithRetry(
-  url: string | URL,
-  init: GraphFetchInit
-): Promise<Response> {
-  const doFetch = init.fetchImpl ?? fetch;
-  const sleep =
-    init.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  for (let attempt = 0; ; attempt++) {
-    const res = await doFetch(url, {
-      method: init.method,
-      headers: init.headers,
-      body: init.body,
-      signal: AbortSignal.timeout(init.timeoutMs),
-    });
-    if (res.ok || attempt >= GRAPH_MAX_RETRIES || !isRetryableGraphStatus(res.status)) {
-      return res;
-    }
-    const retryAfterSeconds = Number(res.headers.get("retry-after"));
-    const delayMs =
-      Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
-        ? retryAfterSeconds * 1000
-        : Math.min(30_000, 500 * 2 ** attempt) + Math.random() * 250;
-    await sleep(Math.min(delayMs, GRAPH_MAX_RETRY_DELAY_MS));
-  }
+export function graphFetchWithRetry(url: string | URL, init: GraphFetchInit): Promise<Response> {
+  return fetchWithRetry(url, init, {
+    maxRetries: GRAPH_MAX_RETRIES,
+    maxDelayMs: GRAPH_MAX_RETRY_DELAY_MS,
+    isRetryable: (res) => isRetryableGraphStatus(res.status),
+  });
 }

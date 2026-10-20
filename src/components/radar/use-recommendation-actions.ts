@@ -11,6 +11,7 @@ import {
 } from "@/actions/radar";
 import { friendlyError } from "@/lib/errors";
 import { runToastAction, toast } from "@/lib/toast";
+import { sleep } from "@/lib/async";
 
 /**
  * Cards brought back by Undo, so the card that remounts after the refresh grows back into
@@ -25,7 +26,7 @@ function prefersReducedMotion() {
   return typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 }
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, prefersReducedMotion() ? 0 : COLLAPSE_MS));
+const settle = () => sleep(prefersReducedMotion() ? 0 : COLLAPSE_MS);
 
 /**
  * One card's actions, shared by the full card, the dashboard's compact row and focus mode's

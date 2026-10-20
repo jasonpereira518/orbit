@@ -8,6 +8,7 @@ import { OrbitLogo } from "@/components/orbit-logo";
 import { Button } from "@/components/ui/button";
 import { Stagger, StaggerItem, StepHeading } from "@/components/onboarding/onboarding-ui";
 import { friendlyError } from "@/lib/errors";
+import { sleep } from "@/lib/async";
 
 /**
  * The last stage step on the tour path. It runs the handoff on arrival — one server action
@@ -41,7 +42,7 @@ export function LaunchStep() {
   // calling setState synchronously during render.
   const run = () => {
     const mine = ++attempt.current;
-    const hold = new Promise((resolve) => window.setTimeout(resolve, HOLD_MS));
+    const hold = sleep(HOLD_MS);
     Promise.all([startInAppTour(), hold])
       .then(([res]) => {
         if (mine !== attempt.current) return;
