@@ -130,6 +130,7 @@
 @source "../lib/analytics-redact.ts";
 @source "../lib/api/keys.ts";
 @source "../lib/app-url.ts";
+@source "../lib/async.ts";
 @source "../lib/attribution-parse.ts";
 @source "../lib/auth.ts";
 @source "../lib/big-dipper-figure.ts";
@@ -160,6 +161,7 @@
 @source "../lib/contact-profile-format.ts";
 @source "../lib/contact-profile.ts";
 @source "../lib/contact-writes.ts";
+@source "../lib/create-external-store.ts";
 @source "../lib/credits/grants.ts";
 @source "../lib/credits/ledger.ts";
 @source "../lib/crypto.ts";
@@ -191,6 +193,8 @@
 @source "../lib/gate-events.ts";
 @source "../lib/google-scopes.ts";
 @source "../lib/ics.ts";
+@source "../lib/identity/email.ts";
+@source "../lib/identity/linkedin.ts";
 @source "../lib/interaction-date.ts";
 @source "../lib/interaction-provenance.ts";
 @source "../lib/interaction-types.ts";
