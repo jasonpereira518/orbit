@@ -11,6 +11,7 @@
  * this path all agree on one spelling of a profile rather than three.
  */
 import type { ParsedNote } from "@/lib/ai";
+import { canonicalLinkedInProfileUrl } from "@/lib/identity/linkedin";
 
 /** One profile URL found in pasted text. */
 export type LinkedInProfileRef = {
@@ -73,7 +74,7 @@ const PROFILE_URL_RE =
   /(?:https?:\/\/)?(?:[a-z0-9-]+\.)?linkedin\.com\/in\/([^\s/?#"'<>,;)\]}]+)/gi;
 
 export function canonicalLinkedInUrl(slug: string) {
-  return `https://www.linkedin.com/in/${slug}`;
+  return canonicalLinkedInProfileUrl(slug);
 }
 
 /**

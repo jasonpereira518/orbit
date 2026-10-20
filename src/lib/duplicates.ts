@@ -1,4 +1,5 @@
 import type { Contact } from "@/db/schema";
+import { extractLinkedInSlug } from "@/lib/identity/linkedin";
 
 /**
  * The columns duplicate detection actually reads.
@@ -82,8 +83,8 @@ export function nameSimilarity(a: string | null | undefined, b: string | null | 
  */
 export function linkedinSlug(url: string | null | undefined) {
   if (!url) return "";
-  const match = url.match(/linkedin\.com\/in\/([^/?#]+)/i);
-  return match ? match[1].toLowerCase() : normalize(url);
+  const slug = extractLinkedInSlug(url);
+  return slug !== null ? slug.toLowerCase() : normalize(url);
 }
 
 /**

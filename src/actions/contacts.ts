@@ -83,6 +83,7 @@ import {
 } from "@/lib/related-contacts";
 import { relatedSqlLower } from "@/lib/related-contacts-sql";
 import { UNDO_DELAY_MS } from "@/lib/email/config";
+import { isLinkedInProfileUrl } from "@/lib/identity/linkedin";
 import { enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
 import { scheduleDispatch } from "@/lib/email/schedule";
 import { getSendCapability, type MailboxId, type SendBlockReason } from "@/lib/email/sender";
@@ -1209,20 +1210,6 @@ export async function backfillContactAvatars(
     ...result,
     pending: Math.max(0, backlog - result.saved - result.failedIds.length),
   };
-}
-
-function isLinkedInProfileUrl(raw: string) {
-  const trimmed = raw.trim();
-  if (!trimmed) return false;
-  try {
-    const url = new URL(
-      trimmed.startsWith("http") ? trimmed : `https://${trimmed}`
-    );
-    const host = url.hostname.replace(/^www\./i, "").toLowerCase();
-    return host === "linkedin.com" && /\/in\//i.test(url.pathname);
-  } catch {
-    return /linkedin\.com\/in\//i.test(trimmed);
-  }
 }
 
 /**

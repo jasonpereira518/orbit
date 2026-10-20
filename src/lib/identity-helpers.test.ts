@@ -18,6 +18,8 @@ import { normalizeEmail as normalizeEmailActivity } from "@/lib/email-activity";
 import { canonicalLinkedInUrl } from "@/lib/linkedin-paste";
 import { buildLinkedInUrl, isDemoProspect as isDemoProspectChannels } from "@/lib/outreach-channels";
 import { isDemoProspect as isDemoProspectQuality } from "@/lib/outreach-quality";
+import { normalizeEmail as normalizeEmailAvatarConnectors } from "@/lib/identity/email";
+import { isLinkedInProfileUrl as isLinkedInProfileUrlActionsContacts } from "@/lib/identity/linkedin";
 import { isUuid as isUuidIds } from "@/lib/ids";
 import { isUuid as isUuidChatSend } from "@/lib/chat-send";
 import { isUuid as isUuidMeeting } from "@/lib/meeting-sessions";
@@ -25,23 +27,10 @@ import { escapeLike as escapeLikeRank } from "@/lib/contact-search-rank";
 
 /* ----------------------------- verbatim private copies (UPDATE IF SOURCE CHANGES) ----- */
 
-/** private copy at actions/contacts.ts:1236 — body copied verbatim. */
-function isLinkedInProfileUrlActionsContacts(raw: string) {
-  const trimmed = raw.trim();
-  if (!trimmed) return false;
-  try {
-    const url = new URL(trimmed.startsWith("http") ? trimmed : `https://${trimmed}`);
-    const host = url.hostname.replace(/^www\./i, "").toLowerCase();
-    return host === "linkedin.com" && /\/in\//i.test(url.pathname);
-  } catch {
-    return /linkedin\.com\/in\//i.test(trimmed);
-  }
-}
-
-/** private copy at lib/contact-avatar-connectors.ts:29 — body copied verbatim. */
-function normalizeEmailAvatarConnectors(email: string): string {
-  return email.trim().toLowerCase();
-}
+// P4.3 decided 2026-10-20: the private copies at actions/contacts.ts:1236 (strict LinkedIn) and
+// lib/contact-avatar-connectors.ts:29 (non-null email) are DELETED. Both modules now import the
+// shared lib/identity/{linkedin,email}.ts, imported above under the old copy names so each
+// table below still has a column for them.
 
 /** private copy at lib/hybrid-search.ts:104 (escapeLikeValue) — body copied verbatim. */
 function escapeLikeHybridSearch(value: string): string {
@@ -79,20 +68,22 @@ type UrlRow = {
   build: string | null;
 };
 
+// P4.3 decided 2026-10-20: `actionsContacts` is now the shared lib rule (the strict private copy is gone), so
+// uk.linkedin.com, /company/, /pub/ and the bare host flip false -> true on the four marked rows.
 const L = "https://www.linkedin.com";
 const URL_TABLE: UrlRow[] = [
   { input: "https://www.linkedin.com/in/jane-doe", contactInput: true, actionsContacts: true, slug: "jane-doe", recruiters: `${L}/in/jane-doe`, build: `${L}/in/jane-doe` },
   { input: "https://www.linkedin.com/in/Jane-Doe/", contactInput: true, actionsContacts: true, slug: "jane-doe", recruiters: `${L}/in/jane-doe`, build: `${L}/in/Jane-Doe/` },
   { input: "  linkedin.com/in/jane-doe  ", contactInput: true, actionsContacts: true, slug: "jane-doe  ", recruiters: `${L}/in/jane-doe`, build: `${L}/in/linkedin.com/in/jane-doe` },
   { input: "LINKEDIN.COM/IN/Jane", contactInput: true, actionsContacts: true, slug: "jane", recruiters: `${L}/in/jane`, build: `${L}/in/LINKEDIN.COM/IN/Jane` },
-  { input: "https://uk.linkedin.com/in/jane-doe", contactInput: true, actionsContacts: false, slug: "jane-doe", recruiters: `${L}/in/jane-doe`, build: "https://uk.linkedin.com/in/jane-doe" },
+  { input: "https://uk.linkedin.com/in/jane-doe", contactInput: true, actionsContacts: true, slug: "jane-doe", recruiters: `${L}/in/jane-doe`, build: "https://uk.linkedin.com/in/jane-doe" },
   { input: "www.linkedin.com/in/jane", contactInput: true, actionsContacts: true, slug: "jane", recruiters: `${L}/in/jane`, build: `${L}/in/www.linkedin.com/in/jane` },
   { input: "https://www.linkedin.com/in/jane/?trk=x#frag", contactInput: true, actionsContacts: true, slug: "jane", recruiters: `${L}/in/jane`, build: `${L}/in/jane/?trk=x#frag` },
   { input: "https://www.linkedin.com/in/jane?utm=1", contactInput: true, actionsContacts: true, slug: "jane", recruiters: `${L}/in/jane`, build: `${L}/in/jane?utm=1` },
-  { input: "https://www.linkedin.com/company/acme", contactInput: true, actionsContacts: false, slug: `${L}/company/acme`, recruiters: `${L}/company/acme`, build: `${L}/company/acme` },
-  { input: "https://www.linkedin.com/", contactInput: true, actionsContacts: false, slug: `${L}/`, recruiters: L, build: `${L}/` },
+  { input: "https://www.linkedin.com/company/acme", contactInput: true, actionsContacts: true, slug: `${L}/company/acme`, recruiters: `${L}/company/acme`, build: `${L}/company/acme` },
+  { input: "https://www.linkedin.com/", contactInput: true, actionsContacts: true, slug: `${L}/`, recruiters: L, build: `${L}/` },
   { input: "https://www.linkedin.com/in/", contactInput: true, actionsContacts: true, slug: `${L}/in/`, recruiters: `${L}/in`, build: `${L}/in/` },
-  { input: "https://www.linkedin.com/pub/jane/1/2/3", contactInput: true, actionsContacts: false, slug: `${L}/pub/jane/1/2/3`, recruiters: `${L}/pub/jane/1/2/3`, build: `${L}/pub/jane/1/2/3` },
+  { input: "https://www.linkedin.com/pub/jane/1/2/3", contactInput: true, actionsContacts: true, slug: `${L}/pub/jane/1/2/3`, recruiters: `${L}/pub/jane/1/2/3`, build: `${L}/pub/jane/1/2/3` },
   { input: "http://linkedin.com/in/jane", contactInput: true, actionsContacts: true, slug: "jane", recruiters: `${L}/in/jane`, build: "http://linkedin.com/in/jane" },
   { input: "https://example.com/in/jane", contactInput: false, actionsContacts: false, slug: "https://example.com/in/jane", recruiters: `${L}/in/jane`, build: "https://example.com/in/jane" },
   { input: "https://evil.com/linkedin.com/in/jane", contactInput: false, actionsContacts: false, slug: "jane", recruiters: `${L}/linkedin.com/in/jane`, build: "https://evil.com/linkedin.com/in/jane" },
@@ -142,13 +133,15 @@ describe("DISAGREEMENTS (LinkedIn): P4.3 flips these", () => {
   it("[P4.3] regional host: contact-input accepts uk.linkedin.com, actions/contacts copy rejects it", () => {
     const u = "https://uk.linkedin.com/in/jane-doe";
     assert.equal(isLinkedInProfileUrlContactInput(u), true);
-    assert.equal(isLinkedInProfileUrlActionsContacts(u), false);
+    // P4.3 decided 2026-10-20: one lib rule; the strict copy is deleted, so regional hosts are accepted everywhere.
+    assert.equal(isLinkedInProfileUrlActionsContacts(u), true);
   });
 
   it("[P4.3] non-profile paths: contact-input accepts /company/ and the bare host, the other copy requires /in/", () => {
     for (const u of ["https://www.linkedin.com/company/acme", "https://www.linkedin.com/"]) {
       assert.equal(isLinkedInProfileUrlContactInput(u), true, u);
-      assert.equal(isLinkedInProfileUrlActionsContacts(u), false, u);
+      // P4.3 decided 2026-10-20: /company/ and the bare host are accepted by the single shared rule.
+      assert.equal(isLinkedInProfileUrlActionsContacts(u), true, u);
     }
   });
 
@@ -176,6 +169,7 @@ describe("DISAGREEMENTS (LinkedIn): P4.3 flips these", () => {
   });
 
   it("[P4.3] a slug-less /in/ URL is a valid profile URL to one copy and has no slug in the other", () => {
+    // unchanged: accepted under the shared rule too (any linkedin.com host).
     assert.equal(isLinkedInProfileUrlActionsContacts("https://www.linkedin.com/in/"), true);
     assert.equal(linkedinSlug("https://www.linkedin.com/in/"), `${L}/in/`);
   });
@@ -189,11 +183,11 @@ const EMAIL_TABLE: EmailRow[] = [
   { input: "Jane@Example.com", activity: "jane@example.com", recruiters: "jane@example.com", avatar: "jane@example.com" },
   { input: "JANE@EXAMPLE.COM", activity: "jane@example.com", recruiters: "jane@example.com", avatar: "jane@example.com" },
   { input: "  jane@example.com  ", activity: "jane@example.com", recruiters: "jane@example.com", avatar: "jane@example.com" },
-  { input: "jane", activity: null, recruiters: "jane", avatar: "jane" },
+  { input: "jane", activity: null, recruiters: null /* P4.3 decided 2026-10-20: no-@ is null everywhere */, avatar: null /* P4.3 decided 2026-10-20 */ },
   { input: "a@b", activity: "a@b", recruiters: "a@b", avatar: "a@b" },
   { input: "Jane Doe <jane@x.com>", activity: "jane doe <jane@x.com>", recruiters: "jane doe <jane@x.com>", avatar: "jane doe <jane@x.com>" },
-  { input: "", activity: null, recruiters: null, avatar: "" },
-  { input: "   ", activity: null, recruiters: null, avatar: "" },
+  { input: "", activity: null, recruiters: null, avatar: null /* P4.3 decided 2026-10-20: blank is null, not "" */ },
+  { input: "   ", activity: null, recruiters: null, avatar: null /* P4.3 decided 2026-10-20 */ },
   { input: null, activity: null, recruiters: null, avatar: null },
   { input: undefined, activity: null, recruiters: null, avatar: null },
 ];
@@ -203,28 +197,29 @@ describe("normalizeEmail: every copy against one input table", () => {
     it(`${JSON.stringify(row.input)}`, () => {
       assert.equal(normalizeEmailActivity(row.input), row.activity, "lib/email-activity.ts:80");
       assert.equal(normalizeEmailRecruiters(row.input), row.recruiters, "lib/recruiters.ts:34");
-      // The avatar copy takes a string only (null / undefined would throw); null rows are not run.
-      if (typeof row.input === "string") {
-        assert.equal(normalizeEmailAvatarConnectors(row.input), row.avatar, "private copy at lib/contact-avatar-connectors.ts:29");
-      }
+      // P4.3 decided 2026-10-20: the avatar copy is gone (shared normalizer) and no longer throws, so null / undefined rows run too.
+      assert.equal(normalizeEmailAvatarConnectors(row.input), row.avatar, "lib/identity/email.ts (was the avatar-connectors copy)");
     });
   }
 
   it("avatar-connectors copy throws on null/undefined (the other two return null)", () => {
-    assert.throws(() => normalizeEmailAvatarConnectors(null as unknown as string));
-    assert.throws(() => normalizeEmailAvatarConnectors(undefined as unknown as string));
+    // P4.3 decided 2026-10-20: the shared normalizer never throws; null/undefined -> null.
+    assert.equal(normalizeEmailAvatarConnectors(null), null);
+    assert.equal(normalizeEmailAvatarConnectors(undefined), null);
   });
 });
 
 describe("DISAGREEMENTS (email): P4.3 flips these", () => {
   it("[P4.3] no-@ string: email-activity says null, recruiters and avatar copies keep it", () => {
     assert.equal(normalizeEmailActivity("jane"), null);
-    assert.equal(normalizeEmailRecruiters("jane"), "jane");
-    assert.equal(normalizeEmailAvatarConnectors("jane"), "jane");
+    // P4.3 decided 2026-10-20: one canonical normalizer; no-@ is null for all three.
+    assert.equal(normalizeEmailRecruiters("jane"), null);
+    assert.equal(normalizeEmailAvatarConnectors("jane"), null);
   });
 
   it("[P4.3] empty / blank: avatar copy returns '' where the other two return null", () => {
-    assert.equal(normalizeEmailAvatarConnectors("   "), "");
+    // P4.3 decided 2026-10-20: blank is null for the avatar path too (was "").
+    assert.equal(normalizeEmailAvatarConnectors("   "), null);
     assert.equal(normalizeEmailActivity("   "), null);
     assert.equal(normalizeEmailRecruiters("   "), null);
   });
@@ -240,28 +235,32 @@ describe("isDemoProspect: channels (prospect) vs quality (enrichment)", () => {
     { label: "enrichment.demo === false", prospect: { enrichment: { demo: false } }, channels: false, quality: false },
     { label: "enrichment null", prospect: { enrichment: null }, channels: false, quality: false },
     { label: "enrichment undefined", prospect: {}, channels: false, quality: false },
-    { label: "externalId demo-1", prospect: { externalId: "demo-1" }, channels: true, quality: false },
+    { label: "externalId demo-1", prospect: { externalId: "demo-1" }, channels: true, quality: true /* P4.3 decided 2026-10-20: stricter detection (prefix OR flag) everywhere */ },
     { label: "externalId DEMO-1 (case-sensitive)", prospect: { externalId: "DEMO-1" }, channels: false, quality: false },
     { label: "externalId ' demo-1' (not trimmed)", prospect: { externalId: " demo-1" }, channels: false, quality: false },
     { label: "externalId real-1", prospect: { externalId: "real-1" }, channels: false, quality: false },
     { label: "externalId null", prospect: { externalId: null }, channels: false, quality: false },
-    { label: "externalId demo-1 AND demo:false", prospect: { externalId: "demo-1", enrichment: { demo: false } }, channels: true, quality: false },
+    { label: "externalId demo-1 AND demo:false", prospect: { externalId: "demo-1", enrichment: { demo: false } }, channels: true, quality: true /* P4.3 decided 2026-10-20 */ },
   ];
   for (const r of rows) {
     it(r.label, () => {
       assert.equal(isDemoProspectChannels(r.prospect), r.channels, "outreach-channels.ts:56");
-      assert.equal(isDemoProspectQuality(r.prospect.enrichment), r.quality, "outreach-quality.ts:4");
+      // P4.3 decided 2026-10-20: quality now takes the prospect (same function as channels), not just its enrichment.
+      assert.equal(isDemoProspectQuality(r.prospect), r.quality, "outreach-quality.ts (re-export of outreach-channels)");
     });
   }
 
   it("[P4.3] DISAGREEMENT: a demo- externalId is a demo prospect to channels but not to quality", () => {
     assert.equal(isDemoProspectChannels({ externalId: "demo-1" }), true);
-    assert.equal(isDemoProspectQuality(undefined), false);
+    // P4.3 decided 2026-10-20: same function, so quality now flags a demo- externalId too.
+    assert.equal(isDemoProspectQuality({ externalId: "demo-1" }), true);
+    assert.equal(isDemoProspectQuality({}), false);
   });
 
   it("quality accepts a bare enrichment object only; non-objects are false", () => {
-    for (const v of [true, "x", 0, [], null, undefined]) assert.equal(isDemoProspectQuality(v), false);
-    assert.equal(isDemoProspectQuality({ demo: true }), true);
+    // P4.3 decided 2026-10-20: signature is now the prospect ({ externalId, enrichment }); enrichment goes under its key.
+    for (const v of [true, "x", 0, [], null, undefined]) assert.equal(isDemoProspectQuality({ enrichment: v }), false);
+    assert.equal(isDemoProspectQuality({ enrichment: { demo: true } }), true);
   });
 });
 

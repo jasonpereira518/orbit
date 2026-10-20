@@ -1,6 +1,8 @@
 import { and, asc, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { cleanSingleLine } from "@/lib/ai-security";
+import { normalizeEmail } from "@/lib/identity/email";
+import { LINKEDIN_WWW_ORIGIN } from "@/lib/identity/linkedin";
 import {
   recruiters,
   userRecruiterLinks,
@@ -31,10 +33,8 @@ export function normalizePersonName(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-export function normalizeEmail(email: string | null | undefined): string | null {
-  const t = email?.trim().toLowerCase();
-  return t || null;
-}
+// One canonical normalizer (lib/identity/email.ts); null means "no email".
+export { normalizeEmail };
 
 export function normalizeFirm(firm: string | null | undefined): string | null {
   const t = firm?.trim().toLowerCase().replace(/\s+/g, " ");
@@ -61,7 +61,7 @@ export function normalizeLinkedinUrl(
   try {
     const u = new URL(t.startsWith("http") ? t : `https://${t}`);
     const path = u.pathname.replace(/\/+$/, "").toLowerCase();
-    return `https://www.linkedin.com${path}`;
+    return `${LINKEDIN_WWW_ORIGIN}${path}`;
   } catch {
     return t.toLowerCase();
   }

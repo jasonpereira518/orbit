@@ -19,6 +19,7 @@
  *
  * Pure: no network, no database, no DOM.
  */
+import { canonicalLinkedInProfileUrl } from "@/lib/identity/linkedin";
 
 /** Enough for a large event page; the fetcher's own cap is what actually bounds the input. */
 const MAX_JSON_BYTES = 2_000_000;
@@ -157,7 +158,7 @@ export function linkedinUrlFrom(value: unknown): string | null {
   }
   const handle = raw.replace(/^\/?(?:in\/)?/i, "").replace(/\/+$/, "");
   if (!/^[A-Za-z0-9\-_%À-ÿ.]{3,100}$/.test(handle)) return null;
-  return `https://www.linkedin.com/in/${handle}`;
+  return canonicalLinkedInProfileUrl(handle);
 }
 
 /** An X/Twitter handle, without the `@` and without a URL wrapper. */

@@ -1,3 +1,4 @@
+import { canonicalLinkedInProfileUrl } from "@/lib/identity/linkedin";
 import { isUnmailableAddress, type OutreachChannel } from "@/lib/outreach-types";
 
 export function buildMailtoUrl(input: {
@@ -23,7 +24,7 @@ export function buildSmsUrl(input: { phone: string; body: string }) {
 export function buildLinkedInUrl(linkedinUrl: string) {
   const url = linkedinUrl.trim();
   if (url.startsWith("http")) return url;
-  return `https://www.linkedin.com/in/${url.replace(/^\/+/, "")}`;
+  return canonicalLinkedInProfileUrl(url.replace(/^\/+/, ""));
 }
 
 export function buildLinkedInSearchUrl(fullName: string, company?: string | null) {

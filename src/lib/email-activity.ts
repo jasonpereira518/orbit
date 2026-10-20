@@ -26,6 +26,7 @@
  *
  * Pure: no database, no network. `email-activity-server.ts` does both.
  */
+import { normalizeEmail } from "@/lib/identity/email";
 import type { NetworkEvent } from "@/lib/ingest/events";
 
 /**
@@ -77,11 +78,7 @@ export type EmailHeader = {
 };
 
 /** Lowercased and trimmed; the form `contact_identities` stores for `kind = 'email'`. */
-export function normalizeEmail(value: string | null | undefined): string | null {
-  const trimmed = (value ?? "").trim().toLowerCase();
-  if (!trimmed || !trimmed.includes("@")) return null;
-  return trimmed;
-}
+export { normalizeEmail };
 
 /**
  * Pull addresses out of one raw header value.

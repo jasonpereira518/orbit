@@ -1289,7 +1289,7 @@ async function sendOutreachMessageNow(messageId: string) {
 
   // Before anything else, and outside the try below: a refusal is not a failed send, so
   // the draft must not be marked "failed".
-  if (isDemoProspect(message.prospect.enrichment)) {
+  if (isDemoProspect(message.prospect)) {
     throw new UserFacingError(DEMO_PROSPECT_SEND_MESSAGE);
   }
 
@@ -1423,7 +1423,7 @@ export async function previewBulkSendQuality(input: {
       channel: m.channel as OutreachChannel,
       subject: m.subject,
       body: m.body,
-      isDemo: isDemoProspect(m.prospect.enrichment),
+      isDemo: isDemoProspect(m.prospect),
     }))
   );
 }
@@ -1511,7 +1511,7 @@ export async function saveProspectAsContact(input: {
   if (prospect.contactId) return { contactId: prospect.contactId, created: false };
 
   // A sample's email, phone and profile URL were made up: never copy them into the network.
-  const demo = isDemoProspect(prospect.enrichment);
+  const demo = isDemoProspect(prospect);
   let email = demo ? null : prospect.email;
   let phone = demo ? null : prospect.phone;
 
