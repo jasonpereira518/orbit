@@ -4,6 +4,7 @@ import { useSyncExternalStore } from "react";
 import { getAppPulse } from "@/actions/app-pulse";
 import type { AppPulse } from "@/lib/app-pulse";
 import { isOffline, reportRequestError, reportRequestOk } from "@/lib/connectivity-store";
+import { createExternalStore, listen } from "@/lib/create-external-store";
 
 /**
  * One poll for the whole app, shared by everything that used to poll on its own.
@@ -24,11 +25,11 @@ let snapshot: PulseSnapshot = EMPTY;
 let inFlight: Promise<void> | null = null;
 let latest = 0;
 let timer: number | null = null;
-const listeners = new Set<() => void>();
+let stopVisible: (() => void) | null = null;
 
 function set(next: Partial<PulseSnapshot>) {
   snapshot = { ...snapshot, ...next };
-  for (const l of listeners) l();
+  store.emit();
 }
 
 /**
@@ -58,36 +59,36 @@ export function refreshPulse(force = false): Promise<void> {
   return run;
 }
 
-function subscribe(listener: () => void) {
-  listeners.add(listener);
-  if (listeners.size === 1 && timer === null) {
-    timer = window.setInterval(() => {
-      if (document.visibilityState === "visible" && !isOffline()) void refreshPulse();
-    }, PULSE_MS);
-    document.addEventListener("visibilitychange", onVisible);
-  }
-  return () => {
-    listeners.delete(listener);
-    if (listeners.size === 0) {
-      if (timer !== null) {
-        window.clearInterval(timer);
-        timer = null;
-      }
-      document.removeEventListener("visibilitychange", onVisible);
-      // Dropped when the shell unmounts so the next session cannot paint the previous
-      // account's counts before its own first fetch lands.
-      snapshot = EMPTY;
-    }
-  };
-}
-
 function onVisible() {
   if (document.visibilityState === "visible" && !isOffline()) void refreshPulse();
 }
 
-const getSnapshot = () => snapshot;
-const getServerSnapshot = () => EMPTY;
+const store = createExternalStore<PulseSnapshot>({
+  getSnapshot: () => snapshot,
+  getServerSnapshot: () => EMPTY,
+  onSubscribe(count) {
+    if (count === 1 && timer === null) {
+      timer = window.setInterval(() => {
+        if (document.visibilityState === "visible" && !isOffline()) void refreshPulse();
+      }, PULSE_MS);
+      stopVisible = listen(document, "visibilitychange", onVisible);
+    }
+  },
+  onUnsubscribe(count) {
+    if (count === 0) {
+      if (timer !== null) {
+        window.clearInterval(timer);
+        timer = null;
+      }
+      stopVisible?.();
+      stopVisible = null;
+      // Dropped when the shell unmounts so the next session cannot paint the previous
+      // account's counts before its own first fetch lands.
+      snapshot = EMPTY;
+    }
+  },
+});
 
 export function useAppPulse(): PulseSnapshot {
-  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getServerSnapshot);
 }

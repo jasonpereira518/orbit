@@ -29,6 +29,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useMotionValue, type MotionValue } from "motion/react";
+import { getAudioContextCtor } from "@/lib/audio-context";
 import { createDownsampler, encodeWav16, rmsLevel, TARGET_SAMPLE_RATE } from "@/lib/voice-recording";
 import { ABSOLUTE_VOICE_RMS, MAX_MEETING_MS, MeetingChunker, type MeetingChunk } from "@/lib/meeting-chunking";
 import { LoudnessTimeline } from "@/lib/speaker-map";
@@ -140,14 +141,6 @@ export type MeetingRecorderHandle = {
   resume: (opts: { startSeq?: number; startOffsetMs: number }) => void;
   reset: () => void;
 };
-
-type AudioContextCtor = typeof AudioContext;
-
-function getAudioContextCtor(): AudioContextCtor | null {
-  if (typeof window === "undefined") return null;
-  const w = window as Window & { webkitAudioContext?: AudioContextCtor };
-  return window.AudioContext ?? w.webkitAudioContext ?? null;
-}
 
 /**
  * Whether this browser can record a meeting at all. Desktop Chromium is the only engine

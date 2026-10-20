@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useMotionValue, type MotionValue } from "motion/react";
+import { getAudioContextCtor } from "@/lib/audio-context";
 import {
   MAX_RECORDING_MS,
   MIN_RECORDING_MS,
@@ -108,14 +109,6 @@ export type VoiceRecorderHandle = {
   /** Clear a settled error back to idle, without touching the device. */
   reset: () => void;
 };
-
-type AudioContextCtor = typeof AudioContext;
-
-function getAudioContextCtor(): AudioContextCtor | null {
-  if (typeof window === "undefined") return null;
-  const w = window as Window & { webkitAudioContext?: AudioContextCtor };
-  return window.AudioContext ?? w.webkitAudioContext ?? null;
-}
 
 /**
  * Whether this browser can record at all.

@@ -15,6 +15,7 @@
  */
 
 import { useSyncExternalStore } from "react";
+import { createExternalStore, listen } from "@/lib/create-external-store";
 import type { MeetingCandidatesResult } from "@/actions/meetings";
 import { showDesktopNotification } from "@/lib/browser-notifications";
 import type { MeetingCandidate } from "@/lib/meeting-calendar";
@@ -141,7 +142,7 @@ let events: MeetingCandidate[] = [];
 /** Not connected, no plan, or the read failed: stop asking for the rest of this session. */
 let stopped = false;
 let lastRefresh = 0;
-const listeners = new Set<() => void>();
+let stopVisibility: (() => void) | null = null;
 let timers: {
   first?: ReturnType<typeof setTimeout>;
   refresh?: ReturnType<typeof setInterval>;
@@ -180,7 +181,7 @@ function recompute(): void {
 
   snapshot = nudge ? { nudge, timing } : EMPTY;
   if (nudge && !sameOffer) alertDesktop(nudge);
-  listeners.forEach((l) => l());
+  store.emit();
 }
 
 /**
@@ -208,7 +209,7 @@ function start(): void {
   timers.first = setTimeout(() => void refresh(), FIRST_REFRESH_DELAY_MS);
   timers.refresh = setInterval(() => void refresh(), REFRESH_MS);
   timers.tick = setInterval(recompute, TICK_MS);
-  document.addEventListener("visibilitychange", onVisibility);
+  stopVisibility = listen(document, "visibilitychange", onVisibility);
 }
 
 function stop(): void {
@@ -216,17 +217,20 @@ function stop(): void {
   clearInterval(timers.refresh);
   clearInterval(timers.tick);
   timers = {};
-  document.removeEventListener("visibilitychange", onVisibility);
+  stopVisibility?.();
+  stopVisibility = null;
 }
 
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  if (listeners.size === 1) start();
-  return () => {
-    listeners.delete(listener);
-    if (listeners.size === 0) stop();
-  };
-}
+const store = createExternalStore<NudgeSnapshot>({
+  getSnapshot: () => snapshot,
+  getServerSnapshot: () => EMPTY,
+  onSubscribe(count) {
+    if (count === 1) start();
+  },
+  onUnsubscribe(count) {
+    if (count === 0) stop();
+  },
+});
 
 const subscribeNothing = () => () => {};
 
@@ -235,5 +239,5 @@ const subscribeNothing = () => () => {};
  * without meeting recording) does not subscribe, so the poll never starts for it.
  */
 export function useMeetingNudgeSnapshot(enabled: boolean): NudgeSnapshot {
-  return useSyncExternalStore(enabled ? subscribe : subscribeNothing, () => (enabled ? snapshot : EMPTY), () => EMPTY);
+  return useSyncExternalStore(enabled ? store.subscribe : subscribeNothing, () => (enabled ? snapshot : EMPTY), () => EMPTY);
 }

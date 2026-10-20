@@ -10,6 +10,7 @@ import {
   type ConnectivityEvent,
   type ConnectivityState,
 } from "@/lib/connectivity";
+import { createExternalStore } from "@/lib/create-external-store";
 import { isNetworkError } from "@/lib/errors";
 
 /**
@@ -38,7 +39,6 @@ let state: ConnectivityState = INITIAL_CONNECTIVITY;
 let started = false;
 let probeTimer: number | null = null;
 let probing: Promise<void> | null = null;
-const listeners = new Set<() => void>();
 const reconnectListeners = new Set<() => void>();
 
 function dispatch(event: ConnectivityEvent) {
@@ -46,7 +46,7 @@ function dispatch(event: ConnectivityEvent) {
   const next = reduceConnectivity(prev, event);
   if (next === prev) return;
   state = next;
-  for (const l of listeners) l();
+  store.emit();
   if (isReconnection(prev.status, next.status)) {
     for (const l of reconnectListeners) {
       try {
@@ -133,20 +133,17 @@ function stop() {
   document.removeEventListener("visibilitychange", onVisible);
 }
 
-function subscribe(listener: () => void) {
-  start();
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-    if (listeners.size === 0 && reconnectListeners.size === 0) stop();
-  };
-}
-
-const getSnapshot = () => state;
-const getServerSnapshot = () => INITIAL_CONNECTIVITY;
+const store = createExternalStore<ConnectivityState>({
+  getSnapshot: () => state,
+  getServerSnapshot: () => INITIAL_CONNECTIVITY,
+  beforeSubscribe: start,
+  onUnsubscribe(count) {
+    if (count === 0 && reconnectListeners.size === 0) stop();
+  },
+});
 
 export function useConnectivity(): ConnectivityState {
-  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getServerSnapshot);
 }
 
 /** The current status, for code outside React (a poll deciding whether to bother). */
@@ -171,7 +168,7 @@ export function onReconnect(listener: () => void): () => void {
   reconnectListeners.add(listener);
   return () => {
     reconnectListeners.delete(listener);
-    if (listeners.size === 0 && reconnectListeners.size === 0) stop();
+    if (store.size() === 0 && reconnectListeners.size === 0) stop();
   };
 }
 
