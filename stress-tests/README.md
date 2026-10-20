@@ -13,4 +13,6 @@ Every script imports `scripts/smoke/_env.ts`, so it runs against a throwaway PGl
 | `scale-20k.ts` | 20,000 contacts / 40,000 interactions: graph, dashboard, knowledge, notifications, closeness rescore, full pagination walk, LIKE metacharacters, export | 3 findings (not re-run after Phase 2; SCALE-GRAPH waits on decision 12) |
 | `resilience-repros.ts` | NULL-closeness paging, duplicate concurrent creates, overlapping webhook drains, import double-run, partial capture save, CSV formula injection, `.docx` inflate bomb | 6 findings (all fixed: Phase 1, 2 and 3 → 0) |
 
+Since Phase 4 the smoke suite runs every script here except `scale-20k.ts` as `scripts/smoke-stress-<name>.ts`, under `STRESS_STRICT=1`, where a `BUG` line fails the run. `npx tsx scripts/prove-audit-regressions.ts` re-proves them against the pre-audit commit: every finding must reappear there and be gone here.
+
 Run one: `npx tsx stress-tests/<name>.ts`. `_harness.ts` prints `ok` for a property that held, `BUG` for a confirmed finding and `FAIL` for a harness problem; only `FAIL` sets a non-zero exit code. `_probes/` holds scripts a test spawns under a hard timeout.

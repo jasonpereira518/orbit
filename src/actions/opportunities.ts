@@ -31,6 +31,7 @@ import {
 import { isoDayToLocalNoon } from "@/lib/suggested-reminder-utils";
 import { z } from "zod";
 import { anyNumber } from "@/lib/input/schemas";
+import { parseClientDate } from "@/lib/input/dates";
 import { defineAction, failResult } from "@/lib/input/action";
 
 type Fail = { ok: false; error: string };
@@ -215,7 +216,8 @@ export const restoreOpportunity = defineAction(
           sourceInteractionId: row.sourceInteractionId,
           noteBatchId: row.noteBatchId,
           sourceExcerpt: row.sourceExcerpt,
-          dueDate: row.dueDate ? new Date(row.dueDate) : null,
+          // The row came back from the client for an undo: a garbled date restores as none.
+          dueDate: parseClientDate(row.dueDate),
           rawDatePhrase: row.rawDatePhrase,
           confidenceScore: row.confidenceScore,
           createdBy: row.createdBy,

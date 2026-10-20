@@ -10,8 +10,11 @@
 # vercel.json, and the smoke suite runs against a throwaway PGlite directory — there is no
 # `.env.local` in CI, and scripts/smoke/_env.ts deletes DATABASE_URL regardless.
 #
-# Turn this into a real gate in GitHub → Settings → Branches → main: require the `check`
-# and `smoke` status checks before merging.
+# Turn this into a real gate in GitHub → Settings → Branches → main: require
+# `typecheck · lint · build`, the three `smoke suite (PGlite) i/3` checks,
+# `audit · dependency review · secret scan`, and `browser flows (Playwright)` before merging
+# (FIX_PLAN 4.5). Every job runs on every ready PR, so a required check is never left waiting
+# on a run that did not start.
 name: ci
 
 # CI runs where a result can change a decision, and nowhere else:
@@ -241,6 +244,14 @@ jobs:
         run: |
           npm audit --omit=dev --audit-level=high || true   # the full picture, in the log
           npm audit --omit=dev --audit-level=critical
+      # FIX_PLAN 4.3: fails on any high/critical production advisory not allowlisted, each
+      # allowlisted advisory pinned to the one package it may arrive through (read from the
+      # lockfile's tree, so no install is needed).
+      - name: dependency audit (allowlisted, high and up)
+        run: node scripts/audit-deps.mjs
+      # FIX_PLAN 4.4: every tracked file, not just new commits, for live credential formats.
+      - name: secret scan (tracked files)
+        run: node scripts/scan-secrets.mjs
       # Needs Settings → Code security → Dependency graph, which is off on this repository
       # (the action errors out without it, failing every PR). Turn the graph on, then set the
       # repository variable DEPENDENCY_REVIEW=true to start enforcing this step.

