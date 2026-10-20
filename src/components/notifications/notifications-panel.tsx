@@ -9,7 +9,7 @@ import {
   useState,
   useTransition,
 } from "react";
-import { formatDistanceToNow } from "date-fns";
+import { longRelativeLabel } from "@/lib/relative-date";
 import {
   Bell,
   Check,
@@ -520,7 +520,7 @@ function KeptRow({
           {entry.title}
         </p>
         <p className="mt-0.5 truncate text-xs text-muted-foreground">
-          {formatDistanceToNow(entry.at, { addSuffix: true })}
+          {longRelativeLabel(new Date(entry.at))}
           {entry.description ? ` · ${entry.description}` : ""}
         </p>
       </div>
@@ -681,7 +681,7 @@ function NotificationRow({
           ? FileText
           : Bell;
   const when = item.dueAt
-    ? formatDistanceToNow(new Date(item.dueAt), { addSuffix: true })
+    ? longRelativeLabel(new Date(item.dueAt))
     : item.kind === "capture_review" || item.kind === "cloud_notes"
       ? "Waiting on you"
       : "No due date";

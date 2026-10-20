@@ -159,3 +159,64 @@ export function formatLastTouch(at: Date, now: Date = new Date()): string {
   if (sameDay && at.getTime() > now.getTime()) return "today";
   return formatDistance(at, now, { addSuffix: true });
 }
+
+// ---------------------------------------------------------------------------------------
+// Relative LABELS ("3d", "11 minutes ago"): the one place the wording is decided.
+//
+// Pure functions of (then, now) so they are testable at a fixed instant. `<RelativeTime>`
+// and the admin tables call these; nothing should hand-build a "Nd ago" string. The rules
+// below reproduce, byte for byte, the copies they replaced (pinned in
+// `relative-label.test.ts`), including the quirks: a future date reads "-5m" in the short
+// format, and an invalid date reads "NaNy".
+// ---------------------------------------------------------------------------------------
+
+export type RelativeFormat = "short" | "long";
+
+/**
+ * Compact admin wording: "just now", "5m", "3h", "12d", "2y". Rounds each unit independently
+ * and switches unit at the rounded value (59.5 minutes is "1h"), so a label never reads "60m".
+ * `ago: true` appends " ago" to everything except "just now".
+ */
+export function shortRelativeLabel(then: Date, now: Date = new Date(), opts: { ago?: boolean } = {}): string {
+  const suffix = opts.ago ? " ago" : "";
+  const diff = now.getTime() - then.getTime();
+  const mins = Math.round(diff / 60_000);
+  if (Math.abs(mins) < 1) return "just now";
+  if (Math.abs(mins) < 60) return `${mins}m${suffix}`;
+
+  const hours = Math.round(diff / 3_600_000);
+  if (Math.abs(hours) < 24) return `${hours}h${suffix}`;
+
+  const days = Math.round(diff / 86_400_000);
+  if (Math.abs(days) < 365) return `${days}d${suffix}`;
+
+  return `${Math.round(days / 365)}y${suffix}`;
+}
+
+/**
+ * Sentence wording: "11 minutes ago", "in about 2 hours" (date-fns). Throws a RangeError for
+ * an invalid date, as date-fns does; callers that take untrusted strings catch it.
+ */
+export function longRelativeLabel(then: Date, now: Date = new Date()): string {
+  return formatDistance(then, now, { addSuffix: true });
+}
+
+/** The label for a `format`, as `<RelativeTime format>` renders it. */
+export function relativeLabel(then: Date, now: Date = new Date(), format: RelativeFormat = "short"): string {
+  return format === "long" ? longRelativeLabel(then, now) : shortRelativeLabel(then, now);
+}
+
+/**
+ * The status-strip wording: "3 min ago", "5 h ago", "4 d ago". A THIRD style, not a variant of
+ * `shortRelativeLabel`, because it disagrees on every boundary: it clamps the future to "just
+ * now" (short gives "-5m"), keeps hours up to 47 (short switches to days at 24), and spaces
+ * its units. Kept as its own named formatter so the health strip reads exactly as before.
+ */
+export function minutesAgoLabel(then: Date, now: Date = new Date()): string {
+  const mins = Math.max(0, Math.round((now.getTime() - then.getTime()) / 60_000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 48) return `${hours} h ago`;
+  return `${Math.round(hours / 24)} d ago`;
+}

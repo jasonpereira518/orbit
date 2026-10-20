@@ -2,7 +2,7 @@ import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { Suspense } from "react";
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
-import { formatDistanceToNow } from "date-fns";
+import { longRelativeLabel } from "@/lib/relative-date";
 import { Bell, Sparkles, Users } from "lucide-react";
 import type { getOutreachPerformanceSummary } from "@/actions/outreach";
 import type { fetchDashboard } from "@/actions/reminders";
@@ -599,7 +599,7 @@ export async function RecentlyUpdatedSection({
                     </div>
                   </div>
                   <span className="shrink-0 text-xs text-muted-foreground">
-                    {formatDistanceToNow(new Date(c.updatedAt), { addSuffix: true })}
+                    {longRelativeLabel(new Date(c.updatedAt))}
                   </span>
                 </IntentLink>
               );

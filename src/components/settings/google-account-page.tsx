@@ -50,7 +50,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { formatDistanceToNow } from "date-fns";
+import { longRelativeLabel } from "@/lib/relative-date";
 import { CalendarClock, CalendarDays, Loader2, Mail, Send, Users } from "lucide-react";
 import { getGmailScanStatus, setCalendarSync, type GmailScanStatus } from "@/actions/gmail";
 import { Button } from "@/components/ui/button";
@@ -345,7 +345,7 @@ function meetingsLine(capability: CapabilityStatus | undefined, lastCheckedAt: s
   if (capability?.state === "off") return "Off — meetings aren’t being logged.";
   const base = "Logs meetings with people you know onto their timelines.";
   if (capability?.state !== "on" || !lastCheckedAt) return base;
-  return `${base} Checked ${formatDistanceToNow(new Date(lastCheckedAt), { addSuffix: true })}.`;
+  return `${base} Checked ${longRelativeLabel(new Date(lastCheckedAt))}.`;
 }
 
 /**

@@ -4,7 +4,7 @@ import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { X } from "lucide-react";
-import { formatDistanceToNow } from "date-fns";
+import { longRelativeLabel } from "@/lib/relative-date";
 import { companyBrandText } from "@/lib/company-brand";
 import { runToastAction, toast } from "@/lib/toast";
 import {
@@ -77,7 +77,7 @@ export function SuggestionRow({
   // Dormant and quiet-thread descriptions already state how long it has been.
   const lastTouch =
     lastInteractionAt && !/last (touch|activity)/i.test(description ?? "")
-    ? formatDistanceToNow(new Date(lastInteractionAt), { addSuffix: true })
+    ? longRelativeLabel(new Date(lastInteractionAt))
     : null;
   const nextStep = NEXT_STEP[suggestionType];
   const companyBrand = companyBrandText(contactCompany);

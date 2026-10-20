@@ -3,7 +3,8 @@
 import { useEffect, useState, useSyncExternalStore, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { format, formatDistanceToNow } from "date-fns";
+import { format } from "date-fns";
+import { longRelativeLabel } from "@/lib/relative-date";
 import { ChevronLeft, ChevronRight, Focus, LayoutList, Play, RefreshCw, Wand2 } from "lucide-react";
 import { AiKeyNotice } from "@/components/ai-key-notice";
 import { Button } from "@/components/ui/button";
@@ -137,7 +138,7 @@ export function RadarView(props: RadarViewProps) {
           {paused
             ? "Paused. Nothing updates overnight until you resume."
             : lastRunAt
-              ? `Updated ${formatDistanceToNow(new Date(lastRunAt), { addSuffix: true })}`
+              ? `Updated ${longRelativeLabel(new Date(lastRunAt))}`
               : "Your first list is being put together."}
           {!paused && signalsThisWeek > 0 && (
             <span>
@@ -423,7 +424,7 @@ function EmptyState({
         {paused
           ? "Radar is paused. Resume it to hear about new people."
           : ranOnce
-            ? `Nobody needs you right now. Radar checks again ${next ? formatDistanceToNow(next, { addSuffix: true }) : "tonight"}, and anything new will show up here.`
+            ? `Nobody needs you right now. Radar checks again ${next ? longRelativeLabel(next) : "tonight"}, and anything new will show up here.`
             : "Radar hasn’t found anyone to suggest yet. It checks your network every night."}
       </p>
     </div>

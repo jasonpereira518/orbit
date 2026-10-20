@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import { useMemo, useState, useTransition } from "react";
-import { formatDistanceToNow } from "date-fns";
+import { longRelativeLabel } from "@/lib/relative-date";
 import {
   Check,
   Coffee,
@@ -192,7 +192,7 @@ function ContactSection({ item }: { item: ReminderRow }) {
         </IntentLink>
         <p className="mt-0.5 text-xs text-muted-foreground">
           {item.contactLastTouch
-            ? `Last in touch ${formatDistanceToNow(new Date(item.contactLastTouch), { addSuffix: true })}`
+            ? `Last in touch ${longRelativeLabel(new Date(item.contactLastTouch))}`
             : "No logged conversations yet"}
         </p>
         <div className="mt-3 flex flex-wrap gap-1.5">

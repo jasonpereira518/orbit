@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
-import { formatDistanceToNow } from "date-fns";
+import { longRelativeLabel } from "@/lib/relative-date";
 import { Handshake, Orbit, RefreshCw } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { regenerateContactSummary } from "@/actions/contacts";
@@ -58,7 +58,7 @@ export function ContactProfileOverview({
   const [pending, start] = useTransition();
 
   const recencyLabel = lastTouchAt
-    ? formatDistanceToNow(new Date(lastTouchAt), { addSuffix: true })
+    ? longRelativeLabel(new Date(lastTouchAt))
     : "Never";
 
   return (

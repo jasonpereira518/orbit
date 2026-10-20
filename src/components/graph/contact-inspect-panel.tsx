@@ -4,7 +4,8 @@ import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
-import { format, formatDistanceToNow } from "date-fns";
+import { format } from "date-fns";
+import { longRelativeLabel } from "@/lib/relative-date";
 import {
   Globe,
   Settings,
@@ -69,7 +70,7 @@ function formatMaybeDate(value: string | null | undefined) {
 function formatMaybeRelative(value: string | null | undefined) {
   if (!value) return null;
   try {
-    return formatDistanceToNow(new Date(value), { addSuffix: true });
+    return longRelativeLabel(new Date(value));
   } catch {
     return null;
   }

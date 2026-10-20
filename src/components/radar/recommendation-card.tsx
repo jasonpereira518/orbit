@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { formatDistanceToNow } from "date-fns";
+import { longRelativeLabel } from "@/lib/relative-date";
 import { CalendarPlus, Clock, Copy, MoreHorizontal, PenLine, Sparkles, X } from "lucide-react";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
@@ -208,7 +208,7 @@ export function RecommendationCard({
                       {evidence.at && (
                         <span suppressHydrationWarning>
                           {" · "}
-                          {formatDistanceToNow(new Date(evidence.at), { addSuffix: true })}
+                          {longRelativeLabel(new Date(evidence.at))}
                         </span>
                       )}
                     </span>

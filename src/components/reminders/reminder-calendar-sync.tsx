@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState, useTransition } from "react";
-import { formatDistanceToNow } from "date-fns";
+import { longRelativeLabel } from "@/lib/relative-date";
 import { CalendarSync, Check, Copy, ExternalLink } from "lucide-react";
 import {
   enableCalendarFeed,
@@ -48,7 +48,7 @@ export function ReminderCalendarSync({ initial }: { initial: CalendarSyncSummary
   const statusText = !summary.enabled
     ? "Off"
     : lastFetched
-      ? `Updated ${formatDistanceToNow(lastFetched, { addSuffix: true })}`
+      ? `Updated ${longRelativeLabel(lastFetched)}`
       : "Waiting for your calendar";
 
   function mint(fn: () => Promise<CalendarFeedStatus>, success: string) {
@@ -179,7 +179,7 @@ export function ReminderCalendarSync({ initial }: { initial: CalendarSyncSummary
           <div className="space-y-2">
             <p className="text-xs text-muted-foreground">
               {lastFetched
-                ? `Your calendar last checked ${formatDistanceToNow(lastFetched, { addSuffix: true })}.`
+                ? `Your calendar last checked ${longRelativeLabel(lastFetched)}.`
                 : "The link exists, but no calendar has checked it yet."}
             </p>
             <Button size="sm" variant="outline" className="w-full" onClick={() => setConfirmingNew(true)}>

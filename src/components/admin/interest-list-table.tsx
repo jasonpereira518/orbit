@@ -10,6 +10,7 @@ import {
   bulkUnsubscribeInterestListAction,
 } from "@/actions/admin";
 import { cn } from "@/lib/utils";
+import { shortRelativeLabel } from "@/lib/relative-date";
 
 /**
  * The roster table, client-side only because selection is client state.
@@ -75,7 +76,7 @@ function PassChecksCell({
       setAgo(null);
       return;
     }
-    const update = () => setAgo(relativeAgoLabel(new Date(lastCheckedAtIso)));
+    const update = () => setAgo(shortRelativeLabel(new Date(lastCheckedAtIso), new Date(), { ago: true }));
     update();
     const timer = setInterval(update, 60_000);
     return () => clearInterval(timer);
@@ -95,19 +96,6 @@ function PassChecksCell({
       {count.toLocaleString("en-US")}
     </span>
   );
-}
-
-/** Same compact relative labels as `RelativeTime`, with an "ago" suffix for title copy. */
-function relativeAgoLabel(d: Date): string {
-  const diff = Date.now() - d.getTime();
-  const mins = Math.round(diff / 60_000);
-  if (Math.abs(mins) < 1) return "just now";
-  if (Math.abs(mins) < 60) return `${mins}m ago`;
-  const hours = Math.round(diff / 3_600_000);
-  if (Math.abs(hours) < 24) return `${hours}h ago`;
-  const days = Math.round(diff / 86_400_000);
-  if (Math.abs(days) < 365) return `${days}d ago`;
-  return `${Math.round(days / 365)}y ago`;
 }
 
 const BULK_BUTTON =

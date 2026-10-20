@@ -1,6 +1,6 @@
 "use client";
 
-import { formatDistanceToNow } from "date-fns";
+import { longRelativeLabel } from "@/lib/relative-date";
 import { FileText, Loader2, RefreshCw, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
@@ -393,7 +393,7 @@ function FileList({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium text-ink">{f.name}</span>
                   <span className="block truncate text-xs text-muted-foreground">
-                    {f.modifiedTime ? `Edited ${formatDistanceToNow(new Date(f.modifiedTime), { addSuffix: true })}` : ""}
+                    {f.modifiedTime ? `Edited ${longRelativeLabel(new Date(f.modifiedTime))}` : ""}
                     {done ? " · Already extracted" : f.hint ? ` · ${f.hint}` : ""}
                   </span>
                 </span>
@@ -468,7 +468,7 @@ function ReviewDialog({
                   <span className="block truncate text-sm font-medium text-ink">{f.name}</span>
                   <span className="block truncate text-xs text-muted-foreground">
                     {DRIVE_LABEL[f.provider]}
-                    {f.modifiedAt ? ` · ${formatDistanceToNow(new Date(f.modifiedAt), { addSuffix: true })}` : ""}
+                    {f.modifiedAt ? ` · ${longRelativeLabel(new Date(f.modifiedAt))}` : ""}
                     {f.reason ? ` · ${f.reason}` : ""}
                   </span>
                 </span>

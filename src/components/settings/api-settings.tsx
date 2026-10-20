@@ -13,7 +13,7 @@
  * rather than letting someone close the panel and lose it.
  */
 import { useCallback, useEffect, useState, useTransition } from "react";
-import { formatDistanceToNow } from "date-fns";
+import { longRelativeLabel } from "@/lib/relative-date";
 import { Copy, KeyRound, Trash2 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
@@ -223,7 +223,7 @@ export function ApiSettings() {
                 </p>
                 <p className="text-muted-foreground text-xs">
                   {key.lastUsedAt
-                    ? `Last used ${formatDistanceToNow(new Date(key.lastUsedAt), { addSuffix: true })}`
+                    ? `Last used ${longRelativeLabel(new Date(key.lastUsedAt))}`
                     : "Never used"}
                 </p>
               </div>

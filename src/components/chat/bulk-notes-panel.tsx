@@ -5,7 +5,8 @@ import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { History, X } from "lucide-react";
-import { addDays, format, formatDistanceToNow } from "date-fns";
+import { addDays, format } from "date-fns";
+import { longRelativeLabel } from "@/lib/relative-date";
 import { toast } from "@/lib/toast";
 import { useCornerClearanceAbove } from "@/lib/corner-clearance";
 import {
@@ -1004,7 +1005,7 @@ export function BulkNotesPanel({
                   Unsaved notes restored — last edited{" "}
                   {restoredJustNow
                     ? "just now"
-                    : formatDistanceToNow(new Date(restoredAt), { addSuffix: true })}
+                    : longRelativeLabel(new Date(restoredAt))}
                 </span>
               </span>
               <Button type="button" variant="ghost" size="sm" disabled={pending} onClick={discardDraft}>

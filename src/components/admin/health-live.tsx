@@ -32,6 +32,7 @@ import { ProductTabs } from "@/components/admin/product-tabs";
 import { SystemStrip } from "@/components/admin/system-strip";
 import { useLivePoll } from "@/components/admin/use-live-poll";
 import { cn } from "@/lib/utils";
+import { minutesAgoLabel } from "@/lib/relative-date";
 import type { AdminHealth } from "@/lib/admin-health";
 import type {
   CronHealth,
@@ -103,13 +104,7 @@ function who(userId: string, email: string | null) {
 /** "3 min ago" for the strip, which takes a string rather than a node. Accepts a
  *  server `Date` or the ISO string it becomes after a JSON round trip. */
 function relativeMinutes(date: Date | string) {
-  const d = typeof date === "string" ? new Date(date) : date;
-  const mins = Math.max(0, Math.round((Date.now() - d.getTime()) / 60_000));
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins} min ago`;
-  const hours = Math.round(mins / 60);
-  if (hours < 48) return `${hours} h ago`;
-  return `${Math.round(hours / 24)} d ago`;
+  return minutesAgoLabel(typeof date === "string" ? new Date(date) : date);
 }
 
 /**
