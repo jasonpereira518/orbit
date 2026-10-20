@@ -35,6 +35,7 @@ import { rateLimitBuckets } from "@/db/schema";
  *   chatThreadDaily  200 / day    new chat conversations
  *   reminderDaily    500 / day    reminders a person or their agent creates
  *   importDaily      50 / day     import jobs started (files, Gmail/Outlook scans, LinkedIn)
+ *   unsubscribeMiss  20 / hour    bad tokens one IP may send to the unsubscribe links
  *   API keys         10 active    `MAX_ACTIVE_API_KEYS`, a count rather than a bucket
  *
  * The daily caps are sized so nobody using Orbit as intended meets them: they exist to stop
@@ -99,6 +100,7 @@ const BUCKET_LABELS: Record<string, string> = {
   chatThreadDaily: "daily new-conversation",
   reminderDaily: "daily reminder",
   importDaily: "daily import",
+  unsubscribeMiss: "unsubscribe",
   "web-search": "monthly web search",
   "web-search-all": "Orbit-wide web search",
 };
@@ -427,6 +429,12 @@ export const RATE_LIMITS = {
   reminderDaily: { limit: 500, windowSec: 86_400 },
   /** Import jobs started per user per day (L-22). Each can carry thousands of rows. */
   importDaily: { limit: 50, windowSec: 86_400 },
+  /**
+   * Invalid tokens one IP may send to the three unsubscribe POSTs (`unsubscribe-guard.ts`).
+   * Only misses count: RFC 8058 one-click unsubscribes arrive from the mail provider's own
+   * servers, so many real people share an IP, and a valid token is never what gets refused.
+   */
+  unsubscribeMiss: { limit: 20, windowSec: 3600 },
 } as const satisfies Record<string, BucketPolicy>;
 
 /** Active (unrevoked) API keys and MCP URLs per account (L-22). Counted, not bucketed. */
@@ -444,6 +452,7 @@ export const NEW_LIMIT_SCOPES: ReadonlySet<string> = new Set([
   "reminderDaily",
   "importDaily",
   "apiKeyCap",
+  "unsubscribeMiss",
 ]);
 
 /**
