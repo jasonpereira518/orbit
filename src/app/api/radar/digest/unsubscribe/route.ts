@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { escapeHtml } from "@/lib/interest-list-email";
 import { unsubscribeRadarDigest } from "@/lib/radar/digest";
+import { recordUnsubscribeMiss, unsubscribeAttemptsExhausted } from "@/lib/unsubscribe-guard";
 
 // Clicked from Radar's Monday email, often in a mail client with no session. Authenticated
 // by the signed token in the query string instead (`src/lib/radar/digest.ts`), the same
@@ -65,8 +66,15 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const token = tokenOf(request);
   if (!token) return new NextResponse(page("This link is missing its token."), { status: 400, headers: HTML_HEADERS });
+  if (await unsubscribeAttemptsExhausted(request)) {
+    return new NextResponse(page("Too many invalid links from this network. Try again in an hour."), {
+      status: 429,
+      headers: { ...HTML_HEADERS, "Retry-After": "3600" },
+    });
+  }
   if (!(await unsubscribeRadarDigest(token))) {
     // The same answer whether the token was mistyped, forged or never issued.
+    await recordUnsubscribeMiss(request);
     return new NextResponse(page("This link is invalid."), { status: 404, headers: HTML_HEADERS });
   }
   return new NextResponse(
