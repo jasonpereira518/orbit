@@ -6,6 +6,7 @@
  * Pure: no network, no key. Run: npx tsx scripts/smoke-tool-stream-driver.ts
  */
 import "./smoke/_env";
+import { anthropicRoundParams } from "../src/lib/ai-tools";
 import { readAnthropicText, readGeminiRound, readOpenAiRound } from "../src/lib/ai-tools-stream";
 
 let failures = 0;
@@ -119,6 +120,30 @@ async function main() {
       round.content.parts?.length === 4 && JSON.stringify(round.content).includes("sig-1")
     );
     check("the last chunk is kept for usage", JSON.stringify(round.last).includes("promptTokenCount"));
+  }
+
+  console.log("\nAnthropic: each round's request reads the previous round's prefix from cache");
+  {
+    const base = {
+      model: "claude-sonnet-4-5",
+      maxOutputTokens: 1000,
+      temperature: 0.3,
+      system: "You answer from the user's network.",
+      tools: [{ name: "list_events", description: "x", input_schema: { type: "object" as const, properties: {} } }],
+      messages: [{ role: "user" as const, content: "What is coming up?" }],
+    };
+    const round = anthropicRoundParams({ ...base, noTools: false });
+    check(
+      "the system block carries a breakpoint, which caches the tools before it too",
+      Array.isArray(round.system) && round.system.length === 1 && round.system[0].cache_control?.type === "ephemeral" && round.system[0].text === base.system
+    );
+    check("the top-level breakpoint caches the growing conversation", round.cache_control?.type === "ephemeral");
+    check("two breakpoints, under the four a request may carry", JSON.stringify(round).split('"cache_control"').length - 1 === 2);
+    const last = anthropicRoundParams({ ...base, noTools: true });
+    check(
+      "the tools-off round keeps the same tools and system, so it still reads that cache",
+      JSON.stringify(last.tools) === JSON.stringify(round.tools) && JSON.stringify(last.system) === JSON.stringify(round.system) && last.tool_choice?.type === "none"
+    );
   }
 
   if (failures) {
