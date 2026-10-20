@@ -24,7 +24,8 @@ import type { CaptureJobSource } from "@/lib/capture/types";
 import { friendlyError, isMissingAiApiKeyError, MISSING_AI_API_KEY_MESSAGE } from "@/lib/errors";
 import { isPaywallError } from "@/lib/entitlements";
 import { requireUserForSurface } from "@/lib/plan-guards";
-import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { RATE_LIMITS } from "@/lib/rate-limit";
+import { withRateLimit } from "@/lib/route-http";
 import { reportAndContinue, reportedFailure } from "@/lib/report-error";
 
 export const dynamic = "force-dynamic";
@@ -167,18 +168,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "That upload was interrupted — try it again" }, { status: 409 });
   }
 
-  try {
-    if (continued) await consumeBucket("captureParts", userId, RATE_LIMITS.captureParts);
-    else await consumeBucket("capture", userId, RATE_LIMITS.capture);
-  } catch (err) {
-    if (isRateLimitedError(err)) {
-      return NextResponse.json(
-        { error: err.message },
-        { status: 429, headers: { "Retry-After": String(err.retryAfterSec) } }
-      );
-    }
-    throw err;
-  }
+  const limited = continued
+    ? await withRateLimit("captureParts", userId, RATE_LIMITS.captureParts)
+    : await withRateLimit("capture", userId, RATE_LIMITS.capture);
+  if (limited) return limited;
 
   const files: CaptureMediaFile[] = [];
   for (const f of uploads) {

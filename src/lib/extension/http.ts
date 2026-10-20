@@ -15,6 +15,7 @@ import { extensionUsage } from "@/db/schema";
 import { ContactNotFoundError } from "@/lib/contact-writes";
 import type { ExtensionError, ExtensionErrorCode } from "./contract";
 import { MAX_BODY_BYTES } from "./contract.schema";
+import { readJsonBody as readJsonBodyCore } from "@/lib/route-http";
 import { reportError } from "@/lib/report-error";
 import {
   ExtensionRateLimitError,
@@ -166,33 +167,18 @@ async function consumeBudget(userId: string, cost: RouteCost) {
  * reject cheaply, then the decoded length is re-checked because the header can
  * be absent under chunked encoding, or simply wrong.
  */
-async function readJsonBody<T>(req: Request, schema: z.ZodType<T>): Promise<T> {
-  const declared = Number(req.headers.get("content-length") || 0);
-  if (declared > MAX_BODY_BYTES) {
-    throw new PayloadTooLargeError("Request body is too large.");
-  }
-
-  const raw = await req.text();
-  if (raw.length > MAX_BODY_BYTES) {
-    throw new PayloadTooLargeError("Request body is too large.");
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new InvalidRequestError("Request body is not valid JSON.");
-  }
-
-  const result = schema.safeParse(parsed);
-  if (!result.success) {
-    const first = result.error.issues[0];
-    const path = first?.path.join(".");
-    throw new InvalidRequestError(
-      path ? `${path}: ${first.message}` : (first?.message ?? "Invalid request.")
-    );
-  }
-  return result.data;
+export async function readJsonBody<T>(req: Request, schema: z.ZodType<T>): Promise<T> {
+  return readJsonBodyCore(req, schema, {
+    maxBytes: MAX_BODY_BYTES,
+    onError: (f) => {
+      if (f.kind === "too_large") return new PayloadTooLargeError("Request body is too large.");
+      if (f.kind === "invalid_json") return new InvalidRequestError("Request body is not valid JSON.");
+      const path = f.issue?.path.join(".");
+      return new InvalidRequestError(
+        path ? `${path}: ${f.issue?.message}` : (f.issue?.message ?? "Invalid request.")
+      );
+    },
+  });
 }
 
 /* -------------------------------------------------------------------------- */

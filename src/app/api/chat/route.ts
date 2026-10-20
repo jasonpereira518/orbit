@@ -19,7 +19,8 @@ import { validateProposedActions } from "@/lib/chat-proposed-actions";
 import { friendlyError } from "@/lib/errors";
 import { traced } from "@/lib/perf-trace";
 import { isPaywallError } from "@/lib/entitlements";
-import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { RATE_LIMITS } from "@/lib/rate-limit";
+import { withRateLimit } from "@/lib/route-http";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { reportedFailure, reportError } from "@/lib/report-error";
 import { createStreamRedactor } from "@/lib/ai-security";
@@ -59,17 +60,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: friendlyError(err, "Sign in to chat") }, { status });
   }
 
-  try {
-    await consumeBucket("chat", userId, RATE_LIMITS.chat);
-  } catch (err) {
-    if (isRateLimitedError(err)) {
-      return NextResponse.json(
-        { error: err.message },
-        { status: 429, headers: { "Retry-After": String(err.retryAfterSec) } }
-      );
-    }
-    throw err;
-  }
+  const limited = await withRateLimit("chat", userId, RATE_LIMITS.chat);
+  if (limited) return limited;
 
   const body = (await request.json().catch(() => null)) as
     | {

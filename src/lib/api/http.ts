@@ -15,6 +15,7 @@ import { NextResponse, after } from "next/server";
 import type { z } from "zod";
 import { ApiAuthError, requireApiCaller, touchApiKeyLastUsed, type ApiCaller } from "@/lib/api/auth";
 import type { ApiKeyScope } from "@/lib/api/keys";
+import { readJsonBody as readJsonBodyCore } from "@/lib/route-http";
 import { RATE_LIMITS, RateLimitedError, consumeBucket } from "@/lib/rate-limit";
 
 export type ApiErrorCode =
@@ -117,32 +118,19 @@ export async function readJson<T>(
   schema: z.ZodType<T>,
   maxBytes = MAX_SMALL_BODY_BYTES
 ): Promise<T> {
-  const declared = Number(request.headers.get("content-length") || 0);
-  if (declared > maxBytes) {
-    throw new ApiRequestError("payload_too_large", "Request body is too large.");
-  }
-  const raw = await request.text();
-  if (raw.length > maxBytes) {
-    throw new ApiRequestError("payload_too_large", "Request body is too large.");
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = raw ? JSON.parse(raw) : {};
-  } catch {
-    throw new ApiRequestError("invalid_request", "Request body is not valid JSON.");
-  }
-
-  const result = schema.safeParse(parsed);
-  if (!result.success) {
-    const issue = result.error.issues[0];
-    throw new ApiRequestError(
-      "invalid_request",
-      issue?.message ?? "Request body failed validation.",
-      issue?.path.join(".")
-    );
-  }
-  return result.data;
+  return readJsonBodyCore(request, schema, {
+    maxBytes,
+    emptyBody: {},
+    onError: (f) => {
+      if (f.kind === "too_large") return new ApiRequestError("payload_too_large", "Request body is too large.");
+      if (f.kind === "invalid_json") return new ApiRequestError("invalid_request", "Request body is not valid JSON.");
+      return new ApiRequestError(
+        "invalid_request",
+        f.issue?.message ?? "Request body failed validation.",
+        f.issue?.path.join(".")
+      );
+    },
+  });
 }
 
 /**

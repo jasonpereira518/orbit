@@ -1,7 +1,7 @@
-import { NextResponse } from "next/server";
 import { requireUserId } from "@/lib/auth";
 import { userExportStream } from "@/lib/data-export";
-import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { RATE_LIMITS } from "@/lib/rate-limit";
+import { withRateLimit } from "@/lib/route-http";
 
 /** A large network pages through every table; the stream keeps memory flat, not time short. */
 export const maxDuration = 300;
@@ -17,17 +17,8 @@ export async function GET() {
   } catch {
     return new Response(null, { status: 401 });
   }
-  try {
-    await consumeBucket("export", userId, RATE_LIMITS.export);
-  } catch (err) {
-    if (isRateLimitedError(err)) {
-      return NextResponse.json(
-        { error: err.message },
-        { status: 429, headers: { "Retry-After": String(err.retryAfterSec) } }
-      );
-    }
-    throw err;
-  }
+  const limited = await withRateLimit("export", userId, RATE_LIMITS.export);
+  if (limited) return limited;
   const date = new Date().toISOString().slice(0, 10);
   return new Response(userExportStream(userId), {
     headers: {

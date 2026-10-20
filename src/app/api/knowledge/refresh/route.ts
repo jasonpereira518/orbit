@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { requireUserForSurface } from "@/lib/plan-guards";
-import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { RATE_LIMITS } from "@/lib/rate-limit";
+import { withRateLimit } from "@/lib/route-http";
 
 /** A brief is one model call, but a slow provider should not be cut off at the layout's 60. */
 export const maxDuration = 60;
@@ -40,17 +41,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "contactId required" }, { status: 400 });
   }
 
-  try {
-    await consumeBucket("knowledgeRefresh", userId, RATE_LIMITS.knowledgeRefresh);
-  } catch (err) {
-    if (isRateLimitedError(err)) {
-      return NextResponse.json(
-        { error: err.message },
-        { status: 429, headers: { "Retry-After": String(err.retryAfterSec) } }
-      );
-    }
-    throw err;
-  }
+  const limited = await withRateLimit("knowledgeRefresh", userId, RATE_LIMITS.knowledgeRefresh);
+  if (limited) return limited;
 
   // Scoped to the caller inside: a contact that is not theirs reads as "not found" and no
   // model is asked.

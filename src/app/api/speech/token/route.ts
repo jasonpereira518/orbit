@@ -8,7 +8,8 @@ import { shortformTag } from "@/lib/deepgram-params";
 import { speechTagIdFor } from "@/lib/speech-tag-id";
 import { loadNetworkVocabulary } from "@/lib/transcription-vocabulary";
 import { speechAllowance } from "@/lib/speech-quota";
-import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { RATE_LIMITS } from "@/lib/rate-limit";
+import { withRateLimit } from "@/lib/route-http";
 import { reportedFailure } from "@/lib/report-error";
 
 export const dynamic = "force-dynamic";
@@ -48,21 +49,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Cross-origin request refused" }, { status: 403 });
   }
 
-  try {
-    await consumeBucket("speechToken", userId, RATE_LIMITS.speechToken);
-  } catch (err) {
-    if (isRateLimitedError(err)) {
-      // Matches every other rate-limited route (see meetings/[id]/chunks): the error's own
-      // message already carries the bucket's label and the wait, and friendlyError would
-      // just discard both in favor of a generic fallback since RateLimitedError isn't one
-      // of its recognized "own words".
-      return NextResponse.json(
-        { error: err.message },
-        { status: 429, headers: { "Retry-After": String(err.retryAfterSec) } },
-      );
-    }
-    throw err;
-  }
+  // Matches every other rate-limited route (see meetings/[id]/chunks): the error's own
+  // message already carries the bucket's label and the wait, and friendlyError would
+  // just discard both in favor of a generic fallback since RateLimitedError isn't one
+  // of its recognized "own words".
+  const limited = await withRateLimit("speechToken", userId, RATE_LIMITS.speechToken);
+  if (limited) return limited;
 
   // Off, or the Deepgram credit has reached this plan's rung (`speech-cost.ts`). Either way the
   // chat mic falls back to the browser's own recogniser, which costs Orbit nothing.

@@ -4,7 +4,8 @@ import { hasBlobStorage } from "@/lib/contact-avatar";
 import { attachmentPrefixFor, isBlockedFilename } from "@/lib/email/attachment-paths";
 import { MAX_ATTACHMENT_BYTES_GMAIL } from "@/lib/email/config";
 import { requireUserForSurface } from "@/lib/plan-guards";
-import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { RATE_LIMITS } from "@/lib/rate-limit";
+import { withRateLimit } from "@/lib/route-http";
 import { COMPOSE_SURFACE_KEY } from "@/lib/surfaces";
 
 export const runtime = "nodejs";
@@ -36,14 +37,8 @@ export async function POST(request: Request) {
   if (body.type !== "blob.generate-client-token") {
     return NextResponse.json({ error: "Unsupported" }, { status: 400 });
   }
-  try {
-    await consumeBucket("emailAttachmentUpload", userId, RATE_LIMITS.emailAttachmentUpload);
-  } catch (err) {
-    if (isRateLimitedError(err)) {
-      return NextResponse.json({ error: err.message }, { status: 429, headers: { "Retry-After": String(err.retryAfterSec) } });
-    }
-    throw err;
-  }
+  const limited = await withRateLimit("emailAttachmentUpload", userId, RATE_LIMITS.emailAttachmentUpload);
+  if (limited) return limited;
   try {
     const json = await handleUpload({
       body,

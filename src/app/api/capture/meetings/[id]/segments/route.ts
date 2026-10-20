@@ -4,7 +4,8 @@ import { reportedFailure } from "@/lib/report-error";
 import { isPaywallError } from "@/lib/entitlements";
 import { recordLiveSegments, validYouClaim, type LiveSegmentInput, type YouClaim } from "@/lib/meeting-sessions";
 import { requireMeetingsUser } from "@/lib/plan-guards";
-import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { RATE_LIMITS } from "@/lib/rate-limit";
+import { withRateLimit } from "@/lib/route-http";
 
 export const dynamic = "force-dynamic";
 
@@ -44,17 +45,8 @@ export async function POST(request: Request, ctx: Params) {
     return NextResponse.json({ error: "Missing recorder id" }, { status: 400 });
   }
 
-  try {
-    await consumeBucket("meetingChunk", userId, RATE_LIMITS.meetingChunk);
-  } catch (err) {
-    if (isRateLimitedError(err)) {
-      return NextResponse.json(
-        { error: err.message },
-        { status: 429, headers: { "Retry-After": String(err.retryAfterSec) } }
-      );
-    }
-    throw err;
-  }
+  const limited = await withRateLimit("meetingChunk", userId, RATE_LIMITS.meetingChunk);
+  if (limited) return limited;
 
   let segments: LiveSegmentInput[];
   let you: YouClaim | null = null;
