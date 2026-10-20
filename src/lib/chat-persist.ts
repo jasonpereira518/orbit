@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { chatMessages, chatThreads, type ChatRecommendation } from "@/db/schema";
 import type { EvidenceSource } from "@/lib/chat-evidence";
@@ -65,6 +65,11 @@ export async function persistAssistantTurn(
      */
     version?: { slot: string; version: number; userMessageId: string };
     /**
+     * A dropped connection cut this answer off; `answer` is what had streamed (audit L-25).
+     * Carries the turn id so a Stop that lands afterwards can still find and discard it.
+     */
+    interrupted?: { clientTurnId: string | null };
+    /**
      * How the answer was produced, for `chat_answer_landed`: wall time since the request began
      * and the research loop's rounds (0 when one retrieval answered it). Counts only.
      */
@@ -84,6 +89,7 @@ export async function persistAssistantTurn(
       activity: turn.activity ?? [],
       evidence: turn.evidence ?? {},
       proposedActions: turn.proposedActions ?? [],
+      ...(turn.interrupted ? { interrupted: true, clientTurnId: turn.interrupted.clientTurnId } : {}),
       ...(turn.version
         ? { slot: turn.version.slot, version: turn.version.version, isActive: false }
         : {}),
@@ -103,7 +109,8 @@ export async function persistAssistantTurn(
     .where(and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)));
   // The answer is stored: the one moment it "landed". Keyed by the message id, so a retried
   // persist cannot count it twice. Counts and ids only; never the answer or its citations.
-  if (assistantMessage?.id) {
+  // A partial answer kept after a dropped connection did not land.
+  if (assistantMessage?.id && !turn.interrupted) {
     track(
       "chat_answer_landed",
       {
@@ -163,6 +170,85 @@ export async function discardEmptyThread(userId: string, threadId: string | null
   await db
     .delete(chatThreads)
     .where(and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)));
+}
+
+/**
+ * A Stop the person pressed (audit L-25). To the server a Stop and a dropped connection are
+ * the same abort, so the client says which it was: this marks the turn stopped and discards
+ * its question if it is already saved. The route saves the question BEFORE it reads the
+ * mark (`wasTurnStopped`), so whichever of the two requests lands first, the stopped
+ * question ends up gone and a merely dropped one stays.
+ */
+export async function markTurnStopped(userId: string, threadId: string, turnId: string) {
+  const db = await getDb();
+  await db
+    .update(chatThreads)
+    .set({ stoppedTurnId: turnId })
+    .where(and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)));
+  // A partial answer the route kept because it saw the abort before this mark: a Stop
+  // discards it too. Only an interrupted one, so a finished answer is never touched.
+  await db
+    .delete(chatMessages)
+    .where(
+      and(
+        eq(chatMessages.threadId, threadId),
+        eq(chatMessages.userId, userId),
+        eq(chatMessages.clientTurnId, turnId),
+        eq(chatMessages.role, "assistant"),
+        eq(chatMessages.interrupted, true)
+      )
+    );
+  const row = await db.query.chatMessages.findFirst({
+    where: and(
+      eq(chatMessages.threadId, threadId),
+      eq(chatMessages.userId, userId),
+      eq(chatMessages.clientTurnId, turnId),
+      eq(chatMessages.role, "user")
+    ),
+    columns: { id: true },
+  });
+  if (row) await discardUnansweredQuestion(userId, threadId, row.id);
+  await discardEmptyThread(userId, threadId);
+}
+
+/** Whether the person stopped this turn on purpose. See `markTurnStopped`. */
+export async function wasTurnStopped(userId: string, threadId: string | null, turnId: string | null): Promise<boolean> {
+  if (!threadId || !turnId) return false;
+  const db = await getDb();
+  const thread = await db.query.chatThreads.findFirst({
+    where: and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)),
+    columns: { stoppedTurnId: true },
+  });
+  return thread?.stoppedTurnId === turnId;
+}
+
+/**
+ * Asking again after a dropped connection: the first copy of the question was kept with no
+ * answer under it, so drop that copy rather than show the question twice. Only the thread's
+ * last row, only a question, and only when the text is the same.
+ */
+export async function supersedeDanglingQuestion(userId: string, threadId: string | null, content: string) {
+  if (!threadId) return;
+  const db = await getDb();
+  const [last, previous] = await db.query.chatMessages.findMany({
+    where: and(eq(chatMessages.threadId, threadId), eq(chatMessages.userId, userId), eq(chatMessages.isActive, true)),
+    orderBy: [desc(chatMessages.createdAt)],
+    limit: 2,
+    columns: { id: true, role: true, content: true, interrupted: true },
+  });
+  if (!last) return;
+  // The question alone, kept with nothing under it.
+  if (last.role === "user") {
+    if (last.content !== content) return;
+    await db.delete(chatMessages).where(and(eq(chatMessages.id, last.id), eq(chatMessages.userId, userId)));
+    return;
+  }
+  // The question and the partial answer a dropped connection kept: the new answer replaces both.
+  if (last.interrupted && previous?.role === "user" && previous.content === content) {
+    await db
+      .delete(chatMessages)
+      .where(and(inArray(chatMessages.id, [last.id, previous.id]), eq(chatMessages.userId, userId)));
+  }
 }
 
 /**

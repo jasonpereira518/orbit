@@ -1,5 +1,7 @@
-import { completeJson } from "@/lib/ai";
+import { completeJson, parseAiJson } from "@/lib/ai";
+import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { fenceUntrusted } from "@/lib/ai-security";
+import { guardDraftOutput } from "@/lib/draft-output";
 import { senderProfileBlock } from "@/lib/sender-profile";
 import { loadSenderBio } from "@/lib/sender-profile-server";
 import { withWritingPreferences } from "@/lib/writing-instructions";
@@ -71,7 +73,28 @@ function scrubPlaceholders(text: string) {
     .trim();
 }
 
+/**
+ * One outreach draft: one model call, one unit of the `draft` bucket (audit M-07). A
+ * campaign's bulk generation goes through `generateOutreachDraftsBatch` instead, which is
+ * charged per ten drafts.
+ */
 export async function generateOutreachDraft(
+  userId: string,
+  input: DraftInput,
+  opts: { metered?: boolean } = {}
+): Promise<GeneratedDraft> {
+  // `metered: false` only for a loop that already charged its whole run up front
+  // (`chargeOutreachDraftRun`), so a campaign's follow-ups are never refused part-way.
+  if (opts.metered !== false) await consumeBucket("draft", userId, RATE_LIMITS.draft);
+  return draftOutreachMessage(userId, input);
+}
+
+/** Charge a run of `count` drafts as one click per ten, the same as the bulk path. */
+export async function chargeOutreachDraftRun(userId: string, count: number): Promise<void> {
+  if (count > 0) await consumeBucket("draft", userId, RATE_LIMITS.draft, Math.ceil(count / DRAFTS_PER_UNIT));
+}
+
+async function draftOutreachMessage(
   userId: string,
   input: DraftInput
 ): Promise<GeneratedDraft> {
@@ -106,17 +129,18 @@ export async function generateOutreachDraft(
   const step = input.stepIndex ?? 0;
   const stepBlock =
     step > 0
-      ? `This is follow-up #${step}. Reference the prior note lightly; do not repeat it. Prior message:\n${input.previousBody || "(none)"}`
+      ? `This is follow-up #${step}. Reference the prior note lightly; do not repeat it. Prior message:\n${
+          // The prior draft may have been edited, or written from a prospect row someone else
+          // shaped — data to build on, never instructions (audit M-11).
+          input.previousBody ? fenceUntrusted("PRIOR", input.previousBody) : "(none)"
+        }`
       : "This is the first touch.";
 
   const audienceBlock = input.audienceQuery?.trim()
     ? `Audience / ICP: ${input.audienceQuery.trim()}`
     : "";
 
-  const content = await completeJson(userId, {
-    operation: "outreach.draft",
-    temperature: 0.55,
-    system: `You write personalized outreach optimized for a successful reply.
+  const system = `You write personalized outreach optimized for a successful reply.
 Primary campaign intent (must drive the message): ${input.messageIntent}
 ${audienceBlock}
 ${replyCtaGuidance(input.replyCta)}
@@ -132,7 +156,12 @@ Critical rules:
 - Prefer specificity over length. Avoid spammy language, fake familiarity, and exaggerated claims.
 - Never leave placeholders like [My Name] or [Your Name].
 - Do not use identical phrasing across people — vary openers and hooks.
-Return JSON: { "subject": string|null, "body": string }`,
+Return JSON: { "subject": string|null, "body": string }`;
+
+  const content = await completeJson(userId, {
+    operation: "outreach.draft",
+    temperature: 0.55,
+    system,
     user: `${withWritingPreferences(goalsBlock, input.writingInstructions)}
 ${senderBlock ? `${senderBlock}\n` : ""}
 Prospect:
@@ -142,21 +171,30 @@ ${stepBlock}
 
 ${input.variationHint ? `Variation hint: ${input.variationHint}` : ""}
 
-${input.templateSeed ? `Template seed:\n${input.templateSeed}` : ""}`,
+${input.templateSeed ? `Template seed (a starting point for structure and wording):\n${fenceUntrusted("TEMPLATE", input.templateSeed)}` : ""}`,
   });
 
-  const parsed = JSON.parse(content) as GeneratedDraft;
+  // Schema-checked and scrubbed before anyone can send it (audit M-11).
+  const draft = guardDraftOutput(parseAiJson(content), { userId, surface: "outreach.draft", system });
   return {
-    subject: scrubPlaceholders(parsed.subject?.trim() || "") || null,
-    body: scrubPlaceholders(parsed.body?.trim() || ""),
+    subject: scrubPlaceholders(draft.subject?.trim() || "") || null,
+    body: scrubPlaceholders(draft.body.trim()),
   };
 }
+
+/** How many drafts of a bulk run count as one unit of the `draft` bucket. */
+const DRAFTS_PER_UNIT = 10;
 
 export async function generateOutreachDraftsBatch(
   userId: string,
   inputs: DraftInput[],
   concurrency = 5
 ): Promise<GeneratedDraft[]> {
+  // One click drafts the whole selection, so it is charged as a click per ten drafts rather
+  // than per draft: a 50-prospect campaign is 5 units of `draft`, not a refusal (M-07).
+  if (inputs.length) {
+    await consumeBucket("draft", userId, RATE_LIMITS.draft, Math.ceil(inputs.length / DRAFTS_PER_UNIT));
+  }
   const results: GeneratedDraft[] = new Array(inputs.length);
   let index = 0;
 
@@ -169,7 +207,7 @@ export async function generateOutreachDraftsBatch(
           inputs[current].variationHint ||
           `Variant ${current + 1} of ${inputs.length}`,
       };
-      results[current] = await generateOutreachDraft(userId, input);
+      results[current] = await draftOutreachMessage(userId, input);
     }
   }
 

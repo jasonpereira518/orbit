@@ -3,7 +3,6 @@
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
-import { requireUserId } from "@/lib/auth";
 import type { RejectedCounts } from "@/lib/date-commitment-extract";
 import { hashSourceNote } from "@/lib/suggested-reminder-utils";
 import type { CaptureParseHints } from "@/lib/ai";
@@ -54,6 +53,23 @@ import {
 } from "@/lib/meeting-sessions";
 import type { NoteBatchMeeting } from "@/db/schema";
 import { actionFailure } from "@/lib/action-failure";
+import { z } from "zod";
+import { defineAction, failResult } from "@/lib/input/action";
+import { anyNumber } from "@/lib/input/schemas";
+
+// Argument shapes, generated from the handlers' parameter types.
+const CaptureMediaFileSchema = z.looseObject({ filename: z.string(), mimeType: z.string(), base64: z.string() });
+const CaptureParseHintsSchema = z.looseObject({ eventDate: z.string().nullish(), seedPeople: z.array(z.looseObject({ name: z.string().nullish(), email: z.string().nullish(), linkedinUrl: z.string().nullish(), title: z.string().nullish(), company: z.string().nullish() })).optional(), interactionType: z.string().nullish(), goals: z.array(z.string()).optional() });
+const MentionPickSchema = z.looseObject({ id: z.string(), name: z.string() });
+const BulkParseOptionsSchema = z.looseObject({ meetingSessionId: z.string().nullish(), mentionPicks: z.array(MentionPickSchema).nullish() });
+
+// Argument shapes, generated from the handlers' parameter types.
+const NoteBatchOpportunityInputSchema = z.looseObject({ kind: z.enum(["internship", "job", "referral", "introduction", "startup_lead", "mentor", "investor", "speaker", "customer", "collaboration", "advice", "other"]), direction: z.enum(["they_offer", "you_ask"]).nullable(), sourceExcerpt: z.string(), rawDatePhrase: z.string().nullable(), confidenceScore: anyNumber, label: z.string(), dueDateIso: z.string().nullish() });
+const NoteBatchParticipantInputSchema = z.looseObject({ notes: z.string(), sourceHash: z.string().optional(), parsed: z.looseObject({ name: z.string().nullable(), company: z.string().nullable(), role: z.string().nullable(), presence: z.enum(["mentioned", "participant"]), location: z.string().nullable(), email: z.string().nullable(), linkedin_url: z.string().nullable(), met_at: z.string().nullable(), topics: z.array(z.string()), action_items: z.array(z.string()), follow_up_recommendation: z.string().nullable(), follow_up_days: anyNumber.nullable(), relationship_score_suggestion: anyNumber.nullable(), relevance: anyNumber.nullable(), tags: z.array(z.string()), summary: z.string().nullable(), key_facts: z.array(z.string()), opportunities: z.array(z.looseObject({ kind: z.string().nullable(), label: z.string(), direction: z.string().nullable(), due_phrase: z.string().nullable(), source_excerpt: z.string(), confidence: anyNumber })), implied_next_steps: z.array(z.looseObject({ text: z.string(), rationale: z.string().nullable(), source_excerpt: z.string(), confidence: anyNumber })), shared_interests: z.array(z.string()), suggested_next_message: z.string().nullable(), confidence: anyNumber.nullable(), interaction_date: z.string().nullable(), low_confidence_fields: z.array(z.string()), takeaways: z.array(z.string()).optional(), personal_details: z.array(z.string()).optional(), work: z.looseObject({ team: z.string().nullable(), building: z.string().nullable(), priorities: z.array(z.string()), hiring: z.string().nullable(), looking_for: z.string().nullable() }).nullish(), phone: z.string().nullish(), x_handle: z.string().nullish(), website: z.string().nullish(), school: z.string().nullish(), industry: z.string().nullish(), connections: z.array(z.looseObject({ name: z.string(), relation: z.string().nullable(), source_excerpt: z.string() })).optional(), promises: z.array(z.looseObject({ direction: z.enum(["you_owe", "they_owe"]).nullable(), text: z.string(), due_phrase: z.string().nullable(), source_excerpt: z.string() })).optional() }), mergeContactId: z.string().nullish(), createReminder: z.boolean(), relationshipScore: anyNumber, closenessChosen: z.boolean().optional(), tagNames: z.array(z.string()), followUpDays: anyNumber.nullish(), interactionDate: z.string().nullish(), interactionType: z.string().nullish(), opportunities: z.array(NoteBatchOpportunityInputSchema).optional(), cadenceDays: anyNumber.nullish(), cadencePhrase: z.string().nullish() });
+const NoteBatchCommitmentInputSchema = z.looseObject({ title: z.string(), description: z.string().nullable(), actionKind: z.enum(["email", "follow_up", "call", "meet", "task"]), sourceExcerpt: z.string(), dateBasis: z.enum(["absolute", "relative", "vague"]), confidenceScore: anyNumber, yearInferred: z.boolean(), anchorIso: z.string(), personName: z.string().nullable(), dueDateIso: z.string(), contactId: z.string().nullish(), rawDatePhrase: z.string().nullable(), origin: z.enum(["explicit", "implied"]).optional() });
+const NoteBatchMentionInputSchema = z.looseObject({ text: z.string(), context: z.string().nullable(), nearPerson: z.string().nullable(), contactId: z.string().nullable(), confidence: anyNumber, matchedBy: z.enum(["exact_name", "name_company", "first_name_unique", "user_pick", "decision"]).nullable() });
+const RejectedCountsSchema = z.looseObject({ relative: anyNumber, unverifiable: anyNumber, past: anyNumber, relativePhrases: z.array(z.string()).optional() });
+const MeetingExtraReminderInputSchema = z.looseObject({ kind: z.enum(["action", "blocker", "question"]), title: z.string(), ownerName: z.string().nullable(), sourceExcerpt: z.string().nullable() });
 
 export type {
   BulkNoteDuplicate,
@@ -69,79 +85,87 @@ export type {
  * can show the original next to what was pulled out of it (see `src/lib/capture-photos.ts`).
  * The ids come back as `photos`; the panel hands them to `confirmBulkCapture`.
  */
-export async function ingestCaptureMedia(input: {
-  text?: string;
-  files?: CaptureMediaFile[];
-}) {
-  try {
-    const userId = await requireUserId();
-    await consumeBucket("capture", userId, RATE_LIMITS.capture);
-    const hasText = Boolean(input.text?.trim());
-    const hasFiles = Boolean(input.files?.length);
-    if (!hasText && !hasFiles) {
-      return { ok: false as const, error: "Add notes or upload a file first" };
-    }
-
-    // The panel checks this before encoding, but a non-browser caller can reach the action
-    // directly — and an oversized body is truncated in transit rather than refused, so the
-    // only alternative to an explicit error is a mystery parse failure. Measured on the
-    // decoded bytes so the number matches the file the caller actually sent.
-    const uploadBytes = (input.files ?? []).reduce(
-      (sum, file) => sum + Math.floor((file.base64.length * 3) / 4),
-      0
-    );
-    if (uploadBytes > CAPTURE_MAX_UPLOAD_BYTES) {
-      return {
-        ok: false as const,
-        error: `That upload is ${formatUploadSize(uploadBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)}, so try fewer or smaller files`,
-      };
-    }
-
-    // Kept alongside the transcription rather than after it: re-encoding and uploading eight
-    // photos is seconds of work that has no reason to queue behind a model call. Settled,
-    // not raced, so a transcription failure can still find and discard what was stored.
-    const images = captureImageFiles(input.files);
-    const [normalizedResult, storedResult] = await Promise.allSettled([
-      normalizeCaptureInput(userId, {
-        text: input.text,
-        files: input.files,
-      }),
-      storeCapturePhotos(
-        userId,
-        images.map((img) => ({ filename: img.filename, base64: img.base64 }))
-      ),
-    ]);
-    const photos: StoredCapturePhoto[] =
-      storedResult.status === "fulfilled" ? storedResult.value : [];
-    if (normalizedResult.status === "rejected") {
-      // No text means nothing can be saved to claim these, so do not leave them for the
-      // prune to find tomorrow.
-      await discardCapturePhotos(
-        userId,
-        photos.map((p) => p.id)
-      ).catch(() => {});
-      throw normalizedResult.reason;
-    }
-    const normalized = normalizedResult.value;
-
-    return {
-      ok: true as const,
-      text: normalized.text,
-      hints: normalized.hints,
-      sources: normalized.sources,
-      transcriptionEngine: normalized.transcriptionEngine ?? null,
-      photos,
-      /** Photos that were read but could not be kept, so the panel can say so. */
-      photosNotKept: Math.max(0, images.length - photos.length),
-    };
-  } catch (err) {
+export const ingestCaptureMedia = defineAction(
+  { schema: z.tuple([z.looseObject({ text: z.string().optional(), files: z.array(CaptureMediaFileSchema).optional() })]), invalid: failResult, onGateError: async (err) => {
     // Data, not a throw — so never stripped in production. See `friendlyError`.
     return {
       ok: false as const,
       error: await actionFailure(err, TOAST_COPY.fileReadFailed, "capture.ingest-capture-media"),
     };
+  } },
+  async (userId, input: {
+    text?: string;
+    files?: CaptureMediaFile[];
+  }) => {
+    try {
+      await consumeBucket("capture", userId, RATE_LIMITS.capture);
+      const hasText = Boolean(input.text?.trim());
+      const hasFiles = Boolean(input.files?.length);
+      if (!hasText && !hasFiles) {
+        return { ok: false as const, error: "Add notes or upload a file first" };
+      }
+
+      // The panel checks this before encoding, but a non-browser caller can reach the action
+      // directly — and an oversized body is truncated in transit rather than refused, so the
+      // only alternative to an explicit error is a mystery parse failure. Measured on the
+      // decoded bytes so the number matches the file the caller actually sent.
+      const uploadBytes = (input.files ?? []).reduce(
+        (sum, file) => sum + Math.floor((file.base64.length * 3) / 4),
+        0
+      );
+      if (uploadBytes > CAPTURE_MAX_UPLOAD_BYTES) {
+        return {
+          ok: false as const,
+          error: `That upload is ${formatUploadSize(uploadBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)}, so try fewer or smaller files`,
+        };
+      }
+
+      // Kept alongside the transcription rather than after it: re-encoding and uploading eight
+      // photos is seconds of work that has no reason to queue behind a model call. Settled,
+      // not raced, so a transcription failure can still find and discard what was stored.
+      const images = captureImageFiles(input.files);
+      const [normalizedResult, storedResult] = await Promise.allSettled([
+        normalizeCaptureInput(userId, {
+          text: input.text,
+          files: input.files,
+        }),
+        storeCapturePhotos(
+          userId,
+          images.map((img) => ({ filename: img.filename, base64: img.base64 }))
+        ),
+      ]);
+      const photos: StoredCapturePhoto[] =
+        storedResult.status === "fulfilled" ? storedResult.value : [];
+      if (normalizedResult.status === "rejected") {
+        // No text means nothing can be saved to claim these, so do not leave them for the
+        // prune to find tomorrow.
+        await discardCapturePhotos(
+          userId,
+          photos.map((p) => p.id)
+        ).catch(() => {});
+        throw normalizedResult.reason;
+      }
+      const normalized = normalizedResult.value;
+
+      return {
+        ok: true as const,
+        text: normalized.text,
+        hints: normalized.hints,
+        sources: normalized.sources,
+        transcriptionEngine: normalized.transcriptionEngine ?? null,
+        photos,
+        /** Photos that were read but could not be kept, so the panel can say so. */
+        photosNotKept: Math.max(0, images.length - photos.length),
+      };
+    } catch (err) {
+      // Data, not a throw — so never stripped in production. See `friendlyError`.
+      return {
+        ok: false as const,
+        error: await actionFailure(err, TOAST_COPY.fileReadFailed, "capture.ingest-capture-media"),
+      };
+    }
   }
-}
+);
 
 export type BulkParseOptions = {
   /** See `CaptureParseOptions.meetingSessionId` in `src/lib/capture-parse.ts`. */
@@ -155,161 +179,164 @@ export type BulkParseOptions = {
  * sheet, onboarding, `log-interaction-sheet.tsx`). The /capture page runs the same
  * pipeline through `runCaptureJobById` instead, so a reload does not lose the parse.
  */
-export async function parseBulkCaptureNotes(
-  notes: string,
-  hints?: CaptureParseHints | null,
-  opts: BulkParseOptions = {}
-) {
-  try {
-    const userId = await requireUserId();
-    await consumeBucket("capture", userId, RATE_LIMITS.capture);
-    if (!notes.trim()) {
-      return { ok: false as const, error: "Notes are required" };
-    }
-    const result = await runCaptureParse(userId, notes, hints, {
-      meetingSessionId: opts.meetingSessionId,
-      mentionPicks: sanitizeMentionPicks(opts.mentionPicks ?? []),
-    });
-    return { ok: true as const, ...result };
-  } catch (err) {
+export const parseBulkCaptureNotes = defineAction(
+  { schema: z.tuple([z.string(), CaptureParseHintsSchema.nullish(), BulkParseOptionsSchema.optional()]), invalid: failResult, onGateError: async (err) => {
     // Data, not a throw — so never stripped in production, and `toUserFacingError` put
     // raw text such as "Failed to parse AI JSON: {…" in front of the person verbatim.
     return {
       ok: false as const,
       error: await actionFailure(err, TOAST_COPY.notesReadFailed, "capture.parse-bulk-capture-notes"),
     };
-  }
-}
-
-export async function confirmBulkCapture(
-  items: NoteBatchParticipantInput[],
-  batch: {
-    sourceHash: string;
-    sourceText: string;
-    anchorIso: string;
-    anchorBasis: "note" | "hint" | "upload";
-    entryPoint?: "capture" | "profile";
-    seedContactId?: string | null;
-    commitments: NoteBatchCommitmentInput[];
-    mentions?: NoteBatchMentionInput[];
-    skipped: RejectedCounts;
-    /** Ids `ingestCaptureMedia` returned for this capture's photos. */
-    photoIds?: string[];
-    /** `ingestCaptureMedia`'s `sources` labels, for the history's icons. */
-    sources?: string[];
-    /** A recorded meeting being saved: which one, and the digest items ticked as reminders. */
-    meeting?: { sessionId: string; extraReminders: MeetingExtraReminderInput[] } | null;
-  }
-) {
-  const userId = await requireUserId();
-  await consumeBucket("capture", userId, RATE_LIMITS.capture);
-  // The hash is recomputed server-side: the client echoes sourceText, and a forged hash
-  // could collide with (or evade) another note's dedupe keys.
-  const sourceHash = hashSourceNote(batch.sourceText);
-  if (sourceHash !== batch.sourceHash) throw new Error("Note text changed since parsing; re-run extraction");
-
-  // The digest is read from the session, never taken from the client: it is what the
-  // results page will show as "what this meeting was", and it must be what the model said.
-  let meetingSummary: NoteBatchMeeting | null = null;
-  if (batch.meeting) {
-    const session = await getMeetingSession(userId, batch.meeting.sessionId);
-    if (!session) throw new Error("That meeting no longer exists");
-    if (session.status === "saved" && session.noteBatchId) {
-      // A double-click, or a second tab. The first save is the save.
-      const existing = await getNoteBatchForUser(userId, session.noteBatchId);
-      if (existing) {
-        return { batchId: existing.id, created: 0, updated: 0, contactIds: [], remindersCreated: 0, result: existing.result };
+  } },
+  async (userId, notes: string, hints?: CaptureParseHints | null, opts: BulkParseOptions = {}) => {
+    try {
+      await consumeBucket("capture", userId, RATE_LIMITS.capture);
+      if (!notes.trim()) {
+        return { ok: false as const, error: "Notes are required" };
       }
+      const result = await runCaptureParse(userId, notes, hints, {
+        meetingSessionId: opts.meetingSessionId,
+        mentionPicks: sanitizeMentionPicks(opts.mentionPicks ?? []),
+      });
+      return { ok: true as const, ...result };
+    } catch (err) {
+      // Data, not a throw — so never stripped in production, and `toUserFacingError` put
+      // raw text such as "Failed to parse AI JSON: {…" in front of the person verbatim.
+      return {
+        ok: false as const,
+        error: await actionFailure(err, TOAST_COPY.notesReadFailed, "capture.parse-bulk-capture-notes"),
+      };
     }
-    if (!session.digest) throw new Error("Analyze the meeting before saving it");
-    meetingSummary = toNoteBatchMeeting(session);
   }
+);
 
-  const out = await saveNoteBatch(userId, {
-    sourceText: batch.sourceText,
-    sourceHash,
-    anchorIso: batch.anchorIso,
-    anchorBasis: batch.anchorBasis,
-    entryPoint: batch.entryPoint ?? "capture",
-    seedContactId: batch.seedContactId ?? null,
-    participants: items,
-    commitments: batch.commitments,
-    mentions: batch.mentions ?? [],
-    skipped: batch.skipped,
-    inputSources: captureSourceKinds([
-      ...(batch.sources ?? []),
-      ...(batch.photoIds?.length ? ["photos"] : []),
-    ]),
-    meeting:
-      batch.meeting && meetingSummary
-        ? { summary: meetingSummary, extraReminders: batch.meeting.extraReminders.slice(0, 40) }
-        : null,
-  });
+export const confirmBulkCapture = defineAction(
+  { schema: z.tuple([z.array(NoteBatchParticipantInputSchema), z.looseObject({ sourceHash: z.string(), sourceText: z.string(), anchorIso: z.string(), anchorBasis: z.enum(["note", "hint", "upload"]), entryPoint: z.enum(["capture", "profile"]).optional(), seedContactId: z.string().nullish(), commitments: z.array(NoteBatchCommitmentInputSchema), mentions: z.array(NoteBatchMentionInputSchema).optional(), skipped: RejectedCountsSchema, photoIds: z.array(z.string()).optional(), sources: z.array(z.string()).optional(), meeting: z.looseObject({ sessionId: z.string(), extraReminders: z.array(MeetingExtraReminderInputSchema) }).nullish() })]) },
+  async (userId, items: NoteBatchParticipantInput[], batch: {
+      sourceHash: string;
+      sourceText: string;
+      anchorIso: string;
+      anchorBasis: "note" | "hint" | "upload";
+      entryPoint?: "capture" | "profile";
+      seedContactId?: string | null;
+      commitments: NoteBatchCommitmentInput[];
+      mentions?: NoteBatchMentionInput[];
+      skipped: RejectedCounts;
+      /** Ids `ingestCaptureMedia` returned for this capture's photos. */
+      photoIds?: string[];
+      /** `ingestCaptureMedia`'s `sources` labels, for the history's icons. */
+      sources?: string[];
+      /** A recorded meeting being saved: which one, and the digest items ticked as reminders. */
+      meeting?: { sessionId: string; extraReminders: MeetingExtraReminderInput[] } | null;
+    }) => {
+    await consumeBucket("capture", userId, RATE_LIMITS.capture);
+    // The hash is recomputed server-side: the client echoes sourceText, and a forged hash
+    // could collide with (or evade) another note's dedupe keys.
+    const sourceHash = hashSourceNote(batch.sourceText);
+    if (sourceHash !== batch.sourceHash) throw new Error("Note text changed since parsing; re-run extraction");
 
-  // The reviewed-and-confirmed path has no capture job, so the batch id stands in for it: one
-  // `capture_saved` per batch, however many times the action is reached.
-  trackCaptureSaved(
-    {
-      id: out.batchId,
-      userId,
-      sourceKind: batch.meeting ? "meeting" : "messy",
-      sources: [...(batch.sources ?? []), ...(batch.photoIds?.length ? ["photos"] : [])],
-    },
-    { created: out.created, updated: out.updated }
-  );
+    // The digest is read from the session, never taken from the client: it is what the
+    // results page will show as "what this meeting was", and it must be what the model said.
+    let meetingSummary: NoteBatchMeeting | null = null;
+    if (batch.meeting) {
+      const session = await getMeetingSession(userId, batch.meeting.sessionId);
+      if (!session) throw new Error("That meeting no longer exists");
+      if (session.status === "saved" && session.noteBatchId) {
+        // A double-click, or a second tab. The first save is the save.
+        const existing = await getNoteBatchForUser(userId, session.noteBatchId);
+        if (existing) {
+          return { batchId: existing.id, created: 0, updated: 0, contactIds: [], remindersCreated: 0, result: existing.result };
+        }
+      }
+      if (!session.digest) throw new Error("Analyze the meeting before saving it");
+      meetingSummary = toNoteBatchMeeting(session);
+    }
 
-  // After the save, not inside it: a photo is a record of where the notes came from, and a
-  // failure to claim one must not roll back contacts and reminders the person just reviewed.
-  if (batch.photoIds?.length) {
-    await attachCapturePhotos(userId, out.batchId, batch.photoIds).catch(() => 0);
-  }
-
-  if (batch.meeting) {
-    await markMeetingSessionSaved(userId, batch.meeting.sessionId, out.batchId);
-  }
-
-  // One person logged → fetch their photo before returning, so they arrive on the contact
-  // with a face rather than a placeholder that fills in on some later page load. Only for
-  // a single contact: a batch of them is what the background backfill is for, and one is
-  // also the case where the missing face is most obvious. Before `revalidatePath` and not
-  // in `after()`: scheduled later, the photo lands after the page it belongs on rendered.
-  // The /capture page saves through `runCaptureJobById`, which does the same thing.
-  if (out.contactIds.length === 1) {
-    const db = await getDb();
-    await resolveAvatarNow(db, userId, out.contactIds[0]!, {
-      persistRemote: downloadAndPersistAvatar,
-      resolveLinkedIn: (id, url) => resolveLinkedInPhotoCached(id, url, userId),
+    const out = await saveNoteBatch(userId, {
+      sourceText: batch.sourceText,
+      sourceHash,
+      anchorIso: batch.anchorIso,
+      anchorBasis: batch.anchorBasis,
+      entryPoint: batch.entryPoint ?? "capture",
+      seedContactId: batch.seedContactId ?? null,
+      participants: items,
+      commitments: batch.commitments,
+      mentions: batch.mentions ?? [],
+      skipped: batch.skipped,
+      inputSources: captureSourceKinds([
+        ...(batch.sources ?? []),
+        ...(batch.photoIds?.length ? ["photos"] : []),
+      ]),
+      meeting:
+        batch.meeting && meetingSummary
+          ? { summary: meetingSummary, extraReminders: batch.meeting.extraReminders.slice(0, 40) }
+          : null,
     });
-  }
 
-  // The lib skipped embeddings and summaries (it must run outside a request scope for the
-  // smoke suite); this is the request scope, so schedule them here.
-  after(async () => {
-    await kickEmbeddingBackfill(userId).catch(() => null);
-    await kickWorkHistoryResearch(userId, linkedInCaptureContactIds(items, out.contactIds));
-    for (const id of out.contactIds) {
-      await generateAndStoreContactBrief(userId, id).catch(() => null);
+    // The reviewed-and-confirmed path has no capture job, so the batch id stands in for it: one
+    // `capture_saved` per batch, however many times the action is reached.
+    trackCaptureSaved(
+      {
+        id: out.batchId,
+        userId,
+        sourceKind: batch.meeting ? "meeting" : "messy",
+        sources: [...(batch.sources ?? []), ...(batch.photoIds?.length ? ["photos"] : [])],
+      },
+      { created: out.created, updated: out.updated }
+    );
+
+    // After the save, not inside it: a photo is a record of where the notes came from, and a
+    // failure to claim one must not roll back contacts and reminders the person just reviewed.
+    if (batch.photoIds?.length) {
+      await attachCapturePhotos(userId, out.batchId, batch.photoIds).catch(() => 0);
     }
-  });
 
-  revalidatePath("/");
-  revalidatePath("/dashboard");
-  revalidatePath("/contacts");
-  revalidatePath("/capture");
-  revalidatePath("/reminders");
-  revalidatePath("/graph");
-  for (const id of out.contactIds) revalidatePath(`/contacts/${id}`);
-  return out;
-}
+    if (batch.meeting) {
+      await markMeetingSessionSaved(userId, batch.meeting.sessionId, out.batchId);
+    }
+
+    // One person logged → fetch their photo before returning, so they arrive on the contact
+    // with a face rather than a placeholder that fills in on some later page load. Only for
+    // a single contact: a batch of them is what the background backfill is for, and one is
+    // also the case where the missing face is most obvious. Before `revalidatePath` and not
+    // in `after()`: scheduled later, the photo lands after the page it belongs on rendered.
+    // The /capture page saves through `runCaptureJobById`, which does the same thing.
+    if (out.contactIds.length === 1) {
+      const db = await getDb();
+      await resolveAvatarNow(db, userId, out.contactIds[0]!, {
+        persistRemote: downloadAndPersistAvatar,
+        resolveLinkedIn: (id, url) => resolveLinkedInPhotoCached(id, url, userId),
+      });
+    }
+
+    // The lib skipped embeddings and summaries (it must run outside a request scope for the
+    // smoke suite); this is the request scope, so schedule them here.
+    after(async () => {
+      await kickEmbeddingBackfill(userId).catch(() => null);
+      await kickWorkHistoryResearch(userId, linkedInCaptureContactIds(items, out.contactIds));
+      for (const id of out.contactIds) {
+        await generateAndStoreContactBrief(userId, id).catch(() => null);
+      }
+    });
+
+    revalidatePath("/");
+    revalidatePath("/dashboard");
+    revalidatePath("/contacts");
+    revalidatePath("/capture");
+    revalidatePath("/reminders");
+    revalidatePath("/graph");
+    for (const id of out.contactIds) revalidatePath(`/contacts/${id}`);
+    return out;
+  }
+);
 
 /**
  * One page of the capture history, newest first. `cursor` is the previous page's
  * `nextCursor`; omit it for the first page.
  */
-export async function listCaptureHistory(
-  cursor?: string | null,
-  limit: number = CAPTURE_HISTORY_PAGE
-): Promise<CaptureHistoryPage> {
-  const userId = await requireUserId();
-  return listCaptureHistoryFor(userId, { cursor, limit });
-}
+export const listCaptureHistory = defineAction(
+  { schema: z.tuple([z.string().nullish(), anyNumber.optional()]) },
+  async (userId, cursor?: string | null, limit: number = CAPTURE_HISTORY_PAGE): Promise<CaptureHistoryPage> => {
+    return listCaptureHistoryFor(userId, { cursor, limit });
+  }
+);

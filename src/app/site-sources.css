@@ -101,6 +101,7 @@
 @source "../components/motion/reveal.tsx";
 @source "../components/orbit-logo.tsx";
 @source "../components/pricing/back-control.tsx";
+@source "../components/settings/sections.ts";
 @source "../components/theme-provider.tsx";
 @source "../components/ui/button.tsx";
 @source "../components/ui/loading-region.tsx";
@@ -113,6 +114,7 @@
 @source "../components/warp/warp-provider.tsx";
 @source "../db/index.ts";
 @source "../db/schema.ts";
+@source "../lib/account-audit.ts";
 @source "../lib/action-items.ts";
 @source "../lib/admin-audit.ts";
 @source "../lib/admin.ts";
@@ -133,7 +135,9 @@
 @source "../lib/app-url.ts";
 @source "../lib/attribution-parse.ts";
 @source "../lib/auth.ts";
+@source "../lib/avatar-blob.ts";
 @source "../lib/big-dipper-figure.ts";
+@source "../lib/blob-lazy.ts";
 @source "../lib/bot-check.ts";
 @source "../lib/calendar-feed.ts";
 @source "../lib/capture/closeness.ts";
@@ -144,6 +148,7 @@
 @source "../lib/chat-stream-protocol.ts";
 @source "../lib/clerk-session-hint.ts";
 @source "../lib/client-ip.ts";
+@source "../lib/closeness-cohort.ts";
 @source "../lib/closeness-evidence.ts";
 @source "../lib/closeness-materialize.ts";
 @source "../lib/closeness.ts";
@@ -156,16 +161,21 @@
 @source "../lib/contact-brief.ts";
 @source "../lib/contact-identity.ts";
 @source "../lib/contact-input.ts";
+@source "../lib/contact-merge.ts";
 @source "../lib/contact-message-submit.ts";
 @source "../lib/contact-message.ts";
 @source "../lib/contact-profile-format.ts";
 @source "../lib/contact-profile.ts";
+@source "../lib/contact-resolve.ts";
+@source "../lib/contact-search-rank.ts";
 @source "../lib/contact-writes.ts";
 @source "../lib/credits/grants.ts";
 @source "../lib/credits/ledger.ts";
+@source "../lib/crypto-rewrap.ts";
 @source "../lib/crypto.ts";
 @source "../lib/dates.ts";
 @source "../lib/decisions/catalog.ts";
+@source "../lib/decisions/duplicates.ts";
 @source "../lib/decisions/engine.ts";
 @source "../lib/decisions/gates.ts";
 @source "../lib/decisions/jev.ts";
@@ -183,6 +193,9 @@
 @source "../lib/demo-data/seed-extended.ts";
 @source "../lib/demo-data/seed.ts";
 @source "../lib/demo-data/student.ts";
+@source "../lib/demo-workspace.ts";
+@source "../lib/dictation.ts";
+@source "../lib/duplicate-count-memo.ts";
 @source "../lib/duplicates.ts";
 @source "../lib/entitlements.ts";
 @source "../lib/error-events.ts";
@@ -192,6 +205,8 @@
 @source "../lib/gate-events.ts";
 @source "../lib/google-scopes.ts";
 @source "../lib/ics.ts";
+@source "../lib/input/action.ts";
+@source "../lib/input/text.ts";
 @source "../lib/interaction-date.ts";
 @source "../lib/interaction-provenance.ts";
 @source "../lib/interaction-types.ts";
@@ -199,6 +214,7 @@
 @source "../lib/interest-list-join.ts";
 @source "../lib/interest-list-schema.ts";
 @source "../lib/interest-list-ticket.ts";
+@source "../lib/interest-list-tokens.ts";
 @source "../lib/interest-list.ts";
 @source "../lib/interest-progress-store.ts";
 @source "../lib/job-changes.ts";
@@ -222,11 +238,13 @@
 @source "../lib/pass-invites.ts";
 @source "../lib/pass-seen.ts";
 @source "../lib/pgvector.ts";
+@source "../lib/plan-guards.ts";
 @source "../lib/plan-limits.ts";
 @source "../lib/plan-upgrade-events.ts";
 @source "../lib/plans/plan-config.ts";
 @source "../lib/product-event-schemas.ts";
 @source "../lib/product-events.ts";
+@source "../lib/provider-connections.ts";
 @source "../lib/query-counter.ts";
 @source "../lib/rate-limit.ts";
 @source "../lib/recruiters.ts";
@@ -236,6 +254,7 @@
 @source "../lib/safe-links.ts";
 @source "../lib/search.ts";
 @source "../lib/secret-patterns.ts";
+@source "../lib/secrets.ts";
 @source "../lib/sentry-browser.ts";
 @source "../lib/sentry-lazy.ts";
 @source "../lib/sentry-scrub.ts";
@@ -252,6 +271,8 @@
 @source "../lib/starfield-events.ts";
 @source "../lib/stripe-config.ts";
 @source "../lib/suggested-reminder-utils.ts";
+@source "../lib/surface-visibility.ts";
+@source "../lib/surfaces.ts";
 @source "../lib/tab-title-badge.ts";
 @source "../lib/throttle-latch.ts";
 @source "../lib/timeline-cost.ts";

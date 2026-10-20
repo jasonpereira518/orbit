@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getImportJobStatus } from "@/actions/imports";
-import { refuseCrossOrigin } from "@/lib/same-origin";
+import { sameOriginGuard } from "@/lib/api/same-origin";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -15,7 +15,7 @@ type Params = { params: Promise<{ id: string }> };
  * import, no session) this answers 500, and the runner retries either one the same way.
  */
 export async function POST(request: Request, { params }: Params) {
-  const refused = refuseCrossOrigin(request);
+  const refused = sameOriginGuard(request, { message: "Cross-origin request refused", json: true });
   if (refused) return refused;
   const { id } = await params;
   try {

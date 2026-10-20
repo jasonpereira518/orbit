@@ -5,7 +5,7 @@ import { recordGateHitThrottled } from "@/lib/gate-events";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
-import { decryptOrNull } from "@/lib/crypto";
+import { decryptAndRewrap } from "@/lib/crypto-rewrap";
 import { UserFacingError } from "@/lib/errors";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { normalizeCompanyKey } from "@/lib/company-name";
@@ -145,7 +145,12 @@ async function resolveApolloKey(
     (await (await getDb()).query.userSettings.findFirst({
       where: eq(userSettings.userId, userId),
     }));
-  const personal = decryptOrNull(settings?.apolloApiKeyEncrypted);
+  const personal = await decryptAndRewrap(settings?.apolloApiKeyEncrypted, {
+    table: userSettings,
+    column: userSettings.apolloApiKeyEncrypted,
+    idColumn: userSettings.userId,
+    id: userId,
+  });
   if (personal) return { apiKey: personal, hosted: false };
 
   // Orbit's shared Apollo key: no plan includes it (`hostedEnrichment` is off everywhere), so

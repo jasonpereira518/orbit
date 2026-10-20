@@ -16,7 +16,7 @@
 import { DUPLICATE_TUNING } from "@/lib/decisions/catalog";
 import { openEngines } from "@/lib/decisions/engine";
 import { nameMergeVetoes, personCard } from "@/lib/decisions/duplicates";
-import { and, desc, eq, gte } from "drizzle-orm";
+import { and, desc, eq, gte, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, noteBatches, type CaptureSourceKind } from "@/db/schema";
 import { runCaptureParse } from "@/lib/capture-parse";
@@ -59,6 +59,7 @@ import {
   type NoteBatchCommitmentInput,
   type NoteBatchParticipantInput,
   type SaveNoteBatchInput,
+  type SaveNoteBatchOptions,
   type SaveNoteBatchOutput,
 } from "@/lib/note-batch-save";
 import { hashSourceNote } from "@/lib/suggested-reminder-utils";
@@ -78,7 +79,7 @@ import {
 
 export type CaptureRunnerDeps = {
   parse?: typeof runCaptureParse;
-  save?: (userId: string, input: SaveNoteBatchInput) => Promise<SaveNoteBatchOutput>;
+  save?: (userId: string, input: SaveNoteBatchInput, opts?: SaveNoteBatchOptions) => Promise<SaveNoteBatchOutput>;
   /** Post-save enrichment (embeddings, briefs). Off in the smoke suite. */
   enrich?: boolean;
   now?: Date;
@@ -228,7 +229,11 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
 
     // (a) A batch this corpus already produced — the previous attempt got that far. The
     //     window is the job's whole life, not the current claim: the batch predates the
-    //     re-claim by definition.
+    //     re-claim by definition. A `saved` batch is the answer; a `failed` one is an
+    //     attempt that threw part-way and is RESUMED, never reported as the result — that
+    //     is how a save that lost people on participant two used to read as "saved" with
+    //     one person (audit H-05). A `saving` batch belongs to a runner still writing; the
+    //     claim above is what rules that out, so it is treated as an attempt to resume.
     const existing = row.noteBatchId
       ? await getNoteBatchForUser(userId, row.noteBatchId)
       : await findBatchForCorpus(userId, row.sourceHash, row.createdAt);
@@ -237,8 +242,16 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
     // Who this save pulled from LinkedIn. Empty on the resumed path: that batch's first
     // attempt already kicked them, and the Experience section's button covers a miss.
     let linkedInContactIds: string[] = [];
-    if (existing) {
+    if (existing && existing.status === "saved") {
       out = summarizeExistingBatch(existing);
+    } else if (existing && (existing.status === "failed" || existing.status === "saving")) {
+      if (existing.status === "saving") {
+        // Nobody else holds the job, so the writer died. Mark it so the resume path applies.
+        const db = await getDb();
+        await db.update(noteBatches).set({ status: "failed" }).where(eq(noteBatches.id, existing.id));
+      }
+      const input = await buildSaveInput(row);
+      out = await save(userId, input, { resumeBatchId: existing.id });
     } else {
       // A job in the review flow: the person ticked these reminders, so each is a follow-up they set.
       const input = { ...(await buildSaveInput(row)), trackFollowUps: true };
@@ -288,7 +301,9 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
       // rebuilds the search text and brief itself when it lands).
       await kickWorkHistoryResearch(userId, linkedInContactIds);
       for (const contactId of out.contactIds) {
-        await generateAndStoreContactBrief(userId, contactId).catch(reportAndContinue(followOn("brief"), null));
+        // `meter: false`: the capture itself was the metered click (`capture`), and a roster scan
+        // can name more people than the `brief` bucket's window holds.
+        await generateAndStoreContactBrief(userId, contactId, { meter: false }).catch(reportAndContinue(followOn("brief"), null));
       }
     }
   } catch (err) {
@@ -307,14 +322,18 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
   return getCaptureJobById(id);
 }
 
-/** A saved batch for this exact corpus, created since this job began. */
+/**
+ * The batch for this exact corpus, created since this job began: finished (`saved`) or an
+ * attempt that did not finish (`failed`, or `saving` from a writer that died). An `undone`
+ * batch is excluded on purpose — the person reverted it, and a resume must not bring it back.
+ */
 async function findBatchForCorpus(userId: string, sourceHash: string, since: Date) {
   const db = await getDb();
   const row = await db.query.noteBatches.findFirst({
     where: and(
       eq(noteBatches.userId, userId),
       eq(noteBatches.sourceHash, sourceHash),
-      eq(noteBatches.status, "saved"),
+      inArray(noteBatches.status, ["saved", "failed", "saving"]),
       gte(noteBatches.createdAt, since)
     ),
     orderBy: [desc(noteBatches.createdAt)],

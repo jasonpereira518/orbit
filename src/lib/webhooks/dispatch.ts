@@ -28,10 +28,10 @@
  */
 import { getEntitlements } from "@/lib/entitlements";
 import { randomUUID } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { outboundWebhookDeliveries, webhookEndpoints } from "@/db/schema";
-import { decryptOrNull } from "@/lib/crypto";
+import { decryptAndRewrap } from "@/lib/crypto-rewrap";
 import { buildEnvelope, signPayload, type WebhookEventType } from "@/lib/webhooks/sign";
 
 /** Per-attempt HTTP timeout. A slow endpoint must not consume the drain's budget. */
@@ -69,7 +69,7 @@ function backoffFor(attempt: number): number {
  * `src/actions/webhook-endpoints.ts`, `src/app/api/v1/webhook-endpoints/route.ts` and
  * `scripts/smoke-webhook-delivery.ts` all import it from this module.
  */
-import { assertDeliverable, isBlockedAddress } from "@/lib/net-guard";
+import { assertDeliverable, isBlockedAddress, readBodyCapped } from "@/lib/net-guard";
 import { reportError } from "@/lib/report-error";
 
 export { isBlockedAddress, assertDeliverable };
@@ -162,7 +162,80 @@ type DueRow = {
   attempts: number;
   url: string;
   secret_encrypted: string;
+  /** The drain's claim on this row. Set by `claimDueDeliveries`; settles land only under it. */
+  claim_token?: string | null;
 };
+
+/**
+ * How long a drain owns the rows it claimed. Longer than its whole budget (45 s) so a row is
+ * never re-claimed mid-attempt; short enough that a drain that died frees its rows by the
+ * next ten-minute tick.
+ */
+export const DELIVERY_CLAIM_MS = 2 * 60 * 1000;
+
+/**
+ * Deliveries one endpoint may take per pass. The drain is shared by every account and runs
+ * oldest-first; without a ceiling, one account with ten slow endpoints and a bulk import filled
+ * every pass with its own five-second timeouts while everyone else's deliveries waited
+ * (audit M-03). Five per endpoint per pass still clears a normal backlog in a few ticks.
+ */
+export const MAX_PER_ENDPOINT_PER_PASS = 5;
+
+/** The most of an error response body ever read. The 200 kept is cut from this. */
+const ERROR_BODY_MAX_BYTES = 4096;
+
+/** A settle lands on the row only while this drain still holds the claim it was handed. */
+function settleWhere(row: DueRow) {
+  return row.claim_token
+    ? and(eq(outboundWebhookDeliveries.id, row.id), eq(outboundWebhookDeliveries.claimedBy, row.claim_token))
+    : eq(outboundWebhookDeliveries.id, row.id);
+}
+
+/**
+ * Claim the next due deliveries for this drain, in one statement (audit M-03).
+ *
+ * The drain used to SELECT its rows and then attempt each one; two overlapping drains (the
+ * schedule and a manual dispatch run in different concurrency groups) selected the same rows
+ * and POSTed each event twice. Claiming is an UPDATE: the second drain's statement waits on
+ * the first one's row locks, re-checks `claimed_until`, and skips rows already taken.
+ *
+ * Fair across endpoints: at most `MAX_PER_ENDPOINT_PER_PASS` rows per endpoint, then the
+ * oldest overall. The endpoint's url and secret come back on the same row.
+ */
+export async function claimDueDeliveries(opts: { max: number; now: Date; token: string }): Promise<DueRow[]> {
+  const db = await getDb();
+  const until = new Date(opts.now.getTime() + DELIVERY_CLAIM_MS);
+  return rowsOf<DueRow>(
+    await db.execute(sql`
+      WITH due AS (
+        SELECT d.id, d.next_attempt_at,
+               row_number() OVER (PARTITION BY d.endpoint_id ORDER BY d.next_attempt_at, d.id) AS rn
+          FROM outbound_webhook_deliveries d
+          JOIN webhook_endpoints e ON e.id = d.endpoint_id
+         WHERE d.status = 'pending'
+           AND d.next_attempt_at IS NOT NULL
+           AND d.next_attempt_at <= ${opts.now}
+           AND e.status = 'active'
+           AND (d.claimed_until IS NULL OR d.claimed_until < ${opts.now})
+      ),
+      picked AS (
+        SELECT id FROM due
+         WHERE rn <= ${MAX_PER_ENDPOINT_PER_PASS}
+         ORDER BY next_attempt_at, id
+         LIMIT ${opts.max}
+      )
+      UPDATE outbound_webhook_deliveries d
+         SET claimed_by = ${opts.token}, claimed_until = ${until}
+        FROM picked
+       WHERE d.id = picked.id
+         AND d.status = 'pending'
+         AND (d.claimed_until IS NULL OR d.claimed_until < ${opts.now})
+      RETURNING d.id, d.endpoint_id, d.payload, d.attempts, d.claimed_by AS claim_token,
+                (SELECT e.url FROM webhook_endpoints e WHERE e.id = d.endpoint_id) AS url,
+                (SELECT e.secret_encrypted FROM webhook_endpoints e WHERE e.id = d.endpoint_id) AS secret_encrypted
+    `)
+  );
+}
 
 /**
  * Attempt one delivery and record the outcome.
@@ -179,7 +252,12 @@ export async function attemptDelivery(row: DueRow, now: Date = new Date()): Prom
 
   try {
     await assertDeliverable(row.url);
-    const secret = decryptOrNull(row.secret_encrypted);
+    const secret = await decryptAndRewrap(row.secret_encrypted, {
+      table: webhookEndpoints,
+      column: webhookEndpoints.secretEncrypted,
+      idColumn: webhookEndpoints.id,
+      id: row.endpoint_id,
+    });
     if (!secret) throw new Error("Endpoint secret could not be read");
 
     const timestamp = Math.floor(now.getTime() / 1000);
@@ -200,7 +278,10 @@ export async function attemptDelivery(row: DueRow, now: Date = new Date()): Prom
     statusCode = res.status;
     // Only 2xx is success. A 3xx is a misconfigured endpoint, not a delivery.
     if (res.status < 200 || res.status >= 300) {
-      const text = await res.text().catch(() => "");
+      // Capped while streaming: `res.text()` read the whole body first, and the 5 s abort
+      // bounds time, not bytes — a hostile endpoint could stream tens of MB into memory.
+      const capped = await readBodyCapped(res, ERROR_BODY_MAX_BYTES).catch(() => null);
+      const text = capped ? capped.toString("utf8") : "(response body too large)";
       // 200 characters, never more: the response body is an exfiltration channel, and this
       // string is shown back to the user in Settings.
       error = `HTTP ${res.status}: ${text.slice(0, 200)}`;
@@ -220,8 +301,10 @@ export async function attemptDelivery(row: DueRow, now: Date = new Date()): Prom
         lastAttemptedAt: now,
         deliveredAt: now,
         nextAttemptAt: null,
+        claimedBy: null,
+        claimedUntil: null,
       })
-      .where(eq(outboundWebhookDeliveries.id, row.id));
+      .where(settleWhere(row));
     await db
       .update(webhookEndpoints)
       .set({ consecutiveFailures: 0, updatedAt: now })
@@ -239,8 +322,10 @@ export async function attemptDelivery(row: DueRow, now: Date = new Date()): Prom
       lastError: error,
       lastAttemptedAt: now,
       nextAttemptAt: exhausted ? null : new Date(now.getTime() + backoffFor(attempt)),
+      claimedBy: null,
+      claimedUntil: null,
     })
-    .where(eq(outboundWebhookDeliveries.id, row.id));
+    .where(settleWhere(row));
 
   if (exhausted) {
     // Only an abandoned delivery counts against the endpoint. Counting every failed attempt
@@ -300,7 +385,12 @@ export async function verifyEndpoint(
 
   try {
     await assertDeliverable(endpoint.url);
-    const secret = decryptOrNull(endpoint.secretEncrypted);
+    const secret = await decryptAndRewrap(endpoint.secretEncrypted, {
+      table: webhookEndpoints,
+      column: webhookEndpoints.secretEncrypted,
+      idColumn: webhookEndpoints.id,
+      id: endpoint.id,
+    });
     if (!secret) throw new Error("Endpoint secret could not be read");
 
     const res = await fetch(endpoint.url, {
@@ -432,22 +522,14 @@ export async function drainDueDeliveries(
   const now = opts.now ?? new Date();
   const deadline = Date.now() + opts.budgetMs;
   const stats: DrainStats = { attempted: 0, delivered: 0, failed: 0, deferred: 0 };
-  const db = await getDb();
 
-  const due = rowsOf<DueRow>(
-    await db.execute(sql`
-      SELECT d.id, d.endpoint_id, d.payload, d.attempts, e.url, e.secret_encrypted
-        FROM outbound_webhook_deliveries d
-        JOIN webhook_endpoints e ON e.id = d.endpoint_id
-       WHERE d.status = 'pending'
-         AND d.next_attempt_at IS NOT NULL
-         AND d.next_attempt_at <= ${now}
-         AND e.status = 'active'
-       ORDER BY d.next_attempt_at
-       LIMIT ${opts.max}
-    `)
-  );
+  // Claimed, not merely selected: see `claimDueDeliveries`.
+  const token = randomUUID();
+  const due = await claimDueDeliveries({ max: opts.max, now, token });
 
+  // Grouped by endpoint (claim order kept within each), then up to DRAIN_ENDPOINT_CONCURRENCY
+  // endpoints drain side by side, each stopping after DRAIN_ENDPOINT_FAILURE_STREAK failures
+  // in a row, so one dead endpoint never holds the pass for the rest.
   const byEndpoint = new Map<string, DueRow[]>();
   for (const row of due) {
     const queue = byEndpoint.get(row.endpoint_id);
@@ -455,17 +537,19 @@ export async function drainDueDeliveries(
     else byEndpoint.set(row.endpoint_id, [row]);
   }
   const queues = [...byEndpoint.values()];
+  const unattempted: string[] = [];
 
   async function drainEndpoint(queue: DueRow[]) {
     let streak = 0;
     for (let i = 0; i < queue.length; i++) {
       if (Date.now() >= deadline || streak >= DRAIN_ENDPOINT_FAILURE_STREAK) {
         stats.deferred += queue.length - i;
+        for (const row of queue.slice(i)) unattempted.push(row.id);
         return;
       }
       stats.attempted++;
       // One endpoint's failure must never stop the queue.
-      const ok = await attemptDelivery(queue[i], now).catch(() => false);
+      const ok = await attemptDelivery(queue[i]!, now).catch(() => false);
       if (ok) {
         stats.delivered++;
         streak = 0;
@@ -479,9 +563,17 @@ export async function drainDueDeliveries(
   let next = 0;
   await Promise.all(
     Array.from({ length: Math.min(DRAIN_ENDPOINT_CONCURRENCY, queues.length) }, async () => {
-      while (next < queues.length) await drainEndpoint(queues[next++]);
+      while (next < queues.length) await drainEndpoint(queues[next++]!);
     })
   );
+  // Rows the budget or a failure streak never reached go back now, not when the claim expires.
+  if (unattempted.length) {
+    const db = await getDb();
+    await db
+      .update(outboundWebhookDeliveries)
+      .set({ claimedBy: null, claimedUntil: null })
+      .where(and(inArray(outboundWebhookDeliveries.id, unattempted), eq(outboundWebhookDeliveries.claimedBy, token)));
+  }
   return stats;
 }
 

@@ -33,6 +33,13 @@
  * have the action import it, so no action id is minted for it. That is the shape
  * `src/actions/apple.ts` over `src/lib/apple.ts` already uses.
  *
+ * A second check, same mechanism: no exported action may take a SERVER-ONLY options
+ * parameter. `ContactWriteOptions` carries `entitlements` and `headroom` — the inputs to
+ * the free plan's contact cap — and the `skip*` flags bulk paths use. Forwarded from an
+ * action's own parameter it let a browser POST a forged entitlements object and add
+ * contacts past the cap (audit H-01). Flagged: a parameter typed by name as one of
+ * `SERVER_ONLY_TYPES`, or an inline/destructured parameter naming a `SERVER_ONLY_FIELD`.
+ *
  * `--report` prints the full export inventory instead of only the offenders.
  * Run: npx tsx scripts/smoke-action-user-scope.ts [--report]
  */
@@ -60,6 +67,12 @@ const SESSION_DERIVING = new Set([
   "requireRecruitersUser",
   "requireMeetingsUser",
 ]);
+
+/** Option types that exist for server callers only — never for a browser to supply. */
+const SERVER_ONLY_TYPES = new Set(["ContactWriteOptions"]);
+
+/** Option fields that decide a plan gate or skip a write-side invariant. */
+const SERVER_ONLY_FIELD = /^(entitlements|headroom|skipEmbedding|skipRevalidate|skipSummary|skipCloseness|mergeFactLists)$/;
 
 /**
  * Exports that take a user id on purpose. One line per entry saying why it is safe.
@@ -136,6 +149,37 @@ function userIdFieldsOf(param: ts.ParameterDeclaration): string[] {
   return found;
 }
 
+/** Every server-only option reachable from one parameter: by type name, destructured key,
+ *  or inline object-type member. */
+function serverOnlyFieldsOf(param: ts.ParameterDeclaration): string[] {
+  const found: string[] = [];
+  if (param.type && ts.isTypeReferenceNode(param.type) && ts.isIdentifier(param.type.typeName)) {
+    if (SERVER_ONLY_TYPES.has(param.type.typeName.text)) found.push(param.type.typeName.text);
+  }
+  if (ts.isObjectBindingPattern(param.name)) {
+    for (const el of param.name.elements) {
+      const key = el.propertyName ?? el.name;
+      if (ts.isIdentifier(key) && SERVER_ONLY_FIELD.test(key.text)) found.push(key.text);
+    }
+  }
+  if (param.type) {
+    const visit = (node: ts.Node) => {
+      if (ts.isTypeLiteralNode(node)) {
+        for (const member of node.members) {
+          const name = member.name;
+          if (name && ts.isIdentifier(name) && SERVER_ONLY_FIELD.test(name.text)) found.push(name.text);
+        }
+      }
+      if (ts.isTypeReferenceNode(node) && ts.isIdentifier(node.typeName) && SERVER_ONLY_TYPES.has(node.typeName.text)) {
+        found.push(node.typeName.text);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(param.type);
+  }
+  return found;
+}
+
 /** Whether this function's OWN body calls a session-deriving helper. Nested function
  *  bodies count: an action that derives the user inside a `try`, a callback, or an
  *  `await Promise.all([...])` has still established who is asking. */
@@ -163,6 +207,7 @@ type ExportedFn = {
   name: string;
   line: number;
   userIdFields: string[];
+  serverOnlyFields: string[];
   sessionCalls: string[];
 };
 
@@ -180,6 +225,7 @@ function exportedAsyncFunctions(file: string, sf: ts.SourceFile): ExportedFn[] {
       name,
       line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1,
       userIdFields: params.flatMap(userIdFieldsOf),
+      serverOnlyFields: params.flatMap(serverOnlyFieldsOf),
       sessionCalls: derivesUserFromSession(body),
     });
   };
@@ -276,6 +322,21 @@ if (!offenders.some((fn) => !ALLOWLIST[`${fn.file.split("/").pop()}#${fn.name}`]
     `no exported action takes a caller-supplied user id (${allExports.length} exports checked)`,
     true
   );
+}
+
+// --- Server-only options ---------------------------------------------------------------
+console.log("\nexported actions take no server-only options from their caller");
+
+const optionOffenders = allExports.filter((fn) => fn.serverOnlyFields.length > 0);
+for (const fn of optionOffenders) {
+  check(
+    `${fn.file}:${fn.line} ${fn.name}() accepts ${[...new Set(fn.serverOnlyFields)].join(", ")} from its caller`,
+    false,
+    "a browser can POST these — build ContactWriteOptions inside the action, or move the export to src/lib/"
+  );
+}
+if (optionOffenders.length === 0) {
+  check(`no exported action accepts a server-only option (${allExports.length} exports checked)`, true);
 }
 
 // A stale allowlist entry is a guard that has quietly stopped guarding.

@@ -2,6 +2,8 @@ import { and, desc, eq, gt, lte, or, sql } from "drizzle-orm";
 import { getDb, rowsOf, runAtomicBatch } from "@/db";
 import { creditGrants, creditHolds } from "@/db/schema";
 import { FREE_STARTER_CREDITS, PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
+import { AI_OPERATIONS } from "@/lib/ai-operations";
+import { holdEstimateMicros } from "@/lib/managed-ai-policy";
 import { creditsToMicros } from "@/lib/credits/grants";
 
 /**
@@ -340,10 +342,24 @@ export async function settleCredits(input: { userId: string; operation: string; 
   ]);
 }
 
-/** Release a hold without charging (a batch that finished or failed, a refused call). */
-export async function releaseHold(userId: string, operation: string): Promise<void> {
+/**
+ * Release one hold without charging (a batch that finished or failed, a refused call): the one
+ * named by `holdId`, else the oldest live one for the operation (the one `settleCredits` would
+ * take), falling back to an expired one.
+ * Deleting every hold for the operation freed the reservations of concurrent calls still running,
+ * so the account could overspend while they finished.
+ */
+export async function releaseHold(userId: string, operation: string, holdId?: string): Promise<void> {
   const db = await getDb();
-  await db.delete(creditHolds).where(and(eq(creditHolds.userId, userId), eq(creditHolds.operation, operation)));
+  if (holdId) {
+    await db.delete(creditHolds).where(and(eq(creditHolds.id, holdId), eq(creditHolds.userId, userId)));
+    return;
+  }
+  await db.execute(sql`DELETE FROM credit_holds WHERE id = (
+      SELECT id FROM credit_holds
+       WHERE user_id = ${userId} AND operation = ${operation}
+       ORDER BY (expires_at > now()) DESC, created_at, id LIMIT 1
+    )`);
 }
 
 /** Drop holds that expired more than a day ago. Called from the process-stalled cron. */
@@ -466,6 +482,13 @@ const UNPRICED_OTHER_MICROS = 2_000;
  * Settle one managed call from its usage row. Only LLM calls on Orbit's key spend credits:
  * Deepgram has its own hours meter, and a failed call that reported no tokens costs nothing.
  */
+/**
+ * Failures the PROVIDER still bills in full: the caller walked away (a closed tab, an
+ * `AbortSignal`) or Orbit's own deadline fired while the model was mid-answer. A stream
+ * reports its token usage only in its final chunk, so these arrive with no counts at all.
+ */
+const BILLED_FAILURE_KINDS = new Set(["cancelled", "timeout"]);
+
 export async function settleManagedUsage(row: {
   userId: string;
   operation: string;
@@ -474,10 +497,35 @@ export async function settleManagedUsage(row: {
   keyOwner: "user" | "orbit";
   success: number;
   estimatedCostMicros: number | null;
+  errorKind?: string | null;
 }): Promise<void> {
   if (row.keyOwner !== "orbit" || row.provider === "deepgram" || row.provider === "typesafe") return;
-  const micros =
-    row.estimatedCostMicros ??
-    (row.success === 1 ? (UNPRICED_MICROS[row.kind] ?? UNPRICED_OTHER_MICROS) : 0);
-  await settleCredits({ userId: row.userId, operation: row.operation, micros });
+  await settleCredits({ userId: row.userId, operation: row.operation, micros: managedChargeMicros(row) });
+}
+
+/**
+ * What a managed call costs the account, in micros.
+ *
+ * Reported or estimated cost when there is one. A successful call with no price on file is
+ * charged its pessimistic stand-in. A failed call is free — the provider refused or broke —
+ * EXCEPT when the failure is the caller's: an aborted or timed-out stream has already been
+ * generated and billed to Orbit in full, and settling it at zero let a client read the whole
+ * answer from the SSE stream, abort before the last chunk, and pay nothing (audit H-02).
+ * Those settle at the hold estimate for the operation's tier — the same number the call
+ * reserved before it ran, never more than the hold the person already saw as pending.
+ */
+export function managedChargeMicros(row: {
+  operation: string;
+  kind: string;
+  success: number;
+  estimatedCostMicros: number | null;
+  errorKind?: string | null;
+}): number {
+  if (row.estimatedCostMicros !== null) return row.estimatedCostMicros;
+  if (row.success === 1) return UNPRICED_MICROS[row.kind] ?? UNPRICED_OTHER_MICROS;
+  if (row.errorKind && BILLED_FAILURE_KINDS.has(row.errorKind)) {
+    const tier = (AI_OPERATIONS as Record<string, { tier?: string }>)[row.operation]?.tier;
+    return holdEstimateMicros(tier);
+  }
+  return 0;
 }

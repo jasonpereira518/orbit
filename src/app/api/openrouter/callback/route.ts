@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { recordAccountAudit } from "@/lib/account-audit";
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { requireUserId, UnauthorizedError } from "@/lib/auth";
@@ -67,6 +68,7 @@ export async function GET(request: Request) {
         code_verifier: decoded.verifier,
         code_challenge_method: "S256",
       }),
+      signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) return errorRedirect(returnUrl, "exchange_failed");
     const body = (await res.json()) as { key?: unknown };
@@ -91,6 +93,7 @@ export async function GET(request: Request) {
     model: DEFAULT_MODELS.openrouter,
     encryptedKey: encrypt(key),
   });
+  await recordAccountAudit({ userId: sessionUserId, action: "integration.connect", resourceType: "openrouter" });
 
   // 8. Done. Match saveAiSettings's own revalidation — the 302 makes the landing page
   // (/settings) render fresh regardless, but /chat would otherwise keep whatever the

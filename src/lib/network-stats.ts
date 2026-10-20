@@ -8,6 +8,7 @@ import {
   type ClosenessCohortSlimResult,
 } from "@/lib/closeness-cohort";
 import { getNetworkStatsCounts } from "@/lib/dashboard-aggregates";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 
 export type NetworkStatItem = {
   label: string;
@@ -107,6 +108,7 @@ export async function getNetworkStats(
     interactionCountRows,
     companyCountRows,
     cohortSummary,
+    timeZone,
   ] = await Promise.all([
     // Four integers from one statement, where this used to loop every contact in the
     // account. The dashboard donated its scan for that loop, which is why two of the widest
@@ -133,6 +135,8 @@ export async function getNetworkStats(
       : storedCohortSummary(userId).then(
           (stored) => stored ?? getClosenessCohortSlim(userId).then(summarizeCohort)
         ),
+    // "Since <date>" is written here, on the server: in the viewer's zone (audit L-17).
+    viewerTimeZone(),
   ]);
 
   const interactionCount = interactionCountRows[0]?.value ?? 0;
@@ -197,7 +201,7 @@ export async function getNetworkStats(
         suffix: networkAgeDays > 0 ? " days" : undefined,
         empty: networkAgeDays === 0,
         detail: oldestContactAt
-          ? `Since ${oldestContactAt.toLocaleDateString()}`
+          ? `Since ${oldestContactAt.toLocaleDateString(undefined, { timeZone })}`
           : undefined,
       },
     ],

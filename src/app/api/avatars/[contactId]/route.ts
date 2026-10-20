@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { withMediaResourcePolicy } from "@/lib/media-headers";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
@@ -15,6 +16,7 @@ import {
   AvatarSourceRateLimitError,
   parseImageDataUrl,
 } from "@/lib/contact-avatar";
+import { isUuid } from "@/lib/input/ids";
 
 type Params = { params: Promise<{ contactId: string }> };
 
@@ -100,7 +102,7 @@ async function persistProfileImage(
  * (legacy data URL or Blob), proxy/persist a usable remote image into
  * Blob storage, or resolve their LinkedIn OG image on demand.
  */
-export async function GET(req: Request, { params }: Params) {
+async function serve(req: Request, { params }: Params) {
   let userId: string;
   try {
     userId = await requireUserId();
@@ -108,6 +110,8 @@ export async function GET(req: Request, { params }: Params) {
     return new NextResponse(null, { status: 401 });
   }
   const { contactId } = await params;
+  // A malformed id would reach Postgres as a failed uuid cast — a 500 for "no such contact".
+  if (!isUuid(contactId)) return miss(404);
   const versioned = new URL(req.url).searchParams.has("v");
   const db = await getDb();
 
@@ -203,4 +207,9 @@ export async function GET(req: Request, { params }: Params) {
   }
 
   return miss(404);
+}
+
+/** Every response, redirects and misses included, is same-origin only (audit L-09). */
+export async function GET(_req: Request, ctx: Params) {
+  return withMediaResourcePolicy(await serve(_req, ctx));
 }

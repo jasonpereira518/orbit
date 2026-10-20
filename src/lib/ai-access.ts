@@ -9,7 +9,8 @@ import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { usageEvents, userSettings } from "@/db/schema";
 import { getAppBaseUrl } from "@/lib/app-url";
-import { decryptOrNull } from "@/lib/crypto";
+import type { PgColumn } from "drizzle-orm/pg-core";
+import { decryptAndRewrap } from "@/lib/crypto-rewrap";
 import { isDemoAccount, isLocalhost } from "@/lib/demo-account";
 import { resolvePlan, type BillingColumns } from "@/lib/entitlements";
 import { classifyAiError } from "@/lib/errors";
@@ -23,6 +24,7 @@ import {
   getCreditBalance,
   packsUsable,
   placeHold,
+  releaseHold,
   type CreditBalance,
 } from "@/lib/credits/ledger";
 import { creditsToMicros } from "@/lib/credits/grants";
@@ -588,12 +590,17 @@ export class AiAccess {
     const plan = resolvePlan(row).plan;
 
     const personal: Partial<Record<AiProvider, string>> = {};
-    const decrypted = {
-      gemini: decryptOrNull(row?.geminiApiKeyEncrypted),
-      openai: decryptOrNull(row?.openaiApiKeyEncrypted),
-      anthropic: decryptOrNull(row?.anthropicApiKeyEncrypted),
-      openrouter: decryptOrNull(row?.openrouterApiKeyEncrypted),
-    };
+    // Re-encrypts a legacy or previous-secret ciphertext on the way past (audit L-06).
+    const settingsKey = (stored: string | null | undefined, column: PgColumn) =>
+      decryptAndRewrap(stored, { table: userSettings, column, idColumn: userSettings.userId, id: row?.userId });
+    const [gemini, openai, anthropic, openrouter, ownDecisionKey] = await Promise.all([
+      settingsKey(row?.geminiApiKeyEncrypted, userSettings.geminiApiKeyEncrypted),
+      settingsKey(row?.openaiApiKeyEncrypted, userSettings.openaiApiKeyEncrypted),
+      settingsKey(row?.anthropicApiKeyEncrypted, userSettings.anthropicApiKeyEncrypted),
+      settingsKey(row?.openrouterApiKeyEncrypted, userSettings.openrouterApiKeyEncrypted),
+      settingsKey(row?.typesafeApiKeyEncrypted, userSettings.typesafeApiKeyEncrypted),
+    ]);
+    const decrypted = { gemini, openai, anthropic, openrouter };
     for (const [provider, key] of Object.entries(decrypted)) {
       if (key) personal[provider as AiProvider] = key;
     }
@@ -614,7 +621,6 @@ export class AiAccess {
     // BYOK only. The one exception is the dev server's own `.env.local`, on the same terms
     // as every other provider there (a localhost demo account) — so it can never become an
     // Orbit-paid key.
-    const ownDecisionKey = decryptOrNull(row?.typesafeApiKeyEncrypted);
     const devDecisionKey =
       eligibility === "demo" && localDevAiEnabled()
         ? process.env[LOCAL_TYPESAFE_ENV]?.trim() || null
@@ -689,7 +695,26 @@ export class AiAccess {
     return mint(provider, model, source, key, operation);
   }
 
-  private async holdCredits(operation: string): Promise<void> {
+  /**
+   * One more credit hold for a call that bills several rounds on ONE grant — a web search
+   * that Anthropic pauses and Orbit resumes (audit L-15). The grant's own hold covered the
+   * first round only; each resume reserves its own, so a balance that cannot cover the next
+   * round stops the call there instead of overspending. Null when the grant is not metered
+   * (the person's own key, or a dev server); throws the same refusal as a first hold.
+   * Release each id with `releaseStepHold` once the call is done: the usage settle releases
+   * only the grant's own hold.
+   */
+  async holdStep(grant: AiGrant): Promise<string | null> {
+    if (grant.keyOwner !== "orbit" || this.eligibility !== "plan") return null;
+    return this.holdCredits(grant.operation);
+  }
+
+  /** Release a hold `holdStep` placed, by id, without touching any concurrent call's. */
+  async releaseStepHold(grant: AiGrant, holdId: string): Promise<void> {
+    await releaseHold(this.userId, grant.operation, holdId);
+  }
+
+  private async holdCredits(operation: string): Promise<string> {
     await ensureAllowance(this.userId, this.plan, creditPeriodFor(this.settings));
     const tier = (AI_OPERATIONS as Record<string, { tier?: string }>)[operation]?.tier;
     const monthly = PLAN_CONFIG[this.plan].monthlyCredits ?? 0;
@@ -703,7 +728,7 @@ export class AiAccess {
       // Free's one-time starter credits are for things the person asks for, never background work.
       reserveStarter: background && this.plan === "free",
     });
-    if (hold) return;
+    if (hold) return hold;
     // Below the background floor with credits left is not "you've used your credits".
     if (background) {
       const balance = await getCreditBalance(this.userId, this.plan, this.settings, undefined, { ensure: false });

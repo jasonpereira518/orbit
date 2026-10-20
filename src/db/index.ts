@@ -108,6 +108,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   credit_email_enabled integer NOT NULL DEFAULT 1,
   credit_notice_period_start timestamptz,
   credit_notice_level integer NOT NULL DEFAULT 0,
+  credit_email_unsub_token_hash text,
+  clerk_user_updated_at timestamptz,
   last_active_at timestamptz,
   recruiter_sharing integer NOT NULL DEFAULT 0,
   terms_accepted_at timestamptz,
@@ -462,6 +464,8 @@ CREATE TABLE IF NOT EXISTS imports (
   stall_resumes integer NOT NULL DEFAULT 0,
   reverted_at timestamptz,
   revert_stats jsonb,
+  claim_token text,
+  lease_until timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -823,6 +827,7 @@ CREATE TABLE IF NOT EXISTS chat_threads (
   user_id text NOT NULL,
   title text,
   context_note text,
+  stopped_turn_id text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -841,6 +846,8 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   proposed_actions jsonb DEFAULT '[]',
   feedback text,
   feedback_note text,
+  client_turn_id text,
+  interrupted boolean NOT NULL DEFAULT false,
   slot uuid,
   version integer NOT NULL DEFAULT 1,
   is_active boolean NOT NULL DEFAULT true,
@@ -1113,6 +1120,18 @@ CREATE TABLE IF NOT EXISTS admin_audit_log (
 );
 CREATE INDEX IF NOT EXISTS admin_audit_log_created_idx ON admin_audit_log(created_at);
 CREATE INDEX IF NOT EXISTS admin_audit_log_target_idx ON admin_audit_log(target_user_id);
+CREATE TABLE IF NOT EXISTS account_audit_log (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  subject_user_id text NOT NULL,
+  actor text NOT NULL,
+  action text NOT NULL,
+  resource_type text,
+  resource_id text,
+  detail jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS account_audit_log_subject_idx ON account_audit_log(subject_user_id, created_at);
+CREATE INDEX IF NOT EXISTS account_audit_log_action_idx ON account_audit_log(action, created_at);
 CREATE TABLE IF NOT EXISTS api_keys (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1166,6 +1185,8 @@ CREATE TABLE IF NOT EXISTS outbound_webhook_deliveries (
   last_error text,
   last_attempted_at timestamptz,
   delivered_at timestamptz,
+  claimed_by text,
+  claimed_until timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS outbound_deliveries_endpoint_event_uidx ON outbound_webhook_deliveries(endpoint_id, event_id);
@@ -1220,6 +1241,7 @@ CREATE TABLE IF NOT EXISTS rate_limit_buckets (
   window_started_at timestamptz NOT NULL DEFAULT now(),
   count integer NOT NULL DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS rate_limit_buckets_window_started_idx ON rate_limit_buckets(window_started_at);
 CREATE TABLE IF NOT EXISTS job_feed_sources (
   id text PRIMARY KEY,
   label text NOT NULL,
@@ -1370,11 +1392,15 @@ CREATE TABLE IF NOT EXISTS interest_list_signups (
   utm_medium text,
   utm_campaign text,
   landing_path text,
-  unsubscribe_token text NOT NULL,
+  unsubscribe_token text,
+  unsubscribe_token_hash text,
+  unsubscribe_token_encrypted text,
   unsubscribed_at timestamptz,
   welcome_planet text,
   follow_up_sent_at timestamptz,
   share_token text,
+  share_token_hash text,
+  share_token_encrypted text,
   referred_by_id uuid,
   first_name text,
   last_name text,
@@ -1382,6 +1408,7 @@ CREATE TABLE IF NOT EXISTS interest_list_signups (
   pass_check_count integer NOT NULL DEFAULT 0,
   pass_last_checked_at timestamptz,
   signup_event_label text,
+  referral_tier_mailed integer NOT NULL DEFAULT 0,
   join_session_id text,
   user_id text,
   converted_at timestamptz,
@@ -2773,6 +2800,40 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // held only cached web lookups. Rescanned every ref and worktree on Oct 15 2026: 169 was the
 // highest claimed anywhere.
 //
+// 171 = imports.claim_token + imports.lease_until: the import runner's lease, so the stall
+// backstop or an admin retry can never run a second runner beside a live one (audit H-04).
+// Rescanned every local and remote ref on Oct 17 2026: 170 was the highest claimed anywhere.
+//
+// 172 = contacts_user_closeness_nl_idx (closeness sort NULLS LAST, audit M-12) and
+// outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, audit M-03).
+// Rescanned Oct 17 2026: 171 (this branch) was the highest claimed anywhere.
+//
+// 173 = interest_list_signups.referral_tier_mailed: the highest referral tier a referrer has
+// been mailed, claimed with a conditional update so a tier crossed by two concurrent joins is
+// still mailed exactly once (audit L-20). Rescanned Oct 17 2026: 172 (this branch) was the highest.
+//
+// 174 = chat_threads.stopped_turn_id + chat_messages.client_turn_id: a dropped chat connection
+// keeps the person's question; only an explicit Stop discards it (audit L-25). Rescanned
+// Oct 17 2026: 173 (this branch) was the highest claimed anywhere.
+//
+// 175 = chat_messages.interrupted: the part of an answer that streamed before a dropped
+// connection is kept, marked as cut off (audit L-25). Rescanned Oct 19 2026: 174 (this
+// branch) was the highest claimed anywhere.
+//
+// 176 = rate_limit_buckets_window_started_idx: the bucket prune deletes by window age, which
+// was a sequential scan of a table that gains a row per (scope, key); the new per-user AI
+// buckets and daily caps (audit M-07, L-22) grow it faster. 177–179 are claimed by parallel
+// Phase 3 branches (Oct 19 2026); 175 was the highest on this branch.
+//
+// 177 = FIX_PLAN 3.5 / 3.6: account_audit_log (new table, audit L-23);
+// user_settings.credit_email_unsub_token_hash (L-05) and clerk_user_updated_at (L-07);
+// interest_list_signups.unsubscribe_token_hash / _encrypted and share_token_hash / _encrypted,
+// with unsubscribe_token made nullable (L-05). NOT 176, 178 or 179: those are claimed by the
+// other Phase 3 branches built alongside this one from 175.
+//
+// The lines below came from main, merged into the audit branch. main's 171 (the performance
+// pass's indexes) and this branch's 171 (the import lease) are different changes under one
+// number; both are idempotent `IF NOT EXISTS` DDL, so both apply.
 // 171 = the performance pass (PERFORMANCE_AUDIT.md): indexes only — contacts_user_name_norm_idx,
 // contacts_unscored_idx, interactions_user_contact_date_idx, contact_career_moves_contact_fk_idx,
 // contacts_user_email_prefix_idx, the related-contacts corpus functions with
@@ -2799,7 +2860,12 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // .join_session_id / user_id / converted_at, and two new tables: site_invites (Orbit's own
 // invitation ledger) and product_events (append-only, schema-validated telemetry). Renumbered from 171 on Oct 19 2026
 // after main reached 179; rescanned every remote ref that day: 180 was the highest claimed anywhere.
-export const SCHEMA_VERSION = 181;
+//
+// 182 = the audit branch (its 172-177, last stamped 179 on that branch) merged with main's 179
+// and 181. A database at main's 179 or 181 has none of the audit DDL, and one at the audit's
+// 179 has none of main's; one bump past all of them re-runs the whole idempotent sweep.
+// Rescanned Oct 19 2026: 181 (main) was the highest claimed.
+export const SCHEMA_VERSION = 182;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3152,6 +3218,21 @@ export const SCALE_DDL: string[] = [
   // descending id. The cursor is a row-value comparison, which needs every element ordered
   // the same way, so the index has to be declared that way to serve it.
   `CREATE INDEX IF NOT EXISTS contacts_user_closeness_idx ON contacts(user_id, closeness DESC, id DESC)`,
+  // v172: the contacts list's closeness sort is NULLS LAST (audit M-12), which the index
+  // above (DESC = NULLS FIRST) cannot serve. Kept alongside it: other readers order that way.
+  `CREATE INDEX IF NOT EXISTS contacts_user_closeness_nl_idx ON contacts(user_id, closeness DESC NULLS LAST, id DESC)`,
+  // v172: the outbound webhook drain's claim (audit M-03). See `claimDueDeliveries`.
+  `ALTER TABLE outbound_webhook_deliveries ADD COLUMN IF NOT EXISTS claimed_by text`,
+  `ALTER TABLE outbound_webhook_deliveries ADD COLUMN IF NOT EXISTS claimed_until timestamptz`,
+  // v173: the referral tier notice's claim (audit L-20). See `notifyIfTierUnlocked`.
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS referral_tier_mailed integer NOT NULL DEFAULT 0`,
+  // v174: Stop versus a dropped connection (audit L-25). See `markTurnStopped`.
+  `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS stopped_turn_id text`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS client_turn_id text`,
+  // v175: a dropped connection keeps the partial answer (audit L-25).
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS interrupted boolean NOT NULL DEFAULT false`,
+  // v176: the rate-limit prune's range scan (FIX_PLAN 3.3). See `pruneRateLimitBuckets`.
+  `CREATE INDEX IF NOT EXISTS rate_limit_buckets_window_started_idx ON rate_limit_buckets(window_started_at)`,
   `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
   // Backs BOTH the "Last spoken" sort on /contacts and the composer's pickers, which open
   // on "who have I actually spoken to lately" rather than whoever is alphabetically first
@@ -4726,6 +4807,9 @@ const alters = [
   `ALTER TABLE import_job_rows ADD COLUMN IF NOT EXISTS revert_snapshot jsonb`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS reverted_at timestamptz`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS revert_stats jsonb`,
+  // v171: the import runner's lease (audit H-04). See `imports.claimToken` in schema.ts.
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS claim_token text`,
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS lease_until timestamptz`,
   // Partial: the overwhelming majority of interactions and reminders are hand-made and
   // carry NULL here, and the only query that reads the column asks for one import's rows.
   `CREATE INDEX IF NOT EXISTS interactions_import_idx ON interactions(import_id) WHERE import_id IS NOT NULL`,
@@ -5064,6 +5148,18 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS relationship_engine_enabled integer NOT NULL DEFAULT 1`,
   // Schema v148: sender labels the owner picked as "me" in chat exports (WhatsApp has no "Me").
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS chat_self_names jsonb NOT NULL DEFAULT '[]'`,
+  // Schema v177 (FIX_PLAN 3.5 / 3.6): hash-bound credit-email unsubscribe (audit L-05), Clerk
+  // user.updated ordering (L-07), and interest-list tokens hashed at rest (L-05). The plaintext
+  // token columns become nullable; `backfillInterestListTokens` moves old rows over in place.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credit_email_unsub_token_hash text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS clerk_user_updated_at timestamptz`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS unsubscribe_token_hash text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS unsubscribe_token_encrypted text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS share_token_hash text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS share_token_encrypted text`,
+  `ALTER TABLE interest_list_signups ALTER COLUMN unsubscribe_token DROP NOT NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_unsub_hash_uidx ON interest_list_signups(unsubscribe_token_hash)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_hash_uidx ON interest_list_signups(share_token_hash)`,
 ];
 
 /**

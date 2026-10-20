@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { outlookConnections } from "@/db/schema";
-import { decrypt, encrypt } from "@/lib/crypto";
+import { encrypt } from "@/lib/crypto";
+import { decryptAndRewrapStrict } from "@/lib/crypto-rewrap";
 import { ReauthRequiredError, isRefreshRejection } from "@/lib/errors";
 import { assertGraphUrl, graphFetchWithRetry } from "@/lib/graph-fetch";
 import {
@@ -412,7 +413,12 @@ export async function getValidAccessToken(
 
   if (!expiresSoon) {
     await touchLastSynced(conn);
-    return decrypt(conn.accessTokenEncrypted);
+    return decryptAndRewrapStrict(conn.accessTokenEncrypted, {
+      table: outlookConnections,
+      column: outlookConnections.accessTokenEncrypted,
+      idColumn: outlookConnections.id,
+      id: conn.id,
+    });
   }
 
   if (!conn.refreshTokenEncrypted) {
@@ -422,7 +428,14 @@ export async function getValidAccessToken(
 
   let refreshed;
   try {
-    refreshed = await refreshAccessToken(decrypt(conn.refreshTokenEncrypted));
+    refreshed = await refreshAccessToken(
+      await decryptAndRewrapStrict(conn.refreshTokenEncrypted, {
+        table: outlookConnections,
+        column: outlookConnections.refreshTokenEncrypted,
+        idColumn: outlookConnections.id,
+        id: conn.id,
+      })
+    );
   } catch (err) {
     if (err instanceof ReauthRequiredError) {
       await markOutlookNeedsReauth(userId);

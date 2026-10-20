@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { backfillContactAvatars } from "@/actions/contacts";
+import { sameOriginGuard } from "@/lib/api/same-origin";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,11 +18,8 @@ export const runtime = "nodejs";
  * A cookie-authenticated POST, so it refuses a cross-site Origin the way Server Actions do.
  */
 export async function POST(request: Request) {
-  const origin = request.headers.get("origin");
-  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
-  if (origin && host && URL.parse(origin)?.host !== host) {
-    return NextResponse.json({ error: "Cross-origin request refused" }, { status: 403 });
-  }
+  const refused = sameOriginGuard(request, { json: true });
+  if (refused) return refused;
 
   let skipIds: string[] = [];
   try {

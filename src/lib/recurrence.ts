@@ -26,6 +26,15 @@ import { fromWallClockInput, toWallClockInput } from "@/lib/events/wall-clock";
 /** A runaway or malformed rule must not be able to ingest an unbounded number of meetings. */
 export const MAX_OCCURRENCES = 400;
 
+/**
+ * The largest `INTERVAL` this module will expand. RFC 5545 puts no ceiling on it, but no real
+ * calendar repeats less often than every few hundred periods, and a feed is user-supplied
+ * text: `INTERVAL=1000000000` used to spin `stepMonths` a billion times per candidate inside
+ * the shared sync worker (audit H-03). Past this the rule is treated as unsupported — the
+ * master stands alone, which is this module's answer to anything it will not guess at.
+ */
+export const MAX_INTERVAL = 1000;
+
 export type RecurrenceRule = {
   freq: "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY";
   interval: number;
@@ -181,6 +190,7 @@ function isSupportedRule(rule: RecurrenceRule): boolean {
   const hasByMonthDay = rule.byMonthDay.length > 0;
   const hasBySetPos = rule.bySetPos.length > 0;
 
+  if (!Number.isFinite(rule.interval) || rule.interval < 1 || rule.interval > MAX_INTERVAL) return false;
   if (hasByDay && rule.byDay.some((d) => !(d in WEEKDAY_INDEX))) return false;
   if (hasByMonthDay && rule.byMonthDay.some((d) => d < 1 || d > 31)) return false;
 
@@ -214,27 +224,45 @@ const DAY_MS = 86_400_000;
  */
 const MAX_EMPTY_MONTHLY_PERIODS = 36;
 
-/** `{ y, mo }` stepped forward by `interval` months, carrying the year on 12-month overflow. */
+/**
+ * `{ y, mo }` stepped forward by `interval` months, carrying the year on 12-month overflow.
+ * Arithmetic, not a loop: a `while (nextMo > 12)` walked `interval / 12` times per step, which
+ * for a hostile `INTERVAL` was the whole CPU budget of the sync worker.
+ */
 function stepMonths(y: number, mo: number, interval: number): { y: number; mo: number } {
-  let nextMo = mo + interval;
-  let nextY = y;
-  while (nextMo > 12) {
-    nextMo -= 12;
-    nextY++;
-  }
-  return { y: nextY, mo: nextMo };
+  const zeroBased = mo - 1 + interval;
+  return { y: y + Math.floor(zeroBased / 12), mo: (zeroBased % 12) + 1 };
 }
 
-function* dailySeries(rule: RecurrenceRule, start: Civil): Generator<Civil> {
-  let anchor = civilToUtcMs(start);
+/**
+ * The first anchor at or after `notBeforeMs` on a fixed-period series, in one division.
+ *
+ * A standup whose DTSTART is years back used to be walked one candidate at a time from that
+ * date to the window — tens of thousands of wall-clock resolutions (each an `Intl` call) per
+ * sync, for occurrences the window was going to drop anyway. The master's own occurrence is
+ * never skipped: the window's consumer keys dedupe on it, so it is yielded first when it
+ * falls before the jump.
+ */
+function jumpTo(anchorMs: number, periodMs: number, notBeforeMs: number | undefined): number {
+  if (notBeforeMs === undefined || notBeforeMs <= anchorMs) return anchorMs;
+  const steps = Math.floor((notBeforeMs - anchorMs) / periodMs);
+  return anchorMs + Math.max(0, steps) * periodMs;
+}
+
+function* dailySeries(rule: RecurrenceRule, start: Civil, notBeforeMs?: number): Generator<Civil> {
+  const first = civilToUtcMs(start);
+  let anchor = jumpTo(first, rule.interval * DAY_MS, notBeforeMs);
+  if (anchor !== first) yield utcMsToCivil(first);
   while (true) {
     yield utcMsToCivil(anchor);
     anchor += rule.interval * DAY_MS;
   }
 }
 
-function* weeklySimpleSeries(rule: RecurrenceRule, start: Civil): Generator<Civil> {
-  let anchor = civilToUtcMs(start);
+function* weeklySimpleSeries(rule: RecurrenceRule, start: Civil, notBeforeMs?: number): Generator<Civil> {
+  const first = civilToUtcMs(start);
+  let anchor = jumpTo(first, rule.interval * 7 * DAY_MS, notBeforeMs);
+  if (anchor !== first) yield utcMsToCivil(first);
   while (true) {
     yield utcMsToCivil(anchor);
     anchor += rule.interval * 7 * DAY_MS;
@@ -343,12 +371,12 @@ function* yearlySimpleSeries(rule: RecurrenceRule, start: Civil): Generator<Civi
   }
 }
 
-function civilDateSeries(rule: RecurrenceRule, start: Civil): Generator<Civil> {
+function civilDateSeries(rule: RecurrenceRule, start: Civil, notBeforeMs?: number): Generator<Civil> {
   switch (rule.freq) {
     case "DAILY":
-      return dailySeries(rule, start);
+      return dailySeries(rule, start, notBeforeMs);
     case "WEEKLY":
-      return rule.byDay.length > 0 ? weeklyByDaySeries(rule, start) : weeklySimpleSeries(rule, start);
+      return rule.byDay.length > 0 ? weeklyByDaySeries(rule, start) : weeklySimpleSeries(rule, start, notBeforeMs);
     case "MONTHLY":
       if (rule.byMonthDay.length > 0) return monthlyByMonthDaySeries(rule, start);
       if (rule.byDay.length > 0 && rule.bySetPos.length > 0) return monthlySetPosSeries(rule, start);
@@ -422,9 +450,29 @@ export function expandEvent(
   // before either the cap or `window.to` ever gets a chance to stop it.
   const MAX_CANDIDATE_ITERATIONS = 50_000;
   let iterations = 0;
-  for (const civil of civilDateSeries(rule, start)) {
+  // A candidate past the window's own year can only be followed by later ones, so there is
+  // nothing left to find; checked on the civil date, before any wall-clock resolution.
+  const lastUsefulYear = window.to.getUTCFullYear() + 1;
+  // Two days of slack on either side of the window, so no zone offset can push a candidate
+  // the cheap civil-date checks dropped back inside it (or vice versa).
+  const notBeforeMs = window.from.getTime() - 2 * DAY_MS;
+  // The fixed-period jump skips candidates without counting them, so it is only safe for a
+  // rule with no COUNT: a COUNT tallies every candidate from DTSTART, and a series jumped
+  // past its own quota would emit occurrences that no longer exist.
+  const jumpMs = rule.count === null ? notBeforeMs : undefined;
+  const isMasterDate = (c: Civil) => c.y === start.y && c.mo === start.mo && c.d === start.d;
+  for (const civil of civilDateSeries(rule, start, jumpMs)) {
     if (results.length >= cap) break;
     if (++iterations > MAX_CANDIDATE_ITERATIONS) break;
+    if (!Number.isFinite(civil.y) || civil.y > lastUsefulYear) break;
+    // Cheap pre-check on the civil date: a candidate well before the window never needs its
+    // wall clock resolved. COUNT still has to see it (RFC 5545 counts from DTSTART), so it
+    // is tallied here exactly as the full path below would tally it.
+    if (civilToUtcMs(civil) < notBeforeMs && !isMasterDate(civil)) {
+      count++;
+      if (rule.count !== null && count > rule.count) break;
+      continue;
+    }
 
     const wall = `${civilKey(civil)}T${pad2(hh)}:${pad2(mm)}`;
     const instant = fromWallClockInput(wall, timezone);

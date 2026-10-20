@@ -9,6 +9,8 @@ import {
   type StarAllocation,
 } from "@/lib/waitlist-poll";
 import { setStarsCore } from "@/lib/waitlist-poll-votes";
+import { z } from "zod";
+import { defineAction } from "@/lib/input/action";
 
 /**
  * The request-reading half of a poll write. Everything that decides what happens lives in
@@ -25,34 +27,39 @@ import { setStarsCore } from "@/lib/waitlist-poll-votes";
  * A "use server" file may export only async functions, so the types the client needs are
  * spelled out in the return type rather than exported.
  */
-export async function setPollStars(input: {
-  allocation: StarAllocation;
-  me?: string | null;
-}): Promise<
-  | { ok: true; allocation: StarAllocation; budget: number; results: PollResults }
-  | { ok: false; message: string }
-> {
-  // A server action is a public POST endpoint: the types above are not enforced at runtime.
-  const raw: unknown = input;
-  if (raw === null || typeof raw !== "object") return { ok: false, message: POLL_ERROR };
-  const { allocation, me } = raw as { allocation?: unknown; me?: unknown };
-  if (allocation === null || typeof allocation !== "object") return { ok: false, message: POLL_ERROR };
+export const setPollStars = defineAction(
+  // Public: waitlist visitors vote without an account. The handler and `setStarsCore` check
+  // the allocation themselves; this only refuses a body that is not an object at all.
+  { auth: "public", schema: z.tuple([z.looseObject({})]), invalid: () => ({ ok: false as const, message: POLL_ERROR }) },
+  async (_caller, input: {
+    allocation: StarAllocation;
+    me?: string | null;
+  }): Promise<
+    | { ok: true; allocation: StarAllocation; budget: number; results: PollResults }
+    | { ok: false; message: string }
+  > => {
+    // A server action is a public POST endpoint: the types above are not enforced at runtime.
+    const raw: unknown = input;
+    if (raw === null || typeof raw !== "object") return { ok: false, message: POLL_ERROR };
+    const { allocation, me } = raw as { allocation?: unknown; me?: unknown };
+    if (allocation === null || typeof allocation !== "object") return { ok: false, message: POLL_ERROR };
 
-  const ip = clientIpFrom(await headers());
-  const jar = await cookies();
-  const voterId = jar.get(POLL_VOTER_COOKIE)?.value ?? null;
+    const ip = clientIpFrom(await headers());
+    const jar = await cookies();
+    const voterId = jar.get(POLL_VOTER_COOKIE)?.value ?? null;
 
-  const result = await setStarsCore({ allocation, me: typeof me === "string" ? me : null, voterId }, { ip });
-  if (!result.ok) return result;
+    const result = await setStarsCore({ allocation, me: typeof me === "string" ? me : null, voterId }, { ip });
+    if (!result.ok) return result;
 
-  if (result.newVoterId) {
-    jar.set(POLL_VOTER_COOKIE, result.newVoterId, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      maxAge: 60 * 60 * 24 * 365,
-      path: "/",
-    });
+    if (result.newVoterId) {
+      jar.set(POLL_VOTER_COOKIE, result.newVoterId, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+        maxAge: 60 * 60 * 24 * 365,
+        path: "/",
+      });
+    }
+    return { ok: true, allocation: result.allocation, budget: result.budget, results: result.results };
   }
-  return { ok: true, allocation: result.allocation, budget: result.budget, results: result.results };
-}
+);

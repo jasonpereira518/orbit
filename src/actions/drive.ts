@@ -4,7 +4,6 @@ import { after } from "next/server";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { gmailConnections } from "@/db/schema";
-import { requireUserId } from "@/lib/auth";
 import { requireSyncUser } from "@/lib/plan-guards";
 import { getValidAccessToken } from "@/lib/gmail";
 import { asActionResult, friendlyError, ReauthRequiredError, type ActionResult } from "@/lib/errors";
@@ -14,6 +13,11 @@ import { driveReadinessReason } from "@/lib/drive-picker-token";
 import type { PickedDriveFile } from "@/lib/imports/drive-triage";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
 import { recordDemoDriveImport } from "@/lib/demo-workspace-actions";
+import { z } from "zod";
+import { defineAction, failResult } from "@/lib/input/action";
+
+// Argument shapes, generated from the handlers' parameter types.
+const PickedDriveFileSchema = z.looseObject({ id: z.string(), name: z.string(), mimeType: z.string(), modifiedTime: z.string() });
 
 /**
  * Whether Orbit's stored Google grant can read the files someone is about to pick.
@@ -26,31 +30,33 @@ import { recordDemoDriveImport } from "@/lib/demo-workspace-actions";
  * consent first. Returned as data, never thrown: a thrown message is replaced by a digest in
  * production.
  */
-export async function checkDriveReadiness(): Promise<
-  | { ok: true }
-  | { ok: false; reason: "needs_consent" | "not_connected" | "needs_reconnect" | "error"; error?: string }
-> {
-  const userId = await requireSyncUser();
-  if (await isDemoWorkspace(userId)) return { ok: true };
-  const db = await getDb();
-  const conn = await db.query.gmailConnections.findFirst({
-    where: eq(gmailConnections.userId, userId),
-    columns: { scopes: true, status: true },
-  });
-  const reason = driveReadinessReason(conn);
-  if (reason) return { ok: false, reason };
-  try {
-    // Proves the stored grant still refreshes; the token itself is discarded here.
-    await getValidAccessToken(userId);
-    return { ok: true };
-  } catch (err) {
-    // The refresh token itself was rejected mid-flight (revoked, or Google now wants fresh
-    // consent) even though the row still read `active` a moment ago — same fix as a lapsed
-    // row: send the person to reconnect rather than a transient-sounding "try again".
-    if (err instanceof ReauthRequiredError) return { ok: false, reason: "needs_reconnect" };
-    return { ok: false, reason: "error", error: friendlyError(err, "Couldn’t reach Google — try again in a moment") };
+export const checkDriveReadiness = defineAction(
+  { auth: () => requireSyncUser() },
+  async (userId): Promise<
+    | { ok: true }
+    | { ok: false; reason: "needs_consent" | "not_connected" | "needs_reconnect" | "error"; error?: string }
+  > => {
+    if (await isDemoWorkspace(userId)) return { ok: true };
+    const db = await getDb();
+    const conn = await db.query.gmailConnections.findFirst({
+      where: eq(gmailConnections.userId, userId),
+      columns: { scopes: true, status: true },
+    });
+    const reason = driveReadinessReason(conn);
+    if (reason) return { ok: false, reason };
+    try {
+      // Proves the stored grant still refreshes; the token itself is discarded here.
+      await getValidAccessToken(userId);
+      return { ok: true };
+    } catch (err) {
+      // The refresh token itself was rejected mid-flight (revoked, or Google now wants fresh
+      // consent) even though the row still read `active` a moment ago — same fix as a lapsed
+      // row: send the person to reconnect rather than a transient-sounding "try again".
+      if (err instanceof ReauthRequiredError) return { ok: false, reason: "needs_reconnect" };
+      return { ok: false, reason: "error", error: friendlyError(err, "Couldn’t reach Google — try again in a moment") };
+    }
   }
-}
+);
 
 /**
  * Stage the picked files and start reading them in the background.
@@ -62,19 +68,17 @@ export async function checkDriveReadiness(): Promise<
  * group (`account.ts`, `gmail.ts`, `outlook.ts`, …), which returns a `UserFacingError`'s
  * message as data instead of throwing it. Task 8 unwraps the `ActionResult` client-side.
  */
-export async function startDriveImport(
-  files: PickedDriveFile[],
-): Promise<ActionResult<{ importId: string; totalRows: number }>> {
-  // Outside the wrap: a denied entitlement throws `PaywallError`, not `UserFacingError`, so
-  // `asActionResult` would just rethrow it anyway — no point wrapping it.
-  const userId = await requireSyncUser();
-  return asActionResult(async () => {
-    if (await isDemoWorkspace(userId)) return recordDemoDriveImport(userId, files);
-    const staged = await stageDriveImport(userId, files);
-    after(() => runDriveImportJob(staged.importId).catch(() => {}));
-    return staged;
-  });
-}
+export const startDriveImport = defineAction(
+  { auth: () => requireSyncUser(), schema: z.tuple([z.array(PickedDriveFileSchema)]), invalid: failResult },
+  async (userId, files: PickedDriveFile[]): Promise<ActionResult<{ importId: string; totalRows: number }>> => {
+    return asActionResult(async () => {
+      if (await isDemoWorkspace(userId)) return recordDemoDriveImport(userId, files);
+      const staged = await stageDriveImport(userId, files);
+      after(() => runDriveImportJob(staged.importId).catch(() => {}));
+      return staged;
+    });
+  }
+);
 
 /**
  * Drop a flagged commitment from an import's "Worth a look" list.
@@ -84,7 +88,9 @@ export async function startDriveImport(
  * re-verified — dismissing a flag on a past import shouldn't lock out someone who has since
  * moved off the plan that let them run it.
  */
-export async function dismissDriveFlag(importId: string, flagId: string): Promise<void> {
-  const userId = await requireUserId();
-  await removeDriveFlag(userId, importId, flagId);
-}
+export const dismissDriveFlag = defineAction(
+  { schema: z.tuple([z.string(), z.string()]) },
+  async (userId, importId: string, flagId: string): Promise<void> => {
+    await removeDriveFlag(userId, importId, flagId);
+  }
+);

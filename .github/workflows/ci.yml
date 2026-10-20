@@ -31,8 +31,8 @@ name: ci
 # The repository is public, so hosted runners are free. This workflow is written to stay
 # safe there: it triggers on `pull_request` (never `pull_request_target` or `workflow_run`),
 # so a fork's PR runs with a read-only token and no secrets, and it uses none. Keep it that
-# way; the two workflows that do use secrets (ops, backup) run only on schedule or manual
-# dispatch from the default branch.
+# way; the one workflow here that does use secrets (ops) runs only on schedule or manual
+# dispatch from the default branch. Backups run from the private ops repository.
 on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]

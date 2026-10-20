@@ -132,9 +132,11 @@ jobs:
         id: health
         continue-on-error: true
         run: |
-          code=$(curl -sS -o /tmp/health.json -w '%{http_code}' --max-time 15 "$APP_URL/api/health" || echo "000")
+          # Status code only: this repository is public, so its Actions logs are too, and the
+          # body names the deployed sha, deployment id and schema versions (audit L-13).
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$APP_URL/api/health" || echo "000")
           echo "code=$code" >> "$GITHUB_OUTPUT"
-          echo "health: HTTP $code"; cat /tmp/health.json 2>/dev/null; echo
+          echo "health: HTTP $code"
           # Surfaced as an annotation because `continue-on-error: true` makes this step's own
           # conclusion always `success`. A red probe is otherwise invisible in the run
           # summary, and every gated step below skips with nothing on screen to explain why.

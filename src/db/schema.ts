@@ -494,6 +494,16 @@ export const userSettings = pgTable("user_settings", {
   creditNoticePeriodStart: timestamp("credit_notice_period_start", { withTimezone: true }),
   creditNoticeLevel: integer("credit_notice_level").default(0).notNull(),
   /**
+   * SHA-256 of the unsubscribe token in the last credit email sent, so a link only works while
+   * it is on the account (audit L-05; the same binding as `radarDigestUnsubTokenHash`).
+   */
+  creditEmailUnsubTokenHash: text("credit_email_unsub_token_hash"),
+  /**
+   * `updated_at` of the last Clerk `user.created` / `user.updated` applied to this row. An
+   * event no newer than this is a replay or arrived out of order and is ignored (audit L-07).
+   */
+  clerkUserUpdatedAt: timestamp("clerk_user_updated_at", { withTimezone: true }),
+  /**
    * The last time this human was present. Two writers, deliberately sharing one column:
    *
    *  - `POST /api/presence`, a ~45s heartbeat from every visible tab (`src/lib/presence.ts`).
@@ -1393,7 +1403,12 @@ export const noteBatches = pgTable(
     /** The date relative phrases were counted from. */
     anchorDate: timestamp("anchor_date", { withTimezone: true }).notNull(),
     anchorBasis: text("anchor_basis").$type<"note" | "hint" | "upload">().default("upload").notNull(),
-    status: text("status").$type<"saved" | "undone">().default("saved").notNull(),
+    /**
+     * `saving` while a runner writes it, `saved` once every step landed, `failed` when an
+     * attempt threw (`result` holds what landed; `saveNoteBatch` can resume it), `undone`
+     * after the person reverted it. Readers that mean "a finished capture" ask for `saved`.
+     */
+    status: text("status").$type<"saving" | "saved" | "failed" | "undone">().default("saved").notNull(),
     result: jsonb("result").$type<NoteBatchResult>().notNull(),
     /**
      * How the notes got in — typed, voice, photos, a calendar invite, an email. Only ever a
@@ -2160,6 +2175,15 @@ export const imports = pgTable("imports", {
   revertedAt: timestamp("reverted_at", { withTimezone: true }),
   /** What the revert actually managed to undo — see `ImportRevertStats`. */
   revertStats: jsonb("revert_stats").$type<ImportRevertStats>(),
+  /**
+   * The runner that currently owns this job, and until when. `runImportJob` claims the row
+   * before it touches a chunk and renews the lease per chunk; a second runner (the stall
+   * backstop, an admin retry, a duplicate continuation kick) finds a live lease and leaves.
+   * Without this, two invocations re-claimed the same `processing` rows and every name-only
+   * row was created twice (audit H-04). Same shape as `capture_jobs.claim_token`.
+   */
+  claimToken: text("claim_token"),
+  leaseUntil: timestamp("lease_until", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -3576,6 +3600,12 @@ export const chatThreads = pgTable(
     title: text("title"),
     /** Freeform context the user types for this conversation only — never extracted into contacts. */
     contextNote: text("context_note"),
+    /**
+     * The client turn id of the last answer the person stopped on purpose (audit L-25). A
+     * dropped connection and a Stop look the same to the server; this is how it tells them
+     * apart: only a stopped turn's question is discarded. See `markTurnStopped`.
+     */
+    stoppedTurnId: text("stopped_turn_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -3637,6 +3667,17 @@ export const chatMessages = pgTable(
     feedback: text("feedback").$type<"up" | "down">(),
     /** The optional note a thumbs-down can carry. */
     feedbackNote: text("feedback_note"),
+    /**
+     * The id the client minted for the turn that wrote this question, so a Stop that reaches
+     * the server after the question was saved can find and discard it. Null on assistant rows,
+     * versioned turns and every row from before SCHEMA_VERSION 174.
+     */
+    clientTurnId: text("client_turn_id"),
+    /**
+     * An answer cut off by a dropped connection, stored as far as it had streamed (audit
+     * L-25). Always false for a finished answer; a Stop discards the turn instead.
+     */
+    interrupted: boolean("interrupted").default(false).notNull(),
     /**
      * Groups the versions of one turn — a user row and its assistant reply share a `slot`.
      * Every row created from SCHEMA_VERSION 80 onward gets one at insert; a row from before
@@ -3849,6 +3890,39 @@ export const adminAuditLog = pgTable(
     // action, filtered on created_at) — the only admin-console query that leads with
     // admin_user_id. Runs on every account-inspector page view.
     index("admin_audit_log_admin_target_idx").on(t.adminUserId, t.targetUserId, t.createdAt),
+  ]
+);
+
+/**
+ * What an account holder did to their own account's security surface (audit L-23): API keys
+ * created and revoked, data exported, accounts connected and disconnected, the plan changing,
+ * and the account being deleted. The admin console's own actions stay in `admin_audit_log`.
+ *
+ * Keyed by `subject_user_id`, not `user_id`, on purpose, for the reason `admin_audit_log`
+ * uses `target_user_id`: the row recording a self-deletion has to outlive the deletion, so
+ * this table is outside the purge sweep. It holds ids and labels only — never a token, a key,
+ * an email body or anyone's contact data.
+ *
+ * Action names, all written through `src/lib/account-audit.ts`:
+ *   api_key.create · api_key.revoke · data.export · account.delete
+ *   integration.connect · integration.disconnect · plan.change · webhook.secret_rotate
+ */
+export const accountAuditLog = pgTable(
+  "account_audit_log",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    subjectUserId: text("subject_user_id").notNull(),
+    /** Who did it: the person, or a system path acting for them (Stripe, Clerk). */
+    actor: text("actor").$type<"user" | "stripe" | "clerk" | "system">().notNull(),
+    action: text("action").notNull(),
+    resourceType: text("resource_type"),
+    resourceId: text("resource_id"),
+    detail: jsonb("detail").$type<Record<string, unknown>>().default({}).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("account_audit_log_subject_idx").on(t.subjectUserId, t.createdAt),
+    index("account_audit_log_action_idx").on(t.action, t.createdAt),
   ]
 );
 
@@ -4210,6 +4284,9 @@ export const outboundWebhookDeliveries = pgTable(
     lastError: text("last_error"),
     lastAttemptedAt: timestamp("last_attempted_at", { withTimezone: true }),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    /** The drain that owns this row, and until when (audit M-03). See `claimDueDeliveries`. */
+    claimedBy: text("claimed_by"),
+    claimedUntil: timestamp("claimed_until", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -4253,11 +4330,16 @@ export const cronRuns = pgTable(
  * In Postgres rather than memory because a serverless instance's memory is neither shared
  * nor durable. Bounded by scopes × users; rows are tiny and reused every window.
  */
-export const rateLimitBuckets = pgTable("rate_limit_buckets", {
-  bucket: text("bucket").primaryKey(),
-  windowStartedAt: timestamp("window_started_at", { withTimezone: true }).defaultNow().notNull(),
-  count: integer("count").default(0).notNull(),
-});
+export const rateLimitBuckets = pgTable(
+  "rate_limit_buckets",
+  {
+    bucket: text("bucket").primaryKey(),
+    windowStartedAt: timestamp("window_started_at", { withTimezone: true }).defaultNow().notNull(),
+    count: integer("count").default(0).notNull(),
+  },
+  // v176: `pruneRateLimitBuckets` deletes by age; a range scan, not a sequential one.
+  (t) => [index("rate_limit_buckets_window_started_idx").on(t.windowStartedAt)]
+);
 
 /**
  * One row per known ops condition (`src/lib/ops-alerts.ts`), keyed by condition id.
@@ -4640,7 +4722,14 @@ export const interestListSignups = pgTable(
     landingPath: text("landing_path"),
     /** Opaque, same convention as `user_settings.calendar_feed_token` — mints the one-click
      * unsubscribe link without exposing the row's uuid or requiring a session. */
-    unsubscribeToken: text("unsubscribe_token").notNull(),
+    /**
+     * Plaintext, only on rows written before v177 and not yet backfilled
+     * (`src/lib/interest-list-tokens.ts`). New rows keep the hash for lookups and the
+     * ciphertext for building the link again in a later email (audit L-05).
+     */
+    unsubscribeToken: text("unsubscribe_token"),
+    unsubscribeTokenHash: text("unsubscribe_token_hash"),
+    unsubscribeTokenEncrypted: text("unsubscribe_token_encrypted"),
     unsubscribedAt: timestamp("unsubscribed_at", { withTimezone: true }),
     /**
      * Which planet the welcome email showed. Stored rather than recomputed so the note's
@@ -4661,11 +4750,19 @@ export const interestListSignups = pgTable(
      * submitted.
      */
     shareToken: text("share_token"),
+    /** Hash and ciphertext of the share token; the plaintext above only on pre-v177 rows. */
+    shareTokenHash: text("share_token_hash"),
+    shareTokenEncrypted: text("share_token_encrypted"),
     /**
      * The row whose share link brought this signup in — the referrer's `id`. Written once,
      * on insert, never on a rejoin. No FK, like every other cross-row reference here.
      */
     referredById: uuid("referred_by_id"),
+    /**
+     * The highest referral tier (its `at`) this row has been mailed about. Raised with a
+     * conditional update before the mail goes out, so each tier is mailed once (audit L-20).
+     */
+    referralTierMailed: integer("referral_tier_mailed").notNull().default(0),
     /**
      * The name on the pass, collected in the join's second step. Null until then — and for
      * every row from before the step existed, and for anyone who left after step one.
@@ -4708,6 +4805,8 @@ export const interestListSignups = pgTable(
     uniqueIndex("interest_list_signups_token_uidx").on(t.unsubscribeToken),
     index("interest_list_signups_created_idx").on(t.createdAt),
     uniqueIndex("interest_list_signups_share_token_uidx").on(t.shareToken),
+    uniqueIndex("interest_list_signups_unsub_hash_uidx").on(t.unsubscribeTokenHash),
+    uniqueIndex("interest_list_signups_share_hash_uidx").on(t.shareTokenHash),
     index("interest_list_signups_referred_by_idx").on(t.referredById),
   ]
 );
@@ -4954,9 +5053,9 @@ export const gateEvents = pgTable(
  * `grant_key` is the idempotency key: `pack:cs:<checkout session>` for a pack (so a retried
  * webhook grants once), `allowance:<user>:<period start>` for an allowance.
  *
- * `user_id` is nullable only so a full account deletion can anonymise the rows the way it
- * anonymises `billing_events`: a pack is money, and the liability figure must not silently
- * change when its buyer leaves.
+ * `user_id` is nullable so "delete all my data" (which keeps the account) can anonymise the
+ * rows the way it anonymises `billing_events`. Deleting the account itself deletes them
+ * (audit M-09): their keys embed the account id, and the money record is `billing_events`.
  */
 export const creditGrants = pgTable(
   "credit_grants",

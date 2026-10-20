@@ -1,5 +1,6 @@
 "use server";
 
+import { recordAccountAudit } from "@/lib/account-audit";
 /**
  * Server actions for the events surface.
  *
@@ -16,7 +17,7 @@ import { requireSyncUser, requireUserForReleasedSurface } from "@/lib/plan-guard
 import { requireReleasedSurface } from "@/lib/surface-visibility";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { fetchEventPage, EventPageError } from "@/lib/events/fetch-page";
-import { canonicalizeEventUrl } from "@/lib/events/canonical-url";
+import { canonicalEventUrlOrRefuse } from "@/lib/events/event-url-input";
 import { enrichEvent } from "@/lib/events/enrich";
 import { IcsFeedGoneError, syncIcsFeed } from "@/lib/events/discovery/from-ics-feed";
 import {
@@ -89,6 +90,10 @@ import type { EventRecord } from "@/db/schema";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 import { GOOGLE_SCOPES, hasGmailReadScope, hasScope } from "@/lib/google-scopes";
 import { actionFailure } from "@/lib/action-failure";
+import { optionalClientDate } from "@/lib/input/dates";
+import { z } from "zod";
+import { anyNumber, uuid, optionalClientDateField } from "@/lib/input/schemas";
+import { defineAction, failResult } from "@/lib/input/action";
 
 const OAUTH_STATE_COOKIE = "orbit_eventbrite_oauth_state";
 const SURFACE = "page.events";
@@ -99,24 +104,28 @@ function revalidateEvents(eventId?: string) {
 }
 
 /** The events page's two tabs, read together: one auth check, two queries in parallel. */
-export async function listEventsByTab(): Promise<{
-  upcoming: EventListRow[];
-  past: EventListRow[];
-}> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  const now = new Date();
-  const [upcoming, past] = await Promise.all([
-    listEventsForUser(userId, 100, { when: "upcoming", now }),
-    listEventsForUser(userId, 100, { when: "past", now }),
-  ]);
-  return { upcoming, past };
-}
+export const listEventsByTab = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE) },
+  async (userId): Promise<{
+    upcoming: EventListRow[];
+    past: EventListRow[];
+  }> => {
+    const now = new Date();
+    const [upcoming, past] = await Promise.all([
+      listEventsForUser(userId, 100, { when: "upcoming", now }),
+      listEventsForUser(userId, 100, { when: "past", now }),
+    ]);
+    return { upcoming, past };
+  }
+);
 
 /** Everything the user has said "not mine" to, so a mistake is one click from undone. */
-export async function listHiddenEvents(): Promise<EventListRow[]> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  return listEventsForUser(userId, 100, { hidden: true });
-}
+export const listHiddenEvents = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE) },
+  async (userId): Promise<EventListRow[]> => {
+    return listEventsForUser(userId, 100, { hidden: true });
+  }
+);
 
 /**
  * The people the user keeps running into.
@@ -124,35 +133,43 @@ export async function listHiddenEvents(): Promise<EventListRow[]> {
  * Name-only clusters are excluded unless asked for: two different David Kims at two meetups
  * are not a pattern, and a panel that claims they are is worse than an empty one.
  */
-export async function getRepeatCoAttendees(options?: {
-  limit?: number;
-  includeWeak?: boolean;
-}): Promise<RepeatPerson[]> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  const self = await loadSelfIdentity(userId);
-  return listRepeatCoAttendees(userId, {
-    limit: options?.limit ?? 8,
-    includeWeak: options?.includeWeak ?? false,
-    // The user is on every one of their own rosters; without this they are the top result.
-    selfKeys: self.keyStrings,
-  });
-}
+export const getRepeatCoAttendees = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([z.looseObject({ limit: anyNumber.optional(), includeWeak: z.boolean().optional() }).optional()]) },
+  async (userId, options?: {
+    limit?: number;
+    includeWeak?: boolean;
+  }): Promise<RepeatPerson[]> => {
+    const self = await loadSelfIdentity(userId);
+    return listRepeatCoAttendees(userId, {
+      limit: options?.limit ?? 8,
+      includeWeak: options?.includeWeak ?? false,
+      // The user is on every one of their own rosters; without this they are the top result.
+      selfKeys: self.keyStrings,
+    });
+  }
+);
 
 /** Every event a contact shares with the user. Rendered on the contact page. */
-export async function getEventsWithContact(contactId: string): Promise<EventTogether[]> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  return listEventsTogetherForContact(userId, contactId);
-}
+export const getEventsWithContact = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid]) },
+  async (userId, contactId: string): Promise<EventTogether[]> => {
+    return listEventsTogetherForContact(userId, contactId);
+  }
+);
 
-export async function getEvent(eventId: string): Promise<EventRecord | null> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  return getEventForUser(userId, eventId);
-}
+export const getEvent = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid]) },
+  async (userId, eventId: string): Promise<EventRecord | null> => {
+    return getEventForUser(userId, eventId);
+  }
+);
 
-export async function getRoster(eventId: string): Promise<RosterRow[]> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  return listRosterForUser(userId, eventId);
-}
+export const getRoster = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid]) },
+  async (userId, eventId: string): Promise<RosterRow[]> => {
+    return listRosterForUser(userId, eventId);
+  }
+);
 
 /**
  * How many events each person on this roster has shared with the user.
@@ -160,67 +177,71 @@ export async function getRoster(eventId: string): Promise<RosterRow[]> {
  * A separate read from the roster itself so the badge can stream in without holding up the
  * list — it is an aggregate over the user's whole history, and the names matter more.
  */
-export async function getRosterHistory(
-  eventId: string
-): Promise<Array<{ attendeeId: string; eventsTogether: number }>> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  const history = await eventsTogetherForRoster(userId, eventId);
-  return [...history.entries()]
-    .filter(([, value]) => value.count > 1)
-    .map(([attendeeId, value]) => ({ attendeeId, eventsTogether: value.count }));
-}
+export const getRosterHistory = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid]) },
+  async (userId, eventId: string): Promise<Array<{ attendeeId: string; eventsTogether: number }>> => {
+    const history = await eventsTogetherForRoster(userId, eventId);
+    return [...history.entries()]
+      .filter(([, value]) => value.count > 1)
+      .map(([attendeeId, value]) => ({ attendeeId, eventsTogether: value.count }));
+  }
+);
 
-export async function createEvent(input: {
-  title: string;
-  startsAt?: string | null;
-  venue?: string | null;
-  city?: string | null;
-  url?: string | null;
-  role?: "attended" | "hosted";
-  notes?: string | null;
-}): Promise<ActionResult<{ id: string; existing?: boolean }>> {
-  return asActionResult(async () => {
-    const userId = await requireUserForReleasedSurface(SURFACE);
-    const title = input.title.trim();
-    if (!title) throw new UserFacingError("Give the event a name first");
+export const createEvent = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([z.looseObject({ title: z.string(), startsAt: optionalClientDateField("start time"), venue: z.string().nullish(), city: z.string().nullish(), url: z.string().nullish(), role: z.enum(["attended", "hosted"]).optional(), notes: z.string().nullish() })]), invalid: failResult, onGateError: (err) => asActionResult(() => Promise.reject(err)) },
+  async (userId, input: {
+    title: string;
+    startsAt?: string | null;
+    venue?: string | null;
+    city?: string | null;
+    url?: string | null;
+    role?: "attended" | "hosted";
+    notes?: string | null;
+  }): Promise<ActionResult<{ id: string; existing?: boolean }>> => {
+    return asActionResult(async () => {
+      const title = input.title.trim();
+      if (!title) throw new UserFacingError("Give the event a name first");
 
-    // Cleaned before the row is written, not just before it is fetched. Enrichment can fail —
-    // the host is down, the link needs a login — and the pasted URL would otherwise persist
-    // with the user's own Luma guest token in it, rendered back as a link on the event page.
-    const outcome = input.url ? canonicalizeEventUrl(input.url) : null;
-    const url = outcome?.kind === "ok" ? outcome.candidates[0]! : input.url ?? null;
+      // Cleaned before the row is written, not just before it is fetched. Enrichment can fail —
+      // the host is down, the link needs a login — and the pasted URL would otherwise persist
+      // with the user's own Luma guest token in it, rendered back as a link on the event page.
+      // A link that cannot be canonicalised is refused rather than stored as typed (audit
+      // L-02): the raw fallback is how a `javascript:` or private-network URL reached the
+      // event page's link.
+      const url = canonicalEventUrlOrRefuse(input.url);
 
-    // Already here? Discovery may have added this event days ago, and a user pasting its link
-    // means "show me this", not "make me a second one". Taking them to the row they already
-    // have is also how they find the roster they have already built on it.
-    const found = await findOrCreateEventByLink(
-      userId,
-      {
-        title,
-        startsAt: input.startsAt ? new Date(input.startsAt) : null,
-        venue: input.venue ?? null,
-        city: input.city ?? null,
-        url,
-        role: input.role ?? "attended",
-        notes: input.notes ?? null,
-      },
-      "manual"
-    );
-    if (found.existing) {
-      revalidateEvents(found.id);
-      return { id: found.id, existing: true };
-    }
-    const event = { id: found.id };
+      // Already here? Discovery may have added this event days ago, and a user pasting its link
+      // means "show me this", not "make me a second one". Taking them to the row they already
+      // have is also how they find the roster they have already built on it.
+      const found = await findOrCreateEventByLink(
+        userId,
+        {
+          title,
+          startsAt: optionalClientDate(input.startsAt, "start time"),
+          venue: input.venue ?? null,
+          city: input.city ?? null,
+          url,
+          role: input.role ?? "attended",
+          notes: input.notes ?? null,
+        },
+        "manual"
+      );
+      if (found.existing) {
+        revalidateEvents(found.id);
+        return { id: found.id, existing: true };
+      }
+      const event = { id: found.id };
 
-    if (input.url) {
-      // Off the request path: the user should land on their event, not wait on someone
-      // else's web server. `enrich_status` on the row is how the UI shows this is in flight.
-      after(() => enrichEvent(userId, event.id, input.url!).catch(() => {}));
-    }
-    revalidateEvents();
-    return { id: event.id };
-  });
-}
+      if (url && input.url) {
+        // Off the request path: the user should land on their event, not wait on someone
+        // else's web server. `enrich_status` on the row is how the UI shows this is in flight.
+        after(() => enrichEvent(userId, event.id, input.url!).catch(() => {}));
+      }
+      revalidateEvents();
+      return { id: event.id };
+    });
+  }
+);
 
 /**
  * Pull details from a public event page.
@@ -229,24 +250,23 @@ export async function createEvent(input: {
  * without a bucket this action is an open proxy for scanning, and the SSRF guard stops it
  * reaching anything internal but does not stop the volume.
  */
-export async function enrichEventFromUrl(
-  eventId: string,
-  url: string
-): Promise<{ ok: boolean; error?: string }> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  try {
-    await consumeBucket("eventEnrich", userId, RATE_LIMITS.eventEnrich);
-  } catch (error) {
-    if (isRateLimitedError(error)) {
-      return { ok: false, error: error.message };
+export const enrichEventFromUrl = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid, z.string()]), invalid: failResult },
+  async (userId, eventId: string, url: string): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      await consumeBucket("eventEnrich", userId, RATE_LIMITS.eventEnrich);
+    } catch (error) {
+      if (isRateLimitedError(error)) {
+        return { ok: false, error: error.message };
+      }
+      throw error;
     }
-    throw error;
+    const result = await enrichEvent(userId, eventId, url);
+    if (result.restamped > 0) revalidatePath("/contacts");
+    revalidateEvents(eventId);
+    return result;
   }
-  const result = await enrichEvent(userId, eventId, url);
-  if (result.restamped > 0) revalidatePath("/contacts");
-  revalidateEvents(eventId);
-  return result;
-}
+);
 
 const EVENT_TEXT_MAX = 10_000;
 const EVENT_ATTENDANCE_MODES = ["offline", "online", "mixed"] as const;
@@ -298,48 +318,44 @@ function pickEventEdits(patch: Record<string, unknown>) {
  * `wall-clock.ts` — deliberately NOT as the raw `datetime-local` string, which carries no
  * zone and would be read here in the server's.
  */
-export async function updateEvent(
-  eventId: string,
-  patch: {
-    title?: string;
-    startsAt?: string | null;
-    endsAt?: string | null;
-    venue?: string | null;
-    city?: string | null;
-    url?: string | null;
-    description?: string | null;
-    organizerName?: string | null;
-    organizerUrl?: string | null;
-    attendanceMode?: "offline" | "online" | "mixed" | null;
-    notes?: string | null;
-    role?: "attended" | "hosted";
+export const updateEvent = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid, z.looseObject({ title: z.string().optional(), startsAt: optionalClientDateField("event time"), endsAt: optionalClientDateField("event time"), venue: z.string().nullish(), city: z.string().nullish(), url: z.string().nullish(), description: z.string().nullish(), organizerName: z.string().nullish(), organizerUrl: z.string().nullish(), attendanceMode: z.enum(["offline", "online", "mixed"]).nullish(), notes: z.string().nullish(), role: z.enum(["attended", "hosted"]).optional() })]) },
+  async (userId, eventId: string, patch: {
+      title?: string;
+      startsAt?: string | null;
+      endsAt?: string | null;
+      venue?: string | null;
+      city?: string | null;
+      url?: string | null;
+      description?: string | null;
+      organizerName?: string | null;
+      organizerUrl?: string | null;
+      attendanceMode?: "offline" | "online" | "mixed" | null;
+      notes?: string | null;
+      role?: "attended" | "hosted";
+    }): Promise<void> => {
+    // Read before and after so the interactions already written from this event can be brought
+    // back in step — the note and date they carry are derived from exactly these fields.
+    const before = await getEventForUser(userId, eventId);
+
+    // A link pasted here goes through the same cleaning as one pasted into "Add event",
+    // or editing would be a way to put a personal ticket token back into the database.
+    // Same refusal as "Add event" (audit L-02): a link that does not canonicalise is not stored.
+    const url = patch.url === undefined ? undefined : canonicalEventUrlOrRefuse(patch.url);
+
+    const asDate = (value: string | null | undefined) =>
+      value === undefined ? undefined : optionalClientDate(value, "event time");
+
+    await updateEventForUser(userId, eventId, {
+      ...pickEventEdits(patch as Record<string, unknown>),
+      ...(url === undefined ? {} : { url: url || null }),
+      startsAt: asDate(patch.startsAt),
+      endsAt: asDate(patch.endsAt),
+    });
+    await restampFromEvent(userId, eventId, before);
+    revalidateEvents(eventId);
   }
-): Promise<void> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  // Read before and after so the interactions already written from this event can be brought
-  // back in step — the note and date they carry are derived from exactly these fields.
-  const before = await getEventForUser(userId, eventId);
-
-  // A link pasted here goes through the same cleaning as one pasted into "Add event",
-  // or editing would be a way to put a personal ticket token back into the database.
-  let url = patch.url;
-  if (typeof url === "string" && url.trim()) {
-    const outcome = canonicalizeEventUrl(url);
-    if (outcome.kind === "ok") url = outcome.candidates[0]!;
-  }
-
-  const asDate = (value: string | null | undefined) =>
-    value === undefined ? undefined : value ? new Date(value) : null;
-
-  await updateEventForUser(userId, eventId, {
-    ...pickEventEdits(patch as Record<string, unknown>),
-    ...(url === undefined ? {} : { url: url || null }),
-    startsAt: asDate(patch.startsAt),
-    endsAt: asDate(patch.endsAt),
-  });
-  await restampFromEvent(userId, eventId, before);
-  revalidateEvents(eventId);
-}
+);
 
 /**
  * What a resync would change, without changing it.
@@ -347,36 +363,36 @@ export async function updateEvent(
  * Rate-limited on the same bucket as enrichment: it is the same outbound request to a
  * user-chosen address, and a preview that were free would make the bucket meaningless.
  */
-export async function previewResync(
-  eventId: string
-): Promise<{ ok: true; changes: EventFieldChange[] } | { ok: false; error: string }> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  const event = await getEventForUser(userId, eventId);
-  if (!event) return { ok: false, error: "That event no longer exists" };
-  if (!event.url) return { ok: false, error: "This event has no link to refresh from" };
+export const previewResync = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid]), invalid: failResult },
+  async (userId, eventId: string): Promise<{ ok: true; changes: EventFieldChange[] } | { ok: false; error: string }> => {
+    const event = await getEventForUser(userId, eventId);
+    if (!event) return { ok: false, error: "That event no longer exists" };
+    if (!event.url) return { ok: false, error: "This event has no link to refresh from" };
 
-  try {
-    await consumeBucket("eventEnrich", userId, RATE_LIMITS.eventEnrich);
-  } catch (error) {
-    if (isRateLimitedError(error)) {
-      return { ok: false, error: "Too many lookups just now — try again in a few minutes" };
+    try {
+      await consumeBucket("eventEnrich", userId, RATE_LIMITS.eventEnrich);
+    } catch (error) {
+      if (isRateLimitedError(error)) {
+        return { ok: false, error: "Too many lookups just now — try again in a few minutes" };
+      }
+      throw error;
     }
-    throw error;
-  }
 
-  try {
-    const details = await fetchEventPage(event.url);
-    return { ok: true, changes: diffEventAgainstPage(event, details) };
-  } catch (error) {
-    return {
-      ok: false,
-      error:
-        error instanceof EventPageError
-          ? error.message
-          : await actionFailure(error, "Couldn’t read that page — try again?", "events.preview-resync"),
-    };
+    try {
+      const details = await fetchEventPage(event.url);
+      return { ok: true, changes: diffEventAgainstPage(event, details) };
+    } catch (error) {
+      return {
+        ok: false,
+        error:
+          error instanceof EventPageError
+            ? error.message
+            : await actionFailure(error, "Couldn’t read that page — try again?", "events.preview-resync"),
+      };
+    }
   }
-}
+);
 
 /**
  * Apply the refresh.
@@ -386,26 +402,28 @@ export async function previewResync(
  * the page says. The cost is a second request; the alternative is letting the client dictate
  * the contents of a row.
  */
-export async function resyncEvent(eventId: string): Promise<{ ok: boolean; error?: string }> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  const event = await getEventForUser(userId, eventId);
-  if (!event) return { ok: false, error: "That event no longer exists" };
-  if (!event.url) return { ok: false, error: "This event has no link to refresh from" };
+export const resyncEvent = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid]), invalid: failResult },
+  async (userId, eventId: string): Promise<{ ok: boolean; error?: string }> => {
+    const event = await getEventForUser(userId, eventId);
+    if (!event) return { ok: false, error: "That event no longer exists" };
+    if (!event.url) return { ok: false, error: "This event has no link to refresh from" };
 
-  try {
-    await consumeBucket("eventEnrich", userId, RATE_LIMITS.eventEnrich);
-  } catch (error) {
-    if (isRateLimitedError(error)) {
-      return { ok: false, error: "Too many lookups just now — try again in a few minutes" };
+    try {
+      await consumeBucket("eventEnrich", userId, RATE_LIMITS.eventEnrich);
+    } catch (error) {
+      if (isRateLimitedError(error)) {
+        return { ok: false, error: "Too many lookups just now — try again in a few minutes" };
+      }
+      throw error;
     }
-    throw error;
-  }
 
-  const result = await enrichEvent(userId, eventId, event.url, { mode: "replace" });
-  if (result.restamped > 0) revalidatePath("/contacts");
-  revalidateEvents(eventId);
-  return result;
-}
+    const result = await enrichEvent(userId, eventId, event.url, { mode: "replace" });
+    if (result.restamped > 0) revalidatePath("/contacts");
+    revalidateEvents(eventId);
+    return result;
+  }
+);
 
 /**
  * Re-derive this event's interactions after its details changed.
@@ -429,15 +447,17 @@ async function restampFromEvent(
   }
 }
 
-export async function deleteEvent(eventId: string): Promise<void> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  // Before the delete, not after: the FK would null these anyway, but a discovery pass
-  // running in the gap could otherwise re-create the event from the very keys we are about
-  // to orphan — and it would come back with the same link, minutes later, looking like a bug.
-  await tombstoneAliasesForEvent(userId, eventId).catch(() => {});
-  await deleteEventForUser(userId, eventId);
-  revalidateEvents();
-}
+export const deleteEvent = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid]) },
+  async (userId, eventId: string): Promise<void> => {
+    // Before the delete, not after: the FK would null these anyway, but a discovery pass
+    // running in the gap could otherwise re-create the event from the very keys we are about
+    // to orphan — and it would come back with the same link, minutes later, looking like a bug.
+    await tombstoneAliasesForEvent(userId, eventId).catch(() => {});
+    await deleteEventForUser(userId, eventId);
+    revalidateEvents();
+  }
+);
 
 /**
  * "Not mine" — hide an event discovery added.
@@ -446,71 +466,68 @@ export async function deleteEvent(eventId: string): Promise<void> {
  * a mis-click must not take their work with it. The keys stay behind pointing at this row,
  * which is what stops the next sync of the same calendar adding it straight back.
  */
-export async function dismissEvent(eventId: string): Promise<void> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  await dismissEventForUser(userId, eventId);
-  revalidateEvents(eventId);
-}
+export const dismissEvent = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid]) },
+  async (userId, eventId: string): Promise<void> => {
+    await dismissEventForUser(userId, eventId);
+    revalidateEvents(eventId);
+  }
+);
 
-export async function restoreEvent(eventId: string): Promise<void> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  await restoreEventForUser(userId, eventId);
-  revalidateEvents(eventId);
-}
+export const restoreEvent = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid]) },
+  async (userId, eventId: string): Promise<void> => {
+    await restoreEventForUser(userId, eventId);
+    revalidateEvents(eventId);
+  }
+);
 
 /** The dominant cover colour, sampled in the browser. Ignored once the user picks their own. */
-export async function setEventThemeColor(
-  eventId: string,
-  color: string,
-  source: "image" | "manual"
-): Promise<void> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  if (!/^#[0-9a-f]{6}$/i.test(color)) return;
-  const existing = await getEventForUser(userId, eventId);
-  if (!existing) return;
-  // A probe must never overwrite a colour the user chose, or the hero would flicker back
-  // every time the hero image reloads.
-  if (existing.themeLocked === 1 && source === "image") return;
-  await updateEventForUser(userId, eventId, {
-    themeColor: color.toLowerCase(),
-    themeSource: source === "manual" ? "meta" : "image",
-    themeLocked: source === "manual" ? 1 : 0,
-  });
-  revalidateEvents(eventId);
-}
+export const setEventThemeColor = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid, z.string(), z.enum(["manual", "image"])]) },
+  async (userId, eventId: string, color: string, source: "image" | "manual"): Promise<void> => {
+    if (!/^#[0-9a-f]{6}$/i.test(color)) return;
+    const existing = await getEventForUser(userId, eventId);
+    if (!existing) return;
+    // A probe must never overwrite a colour the user chose, or the hero would flicker back
+    // every time the hero image reloads.
+    if (existing.themeLocked === 1 && source === "image") return;
+    await updateEventForUser(userId, eventId, {
+      themeColor: color.toLowerCase(),
+      themeSource: source === "manual" ? "meta" : "image",
+      themeLocked: source === "manual" ? 1 : 0,
+    });
+    revalidateEvents(eventId);
+  }
+);
 
-export async function importAttendeesFromText(
-  eventId: string,
-  text: string,
-  kind: "paste" | "screenshot" = "paste"
-): Promise<{ added: number; skipped: number; deduped: number }> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  const parsed = parseRosterText(text);
-  await upsertEventAttendees(userId, eventId, parsed.attendees, kind);
-  revalidateEvents(eventId);
-  return { added: parsed.attendees.length, skipped: parsed.skipped, deduped: parsed.deduped };
-}
+export const importAttendeesFromText = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid, z.string(), z.enum(["paste", "screenshot"]).optional()]) },
+  async (userId, eventId: string, text: string, kind: "paste" | "screenshot" = "paste"): Promise<{ added: number; skipped: number; deduped: number }> => {
+    const parsed = parseRosterText(text);
+    await upsertEventAttendees(userId, eventId, parsed.attendees, kind);
+    revalidateEvents(eventId);
+    return { added: parsed.attendees.length, skipped: parsed.skipped, deduped: parsed.deduped };
+  }
+);
 
-export async function importAttendeesFromCsv(
-  eventId: string,
-  csv: string
-): Promise<{ added: number; skipped: number; deduped: number }> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  const parsed = parseRosterCsv(csv);
-  await upsertEventAttendees(userId, eventId, parsed.attendees, "csv");
-  revalidateEvents(eventId);
-  return { added: parsed.attendees.length, skipped: parsed.skipped, deduped: parsed.deduped };
-}
+export const importAttendeesFromCsv = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid, z.string()]) },
+  async (userId, eventId: string, csv: string): Promise<{ added: number; skipped: number; deduped: number }> => {
+    const parsed = parseRosterCsv(csv);
+    await upsertEventAttendees(userId, eventId, parsed.attendees, "csv");
+    revalidateEvents(eventId);
+    return { added: parsed.attendees.length, skipped: parsed.skipped, deduped: parsed.deduped };
+  }
+);
 
-export async function setSpokeTo(
-  eventId: string,
-  attendeeIds: string[],
-  spokeTo: boolean
-): Promise<void> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  await setSpokeToForUser(userId, eventId, attendeeIds, spokeTo);
-  revalidateEvents(eventId);
-}
+export const setSpokeTo = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid, z.array(uuid), z.boolean()]) },
+  async (userId, eventId: string, attendeeIds: string[], spokeTo: boolean): Promise<void> => {
+    await setSpokeToForUser(userId, eventId, attendeeIds, spokeTo);
+    revalidateEvents(eventId);
+  }
+);
 
 /**
  * Correct one attendee's details.
@@ -520,36 +537,34 @@ export async function setSpokeTo(
  * already holding the new identity. See `updateAttendeeForUser` for why the second is a
  * refusal rather than a merge.
  */
-export async function updateAttendee(
-  eventId: string,
-  attendeeId: string,
-  patch: {
-    fullName: string | null;
-    email: string | null;
-    company: string | null;
-    title: string | null;
-    linkedinUrl: string | null;
-    xHandle: string | null;
-    attendeeRole: AttendeeRole | null;
+export const updateAttendee = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid, uuid, z.looseObject({ fullName: z.string().nullable(), email: z.string().nullable(), company: z.string().nullable(), title: z.string().nullable(), linkedinUrl: z.string().nullable(), xHandle: z.string().nullable(), attendeeRole: z.enum(["speaker", "attendee", "host"]).nullable() })]) },
+  async (userId, eventId: string, attendeeId: string, patch: {
+      fullName: string | null;
+      email: string | null;
+      company: string | null;
+      title: string | null;
+      linkedinUrl: string | null;
+      xHandle: string | null;
+      attendeeRole: AttendeeRole | null;
+    }): Promise<UpdateAttendeeResult> => {
+    const blank = (value: string | null) => {
+      const text = value?.trim();
+      return text ? text : null;
+    };
+    const result = await updateAttendeeForUser(userId, attendeeId, {
+      fullName: blank(patch.fullName),
+      email: blank(patch.email)?.toLowerCase() ?? null,
+      company: blank(patch.company),
+      title: blank(patch.title),
+      linkedinUrl: blank(patch.linkedinUrl),
+      xHandle: blank(patch.xHandle)?.replace(/^@/, "") ?? null,
+      attendeeRole: patch.attendeeRole,
+    });
+    if (result.ok) revalidateEvents(eventId);
+    return result;
   }
-): Promise<UpdateAttendeeResult> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  const blank = (value: string | null) => {
-    const text = value?.trim();
-    return text ? text : null;
-  };
-  const result = await updateAttendeeForUser(userId, attendeeId, {
-    fullName: blank(patch.fullName),
-    email: blank(patch.email)?.toLowerCase() ?? null,
-    company: blank(patch.company),
-    title: blank(patch.title),
-    linkedinUrl: blank(patch.linkedinUrl),
-    xHandle: blank(patch.xHandle)?.replace(/^@/, "") ?? null,
-    attendeeRole: patch.attendeeRole,
-  });
-  if (result.ok) revalidateEvents(eventId);
-  return result;
-}
+);
 
 /**
  * Remove one person from the roster.
@@ -557,11 +572,13 @@ export async function updateAttendee(
  * Leaves their contact and this event's interaction alone if they were connected — the
  * roster row is a guest-list entry, not the record of having met them.
  */
-export async function deleteAttendee(eventId: string, attendeeId: string): Promise<void> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  await deleteAttendeeForUser(userId, attendeeId);
-  revalidateEvents(eventId);
-}
+export const deleteAttendee = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid, uuid]) },
+  async (userId, eventId: string, attendeeId: string): Promise<void> => {
+    await deleteAttendeeForUser(userId, attendeeId);
+    revalidateEvents(eventId);
+  }
+);
 
 /**
  * Who on this roster is already in your network.
@@ -574,53 +591,52 @@ export async function deleteAttendee(eventId: string, attendeeId: string): Promi
  * Only unconnected rows are asked about: a row with a `contactId` is already known to be
  * linked, and asking would pay for a match we already have.
  */
-export async function matchRosterToNetwork(eventId: string): Promise<ConnectPreviewRow[]> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  const event = await getEventForUser(userId, eventId);
-  if (!event) return [];
-  const roster = await listRosterForUser(userId, eventId);
-  const unlinked = roster.filter((r) => !r.contactId).map((r) => r.id);
-  if (unlinked.length === 0) return [];
-  return previewConnect(userId, event, unlinked);
-}
+export const matchRosterToNetwork = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid]) },
+  async (userId, eventId: string): Promise<ConnectPreviewRow[]> => {
+    const event = await getEventForUser(userId, eventId);
+    if (!event) return [];
+    const roster = await listRosterForUser(userId, eventId);
+    const unlinked = roster.filter((r) => !r.contactId).map((r) => r.id);
+    if (unlinked.length === 0) return [];
+    return previewConnect(userId, event, unlinked);
+  }
+);
 
 /** A dry run, so the user sees who will merge and who will be created before committing. */
-export async function previewConnectAttendees(
-  eventId: string,
-  attendeeIds: string[]
-): Promise<ConnectPreviewRow[]> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  const event = await getEventForUser(userId, eventId);
-  if (!event) throw new Error("That event no longer exists.");
-  return previewConnect(userId, event, attendeeIds);
-}
+export const previewConnectAttendees = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid, z.array(uuid)]) },
+  async (userId, eventId: string, attendeeIds: string[]): Promise<ConnectPreviewRow[]> => {
+    const event = await getEventForUser(userId, eventId);
+    if (!event) throw new Error("That event no longer exists.");
+    return previewConnect(userId, event, attendeeIds);
+  }
+);
 
-export async function addSpokenToConnections(
-  eventId: string,
-  attendeeIds: string[]
-): Promise<ConnectSummary & { remaining: number }> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  const event = await getEventForUser(userId, eventId);
-  if (!event) throw new Error("That event no longer exists.");
+export const addSpokenToConnections = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid, z.array(uuid)]) },
+  async (userId, eventId: string, attendeeIds: string[]): Promise<ConnectSummary & { remaining: number }> => {
+    const event = await getEventForUser(userId, eventId);
+    if (!event) throw new Error("That event no longer exists.");
 
-  const summary = await connectAttendees(userId, event, attendeeIds);
-  revalidateEvents(eventId);
-  // These people are now contacts, so the surfaces that count them are stale.
-  revalidatePath("/contacts");
-  revalidatePath("/dashboard");
-  return summary;
-}
+    const summary = await connectAttendees(userId, event, attendeeIds);
+    revalidateEvents(eventId);
+    // These people are now contacts, so the surfaces that count them are stale.
+    revalidatePath("/contacts");
+    revalidatePath("/dashboard");
+    return summary;
+  }
+);
 
-export async function removeSpokenToConnection(
-  eventId: string,
-  attendeeId: string
-): Promise<void> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  // Deliberately does not delete the contact — see the confirmation copy in the roster.
-  await unlinkAttendeeForUser(userId, attendeeId);
-  revalidateEvents(eventId);
-  revalidatePath("/contacts");
-}
+export const removeSpokenToConnection = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid, uuid]) },
+  async (userId, eventId: string, attendeeId: string): Promise<void> => {
+    // Deliberately does not delete the contact — see the confirmation copy in the roster.
+    await unlinkAttendeeForUser(userId, attendeeId);
+    revalidateEvents(eventId);
+    revalidatePath("/contacts");
+  }
+);
 
 // --- Who to talk to ------------------------------------------------------------------------
 
@@ -630,18 +646,18 @@ export async function removeSpokenToConnection(
  * `aiAvailable` rides along so the card can hide a button that would only ever return "add a
  * key in Settings" — an offer the product cannot keep is worse than no offer.
  */
-export async function getWhoToTalkTo(
-  eventId: string
-): Promise<(WhoToTalkTo & { aiAvailable: boolean }) | null> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  const event = await getEventForUser(userId, eventId);
-  if (!event) return null;
-  const [result, aiAvailable] = await Promise.all([
-    whoToTalkTo(userId, event, { limit: 5 }),
-    userCanUseAi(userId).catch(() => false),
-  ]);
-  return { ...result, aiAvailable };
-}
+export const getWhoToTalkTo = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid]) },
+  async (userId, eventId: string): Promise<(WhoToTalkTo & { aiAvailable: boolean }) | null> => {
+    const event = await getEventForUser(userId, eventId);
+    if (!event) return null;
+    const [result, aiAvailable] = await Promise.all([
+      whoToTalkTo(userId, event, { limit: 5 }),
+      userCanUseAi(userId).catch(() => false),
+    ]);
+    return { ...result, aiAvailable };
+  }
+);
 
 /**
  * One AI line about a person the SCORE already chose.
@@ -653,38 +669,39 @@ export async function getWhoToTalkTo(
  * What it is given is the roster row and the reasons already computed. Not the user's notes,
  * not their mail, not anything from `event_aliases`.
  */
-export async function explainAttendee(
-  eventId: string,
-  attendeeId: string
-): Promise<{ ok: boolean; why?: string; opener?: string; error?: string }> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  const ai = await getAiAccessStatus(userId);
-  if (!ai.ready) {
-    // The gate's own words: "add a key", "this month's included AI is used", "still clearing".
-    return { ok: false, error: refusalCopyFor(ai.reason, ai.plan) };
-  }
-
-  try {
-    await consumeBucket("eventWhy", userId, RATE_LIMITS.eventWhy);
-  } catch (error) {
-    if (isRateLimitedError(error)) {
-      return { ok: false, error: "That's a lot of suggestions — try again in a bit." };
+export const explainAttendee = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid, uuid]), invalid: failResult },
+  async (userId, eventId: string, attendeeId: string): Promise<{ ok: boolean; why?: string; opener?: string; error?: string }> => {
+    const ai = await getAiAccessStatus(userId);
+    if (!ai.ready) {
+      // The gate's own words: "add a key", "this month's included AI is used", "still clearing".
+      return { ok: false, error: refusalCopyFor(ai.reason, ai.plan) };
     }
-    throw error;
-  }
 
-  const result = await explainAttendeeForUser(userId, eventId, attendeeId);
-  if (result.ok) revalidateEvents(eventId);
-  return result;
-}
+    try {
+      await consumeBucket("eventWhy", userId, RATE_LIMITS.eventWhy);
+    } catch (error) {
+      if (isRateLimitedError(error)) {
+        return { ok: false, error: "That's a lot of suggestions — try again in a bit." };
+      }
+      throw error;
+    }
+
+    const result = await explainAttendeeForUser(userId, eventId, attendeeId);
+    if (result.ok) revalidateEvents(eventId);
+    return result;
+  }
+);
 
 // --- Companies at an event ---------------------------------------------------------------
 
 /** Who was there as an organisation, and who you already know at each. */
-export async function getEventCompanies(eventId: string): Promise<EventCompanyRow[]> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  return loadEventCompanyPanel(userId, eventId);
-}
+export const getEventCompanies = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid]) },
+  async (userId, eventId: string): Promise<EventCompanyRow[]> => {
+    return loadEventCompanyPanel(userId, eventId);
+  }
+);
 
 /**
  * Add the employer list from a career fair.
@@ -692,80 +709,77 @@ export async function getEventCompanies(eventId: string): Promise<EventCompanyRo
  * Pasted rather than fetched: a fair's exhibitor list is a PDF, a slide, or a page behind a
  * university login as often as it is a web page, and the user already has it on screen.
  */
-export async function importEventCompanies(
-  eventId: string,
-  text: string,
-  role: "exhibitor" | "sponsor" | "host" | "employer" = "employer"
-): Promise<{ added: number; skipped: number; deduped: number }> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  const parsed = parseCompanyList(text);
-  const added = await upsertEventCompanies(
-    userId,
-    eventId,
-    parsed.names.map((name) => ({ name, role, source: "paste" as const }))
-  );
-  revalidateEvents(eventId);
-  return { added, skipped: parsed.skipped, deduped: parsed.deduped };
-}
+export const importEventCompanies = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid, z.string(), z.enum(["host", "sponsor", "exhibitor", "employer"]).optional()]) },
+  async (userId, eventId: string, text: string, role: "exhibitor" | "sponsor" | "host" | "employer" = "employer"): Promise<{ added: number; skipped: number; deduped: number }> => {
+    const parsed = parseCompanyList(text);
+    const added = await upsertEventCompanies(
+      userId,
+      eventId,
+      parsed.names.map((name) => ({ name, role, source: "paste" as const }))
+    );
+    revalidateEvents(eventId);
+    return { added, skipped: parsed.skipped, deduped: parsed.deduped };
+  }
+);
 
 /** Wrong ones are hidden rather than deleted, so a bad paste is one click undone. */
-export async function dismissEventCompanyRow(
-  eventId: string,
-  id: string
-): Promise<void> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  await dismissEventCompany(userId, id);
-  revalidateEvents(eventId);
-}
+export const dismissEventCompanyRow = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid, uuid]) },
+  async (userId, eventId: string, id: string): Promise<void> => {
+    await dismissEventCompany(userId, id);
+    revalidateEvents(eventId);
+  }
+);
 
 /** Star a company from the event panel, where noticing it is most likely. */
-export async function addTargetCompanyFromEvent(
-  eventId: string,
-  name: string,
-  priority: 1 | 2 | 3 = 2
-): Promise<{ ok: boolean; error?: string }> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  const result = await addTargetCompany(userId, name, priority);
-  revalidateEvents(eventId);
-  return result;
-}
+export const addTargetCompanyFromEvent = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE), schema: z.tuple([uuid, z.string(), z.union([z.literal(1), z.literal(2), z.literal(3)]).optional()]), invalid: failResult },
+  async (userId, eventId: string, name: string, priority: 1 | 2 | 3 = 2): Promise<{ ok: boolean; error?: string }> => {
+    const result = await addTargetCompany(userId, name, priority);
+    revalidateEvents(eventId);
+    return result;
+  }
+);
 
 // --- Provider connections -------------------------------------------------------------------
 
-export async function getEventConnections(): Promise<{
-  connections: EventConnectionSummary[];
-  eventbriteConfigured: boolean;
-  /** Any active Google connection exists. */
-  googleConnected: boolean;
-  /** That connection may read mail — the confirmation-email scan can run. */
-  googleMailGranted: boolean;
-  /** That connection may read the calendar — meetings sync. */
-  googleCalendarGranted: boolean;
-}> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  const [connections, grant, demo] = await Promise.all([
-    listEventConnections(userId),
-    findGmailGrant(userId),
-    isDemoWorkspace(userId),
-  ]);
-  // The demo workspace stores no OAuth grant but reads as connected everywhere else.
-  if (demo) {
+export const getEventConnections = defineAction(
+  { auth: () => requireUserForReleasedSurface(SURFACE) },
+  async (userId): Promise<{
+    connections: EventConnectionSummary[];
+    eventbriteConfigured: boolean;
+    /** Any active Google connection exists. */
+    googleConnected: boolean;
+    /** That connection may read mail — the confirmation-email scan can run. */
+    googleMailGranted: boolean;
+    /** That connection may read the calendar — meetings sync. */
+    googleCalendarGranted: boolean;
+  }> => {
+    const [connections, grant, demo] = await Promise.all([
+      listEventConnections(userId),
+      findGmailGrant(userId),
+      isDemoWorkspace(userId),
+    ]);
+    // The demo workspace stores no OAuth grant but reads as connected everywhere else.
+    if (demo) {
+      return {
+        connections,
+        eventbriteConfigured: eventbriteOAuthConfig().configured,
+        googleConnected: true,
+        googleMailGranted: true,
+        googleCalendarGranted: true,
+      };
+    }
     return {
       connections,
       eventbriteConfigured: eventbriteOAuthConfig().configured,
-      googleConnected: true,
-      googleMailGranted: true,
-      googleCalendarGranted: true,
+      googleConnected: grant !== null,
+      googleMailGranted: hasGmailReadScope(grant?.scopes),
+      googleCalendarGranted: hasScope(grant?.scopes, GOOGLE_SCOPES.calendar),
     };
   }
-  return {
-    connections,
-    eventbriteConfigured: eventbriteOAuthConfig().configured,
-    googleConnected: grant !== null,
-    googleMailGranted: hasGmailReadScope(grant?.scopes),
-    googleCalendarGranted: hasScope(grant?.scopes, GOOGLE_SCOPES.calendar),
-  };
-}
+);
 
 /**
  * Store a Luma API key.
@@ -774,35 +788,37 @@ export async function getEventConnections(): Promise<{
  * a key that will fail silently in a background sync three hours from now, and the user is
  * standing right here with the ability to fix it.
  */
-export async function connectLuma(apiKey: string): Promise<{ ok: boolean; error?: string }> {
-  const userId = await requireSyncUser();
-  await requireReleasedSurface(userId, SURFACE);
-  const key = apiKey.trim();
-  if (!key) return { ok: false, error: "Paste your Luma API key first" };
+export const connectLuma = defineAction(
+  { auth: () => requireSyncUser(), schema: z.tuple([z.string()]), invalid: failResult },
+  async (userId, apiKey: string): Promise<{ ok: boolean; error?: string }> => {
+    await requireReleasedSurface(userId, SURFACE);
+    const key = apiKey.trim();
+    if (!key) return { ok: false, error: "Paste your Luma API key first" };
 
-  try {
-    await listCalendarEvents(key, null);
-  } catch (error) {
-    // Only a 401/403 means the key is wrong. A Luma outage or a network error used to get
-    // the same "didn't accept that key" line, sending people to fix a key that was fine.
-    if (!(error instanceof LumaAuthError)) {
-      return { ok: false, error: await actionFailure(error, "Couldn’t reach Luma just now — try again", "events.connect-luma") };
+    try {
+      await listCalendarEvents(key, null);
+    } catch (error) {
+      // Only a 401/403 means the key is wrong. A Luma outage or a network error used to get
+      // the same "didn't accept that key" line, sending people to fix a key that was fine.
+      if (!(error instanceof LumaAuthError)) {
+        return { ok: false, error: await actionFailure(error, "Couldn’t reach Luma just now — try again", "events.connect-luma") };
+      }
+      return {
+        ok: false,
+        error: "Luma didn’t accept that key — it needs to be a calendar key from a Luma Plus account",
+      };
     }
-    return {
-      ok: false,
-      error: "Luma didn’t accept that key — it needs to be a calendar key from a Luma Plus account",
-    };
-  }
 
-  await upsertEventConnection(userId, {
-    provider: "luma",
-    authKind: "api_key",
-    secret: key,
-    label: "Luma calendar",
-  });
-  revalidateEvents();
-  return { ok: true };
-}
+    await upsertEventConnection(userId, {
+      provider: "luma",
+      authKind: "api_key",
+      secret: key,
+      label: "Luma calendar",
+    });
+    revalidateEvents();
+    return { ok: true };
+  }
+);
 
 /**
  * Connect a personal Luma or Partiful calendar feed.
@@ -818,46 +834,45 @@ export async function connectLuma(apiKey: string): Promise<{ ok: boolean; error?
  * The URL is a secret — it lists everything its holder has registered for — so it is stored
  * encrypted and never echoed back with its query string intact.
  */
-export async function connectEventFeed(
-  provider: "luma_ics" | "partiful_ics",
-  feedUrl: string
-): Promise<{ ok: boolean; error?: string; found?: number }> {
-  const userId = await requireSyncUser();
-  await requireReleasedSurface(userId, SURFACE);
-  const raw = feedUrl.trim();
-  if (!raw) return { ok: false, error: "Paste your calendar link first" };
+export const connectEventFeed = defineAction(
+  { auth: () => requireSyncUser(), schema: z.tuple([z.enum(["luma_ics", "partiful_ics"]), z.string()]), invalid: failResult },
+  async (userId, provider: "luma_ics" | "partiful_ics", feedUrl: string): Promise<{ ok: boolean; error?: string; found?: number }> => {
+    await requireReleasedSurface(userId, SURFACE);
+    const raw = feedUrl.trim();
+    if (!raw) return { ok: false, error: "Paste your calendar link first" };
 
-  // `webcal:` is what these platforms hand out for a one-click subscribe, and it is https
-  // underneath. Rewriting it here means the user can paste exactly what they copied.
-  const normalized = raw.replace(/^webcal:\/\//i, "https://");
-  if (!/^https:\/\//i.test(normalized)) {
-    return { ok: false, error: "That link needs to start with https:// or webcal://" };
-  }
-
-  try {
-    // Fetching the feed IS the validation, and it is not wasted work: whatever it holds is
-    // recorded now, so the user sees their events immediately rather than in fifteen minutes.
-    const stats = await syncIcsFeed(userId, normalized, provider);
-    await upsertEventConnection(userId, {
-      provider,
-      authKind: "ics",
-      secret: normalized,
-      label: provider === "luma_ics" ? "Luma calendar feed" : "Partiful calendar feed",
-    });
-    revalidateEvents();
-    return { ok: true, found: stats.created + stats.attached };
-  } catch (error) {
-    if (error instanceof IcsFeedGoneError) return { ok: false, error: error.message };
-    if (error instanceof EventPageError) {
-      // `net-guard` and the fetcher both produce user-facing messages already.
-      return { ok: false, error: error.message };
+    // `webcal:` is what these platforms hand out for a one-click subscribe, and it is https
+    // underneath. Rewriting it here means the user can paste exactly what they copied.
+    const normalized = raw.replace(/^webcal:\/\//i, "https://");
+    if (!/^https:\/\//i.test(normalized)) {
+      return { ok: false, error: "That link needs to start with https:// or webcal://" };
     }
-    return {
-      ok: false,
-      error: await actionFailure(error, "That calendar link couldn’t be read — check it and try again?", "events.connect-feed", { provider }),
-    };
+
+    try {
+      // Fetching the feed IS the validation, and it is not wasted work: whatever it holds is
+      // recorded now, so the user sees their events immediately rather than in fifteen minutes.
+      const stats = await syncIcsFeed(userId, normalized, provider);
+      await upsertEventConnection(userId, {
+        provider,
+        authKind: "ics",
+        secret: normalized,
+        label: provider === "luma_ics" ? "Luma calendar feed" : "Partiful calendar feed",
+      });
+      revalidateEvents();
+      return { ok: true, found: stats.created + stats.attached };
+    } catch (error) {
+      if (error instanceof IcsFeedGoneError) return { ok: false, error: error.message };
+      if (error instanceof EventPageError) {
+        // `net-guard` and the fetcher both produce user-facing messages already.
+        return { ok: false, error: error.message };
+      }
+      return {
+        ok: false,
+        error: await actionFailure(error, "That calendar link couldn’t be read — check it and try again?", "events.connect-feed", { provider }),
+      };
+    }
   }
-}
+);
 
 /**
  * Turn the confirmation-email scan on or off.
@@ -870,77 +885,83 @@ export async function connectEventFeed(
  * takes the stored scan position with it — there is nothing else to delete, because the scan
  * keeps no message content anywhere.
  */
-export async function setGmailEventScan(
-  enabled: boolean
-): Promise<{ ok: boolean; error?: string; needsMailScope?: boolean }> {
-  const userId = await requireSyncUser();
-  await requireReleasedSurface(userId, SURFACE);
+export const setGmailEventScan = defineAction(
+  { auth: () => requireSyncUser(), schema: z.tuple([z.boolean()]), invalid: failResult },
+  async (userId, enabled: boolean): Promise<{ ok: boolean; error?: string; needsMailScope?: boolean }> => {
+    await requireReleasedSurface(userId, SURFACE);
 
-  if (!enabled) {
-    await deleteEventConnection(userId, "gmail");
+    if (!enabled) {
+      await deleteEventConnection(userId, "gmail");
+      revalidateEvents();
+      return { ok: true };
+    }
+
+    const connection = await findGmailGrant(userId);
+    // This switch never widens a grant silently: without gmail.readonly it tells the card to
+    // send the person through Google's consent screen for exactly that scope.
+    if (!connection || !hasGmailReadScope(connection.scopes)) {
+      return {
+        ok: false,
+        needsMailScope: true,
+        error: "Allow mail access first — Orbit asks Google for it next",
+      };
+    }
+
+    await upsertEventConnection(userId, {
+      provider: "gmail",
+      authKind: "google_grant",
+      // No secret: the token comes from the Gmail connection at scan time, so nothing is
+      // duplicated here and revoking Google revokes this too.
+      secret: "",
+      label: connection.emailAddress ?? "Gmail",
+    });
     revalidateEvents();
     return { ok: true };
   }
+);
 
-  const connection = await findGmailGrant(userId);
-  // This switch never widens a grant silently: without gmail.readonly it tells the card to
-  // send the person through Google's consent screen for exactly that scope.
-  if (!connection || !hasGmailReadScope(connection.scopes)) {
-    return {
-      ok: false,
-      needsMailScope: true,
-      error: "Allow mail access first — Orbit asks Google for it next",
-    };
+export const startEventbriteOAuth = defineAction(
+  { auth: () => requireSyncUser() },
+  async (userId): Promise<{ url: string }> => {
+    await requireReleasedSurface(userId, SURFACE);
+    const config = eventbriteOAuthConfig();
+    if (!config.configured) {
+      throw new Error(
+        "Eventbrite is not configured. Set EVENTBRITE_CLIENT_ID and EVENTBRITE_CLIENT_SECRET."
+      );
+    }
+    const state = `${userId}:${crypto.randomUUID()}`;
+    const jar = await cookies();
+    jar.set(OAUTH_STATE_COOKIE, state, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 600,
+    });
+    return { url: buildEventbriteAuthUrl(state) };
   }
-
-  await upsertEventConnection(userId, {
-    provider: "gmail",
-    authKind: "google_grant",
-    // No secret: the token comes from the Gmail connection at scan time, so nothing is
-    // duplicated here and revoking Google revokes this too.
-    secret: "",
-    label: connection.emailAddress ?? "Gmail",
-  });
-  revalidateEvents();
-  return { ok: true };
-}
-
-export async function startEventbriteOAuth(): Promise<{ url: string }> {
-  const userId = await requireSyncUser();
-  await requireReleasedSurface(userId, SURFACE);
-  const config = eventbriteOAuthConfig();
-  if (!config.configured) {
-    throw new Error(
-      "Eventbrite is not configured. Set EVENTBRITE_CLIENT_ID and EVENTBRITE_CLIENT_SECRET."
-    );
-  }
-  const state = `${userId}:${crypto.randomUUID()}`;
-  const jar = await cookies();
-  jar.set(OAUTH_STATE_COOKIE, state, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: 600,
-  });
-  return { url: buildEventbriteAuthUrl(state) };
-}
+);
 
 /** Read once and delete, so a state cannot be replayed. */
-export async function consumeEventbriteOAuthState(state: string | null): Promise<string> {
-  const jar = await cookies();
-  const expected = jar.get(OAUTH_STATE_COOKIE)?.value;
-  jar.delete(OAUTH_STATE_COOKIE);
-  if (!state || !expected || state !== expected) throw new Error("Invalid OAuth state");
-  const [userId] = state.split(":");
-  if (!userId) throw new Error("Invalid OAuth state");
-  return userId;
-}
+export const consumeEventbriteOAuthState = defineAction(
+  { auth: "public", schema: z.tuple([z.string().nullable()]) },
+  async (_caller, state: string | null): Promise<string> => {
+    const jar = await cookies();
+    const expected = jar.get(OAUTH_STATE_COOKIE)?.value;
+    jar.delete(OAUTH_STATE_COOKIE);
+    if (!state || !expected || state !== expected) throw new Error("Invalid OAuth state");
+    const [userId] = state.split(":");
+    if (!userId) throw new Error("Invalid OAuth state");
+    return userId;
+  }
+);
 
-export async function disconnectEventProvider(
-  provider: EventConnectionProvider
-): Promise<void> {
-  const userId = await requireSyncUser();
-  await deleteEventConnection(userId, provider);
-  revalidateEvents();
-}
+export const disconnectEventProvider = defineAction(
+  { auth: () => requireSyncUser(), schema: z.tuple([z.enum(["gmail", "luma", "eventbrite", "luma_ics", "partiful_ics"])]) },
+  async (userId, provider: EventConnectionProvider): Promise<void> => {
+    await deleteEventConnection(userId, provider);
+    await recordAccountAudit({ userId, action: "integration.disconnect", resourceType: provider });
+    revalidateEvents();
+  }
+);

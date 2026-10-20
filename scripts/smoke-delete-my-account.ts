@@ -12,10 +12,11 @@ import { run } from "./smoke/_env";
 process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||= "pk_test_smoke-delete-my-account";
 process.env.ADMIN_USER_IDS = "smoke-delete-my-account-operator";
 
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, like, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, userSettings } from "../src/db/schema";
+import { accountAuditLog, billingEvents, contacts, creditGrants, interestListSignups, userSettings } from "../src/db/schema";
 import { deleteOwnAccount, type AccountDeletionDeps } from "../src/lib/account-deletion";
+import { setStripeCustomerRetirerForTest } from "../src/lib/stripe-customer-retire";
 import { purgeUserData } from "../src/lib/user-data";
 
 const USER = "smoke-delete-my-account-user";
@@ -76,6 +77,16 @@ run(async () => {
     await db.delete(contacts).where(eq(contacts.userId, id));
   }
   await db.delete(userSettings).where(inArray(userSettings.userId, IDS));
+  await db.delete(accountAuditLog).where(inArray(accountAuditLog.subjectUserId, IDS));
+  await db.delete(billingEvents).where(like(billingEvents.eventId, "smoke-delete-my-account-%"));
+  await db.delete(creditGrants).where(like(creditGrants.grantKey, "smoke-delete-my-account-%"));
+  await db.delete(interestListSignups).where(like(interestListSignups.email, "smoke-delete-my-account-%"));
+
+  // Stripe is never called: the customer "retire" is recorded here instead (audit M-09).
+  const retired: Array<{ customerId: string; at: Date }> = [];
+  setStripeCustomerRetirerForTest(async (customerId, at) => {
+    retired.push({ customerId, at });
+  });
 
   console.log("An account with no subscription");
   await seed(USER, null);
@@ -100,10 +111,43 @@ run(async () => {
   check("and nothing was deleted", (await counts(PAYER)).contacts === 1);
 
   console.log("A paying account");
+  // The residue account deletion used to leave behind (audit M-09).
+  await db.insert(billingEvents).values({
+    source: "stripe", eventId: "smoke-delete-my-account-evt", kind: "new", userId: PAYER, mrrDeltaCents: 500,
+    effectiveAt: new Date(), detail: { invoiceId: "in_smoke", email: `${PAYER}@example.test`, targetUserId: PAYER },
+  });
+  await db.insert(creditGrants).values([
+    { userId: PAYER, kind: "pack", grantKey: "smoke-delete-my-account-pack", microsGranted: 100, microsRemaining: 50, amountCents: 500 },
+    { userId: PAYER, kind: "starter", grantKey: `smoke-delete-my-account-starter:${PAYER}`, microsGranted: 100, microsRemaining: 100 },
+  ]);
+  await db.insert(interestListSignups).values([
+    { email: `${PAYER}@example.test`, unsubscribeToken: "smoke-delete-my-account-tok-1" },
+    { email: "smoke-delete-my-account-someone-else@example.test", unsubscribeToken: "smoke-delete-my-account-tok-2" },
+  ]);
   const paid = fakeDeps();
   await deleteOwnAccount(PAYER, paid.deps);
   check("its subscription was cancelled first", paid.calls.cancelled.join() === "cus_smoke_payer");
   check("then everything was deleted", (await counts(PAYER)).settings === 0);
+  const [billing] = await db.select().from(billingEvents).where(eq(billingEvents.eventId, "smoke-delete-my-account-evt"));
+  check("its billing record is kept, anonymised", billing?.userId === null && billing.mrrDeltaCents === 500);
+  check("…with personal fields stripped and Stripe ids kept", !("email" in (billing?.detail ?? {})) && !("targetUserId" in (billing?.detail ?? {})) && billing?.detail.invoiceId === "in_smoke", JSON.stringify(billing?.detail));
+  const grants = await db.select().from(creditGrants).where(like(creditGrants.grantKey, "smoke-delete-my-account-%"));
+  check("its credit grants are deleted, not just anonymised", grants.length === 0, JSON.stringify(grants.map((g) => g.grantKey)));
+  const waitlist = (await db.select().from(interestListSignups).where(like(interestListSignups.email, "smoke-delete-my-account-%"))).map((r) => r.email);
+  check("the waitlist row with its address is dropped, others kept", JSON.stringify(waitlist) === JSON.stringify(["smoke-delete-my-account-someone-else@example.test"]), JSON.stringify(waitlist));
+  check("the Stripe customer is marked deleted, not deleted", retired.length === 1 && retired[0].customerId === "cus_smoke_payer");
+  const audit = await db.select().from(accountAuditLog).where(and(eq(accountAuditLog.subjectUserId, PAYER), eq(accountAuditLog.action, "account.delete")));
+  check("the deletion itself is on the account's audit log, and survives the purge", audit.length === 1 && audit[0].actor === "user");
+
+  console.log("Deleting data but keeping the account");
+  await seed(USER, null);
+  await db.insert(creditGrants).values({ userId: USER, kind: "pack", grantKey: "smoke-delete-my-account-keep", microsGranted: 100, microsRemaining: 50, amountCents: 500 });
+  await db.insert(interestListSignups).values({ email: `${USER}@example.test`, unsubscribeToken: "smoke-delete-my-account-tok-3" });
+  await purgeUserData(USER);
+  const keptGrant = await db.select().from(creditGrants).where(eq(creditGrants.grantKey, "smoke-delete-my-account-keep"));
+  check("credit grants are anonymised, as before (the account still exists)", keptGrant.length === 1 && keptGrant[0].userId === null);
+  check("the waitlist row stays", (await db.select({ n: sql<number>`1` }).from(interestListSignups).where(eq(interestListSignups.email, `${USER}@example.test`))).length === 1);
+  await purgeUserData(USER, { keepSettings: false });
 
   console.log("When the sign-in cannot be removed");
   await seed(USER, null);
@@ -122,6 +166,11 @@ run(async () => {
     await db.delete(contacts).where(eq(contacts.userId, id));
   }
   await db.delete(userSettings).where(inArray(userSettings.userId, IDS));
+  await db.delete(accountAuditLog).where(inArray(accountAuditLog.subjectUserId, IDS));
+  await db.delete(billingEvents).where(like(billingEvents.eventId, "smoke-delete-my-account-%"));
+  await db.delete(creditGrants).where(like(creditGrants.grantKey, "smoke-delete-my-account-%"));
+  await db.delete(interestListSignups).where(like(interestListSignups.email, "smoke-delete-my-account-%"));
+  setStripeCustomerRetirerForTest(null);
   if (failures > 0) throw new Error(`${failures} check(s) failed`);
   console.log("\nAll account-deletion checks passed.");
 });

@@ -23,10 +23,10 @@
  * claimed, and the route honours only a token whose hash matches: a link works for an account
  * that was actually sent one.
  */
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { getAppBaseUrl } from "@/lib/app-url";
+import { hashIdToken, signIdToken, verifyIdToken, type SignedIdTokenSpec } from "@/lib/signed-id-token";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { isValidTimeZone } from "@/lib/reminder-due-bucket";
 import { buildRadarDigestEmail, type DigestContent } from "@/lib/radar/digest-email";
@@ -118,34 +118,19 @@ export async function captureRadarTimeZone(userId: string, raw: string | null | 
 
 // ---- Unsubscribe -------------------------------------------------------------------------
 
-function unsubscribeKey(): Buffer {
-  // ENCRYPTION_SECRET is required in production (src/lib/env.ts); the fallback is dev-only,
-  // and refused outright in production: a known key would let anyone sign a token.
-  const secret = process.env.ENCRYPTION_SECRET;
-  if (!secret && process.env.NODE_ENV === "production") throw new Error("ENCRYPTION_SECRET must be set in production");
-  return createHmac("sha256", secret || "orbit-dev-radar-digest").update(UNSUBSCRIBE_LABEL).digest();
-}
+const UNSUBSCRIBE_TOKEN: SignedIdTokenSpec = { label: UNSUBSCRIBE_LABEL, devFallback: "orbit-dev-radar-digest" };
 
 export function radarDigestUnsubscribeToken(userId: string): string {
-  const id = Buffer.from(userId, "utf8").toString("base64url");
-  const mac = createHmac("sha256", unsubscribeKey()).update(id).digest("base64url");
-  return `${id}.${mac}`;
+  return signIdToken(UNSUBSCRIBE_TOKEN, userId);
 }
 
 /** The account a token was issued for, or null when it is not one this app signed. */
 export function readRadarDigestUnsubscribeToken(token: string | null | undefined): string | null {
-  if (!token || token.length > 400) return null;
-  const [id, mac, extra] = token.split(".");
-  if (!id || !mac || extra !== undefined) return null;
-  const expected = Buffer.from(createHmac("sha256", unsubscribeKey()).update(id).digest("base64url"));
-  const given = Buffer.from(mac);
-  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
-  const userId = Buffer.from(id, "base64url").toString("utf8");
-  return userId || null;
+  return verifyIdToken(UNSUBSCRIBE_TOKEN, token)?.id ?? null;
 }
 
 export function hashRadarDigestToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
+  return hashIdToken(token);
 }
 
 export function radarDigestUnsubscribeUrl(token: string): string {
@@ -157,13 +142,20 @@ export function radarDigestUnsubscribeUrl(token: string): string {
  * verify or was never issued. Idempotent: a second click finds it already off.
  */
 export async function unsubscribeRadarDigest(token: string | null | undefined): Promise<boolean> {
-  const userId = readRadarDigestUnsubscribeToken(token);
-  if (!userId || !token) return false;
+  const verified = verifyIdToken(UNSUBSCRIBE_TOKEN, token);
+  if (!verified || !token) return false;
   const db = await getDb();
+  // A link signed before the HKDF sub-keys (audit L-06) is still in people's inboxes. Its hash
+  // was the one stored then, and the first digest sent since replaced it with the new token's,
+  // so it is accepted while the account has ANY digest hash on file — an account that was
+  // deleted, or never sent a digest, still has none, which is the binding that matters.
+  const bound = verified.legacy
+    ? sql`radar_digest_unsub_token_hash IS NOT NULL`
+    : sql`radar_digest_unsub_token_hash = ${hashRadarDigestToken(token)}`;
   const rows = rowsOf<{ user_id: string }>(
     await db.execute(sql`
       UPDATE user_settings SET radar_digest_enabled = 0
-       WHERE user_id = ${userId} AND radar_digest_unsub_token_hash = ${hashRadarDigestToken(token)}
+       WHERE user_id = ${verified.id} AND ${bound}
       RETURNING user_id
     `)
   );

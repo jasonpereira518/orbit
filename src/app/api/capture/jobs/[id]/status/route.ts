@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCaptureJob } from "@/actions/capture-jobs";
-import { refuseCrossOrigin } from "@/lib/same-origin";
+import { sameOriginGuard } from "@/lib/api/same-origin";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -18,7 +18,7 @@ type Params = { params: Promise<{ id: string }> };
  * failures included.
  */
 export async function POST(request: Request, { params }: Params) {
-  const refused = refuseCrossOrigin(request);
+  const refused = sameOriginGuard(request, { message: "Cross-origin request refused", json: true });
   if (refused) return refused;
   const { id } = await params;
   let since: string | null = null;

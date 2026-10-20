@@ -10,18 +10,22 @@ import { traced } from "@/lib/perf-trace";
 import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
 import { getDisplayProfile } from "@/lib/auth";
 import { rebuildContactEmbedding } from "@/lib/search";
-import { requireUserForSurface } from "@/lib/plan-guards";
 import { reportError } from "@/lib/report-error";
+import { z } from "zod";
+import { defineAction } from "@/lib/input/action";
+import { anyNumber } from "@/lib/input/schemas";
 
 export type { GraphCluster, UserSocialLinks } from "@/lib/graph-data";
 
-export async function getGraphData() {
-  const userId = await requireUserForSurface("page.graph");
-  // Handed over un-awaited: the Clerk profile round trip runs alongside the contact scan.
-  return traced("graph.load", () => loadGraphData(userId, { profile: getDisplayProfile() }), {
-    userId,
-  });
-}
+export const getGraphData = defineAction(
+  { auth: { surface: "page.graph" } },
+  async (userId) => {
+    // Handed over un-awaited: the Clerk profile round trip runs alongside the contact scan.
+    return traced("graph.load", () => loadGraphData(userId, { profile: getDisplayProfile() }), {
+      userId,
+    });
+  }
+);
 
 /**
  * The whole network, including people you have never engaged with.
@@ -34,14 +38,16 @@ export async function getGraphData() {
  * The client caches the result for the session, so toggling back and forth costs one fetch,
  * not one per toggle.
  */
-export async function getFullGraphData() {
-  const userId = await requireUserForSurface("page.graph");
-  return traced(
-    "graph.load.all",
-    () => loadGraphData(userId, { profile: getDisplayProfile(), scope: "all" }),
-    { userId }
-  );
-}
+export const getFullGraphData = defineAction(
+  { auth: { surface: "page.graph" } },
+  async (userId) => {
+    return traced(
+      "graph.load.all",
+      () => loadGraphData(userId, { profile: getDisplayProfile(), scope: "all" }),
+      { userId }
+    );
+  }
+);
 
 /** What the inspect panel shows for one star beyond the chart payload (see `loadGraphData`). */
 export type GraphContactDetail = {
@@ -56,25 +62,28 @@ export type GraphContactDetail = {
 };
 
 /** One contact's detail for the inspect panel, or null when it is not the caller's. */
-export async function getGraphContactDetail(contactId: string): Promise<GraphContactDetail | null> {
-  const userId = await requireUserForSurface("page.graph");
-  if (typeof contactId !== "string" || !UUID_RE.test(contactId)) return null;
-  const db = await getDb();
-  const row = await db.query.contacts.findFirst({
-    where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
-    columns: {
-      howMet: true,
-      metContext: true,
-      dateMet: true,
-      sharedInterests: true,
-      email: true,
-      phone: true,
-      linkedinUrl: true,
-      website: true,
-    },
-  });
-  return row ?? null;
-}
+export const getGraphContactDetail = defineAction(
+  // Anything is accepted and checked below: a malformed id answers null, as it always has.
+  { auth: { surface: "page.graph" }, schema: z.tuple([z.unknown()]) },
+  async (userId, contactId: unknown): Promise<GraphContactDetail | null> => {
+    if (typeof contactId !== "string" || !UUID_RE.test(contactId)) return null;
+    const db = await getDb();
+    const row = await db.query.contacts.findFirst({
+      where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+      columns: {
+        howMet: true,
+        metContext: true,
+        dateMet: true,
+        sharedInterests: true,
+        email: true,
+        phone: true,
+        linkedinUrl: true,
+        website: true,
+      },
+    });
+    return row ?? null;
+  }
+);
 
 /** Wall-clock budget for one constellation refresh tick. */
 const CONSTELLATION_REFRESH_BUDGET_MS = 20_000;
@@ -97,118 +106,120 @@ function nonNegativeInt(value: unknown): number | null {
  * could skip or repeat rows. The total is counted once, on the first tick (no `after`); the
  * client carries it, and `processed`, forward.
  */
-export async function refreshConstellationBatch(input?: {
-  /** The last contact id the previous tick attempted; omitted on the first tick. */
-  after?: string | null;
-  /** Rows attempted by earlier ticks, as the previous tick returned it. */
-  processed?: number;
-  /** The first tick's `total`, carried forward so later ticks need not count again. */
-  total?: number;
-  limit?: number;
-}) {
-  const userId = await requireUserForSurface("page.graph");
-  const db = await getDb();
-  // Actions are reachable by direct POST, so the cursor is checked before it meets a uuid
-  // column (where a malformed one would be a database error rather than a clear refusal).
-  const after = input?.after || null;
-  if (after !== null && (typeof after !== "string" || !UUID_RE.test(after))) {
-    throw new Error("Invalid refresh cursor");
-  }
-  const processedBefore = nonNegativeInt(input?.processed) ?? 0;
-  // Only a later tick carries a total; the first one (no cursor) always counts.
-  const carriedTotal = after === null ? null : nonNegativeInt(input?.total);
-  // Each rebuild is an embedding round trip; four per tick keeps a tick well inside the
-  // page's function ceiling, and the deadline below guards the slow-provider case.
-  const limit = Math.min(20, Math.max(1, input?.limit ?? 4));
-  const deadline = deadlineAfter(CONSTELLATION_REFRESH_BUDGET_MS);
-
-  // One row past the page says whether another tick is needed, so the last page does not
-  // cost an extra, empty tick. The count runs alongside the page, first tick only.
-  const [page, counted] = await Promise.all([
-    db
-      .select({ id: contacts.id })
-      .from(contacts)
-      .where(
-        after === null
-          ? eq(contacts.userId, userId)
-          : and(eq(contacts.userId, userId), gt(contacts.id, after))
-      )
-      .orderBy(asc(contacts.id))
-      .limit(limit + 1),
-    carriedTotal === null
-      ? db.select({ value: count() }).from(contacts).where(eq(contacts.userId, userId))
-      : Promise.resolve(null),
-  ]);
-  const slice = page.slice(0, limit);
-  const hasMore = page.length > limit;
-
-  let processed = processedBefore;
-  let cursor = after;
-  let attemptedAll = true;
-  let failed = 0;
-  let firstError: unknown = null;
-  let firstFailedId: string | null = null;
-  let aiError: string | null = null;
-  for (const row of slice) {
-    // Unattempted rows are simply not counted as processed; the client asks again, from
-    // the cursor, which only ever advances past rows that were attempted.
-    if (deadlineReached(deadline)) {
-      attemptedAll = false;
-      break;
+export const refreshConstellationBatch = defineAction(
+  { auth: { surface: "page.graph" }, schema: z.tuple([z.looseObject({ after: z.string().nullish(), processed: anyNumber.optional(), total: anyNumber.optional(), limit: anyNumber.optional() }).optional()]) },
+  async (userId, input?: {
+    /** The last contact id the previous tick attempted; omitted on the first tick. */
+    after?: string | null;
+    /** Rows attempted by earlier ticks, as the previous tick returned it. */
+    processed?: number;
+    /** The first tick's `total`, carried forward so later ticks need not count again. */
+    total?: number;
+    limit?: number;
+  }) => {
+    const db = await getDb();
+    // Actions are reachable by direct POST, so the cursor is checked before it meets a uuid
+    // column (where a malformed one would be a database error rather than a clear refusal).
+    const after = input?.after || null;
+    if (after !== null && (typeof after !== "string" || !UUID_RE.test(after))) {
+      throw new Error("Invalid refresh cursor");
     }
-    cursor = row.id;
-    try {
-      // strict: this batch reports progress to someone watching a spinner, so a
-      // swallowed provider failure would be counted as a success.
-      await rebuildContactEmbedding(userId, row.id, undefined, { strict: true });
-    } catch (err) {
-      failed += 1;
-      if (!aiError && isAiAccessError(err)) aiError = err.message;
-      if (!firstError) {
-        firstError = err;
-        firstFailedId = row.id;
+    const processedBefore = nonNegativeInt(input?.processed) ?? 0;
+    // Only a later tick carries a total; the first one (no cursor) always counts.
+    const carriedTotal = after === null ? null : nonNegativeInt(input?.total);
+    // Each rebuild is an embedding round trip; four per tick keeps a tick well inside the
+    // page's function ceiling, and the deadline below guards the slow-provider case.
+    const limit = Math.min(20, Math.max(1, input?.limit ?? 4));
+    const deadline = deadlineAfter(CONSTELLATION_REFRESH_BUDGET_MS);
+
+    // One row past the page says whether another tick is needed, so the last page does not
+    // cost an extra, empty tick. The count runs alongside the page, first tick only.
+    const [page, counted] = await Promise.all([
+      db
+        .select({ id: contacts.id })
+        .from(contacts)
+        .where(
+          after === null
+            ? eq(contacts.userId, userId)
+            : and(eq(contacts.userId, userId), gt(contacts.id, after))
+        )
+        .orderBy(asc(contacts.id))
+        .limit(limit + 1),
+      carriedTotal === null
+        ? db.select({ value: count() }).from(contacts).where(eq(contacts.userId, userId))
+        : Promise.resolve(null),
+    ]);
+    const slice = page.slice(0, limit);
+    const hasMore = page.length > limit;
+
+    let processed = processedBefore;
+    let cursor = after;
+    let attemptedAll = true;
+    let failed = 0;
+    let firstError: unknown = null;
+    let firstFailedId: string | null = null;
+    let aiError: string | null = null;
+    for (const row of slice) {
+      // Unattempted rows are simply not counted as processed; the client asks again, from
+      // the cursor, which only ever advances past rows that were attempted.
+      if (deadlineReached(deadline)) {
+        attemptedAll = false;
+        break;
       }
+      cursor = row.id;
+      try {
+        // strict: this batch reports progress to someone watching a spinner, so a
+        // swallowed provider failure would be counted as a success.
+        await rebuildContactEmbedding(userId, row.id, undefined, { strict: true });
+      } catch (err) {
+        failed += 1;
+        if (!aiError && isAiAccessError(err)) aiError = err.message;
+        if (!firstError) {
+          firstError = err;
+          firstFailedId = row.id;
+        }
+      }
+      processed += 1;
     }
-    processed += 1;
+
+    // Contacts added or deleted mid-refresh can move the real count off the first tick's;
+    // never report more processed than total.
+    const total = Math.max(carriedTotal ?? counted?.[0]?.value ?? 0, processed);
+
+    // One row per batch, never per contact — per-item error rows are how a diagnostic
+    // table becomes a log firehose.
+    if (failed > 0) {
+      reportError(firstError, {
+        where: "action.graph.rebuild-embeddings",
+        userId,
+        extra: { failed, batchSize: slice.length, sampleContactId: firstFailedId },
+      });
+      await recordErrorEvent({
+        source: ERROR_SOURCES.graphRebuildEmbeddings,
+        kind: "batch_partial_failure",
+        userId,
+        message: firstError,
+        context: { failed, batchSize: slice.length, total, sampleContactId: firstFailedId },
+      });
+    }
+
+    const done = attemptedAll && !hasMore;
+    const graph = done
+      ? await traced("graph.load", () => loadGraphData(userId, { profile: getDisplayProfile() }), { userId })
+      : null;
+
+    return {
+      total,
+      processed,
+      // `failed` was computed, logged and recorded — and then dropped on the floor here, so
+      // the client had no way to know anything had gone wrong and always reported success.
+      failed,
+      done,
+      /** Pass back as `after` on the next tick. */
+      cursor,
+      /** Set when the AI gate refused embeddings: the refresh cannot succeed until that changes. */
+      aiError,
+      graph,
+    };
   }
-
-  // Contacts added or deleted mid-refresh can move the real count off the first tick's;
-  // never report more processed than total.
-  const total = Math.max(carriedTotal ?? counted?.[0]?.value ?? 0, processed);
-
-  // One row per batch, never per contact — per-item error rows are how a diagnostic
-  // table becomes a log firehose.
-  if (failed > 0) {
-    reportError(firstError, {
-      where: "action.graph.rebuild-embeddings",
-      userId,
-      extra: { failed, batchSize: slice.length, sampleContactId: firstFailedId },
-    });
-    await recordErrorEvent({
-      source: ERROR_SOURCES.graphRebuildEmbeddings,
-      kind: "batch_partial_failure",
-      userId,
-      message: firstError,
-      context: { failed, batchSize: slice.length, total, sampleContactId: firstFailedId },
-    });
-  }
-
-  const done = attemptedAll && !hasMore;
-  const graph = done
-    ? await traced("graph.load", () => loadGraphData(userId, { profile: getDisplayProfile() }), { userId })
-    : null;
-
-  return {
-    total,
-    processed,
-    // `failed` was computed, logged and recorded — and then dropped on the floor here, so
-    // the client had no way to know anything had gone wrong and always reported success.
-    failed,
-    done,
-    /** Pass back as `after` on the next tick. */
-    cursor,
-    /** Set when the AI gate refused embeddings: the refresh cannot succeed until that changes. */
-    aiError,
-    graph,
-  };
-}
+);

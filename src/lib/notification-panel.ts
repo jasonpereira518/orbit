@@ -8,6 +8,8 @@ import {
   type AccountHealthContext,
 } from "@/lib/account-health";
 import type { AccountAlert } from "@/lib/account-alerts";
+import { isDateOnlyDue } from "@/lib/reminder-due-bucket";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 
 /** A canonical (lower-case) uuid, the only text `id = x::uuid` matches as the JS compare would (as in reminders.ts). */
 const CANONICAL_UUID_RE = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
@@ -57,6 +59,7 @@ export async function loadNotificationPanel(
     captureRows,
     radarRows,
     cloudNoteRows,
+    timeZone,
   ] = await Promise.all([
     db.query.reminders.findMany({
       where: and(eq(reminders.userId, userId), eq(reminders.status, "pending")),
@@ -163,6 +166,7 @@ export async function loadNotificationPanel(
           .orderBy(desc(cloudNoteFiles.modifiedAt))
           .limit(50)
       : [],
+    viewerTimeZone(),
   ]);
   const radarRow = radarRows ? rowsOf<{ n: number; drafts: number; names: string[] | null }>(radarRows)[0] : undefined;
   const radarCount = Number(radarRow?.n ?? 0);
@@ -288,10 +292,13 @@ export async function loadNotificationPanel(
       id: `suggested_reminder:${s.id}`,
       kind: "suggested_reminder",
       title: s.title,
+      // A date-only suggestion is a floating date (its UTC day); a timed one is read in the
+      // viewer's zone — the same rule as the reminder rows (`dueDayOf`, audit L-17).
       body: `${due.toLocaleDateString(undefined, {
         month: "short",
         day: "numeric",
         year: "numeric",
+        timeZone: isDateOnlyDue(due) ? "UTC" : timeZone,
       })} · from your notes`,
       url: "/reminders",
       dueAt: due.toISOString(),

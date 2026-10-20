@@ -5,6 +5,10 @@ import { getDb } from "@/db";
 import { startupExpenses } from "@/db/schema";
 import { requireAdminUserId } from "@/lib/admin";
 import { setInfraCost } from "@/lib/infra-costs";
+import { requireClientDate } from "@/lib/input/dates";
+import { z } from "zod";
+import { defineAction } from "@/lib/input/action";
+import { anyNumber } from "@/lib/input/schemas";
 
 /**
  * Cost entry for the Money section.
@@ -21,46 +25,50 @@ import { setInfraCost } from "@/lib/infra-costs";
  * export in the file, and tsc cannot see it.
  */
 
-export async function setInfraCostAction(input: {
-  provider: string;
-  month: string;
-  amountUsd: number;
-  note?: string;
-}): Promise<{ ok: true }> {
-  await requireAdminUserId();
-  await setInfraCost({
-    provider: input.provider,
-    month: new Date(input.month),
-    // Entered in dollars because that is what the bill says; stored in cents because
-    // floats do not survive being summed.
-    amountCents: Math.round(input.amountUsd * 100),
-    note: input.note?.trim() || null,
-  });
+export const setInfraCostAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ provider: z.string(), month: z.string(), amountUsd: anyNumber, note: z.string().optional() })]) },
+  async (_caller, input: {
+    provider: string;
+    month: string;
+    amountUsd: number;
+    note?: string;
+  }): Promise<{ ok: true }> => {
+    await setInfraCost({
+      provider: input.provider,
+      month: requireClientDate(input.month, "month"),
+      // Entered in dollars because that is what the bill says; stored in cents because
+      // floats do not survive being summed.
+      amountCents: Math.round(input.amountUsd * 100),
+      note: input.note?.trim() || null,
+    });
 
-  revalidatePath("/admin/billing/costs");
-  revalidatePath("/admin/billing");
-  return { ok: true };
-}
+    revalidatePath("/admin/billing/costs");
+    revalidatePath("/admin/billing");
+    return { ok: true };
+  }
+);
 
-export async function addOneOffCostAction(input: {
-  category: string;
-  amountUsd: number;
-  incurredAt: string;
-  note?: string;
-}): Promise<{ ok: true }> {
-  await requireAdminUserId();
-  const db = await getDb();
+export const addOneOffCostAction = defineAction(
+  { auth: () => requireAdminUserId(), schema: z.tuple([z.looseObject({ category: z.string(), amountUsd: anyNumber, incurredAt: z.string(), note: z.string().optional() })]) },
+  async (_caller, input: {
+    category: string;
+    amountUsd: number;
+    incurredAt: string;
+    note?: string;
+  }): Promise<{ ok: true }> => {
+    const db = await getDb();
 
-  await db.insert(startupExpenses).values({
-    category: input.category,
-    amountUsd: input.amountUsd,
-    incurredAt: new Date(input.incurredAt),
-    note: input.note?.trim() || null,
-  });
+    await db.insert(startupExpenses).values({
+      category: input.category,
+      amountUsd: input.amountUsd,
+      incurredAt: requireClientDate(input.incurredAt, "date"),
+      note: input.note?.trim() || null,
+    });
 
-  revalidatePath("/admin/billing/costs");
-  revalidatePath("/admin/billing");
-  // Runway reads the same rows through `monthlyCosts`, so it must not keep a stale burn.
-  revalidatePath("/admin/yc/runway");
-  return { ok: true };
-}
+    revalidatePath("/admin/billing/costs");
+    revalidatePath("/admin/billing");
+    // Runway reads the same rows through `monthlyCosts`, so it must not keep a stale burn.
+    revalidatePath("/admin/yc/runway");
+    return { ok: true };
+  }
+);

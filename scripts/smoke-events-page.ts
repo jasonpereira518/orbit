@@ -107,14 +107,14 @@ function main() {
       attendeeCount: 40,
       connectedCount: 6,
     };
-    const hosted = text(React.createElement(EventCard, { event: { ...base, role: "hosted" as const } }));
-    const attended = text(React.createElement(EventCard, { event: { ...base, role: "attended" as const } }));
+    const hosted = text(React.createElement(EventCard, { timeZone: "UTC", event: { ...base, role: "hosted" as const } }));
+    const attended = text(React.createElement(EventCard, { timeZone: "UTC", event: { ...base, role: "attended" as const } }));
     check("a hosted event is badged", hosted.includes("Hosted"), hosted);
     check("an attended event is not", !attended.includes("Hosted"), attended);
     // Both numbers, always: "40 people" hides whether any of them became contacts.
     check("both counts are shown", attended.includes("6 of 40"), attended);
-    check("a dateless event says so", text(React.createElement(EventCard, { event: { ...base, role: "attended" as const, startsAt: null } })).includes("Date not set"));
-    check("a themed card renders without a cover", html(React.createElement(EventCard, { event: { ...base, role: "attended" as const } })).includes("linear-gradient"));
+    check("a dateless event says so", text(React.createElement(EventCard, { timeZone: "UTC", event: { ...base, role: "attended" as const, startsAt: null } })).includes("Date not set"));
+    check("a themed card renders without a cover", html(React.createElement(EventCard, { timeZone: "UTC", event: { ...base, role: "attended" as const } })).includes("linear-gradient"));
   }
 
   console.log("\nnav and surface registration");

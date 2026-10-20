@@ -26,6 +26,7 @@ import { createHash } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { completeJson } from "@/lib/ai";
+import { fenceUntrusted, guardModelOutput } from "@/lib/ai-security";
 import { friendlyError } from "@/lib/errors";
 import { companyMatchKeys } from "@/lib/events/company-list-parse";
 import { loadTargetKeys } from "@/lib/events/companies";
@@ -59,6 +60,28 @@ const SYSTEM = [
   '"opener" is one sentence someone could actually say out loud — no flattery, no pitch,',
   "no exclamation marks, and never a question about something you were not told.",
 ].join(" ");
+
+/**
+ * The user turn: the roster row as fenced data (audit M-16). Name, company, title and the
+ * event title come from a shared roster or a scraped page, so they are other people's words;
+ * the reasons are derived from them.
+ */
+export function attendeeWhyUserPrompt(inputs: Record<string, unknown>): string {
+  return fenceUntrusted("ATTENDEE", JSON.stringify(inputs));
+}
+
+/**
+ * What may be stored as (and served from) `ai_note`: strings only, scrubbed by
+ * `guardModelOutput`, capped. An answer that echoes the system prompt keeps nothing.
+ */
+export function guardAttendeeNote(parsed: { why?: unknown; opener?: unknown }): { why: string; opener: string } {
+  const clean = (v: unknown, max: number) => {
+    if (typeof v !== "string") return "";
+    const g = guardModelOutput(v.trim(), { system: SYSTEM });
+    return g.findings.includes("system_prompt_echo") ? "" : g.text.trim().slice(0, max);
+  };
+  return { why: clean(parsed.why, 200), opener: clean(parsed.opener, 300) };
+}
 
 export async function explainAttendeeForUser(
   userId: string,
@@ -151,7 +174,9 @@ export async function explainAttendeeForUser(
   const inputsHash = hashInputs([inputs]);
 
   if (row.ai_note?.inputsHash === inputsHash) {
-    return { ok: true, why: row.ai_note.why, opener: row.ai_note.opener };
+    // Notes stored before the guard existed are scrubbed on the way out too.
+    const cached = guardAttendeeNote(row.ai_note);
+    return { ok: true, why: cached.why, opener: cached.opener };
   }
   if (scored.reasons.length === 0) {
     return { ok: false, error: "There's nothing specific to say about them yet." };
@@ -161,7 +186,7 @@ export async function explainAttendeeForUser(
   try {
     const raw = await completeJson(userId, {
       system: SYSTEM,
-      user: JSON.stringify(inputs),
+      user: attendeeWhyUserPrompt(inputs),
       operation: "events.why",
         maxOutputTokens: 300,
     });
@@ -172,8 +197,7 @@ export async function explainAttendeeForUser(
     return { ok: false, error: friendlyError(err, "Couldn't write that just now — try again?") };
   }
 
-  const why = typeof parsed.why === "string" ? parsed.why.trim().slice(0, 200) : "";
-  const opener = typeof parsed.opener === "string" ? parsed.opener.trim().slice(0, 300) : "";
+  const { why, opener } = guardAttendeeNote(parsed);
   if (!why && !opener) return { ok: false, error: "Couldn't write that just now — try again?" };
 
   const note: AiNote = {

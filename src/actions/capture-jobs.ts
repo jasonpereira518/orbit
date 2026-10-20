@@ -2,7 +2,6 @@
 
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
-import { requireUserId } from "@/lib/auth";
 import { friendlyError } from "@/lib/errors";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import type { CaptureParseHints } from "@/lib/ai";
@@ -40,6 +39,16 @@ import type {
 } from "@/lib/capture/types";
 import { actionFailure } from "@/lib/action-failure";
 import { hashSourceNote } from "@/lib/suggested-reminder-utils";
+import { z } from "zod";
+import { defineAction, failResult } from "@/lib/input/action";
+import { anyNumber } from "@/lib/input/schemas";
+
+// Argument shapes, generated from the handlers' parameter types.
+const CaptureParseHintsSchema = z.looseObject({ eventDate: z.string().nullish(), seedPeople: z.array(z.looseObject({ name: z.string().nullish(), email: z.string().nullish(), linkedinUrl: z.string().nullish(), title: z.string().nullish(), company: z.string().nullish() })).optional(), interactionType: z.string().nullish(), goals: z.array(z.string()).optional() });
+const MentionPickSchema = z.looseObject({ id: z.string(), name: z.string() });
+const CaptureDecisionSchema = z.looseObject({ decision: z.enum(["accept", "reject", "skip"]), index: anyNumber, mergeContactId: z.string().nullable(), relationshipScore: anyNumber, closenessChosen: z.boolean().optional(), tagNames: z.array(z.string()), edits: z.looseObject({ name: z.string().nullish(), company: z.string().nullish(), role: z.string().nullish(), metAt: z.string().nullish(), summary: z.string().nullish(), takeaways: z.array(z.string()).nullish(), personalDetails: z.array(z.string()).nullish(), work: z.looseObject({ team: z.string().nullable(), building: z.string().nullable(), priorities: z.array(z.string()), hiring: z.string().nullable(), looking_for: z.string().nullable() }).nullish(), phone: z.string().nullish(), xHandle: z.string().nullish(), website: z.string().nullish(), school: z.string().nullish(), industry: z.string().nullish() }).optional(), decidedAt: z.string() });
+const CaptureReminderChoicesSchema = z.looseObject({ checked: z.array(z.string()), overrides: z.record(z.string(), z.looseObject({ personName: z.string().nullish(), dueDateIso: z.string().optional(), title: z.string().optional() })) });
+const CaptureOpportunityChoicesSchema = z.looseObject({ checked: z.array(z.string()), kinds: z.record(z.string(), z.enum(["internship", "job", "referral", "introduction", "startup_lead", "mentor", "investor", "speaker", "customer", "collaboration", "advice", "other"])).optional() });
 
 /**
  * The /capture page's contract with its durable job. Every export is async (one non-async
@@ -71,21 +80,25 @@ function kick(id: string) {
 }
 
 /** What the page hydrates from. `null` means "show the input UI". */
-export async function getActiveCaptureJob(): Promise<CaptureJobView | null> {
-  const userId = await requireUserId();
-  const row = await findActiveCaptureJob(userId);
-  return row ? toCaptureJobView(row) : null;
-}
+export const getActiveCaptureJob = defineAction(
+  {},
+  async (userId): Promise<CaptureJobView | null> => {
+    const row = await findActiveCaptureJob(userId);
+    return row ? toCaptureJobView(row) : null;
+  }
+);
 
 /**
  * Every job still reachable, for the multi-file queue. Bounded, because a page that renders
  * one row per job must not be handed an unbounded list.
  */
-export async function getActiveCaptureJobs(limit = 25): Promise<CaptureJobView[]> {
-  const userId = await requireUserId();
-  const rows = await findActiveCaptureJobs(userId, Math.min(Math.max(1, limit), 50));
-  return rows.map(toCaptureJobView);
-}
+export const getActiveCaptureJobs = defineAction(
+  { schema: z.tuple([anyNumber.optional()]) },
+  async (userId, limit: number = 25): Promise<CaptureJobView[]> => {
+    const rows = await findActiveCaptureJobs(userId, Math.min(Math.max(1, limit), 50));
+    return rows.map(toCaptureJobView);
+  }
+);
 
 /**
  * Discard a whole multi-file drop.
@@ -97,36 +110,40 @@ export async function getActiveCaptureJobs(limit = 25): Promise<CaptureJobView[]
  * Fold an upload's files into one review, once every file is read. Null `job` means "not
  * yet" (a file is still being read) or "already done" (another tab or poll got there first).
  */
-export async function mergeCaptureBatch(
-  batchGroupId: string
-): Promise<{ ok: true; job: CaptureJobView | null } | Fail> {
-  try {
-    const userId = await requireUserId();
-    if (typeof batchGroupId !== "string" || !batchGroupId.trim()) {
-      return { ok: false, error: "That upload is no longer open" };
+export const mergeCaptureBatch = defineAction(
+  { schema: z.tuple([z.string()]), invalid: failResult, onGateError: async (err) => {
+    return { ok: false as const, error: await actionFailure(err, "Couldn’t put those notes together — try again?", "capture-jobs.merge-capture-batch") };
+  } },
+  async (userId, batchGroupId: string): Promise<{ ok: true; job: CaptureJobView | null } | Fail> => {
+    try {
+      if (typeof batchGroupId !== "string" || !batchGroupId.trim()) {
+        return { ok: false, error: "That upload is no longer open" };
+      }
+      const row = await mergeCaptureBatchRows(userId, batchGroupId.trim());
+      return { ok: true, job: row ? toCaptureJobView(row) : null };
+    } catch (err) {
+      return { ok: false, error: await actionFailure(err, "Couldn’t put those notes together — try again?", "capture-jobs.merge-capture-batch") };
     }
-    const row = await mergeCaptureBatchRows(userId, batchGroupId.trim());
-    return { ok: true, job: row ? toCaptureJobView(row) : null };
-  } catch (err) {
-    return { ok: false, error: await actionFailure(err, "Couldn’t put those notes together — try again?", "capture-jobs.merge-capture-batch") };
   }
-}
+);
 
-export async function discardCaptureBatch(
-  batchGroupId: string
-): Promise<{ ok: true; discarded: number } | Fail> {
-  try {
-    const userId = await requireUserId();
-    if (typeof batchGroupId !== "string" || !batchGroupId.trim()) {
-      return { ok: false, error: "That batch is no longer open" };
+export const discardCaptureBatch = defineAction(
+  { schema: z.tuple([z.string()]), invalid: failResult, onGateError: async (err) => {
+    return { ok: false as const, error: friendlyError(err, "Couldn’t discard those captures — try again?") };
+  } },
+  async (userId, batchGroupId: string): Promise<{ ok: true; discarded: number } | Fail> => {
+    try {
+      if (typeof batchGroupId !== "string" || !batchGroupId.trim()) {
+        return { ok: false, error: "That batch is no longer open" };
+      }
+      const discarded = await discardCaptureBatchRows(userId, batchGroupId.trim());
+      revalidatePath("/capture");
+      return { ok: true, discarded };
+    } catch (err) {
+      return { ok: false, error: friendlyError(err, "Couldn’t discard those captures — try again?") };
     }
-    const discarded = await discardCaptureBatchRows(userId, batchGroupId.trim());
-    revalidatePath("/capture");
-    return { ok: true, discarded };
-  } catch (err) {
-    return { ok: false, error: friendlyError(err, "Couldn’t discard those captures — try again?") };
   }
-}
+);
 
 /**
  * The poll. `unchanged` when nothing moved since the client's copy, so the 1.5 s cadence
@@ -134,33 +151,34 @@ export async function discardCaptureBatch(
  * looking at the page is the fastest resumer there is, and `internalFetch` from a preview
  * deployment lands on production, so this is the safety net that always works.
  */
-export async function getCaptureJob(
-  id: string,
-  sinceUpdatedAt?: string | null
-): Promise<Ok | { ok: true; unchanged: true } | Fail> {
-  try {
-    const userId = await requireUserId();
-    const row = await getCaptureJobRow(userId, id);
-    if (!row) return { ok: false, error: "That capture no longer exists" };
-    if (captureJobLooksStuck(row)) {
-      const resumes = await bumpCaptureStallResumes(row.id);
-      if (resumes > MAX_CAPTURE_STALL_RESUMES) {
-        await failCaptureJob(row.id, "Reading those notes stalled a few times and gave up — try extracting again.", {
-          stage: "parse",
-          errorKind: "stalled",
-        });
-      } else {
-        kick(row.id);
+export const getCaptureJob = defineAction(
+  { schema: z.tuple([z.string(), z.string().nullish()]), invalid: failResult, onGateError: async (err) => {
+    return { ok: false as const, error: await actionFailure(err, "Couldn’t check on that capture — try again?", "capture-jobs.get-capture-job") };
+  } },
+  async (userId, id: string, sinceUpdatedAt?: string | null): Promise<Ok | { ok: true; unchanged: true } | Fail> => {
+    try {
+      const row = await getCaptureJobRow(userId, id);
+      if (!row) return { ok: false, error: "That capture no longer exists" };
+      if (captureJobLooksStuck(row)) {
+        const resumes = await bumpCaptureStallResumes(row.id);
+        if (resumes > MAX_CAPTURE_STALL_RESUMES) {
+          await failCaptureJob(row.id, "Reading those notes stalled a few times and gave up — try extracting again.", {
+            stage: "parse",
+            errorKind: "stalled",
+          });
+        } else {
+          kick(row.id);
+        }
       }
+      if (sinceUpdatedAt && row.updatedAt.toISOString() === sinceUpdatedAt) {
+        return { ok: true, unchanged: true };
+      }
+      return { ok: true, job: toCaptureJobView(row) };
+    } catch (err) {
+      return { ok: false, error: await actionFailure(err, "Couldn’t check on that capture — try again?", "capture-jobs.get-capture-job") };
     }
-    if (sinceUpdatedAt && row.updatedAt.toISOString() === sinceUpdatedAt) {
-      return { ok: true, unchanged: true };
-    }
-    return { ok: true, job: toCaptureJobView(row) };
-  } catch (err) {
-    return { ok: false, error: await actionFailure(err, "Couldn’t check on that capture — try again?", "capture-jobs.get-capture-job") };
   }
-}
+);
 
 /**
  * Which of these files (by `hashFileBytes`) this user has already captured.
@@ -170,17 +188,19 @@ export async function getCaptureJob(
  * Only matches come back — a hash nobody has seen is simply absent — and only from this
  * user's own jobs, so the answer can never say anything about anyone else's files.
  */
-export async function findCapturedFiles(
-  hashes: string[]
-): Promise<{ ok: true; matches: Array<{ hash: string; jobId: string; capturedAt: string; label: string | null }> } | Fail> {
-  try {
-    const userId = await requireUserId();
-    if (!Array.isArray(hashes) || !hashes.length) return { ok: true, matches: [] };
-    return { ok: true, matches: await findCapturedFileRows(userId, hashes) };
-  } catch (err) {
-    return { ok: false, error: await actionFailure(err, "Couldn’t check those files — try again?", "capture-jobs.find-captured-files") };
+export const findCapturedFiles = defineAction(
+  { schema: z.tuple([z.array(z.string())]), invalid: failResult, onGateError: async (err) => {
+    return { ok: false as const, error: await actionFailure(err, "Couldn’t check those files — try again?", "capture-jobs.find-captured-files") };
+  } },
+  async (userId, hashes: string[]): Promise<{ ok: true; matches: Array<{ hash: string; jobId: string; capturedAt: string; label: string | null }> } | Fail> => {
+    try {
+      if (!Array.isArray(hashes) || !hashes.length) return { ok: true, matches: [] };
+      return { ok: true, matches: await findCapturedFileRows(userId, hashes) };
+    } catch (err) {
+      return { ok: false, error: await actionFailure(err, "Couldn’t check those files — try again?", "capture-jobs.find-captured-files") };
+    }
   }
-}
+);
 
 /**
  * Extract pressed. Creates the row for text-only input, or queues the job a media upload
@@ -192,187 +212,196 @@ export async function findCapturedFiles(
  * has them (`QueueDuplicate`). Checked BEFORE the rate-limit token is spent: declining to
  * do the work should not cost the person a slot of the work.
  */
-export async function queueCaptureJob(input: {
-  jobId?: string | null;
-  text: string;
-  hints?: CaptureParseHints | null;
-  sourceKind: CaptureJobSource;
-  entryPoint?: "capture" | "profile";
-  seedContactId?: string | null;
-  meetingSessionId?: string | null;
-  /** Set when this job is one file of a multi-file drop. Suspends the discard rule below. */
-  batchGroupId?: string | null;
-  sourceLabel?: string | null;
-  mentionPicks?: MentionPick[] | null;
-  /** Extract again: read these notes even though an identical capture already exists. */
-  force?: boolean;
-}): Promise<Ok | Fail | QueueDuplicate> {
-  try {
-    const userId = await requireUserId();
-    const text = input.text.trim();
-    if (!text && !input.jobId) return { ok: false, error: "Notes are required" };
+export const queueCaptureJob = defineAction(
+  { schema: z.tuple([z.looseObject({ jobId: z.string().nullish(), text: z.string(), hints: CaptureParseHintsSchema.nullish(), sourceKind: z.enum(["phone", "voice", "meeting", "api", "messy", "scan"]), entryPoint: z.enum(["capture", "profile"]).optional(), seedContactId: z.string().nullish(), meetingSessionId: z.string().nullish(), batchGroupId: z.string().nullish(), sourceLabel: z.string().nullish(), mentionPicks: z.array(MentionPickSchema).nullish(), force: z.boolean().optional() })]), invalid: failResult, onGateError: async (err) => {
+    return { ok: false as const, error: await actionFailure(err, "Couldn’t start reading those notes — try again?", "capture-jobs.queue-capture-job") };
+  } },
+  async (userId, input: {
+    jobId?: string | null;
+    text: string;
+    hints?: CaptureParseHints | null;
+    sourceKind: CaptureJobSource;
+    entryPoint?: "capture" | "profile";
+    seedContactId?: string | null;
+    meetingSessionId?: string | null;
+    /** Set when this job is one file of a multi-file drop. Suspends the discard rule below. */
+    batchGroupId?: string | null;
+    sourceLabel?: string | null;
+    mentionPicks?: MentionPick[] | null;
+    /** Extract again: read these notes even though an identical capture already exists. */
+    force?: boolean;
+  }): Promise<Ok | Fail | QueueDuplicate> => {
+    try {
+      const text = input.text.trim();
+      if (!text && !input.jobId) return { ok: false, error: "Notes are required" };
 
-    if (text && !input.force) {
-      const earlier = await findJobBySourceHash(userId, hashSourceNote(text), input.jobId);
-      if (earlier) {
-        return {
-          ok: false,
-          error: DUPLICATE_NOTES_COPY,
-          duplicate: { jobId: earlier.id, capturedAt: earlier.createdAt.toISOString() },
-        };
+      if (text && !input.force) {
+        const earlier = await findJobBySourceHash(userId, hashSourceNote(text), input.jobId);
+        if (earlier) {
+          return {
+            ok: false,
+            error: DUPLICATE_NOTES_COPY,
+            duplicate: { jobId: earlier.id, capturedAt: earlier.createdAt.toISOString() },
+          };
+        }
       }
-    }
 
-    await consumeBucket("capture", userId, RATE_LIMITS.capture);
+      await consumeBucket("capture", userId, RATE_LIMITS.capture);
 
-    let row = input.jobId
-      ? await queueCaptureJobRow(userId, input.jobId, {
-          // An edited transcript supersedes the transcribed blocks: the corpus becomes the
-          // text as the person left it, not the text plus what it was edited from.
-          inputText: text || null,
-          inputHints: input.hints ?? undefined,
-          mentionPicks: input.mentionPicks ?? undefined,
-        })
-      : null;
-    if (input.jobId && row) {
-      // The transcript now lives in `input_text`; the blocks would double it.
-      const db = await getDb();
-      await db
-        .update(captureJobs)
-        .set({ ingestedBlocks: [] })
-        .where(and(eq(captureJobs.id, row.id), eq(captureJobs.userId, userId)));
-    }
-    if (!row) {
-      if (!text) return { ok: false, error: "Notes are required" };
-      // Only one capture is in review at a time: a second Extract while one is waiting
-      // would leave orphaned cards nobody can get back to.
-      //
-      // Suspended for a multi-file drop, and ONLY for one. The rule exists because a lone
-      // Extract has no way back to the cards it displaced — there is no list of them. A
-      // batch does: `CaptureQueuePanel` renders every job in the group and can open any of
-      // them, so the twelve meeting notes somebody just uploaded are exactly what this
-      // would otherwise delete eleven of.
-      if (!input.batchGroupId) {
+      let row = input.jobId
+        ? await queueCaptureJobRow(userId, input.jobId, {
+            // An edited transcript supersedes the transcribed blocks: the corpus becomes the
+            // text as the person left it, not the text plus what it was edited from.
+            inputText: text || null,
+            inputHints: input.hints ?? undefined,
+            mentionPicks: input.mentionPicks ?? undefined,
+          })
+        : null;
+      if (input.jobId && row) {
+        // The transcript now lives in `input_text`; the blocks would double it.
         const db = await getDb();
         await db
           .update(captureJobs)
-          .set({ status: "discarded", updatedAt: new Date() })
-          .where(
-            and(
-              eq(captureJobs.userId, userId),
-              inArray(captureJobs.status, ["ready", "reviewing", "failed", "transcribed"]),
-              // A row the public API enqueued (`sourceKind: "api"` — set ONLY by
-              // src/app/api/v1/notes/route.ts, never client-forgeable; see the type's own
-              // comment in src/lib/capture/types.ts) is exempt from this in-app rule. It has
-              // no way back through `CaptureQueuePanel` — that only renders for a group of
-              // more than one job — so discarding it here would be silent data loss with no
-              // recourse, unlike the ordinary single card this rule is written for, which the
-              // person just displaced themselves and can re-extract if they want it back.
-              ne(captureJobs.sourceKind, "api")
-            )
-          );
+          .set({ ingestedBlocks: [] })
+          .where(and(eq(captureJobs.id, row.id), eq(captureJobs.userId, userId)));
       }
-      row = await createCaptureJob(userId, {
-        // `"api"` is reserved for src/app/api/v1/notes/route.ts alone — see the type's own
-        // comment in src/lib/capture/types.ts. This action has no route boundary of its own
-        // to enforce that at (it is a "use server" action, reachable by a crafted POST that
-        // supplies any `CaptureJobSource` literal, `input.sourceKind` included), so the
-        // coercion has to live here. Without it, a forged call could exempt its own row from
-        // the discard rule below and make it immortal — `resumeStalledCaptureJobs`'s
-        // retention purge only reaps `saved | failed | discarded`, never a `ready` row stuck
-        // there by a fake exemption. `requireUserId()` above means a forger could only ever
-        // do this to their OWN account, but "harmless to everyone else" is not the same as
-        // "does not happen" — hence coercing rather than trusting the caller.
-        sourceKind: input.sourceKind === "api" ? "messy" : input.sourceKind,
-        status: "queued",
-        inputText: text,
-        inputHints: input.hints ?? null,
-        entryPoint: input.entryPoint,
-        seedContactId: input.seedContactId,
-        meetingSessionId: input.meetingSessionId,
-        batchGroupId: input.batchGroupId ?? null,
-        sourceLabel: input.sourceLabel ?? null,
-        mentionPicks: input.mentionPicks ?? null,
-      });
+      if (!row) {
+        if (!text) return { ok: false, error: "Notes are required" };
+        // Only one capture is in review at a time: a second Extract while one is waiting
+        // would leave orphaned cards nobody can get back to.
+        //
+        // Suspended for a multi-file drop, and ONLY for one. The rule exists because a lone
+        // Extract has no way back to the cards it displaced — there is no list of them. A
+        // batch does: `CaptureQueuePanel` renders every job in the group and can open any of
+        // them, so the twelve meeting notes somebody just uploaded are exactly what this
+        // would otherwise delete eleven of.
+        if (!input.batchGroupId) {
+          const db = await getDb();
+          await db
+            .update(captureJobs)
+            .set({ status: "discarded", updatedAt: new Date() })
+            .where(
+              and(
+                eq(captureJobs.userId, userId),
+                inArray(captureJobs.status, ["ready", "reviewing", "failed", "transcribed"]),
+                // A row the public API enqueued (`sourceKind: "api"` — set ONLY by
+                // src/app/api/v1/notes/route.ts, never client-forgeable; see the type's own
+                // comment in src/lib/capture/types.ts) is exempt from this in-app rule. It has
+                // no way back through `CaptureQueuePanel` — that only renders for a group of
+                // more than one job — so discarding it here would be silent data loss with no
+                // recourse, unlike the ordinary single card this rule is written for, which the
+                // person just displaced themselves and can re-extract if they want it back.
+                ne(captureJobs.sourceKind, "api")
+              )
+            );
+        }
+        row = await createCaptureJob(userId, {
+          // `"api"` is reserved for src/app/api/v1/notes/route.ts alone — see the type's own
+          // comment in src/lib/capture/types.ts. This action has no route boundary of its own
+          // to enforce that at (it is a "use server" action, reachable by a crafted POST that
+          // supplies any `CaptureJobSource` literal, `input.sourceKind` included), so the
+          // coercion has to live here. Without it, a forged call could exempt its own row from
+          // the discard rule below and make it immortal — `resumeStalledCaptureJobs`'s
+          // retention purge only reaps `saved | failed | discarded`, never a `ready` row stuck
+          // there by a fake exemption. `requireUserId()` above means a forger could only ever
+          // do this to their OWN account, but "harmless to everyone else" is not the same as
+          // "does not happen" — hence coercing rather than trusting the caller.
+          sourceKind: input.sourceKind === "api" ? "messy" : input.sourceKind,
+          status: "queued",
+          inputText: text,
+          inputHints: input.hints ?? null,
+          entryPoint: input.entryPoint,
+          seedContactId: input.seedContactId,
+          meetingSessionId: input.meetingSessionId,
+          batchGroupId: input.batchGroupId ?? null,
+          sourceLabel: input.sourceLabel ?? null,
+          mentionPicks: input.mentionPicks ?? null,
+        });
+      }
+      kick(row.id);
+      return { ok: true, job: toCaptureJobView(row) };
+    } catch (err) {
+      return { ok: false, error: await actionFailure(err, "Couldn’t start reading those notes — try again?", "capture-jobs.queue-capture-job") };
     }
-    kick(row.id);
-    return { ok: true, job: toCaptureJobView(row) };
-  } catch (err) {
-    return { ok: false, error: await actionFailure(err, "Couldn’t start reading those notes — try again?", "capture-jobs.queue-capture-job") };
   }
-}
+);
 
 /** One card decided; `null` is Back. Idempotent per (job, person). */
-export async function recordCaptureDecision(
-  jobId: string,
-  personKey: string,
-  decision: CaptureDecision | null
-): Promise<Ok | Fail> {
-  try {
-    const userId = await requireUserId();
-    const row = await recordCaptureDecisionRow(userId, jobId, personKey, decision);
-    if (!row) return { ok: false, error: "That capture is no longer open for review" };
-    return { ok: true, job: toCaptureJobView(row) };
-  } catch (err) {
-    return { ok: false, error: await actionFailure(err, "Couldn’t save that decision — it’ll be asked again", "capture-jobs.record-capture-decision") };
+export const recordCaptureDecision = defineAction(
+  { schema: z.tuple([z.string(), z.string(), CaptureDecisionSchema.nullable()]), invalid: failResult, onGateError: async (err) => {
+    return { ok: false as const, error: await actionFailure(err, "Couldn’t save that decision — it’ll be asked again", "capture-jobs.record-capture-decision") };
+  } },
+  async (userId, jobId: string, personKey: string, decision: CaptureDecision | null): Promise<Ok | Fail> => {
+    try {
+      const row = await recordCaptureDecisionRow(userId, jobId, personKey, decision);
+      if (!row) return { ok: false, error: "That capture is no longer open for review" };
+      return { ok: true, job: toCaptureJobView(row) };
+    } catch (err) {
+      return { ok: false, error: await actionFailure(err, "Couldn’t save that decision — it’ll be asked again", "capture-jobs.record-capture-decision") };
+    }
   }
-}
+);
 
 /** The summary's ticks: which dated commitments and meeting items become reminders. */
-export async function recordCaptureChoices(
-  jobId: string,
-  choices: {
-    reminders?: CaptureReminderChoices;
-    meeting?: CaptureDecisions["meeting"];
-    opportunities?: CaptureOpportunityChoices;
+export const recordCaptureChoices = defineAction(
+  { schema: z.tuple([z.string(), z.looseObject({ reminders: CaptureReminderChoicesSchema.optional(), meeting: z.looseObject({ extraReminderKeys: z.array(z.string()), titles: z.record(z.string(), z.string()).optional() }).optional(), opportunities: CaptureOpportunityChoicesSchema.optional() })]), invalid: failResult, onGateError: async (err) => {
+    return { ok: false as const, error: await actionFailure(err, "Couldn’t save that choice — try again?", "capture-jobs.record-capture-choices") };
+  } },
+  async (userId, jobId: string, choices: {
+      reminders?: CaptureReminderChoices;
+      meeting?: CaptureDecisions["meeting"];
+      opportunities?: CaptureOpportunityChoices;
+    }): Promise<Ok | Fail> => {
+    try {
+      const row = await recordCaptureChoicesRow(userId, jobId, choices);
+      if (!row) return { ok: false, error: "That capture is no longer open for review" };
+      return { ok: true, job: toCaptureJobView(row) };
+    } catch (err) {
+      return { ok: false, error: await actionFailure(err, "Couldn’t save that choice — try again?", "capture-jobs.record-capture-choices") };
+    }
   }
-): Promise<Ok | Fail> {
-  try {
-    const userId = await requireUserId();
-    const row = await recordCaptureChoicesRow(userId, jobId, choices);
-    if (!row) return { ok: false, error: "That capture is no longer open for review" };
-    return { ok: true, job: toCaptureJobView(row) };
-  } catch (err) {
-    return { ok: false, error: await actionFailure(err, "Couldn’t save that choice — try again?", "capture-jobs.record-capture-choices") };
-  }
-}
+);
 
 /**
  * Save pressed. Moves the row to `saving` and kicks the runner; a double-click, a second
  * tab or a reload mid-save all find the row already moved and simply return it.
  */
-export async function saveCaptureJob(jobId: string): Promise<Ok | Fail> {
-  try {
-    const userId = await requireUserId();
-    const db = await getDb();
-    const [moved] = await db
-      .update(captureJobs)
-      .set({ status: "saving", error: null, claimToken: null, updatedAt: new Date() })
-      .where(
-        and(
-          eq(captureJobs.id, jobId),
-          eq(captureJobs.userId, userId),
-          inArray(captureJobs.status, ["ready", "reviewing", "failed"])
+export const saveCaptureJob = defineAction(
+  { schema: z.tuple([z.string()]), invalid: failResult, onGateError: async (err) => {
+    return { ok: false as const, error: await actionFailure(err, "Couldn’t save those people — try again?", "capture-jobs.save-capture-job") };
+  } },
+  async (userId, jobId: string): Promise<Ok | Fail> => {
+    try {
+      const db = await getDb();
+      const [moved] = await db
+        .update(captureJobs)
+        .set({ status: "saving", error: null, claimToken: null, updatedAt: new Date() })
+        .where(
+          and(
+            eq(captureJobs.id, jobId),
+            eq(captureJobs.userId, userId),
+            inArray(captureJobs.status, ["ready", "reviewing", "failed"])
+          )
         )
-      )
-      .returning();
-    const row = moved ?? (await getCaptureJobRow(userId, jobId));
-    if (!row) return { ok: false, error: "That capture no longer exists" };
-    if (moved) {
-      if (!moved.result) {
-        await failCaptureJob(moved.id, "Extract people before saving", { stage: "save", errorKind: "not_extracted" });
-        return { ok: false, error: "Extract people before saving" };
+        .returning();
+      const row = moved ?? (await getCaptureJobRow(userId, jobId));
+      if (!row) return { ok: false, error: "That capture no longer exists" };
+      if (moved) {
+        if (!moved.result) {
+          await failCaptureJob(moved.id, "Extract people before saving", { stage: "save", errorKind: "not_extracted" });
+          return { ok: false, error: "Extract people before saving" };
+        }
+        kick(moved.id);
+        revalidatePath("/capture");
+        revalidatePath("/contacts");
+        revalidatePath("/reminders");
       }
-      kick(moved.id);
-      revalidatePath("/capture");
-      revalidatePath("/contacts");
-      revalidatePath("/reminders");
+      return { ok: true, job: toCaptureJobView(moved ?? row) };
+    } catch (err) {
+      return { ok: false, error: await actionFailure(err, "Couldn’t save those people — try again?", "capture-jobs.save-capture-job") };
     }
-    return { ok: true, job: toCaptureJobView(moved ?? row) };
-  } catch (err) {
-    return { ok: false, error: await actionFailure(err, "Couldn’t save those people — try again?", "capture-jobs.save-capture-job") };
   }
-}
+);
 
 /**
  * Throw a job away. `opts.stopping` is Stop pressed on an upload whose request may not have
@@ -380,15 +409,19 @@ export async function saveCaptureJob(jobId: string): Promise<Ok | Fail> {
  * tombstone under it and the late insert gives up (see `discardCaptureJobRow`). Only a
  * well-formed uuid can be tombstoned — anything else is not an id this app ever minted.
  */
-export async function discardCaptureJob(jobId: string, opts?: { stopping?: boolean }): Promise<{ ok: true } | Fail> {
-  try {
-    const userId = await requireUserId();
-    const tombstone =
-      opts?.stopping === true && typeof jobId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(jobId);
-    await discardCaptureJobRow(userId, jobId, { tombstone });
-    revalidatePath("/capture");
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: await actionFailure(err, "Couldn’t clear that capture — try again?", "capture-jobs.discard-capture-job") };
+export const discardCaptureJob = defineAction(
+  { schema: z.tuple([z.string(), z.looseObject({ stopping: z.boolean().optional() }).optional()]), invalid: failResult, onGateError: async (err) => {
+    return { ok: false as const, error: await actionFailure(err, "Couldn’t clear that capture — try again?", "capture-jobs.discard-capture-job") };
+  } },
+  async (userId, jobId: string, opts?: { stopping?: boolean }): Promise<{ ok: true } | Fail> => {
+    try {
+      const tombstone =
+        opts?.stopping === true && typeof jobId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(jobId);
+      await discardCaptureJobRow(userId, jobId, { tombstone });
+      revalidatePath("/capture");
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: await actionFailure(err, "Couldn’t clear that capture — try again?", "capture-jobs.discard-capture-job") };
+    }
   }
-}
+);

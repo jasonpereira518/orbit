@@ -10,9 +10,9 @@
  *
  * Callers must have imported `./smoke/_env` first (local PGlite, no real provider keys).
  */
-import { eq } from "drizzle-orm";
+import { eq, like } from "drizzle-orm";
 import { getDb } from "../../src/db";
-import { contacts, interactions, userSettings } from "../../src/db/schema";
+import { contacts, interactions, rateLimitBuckets, userSettings } from "../../src/db/schema";
 import { encrypt } from "../../src/lib/crypto";
 import { generateOutreachDraft } from "../../src/lib/outreach-drafts";
 import { generateContactFollowUpDraft } from "../../src/lib/follow-up-drafts";
@@ -67,6 +67,10 @@ async function only(run: () => Promise<unknown>): Promise<SentPrompt> {
 
 export async function seedCaseUser(): Promise<{ contactId: string }> {
   const db = await getDb();
+  // The case user is shared by the draft-prompt and writing-instruction smokes, which run in
+  // one database in CI: each draft spends a unit of the user's `draft` bucket (audit M-07),
+  // so without this the second smoke inherits the first one's spend and hits the limit.
+  await db.delete(rateLimitBuckets).where(like(rateLimitBuckets.bucket, `%:${CASE_USER}`));
   await db.delete(userSettings).where(eq(userSettings.userId, CASE_USER));
   await db.insert(userSettings).values({
     userId: CASE_USER,

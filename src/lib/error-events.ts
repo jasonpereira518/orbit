@@ -158,8 +158,12 @@ export type ErrorEventInput = {
 /** Context past this is diagnostics no one reads, and a place for personal data to pile up. */
 const MAX_CONTEXT_CHARS = 4_000;
 
-function boundedContext(context: Record<string, unknown> | undefined): Record<string, unknown> {
-  if (!context) return {};
+function boundedContext(raw: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  // Top-level strings are scrubbed like the message (audit L-14); nested values are ids and counts.
+  const context = Object.fromEntries(
+    Object.entries(raw).map(([k, v]) => [k, typeof v === "string" ? scrubText(v) : v])
+  );
   try {
     const json = JSON.stringify(context);
     if (json.length <= MAX_CONTEXT_CHARS) return context;
@@ -176,8 +180,9 @@ export async function recordErrorEvent(input: ErrorEventInput): Promise<void> {
       source: input.source,
       kind: input.kind,
       userId: input.userId ?? null,
-      // Scrubbed like a Sentry event is: a failure thrown over a contact or a send names an
-      // email address, and this row is read verbatim on /admin/health and kept 30 days.
+      // Scrubbed before it is stored (audit L-14), like a Sentry event is: a parse failure quotes
+      // the model's answer, a provider error its raw body, and a failure thrown over a contact or a
+      // send names an email address. This row is read verbatim on /admin/health and kept 30 days.
       message: input.message
         ? scrubText(toUserFacingError(input.message, "Unknown error").message).slice(0, 500)
         : null,

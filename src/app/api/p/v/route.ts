@@ -16,6 +16,7 @@ import {
   hashVisitor,
 } from "@/lib/analytics-visitor";
 import { recordDwell, recordLoad, recordPageView } from "@/lib/page-views";
+import { sameOriginGuard } from "@/lib/api/same-origin";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -177,6 +178,9 @@ const isUuid = (value: unknown): value is string =>
 
 export async function POST(request: Request) {
   if (!analyticsEnabled() || !recordsHere()) return OK();
+  // Reads the session cookie to attribute the view, so a cross-site post is dropped (L-01).
+  // Always 204, as before: the beacon cannot read a response.
+  if (sameOriginGuard(request, { json: true })) return OK();
   if (overRateLimit(clientIp(request.headers), Date.now())) return OK();
 
   try {

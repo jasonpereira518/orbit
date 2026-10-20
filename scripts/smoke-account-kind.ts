@@ -128,7 +128,7 @@ run(async () => {
 
   console.log("\nthe wiring…");
   const actions = readFileSync("src/actions/admin.ts", "utf8");
-  const action = actions.slice(actions.indexOf("export async function setAccountKindAction"));
+  const action = actions.slice(actions.indexOf("export const setAccountKindAction"));
   check("the action is admin-gated before it does anything", /setAccountKindAction[\s\S]{0,400}?requireAdminUserId\(\)/.test(action.slice(0, 600)));
   const page = readFileSync("src/app/(clerk)/(admin)/admin/users/[userId]/page.tsx", "utf8");
   check("the user page offers the control", page.includes("<AccountKindControl") && page.includes("getAccountKind"));

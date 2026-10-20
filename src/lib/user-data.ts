@@ -1,4 +1,6 @@
 import { cancelBatchJobsFor } from "@/lib/ai-batch";
+import { reportError } from "@/lib/report-error";
+import { retireStripeCustomer } from "@/lib/stripe-customer-retire";
 import { forgetDuplicateCount } from "@/lib/duplicate-count-memo";
 import { del } from "@/lib/blob-lazy";
 import { revokeGoogleGrant } from "@/lib/oauth-revoke";
@@ -6,7 +8,7 @@ import { OUTLOOK_SCAN_IMPORT_TYPE } from "@/lib/outlook-scan-type";
 import { deleteAvatarBlobs } from "@/lib/avatar-blob";
 import { hasBlobStorage } from "@/lib/contact-avatar";
 import { purgeEmailAttachmentsForUser } from "@/lib/email/attachments";
-import { and, asc, eq, getTableName, inArray, lt, or, sql } from "drizzle-orm";
+import { and, asc, eq, getTableName, inArray, lt, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
 import { getDb, rowsOf } from "@/db";
@@ -18,6 +20,7 @@ import {
   apiKeys,
   appleConnections,
   billingEvents,
+  interestListSignups,
   creditAccounts,
   creditGrants,
   creditHolds,
@@ -65,7 +68,6 @@ import {
   gateEvents,
   productEvents,
   siteInvites,
-  interestListSignups,
   gmailConnections,
   ignoredPeople,
   importFiles,
@@ -167,8 +169,11 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  * but does not: both of its foreign keys are `on delete set null`, so its rows outlive the
  * reminders and contacts they point at. `outlook_connections` has no parent at all.
  *
- * Deliberate exceptions — two operator ledgers are NOT deleted, and both use a column
+ * Deliberate exceptions — three audit ledgers are NOT deleted, and all use a column
  * named something other than `user_id` to keep them out of the user-scoped sweep:
+ *   - `account_audit_log.subject_user_id`: the account's own security events (keys, exports,
+ *     connections, plan changes), ending with the deletion itself (audit L-23). Ids and
+ *     labels only.
  *   - `admin_audit_log.target_user_id`: the operator's own record of privileged actions he
  *     took, chiefly comping a plan — which outranks every real billing signal and has no
  *     other trace. Purging it would mean deleting an account erases the evidence.
@@ -853,6 +858,11 @@ const PRESERVED_SETTINGS_COLUMNS = {
   radarDigestTz: true,
   radarDigestLastWeek: true,
   radarDigestUnsubTokenHash: true,
+  // Same reasoning for the credit email: a delete must not break the link in the last one.
+  creditEmailUnsubTokenHash: true,
+  // Part of the Clerk identity mirror: without it, a replayed older user.updated could revert
+  // the preserved email and name (audit L-07).
+  clerkUserUpdatedAt: true,
 } as const;
 
 async function purgeUserSettings(db: Db, userId: string, keepSettings: boolean) {
@@ -888,27 +898,71 @@ export class PurgeIncompleteError extends Error {
 export const PURGE_RESUME_AFTER_MS = 10 * 60 * 1000;
 const PURGE_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
+/** Keys a `billing_events.detail` writer could have filled with something personal. */
+const BILLING_DETAIL_PERSONAL_KEYS = ["email", "name", "customerEmail", "customerName", "targetUserId", "userId", "ip"] as const;
+
+/**
+ * The account-deletion half of the billing step (audit M-09), run only when the account
+ * itself is going (`keepSettings: false`), before the settings row is deleted:
+ *   - `credit_grants`: deleted. Their keys embed the account id (`starter:<id>`,
+ *     `allowance:<id>:…`), and the money record that matters is `billing_events`, kept above.
+ *   - the waitlist row whose address is the account's: deleted, with its referral and poll
+ *     links (`deleteInterestListRow`), so the address is not kept for marketing.
+ *   - the Stripe customer: NOT deleted (finance keeps its history); its metadata is marked
+ *     deleted so nobody reuses it. Best-effort: a Stripe outage must not block an erasure.
+ */
+async function retireDeletedAccount(db: Db, userId: string) {
+  await db.delete(creditGrants).where(eq(creditGrants.userId, userId));
+  const settings = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+    columns: { email: true, stripeCustomerId: true },
+  });
+  const email = settings?.email?.trim().toLowerCase();
+  if (email) {
+    const { deleteInterestListRow } = await import("@/lib/admin-interest-list");
+    const rows = await db
+      .select({ id: interestListSignups.id })
+      .from(interestListSignups)
+      .where(sql`lower(${interestListSignups.email}) = ${email}`);
+    for (const row of rows) await deleteInterestListRow(row.id);
+  }
+  if (settings?.stripeCustomerId) {
+    try {
+      await retireStripeCustomer(settings.stripeCustomerId);
+    } catch (err) {
+      reportError(err, { where: "purge.stripe-customer-retire", userId });
+    }
+  }
+}
+
 async function runPurgeStep(db: Db, userId: string, key: PurgeStepKey, keepSettings: boolean) {
   if (key === "billing") {
-    await db.update(billingEvents).set({ userId: null }).where(eq(billingEvents.userId, userId));
-    // The invitation ledger and the waitlist row are identity, not finance. The invite row is
-    // kept so a wave's counts do not change retroactively, but it stops naming the person; the
-    // waitlist row (email, name, UTMs) is deleted, which is what the waitlist notice promises
-    // once someone has been let in. Runs before `preferences`, so the email is still readable.
-    const [owner] = await db
-      .select({ email: userSettings.email })
-      .from(userSettings)
-      .where(eq(userSettings.userId, userId))
-      .limit(1);
+    // Billing rows are the accounting record (finance keeps them), so they are anonymised:
+    // the account id goes, and so does any personal field a writer put in `detail`. Stripe
+    // object ids (charge, invoice, subscription) stay — they are what a refund is traced by.
+    await db
+      .update(billingEvents)
+      .set({ userId: null, detail: sql`${billingEvents.detail} - ${sql.raw(BILLING_DETAIL_PERSONAL_KEYS.map((k) => `'${k}'`).join(" - "))}` })
+      .where(eq(billingEvents.userId, userId));
+    // The invitation ledger and the waitlist are identity, not finance. The invite row is kept
+    // so a wave's counts do not change retroactively, but it stops naming the person; a waitlist
+    // row linked to this account (email, name, UTMs) is deleted, through deleteInterestListRow so
+    // referrals pointing at it and its poll votes go too. Deleting the account also drops a row
+    // that only shares its email address (`retireDeletedAccount`); deleting data alone does not.
     await db
       .update(siteInvites)
       .set({ acceptedUserId: null, email: sql`'deleted-' || ${siteInvites.id}::text` })
       .where(eq(siteInvites.acceptedUserId, userId));
-    await db.delete(interestListSignups).where(
-      owner?.email
-        ? or(eq(interestListSignups.userId, userId), eq(interestListSignups.email, owner.email.toLowerCase()))
-        : eq(interestListSignups.userId, userId)
-    );
+    const { deleteInterestListRow } = await import("@/lib/admin-interest-list");
+    const waitlistRows = await db
+      .select({ id: interestListSignups.id })
+      .from(interestListSignups)
+      .where(eq(interestListSignups.userId, userId));
+    for (const row of waitlistRows) await deleteInterestListRow(row.id);
+    if (!keepSettings) {
+      await retireDeletedAccount(db, userId);
+      return;
+    }
     // Credit grants are money for the same reason billing rows are: a pack is cash received
     // and its unused credits are a liability, so the rows are anonymised, never deleted. The
     // account is gone, so whatever it had not spent is closed out as revoked — which is what

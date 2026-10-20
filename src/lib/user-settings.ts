@@ -131,6 +131,32 @@ export async function setUserEmail(userId: string, email: string | null) {
 }
 
 /**
+ * Claims a Clerk `user.created` / `user.updated` for this account, by the event's own
+ * `updated_at` (audit L-07). True when the event is at least as new as the last one applied,
+ * and records it; false for an older one, which must not overwrite newer mirrored identity.
+ * Equal is accepted so a redelivery of the same event (Svix retries after a timeout) still
+ * applies — the write is idempotent. An event without `updated_at` is always applied, as
+ * before. Call after `ensureUserSettings`.
+ */
+export async function claimClerkUserEvent(userId: string, updatedAtMs: number | null | undefined): Promise<boolean> {
+  if (typeof updatedAtMs !== "number" || !Number.isFinite(updatedAtMs)) return true;
+  const at = epochToDate(updatedAtMs);
+  if (!at) return true;
+  const db = await getDb();
+  const rows = await db
+    .update(userSettings)
+    .set({ clerkUserUpdatedAt: at })
+    .where(
+      and(
+        eq(userSettings.userId, userId),
+        or(isNull(userSettings.clerkUserUpdatedAt), sql`${userSettings.clerkUserUpdatedAt} <= ${at.toISOString()}::timestamptz`)
+      )
+    )
+    .returning();
+  return rows.length > 0;
+}
+
+/**
  * Mirrors the user's Clerk display name and avatar URL, for the same reason `setUserEmail`
  * mirrors the address: the admin console renders from Postgres alone, and asking Clerk for
  * a display name per row would put a network call on the roster's critical path.
@@ -282,6 +308,28 @@ export async function setSubscriptionState(
   // Queues the one-shot celebration when the RESOLVED plan moves upward. Server-side on
   // purpose: the client watcher's localStorage key is per-device, so upgrading on a phone
   // would celebrate again on a laptop, and clearing site data replays it.
+  //
+  // The account's own audit trail records every plan or status move (audit L-23). Stripe is
+  // the only writer here, so the actor is Stripe even when the person clicked the button.
+  if (
+    updated &&
+    ((existing?.subscriptionPlan ?? null) !== (updated.subscriptionPlan ?? null) ||
+      (existing?.subscriptionStatus ?? null) !== (updated.subscriptionStatus ?? null))
+  ) {
+    const { recordAccountAudit } = await import("@/lib/account-audit");
+    await recordAccountAudit({
+      userId,
+      action: "plan.change",
+      actor: "stripe",
+      detail: {
+        fromPlan: existing?.subscriptionPlan ?? null,
+        toPlan: updated.subscriptionPlan ?? null,
+        fromStatus: existing?.subscriptionStatus ?? null,
+        toStatus: updated.subscriptionStatus ?? null,
+      },
+    });
+  }
+
   if (updated) {
     await queuePlanUpgradeTransition({
       userId,
@@ -379,6 +427,11 @@ export async function setLifetimePurchase(
     })
     .where(eq(userSettings.userId, userId))
     .returning();
+
+  if (updated) {
+    const { recordAccountAudit } = await import("@/lib/account-audit");
+    await recordAccountAudit({ userId, action: "plan.change", actor: "stripe", detail: { toPlan: "lifetime" } });
+  }
 
   if (updated) {
     await queuePlanUpgradeTransition({

@@ -99,6 +99,11 @@ export function ApiSettings() {
           allowWrite ? ["read", "write"] : ["read"],
           kind
         );
+        if (!result.ok && result.reason === "limit_reached") {
+          // At the active-key cap: no plan lifts it, so no "See plans" — revoking one does.
+          toast.error(result.message);
+          return;
+        }
         if (!result.ok) {
           // A paywall, not a fault. Say what it is and where to go, rather than "something
           // went wrong" — the message is carried in the result precisely so this can.

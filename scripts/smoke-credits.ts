@@ -272,6 +272,19 @@ run(async () => {
   check("with no live hold left, settle never touches an expired one (the sweep owns it)",
     (await db.select({ id: creditHolds.id }).from(creditHolds).where(eq(creditHolds.userId, USER))).length === 1);
 
+  console.log("\nReleasing frees one hold, not every hold for the operation (audit L-26)");
+  await reset();
+  await ledger.ensureAllowance(USER, "orbit", cycle1);
+  const holdA = await ledger.placeHold({ userId: USER, micros: 5_000, operation: "batch:shared", packs: false });
+  const holdB = await ledger.placeHold({ userId: USER, micros: 5_000, operation: "batch:shared", packs: false });
+  check("two concurrent holds for one operation are both placed", Boolean(holdA && holdB), { holdA, holdB });
+  await ledger.releaseHold(USER, "batch:shared");
+  const left = (await db.select({ id: creditHolds.id }).from(creditHolds).where(eq(creditHolds.userId, USER))).map((h) => h.id);
+  check("releasing by operation frees the oldest and keeps the other call's reservation", left.length === 1 && left[0] === holdB, left);
+  await ledger.releaseHold(USER, "batch:shared", holdB!);
+  check("releasing by id frees exactly that hold",
+    (await db.select({ id: creditHolds.id }).from(creditHolds).where(eq(creditHolds.userId, USER))).length === 0);
+
   await reset();
   if (failures > 0) throw new Error(`${failures} credit check(s) failed`);
   console.log("\nAll credit checks passed.");

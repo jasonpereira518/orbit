@@ -13,6 +13,7 @@ import { getMeetingTranscript } from "@/lib/meeting-sessions";
 import { MeetingRecapButton } from "@/components/meetings/meeting-recap-button";
 import { isSurfaceLive } from "@/lib/surface-visibility";
 import { COMPOSE_SURFACE_KEY } from "@/lib/surfaces";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 
 const SEARCH_MAX = 100;
 
@@ -85,9 +86,10 @@ export default async function MeetingDetailPage({
   const q = ((await searchParams).q ?? "").trim().slice(0, SEARCH_MAX);
   const userId = await requireUserId();
 
-  const [meeting, composeLive] = await Promise.all([
+  const [meeting, composeLive, timeZone] = await Promise.all([
     loadMeetingTranscript(userId, id),
     isSurfaceLive(userId, COMPOSE_SURFACE_KEY).catch(() => false),
+    viewerTimeZone(),
   ]);
   // The same two states the list shows. A meeting still being recorded is Capture's.
   if (!meeting || (meeting.session.status !== "analyzed" && meeting.session.status !== "saved")) notFound();
@@ -121,6 +123,7 @@ export default async function MeetingDetailPage({
               day: "numeric",
               hour: "numeric",
               minute: "2-digit",
+              timeZone,
             })}
           </span>
           <span className="inline-flex items-center gap-1.5">

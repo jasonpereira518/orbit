@@ -3,7 +3,7 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
-import { getCurrentUserProfile, requireUserId } from "@/lib/auth";
+import { getCurrentUserProfile } from "@/lib/auth";
 import { getShowcaseAccountId } from "@/lib/demo-account";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { FEATURE_DENIAL, getEntitlements } from "@/lib/entitlements";
@@ -40,6 +40,8 @@ import {
   type SubscriptionDetails,
   type SubscriptionResult,
 } from "@/lib/subscription-management";
+import { z } from "zod";
+import { defineAction, failResult, errorResult } from "@/lib/input/action";
 
 export type CheckoutResult = { url: string } | { error: string };
 
@@ -86,137 +88,141 @@ async function checkoutFailed(err: unknown, userId: string, what: string): Promi
  * `checkout_started` event only. It comes from the browser, so it is checked against the
  * closed gate list before it is used, and it changes nothing about the checkout itself.
  */
-export async function startSubscriptionCheckout(
-  plan: PurchasablePlan,
-  period: BillingPeriod = "monthly",
-  gate?: string | null
-): Promise<CheckoutResult> {
-  const userId = await requireUserId();
-  if (!isPurchasablePlan(plan)) return { error: CHECKOUT_COPY.notOpen };
-  if (period !== "monthly" && period !== "annual") return { error: CHECKOUT_COPY.notOpen };
-  if (!isCheckoutConfigured()) return { error: CHECKOUT_COPY.notOpen };
+export const startSubscriptionCheckout = defineAction(
+  { schema: z.tuple([z.enum(["orbit", "max"]), z.enum(["monthly", "annual"]).optional(), z.string().nullish()]), invalid: errorResult },
+  async (userId, plan: PurchasablePlan, period: BillingPeriod = "monthly", gate?: string | null): Promise<CheckoutResult> => {
+    if (!isPurchasablePlan(plan)) return { error: CHECKOUT_COPY.notOpen };
+    if (period !== "monthly" && period !== "annual") return { error: CHECKOUT_COPY.notOpen };
+    if (!isCheckoutConfigured()) return { error: CHECKOUT_COPY.notOpen };
 
-  // `getEntitlements` resolves comps too, so a comped account gets the same refusal a paying
-  // one would. One plan at a time: tier changes go through Settings, never a second checkout.
-  const entitlements = await getEntitlements(userId);
-  if (entitlements.plan === "lifetime") return { error: CHECKOUT_COPY.onLifetime };
-  if (entitlements.plan !== "free") return { error: CHECKOUT_COPY.switchInSettings };
+    // `getEntitlements` resolves comps too, so a comped account gets the same refusal a paying
+    // one would. One plan at a time: tier changes go through Settings, never a second checkout.
+    const entitlements = await getEntitlements(userId);
+    if (entitlements.plan === "lifetime") return { error: CHECKOUT_COPY.onLifetime };
+    if (entitlements.plan !== "free") return { error: CHECKOUT_COPY.switchInSettings };
 
-  const row = await billingRow(userId);
-  const founding =
-    period === "monthly" && foundingAppliesToNewSubscription(row) ? foundingCheckoutTerms(plan) : null;
-  const baseUrl = getAppBaseUrl();
-  const profile = await getCurrentUserProfile();
+    const row = await billingRow(userId);
+    const founding =
+      period === "monthly" && foundingAppliesToNewSubscription(row) ? foundingCheckoutTerms(plan) : null;
+    const baseUrl = getAppBaseUrl();
+    const profile = await getCurrentUserProfile();
 
-  try {
-    const prices = await resolvePriceIds();
-    const planMeta = {
-      [PLAN_METADATA_KEY]: plan,
-      [INTERVAL_METADATA_KEY]: period === "annual" ? "year" : "month",
-      ...(founding?.metadata ?? {}),
-    };
-    const session = await getStripe().checkout.sessions.create({
-      mode: "subscription",
-      line_items: [{ price: subscriptionPriceId(prices, plan, period), quantity: 1 }],
-      // How the webhook knows who paid. Checkout collects its own email, which need not
-      // match the Orbit account, so the Clerk id is the only reliable link.
-      client_reference_id: userId,
-      metadata: planMeta,
-      // Copied onto the subscription itself, so `customer.subscription.*` events (renewals,
-      // cancellations, the founding window) can be attributed and valued without a session.
-      subscription_data: {
-        metadata: { ...planMeta, [SUBSCRIPTION_USER_METADATA_KEY]: userId },
-      },
-      ...(founding ? { discounts: [{ coupon: founding.coupon }] } : {}),
-      // A returning subscriber keeps their Stripe customer (and invoice history).
-      ...(row?.stripeCustomerId
-        ? { customer: row.stripeCustomerId }
-        : { customer_email: profile?.email || undefined }),
-      // `upgraded` arms the celebration watcher's fast poll; `session_id` lets it confirm the
-      // payment with Stripe directly, before the webhook lands.
-      success_url: `${baseUrl}/settings?upgraded=${plan === "max" ? "max" : "pro"}&session_id={CHECKOUT_SESSION_ID}#settings-plan`,
-      cancel_url: `${baseUrl}/pricing`,
-    });
-    if (!session.url) return { error: "Stripe did not return a checkout URL." };
-    trackCheckoutStarted(userId, {
-      sessionId: session.id,
-      plan,
-      interval: period === "annual" ? "year" : "month",
-      gate,
-    });
-    return { url: session.url };
-  } catch (err) {
-    return checkoutFailed(err, userId, plan);
+    try {
+      const prices = await resolvePriceIds();
+      const planMeta = {
+        [PLAN_METADATA_KEY]: plan,
+        [INTERVAL_METADATA_KEY]: period === "annual" ? "year" : "month",
+        ...(founding?.metadata ?? {}),
+      };
+      const session = await getStripe().checkout.sessions.create({
+        mode: "subscription",
+        line_items: [{ price: subscriptionPriceId(prices, plan, period), quantity: 1 }],
+        // How the webhook knows who paid. Checkout collects its own email, which need not
+        // match the Orbit account, so the Clerk id is the only reliable link.
+        client_reference_id: userId,
+        metadata: planMeta,
+        // Copied onto the subscription itself, so `customer.subscription.*` events (renewals,
+        // cancellations, the founding window) can be attributed and valued without a session.
+        subscription_data: {
+          metadata: { ...planMeta, [SUBSCRIPTION_USER_METADATA_KEY]: userId },
+        },
+        ...(founding ? { discounts: [{ coupon: founding.coupon }] } : {}),
+        // A returning subscriber keeps their Stripe customer (and invoice history).
+        ...(row?.stripeCustomerId
+          ? { customer: row.stripeCustomerId }
+          : { customer_email: profile?.email || undefined }),
+        // `upgraded` arms the celebration watcher's fast poll; `session_id` lets it confirm the
+        // payment with Stripe directly, before the webhook lands.
+        success_url: `${baseUrl}/settings?upgraded=${plan === "max" ? "max" : "pro"}&session_id={CHECKOUT_SESSION_ID}#settings-plan`,
+        cancel_url: `${baseUrl}/pricing`,
+      });
+      if (!session.url) return { error: "Stripe did not return a checkout URL." };
+      trackCheckoutStarted(userId, {
+        sessionId: session.id,
+        plan,
+        interval: period === "annual" ? "year" : "month",
+        gate,
+      });
+      return { url: session.url };
+    } catch (err) {
+      return checkoutFailed(err, userId, plan);
+    }
   }
-}
+);
 
 /**
  * Opens a Stripe Checkout Session for one $5 pack of 250 credits. Every plan but Lifetime
  * (whose AI has no packs to top up). Never automatic — a person clicks, sees the price and
  * pays.
  */
-export async function startCreditPackCheckout(gate?: string | null): Promise<CheckoutResult> {
-  const userId = await requireUserId();
-  if (!isCheckoutConfigured()) return { error: CHECKOUT_COPY.notOpen };
-  const entitlements = await getEntitlements(userId);
-  if (!entitlements.canBuyCreditPacks) return { error: CHECKOUT_COPY.packsNeedPlan };
+export const startCreditPackCheckout = defineAction(
+  { schema: z.tuple([z.string().nullish()]), invalid: errorResult },
+  async (userId, gate?: string | null): Promise<CheckoutResult> => {
+    if (!isCheckoutConfigured()) return { error: CHECKOUT_COPY.notOpen };
+    const entitlements = await getEntitlements(userId);
+    if (!entitlements.canBuyCreditPacks) return { error: CHECKOUT_COPY.packsNeedPlan };
 
-  const row = await billingRow(userId);
-  const baseUrl = getAppBaseUrl();
-  const profile = await getCurrentUserProfile();
-  const metadata = {
-    [PLAN_METADATA_KEY]: CREDIT_PACK_METADATA_VALUE,
-    orbit_credits: String(CREDIT_PACK_CREDITS),
-  };
-  try {
-    const prices = await resolvePriceIds();
-    const session = await getStripe().checkout.sessions.create({
-      mode: "payment",
-      line_items: [{ price: prices.creditPack, quantity: 1 }],
-      client_reference_id: userId,
-      metadata,
-      // On the payment intent too, so a refund or dispute of the charge can be traced back
-      // to the pack from the payment alone.
-      payment_intent_data: { metadata: { ...metadata, [SUBSCRIPTION_USER_METADATA_KEY]: userId } },
-      ...(row?.stripeCustomerId
-        ? { customer: row.stripeCustomerId }
-        : { customer_email: profile?.email || undefined, customer_creation: "always" as const }),
-      // The AI settings are a dialog opened by `?integration=ai` (see `integrationHref`).
-      success_url: `${baseUrl}/settings?integration=ai&credits=added&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${baseUrl}/settings?integration=ai`,
-    });
-    if (!session.url) return { error: "Stripe did not return a checkout URL." };
-    trackCheckoutStarted(userId, {
-      sessionId: session.id,
-      // A pack is bought on top of the plan the account is on.
-      plan: entitlements.plan,
-      interval: "once",
-      gate,
-    });
-    return { url: session.url };
-  } catch (err) {
-    return checkoutFailed(err, userId, "credit_pack");
+    const row = await billingRow(userId);
+    const baseUrl = getAppBaseUrl();
+    const profile = await getCurrentUserProfile();
+    const metadata = {
+      [PLAN_METADATA_KEY]: CREDIT_PACK_METADATA_VALUE,
+      orbit_credits: String(CREDIT_PACK_CREDITS),
+    };
+    try {
+      const prices = await resolvePriceIds();
+      const session = await getStripe().checkout.sessions.create({
+        mode: "payment",
+        line_items: [{ price: prices.creditPack, quantity: 1 }],
+        client_reference_id: userId,
+        metadata,
+        // On the payment intent too, so a refund or dispute of the charge can be traced back
+        // to the pack from the payment alone.
+        payment_intent_data: { metadata: { ...metadata, [SUBSCRIPTION_USER_METADATA_KEY]: userId } },
+        ...(row?.stripeCustomerId
+          ? { customer: row.stripeCustomerId }
+          : { customer_email: profile?.email || undefined, customer_creation: "always" as const }),
+        // The AI settings are a dialog opened by `?integration=ai` (see `integrationHref`).
+        success_url: `${baseUrl}/settings?integration=ai&credits=added&session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${baseUrl}/settings?integration=ai`,
+      });
+      if (!session.url) return { error: "Stripe did not return a checkout URL." };
+      trackCheckoutStarted(userId, {
+        sessionId: session.id,
+        // A pack is bought on top of the plan the account is on.
+        plan: entitlements.plan,
+        interval: "once",
+        gate,
+      });
+      return { url: session.url };
+    } catch (err) {
+      return checkoutFailed(err, userId, "credit_pack");
+    }
   }
-}
+);
 
 /** Switch between Pro and Max on Stripe's own confirmation page. Returns its URL. */
-export async function startPlanSwitch(target: PurchasablePlan): Promise<CheckoutResult> {
-  const userId = await requireUserId();
-  if (!isCheckoutConfigured()) return { error: CHECKOUT_COPY.notOpen };
-  const result = await createPlanSwitchUrl(userId, target);
-  return result.ok ? { url: result.url } : { error: result.error };
-}
+export const startPlanSwitch = defineAction(
+  { schema: z.tuple([z.enum(["orbit", "max"])]), invalid: errorResult },
+  async (userId, target: PurchasablePlan): Promise<CheckoutResult> => {
+    if (!isCheckoutConfigured()) return { error: CHECKOUT_COPY.notOpen };
+    const result = await createPlanSwitchUrl(userId, target);
+    return result.ok ? { url: result.url } : { error: result.error };
+  }
+);
 
 /**
  * What the pricing page needs to know about a signed-in visitor: their plan, and whether a
  * founding price applies to them. Founding prices are shown ONLY to an account for which
  * this is true — never to anyone signed out.
  */
-export async function getPricingViewer(): Promise<{ plan: Plan; founding: boolean }> {
-  const userId = await requireUserId();
-  const [{ plan }, row] = await Promise.all([getEntitlements(userId), billingRow(userId)]);
-  return { plan, founding: plan === "free" && foundingAppliesToNewSubscription(row) };
-}
+export const getPricingViewer = defineAction(
+  {},
+  async (userId): Promise<{ plan: Plan; founding: boolean }> => {
+    const [{ plan }, row] = await Promise.all([getEntitlements(userId), billingRow(userId)]);
+    return { plan, founding: plan === "free" && foundingAppliesToNewSubscription(row) };
+  }
+);
 
 /**
  * The resolved plan, for the celebration watcher's polls. `getEntitlements`
@@ -224,17 +230,21 @@ export async function getPricingViewer(): Promise<{ plan: Plan; founding: boolea
  * point: this is how a webhook grant or an admin/demo comp reaches a client
  * that has no realtime channel.
  */
-export async function getCurrentPlan(): Promise<Plan> {
-  const userId = await requireUserId();
-  const { plan } = await getEntitlements(userId);
-  return plan;
-}
+export const getCurrentPlan = defineAction(
+  {},
+  async (userId): Promise<Plan> => {
+    const { plan } = await getEntitlements(userId);
+    return plan;
+  }
+);
 
 /** Stripe's customer portal for the caller's own subscription. Returns the URL, like checkout. */
-export async function openBillingPortal(): Promise<BillingPortalResult> {
-  const userId = await requireUserId();
-  return createBillingPortalUrl(userId);
-}
+export const openBillingPortal = defineAction(
+  { invalid: errorResult },
+  async (userId): Promise<BillingPortalResult> => {
+    return createBillingPortalUrl(userId);
+  }
+);
 
 export type SubscriptionOverview =
   | { ok: true; subscription: SubscriptionDetails; planLabel: string }
@@ -244,12 +254,14 @@ export type SubscriptionOverview =
  * The caller's subscription as Stripe has it right now. Read on demand by the plan card, so
  * the settings page itself never waits on Stripe.
  */
-export async function getSubscriptionOverview(): Promise<SubscriptionOverview> {
-  const userId = await requireUserId();
-  const result = await getSubscriptionDetailsFor(userId);
-  if (!result.ok) return result;
-  return { ok: true, subscription: result.subscription, planLabel: PLAN_LABELS[result.subscription.plan] };
-}
+export const getSubscriptionOverview = defineAction(
+  { invalid: failResult },
+  async (userId): Promise<SubscriptionOverview> => {
+    const result = await getSubscriptionDetailsFor(userId);
+    if (!result.ok) return result;
+    return { ok: true, subscription: result.subscription, planLabel: PLAN_LABELS[result.subscription.plan] };
+  }
+);
 
 /**
  * Stop renewing at the end of the paid period. Access continues until then.
@@ -257,21 +269,25 @@ export async function getSubscriptionOverview(): Promise<SubscriptionOverview> {
  * `reason` is optional and closed (`CANCEL_REASONS`); nothing asks for it yet, and anything
  * else is ignored. It is read for the `subscription_canceled` event only.
  */
-export async function cancelSubscription(reason?: string): Promise<SubscriptionResult> {
-  const userId = await requireUserId();
-  const result = await cancelSubscriptionFor(userId);
-  if (result.ok && result.subscription.cancelAtPeriodEnd) {
-    // After Stripe accepted it. A telemetry failure must never turn a cancellation into an error.
-    trackSubscriptionCanceled(userId, { periodEnd: result.subscription.periodEnd, reason });
+export const cancelSubscription = defineAction(
+  { schema: z.tuple([z.string().optional()]), invalid: failResult },
+  async (userId, reason?: string): Promise<SubscriptionResult> => {
+    const result = await cancelSubscriptionFor(userId);
+    if (result.ok && result.subscription.cancelAtPeriodEnd) {
+      // After Stripe accepted it. A telemetry failure must never turn a cancellation into an error.
+      trackSubscriptionCanceled(userId, { periodEnd: result.subscription.periodEnd, reason });
+    }
+    return result;
   }
-  return result;
-}
+);
 
 /** Undo a pending cancellation. */
-export async function resumeSubscription(): Promise<SubscriptionResult> {
-  const userId = await requireUserId();
-  return resumeSubscriptionFor(userId);
-}
+export const resumeSubscription = defineAction(
+  { invalid: failResult },
+  async (userId): Promise<SubscriptionResult> => {
+    return resumeSubscriptionFor(userId);
+  }
+);
 
 /**
  * Confirm a checkout the moment the buyer is back, instead of waiting on the webhook. Called
@@ -279,30 +295,30 @@ export async function resumeSubscription(): Promise<SubscriptionResult> {
  * the success URL. Same decision, same idempotent writers as the webhook, so whichever
  * lands second finds nothing left to do.
  */
-export async function confirmCheckoutSession(
-  sessionId: string
-): Promise<{ status: "granted" | "processing" | "unconfirmed" }> {
-  const userId = await requireUserId();
-  if (!isCheckoutConfigured()) return { status: "unconfirmed" };
-  if (typeof sessionId !== "string" || !/^cs_[A-Za-z0-9_]{8,250}$/.test(sessionId)) {
+export const confirmCheckoutSession = defineAction(
+  { schema: z.tuple([z.string()]) },
+  async (userId, sessionId: string): Promise<{ status: "granted" | "processing" | "unconfirmed" }> => {
+    if (!isCheckoutConfigured()) return { status: "unconfirmed" };
+    if (typeof sessionId !== "string" || !/^cs_[A-Za-z0-9_]{8,250}$/.test(sessionId)) {
+      return { status: "unconfirmed" };
+    }
+    try {
+      const result = await confirmCheckoutForUser(userId, sessionId, {
+        retrieve: (id) =>
+          getStripe().checkout.sessions.retrieve(id, {
+            expand: ["payment_intent.latest_charge", "subscription"],
+          }),
+      });
+      if (result.status === "applied") return { status: "granted" };
+      // An async payment (a bank debit) completes the session before the money settles.
+      if (result.reason === "unpaid") return { status: "processing" };
+    } catch (err) {
+      // Not recorded as a stripeCheckout error event: that source pages "nobody can pay".
+      console.error("Checkout confirmation on return did not complete:", err);
+    }
     return { status: "unconfirmed" };
   }
-  try {
-    const result = await confirmCheckoutForUser(userId, sessionId, {
-      retrieve: (id) =>
-        getStripe().checkout.sessions.retrieve(id, {
-          expand: ["payment_intent.latest_charge", "subscription"],
-        }),
-    });
-    if (result.status === "applied") return { status: "granted" };
-    // An async payment (a bank debit) completes the session before the money settles.
-    if (result.reason === "unpaid") return { status: "processing" };
-  } catch (err) {
-    // Not recorded as a stripeCheckout error event: that source pages "nobody can pay".
-    console.error("Checkout confirmation on return did not complete:", err);
-  }
-  return { status: "unconfirmed" };
-}
+);
 
 /**
  * Live-demo cheat code: grants Lifetime with a keypress instead of a real checkout.
@@ -313,16 +329,18 @@ export async function confirmCheckoutSession(
  * variable in production builds, so there it is always unset and the shortcut is off; live
  * demos run from a preview or local deployment.
  */
-export async function triggerDemoCelebration(): Promise<{ ok: boolean }> {
-  const userId = await requireUserId();
-  const demoAccountId = getShowcaseAccountId();
-  if (!demoAccountId || userId !== demoAccountId) return { ok: false };
+export const triggerDemoCelebration = defineAction(
+  {},
+  async (userId): Promise<{ ok: boolean }> => {
+    const demoAccountId = getShowcaseAccountId();
+    if (!demoAccountId || userId !== demoAccountId) return { ok: false };
 
-  await setCompedPlan(userId, "lifetime", {
-    note: "Live demo shortcut (Ctrl+Shift+U)",
-  });
-  return { ok: true };
-}
+    await setCompedPlan(userId, "lifetime", {
+      note: "Live demo shortcut (Ctrl+Shift+U)",
+    });
+    return { ok: true };
+  }
+);
 
 /**
  * Low-cardinality kind for a failed checkout: Stripe's own error `code` when it has one

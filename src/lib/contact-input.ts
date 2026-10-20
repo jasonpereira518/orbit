@@ -1,5 +1,7 @@
 import { z } from "zod";
 import type { ContactInput } from "@/lib/contact-writes";
+import { MAX_LIST_ITEMS, MAX_TAGS, TEXT_LIMITS, cleanText, cleanTextList } from "@/lib/input/text";
+import { safeHttpUrl } from "@/lib/safe-links";
 
 /**
  * The server-side input contract for contacts.
@@ -64,17 +66,17 @@ function optionalText(max: number) {
  * into the LinkedIn field.
  */
 export function isLinkedInProfileUrl(url: string) {
-  const trimmed = url.trim();
-  if (!trimmed) return false;
-  try {
-    const parsed = new URL(
-      trimmed.startsWith("http") ? trimmed : `https://${trimmed}`
-    );
-    const host = parsed.hostname.toLowerCase();
-    return host === "linkedin.com" || host.endsWith(".linkedin.com");
-  } catch {
-    return /linkedin\.com\//i.test(trimmed);
-  }
+  // http(s) only, no credentials (`safeHttpUrl`). The unparseable fallback that used to
+  // accept anything containing "linkedin.com/" let `javascript:…//linkedin.com/x` through.
+  const safe = safeHttpUrl(url);
+  if (!safe) return false;
+  const host = new URL(safe).hostname.toLowerCase();
+  return host === "linkedin.com" || host.endsWith(".linkedin.com");
+}
+
+/** A website link safe to store and render: http(s) only (audit EC-URL-1). */
+export function isSafeWebsiteUrl(url: string) {
+  return safeHttpUrl(url) !== null;
 }
 
 const baseShape = {
@@ -98,8 +100,49 @@ const baseShape = {
     { message: "That doesn't look like a LinkedIn profile URL" }
   ),
   xHandle: optionalText(LIMITS.handle),
-  website: optionalText(LIMITS.url),
+  website: optionalText(LIMITS.url).refine((v) => v === undefined || isSafeWebsiteUrl(v), {
+    message: "That website link doesn’t look right — use an http or https address",
+  }),
 };
+
+/**
+ * Caps for the free-text fields the strict schema does not own. Truncated rather than
+ * refused, in BOTH modes: these are written by extraction (a capture's `notes` can be the
+ * whole 100k-character corpus), importers and people alike, and a hard refusal here would
+ * turn an over-long LinkedIn "About" into a failed import row. Every cap sits above what any
+ * of those producers writes today and below the 1 MB at which `search_tsv` fails the save.
+ */
+const FREE_TEXT_CAPS: Record<string, number> = {
+  notes: TEXT_LIMITS.rawNotes,
+  aiSummary: TEXT_LIMITS.summary,
+  howMet: TEXT_LIMITS.shortParagraph,
+  metContext: 200,
+  industry: 200,
+  source: 100,
+  cadencePhrase: 200,
+};
+
+/** Cap for any other string field: the strict schema's own caps are lower and still apply. */
+const DEFAULT_FIELD_CAP = TEXT_LIMITS.shortParagraph;
+
+/**
+ * Make every string in a contact input storable (audit M-05): NUL and other control
+ * characters stripped (Postgres refuses `\u0000` in a `text` column, and one in a name used
+ * to fail the whole write with an opaque 500), NFC-normalised, and capped. List fields are
+ * cleaned per entry and bounded in length. Runs before validation in every mode, so the
+ * strict schema measures what will actually be stored.
+ */
+export function cleanContactFreeText<T extends Partial<ContactInput>>(input: T): T {
+  const out: Record<string, unknown> = { ...input };
+  for (const [k, v] of Object.entries(out)) {
+    if (typeof v === "string") out[k] = cleanText(v, FREE_TEXT_CAPS[k] ?? DEFAULT_FIELD_CAP);
+  }
+  if (Array.isArray(input.keyFacts)) out.keyFacts = cleanTextList(input.keyFacts, TEXT_LIMITS.listItem, MAX_LIST_ITEMS);
+  if (Array.isArray(input.sharedInterests)) out.sharedInterests = cleanTextList(input.sharedInterests, TEXT_LIMITS.listItem, MAX_LIST_ITEMS);
+  if (Array.isArray(input.opportunities)) out.opportunities = cleanTextList(input.opportunities, TEXT_LIMITS.listItem, MAX_LIST_ITEMS);
+  if (Array.isArray(input.tagNames)) out.tagNames = cleanTextList(input.tagNames, TEXT_LIMITS.tag, MAX_TAGS);
+  return out as T;
+}
 
 /** Validates the fields this module owns; everything else passes through untouched. */
 const strictSchema = z.object(baseShape);
@@ -121,9 +164,10 @@ export type NormalizeResult =
  * write shape.
  */
 export function normalizeContactInput(
-  input: ContactInput,
+  rawInput: ContactInput,
   mode: "strict" | "lenient" = "strict"
 ): NormalizeResult {
+  const input = cleanContactFreeText(rawInput);
   const parsed = strictSchema.safeParse(input);
 
   if (parsed.success) {
@@ -151,7 +195,17 @@ export function normalizeContactInput(
     };
   }
 
-  return { ok: true, value: { ...input, fullName: name.data.fullName } };
+  // The one exception to "left exactly as supplied": a link with a scheme that executes
+  // (`javascript:`, `data:`) is dropped rather than stored, so an import can never plant one.
+  // The row still lands; only the unsafe link is left out.
+  const value: ContactInput = { ...input, fullName: name.data.fullName };
+  if (typeof value.website === "string" && value.website.trim() && !isSafeWebsiteUrl(value.website)) {
+    value.website = undefined;
+  }
+  if (typeof value.linkedinUrl === "string" && value.linkedinUrl.trim() && !safeHttpUrl(value.linkedinUrl)) {
+    value.linkedinUrl = undefined;
+  }
+  return { ok: true, value };
 }
 
 /**
@@ -181,8 +235,9 @@ function stripUndefined<T extends Record<string, unknown>>(obj: T) {
  * that touches one field cannot be rejected by another it never sends.
  */
 export function parseContactPatch(
-  input: Partial<ContactInput>
+  rawInput: Partial<ContactInput>
 ): Partial<ContactInput> {
+  const input = cleanContactFreeText(rawInput);
   const partial = z.object(baseShape).partial();
   const parsed = partial.safeParse(input);
   if (!parsed.success) {

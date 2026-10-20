@@ -1,3 +1,5 @@
+import { authErrorResponse, rateLimitGuard } from "@/lib/api/route-error";
+import { sameOriginGuard } from "@/lib/api/same-origin";
 import { NextResponse, after } from "next/server";
 import { captureImageFiles, normalizeCaptureInput, type CaptureMediaFile } from "@/lib/capture-ingest";
 import { discardCapturePhotos, storeCapturePhotos, type StoredCapturePhoto } from "@/lib/capture-photos";
@@ -21,10 +23,9 @@ import { assembleCaptureCorpus, runCaptureJobById } from "@/lib/capture-job-runn
 import { hashSourceNote } from "@/lib/suggested-reminder-utils";
 import { sanitizeMentionPicks, type MentionPick } from "@/lib/mentions/mention-picks";
 import type { CaptureJobSource } from "@/lib/capture/types";
-import { friendlyError, isMissingAiApiKeyError, MISSING_AI_API_KEY_MESSAGE } from "@/lib/errors";
-import { isPaywallError } from "@/lib/entitlements";
+import { isMissingAiApiKeyError, MISSING_AI_API_KEY_MESSAGE } from "@/lib/errors";
 import { requireUserForSurface } from "@/lib/plan-guards";
-import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { reportAndContinue, reportedFailure } from "@/lib/report-error";
 
 export const dynamic = "force-dynamic";
@@ -77,14 +78,11 @@ export async function POST(request: Request) {
   try {
     userId = await requireUserForSurface("page.capture");
   } catch (err) {
-    const status = isPaywallError(err) ? 403 : 401;
-    return NextResponse.json({ error: friendlyError(err, "Sign in to capture notes") }, { status });
+    return authErrorResponse(err, "Sign in to capture notes");
   }
 
-  const origin = request.headers.get("origin");
-  if (origin && URL.parse(origin)?.host !== new URL(request.url).host) {
-    return NextResponse.json({ error: "Cross-origin upload refused" }, { status: 403 });
-  }
+  const refused = sameOriginGuard(request, { message: "Cross-origin upload refused" });
+  if (refused) return refused;
   if (request.headers.get("x-orbit-capture") !== "1") {
     return NextResponse.json({ error: "Missing capture header" }, { status: 400 });
   }
@@ -167,18 +165,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "That upload was interrupted — try it again" }, { status: 409 });
   }
 
-  try {
-    if (continued) await consumeBucket("captureParts", userId, RATE_LIMITS.captureParts);
-    else await consumeBucket("capture", userId, RATE_LIMITS.capture);
-  } catch (err) {
-    if (isRateLimitedError(err)) {
-      return NextResponse.json(
-        { error: err.message },
-        { status: 429, headers: { "Retry-After": String(err.retryAfterSec) } }
-      );
-    }
-    throw err;
-  }
+  const limited = await rateLimitGuard(() =>
+    continued
+      ? consumeBucket("captureParts", userId, RATE_LIMITS.captureParts)
+      : consumeBucket("capture", userId, RATE_LIMITS.capture)
+  );
+  if (limited) return limited;
 
   const files: CaptureMediaFile[] = [];
   for (const f of uploads) {

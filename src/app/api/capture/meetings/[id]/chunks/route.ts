@@ -1,12 +1,12 @@
+import { authErrorResponse, rateLimitGuard } from "@/lib/api/route-error";
+import { sameOriginGuard } from "@/lib/api/same-origin";
 import { NextResponse } from "next/server";
 import { MEETING_CHUNK_MAX_BYTES } from "@/lib/capture-limits";
-import { friendlyError } from "@/lib/errors";
 import { chunkFailureResponse } from "@/lib/meeting-chunk-errors";
 import { reportedFailure } from "@/lib/report-error";
-import { isPaywallError } from "@/lib/entitlements";
 import { ingestMeetingChunk } from "@/lib/meeting-sessions";
 import { requireMeetingsUser } from "@/lib/plan-guards";
-import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 // One chunk is one transcription, whose own deadline is 90s (`TRANSCRIBE_TIMEOUT_MS`).
@@ -40,14 +40,11 @@ export async function POST(request: Request, ctx: Params) {
   try {
     userId = await requireMeetingsUser();
   } catch (err) {
-    const status = isPaywallError(err) ? 403 : 401;
-    return NextResponse.json({ error: friendlyError(err, "Sign in to record a meeting") }, { status });
+    return authErrorResponse(err, "Sign in to record a meeting");
   }
 
-  const origin = request.headers.get("origin");
-  if (origin && URL.parse(origin)?.host !== new URL(request.url).host) {
-    return NextResponse.json({ error: "Cross-origin upload refused" }, { status: 403 });
-  }
+  const refused = sameOriginGuard(request, { message: "Cross-origin upload refused" });
+  if (refused) return refused;
 
   const recorderId = request.headers.get("x-orbit-recorder");
   if (!recorderId) {
@@ -68,17 +65,8 @@ export async function POST(request: Request, ctx: Params) {
     return NextResponse.json({ error: "That chunk is too large" }, { status: 413 });
   }
 
-  try {
-    await consumeBucket("meetingChunk", userId, RATE_LIMITS.meetingChunk);
-  } catch (err) {
-    if (isRateLimitedError(err)) {
-      return NextResponse.json(
-        { error: err.message },
-        { status: 429, headers: { "Retry-After": String(err.retryAfterSec) } }
-      );
-    }
-    throw err;
-  }
+  const limited = await rateLimitGuard(() => consumeBucket("meetingChunk", userId, RATE_LIMITS.meetingChunk));
+  if (limited) return limited;
 
   let wav: Uint8Array | null = null;
   if (!silent) {

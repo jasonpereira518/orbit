@@ -1,3 +1,5 @@
+import { authErrorResponse, rateLimitGuard } from "@/lib/api/route-error";
+import { sameOriginGuard } from "@/lib/api/same-origin";
 import { NextResponse } from "next/server";
 import { chatMessages, type ChatRecommendation } from "@/db/schema";
 import { discardCountAfter, NotLastTurnError, resolveVersionTarget, truncateAfter } from "@/lib/chat-versions";
@@ -10,19 +12,28 @@ import { expandLists, peopleIdsIn, stripInvalidDirectives } from "@/lib/chat-dir
 import { answerDeadlineMs, maybeGather } from "@/lib/chat-gather";
 import { isHandle } from "@/lib/meeting-context";
 import { CHAT_QUESTION_TOO_LONG_MESSAGE, isChatQuestionTooLong } from "@/lib/chat-question";
-import { discardEmptyThread, discardUnansweredQuestion, persistAssistantTurn, trackChatAnswerFailed } from "@/lib/chat-persist";
+import {
+  discardEmptyThread,
+  discardUnansweredQuestion,
+  persistAssistantTurn,
+  supersedeDanglingQuestion,
+  trackChatAnswerFailed,
+  wasTurnStopped,
+} from "@/lib/chat-persist";
+import { isUuid } from "@/lib/input/ids";
+import { persistInterruptedAnswer } from "@/lib/chat-interrupted";
 import { createStepEmitter, deriveFollowUps, plural } from "@/lib/chat-steps";
 import { generateChatTitle, settleWithin, TITLE_GRACE_MS } from "@/lib/chat-title";
 import { formatSse, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
-import { citedIds, stripUnresolvedMarkers } from "@/lib/chat-evidence";
+import { citedIds, stripUnresolvedMarkers, type EvidenceSource } from "@/lib/chat-evidence";
 import { validateProposedActions } from "@/lib/chat-proposed-actions";
 import { friendlyError } from "@/lib/errors";
 import { traced } from "@/lib/perf-trace";
-import { isPaywallError } from "@/lib/entitlements";
-import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { reportedFailure, reportError } from "@/lib/report-error";
 import { createStreamRedactor } from "@/lib/ai-security";
+import { scrubModelText } from "@/lib/sentry-scrub";
 import { requireVisibleSurface } from "@/lib/surface-visibility";
 
 export const dynamic = "force-dynamic";
@@ -55,21 +66,16 @@ export async function POST(request: Request) {
     ({ userId, settings } = await requireAuthenticatedUser());
     await requireVisibleSurface(userId, "page.chat");
   } catch (err) {
-    const status = isPaywallError(err) ? 403 : 401;
-    return NextResponse.json({ error: friendlyError(err, "Sign in to chat") }, { status });
+    return authErrorResponse(err, "Sign in to chat");
   }
 
-  try {
-    await consumeBucket("chat", userId, RATE_LIMITS.chat);
-  } catch (err) {
-    if (isRateLimitedError(err)) {
-      return NextResponse.json(
-        { error: err.message },
-        { status: 429, headers: { "Retry-After": String(err.retryAfterSec) } }
-      );
-    }
-    throw err;
-  }
+  // Cookie-authenticated and reads JSON: refuse a cross-site caller before spending a bucket
+  // unit on it (audit L-01 — this was the one cookie route without the check).
+  const refused = sameOriginGuard(request, { json: true });
+  if (refused) return refused;
+
+  const limited = await rateLimitGuard(() => consumeBucket("chat", userId, RATE_LIMITS.chat));
+  if (limited) return limited;
 
   const body = (await request.json().catch(() => null)) as
     | {
@@ -78,10 +84,13 @@ export async function POST(request: Request) {
         contactId?: unknown;
         contextContactIds?: unknown;
         versionOf?: unknown;
+        turnId?: unknown;
       }
     | null;
   const threadId = typeof body?.threadId === "string" ? body.threadId : null;
   const contactId = typeof body?.contactId === "string" ? body.contactId : null;
+  // Minted by the client per question, so a Stop can be told apart from a dropped connection.
+  const turnId = isUuid(body?.turnId) ? body.turnId : null;
   // Ids the composer resolved from its `@Name` chips. Bounded and re-checked against the
   // user's own rows in `loadAttachedPeople`, so a forged id reaches nothing.
   const contextContactIds = Array.isArray(body?.contextContactIds)
@@ -144,6 +153,13 @@ export async function POST(request: Request) {
       const steps = createStepEmitter((step) => send({ type: "step", step }));
       // Hoisted out of the try so the failure path can clear a question nothing answered.
       let persistedUserMessageId: string | null = null;
+      // What a dropped connection keeps (audit L-25): the redacted text already shown, the
+      // evidence ids and blocks it may reference, and the question it answers.
+      let streamedAnswer = "";
+      let shownEvidence: Record<string, EvidenceSource> = {};
+      let shownBlocks: ReturnType<typeof buildChatBlocks> | null = null;
+      let askedQuestion: string | null = null;
+      let threadTitle: string | null = null;
       try {
         // The account's AI access, resolved ONCE for the whole question from the row the
         // auth gate already read — the decider, query embedding, parse, rerank, writing
@@ -173,9 +189,12 @@ export async function POST(request: Request) {
           steps,
           excludeSlot: versionTarget?.slot ?? null,
           access,
+          signal: request.signal,
         });
         if (threadId) {
           const db = await getDb();
+          // A re-ask after a dropped connection replaces the copy that was kept unanswered.
+          if (!versionTarget) await supersedeDanglingQuestion(userId, threadId, ctx.q).catch(() => {});
           const [userRow] = await db
             .insert(chatMessages)
             .values({
@@ -187,6 +206,7 @@ export async function POST(request: Request) {
               // `loadAttachedPeople` actually found and put in front of the model, so the mark
               // on a reloaded thread describes what the answer was really given.
               attachedContacts: ctx.attachedPeople.map((p) => ({ id: p.id, name: p.name })),
+              clientTurnId: versionTarget ? null : turnId,
               ...(versionTarget
                 ? { slot: versionTarget.slot, version: versionTarget.nextVersion, isActive: false }
                 : {}),
@@ -215,6 +235,9 @@ export async function POST(request: Request) {
         // a block renders the moment its line arrives. Built after research, which can add
         // people the answer may name.
         const blocks = buildChatBlocks(ctx);
+        shownBlocks = blocks;
+        askedQuestion = ctx.q;
+        threadTitle = ctx.thread?.title ?? null;
         send({ type: "blocks", blocks });
 
         steps.start("answer", "Writing the answer");
@@ -235,7 +258,10 @@ export async function POST(request: Request) {
               ctx.modelRecruiters,
               (delta) => {
                 const safe = redactor.push(delta);
-                if (safe) send({ type: "answer", delta: safe });
+                if (safe) {
+                  streamedAnswer += safe;
+                  send({ type: "answer", delta: safe });
+                }
               },
               ctx.focusProfile,
               ctx.attachedContext,
@@ -257,6 +283,7 @@ export async function POST(request: Request) {
                 // Every id the prompt minted, so `[eN]` becomes a chip as it streams. The cited
                 // subset replaces this once the answer is done.
                 onEvidence: (all) => {
+                  shownEvidence = all;
                   if (Object.keys(all).length) send({ type: "evidence", items: all });
                 },
               }
@@ -324,7 +351,7 @@ export async function POST(request: Request) {
         // A JSON tail that did not parse used to mean zero cards and zero actions with no trace
         // anywhere. The answer still stands; this only makes the loss visible.
         if (result.parseError) {
-          reportError(new Error(`chat answer JSON did not parse: ${result.parseError}`), {
+          reportError(new Error(scrubModelText(`chat answer JSON did not parse: ${result.parseError}`)), {
             where: "chat.stream.recommendations",
             userId,
             level: "warning",
@@ -387,12 +414,40 @@ export async function POST(request: Request) {
         });
       } catch (err) {
         // The question was written before the model ran (it carries the attached people and,
-        // on a regenerate, the slot). Nothing answered it — a failure or a Stop alike — so it
-        // does not stay. Before the client-gone return: a Stop is exactly when it is gone.
-        await discardUnansweredQuestion(userId, threadId, persistedUserMessageId).catch(() => {});
-        // A first message that never got an answer leaves the thread empty: remove it too
-        // (a no-op when the thread has any message).
-        await discardEmptyThread(userId, threadId).catch(() => {});
+        // on a regenerate, the slot). A failure or a Stop discards it: nothing answered it.
+        // A dropped connection (a closed tab, a network blip) keeps it, so what the person
+        // typed is still in the thread when they come back (audit L-25); the server cannot
+        // tell that from a Stop by the abort alone, so a Stop is marked by the client
+        // (`markTurnStopped`), which also covers a mark that lands after this runs.
+        // A version turn always goes: its row is inactive and means nothing on its own.
+        const keep =
+          request.signal.aborted &&
+          !versionTarget &&
+          !(await wasTurnStopped(userId, threadId, turnId).catch(() => false));
+        if (keep && persistedUserMessageId && streamedAnswer.trim() && shownBlocks && askedQuestion) {
+          // Keep what the person already watched arrive, marked as cut off, rather than a
+          // question with nothing under it. Cleaned the way a finished answer is: no citation
+          // or block the server never offered survives into storage.
+          await persistInterruptedAnswer({
+            userId,
+            threadId,
+            turnId,
+            question: askedQuestion,
+            title: threadTitle,
+            answer: streamedAnswer,
+            evidence: shownEvidence,
+            blocks: shownBlocks,
+            activity: steps.snapshot(),
+          }).catch((persistErr) => {
+            reportError(persistErr, { where: "route.chat.interrupted", userId, level: "warning" });
+          });
+        }
+        if (!keep) {
+          await discardUnansweredQuestion(userId, threadId, persistedUserMessageId).catch(() => {});
+          // A first message that never got an answer leaves the thread empty: remove it too
+          // (a no-op when the thread has any message).
+          await discardEmptyThread(userId, threadId).catch(() => {});
+        }
         // The client is gone: there is nobody to tell, and enqueueing now would throw. Not
         // an error of ours either — the provider call was aborted on purpose.
         if (request.signal.aborted) return;
@@ -420,3 +475,4 @@ export async function POST(request: Request) {
     },
   });
 }
+

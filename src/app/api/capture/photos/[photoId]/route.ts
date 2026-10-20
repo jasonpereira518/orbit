@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { withMediaResourcePolicy } from "@/lib/media-headers";
 import { getDb } from "@/db";
 import { capturePhotos } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
@@ -21,7 +22,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  *
  * `?download=1` flips the disposition to an attachment under the file's original name.
  */
-export async function GET(req: Request, { params }: Params) {
+async function serve(req: Request, { params }: Params) {
   let userId: string;
   try {
     userId = await requireUserId();
@@ -70,11 +71,18 @@ export async function GET(req: Request, { params }: Params) {
 
   if (photo.storage === "blob") {
     if (!photo.blobUrl) return new NextResponse(null, { status: 404 });
-    const upstream = await fetch(photo.blobUrl, { cache: "no-store" });
+    // Bounded so a stalled blob store fails this request instead of holding it open.
+    const upstream = await fetch(photo.blobUrl, { cache: "no-store", signal: AbortSignal.timeout(20_000) }).catch(() => null);
+    if (!upstream) return new NextResponse(null, { status: 504 });
     if (!upstream.ok || !upstream.body) return new NextResponse(null, { status: 404 });
     return new NextResponse(upstream.body, { headers });
   }
 
   if (!photo.inlineData) return new NextResponse(null, { status: 404 });
   return new NextResponse(new Uint8Array(Buffer.from(photo.inlineData, "base64")), { headers });
+}
+
+/** Every response, redirects and misses included, is same-origin only (audit L-09). */
+export async function GET(req: Request, ctx: Params) {
+  return withMediaResourcePolicy(await serve(req, ctx));
 }

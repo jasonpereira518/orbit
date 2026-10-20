@@ -123,7 +123,7 @@ function enclosingFunctionName(node: ts.Node): string {
   return "<module>";
 }
 
-type ComparisonSite = { key: string; file: string; line: number; fn: string; value: string };
+type ComparisonSite = { key: string; stableKey: string; file: string; line: number; fn: string; value: string };
 
 function findComparisons(file: string, sf: ts.SourceFile): ComparisonSite[] {
   const hits: ComparisonSite[] = [];
@@ -136,12 +136,19 @@ function findComparisons(file: string, sf: ts.SourceFile): ComparisonSite[] {
       NARROWED_PROVIDERS.has(node.right.text)
     ) {
       const { line } = sf.getLineAndCharacterOfPosition(node.getStart());
+      const fn = enclosingFunctionName(node);
+      const value = node.right.text;
+      const nth = hits.filter((h) => h.fn === fn && h.value === value).length + 1;
       hits.push({
+        // Shown in messages, so a failure points at the line.
         key: `${file}:${line + 1}`,
+        // What the allowlist is keyed by: the function, the literal and which occurrence of
+        // that pair it is. Line numbers shifted with every unrelated edit to the file.
+        stableKey: `${file} ${fn} === "${value}" #${nth}`,
         file,
         line: line + 1,
-        fn: enclosingFunctionName(node),
-        value: node.right.text,
+        fn,
+        value,
       });
     }
     ts.forEachChild(node, visit);
@@ -170,34 +177,36 @@ const OPENROUTER_ROUTED_AWAY =
   "that earlier branch honest (every .create( it reaches goes through withOpenRouterRouting).";
 
 const ALLOWLIST: Record<string, string> = {
-  "src/lib/ai-access.ts:767": "the branch is keyed on the completion provider being " +
+  "src/lib/ai-access.ts embeddingRefusal === \"anthropic\" #1": "the branch is keyed on the completion provider being " +
     "\"anthropic\" (the one provider with no embeddings API at all), to pick the copy that " +
     "names OpenAI/Gemini as the fix; every other provider — openrouter included — falls " +
     "through to the same generic embedding-refusal copy.",
-  "src/lib/ai-access.ts:414": "isOpenAiShaped's own body: `provider === \"openai\" || " +
+  "src/lib/ai-access.ts isOpenAiShaped === \"openai\" #1": "isOpenAiShaped's own body: `provider === \"openai\" || " +
     "provider === \"openrouter\"` — the second half is the literal \"openrouter\" itself, " +
     "which this checker does not flag; together the two are exhaustive for what this " +
     "predicate means to answer.",
-  "src/lib/ai-providers.ts:234": "one statement, `value === \"openai\" || value === " +
+  "src/lib/ai-providers.ts resolveAiProvider === \"openai\" #1": "same statement as the \"gemini\" entry for resolveAiProvider — see it.",
+  "src/lib/ai-providers.ts resolveAiProvider === \"anthropic\" #1": "same statement as the \"gemini\" entry for resolveAiProvider — see it.",
+  "src/lib/ai-providers.ts resolveAiProvider === \"gemini\" #1": "one statement, `value === \"openai\" || value === " +
     "\"anthropic\" || value === \"gemini\" || value === \"openrouter\"` — the fourth arm is " +
     "the literal \"openrouter\" itself, which this checker does not flag because it isn't " +
     "one of the three narrowed literals; together the four are exhaustive over AiProvider.",
-  "src/lib/ai-providers.ts:243": "modelBelongsToProvider has a fourth `if (provider === " +
+  "src/lib/ai-providers.ts modelBelongsToProvider === \"gemini\" #1": "modelBelongsToProvider has a fourth `if (provider === " +
     "\"openrouter\") return model.includes(\"/\")` right after this one; the four checks " +
     "together are exhaustive over AiProvider.",
-  "src/lib/ai-providers.ts:244": "same function as line 243 — see that entry.",
-  "src/lib/ai-providers.ts:247": "same function as line 243 — see that entry.",
+  "src/lib/ai-providers.ts modelBelongsToProvider === \"openai\" #1": "same function as line 243 — see that entry.",
+  "src/lib/ai-providers.ts modelBelongsToProvider === \"anthropic\" #1": "same function as line 243 — see that entry.",
   // Fix round 1: the old openai-literal arm here fell through to the Gemini branch for an
   // openrouter grant, throwing `No gemini grant` — fails closed, but breaks every chat
   // tool call for an OpenRouter user. Widened to isOpenAiShaped, same shape as ai.ts, so
   // only the anthropic arm's own literal is left for check 1 to find.
-  "src/lib/ai-tools.ts:131": OPENROUTER_ROUTED_AWAY + " (createToolDriver's anthropic arm; " +
+  "src/lib/ai-tools.ts createToolDriver === \"anthropic\" #1": OPENROUTER_ROUTED_AWAY + " (createToolDriver's anthropic arm; " +
     "openai and openrouter both now take the isOpenAiShaped branch below, leaving only " +
     "Gemini as this arm's fallthrough.)",
-  "src/lib/admin-metrics.ts:356": "the \"openai\" arm of the four-way ternary that now also " +
+  "src/lib/admin-metrics.ts <anonymous> === \"openai\" #1": "the \"openai\" arm of the four-way ternary that now also " +
     "checks \"anthropic\" and \"openrouter\" explicitly (this commit added the openrouter " +
     "arm and its query column), defaulting to gemini — exhaustive over AiProvider.",
-  "src/lib/admin-metrics.ts:358": "the \"anthropic\" arm of the same ternary — see line 356.",
+  "src/lib/admin-metrics.ts <anonymous> === \"anthropic\" #1": "the \"anthropic\" arm of the same ternary — see line 328.",
   // Task 3 widened the completion arms of these cascades — completeJson,
   // completeMultimodalJsonInner and streamText, but NOT transcribeAudioWithAI, reverted in
   // fix round 1 (see its own entry below) — to `isOpenAiShaped(...)`, which already admits
@@ -206,71 +215,71 @@ const ALLOWLIST: Record<string, string> = {
   // comparison left for check 1 to find, and each one's implicit fallback (openai or
   // openrouter now both routed away from it, leaving only anthropic reachable below) is
   // exhaustive without an explicit openrouter arm of its own.
-  "src/lib/ai.ts:615": OPENROUTER_ROUTED_AWAY + " (completeJson's gemini arm; openai and " +
+  "src/lib/ai.ts <anonymous> === \"gemini\" #1": OPENROUTER_ROUTED_AWAY + " (completeJson's gemini arm; openai and " +
     "openrouter both now take the isOpenAiShaped branch above the implicit Anthropic " +
     "fallback, which is what's unreachable for openrouter.)",
-  "src/lib/ai.ts:760": OPENROUTER_ROUTED_AWAY + " (completeMultimodalJsonInner's gemini arm; " +
-    "see ai.ts:615.)",
+  "src/lib/ai.ts completeMultimodalJsonInner === \"gemini\" #1": OPENROUTER_ROUTED_AWAY + " (completeMultimodalJsonInner's gemini arm; " +
+    "see ai.ts:639.)",
   // Fix round 1 reverted transcribeAudioWithAI's isOpenAiShaped widening: the SDK encodes
   // this call's params as multipart form data, where withOpenRouterRouting's nested
   // `provider: {...}` would serialise as "[object Object]" rather than a real field, and
   // "whisper-1" is not a valid OpenRouter model slug regardless — so this is back to a
   // bare openai literal, and openrouter is never granted here (access.transcription()
   // only ever returns openai/gemini), same reasoning as the original Task 2 allowlisting.
-  "src/lib/ai.ts:1046": "transcription() (ai-access.ts) only ever grants \"openai\" or " +
+  "src/lib/ai.ts transcribeAudioWithAI === \"openai\" #1": "transcription() (ai-access.ts) only ever grants \"openai\" or " +
     "\"gemini\" — Anthropic has no speech-to-text and OpenRouter transcription is " +
     "deliberately not wired up (multipart body, no valid model slug); the two are " +
     "exhaustive for every grant transcribeAudioWithAI can receive today.",
-  "src/lib/ai.ts:2315": OPENROUTER_ROUTED_AWAY + " (streamText's gemini arm; see ai.ts:615.)",
+  "src/lib/ai.ts <anonymous> === \"gemini\" #2": OPENROUTER_ROUTED_AWAY + " (streamText's gemini arm; see ai.ts:639.)",
   // webSearchJson: four explicit arms in order — gemini, openrouter, openai, then anthropic
   // as the fallthrough. OpenRouter has its own arm (its search is a request plugin, not the
   // Responses API tool the openai arm uses), so neither literal below can receive it.
-  "src/lib/ai.ts:2833": "webSearchJson's gemini arm; the explicit `provider === \"openrouter\"` " +
+  "src/lib/ai.ts <anonymous> === \"gemini\" #3": "webSearchJson's gemini arm; the explicit `provider === \"openrouter\"` " +
     "arm follows it, so the four arms are exhaustive over AiProvider.",
-  "src/lib/ai.ts:2894": "webSearchJson's openai arm — OpenRouter took its own explicit arm just " +
+  "src/lib/ai.ts <anonymous> === \"openai\" #1": "webSearchJson's openai arm — OpenRouter took its own explicit arm just " +
     "above (plugin-based search, not the Responses API), so it never reaches this one.",
-  "src/lib/errors.ts:37": "aiProviderLabel has a fourth `provider === \"openrouter\" ? " +
+  "src/lib/errors.ts aiProviderLabel === \"gemini\" #1": "aiProviderLabel has a fourth `provider === \"openrouter\" ? " +
     "\"OpenRouter\"` arm right after this one; the four checks together are exhaustive.",
-  "src/lib/errors.ts:39": "same function as line 37 — see that entry.",
-  "src/lib/managed-ai-policy.ts:323": "the \"anthropic\" half of `selected === \"anthropic\" " +
+  "src/lib/errors.ts aiProviderLabel === \"openai\" #1": "same function as line 37 — see that entry.",
+  "src/lib/managed-ai-policy.ts chooseEmbeddingKey === \"anthropic\" #1": "the \"anthropic\" half of `selected === \"anthropic\" " +
     "|| selected === \"openrouter\"` (this commit's fix) — the openrouter half is the " +
     "literal on the same line, which this checker does not flag; both fall to the plain " +
     "EMBEDDING_ORDER, per the comment above EMBEDDING_ORDER.",
-  "src/lib/managed-ai-policy.ts:332": "managedOrder only ever chooses between \"openai\" and " +
+  "src/lib/managed-ai-policy.ts chooseEmbeddingKey === \"openai\" #1": "managedOrder only ever chooses between \"openai\" and " +
     "\"gemini\": Orbit holds no managed OpenRouter key (facts.managed.openrouter is " +
     "hardcoded false and MANAGED_PROVIDER_ORDER excludes it), so no selected provider — " +
     "openrouter included — ever needs a third slot here.",
-  "src/lib/admin-user-detail.ts:570": "the \"openai\" arm of the four-way ternary that now " +
+  "src/lib/admin-user-detail.ts getAdminUserDetail === \"openai\" #1": "the \"openai\" arm of the four-way ternary that now " +
     "also checks \"anthropic\" and \"openrouter\" explicitly (this commit added the " +
     "openrouter arm and its keys.openrouter column), defaulting to gemini.",
-  "src/lib/admin-user-detail.ts:572": "the \"anthropic\" arm of the same ternary — see line 570.",
-  "src/actions/settings.ts:127": "the \"gemini\" arm of the four-way `hasPersonalKey` " +
+  "src/lib/admin-user-detail.ts getAdminUserDetail === \"anthropic\" #1": "the \"anthropic\" arm of the same ternary — see line 570.",
+  "src/actions/settings.ts <anonymous> === \"gemini\" #1": "the \"gemini\" arm of the four-way `hasPersonalKey` " +
     "ternary that now also checks \"openai\" and \"anthropic\" explicitly, defaulting to " +
     "settings?.openrouterApiKeyEncrypted (this fix round's fix — it used to default to the " +
     "anthropic key for an openrouter row) — exhaustive over AiProvider.",
-  "src/actions/settings.ts:123": "the \"openai\" arm of the same ternary — see line 121.",
-  "src/actions/settings.ts:125": "the \"anthropic\" arm of the same ternary — see line 121; " +
+  "src/actions/settings.ts <anonymous> === \"openai\" #1": "the \"openai\" arm of the same ternary — see line 121.",
+  "src/actions/settings.ts <anonymous> === \"anthropic\" #1": "the \"anthropic\" arm of the same ternary — see line 121; " +
     "this is the comparison that was added, moving openrouter off the anthropic default.",
-  "src/lib/outreach-readiness-server.ts:82": "the \"gemini\" arm of hasAiKeyFor's " +
+  "src/lib/outreach-readiness-server.ts hasAiKeyFor === \"gemini\" #1": "the \"gemini\" arm of hasAiKeyFor's " +
     "personal-key ternary, which now has an explicit `provider === \"openrouter\"` arm " +
     "reading openrouterApiKeyEncrypted before the `: null` default. It did NOT until the " +
     "merge of main brought this checker alongside this file: an OpenRouter account's own " +
     "key fell to null, so `hasAiKey` read false and outreach readiness told a user with a " +
     "working key to go add one. Exhaustive over AiProvider now.",
-  "src/lib/outreach-readiness-server.ts:84": "the \"openai\" arm of the same ternary — see line 82.",
-  "src/lib/outreach-readiness-server.ts:86": "the \"anthropic\" arm of the same ternary — see line 82.",
-  "src/lib/ai-settings-write.ts:125": "one of four INDEPENDENT `provider === X && encrypted` " +
+  "src/lib/outreach-readiness-server.ts hasAiKeyFor === \"openai\" #1": "the \"openai\" arm of the same ternary — see line 82.",
+  "src/lib/outreach-readiness-server.ts hasAiKeyFor === \"anthropic\" #1": "the \"anthropic\" arm of the same ternary — see line 82.",
+  "src/lib/ai-settings-write.ts applyAiKeyChange === \"gemini\" #1": "one of four INDEPENDENT `provider === X && encrypted` " +
     "ternaries, one per key column of nextKeyState — each keys off its own literal with no " +
     "shared fallthrough default, so no cascade needs an openrouter arm; openrouterApiKeyEncrypted " +
     "has its own `provider === \"openrouter\"` line right below the three narrowed ones. " +
     "(applyAiKeyChange, moved here from src/actions/settings.ts by Task 5's fix round 1 — " +
     "that file is \"use server\", which made the function a directly-POST-able Server " +
     "Action despite taking a caller-supplied userId.)",
-  "src/lib/ai-settings-write.ts:129": "same independent-ternary shape as line 97 — see that entry.",
-  "src/lib/ai-settings-write.ts:133": "same independent-ternary shape as line 97 — see that entry.",
+  "src/lib/ai-settings-write.ts applyAiKeyChange === \"openai\" #1": "same independent-ternary shape as line 97 — see that entry.",
+  "src/lib/ai-settings-write.ts applyAiKeyChange === \"anthropic\" #1": "same independent-ternary shape as line 97 — see that entry.",
   // Surfaced by this fix round widening the walk to src/app and src/components — which is
   // where finding 1's shipped-OpenRouter-picker bug was hiding.
-  "src/components/settings/ai-settings.tsx:289": "the standalone \"Anthropic has no " +
+  "src/components/settings/ai-settings.tsx AiSettings === \"anthropic\" #1": "the standalone \"Anthropic has no " +
     "embeddings API\" notice, keyed on the one provider that genuinely has none. It is not a " +
     "cascade and has no fallthrough default: every other provider, openrouter included, " +
     "simply renders no notice — correctly, since EMBEDDING_MODELS.openrouter is a real " +
@@ -296,14 +305,14 @@ function checkExhaustiveness() {
   }
   check("found comparisons to review (the check itself is not vacuous)", sites.length > 0, String(sites.length));
   for (const site of sites) {
-    const reason = ALLOWLIST[site.key];
+    const reason = ALLOWLIST[site.stableKey];
     check(
       `${site.key} (${site.fn}, === "${site.value}")`,
       Boolean(reason),
-      reason ?? "not in ALLOWLIST — add the openrouter arm, or an allowlist reason"
+      reason ?? `not in ALLOWLIST — add the openrouter arm, or an allowlist entry keyed "${site.stableKey}"`
     );
   }
-  const stale = Object.keys(ALLOWLIST).filter((key) => !sites.some((s) => s.key === key));
+  const stale = Object.keys(ALLOWLIST).filter((key) => !sites.some((s) => s.stableKey === key));
   check("no allowlist entry outlives the site it excuses", stale.length === 0, stale.join(", "));
 }
 

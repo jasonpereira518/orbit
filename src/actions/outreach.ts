@@ -11,7 +11,8 @@ import {
   type AudienceFilters,
   type OutreachSequenceStep,
 } from "@/db/schema";
-import { createContact, logInteraction } from "@/actions/contacts";
+import { logInteraction } from "@/actions/contacts";
+import { resolveOrCreateContact } from "@/lib/contact-resolve";
 import { listActiveGoalTexts } from "@/actions/goals";
 import {
   companyMatchesOrganizations,
@@ -20,7 +21,6 @@ import {
   searchPeople,
   userHasApolloKey,
 } from "@/lib/apollo";
-import { requireUserId } from "@/lib/auth";
 import { requireOutreachUser } from "@/lib/plan-guards";
 import {
   isDeliveredMessage,
@@ -30,6 +30,7 @@ import {
 } from "@/lib/outreach-metrics";
 import { campaignMetricAggregates, metricsFromAggregates } from "@/lib/outreach-metrics-sql";
 import {
+  chargeOutreachDraftRun,
   generateOutreachDraft,
   generateOutreachDraftsBatch,
 } from "@/lib/outreach-drafts";
@@ -53,6 +54,13 @@ import {
 import { asActionResult, UserFacingError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { actionFailure } from "@/lib/action-failure";
+import { z } from "zod";
+import { defineAction, failResult } from "@/lib/input/action";
+import { anyNumber, uuid } from "@/lib/input/schemas";
+
+// Argument shapes, generated from the handlers' parameter types.
+const AudienceFiltersSchema = z.looseObject({ titles: z.array(z.string()).optional(), locations: z.array(z.string()).optional(), industries: z.array(z.string()).optional(), keywords: z.string().optional(), seniorities: z.array(z.string()).optional(), organizationNames: z.array(z.string()).optional(), organizationDomains: z.array(z.string()).optional() });
+const SequenceStepSchema = z.looseObject({ delayDays: anyNumber, intent: z.string().optional() });
 
 async function requireCampaign(userId: string, campaignId: string) {
   const db = await getDb();
@@ -166,156 +174,164 @@ async function priorNotesForContacts(userId: string, contactIds: string[]) {
  * a campaign. The list only ever used the prospect/message tree it used to load to count it:
  * the card shows `metrics.prospectCount` for the prospects it used to `.length`.
  */
-export async function listCampaigns() {
-  const userId = await requireUserId();
-  const db = await getDb();
-  const rows = await db
-    .select({
-      campaign: outreachCampaigns,
-      counts: campaignMetricAggregates(new Date()),
-    })
-    .from(outreachCampaigns)
-    .leftJoin(outreachProspects, eq(outreachProspects.campaignId, outreachCampaigns.id))
-    .leftJoin(outreachMessages, eq(outreachMessages.prospectId, outreachProspects.id))
-    .where(eq(outreachCampaigns.userId, userId))
-    .groupBy(outreachCampaigns.id)
-    .orderBy(desc(outreachCampaigns.updatedAt), desc(outreachCampaigns.id));
+export const listCampaigns = defineAction(
+  {},
+  async (userId) => {
+    const db = await getDb();
+    const rows = await db
+      .select({
+        campaign: outreachCampaigns,
+        counts: campaignMetricAggregates(new Date()),
+      })
+      .from(outreachCampaigns)
+      .leftJoin(outreachProspects, eq(outreachProspects.campaignId, outreachCampaigns.id))
+      .leftJoin(outreachMessages, eq(outreachMessages.prospectId, outreachProspects.id))
+      .where(eq(outreachCampaigns.userId, userId))
+      .groupBy(outreachCampaigns.id)
+      .orderBy(desc(outreachCampaigns.updatedAt), desc(outreachCampaigns.id));
 
-  return rows.map(({ campaign, counts }) => ({
-    ...campaign,
-    metrics: metricsFromAggregates(counts),
-  }));
-}
+    return rows.map(({ campaign, counts }) => ({
+      ...campaign,
+      metrics: metricsFromAggregates(counts),
+    }));
+  }
+);
 
-export async function getCampaign(campaignId: string) {
-  const userId = await requireUserId();
-  const db = await getDb();
-  const campaign = await db.query.outreachCampaigns.findFirst({
-    where: and(
-      eq(outreachCampaigns.id, campaignId),
-      eq(outreachCampaigns.userId, userId)
-    ),
-    with: {
-      prospects: {
-        orderBy: [desc(outreachProspects.createdAt)],
-        with: {
-          messages: {
-            orderBy: [desc(outreachMessages.updatedAt)],
+export const getCampaign = defineAction(
+  { schema: z.tuple([uuid]) },
+  async (userId, campaignId: string) => {
+    const db = await getDb();
+    const campaign = await db.query.outreachCampaigns.findFirst({
+      where: and(
+        eq(outreachCampaigns.id, campaignId),
+        eq(outreachCampaigns.userId, userId)
+      ),
+      with: {
+        prospects: {
+          orderBy: [desc(outreachProspects.createdAt)],
+          with: {
+            messages: {
+              orderBy: [desc(outreachMessages.updatedAt)],
+            },
           },
         },
       },
-    },
-  });
-  if (!campaign) throw new Error("Campaign not found");
+    });
+    if (!campaign) throw new Error("Campaign not found");
 
-  const metrics = computeCampaignMetrics(campaign.prospects);
-  return {
-    ...campaign,
-    metrics,
-    channelBreakdown: computeChannelBreakdown(campaign.prospects),
-    stepBreakdown: computeStepBreakdown(campaign.prospects),
-  };
-}
+    const metrics = computeCampaignMetrics(campaign.prospects);
+    return {
+      ...campaign,
+      metrics,
+      channelBreakdown: computeChannelBreakdown(campaign.prospects),
+      stepBreakdown: computeStepBreakdown(campaign.prospects),
+    };
+  }
+);
 
-export async function getOutreachPerformanceSummary() {
-  const userId = await requireUserId();
-  const db = await getDb();
+export const getOutreachPerformanceSummary = defineAction(
+  {},
+  async (userId) => {
+    const db = await getDb();
 
-  // One row of counts a campaign, aggregated in SQL — it used to load every prospect and
-  // message of every campaign to count them here. Same order as the outreach list.
-  const campaigns = await db
-    .select({
-      id: outreachCampaigns.id,
-      name: outreachCampaigns.name,
-      status: outreachCampaigns.status,
-      defaultChannel: outreachCampaigns.defaultChannel,
-      counts: campaignMetricAggregates(new Date()),
-    })
-    .from(outreachCampaigns)
-    .leftJoin(outreachProspects, eq(outreachProspects.campaignId, outreachCampaigns.id))
-    .leftJoin(outreachMessages, eq(outreachMessages.prospectId, outreachProspects.id))
-    .where(eq(outreachCampaigns.userId, userId))
-    .groupBy(outreachCampaigns.id)
-    .orderBy(desc(outreachCampaigns.updatedAt), desc(outreachCampaigns.id));
+    // One row of counts a campaign, aggregated in SQL — it used to load every prospect and
+    // message of every campaign to count them here. Same order as the outreach list.
+    const campaigns = await db
+      .select({
+        id: outreachCampaigns.id,
+        name: outreachCampaigns.name,
+        status: outreachCampaigns.status,
+        defaultChannel: outreachCampaigns.defaultChannel,
+        counts: campaignMetricAggregates(new Date()),
+      })
+      .from(outreachCampaigns)
+      .leftJoin(outreachProspects, eq(outreachProspects.campaignId, outreachCampaigns.id))
+      .leftJoin(outreachMessages, eq(outreachMessages.prospectId, outreachProspects.id))
+      .where(eq(outreachCampaigns.userId, userId))
+      .groupBy(outreachCampaigns.id)
+      .orderBy(desc(outreachCampaigns.updatedAt), desc(outreachCampaigns.id));
 
-  const withMetrics = campaigns.map(({ counts, ...campaign }) => ({
-    ...campaign,
-    metrics: metricsFromAggregates(counts),
-  }));
-
-  const ranked = [...withMetrics]
-    .filter((c) => c.metrics.sentCount > 0)
-    .sort((a, b) => {
-      const aRate = a.metrics.successfulReplyRate ?? -1;
-      const bRate = b.metrics.successfulReplyRate ?? -1;
-      if (bRate !== aRate) return bRate - aRate;
-      return b.metrics.positiveReplyCount - a.metrics.positiveReplyCount;
-    })
-    .slice(0, 5)
-    .map((c) => ({
-      id: c.id,
-      name: c.name,
-      metrics: c.metrics,
-      defaultChannel: c.defaultChannel,
-      status: c.status,
+    const withMetrics = campaigns.map(({ counts, ...campaign }) => ({
+      ...campaign,
+      metrics: metricsFromAggregates(counts),
     }));
 
-  const totals = withMetrics.reduce(
-    (acc, c) => {
-      acc.sent += c.metrics.sentCount;
-      acc.bounced += c.metrics.bouncedCount;
-      acc.positive += c.metrics.positiveReplyCount;
-      acc.replies += c.metrics.replyCount;
-      return acc;
-    },
-    { sent: 0, bounced: 0, positive: 0, replies: 0 }
-  );
-  const eligible = Math.max(0, totals.sent - totals.bounced);
+    const ranked = [...withMetrics]
+      .filter((c) => c.metrics.sentCount > 0)
+      .sort((a, b) => {
+        const aRate = a.metrics.successfulReplyRate ?? -1;
+        const bRate = b.metrics.successfulReplyRate ?? -1;
+        if (bRate !== aRate) return bRate - aRate;
+        return b.metrics.positiveReplyCount - a.metrics.positiveReplyCount;
+      })
+      .slice(0, 5)
+      .map((c) => ({
+        id: c.id,
+        name: c.name,
+        metrics: c.metrics,
+        defaultChannel: c.defaultChannel,
+        status: c.status,
+      }));
 
-  return {
-    topCampaigns: ranked,
-    accountMetrics: {
-      sentCount: totals.sent,
-      replyCount: totals.replies,
-      positiveReplyCount: totals.positive,
-      successfulReplyRate: eligible > 0 ? totals.positive / eligible : null,
-      campaignCount: campaigns.length,
-    },
-  };
-}
+    const totals = withMetrics.reduce(
+      (acc, c) => {
+        acc.sent += c.metrics.sentCount;
+        acc.bounced += c.metrics.bouncedCount;
+        acc.positive += c.metrics.positiveReplyCount;
+        acc.replies += c.metrics.replyCount;
+        return acc;
+      },
+      { sent: 0, bounced: 0, positive: 0, replies: 0 }
+    );
+    const eligible = Math.max(0, totals.sent - totals.bounced);
 
-export async function createCampaign(input: {
-  name: string;
-  audienceQuery: string;
-  audienceFilters?: AudienceFilters;
-  replyCta?: string | null;
-  sequenceSteps?: SequenceStep[];
-}) {
-  const userId = await requireOutreachUser();
-  const db = await getDb();
+    return {
+      topCampaigns: ranked,
+      accountMetrics: {
+        sentCount: totals.sent,
+        replyCount: totals.replies,
+        positiveReplyCount: totals.positive,
+        successfulReplyRate: eligible > 0 ? totals.positive / eligible : null,
+        campaignCount: campaigns.length,
+      },
+    };
+  }
+);
 
-  const filters =
-    input.audienceFilters ??
-    (input.audienceQuery.trim()
-      ? await parseAudienceToFilters(userId, input.audienceQuery)
-      : {});
+export const createCampaign = defineAction(
+  { auth: () => requireOutreachUser(), schema: z.tuple([z.looseObject({ name: z.string(), audienceQuery: z.string(), audienceFilters: AudienceFiltersSchema.optional(), replyCta: z.string().nullish(), sequenceSteps: z.array(SequenceStepSchema).optional() })]) },
+  async (userId, input: {
+    name: string;
+    audienceQuery: string;
+    audienceFilters?: AudienceFilters;
+    replyCta?: string | null;
+    sequenceSteps?: SequenceStep[];
+  }) => {
+    const db = await getDb();
 
-  const [campaign] = await db
-    .insert(outreachCampaigns)
-    .values({
-      userId,
-      name: input.name.trim() || "Untitled campaign",
-      audienceQuery: input.audienceQuery.trim(),
-      audienceFilters: filters,
-      replyCta: input.replyCta ?? null,
-      sequenceSteps: (input.sequenceSteps ?? []) as OutreachSequenceStep[],
-      status: "draft",
-    })
-    .returning();
+    const filters =
+      input.audienceFilters ??
+      (input.audienceQuery.trim()
+        ? await parseAudienceToFilters(userId, input.audienceQuery)
+        : {});
 
-  revalidatePath("/outreach");
-  return campaign;
-}
+    const [campaign] = await db
+      .insert(outreachCampaigns)
+      .values({
+        userId,
+        name: input.name.trim() || "Untitled campaign",
+        audienceQuery: input.audienceQuery.trim(),
+        audienceFilters: filters,
+        replyCta: input.replyCta ?? null,
+        sequenceSteps: (input.sequenceSteps ?? []) as OutreachSequenceStep[],
+        status: "draft",
+      })
+      .returning();
+
+    revalidatePath("/outreach");
+    return campaign;
+  }
+);
 
 const CAMPAIGN_TEXT_MAX = 4_000;
 const MAX_SEQUENCE_STEPS = 20;
@@ -358,68 +374,71 @@ function pickCampaignFields(input: Record<string, unknown>) {
   return fields;
 }
 
-export async function updateCampaign(
-  campaignId: string,
-  input: {
-    name?: string;
-    audienceQuery?: string;
-    audienceFilters?: AudienceFilters;
-    messageIntent?: string | null;
-    replyCta?: string | null;
-    tone?: string;
-    defaultChannel?: OutreachChannel;
-    status?: string;
-    sequenceSteps?: SequenceStep[];
-    reparseAudience?: boolean;
-  }
-) {
-  const userId = await requireOutreachUser();
-  await requireCampaign(userId, campaignId);
-  const db = await getDb();
+export const updateCampaign = defineAction(
+  { auth: () => requireOutreachUser(), schema: z.tuple([uuid, z.looseObject({ name: z.string().optional(), audienceQuery: z.string().optional(), audienceFilters: AudienceFiltersSchema.optional(), messageIntent: z.string().nullish(), replyCta: z.string().nullish(), tone: z.string().optional(), defaultChannel: z.enum(["email", "linkedin", "sms"]).optional(), status: z.string().optional(), sequenceSteps: z.array(SequenceStepSchema).optional(), reparseAudience: z.boolean().optional() })]) },
+  async (userId, campaignId: string, input: {
+      name?: string;
+      audienceQuery?: string;
+      audienceFilters?: AudienceFilters;
+      messageIntent?: string | null;
+      replyCta?: string | null;
+      tone?: string;
+      defaultChannel?: OutreachChannel;
+      status?: string;
+      sequenceSteps?: SequenceStep[];
+      reparseAudience?: boolean;
+    }) => {
+    await requireCampaign(userId, campaignId);
+    const db = await getDb();
 
-  const { reparseAudience, sequenceSteps, audienceFilters } = input;
-  // Allowlisted, never spread: every export here is a public POST endpoint, and spreading
-  // the argument into `.set()` let a caller write any real column — `userId` included,
-  // which moved a campaign and its drafts into another account.
-  const fields = pickCampaignFields(input as Record<string, unknown>);
-  const patch: Record<string, unknown> = {
-    ...fields,
-    updatedAt: new Date(),
-  };
+    const { reparseAudience, sequenceSteps, audienceFilters } = input;
+    // Allowlisted, never spread: every export here is a public POST endpoint, and spreading
+    // the argument into `.set()` let a caller write any real column — `userId` included,
+    // which moved a campaign and its drafts into another account.
+    const fields = pickCampaignFields(input as Record<string, unknown>);
+    const patch: Record<string, unknown> = {
+      ...fields,
+      updatedAt: new Date(),
+    };
 
-  if (sequenceSteps !== undefined) {
-    if (!Array.isArray(sequenceSteps) || sequenceSteps.length > MAX_SEQUENCE_STEPS) {
-      throw new UserFacingError(`A sequence can have at most ${MAX_SEQUENCE_STEPS} steps`);
+    if (sequenceSteps !== undefined) {
+      if (!Array.isArray(sequenceSteps) || sequenceSteps.length > MAX_SEQUENCE_STEPS) {
+        throw new UserFacingError(`A sequence can have at most ${MAX_SEQUENCE_STEPS} steps`);
+      }
+      patch.sequenceSteps = sequenceSteps as OutreachSequenceStep[];
     }
-    patch.sequenceSteps = sequenceSteps as OutreachSequenceStep[];
+
+    if (audienceFilters !== undefined) {
+      patch.audienceFilters = audienceFilters;
+    } else if (fields.audienceQuery !== undefined && reparseAudience !== false) {
+      patch.audienceFilters = fields.audienceQuery.trim()
+        ? await parseAudienceToFilters(userId, fields.audienceQuery)
+        : {};
+    }
+
+    const [updated] = await db
+      .update(outreachCampaigns)
+      .set(patch)
+      .where(and(eq(outreachCampaigns.id, campaignId), eq(outreachCampaigns.userId, userId)))
+      .returning();
+
+    revalidatePath("/outreach");
+    revalidatePath(`/outreach/${campaignId}`);
+    return updated;
   }
-
-  if (audienceFilters !== undefined) {
-    patch.audienceFilters = audienceFilters;
-  } else if (fields.audienceQuery !== undefined && reparseAudience !== false) {
-    patch.audienceFilters = fields.audienceQuery.trim()
-      ? await parseAudienceToFilters(userId, fields.audienceQuery)
-      : {};
-  }
-
-  const [updated] = await db
-    .update(outreachCampaigns)
-    .set(patch)
-    .where(and(eq(outreachCampaigns.id, campaignId), eq(outreachCampaigns.userId, userId)))
-    .returning();
-
-  revalidatePath("/outreach");
-  revalidatePath(`/outreach/${campaignId}`);
-  return updated;
-}
+);
 
 /** Returned as data so the hosted-Apollo daily cap copy survives the action boundary. */
-export async function searchProspects(campaignId: string, page = 1) {
-  return asActionResult(() => searchProspectsCore(campaignId, page));
-}
+export const searchProspects = defineAction(
+  { auth: () => requireOutreachUser(), schema: z.tuple([uuid, anyNumber.optional()]), invalid: failResult, onGateError: (err) => asActionResult(() => Promise.reject(err)) },
+  async (userId, campaignId: string, page: number = 1) => {
+    return asActionResult(async () => {
+      return searchProspectsCore(userId, campaignId, page);
+    });
+  }
+);
 
-async function searchProspectsCore(campaignId: string, page = 1) {
-  const userId = await requireOutreachUser();
+async function searchProspectsCore(userId: string, campaignId: string, page = 1) {
   const campaign = await requireCampaign(userId, campaignId);
   const db = await getDb();
 
@@ -520,33 +539,37 @@ async function searchProspectsCore(campaignId: string, page = 1) {
   };
 }
 
-export async function getOutreachApolloStatus() {
-  const userId = await requireUserId();
-  return { hasApollo: await userHasApolloKey(userId) };
-}
+export const getOutreachApolloStatus = defineAction(
+  {},
+  async (userId) => {
+    return { hasApollo: await userHasApolloKey(userId) };
+  }
+);
 
-export async function updateProspectSelection(input: {
-  campaignId: string;
-  prospectIds: string[];
-  status: "selected" | "excluded" | "suggested";
-}) {
-  const userId = await requireOutreachUser();
-  await requireCampaign(userId, input.campaignId);
-  const db = await getDb();
+export const updateProspectSelection = defineAction(
+  { auth: () => requireOutreachUser(), schema: z.tuple([z.looseObject({ campaignId: uuid, prospectIds: z.array(z.string()), status: z.enum(["suggested", "selected", "excluded"]) })]) },
+  async (userId, input: {
+    campaignId: string;
+    prospectIds: string[];
+    status: "selected" | "excluded" | "suggested";
+  }) => {
+    await requireCampaign(userId, input.campaignId);
+    const db = await getDb();
 
-  await db
-    .update(outreachProspects)
-    .set({ status: input.status, updatedAt: new Date() })
-    .where(
-      and(
-        eq(outreachProspects.campaignId, input.campaignId),
-        inArray(outreachProspects.id, input.prospectIds)
-      )
-    );
+    await db
+      .update(outreachProspects)
+      .set({ status: input.status, updatedAt: new Date() })
+      .where(
+        and(
+          eq(outreachProspects.campaignId, input.campaignId),
+          inArray(outreachProspects.id, input.prospectIds)
+        )
+      );
 
-  revalidatePath(`/outreach/${input.campaignId}`);
-  return { ok: true };
-}
+    revalidatePath(`/outreach/${input.campaignId}`);
+    return { ok: true };
+  }
+);
 
 async function upsertMessageForProspect(
   prospectId: string,
@@ -702,61 +725,140 @@ function isLowSignalProspect(
   return !prospect.linkedinUrl;
 }
 
-export async function generateOutreachDrafts(input: {
-  campaignId: string;
-  prospectIds?: string[];
-  channel?: OutreachChannel;
-  templateSeed?: string;
-  excludeLowSignal?: boolean;
-}) {
-  const userId = await requireOutreachUser();
-  const campaign = await requireCampaign(userId, input.campaignId);
-  const db = await getDb();
-  const goals = await listActiveGoalTexts();
-  const writingInstructions = await loadWritingInstructions(userId);
+export const generateOutreachDrafts = defineAction(
+  { auth: () => requireOutreachUser(), schema: z.tuple([z.looseObject({ campaignId: uuid, prospectIds: z.array(z.string()).optional(), channel: z.enum(["email", "linkedin", "sms"]).optional(), templateSeed: z.string().optional(), excludeLowSignal: z.boolean().optional() })]) },
+  async (userId, input: {
+    campaignId: string;
+    prospectIds?: string[];
+    channel?: OutreachChannel;
+    templateSeed?: string;
+    excludeLowSignal?: boolean;
+  }) => {
+    const campaign = await requireCampaign(userId, input.campaignId);
+    const db = await getDb();
+    const goals = await listActiveGoalTexts();
+    const writingInstructions = await loadWritingInstructions(userId);
 
-  const channel = (input.channel ||
-    campaign.defaultChannel ||
-    "email") as OutreachChannel;
+    const channel = (input.channel ||
+      campaign.defaultChannel ||
+      "email") as OutreachChannel;
 
-  const prospects = await db.query.outreachProspects.findMany({
-    where: and(
-      eq(outreachProspects.campaignId, input.campaignId),
-      input.prospectIds?.length
-        ? inArray(outreachProspects.id, input.prospectIds)
-        : eq(outreachProspects.status, "selected")
-    ),
-  });
+    const prospects = await db.query.outreachProspects.findMany({
+      where: and(
+        eq(outreachProspects.campaignId, input.campaignId),
+        input.prospectIds?.length
+          ? inArray(outreachProspects.id, input.prospectIds)
+          : eq(outreachProspects.status, "selected")
+      ),
+    });
 
-  let targetProspects = prospects.length
-    ? prospects
-    : await db.query.outreachProspects.findMany({
-        where: and(
-          eq(outreachProspects.campaignId, input.campaignId),
-          inArray(outreachProspects.status, ["selected", "suggested"])
-        ),
-      });
+    let targetProspects = prospects.length
+      ? prospects
+      : await db.query.outreachProspects.findMany({
+          where: and(
+            eq(outreachProspects.campaignId, input.campaignId),
+            inArray(outreachProspects.status, ["selected", "suggested"])
+          ),
+        });
 
-  if (input.excludeLowSignal !== false) {
-    const strong = targetProspects.filter(
-      (p) => !isLowSignalProspect(p, channel)
+    if (input.excludeLowSignal !== false) {
+      const strong = targetProspects.filter(
+        (p) => !isLowSignalProspect(p, channel)
+      );
+      if (strong.length) targetProspects = strong;
+    }
+
+    if (!targetProspects.length) {
+      throw new Error("No prospects selected for draft generation.");
+    }
+
+    const priorNotesByContact = await priorNotesForContacts(
+      userId,
+      targetProspects
+        .map((p) => p.contactId)
+        .filter((id): id is string => Boolean(id))
     );
-    if (strong.length) targetProspects = strong;
+
+    const draftInputs = await Promise.all(
+      targetProspects.map(async (prospect, index) => ({
+        channel,
+        tone: campaign.tone || "professional",
+        messageIntent:
+          campaign.messageIntent || campaign.audienceQuery || "Introduce myself",
+        audienceQuery: campaign.audienceQuery,
+        replyCta: campaign.replyCta,
+        userGoals: goals,
+        prospect: {
+          fullName: prospect.fullName,
+          title: prospect.title,
+          company: prospect.company,
+          location: prospect.location,
+          enrichmentSummary: enrichmentSummary(prospect.enrichment),
+          priorNotes: prospect.contactId
+            ? (priorNotesByContact.get(prospect.contactId) ?? null)
+            : null,
+        },
+        templateSeed: input.templateSeed,
+        variationHint: `Variant ${index + 1} of ${targetProspects.length}`,
+        writingInstructions,
+      }))
+    );
+
+    const drafts = await generateOutreachDraftsBatch(userId, draftInputs);
+
+    const generated = await upsertFirstStepMessages(
+      targetProspects.map((prospect, i) => ({
+        prospectId: prospect.id,
+        draft: drafts[i],
+      })),
+      channel
+    );
+
+    await db
+      .update(outreachCampaigns)
+      .set({ defaultChannel: channel, updatedAt: new Date() })
+      .where(eq(outreachCampaigns.id, input.campaignId));
+
+    revalidatePath(`/outreach/${input.campaignId}`);
+    return { generated };
   }
+);
 
-  if (!targetProspects.length) {
-    throw new Error("No prospects selected for draft generation.");
-  }
+export const regenerateOutreachDraft = defineAction(
+  { auth: () => requireOutreachUser(), schema: z.tuple([z.looseObject({ campaignId: uuid, prospectId: uuid, channel: z.enum(["email", "linkedin", "sms"]).optional(), stepIndex: anyNumber.optional() })]) },
+  async (userId, input: {
+    campaignId: string;
+    prospectId: string;
+    channel?: OutreachChannel;
+    stepIndex?: number;
+  }) => {
+    const campaign = await requireCampaign(userId, input.campaignId);
+    const db = await getDb();
+    const goals = await listActiveGoalTexts();
+    const writingInstructions = await loadWritingInstructions(userId);
 
-  const priorNotesByContact = await priorNotesForContacts(
-    userId,
-    targetProspects
-      .map((p) => p.contactId)
-      .filter((id): id is string => Boolean(id))
-  );
+    const prospect = await db.query.outreachProspects.findFirst({
+      where: and(
+        eq(outreachProspects.id, input.prospectId),
+        eq(outreachProspects.campaignId, input.campaignId)
+      ),
+      with: {
+        messages: {
+          orderBy: [desc(outreachMessages.stepIndex)],
+        },
+      },
+    });
+    if (!prospect) throw new Error("Prospect not found");
 
-  const draftInputs = await Promise.all(
-    targetProspects.map(async (prospect, index) => ({
+    const channel = (input.channel ||
+      campaign.defaultChannel ||
+      "email") as OutreachChannel;
+    const stepIndex = input.stepIndex ?? 0;
+    const previous = prospect.messages.find(
+      (m) => (m.stepIndex ?? 0) === stepIndex - 1
+    );
+
+    const draft = await generateOutreachDraft(userId, {
       channel,
       tone: campaign.tone || "professional",
       messageIntent:
@@ -770,131 +872,58 @@ export async function generateOutreachDrafts(input: {
         company: prospect.company,
         location: prospect.location,
         enrichmentSummary: enrichmentSummary(prospect.enrichment),
-        priorNotes: prospect.contactId
-          ? (priorNotesByContact.get(prospect.contactId) ?? null)
-          : null,
+        priorNotes: await priorNotesForContact(userId, prospect.contactId),
       },
-      templateSeed: input.templateSeed,
-      variationHint: `Variant ${index + 1} of ${targetProspects.length}`,
+      stepIndex,
+      previousBody: previous?.body,
       writingInstructions,
-    }))
-  );
+    });
 
-  const drafts = await generateOutreachDraftsBatch(userId, draftInputs);
-
-  const generated = await upsertFirstStepMessages(
-    targetProspects.map((prospect, i) => ({
-      prospectId: prospect.id,
-      draft: drafts[i],
-    })),
-    channel
-  );
-
-  await db
-    .update(outreachCampaigns)
-    .set({ defaultChannel: channel, updatedAt: new Date() })
-    .where(eq(outreachCampaigns.id, input.campaignId));
-
-  revalidatePath(`/outreach/${input.campaignId}`);
-  return { generated };
-}
-
-export async function regenerateOutreachDraft(input: {
-  campaignId: string;
-  prospectId: string;
-  channel?: OutreachChannel;
-  stepIndex?: number;
-}) {
-  const userId = await requireOutreachUser();
-  const campaign = await requireCampaign(userId, input.campaignId);
-  const db = await getDb();
-  const goals = await listActiveGoalTexts();
-  const writingInstructions = await loadWritingInstructions(userId);
-
-  const prospect = await db.query.outreachProspects.findFirst({
-    where: and(
-      eq(outreachProspects.id, input.prospectId),
-      eq(outreachProspects.campaignId, input.campaignId)
-    ),
-    with: {
-      messages: {
-        orderBy: [desc(outreachMessages.stepIndex)],
-      },
-    },
-  });
-  if (!prospect) throw new Error("Prospect not found");
-
-  const channel = (input.channel ||
-    campaign.defaultChannel ||
-    "email") as OutreachChannel;
-  const stepIndex = input.stepIndex ?? 0;
-  const previous = prospect.messages.find(
-    (m) => (m.stepIndex ?? 0) === stepIndex - 1
-  );
-
-  const draft = await generateOutreachDraft(userId, {
-    channel,
-    tone: campaign.tone || "professional",
-    messageIntent:
-      campaign.messageIntent || campaign.audienceQuery || "Introduce myself",
-    audienceQuery: campaign.audienceQuery,
-    replyCta: campaign.replyCta,
-    userGoals: goals,
-    prospect: {
-      fullName: prospect.fullName,
-      title: prospect.title,
-      company: prospect.company,
-      location: prospect.location,
-      enrichmentSummary: enrichmentSummary(prospect.enrichment),
-      priorNotes: await priorNotesForContact(userId, prospect.contactId),
-    },
-    stepIndex,
-    previousBody: previous?.body,
-    writingInstructions,
-  });
-
-  const message = await upsertMessageForProspect(prospect.id, channel, draft, {
-    stepIndex,
-    parentMessageId: previous?.id ?? null,
-  });
-  revalidatePath(`/outreach/${input.campaignId}`);
-  return message;
-}
-
-export async function updateOutreachMessage(input: {
-  messageId: string;
-  subject?: string | null;
-  body?: string;
-}) {
-  const userId = await requireOutreachUser();
-  const db = await getDb();
-
-  const message = await db.query.outreachMessages.findFirst({
-    where: eq(outreachMessages.id, input.messageId),
-    with: {
-      prospect: {
-        with: { campaign: true },
-      },
-    },
-  });
-
-  if (!message || message.prospect.campaign.userId !== userId) {
-    throw new Error("Message not found");
+    const message = await upsertMessageForProspect(prospect.id, channel, draft, {
+      stepIndex,
+      parentMessageId: previous?.id ?? null,
+    });
+    revalidatePath(`/outreach/${input.campaignId}`);
+    return message;
   }
+);
 
-  const [updated] = await db
-    .update(outreachMessages)
-    .set({
-      subject: input.subject ?? message.subject,
-      body: input.body ?? message.body,
-      updatedAt: new Date(),
-    })
-    .where(eq(outreachMessages.id, input.messageId))
-    .returning();
+export const updateOutreachMessage = defineAction(
+  { auth: () => requireOutreachUser(), schema: z.tuple([z.looseObject({ messageId: uuid, subject: z.string().nullish(), body: z.string().optional() })]) },
+  async (userId, input: {
+    messageId: string;
+    subject?: string | null;
+    body?: string;
+  }) => {
+    const db = await getDb();
 
-  revalidatePath(`/outreach/${message.prospect.campaignId}`);
-  return updated;
-}
+    const message = await db.query.outreachMessages.findFirst({
+      where: eq(outreachMessages.id, input.messageId),
+      with: {
+        prospect: {
+          with: { campaign: true },
+        },
+      },
+    });
+
+    if (!message || message.prospect.campaign.userId !== userId) {
+      throw new Error("Message not found");
+    }
+
+    const [updated] = await db
+      .update(outreachMessages)
+      .set({
+        subject: input.subject ?? message.subject,
+        body: input.body ?? message.body,
+        updatedAt: new Date(),
+      })
+      .where(eq(outreachMessages.id, input.messageId))
+      .returning();
+
+    revalidatePath(`/outreach/${message.prospect.campaignId}`);
+    return updated;
+  }
+);
 
 async function maybeLogOutreachInteraction(
   prospect: {
@@ -916,47 +945,138 @@ async function maybeLogOutreachInteraction(
   });
 }
 
-export async function markMessageAction(input: {
-  messageId: string;
-  status: Extract<OutreachMessageStatus, "copied" | "opened">;
-}) {
-  const userId = await requireOutreachUser();
-  const db = await getDb();
+export const markMessageAction = defineAction(
+  { auth: () => requireOutreachUser(), schema: z.tuple([z.looseObject({ messageId: uuid, status: z.enum(["copied", "opened"]) })]) },
+  async (userId, input: {
+    messageId: string;
+    status: Extract<OutreachMessageStatus, "copied" | "opened">;
+  }) => {
+    const db = await getDb();
 
-  const message = await db.query.outreachMessages.findFirst({
-    where: eq(outreachMessages.id, input.messageId),
-    with: {
-      prospect: {
-        with: { campaign: true },
+    const message = await db.query.outreachMessages.findFirst({
+      where: eq(outreachMessages.id, input.messageId),
+      with: {
+        prospect: {
+          with: { campaign: true },
+        },
       },
-    },
-  });
+    });
 
-  if (!message || message.prospect.campaign.userId !== userId) {
-    throw new Error("Message not found");
+    if (!message || message.prospect.campaign.userId !== userId) {
+      throw new Error("Message not found");
+    }
+
+    // Copying or reopening a delivered message must not walk it back from "sent", or log its
+    // interaction and schedule its follow-up a second time.
+    if (isDeliveredMessage(message)) return null;
+
+    const now = new Date();
+    const [updated] = await db
+      .update(outreachMessages)
+      .set({
+        status: input.status,
+        lastActionAt: now,
+        updatedAt: now,
+        ...(input.status === "opened" && !message.sentAt ? { sentAt: now } : {}),
+      })
+      .where(eq(outreachMessages.id, input.messageId))
+      .returning();
+
+    if (input.status === "opened") {
+      await db
+        .update(outreachProspects)
+        .set({ status: "contacted", updatedAt: now })
+        .where(eq(outreachProspects.id, message.prospectId));
+
+      await maybeLogOutreachInteraction(
+        {
+          contactId: message.prospect.contactId,
+          campaignId: message.prospect.campaignId,
+        },
+        message.channel as OutreachChannel,
+        message.body,
+        input.status
+      );
+
+      await scheduleNextFollowUpIfNeeded({
+        campaignId: message.prospect.campaignId,
+        prospectId: message.prospectId,
+        parentMessage: updated,
+      });
+    }
+
+    revalidatePath(`/outreach/${message.prospect.campaignId}`);
+    revalidatePath("/outreach");
+    return updated;
   }
+);
 
-  // Copying or reopening a delivered message must not walk it back from "sent", or log its
-  // interaction and schedule its follow-up a second time.
-  if (isDeliveredMessage(message)) return null;
+export const logMessageOutcome = defineAction(
+  { auth: () => requireOutreachUser(), schema: z.tuple([z.looseObject({ messageId: uuid, outcome: z.enum(["bounced", "positive_reply", "negative_reply", "neutral_reply", "unsubscribed"]), notes: z.string().nullish() })]) },
+  async (userId, input: {
+    messageId: string;
+    outcome: OutreachMessageOutcome;
+    notes?: string | null;
+  }) => {
+    const db = await getDb();
 
-  const now = new Date();
-  const [updated] = await db
-    .update(outreachMessages)
-    .set({
-      status: input.status,
-      lastActionAt: now,
-      updatedAt: now,
-      ...(input.status === "opened" && !message.sentAt ? { sentAt: now } : {}),
-    })
-    .where(eq(outreachMessages.id, input.messageId))
-    .returning();
+    const message = await db.query.outreachMessages.findFirst({
+      where: eq(outreachMessages.id, input.messageId),
+      with: {
+        prospect: {
+          with: { campaign: true },
+        },
+      },
+    });
 
-  if (input.status === "opened") {
+    if (!message || message.prospect.campaign.userId !== userId) {
+      throw new Error("Message not found");
+    }
+
+    const now = new Date();
+    const [updated] = await db
+      .update(outreachMessages)
+      .set({
+        outcome: input.outcome,
+        outcomeNotes: input.notes?.trim() || null,
+        repliedAt: now,
+        lastActionAt: now,
+        updatedAt: now,
+      })
+      .where(eq(outreachMessages.id, input.messageId))
+      .returning();
+
+    let prospectStatus: string = message.prospect.status;
+    if (input.outcome === "positive_reply") {
+      prospectStatus = "interested";
+    } else if (
+      input.outcome === "negative_reply" ||
+      input.outcome === "unsubscribed"
+    ) {
+      prospectStatus = "not_interested";
+    } else if (input.outcome === "neutral_reply") {
+      prospectStatus = "replied";
+    } else if (input.outcome === "bounced") {
+      prospectStatus = message.prospect.status;
+    }
+
     await db
       .update(outreachProspects)
-      .set({ status: "contacted", updatedAt: now })
+      .set({ status: prospectStatus, updatedAt: now })
       .where(eq(outreachProspects.id, message.prospectId));
+
+    // Cancel pending follow-ups once we have a reply or bounce/unsubscribe
+    if (input.outcome !== "bounced") {
+      await db
+        .update(outreachMessages)
+        .set({ status: "skipped", updatedAt: now })
+        .where(
+          and(
+            eq(outreachMessages.prospectId, message.prospectId),
+            eq(outreachMessages.status, "scheduled")
+          )
+        );
+    }
 
     await maybeLogOutreachInteraction(
       {
@@ -964,103 +1084,16 @@ export async function markMessageAction(input: {
         campaignId: message.prospect.campaignId,
       },
       message.channel as OutreachChannel,
-      message.body,
-      input.status
+      input.notes?.trim() || `Outcome: ${input.outcome}`,
+      input.outcome
     );
 
-    await scheduleNextFollowUpIfNeeded({
-      campaignId: message.prospect.campaignId,
-      prospectId: message.prospectId,
-      parentMessage: updated,
-    });
+    revalidatePath(`/outreach/${message.prospect.campaignId}`);
+    revalidatePath("/outreach");
+    revalidatePath("/dashboard");
+    return updated;
   }
-
-  revalidatePath(`/outreach/${message.prospect.campaignId}`);
-  revalidatePath("/outreach");
-  return updated;
-}
-
-export async function logMessageOutcome(input: {
-  messageId: string;
-  outcome: OutreachMessageOutcome;
-  notes?: string | null;
-}) {
-  const userId = await requireOutreachUser();
-  const db = await getDb();
-
-  const message = await db.query.outreachMessages.findFirst({
-    where: eq(outreachMessages.id, input.messageId),
-    with: {
-      prospect: {
-        with: { campaign: true },
-      },
-    },
-  });
-
-  if (!message || message.prospect.campaign.userId !== userId) {
-    throw new Error("Message not found");
-  }
-
-  const now = new Date();
-  const [updated] = await db
-    .update(outreachMessages)
-    .set({
-      outcome: input.outcome,
-      outcomeNotes: input.notes?.trim() || null,
-      repliedAt: now,
-      lastActionAt: now,
-      updatedAt: now,
-    })
-    .where(eq(outreachMessages.id, input.messageId))
-    .returning();
-
-  let prospectStatus: string = message.prospect.status;
-  if (input.outcome === "positive_reply") {
-    prospectStatus = "interested";
-  } else if (
-    input.outcome === "negative_reply" ||
-    input.outcome === "unsubscribed"
-  ) {
-    prospectStatus = "not_interested";
-  } else if (input.outcome === "neutral_reply") {
-    prospectStatus = "replied";
-  } else if (input.outcome === "bounced") {
-    prospectStatus = message.prospect.status;
-  }
-
-  await db
-    .update(outreachProspects)
-    .set({ status: prospectStatus, updatedAt: now })
-    .where(eq(outreachProspects.id, message.prospectId));
-
-  // Cancel pending follow-ups once we have a reply or bounce/unsubscribe
-  if (input.outcome !== "bounced") {
-    await db
-      .update(outreachMessages)
-      .set({ status: "skipped", updatedAt: now })
-      .where(
-        and(
-          eq(outreachMessages.prospectId, message.prospectId),
-          eq(outreachMessages.status, "scheduled")
-        )
-      );
-  }
-
-  await maybeLogOutreachInteraction(
-    {
-      contactId: message.prospect.contactId,
-      campaignId: message.prospect.campaignId,
-    },
-    message.channel as OutreachChannel,
-    input.notes?.trim() || `Outcome: ${input.outcome}`,
-    input.outcome
-  );
-
-  revalidatePath(`/outreach/${message.prospect.campaignId}`);
-  revalidatePath("/outreach");
-  revalidatePath("/dashboard");
-  return updated;
-}
+);
 
 async function scheduleNextFollowUpIfNeeded(input: {
   campaignId: string;
@@ -1112,166 +1145,178 @@ async function scheduleNextFollowUpIfNeeded(input: {
   });
 }
 
-export async function generateDueFollowUps(campaignId: string) {
-  const userId = await requireOutreachUser();
-  const campaign = await requireCampaign(userId, campaignId);
-  const db = await getDb();
-  const goals = await listActiveGoalTexts();
-  const writingInstructions = await loadWritingInstructions(userId);
-  const now = new Date();
+export const generateDueFollowUps = defineAction(
+  { auth: () => requireOutreachUser(), schema: z.tuple([uuid]) },
+  async (userId, campaignId: string) => {
+    const campaign = await requireCampaign(userId, campaignId);
+    const db = await getDb();
+    const goals = await listActiveGoalTexts();
+    const writingInstructions = await loadWritingInstructions(userId);
+    const now = new Date();
 
-  const campaignProspectIds = await db.query.outreachProspects.findMany({
-    where: eq(outreachProspects.campaignId, campaignId),
-    columns: { id: true },
-  });
-
-  const due = campaignProspectIds.length
-    ? await db.query.outreachMessages.findMany({
-        where: and(
-          eq(outreachMessages.status, "scheduled"),
-          lte(outreachMessages.scheduledFor, now),
-          inArray(
-            outreachMessages.prospectId,
-            campaignProspectIds.map((p) => p.id)
-          )
-        ),
-        with: {
-          prospect: true,
-        },
-      })
-    : [];
-
-  // Kept as a defensive no-op check, cheap insurance against the `with: { prospect }`
-  // join ever returning a row outside the campaign-scoped prospect id set above.
-  const dueForCampaign = due.filter((m) => m.prospect.campaignId === campaignId);
-  let generated = 0;
-
-  // Everything the loop below reads, read once up front instead of per due message. The
-  // loop only writes status/subject/body — never `outcome` or interactions — so the one
-  // thing it can change is a parent's body; `parentBodies` is kept current so a step whose
-  // parent was generated earlier in this same pass still sees that new body.
-  const dueProspectIds = [...new Set(dueForCampaign.map((m) => m.prospectId))];
-  const parentIds = [
-    ...new Set(
-      dueForCampaign
-        .map((m) => m.parentMessageId)
-        .filter((id): id is string => Boolean(id))
-    ),
-  ];
-  const [repliedRows, parentRows, priorNotesByContact] = await Promise.all([
-    dueProspectIds.length
-      ? db
-          .selectDistinct({ prospectId: outreachMessages.prospectId })
-          .from(outreachMessages)
-          .where(
-            and(
-              inArray(outreachMessages.prospectId, dueProspectIds),
-              sql`${outreachMessages.outcome} is not null`
-            )
-          )
-      : [],
-    parentIds.length
-      ? db
-          .select({ id: outreachMessages.id, body: outreachMessages.body })
-          .from(outreachMessages)
-          .where(inArray(outreachMessages.id, parentIds))
-      : [],
-    priorNotesForContacts(userId, [
-      ...new Set(
-        dueForCampaign
-          .map((m) => m.prospect.contactId)
-          .filter((id): id is string => Boolean(id))
-      ),
-    ]),
-  ]);
-  const repliedProspects = new Set(repliedRows.map((row) => row.prospectId));
-  const parentBodies = new Map(parentRows.map((row) => [row.id, row.body]));
-
-  const skippedIds: string[] = [];
-  const toGenerate: typeof dueForCampaign = [];
-  for (const message of dueForCampaign) {
-    if (
-      message.prospect.status === "interested" ||
-      message.prospect.status === "not_interested" ||
-      message.prospect.status === "replied" ||
-      repliedProspects.has(message.prospectId)
-    ) {
-      skippedIds.push(message.id);
-    } else {
-      toGenerate.push(message);
-    }
-  }
-
-  // Decided entirely from the reads above, so one statement before the model calls
-  // rather than one per skipped message inside the loop.
-  if (skippedIds.length) {
-    await db
-      .update(outreachMessages)
-      .set({ status: "skipped", updatedAt: now })
-      .where(inArray(outreachMessages.id, skippedIds));
-  }
-
-  for (const message of toGenerate) {
-    const steps = (campaign.sequenceSteps ?? []) as SequenceStep[];
-    const step = steps[(message.stepIndex ?? 1) - 1];
-    const channel = message.channel as OutreachChannel;
-
-    const draft = await generateOutreachDraft(userId, {
-      channel,
-      tone: campaign.tone || "professional",
-      messageIntent:
-        step?.intent ||
-        campaign.messageIntent ||
-        campaign.audienceQuery ||
-        "Follow up",
-      audienceQuery: campaign.audienceQuery,
-      replyCta: campaign.replyCta,
-      userGoals: goals,
-      prospect: {
-        fullName: message.prospect.fullName,
-        title: message.prospect.title,
-        company: message.prospect.company,
-        location: message.prospect.location,
-        enrichmentSummary: enrichmentSummary(message.prospect.enrichment),
-        priorNotes: message.prospect.contactId
-          ? (priorNotesByContact.get(message.prospect.contactId) ?? null)
-          : null,
-      },
-      stepIndex: message.stepIndex ?? 1,
-      previousBody: message.parentMessageId
-        ? parentBodies.get(message.parentMessageId)
-        : undefined,
-      writingInstructions,
+    const campaignProspectIds = await db.query.outreachProspects.findMany({
+      where: eq(outreachProspects.campaignId, campaignId),
+      columns: { id: true },
     });
 
-    await db
-      .update(outreachMessages)
-      .set({
-        subject: draft.subject,
-        body: draft.body,
-        status: "generated",
-        updatedAt: now,
-      })
-      .where(eq(outreachMessages.id, message.id));
-    if (parentBodies.has(message.id)) parentBodies.set(message.id, draft.body);
-    generated += 1;
-  }
+    const due = campaignProspectIds.length
+      ? await db.query.outreachMessages.findMany({
+          where: and(
+            eq(outreachMessages.status, "scheduled"),
+            lte(outreachMessages.scheduledFor, now),
+            inArray(
+              outreachMessages.prospectId,
+              campaignProspectIds.map((p) => p.id)
+            )
+          ),
+          with: {
+            prospect: true,
+          },
+        })
+      : [];
 
-  revalidatePath(`/outreach/${campaignId}`);
-  return { generated };
-}
+    // Kept as a defensive no-op check, cheap insurance against the `with: { prospect }`
+    // join ever returning a row outside the campaign-scoped prospect id set above.
+    const dueForCampaign = due.filter((m) => m.prospect.campaignId === campaignId);
+    let generated = 0;
+
+    // Everything the loop below reads, read once up front instead of per due message. The
+    // loop only writes status/subject/body — never `outcome` or interactions — so the one
+    // thing it can change is a parent's body; `parentBodies` is kept current so a step whose
+    // parent was generated earlier in this same pass still sees that new body.
+    const dueProspectIds = [...new Set(dueForCampaign.map((m) => m.prospectId))];
+    const parentIds = [
+      ...new Set(
+        dueForCampaign
+          .map((m) => m.parentMessageId)
+          .filter((id): id is string => Boolean(id))
+      ),
+    ];
+    const [repliedRows, parentRows, priorNotesByContact] = await Promise.all([
+      dueProspectIds.length
+        ? db
+            .selectDistinct({ prospectId: outreachMessages.prospectId })
+            .from(outreachMessages)
+            .where(
+              and(
+                inArray(outreachMessages.prospectId, dueProspectIds),
+                sql`${outreachMessages.outcome} is not null`
+              )
+            )
+        : [],
+      parentIds.length
+        ? db
+            .select({ id: outreachMessages.id, body: outreachMessages.body })
+            .from(outreachMessages)
+            .where(inArray(outreachMessages.id, parentIds))
+        : [],
+      priorNotesForContacts(userId, [
+        ...new Set(
+          dueForCampaign
+            .map((m) => m.prospect.contactId)
+            .filter((id): id is string => Boolean(id))
+        ),
+      ]),
+    ]);
+    const repliedProspects = new Set(repliedRows.map((row) => row.prospectId));
+    const parentBodies = new Map(parentRows.map((row) => [row.id, row.body]));
+
+    const skippedIds: string[] = [];
+    const toGenerate: typeof dueForCampaign = [];
+    for (const message of dueForCampaign) {
+      if (
+        message.prospect.status === "interested" ||
+        message.prospect.status === "not_interested" ||
+        message.prospect.status === "replied" ||
+        repliedProspects.has(message.prospectId)
+      ) {
+        skippedIds.push(message.id);
+      } else {
+        toGenerate.push(message);
+      }
+    }
+
+    // Decided entirely from the reads above, so one statement before the model calls
+    // rather than one per skipped message inside the loop.
+    if (skippedIds.length) {
+      await db
+        .update(outreachMessages)
+        .set({ status: "skipped", updatedAt: now })
+        .where(inArray(outreachMessages.id, skippedIds));
+    }
+
+    // One click drafts every due follow-up: charged up front per ten, like the bulk path, so a
+    // long campaign is never refused part-way with half its follow-ups written (audit M-07).
+    await chargeOutreachDraftRun(userId, toGenerate.length);
+    for (const message of toGenerate) {
+      const steps = (campaign.sequenceSteps ?? []) as SequenceStep[];
+      const step = steps[(message.stepIndex ?? 1) - 1];
+      const channel = message.channel as OutreachChannel;
+
+      const draft = await generateOutreachDraft(userId, {
+        channel,
+        tone: campaign.tone || "professional",
+        messageIntent:
+          step?.intent ||
+          campaign.messageIntent ||
+          campaign.audienceQuery ||
+          "Follow up",
+        audienceQuery: campaign.audienceQuery,
+        replyCta: campaign.replyCta,
+        userGoals: goals,
+        prospect: {
+          fullName: message.prospect.fullName,
+          title: message.prospect.title,
+          company: message.prospect.company,
+          location: message.prospect.location,
+          enrichmentSummary: enrichmentSummary(message.prospect.enrichment),
+          priorNotes: message.prospect.contactId
+            ? (priorNotesByContact.get(message.prospect.contactId) ?? null)
+            : null,
+        },
+        stepIndex: message.stepIndex ?? 1,
+        previousBody: message.parentMessageId
+          ? parentBodies.get(message.parentMessageId)
+          : undefined,
+        writingInstructions,
+      }, { metered: false });
+
+      await db
+        .update(outreachMessages)
+        .set({
+          subject: draft.subject,
+          body: draft.body,
+          status: "generated",
+          updatedAt: now,
+        })
+        .where(eq(outreachMessages.id, message.id));
+      if (parentBodies.has(message.id)) parentBodies.set(message.id, draft.body);
+      generated += 1;
+    }
+
+    revalidatePath(`/outreach/${campaignId}`);
+    return { generated };
+  }
+);
 
 /**
  * Returns the refusal as data: a thrown message is a digest in production, and "this is a
  * sample prospect" is exactly the sentence the person needs to read.
  */
-export async function sendOutreachMessageAction(messageId: string) {
-  return asActionResult(() => sendOutreachMessageNow(messageId));
-}
+export const sendOutreachMessageAction = defineAction(
+  { auth: () => requireOutreachUser(), schema: z.tuple([uuid]), invalid: failResult, onGateError: (err) => asActionResult(() => Promise.reject(err)) },
+  async (userId, messageId: string) => {
+    return asActionResult(async () => {
+      return sendOutreachMessageNow(userId, messageId);
+    });
+  }
+);
 
-/** The send itself. Throws; `bulkSendOutreach` catches per message. */
-async function sendOutreachMessageNow(messageId: string) {
-  const userId = await requireOutreachUser();
+/**
+ * The send itself. Throws; `bulkSendOutreach` catches per message. Takes the caller its
+ * action already resolved through `requireOutreachUser`.
+ */
+async function sendOutreachMessageNow(userId: string, messageId: string) {
   const db = await getDb();
 
   const message = await db.query.outreachMessages.findFirst({
@@ -1406,196 +1451,209 @@ async function campaignMessages(campaignId: string, messageIds: string[]) {
   });
 }
 
-export async function previewBulkSendQuality(input: {
-  campaignId: string;
-  messageIds: string[];
-}) {
-  const userId = await requireOutreachUser();
-  await requireCampaign(userId, input.campaignId);
+export const previewBulkSendQuality = defineAction(
+  { auth: () => requireOutreachUser(), schema: z.tuple([z.looseObject({ campaignId: uuid, messageIds: z.array(z.string()) })]) },
+  async (userId, input: {
+    campaignId: string;
+    messageIds: string[];
+  }) => {
+    await requireCampaign(userId, input.campaignId);
 
-  const messages = await campaignMessages(input.campaignId, input.messageIds);
+    const messages = await campaignMessages(input.campaignId, input.messageIds);
 
-  return assessOutreachQuality(
-    messages.map((m) => ({
-      messageId: m.id,
-      prospectId: m.prospectId,
-      prospectName: m.prospect.fullName,
-      channel: m.channel as OutreachChannel,
-      subject: m.subject,
-      body: m.body,
-      isDemo: isDemoProspect(m.prospect.enrichment),
-    }))
-  );
-}
-
-export async function bulkSendOutreach(input: {
-  campaignId: string;
-  messageIds: string[];
-  ignoreWarnings?: boolean;
-}) {
-  const userId = await requireOutreachUser();
-  await requireCampaign(userId, input.campaignId);
-
-  const quality = await previewBulkSendQuality({
-    campaignId: input.campaignId,
-    messageIds: input.messageIds,
-  });
-  // Both outcomes come back as data. They used to be thrown, and a thrown message is a
-  // digest in production — so the client's `startsWith("Quality warnings:")` check could
-  // never match there, and a blocked send never said why. The dialog pre-checks quality
-  // through `previewBulkSendQuality`, so these are the safety net for drafts that
-  // changed in between; a safety net that says nothing is not one.
-  if (quality.blocking.length) {
-    const more =
-      quality.blocking.length > 1 ? ` (and ${quality.blocking.length - 1} more)` : "";
-    return {
-      status: "blocked" as const,
-      reason: `Can’t send yet — ${quality.blocking[0].message}${more}`,
-    };
+    return assessOutreachQuality(
+      messages.map((m) => ({
+        messageId: m.id,
+        prospectId: m.prospectId,
+        prospectName: m.prospect.fullName,
+        channel: m.channel as OutreachChannel,
+        subject: m.subject,
+        body: m.body,
+        isDemo: isDemoProspect(m.prospect.enrichment),
+      }))
+    );
   }
-  if (!input.ignoreWarnings && quality.warnings.length) {
-    return {
-      status: "needs_confirmation" as const,
-      warning: quality.warnings[0].message,
-    };
-  }
+);
 
-  // Same scope as the preview above: only this campaign's messages are ever sent from here.
-  const inCampaign = new Set(
-    (await campaignMessages(input.campaignId, input.messageIds))
-      .filter((m) => !isDeliveredMessage(m))
-      .map((m) => m.id)
-  );
-  const ids = input.messageIds.filter((id) => inCampaign.has(id)).slice(0, BULK_SEND_LIMIT);
-  const results: Array<{ messageId: string; ok: boolean; error?: string }> = [];
+export const bulkSendOutreach = defineAction(
+  { auth: () => requireOutreachUser(), schema: z.tuple([z.looseObject({ campaignId: uuid, messageIds: z.array(z.string()), ignoreWarnings: z.boolean().optional() })]), invalid: (reason) => ({ status: "blocked" as const, reason }) },
+  async (userId, input: {
+    campaignId: string;
+    messageIds: string[];
+    ignoreWarnings?: boolean;
+  }) => {
+    await requireCampaign(userId, input.campaignId);
 
-  for (const messageId of ids) {
-    try {
-      await sendOutreachMessageNow(messageId);
-      results.push({ messageId, ok: true });
-    } catch (err) {
-      results.push({
-        messageId,
-        ok: false,
-        error: await actionFailure(err, TOAST_COPY.sendFailed, "outreach.bulk-send", { messageId }),
-      });
+    const quality = await previewBulkSendQuality({
+      campaignId: input.campaignId,
+      messageIds: input.messageIds,
+    });
+    // Both outcomes come back as data. They used to be thrown, and a thrown message is a
+    // digest in production — so the client's `startsWith("Quality warnings:")` check could
+    // never match there, and a blocked send never said why. The dialog pre-checks quality
+    // through `previewBulkSendQuality`, so these are the safety net for drafts that
+    // changed in between; a safety net that says nothing is not one.
+    if (quality.blocking.length) {
+      const more =
+        quality.blocking.length > 1 ? ` (and ${quality.blocking.length - 1} more)` : "";
+      return {
+        status: "blocked" as const,
+        reason: `Can’t send yet — ${quality.blocking[0].message}${more}`,
+      };
     }
+    if (!input.ignoreWarnings && quality.warnings.length) {
+      return {
+        status: "needs_confirmation" as const,
+        warning: quality.warnings[0].message,
+      };
+    }
+
+    // Same scope as the preview above: only this campaign's messages are ever sent from here.
+    const inCampaign = new Set(
+      (await campaignMessages(input.campaignId, input.messageIds))
+        .filter((m) => !isDeliveredMessage(m))
+        .map((m) => m.id)
+    );
+    const ids = input.messageIds.filter((id) => inCampaign.has(id)).slice(0, BULK_SEND_LIMIT);
+    const results: Array<{ messageId: string; ok: boolean; error?: string }> = [];
+
+    for (const messageId of ids) {
+      try {
+        await sendOutreachMessageNow(userId, messageId);
+        results.push({ messageId, ok: true });
+      } catch (err) {
+        results.push({
+          messageId,
+          ok: false,
+          error: await actionFailure(err, TOAST_COPY.sendFailed, "outreach.bulk-send", { messageId }),
+        });
+      }
+    }
+
+    revalidatePath(`/outreach/${input.campaignId}`);
+    revalidatePath("/outreach");
+    return {
+      status: "sent" as const,
+      sent: results.filter((r) => r.ok).length,
+      failed: results.filter((r) => !r.ok).length,
+      results,
+      quality,
+    };
   }
+);
 
-  revalidatePath(`/outreach/${input.campaignId}`);
-  revalidatePath("/outreach");
-  return {
-    status: "sent" as const,
-    sent: results.filter((r) => r.ok).length,
-    failed: results.filter((r) => !r.ok).length,
-    results,
-    quality,
-  };
-}
+export const saveProspectAsContact = defineAction(
+  { auth: () => requireOutreachUser(), schema: z.tuple([z.looseObject({ campaignId: uuid, prospectId: uuid })]) },
+  async (userId, input: {
+    campaignId: string;
+    prospectId: string;
+  }) => {
+    await requireCampaign(userId, input.campaignId);
+    const db = await getDb();
 
-export async function saveProspectAsContact(input: {
-  campaignId: string;
-  prospectId: string;
-}) {
-  const userId = await requireOutreachUser();
-  await requireCampaign(userId, input.campaignId);
-  const db = await getDb();
+    const prospect = await db.query.outreachProspects.findFirst({
+      where: and(
+        eq(outreachProspects.id, input.prospectId),
+        eq(outreachProspects.campaignId, input.campaignId)
+      ),
+    });
+    if (!prospect) throw new Error("Prospect not found");
+    if (prospect.contactId) return { contactId: prospect.contactId, created: false };
 
-  const prospect = await db.query.outreachProspects.findFirst({
-    where: and(
-      eq(outreachProspects.id, input.prospectId),
-      eq(outreachProspects.campaignId, input.campaignId)
-    ),
-  });
-  if (!prospect) throw new Error("Prospect not found");
-  if (prospect.contactId) return { contactId: prospect.contactId, created: false };
+    // A sample's email, phone and profile URL were made up: never copy them into the network.
+    const demo = isDemoProspect(prospect.enrichment);
+    let email = demo ? null : prospect.email;
+    let phone = demo ? null : prospect.phone;
 
-  // A sample's email, phone and profile URL were made up: never copy them into the network.
-  const demo = isDemoProspect(prospect.enrichment);
-  let email = demo ? null : prospect.email;
-  let phone = demo ? null : prospect.phone;
+    if (!demo && (!email || !phone)) {
+      const enriched = await enrichPerson(userId, prospect.externalId, {
+        email: prospect.email ?? undefined,
+        linkedinUrl: prospect.linkedinUrl ?? undefined,
+        fullName: prospect.fullName,
+      });
+      if (enriched) {
+        email = email || enriched.email;
+        phone = phone || enriched.phone;
+      }
+    }
 
-  if (!demo && (!email || !phone)) {
+    // The lib resolver, not the `createContact` action: actions no longer take write options
+    // from their caller (audit H-01), and this server-side path legitimately skips the
+    // per-write revalidation because it revalidates the campaign itself below.
+    const { contactId } = await resolveOrCreateContact(
+      userId,
+      {
+        fullName: prospect.fullName,
+        title: prospect.title ?? undefined,
+        company: prospect.company ?? undefined,
+        location: prospect.location ?? undefined,
+        email: email ?? undefined,
+        phone: phone ?? undefined,
+        linkedinUrl: demo ? undefined : (prospect.linkedinUrl ?? undefined),
+        source: "outreach",
+        notes: `Added from outreach campaign ${input.campaignId}`,
+      },
+      { skipRevalidate: true }
+    );
+    const contact = { id: contactId };
+
+    await db
+      .update(outreachProspects)
+      .set({
+        contactId: contact.id,
+        email: email ?? prospect.email,
+        phone: phone ?? prospect.phone,
+        updatedAt: new Date(),
+      })
+      .where(eq(outreachProspects.id, prospect.id));
+
+    revalidatePath(`/outreach/${input.campaignId}`);
+    revalidatePath("/contacts");
+    return { contactId: contact.id, created: true };
+  }
+);
+
+export const enrichProspect = defineAction(
+  { auth: () => requireOutreachUser(), schema: z.tuple([z.looseObject({ campaignId: uuid, prospectId: uuid })]) },
+  async (userId, input: {
+    campaignId: string;
+    prospectId: string;
+  }) => {
+    await requireCampaign(userId, input.campaignId);
+    const db = await getDb();
+
+    const prospect = await db.query.outreachProspects.findFirst({
+      where: and(
+        eq(outreachProspects.id, input.prospectId),
+        eq(outreachProspects.campaignId, input.campaignId)
+      ),
+    });
+    if (!prospect) throw new Error("Prospect not found");
+
     const enriched = await enrichPerson(userId, prospect.externalId, {
       email: prospect.email ?? undefined,
       linkedinUrl: prospect.linkedinUrl ?? undefined,
       fullName: prospect.fullName,
     });
-    if (enriched) {
-      email = email || enriched.email;
-      phone = phone || enriched.phone;
-    }
+
+    if (!enriched) return prospect;
+
+    const [updated] = await db
+      .update(outreachProspects)
+      .set({
+        email: enriched.email ?? prospect.email,
+        phone: enriched.phone ?? prospect.phone,
+        linkedinUrl: enriched.linkedinUrl ?? prospect.linkedinUrl,
+        title: enriched.title ?? prospect.title,
+        company: enriched.company ?? prospect.company,
+        location: enriched.location ?? prospect.location,
+        enrichment: enriched.enrichment,
+        updatedAt: new Date(),
+      })
+      .where(eq(outreachProspects.id, prospect.id))
+      .returning();
+
+    revalidatePath(`/outreach/${input.campaignId}`);
+    return updated;
   }
-
-  const contact = await createContact(
-    {
-      fullName: prospect.fullName,
-      title: prospect.title ?? undefined,
-      company: prospect.company ?? undefined,
-      location: prospect.location ?? undefined,
-      email: email ?? undefined,
-      phone: phone ?? undefined,
-      linkedinUrl: demo ? undefined : (prospect.linkedinUrl ?? undefined),
-      source: "outreach",
-      notes: `Added from outreach campaign ${input.campaignId}`,
-    },
-    { skipRevalidate: true }
-  );
-
-  await db
-    .update(outreachProspects)
-    .set({
-      contactId: contact.id,
-      email: email ?? prospect.email,
-      phone: phone ?? prospect.phone,
-      updatedAt: new Date(),
-    })
-    .where(eq(outreachProspects.id, prospect.id));
-
-  revalidatePath(`/outreach/${input.campaignId}`);
-  revalidatePath("/contacts");
-  return { contactId: contact.id, created: true };
-}
-
-export async function enrichProspect(input: {
-  campaignId: string;
-  prospectId: string;
-}) {
-  const userId = await requireOutreachUser();
-  await requireCampaign(userId, input.campaignId);
-  const db = await getDb();
-
-  const prospect = await db.query.outreachProspects.findFirst({
-    where: and(
-      eq(outreachProspects.id, input.prospectId),
-      eq(outreachProspects.campaignId, input.campaignId)
-    ),
-  });
-  if (!prospect) throw new Error("Prospect not found");
-
-  const enriched = await enrichPerson(userId, prospect.externalId, {
-    email: prospect.email ?? undefined,
-    linkedinUrl: prospect.linkedinUrl ?? undefined,
-    fullName: prospect.fullName,
-  });
-
-  if (!enriched) return prospect;
-
-  const [updated] = await db
-    .update(outreachProspects)
-    .set({
-      email: enriched.email ?? prospect.email,
-      phone: enriched.phone ?? prospect.phone,
-      linkedinUrl: enriched.linkedinUrl ?? prospect.linkedinUrl,
-      title: enriched.title ?? prospect.title,
-      company: enriched.company ?? prospect.company,
-      location: enriched.location ?? prospect.location,
-      enrichment: enriched.enrichment,
-      updatedAt: new Date(),
-    })
-    .where(eq(outreachProspects.id, prospect.id))
-    .returning();
-
-  revalidatePath(`/outreach/${input.campaignId}`);
-  return updated;
-}
+);

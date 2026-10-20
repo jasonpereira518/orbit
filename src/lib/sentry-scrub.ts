@@ -25,9 +25,27 @@ export function scrubUrl(url: string): string {
   return url.replace(TOKEN_PATH, "$1[redacted]").replace(TOKEN_QUERY, "$1[redacted]");
 }
 
-/** For free text — messages, exception values, extras: URLs, then addresses and keys. */
+/**
+ * Model and provider text inside an error message (audit L-14). `parseAiJson` throws
+ * "Failed to parse AI JSON: <200 characters of the model's answer>", the chat route reports
+ * "chat answer JSON did not parse: <excerpt>", and a provider SDK's message carries the raw
+ * JSON error body. All three can quote a person's own notes back (the model was answering
+ * about them), so the excerpt is cut at the colon and a JSON body is replaced whole. What is
+ * left — which call, which status — is what a diagnosis needs.
+ */
+const MODEL_EXCERPT = /((?:Failed to parse AI JSON|did not parse|model output)\s*:)\s*[\s\S]*$/i;
+const JSON_BODY = /\{[\s\S]*"[\s\S]*\}/g;
+
+export function scrubModelText(text: string): string {
+  return text.replace(MODEL_EXCERPT, "$1 [model output omitted]").replace(JSON_BODY, "{…}");
+}
+
+/**
+ * For free text — messages, exception values, extras: model excerpts and provider bodies,
+ * URLs, then addresses and keys.
+ */
 export function scrubText(text: string): string {
-  let out = scrubUrl(text).replace(EMAIL, "[email]");
+  let out = scrubUrl(scrubModelText(text)).replace(EMAIL, "[email]");
   for (const [, re] of SECRET_PATTERNS) out = out.replace(re, "[redacted]");
   return out;
 }

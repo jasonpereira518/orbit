@@ -15,9 +15,13 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // 2026-10-16: the browser extension saves the Luma/Partiful guest list you have open, on your
 // click; meeting prep shows the event behind an invite; meeting history keeps 500 characters
 // of an invite's description (always true, now said).
-// 2026-10-19: product measurement — the product events Orbit records, the one-tap questions, the
-// retention of operational logs, the waitlist entry's lifetime and the tab id saved with it, and
-// naming Vercel BotID and the Slack feedback excerpt, all of which were true and unsaid.
+// 2026-10-19: retention windows for sent-email text, meeting transcripts, feedback screenshots,
+// delivery reports, webhook payloads and usage counters; Sentry and Vercel log retention; what
+// account deletion now also removes (credit balance, the matching waitlist entry) and keeps
+// (the Stripe customer marked deleted, the account's security log). Also product measurement:
+// the product events Orbit records, the one-tap questions, the retention of operational logs,
+// the waitlist entry's lifetime and the tab id saved with it, and naming Vercel BotID and the
+// Slack feedback excerpt, all of which were true and unsaid.
 export const TERMS_VERSION = "2026-10-19";
 export const LEGAL_LAST_UPDATED = "October 19, 2026";
 

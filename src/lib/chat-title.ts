@@ -77,17 +77,37 @@ export function sanitizeChatTitle(raw: unknown): string | null {
   return `${(at > 20 ? cut.slice(0, at) : cut.slice(0, TITLE_MAX_CHARS)).trimEnd()}…`;
 }
 
-async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+/**
+ * Run `work` with a signal that aborts at `ms` or when `callerSignal` does, whichever comes
+ * first, and reject at that moment. The signal goes INTO the model call, so a timed-out or
+ * abandoned request is cancelled at the provider rather than raced and left to bill on
+ * (audit L-15).
+ */
+async function withTimeout<T>(
+  work: (signal: AbortSignal) => Promise<T>,
+  ms: number,
+  callerSignal?: AbortSignal
+): Promise<T> {
+  const controller = new AbortController();
+  const abort = () => controller.abort(callerSignal?.reason ?? new Error("title timeout"));
+  if (callerSignal?.aborted) abort();
+  else callerSignal?.addEventListener("abort", abort, { once: true });
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      promise,
+      work(controller.signal),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("title timeout")), ms);
+        const fail = () => reject(controller.signal.reason ?? new Error("title timeout"));
+        if (controller.signal.aborted) return fail();
+        controller.signal.addEventListener("abort", fail, { once: true });
+        timer = setTimeout(() => {
+          controller.abort(new Error("title timeout"));
+        }, ms);
       }),
     ]);
   } finally {
     clearTimeout(timer);
+    callerSignal?.removeEventListener("abort", abort);
   }
 }
 
@@ -99,22 +119,27 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 export async function generateChatTitle(
   userId: string,
   question: string,
-  completeFn: typeof completeJson = completeJson
+  completeFn: typeof completeJson = completeJson,
+  /** The request's own signal, so a person who leaves cancels the title call too. */
+  callerSignal?: AbortSignal
 ): Promise<string | null> {
   const text = typeof question === "string" ? question.trim() : "";
   if (!text) return null;
   try {
     const content = await withTimeout(
-      completeFn(userId, {
-        operation: "chat.title",
-        temperature: 0.2,
-        // Headroom for a model that spends a few tokens thinking before it writes six words.
-        maxOutputTokens: 160,
-        system: TITLE_SYSTEM,
-        // The question alone. Nothing about the user's network is needed to name a chat.
-        user: `First message:\n${text.slice(0, 1500)}`,
-      }),
-      TITLE_TIMEOUT_MS
+      (signal) =>
+        completeFn(userId, {
+          operation: "chat.title",
+          temperature: 0.2,
+          // Headroom for a model that spends a few tokens thinking before it writes six words.
+          maxOutputTokens: 160,
+          signal,
+          system: TITLE_SYSTEM,
+          // The question alone. Nothing about the user's network is needed to name a chat.
+          user: `First message:\n${text.slice(0, 1500)}`,
+        }),
+      TITLE_TIMEOUT_MS,
+      callerSignal
     );
     const parsed = parseAiJson<{ title?: unknown } | null>(content);
     return sanitizeChatTitle(parsed?.title);

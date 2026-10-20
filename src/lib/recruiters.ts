@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
+import { escapeLike } from "@/lib/contact-search-rank";
 import { cleanSingleLine } from "@/lib/ai-security";
 import {
   recruiters,
@@ -63,7 +64,8 @@ export function normalizeLinkedinUrl(
     const path = u.pathname.replace(/\/+$/, "").toLowerCase();
     return `https://www.linkedin.com${path}`;
   } catch {
-    return t.toLowerCase();
+    // Unparseable is not a LinkedIn URL; storing it lowercased let any string through.
+    return null;
   }
 }
 
@@ -547,7 +549,7 @@ export async function ensureUserLink(input: {
 }
 
 function matchesQuery(q: string) {
-  const pattern = `%${q}%`;
+  const pattern = `%${escapeLike(q)}%`;
   return or(
     ilike(recruiters.fullName, pattern),
     ilike(recruiters.firm, pattern),

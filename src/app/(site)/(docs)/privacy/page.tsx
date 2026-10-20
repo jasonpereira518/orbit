@@ -568,6 +568,18 @@ export default function PrivacyPage() {
             after 30. If you joined the waitlist before creating an account, your email address and
             name leave that entry 30 days after you accept your invite, and at once if you delete
             your account.
+            Some records are kept for a fixed time and then removed automatically: screenshots
+            attached to feedback 90 days after the feedback is resolved;
+            the email addresses in delivery reports after 30 days, and the reports after 90; the
+            contents of webhook deliveries to your own endpoints 30 days after delivery; and
+            records of reaching a plan limit, and usage counters for the browser extension and
+            speech-to-text, after 180 days.
+          </p>
+          <p>
+            Error reports go to Sentry, and Vercel keeps logs of requests to Orbit. Error reports
+            carry your account id but not your IP address or cookies. Both services keep these
+            under their own retention settings, so they are not removed when you delete your data
+            or your account; they age out on those services&rsquo; schedules.
           </p>
           <p>
             A shared LinkedIn photo is deleted within a day once no Orbit account has that person.
@@ -575,11 +587,15 @@ export default function PrivacyPage() {
           </p>
           <p>
             When you delete your account, every table holding your data is cleared, including your
-            settings, keys and tokens. What remains: Stripe&rsquo;s own records of your payments,
-            held by Stripe; Orbit&rsquo;s accounting record of charges, refunds and credit packs, with
-            your account id removed; the operator&rsquo;s audit log of actions taken on your account,
-            which refers to an account id that no longer exists and can keep a short excerpt of
-            feedback you sent; and operational logs of up to 90 days that can name an account id.
+            settings, keys and tokens, your credit balance, and the waitlist entry for the same
+            email address. What remains: Stripe&rsquo;s own records of your payments, held by
+            Stripe, with the Stripe customer marked as deleted rather than removed; Orbit&rsquo;s
+            accounting record of charges, refunds and credit packs, with your account id removed;
+            the operator&rsquo;s audit log of actions taken on your account, which can keep a short
+            excerpt of feedback you sent, and the log of security events on it (keys created and
+            revoked, exports, connected accounts, plan changes and the deletion itself), both of
+            which refer to an account id that no longer exists; a few operational counters keyed by
+            that same id; and operational logs of up to 90 days that can name an account id.
             Encrypted database backups are kept for 90 days, so deleted data
             leaves the last backup within 90 days.
           </p>

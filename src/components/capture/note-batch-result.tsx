@@ -145,7 +145,8 @@ export function NoteBatchResultView({
   contactNames,
 }: {
   batchId: string;
-  status: "saved" | "undone";
+  /** The batch row's status. Only `undone` changes what renders; `saving`/`failed` reach here from a deep link to a batch mid-write or one that threw. */
+  status: "saving" | "saved" | "failed" | "undone";
   anchorIso: string;
   anchorBasis: "note" | "hint" | "upload";
   result: NoteBatchResult;

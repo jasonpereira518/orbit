@@ -1,7 +1,8 @@
-import { NextResponse } from "next/server";
+import { rateLimitGuard } from "@/lib/api/route-error";
 import { requireUserId } from "@/lib/auth";
 import { userExportStream } from "@/lib/data-export";
-import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { recordAccountAudit } from "@/lib/account-audit";
+import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 
 /** A large network pages through every table; the stream keeps memory flat, not time short. */
 export const maxDuration = 300;
@@ -17,17 +18,9 @@ export async function GET() {
   } catch {
     return new Response(null, { status: 401 });
   }
-  try {
-    await consumeBucket("export", userId, RATE_LIMITS.export);
-  } catch (err) {
-    if (isRateLimitedError(err)) {
-      return NextResponse.json(
-        { error: err.message },
-        { status: 429, headers: { "Retry-After": String(err.retryAfterSec) } }
-      );
-    }
-    throw err;
-  }
+  const limited = await rateLimitGuard(() => consumeBucket("export", userId, RATE_LIMITS.export));
+  if (limited) return limited;
+  await recordAccountAudit({ userId, action: "data.export", detail: { format: "json" } });
   const date = new Date().toISOString().slice(0, 10);
   return new Response(userExportStream(userId), {
     headers: {

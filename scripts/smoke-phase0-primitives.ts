@@ -198,12 +198,12 @@ function main() {
     lenient.ok && lenient.value.fullName === "Dana Whitfield"
   );
   check(
-    "lenient mode passes every other field through untouched",
+    "lenient mode passes every other field through, only length-capped (audit M-05)",
     lenient.ok &&
       lenient.value.email === "definitely not an email" &&
       lenient.value.linkedinUrl === "https://example.com/nope" &&
-      lenient.value.company?.length === 3000,
-    "the import engine, not this schema, decides what to do with these"
+      lenient.value.company?.length === 2000,
+    "the import engine, not this schema, decides what to do with these; over-long text is truncated, never rejected"
   );
   check(
     "lenient mode still rejects a row with no usable name",

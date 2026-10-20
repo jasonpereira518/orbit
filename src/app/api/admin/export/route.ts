@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import Papa from "papaparse";
+import { toSpreadsheetCsv } from "@/lib/csv-export";
 import { AdminForbiddenError, requireAdminUserId } from "@/lib/admin";
 import { recordAdminAction } from "@/lib/admin-operations";
 import {
@@ -46,15 +46,6 @@ function isDataset(value: string | null): value is Dataset {
   return value != null && (DATASETS as readonly string[]).includes(value);
 }
 
-/**
- * Cells a spreadsheet would evaluate as a formula (CSV injection, CWE-1236). Waitlist names,
- * referrers, UTM tags and feedback text are typed by anyone, so every string cell starting
- * with one of these gets Papa's `'` prefix. Papa's own default (`/^[=+\-@\t\r].*$/`) misses a
- * multi-line cell — `.` stops at the newline and `$` needs the end of the string — so only the
- * first character is tested. Numbers are not strings, so a negative count is left alone; JSON
- * exports stay exact.
- */
-const CSV_FORMULA_START = /^[=+\-@\t\r]/;
 
 function iso(date: Date | null | undefined): string {
   return date ? date.toISOString() : "";
@@ -98,9 +89,7 @@ export async function GET(request: NextRequest) {
   const stamp = new Date().toISOString().slice(0, 10);
   const filename = `orbit-${dataset}-${stamp}.${format}`;
   const body =
-    format === "json"
-      ? JSON.stringify(rows, null, 2)
-      : Papa.unparse(rows, { escapeFormulae: CSV_FORMULA_START });
+    format === "json" ? JSON.stringify(rows, null, 2) : toSpreadsheetCsv(rows);
 
   return new NextResponse(body, {
     status: 200,

@@ -331,7 +331,8 @@ export function buildContactEmbeddingContent(
     includeNotes ? contact.notes : null,
     metContextLabel(contact.metContext),
     contact.dateMet
-      ? new Date(contact.dateMet).toLocaleDateString()
+      ? // A floating date (UTC midnight): its day is its UTC day, wherever this runs.
+        new Date(contact.dateMet).toLocaleDateString("en-US", { timeZone: "UTC" })
       : null,
     contact.howMet,
     // `about` stays down here: it is long, open-ended prose with no overflow split of its

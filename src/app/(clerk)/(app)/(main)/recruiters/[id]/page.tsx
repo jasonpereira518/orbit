@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 
 /** Request-memoized so `generateMetadata` and the page share one read. */
 const loadRecruiter = cache((id: string) => getRecruiter(id));
@@ -44,6 +45,7 @@ export default async function RecruiterDetailPage({
   const { id } = await params;
   const { canUseRecruiters } = await getEntitlements(await requireUserId());
   if (!canUseRecruiters) return <RecruitersLocked />;
+  const timeZone = await viewerTimeZone();
 
   const [recruiter, { enabled: sharingEnabled }] = await Promise.all([
     loadRecruiter(id),
@@ -215,7 +217,7 @@ export default async function RecruiterDetailPage({
             <p className="mt-4 text-xs text-muted-foreground">
               {link.emailCount} email{link.emailCount === 1 ? "" : "s"}
               {link.lastEmailAt
-                ? ` · last on ${new Date(link.lastEmailAt).toLocaleDateString()}`
+                ? ` · last on ${new Date(link.lastEmailAt).toLocaleDateString(undefined, { timeZone })}`
                 : ""}
             </p>
           ) : null}

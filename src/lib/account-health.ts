@@ -37,6 +37,7 @@ import {
 } from "@/lib/outlook";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { ensureUserSettings } from "@/lib/user-settings";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { LINKEDIN_IMPORT_TYPE, LINKEDIN_MESSAGES_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-import-types";
 
 /**
@@ -488,7 +489,7 @@ export async function getAccountAlerts(
     const input = await loadAccountHealthInput(userId, now, context);
     if (!input) return [];
 
-    const alerts = sortAccountAlerts(toAccountAlerts(evaluateAccountHealth(input, now)));
+    const alerts = sortAccountAlerts(toAccountAlerts(evaluateAccountHealth(input, now), await viewerTimeZone()));
 
     // An operator who has hidden a surface has deliberately turned that remedy off. Drop
     // the whole alert rather than stripping its button: an alert the user cannot act on is

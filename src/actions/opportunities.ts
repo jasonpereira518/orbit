@@ -15,7 +15,6 @@ import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contactOpportunities, type ContactOpportunity } from "@/db/schema";
-import { requireUserId } from "@/lib/auth";
 import {
   insertOpportunities,
   syncContactOpportunityMirror,
@@ -30,6 +29,9 @@ import {
   normalizeOpportunityStatus,
 } from "@/lib/opportunity-kinds";
 import { isoDayToLocalNoon } from "@/lib/suggested-reminder-utils";
+import { z } from "zod";
+import { anyNumber } from "@/lib/input/schemas";
+import { defineAction, failResult } from "@/lib/input/action";
 
 type Fail = { ok: false; error: string };
 type Ok = { ok: true; opportunity: ContactOpportunity };
@@ -60,97 +62,106 @@ async function afterWrite(userId: string, contactId: string) {
   after(() => generateAndStoreContactBrief(userId, contactId).catch(() => null));
 }
 
-export async function createOpportunity(input: {
-  contactId: string;
-  kind: string;
-  label: string;
-  direction?: string | null;
-  dueDateIso?: string | null;
-  status?: string;
-}): Promise<Ok | Fail> {
-  try {
-    const userId = await requireUserId();
-    const contactId = typeof input.contactId === "string" ? input.contactId.trim() : "";
-    if (!contactId) return { ok: false, error: "Pick a contact first" };
-
-    const label = normalizeOpportunityLabel(input.label);
-    if (!label) return { ok: false, error: "Give the opportunity a short label" };
-    if (typeof input.label === "string" && input.label.trim().length > MAX_OPPORTUNITY_LABEL_CHARS) {
-      // Not an error — the label is already truncated. Said out loud so a long paste does not
-      // look like it saved whole.
-      console.warn("opportunity label truncated");
-    }
-
-    const [row] = await insertOpportunities(userId, [
-      {
-        contactId,
-        kind: normalizeOpportunityKind(input.kind),
-        label,
-        status: normalizeOpportunityStatus(input.status),
-        direction: normalizeOpportunityDirection(input.direction),
-        dueDate: parseDueDate(input.dueDateIso),
-        createdBy: "user",
-        // Hand-added rows carry no hash: there is no source note to dedupe against, and a
-        // null hash can never collide under the partial unique index.
-        itemHash: null,
-      },
-    ]);
-    if (!row) return { ok: false, error: "Couldn’t add that opportunity — try again?" };
-    await afterWrite(userId, contactId);
-    return { ok: true, opportunity: row };
-  } catch (err) {
-    return { ok: false, error: friendlyError(err, "Couldn’t add that opportunity — try again?") };
-  }
-}
-
-export async function updateOpportunity(
-  id: string,
-  patch: {
-    kind?: string;
-    label?: string;
+export const createOpportunity = defineAction(
+  { schema: z.tuple([z.looseObject({ contactId: z.string(), kind: z.string(), label: z.string(), direction: z.string().nullish(), dueDateIso: z.string().nullish(), status: z.string().optional() })]), invalid: failResult, onGateError: async (err) => {
+    return { ok: false as const, error: friendlyError(err, "Couldn’t add that opportunity — try again?") };
+  } },
+  async (userId, input: {
+    contactId: string;
+    kind: string;
+    label: string;
     direction?: string | null;
     dueDateIso?: string | null;
     status?: string;
-  }
-): Promise<Ok | Fail> {
-  try {
-    const userId = await requireUserId();
-    if (typeof id !== "string" || !id.trim()) return { ok: false, error: "That opportunity is gone" };
+  }): Promise<Ok | Fail> => {
+    try {
+      const contactId = typeof input.contactId === "string" ? input.contactId.trim() : "";
+      if (!contactId) return { ok: false, error: "Pick a contact first" };
 
-    const set: Partial<typeof contactOpportunities.$inferInsert> = { updatedAt: new Date() };
-    if (patch.kind !== undefined) set.kind = normalizeOpportunityKind(patch.kind);
-    if (patch.label !== undefined) {
-      const label = normalizeOpportunityLabel(patch.label);
+      const label = normalizeOpportunityLabel(input.label);
       if (!label) return { ok: false, error: "Give the opportunity a short label" };
-      set.label = label;
-    }
-    if (patch.direction !== undefined) set.direction = normalizeOpportunityDirection(patch.direction);
-    if (patch.dueDateIso !== undefined) set.dueDate = parseDueDate(patch.dueDateIso);
-    if (patch.status !== undefined) {
-      const status = normalizeOpportunityStatus(patch.status);
-      set.status = status;
-      // Closing stamps the time; reopening clears it, so "closed on" never outlives the close.
-      set.closedAt = status === "open" || status === "in_progress" ? null : new Date();
-    }
+      if (typeof input.label === "string" && input.label.trim().length > MAX_OPPORTUNITY_LABEL_CHARS) {
+        // Not an error — the label is already truncated. Said out loud so a long paste does not
+        // look like it saved whole.
+        console.warn("opportunity label truncated");
+      }
 
-    const db = await getDb();
-    const [row] = await db
-      .update(contactOpportunities)
-      .set(set)
-      .where(and(eq(contactOpportunities.id, id.trim()), eq(contactOpportunities.userId, userId)))
-      .returning();
-    if (!row) return { ok: false, error: "That opportunity is gone" };
-    await afterWrite(userId, row.contactId);
-    return { ok: true, opportunity: row };
-  } catch (err) {
-    return { ok: false, error: friendlyError(err, "Couldn’t update that opportunity — try again?") };
+      const [row] = await insertOpportunities(userId, [
+        {
+          contactId,
+          kind: normalizeOpportunityKind(input.kind),
+          label,
+          status: normalizeOpportunityStatus(input.status),
+          direction: normalizeOpportunityDirection(input.direction),
+          dueDate: parseDueDate(input.dueDateIso),
+          createdBy: "user",
+          // Hand-added rows carry no hash: there is no source note to dedupe against, and a
+          // null hash can never collide under the partial unique index.
+          itemHash: null,
+        },
+      ]);
+      if (!row) return { ok: false, error: "Couldn’t add that opportunity — try again?" };
+      await afterWrite(userId, contactId);
+      return { ok: true, opportunity: row };
+    } catch (err) {
+      return { ok: false, error: friendlyError(err, "Couldn’t add that opportunity — try again?") };
+    }
   }
-}
+);
+
+export const updateOpportunity = defineAction(
+  { schema: z.tuple([z.string(), z.looseObject({ kind: z.string().optional(), label: z.string().optional(), direction: z.string().nullish(), dueDateIso: z.string().nullish(), status: z.string().optional() })]), invalid: failResult, onGateError: async (err) => {
+    return { ok: false as const, error: friendlyError(err, "Couldn’t update that opportunity — try again?") };
+  } },
+  async (userId, id: string, patch: {
+      kind?: string;
+      label?: string;
+      direction?: string | null;
+      dueDateIso?: string | null;
+      status?: string;
+    }): Promise<Ok | Fail> => {
+    try {
+      if (typeof id !== "string" || !id.trim()) return { ok: false, error: "That opportunity is gone" };
+
+      const set: Partial<typeof contactOpportunities.$inferInsert> = { updatedAt: new Date() };
+      if (patch.kind !== undefined) set.kind = normalizeOpportunityKind(patch.kind);
+      if (patch.label !== undefined) {
+        const label = normalizeOpportunityLabel(patch.label);
+        if (!label) return { ok: false, error: "Give the opportunity a short label" };
+        set.label = label;
+      }
+      if (patch.direction !== undefined) set.direction = normalizeOpportunityDirection(patch.direction);
+      if (patch.dueDateIso !== undefined) set.dueDate = parseDueDate(patch.dueDateIso);
+      if (patch.status !== undefined) {
+        const status = normalizeOpportunityStatus(patch.status);
+        set.status = status;
+        // Closing stamps the time; reopening clears it, so "closed on" never outlives the close.
+        set.closedAt = status === "open" || status === "in_progress" ? null : new Date();
+      }
+
+      const db = await getDb();
+      const [row] = await db
+        .update(contactOpportunities)
+        .set(set)
+        .where(and(eq(contactOpportunities.id, id.trim()), eq(contactOpportunities.userId, userId)))
+        .returning();
+      if (!row) return { ok: false, error: "That opportunity is gone" };
+      await afterWrite(userId, row.contactId);
+      return { ok: true, opportunity: row };
+    } catch (err) {
+      return { ok: false, error: friendlyError(err, "Couldn’t update that opportunity — try again?") };
+    }
+  }
+);
 
 /** Shorthand for the status buttons, which are the common case. */
-export async function setOpportunityStatus(id: string, status: string): Promise<Ok | Fail> {
-  return updateOpportunity(id, { status });
-}
+export const setOpportunityStatus = defineAction(
+  { schema: z.tuple([z.string(), z.string()]), invalid: failResult, onGateError: async (err) => {
+    return { ok: false as const, error: friendlyError(err, "Couldn’t update that opportunity — try again?") };
+  } },
+  // `updateOpportunity` resolves the caller again; this one only puts auth before parsing.
+  async (_userId, id: string, status: string): Promise<Ok | Fail> => updateOpportunity(id, { status })
+);
 
 /**
  * Delete, returning the row so the toast can offer Undo.
@@ -159,22 +170,26 @@ export async function setOpportunityStatus(id: string, status: string): Promise<
  * against it", which is a fact worth keeping, whereas delete means "this should never have
  * been here". Conflating them would make the dismissed list a junk drawer.
  */
-export async function deleteOpportunity(id: string): Promise<Ok | Fail> {
-  try {
-    const userId = await requireUserId();
-    if (typeof id !== "string" || !id.trim()) return { ok: false, error: "That opportunity is gone" };
-    const db = await getDb();
-    const [row] = await db
-      .delete(contactOpportunities)
-      .where(and(eq(contactOpportunities.id, id.trim()), eq(contactOpportunities.userId, userId)))
-      .returning();
-    if (!row) return { ok: false, error: "That opportunity is gone" };
-    await afterWrite(userId, row.contactId);
-    return { ok: true, opportunity: row };
-  } catch (err) {
-    return { ok: false, error: friendlyError(err, "Couldn’t delete that opportunity — try again?") };
+export const deleteOpportunity = defineAction(
+  { schema: z.tuple([z.string()]), invalid: failResult, onGateError: async (err) => {
+    return { ok: false as const, error: friendlyError(err, "Couldn’t delete that opportunity — try again?") };
+  } },
+  async (userId, id: string): Promise<Ok | Fail> => {
+    try {
+      if (typeof id !== "string" || !id.trim()) return { ok: false, error: "That opportunity is gone" };
+      const db = await getDb();
+      const [row] = await db
+        .delete(contactOpportunities)
+        .where(and(eq(contactOpportunities.id, id.trim()), eq(contactOpportunities.userId, userId)))
+        .returning();
+      if (!row) return { ok: false, error: "That opportunity is gone" };
+      await afterWrite(userId, row.contactId);
+      return { ok: true, opportunity: row };
+    } catch (err) {
+      return { ok: false, error: friendlyError(err, "Couldn’t delete that opportunity — try again?") };
+    }
   }
-}
+);
 
 /**
  * Undo for the delete above.
@@ -183,31 +198,35 @@ export async function deleteOpportunity(id: string): Promise<Ok | Fail> {
  * `itemHash`. Keeping the hash would let a restored row block a legitimate re-paste of the
  * note it came from; the row is back either way, which is what Undo promised.
  */
-export async function restoreOpportunity(row: ContactOpportunity): Promise<Ok | Fail> {
-  try {
-    const userId = await requireUserId();
-    if (!row || typeof row.contactId !== "string") return { ok: false, error: "Nothing to restore" };
-    const [restored] = await insertOpportunities(userId, [
-      {
-        contactId: row.contactId,
-        kind: normalizeOpportunityKind(row.kind),
-        label: normalizeOpportunityLabel(row.label),
-        status: normalizeOpportunityStatus(row.status),
-        direction: normalizeOpportunityDirection(row.direction),
-        sourceInteractionId: row.sourceInteractionId,
-        noteBatchId: row.noteBatchId,
-        sourceExcerpt: row.sourceExcerpt,
-        dueDate: row.dueDate ? new Date(row.dueDate) : null,
-        rawDatePhrase: row.rawDatePhrase,
-        confidenceScore: row.confidenceScore,
-        createdBy: row.createdBy,
-        itemHash: null,
-      },
-    ]);
-    if (!restored) return { ok: false, error: "Couldn’t restore that opportunity" };
-    await afterWrite(userId, row.contactId);
-    return { ok: true, opportunity: restored };
-  } catch (err) {
-    return { ok: false, error: friendlyError(err, "Couldn’t restore that opportunity — try again?") };
+export const restoreOpportunity = defineAction(
+  { schema: z.tuple([z.looseObject({ id: z.string(), userId: z.string(), createdAt: z.date(), updatedAt: z.date(), contactId: z.string(), kind: z.enum(["internship", "job", "referral", "introduction", "startup_lead", "mentor", "investor", "speaker", "customer", "collaboration", "advice", "other"]), status: z.enum(["in_progress", "dismissed", "open", "landed", "passed"]), noteBatchId: z.string().nullable(), direction: z.enum(["they_offer", "you_ask"]).nullable(), dueDate: z.date().nullable(), createdBy: z.enum(["user", "ai"]), sourceInteractionId: z.string().nullable(), sourceExcerpt: z.string().nullable(), rawDatePhrase: z.string().nullable(), confidenceScore: anyNumber.nullable(), itemHash: z.string().nullable(), label: z.string(), closedAt: z.date().nullable() })]), invalid: failResult, onGateError: async (err) => {
+    return { ok: false as const, error: friendlyError(err, "Couldn’t restore that opportunity — try again?") };
+  } },
+  async (userId, row: ContactOpportunity): Promise<Ok | Fail> => {
+    try {
+      if (!row || typeof row.contactId !== "string") return { ok: false, error: "Nothing to restore" };
+      const [restored] = await insertOpportunities(userId, [
+        {
+          contactId: row.contactId,
+          kind: normalizeOpportunityKind(row.kind),
+          label: normalizeOpportunityLabel(row.label),
+          status: normalizeOpportunityStatus(row.status),
+          direction: normalizeOpportunityDirection(row.direction),
+          sourceInteractionId: row.sourceInteractionId,
+          noteBatchId: row.noteBatchId,
+          sourceExcerpt: row.sourceExcerpt,
+          dueDate: row.dueDate ? new Date(row.dueDate) : null,
+          rawDatePhrase: row.rawDatePhrase,
+          confidenceScore: row.confidenceScore,
+          createdBy: row.createdBy,
+          itemHash: null,
+        },
+      ]);
+      if (!restored) return { ok: false, error: "Couldn’t restore that opportunity" };
+      await afterWrite(userId, row.contactId);
+      return { ok: true, opportunity: restored };
+    } catch (err) {
+      return { ok: false, error: friendlyError(err, "Couldn’t restore that opportunity — try again?") };
+    }
   }
-}
+);

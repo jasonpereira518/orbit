@@ -5,21 +5,26 @@ import { DISCOVERY_LABEL, RSVP_LABEL } from "@/components/events/event-provenanc
 import { DismissEventButton } from "@/components/events/dismiss-event-button";
 import type { EventListRow } from "@/lib/events/store";
 
-function formatDate(date: Date | null): string {
+/** In the viewer's zone (audit L-17): this renders on the server, whose zone is UTC. */
+function formatDate(date: Date | null, timeZone: string): string {
   if (!date) return "Date not set";
   return date.toLocaleDateString(undefined, {
     year: "numeric",
     month: "short",
     day: "numeric",
+    timeZone,
   });
 }
 
 export function EventCard({
   event,
   hidden = false,
+  timeZone,
 }: {
   event: EventListRow;
   hidden?: boolean;
+  /** The viewer's IANA zone (`viewerTimeZone`). */
+  timeZone: string;
 }) {
   const place = [event.venue, event.city].filter(Boolean).join(", ");
   const found = event.discoveredVia ? DISCOVERY_LABEL[event.discoveredVia] : null;
@@ -83,7 +88,7 @@ export function EventCard({
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
           <span className="inline-flex items-center gap-1.5">
             <CalendarDays className="size-3.5" aria-hidden />
-            {formatDate(event.startsAt)}
+            {formatDate(event.startsAt, timeZone)}
           </span>
           {place ? (
             <span className="inline-flex items-center gap-1.5">

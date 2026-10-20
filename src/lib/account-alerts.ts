@@ -612,7 +612,11 @@ function plural(n: number, one: string, many: string) {
 }
 
 /** Turns findings into the rows a user reads. The admin console keeps its own wording. */
-export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
+export function toAccountAlerts(
+  findings: HealthFinding[],
+  /** The viewer's IANA zone, for the dates an alert spells out (audit L-17). */
+  timeZone: string = "UTC"
+): AccountAlert[] {
   const alerts: AccountAlert[] = [];
 
   for (const f of findings) {
@@ -885,6 +889,7 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
             ? until.toLocaleDateString(undefined, {
                 month: "short",
                 day: "numeric",
+                timeZone,
               })
             : null;
         alerts.push({
