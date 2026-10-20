@@ -12,17 +12,8 @@ import { isDemoMode } from "@/lib/auth";
 import { deleteEventConnection } from "@/lib/events/connections";
 import { missingGooglePurposes, serializeGooglePurposes } from "@/lib/google-scopes";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
+import { classifyOAuthFailure, PROFILE_FETCH_RULE } from "@/lib/oauth-failure";
 import { dropCloudNoteSource, syncCloudNoteSource } from "@/lib/cloud-notes/sources";
-
-/** Keeps `error_events.kind` low-cardinality so the admin console can group on it. */
-function classifyOAuthFailure(err: unknown): string {
-  const message = err instanceof Error ? err.message : String(err);
-  if (/authorization code/i.test(message)) return "missing_code";
-  if (/OAuth state|does not match/i.test(message)) return "state_mismatch";
-  if (/Token exchange/i.test(message)) return "token_exchange_failed";
-  if (/profile|no email/i.test(message)) return "profile_fetch_failed";
-  return "other";
-}
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -137,7 +128,7 @@ export async function GET(request: Request) {
   } catch (err) {
     await recordErrorEvent({
       source: ERROR_SOURCES.oauthGmailCallback,
-      kind: classifyOAuthFailure(err),
+      kind: classifyOAuthFailure(err, PROFILE_FETCH_RULE),
       message: err,
     });
     redirectBase.searchParams.set("gmail", "error");

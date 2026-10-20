@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { isDemoMode } from "@/lib/auth";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
+import { classifyOAuthFailure, NO_ORGANIZATION_RULE } from "@/lib/oauth-failure";
 import { consumeEventbriteOAuthState } from "@/actions/events";
 import {
   exchangeEventbriteCode,
@@ -11,16 +12,6 @@ import { upsertEventConnection } from "@/lib/events/connections";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-/** Keeps `error_events.kind` low-cardinality so the admin console can group on it. */
-function classifyOAuthFailure(err: unknown): string {
-  const message = err instanceof Error ? err.message : String(err);
-  if (/authorization code/i.test(message)) return "missing_code";
-  if (/OAuth state|does not match/i.test(message)) return "state_mismatch";
-  if (/Token exchange/i.test(message)) return "token_exchange_failed";
-  if (/organization/i.test(message)) return "no_organization";
-  return "other";
-}
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -78,7 +69,7 @@ export async function GET(request: Request) {
     redirect.searchParams.set("eventbrite", "connected");
     return NextResponse.redirect(redirect);
   } catch (err) {
-    const kind = classifyOAuthFailure(err);
+    const kind = classifyOAuthFailure(err, NO_ORGANIZATION_RULE);
     await recordErrorEvent({
       source: ERROR_SOURCES.oauthEventbriteCallback,
       kind,
