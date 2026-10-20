@@ -9,6 +9,7 @@ import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { noteBatches, type CaptureSourceKind } from "@/db/schema";
 import { listCapturePhotosForBatches } from "@/lib/capture-photos";
+import { decodePgTimestampIdCursor, encodeIsoIdCursor } from "@/lib/cursor";
 import { captureExcerpt, captureHistoryTitle, captureSourceKinds } from "@/lib/note-batches";
 
 export const CAPTURE_HISTORY_FIRST_PAGE = 5;
@@ -46,20 +47,12 @@ export type CaptureHistoryPage = {
  * it silently repeats or skips captures that landed in the same millisecond.
  */
 function encodeCursor(createdAtText: string, id: string) {
-  return `${createdAtText}|${id}`;
+  return encodeIsoIdCursor(createdAtText, id, "plain");
 }
 
 function decodeCursor(cursor: string | null | undefined): { at: string; id: string } | null {
-  if (!cursor) return null;
-  const bar = cursor.lastIndexOf("|");
-  if (bar <= 0) return null;
-  const at = cursor.slice(0, bar);
-  const id = cursor.slice(bar + 1);
-  // Both halves are cast inside the query, so junk would throw there; refuse it here and
-  // hand back the first page instead of an error.
-  if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
-  if (!/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d{1,6})?([+-]\d{2}(:?\d{2})?|Z)?$/.test(at)) return null;
-  return { at, id };
+  // Both halves are validated (uuid, Postgres timestamp text) so junk hands back the first page.
+  return decodePgTimestampIdCursor(cursor);
 }
 
 /**

@@ -16,6 +16,7 @@ import { createContactForUser } from "@/lib/contact-writes";
 import { DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
 import { findConfidentDuplicate } from "@/lib/contact-resolve";
 import { enqueueWebhookEvent } from "@/lib/webhooks/dispatch";
+import { decodeIsoIdCursor, encodeIsoIdCursor } from "@/lib/cursor";
 import { auditUntrustedWrite, cleanAgentContactFields } from "@/lib/ai-security";
 
 export const runtime = "nodejs";
@@ -27,20 +28,15 @@ export const dynamic = "force-dynamic";
  * tiebreaker a page boundary landing inside that tie would skip or repeat rows.
  */
 function encodeCursor(row: { createdAt: Date | null; id: string }): string {
-  return Buffer.from(`${(row.createdAt ?? new Date(0)).toISOString()}|${row.id}`).toString(
-    "base64url"
-  );
+  return encodeIsoIdCursor((row.createdAt ?? new Date(0)).toISOString(), row.id, "base64url");
 }
 
 function decodeCursor(cursor: string): { createdAt: Date; id: string } | null {
-  try {
-    const [iso, id] = Buffer.from(cursor, "base64url").toString("utf8").split("|");
-    const createdAt = new Date(iso);
-    if (!id || Number.isNaN(createdAt.getTime())) return null;
-    return { createdAt, id };
-  } catch {
-    return null;
-  }
+  const parts = decodeIsoIdCursor(cursor, "base64url");
+  if (!parts) return null;
+  const createdAt = new Date(parts.iso);
+  if (Number.isNaN(createdAt.getTime())) return null;
+  return { createdAt, id: parts.id };
 }
 
 /** The one contact shape the API returns, shared by search, create and webhook payloads. */

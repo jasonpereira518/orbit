@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
+import { toDate } from "@/lib/admin-metrics";
 
 /**
  * One account's history, merged across everything that writes.
@@ -46,10 +47,6 @@ export type AdminTimelineEntry = {
 };
 
 export const TIMELINE_PAGE_SIZE = 40;
-
-function toDate(value: Date | string): Date {
-  return value instanceof Date ? value : new Date(value);
-}
 
 type TimelineRecord = {
   kind: string;
@@ -159,7 +156,7 @@ export async function loadAdminTimeline(
       detail: r.detail,
       resourceType: r.resource_type,
       resourceId: r.resource_id,
-      at: toDate(r.at),
+      at: toDate(r.at) ?? new Date(NaN),
     })),
     hasMore,
   };

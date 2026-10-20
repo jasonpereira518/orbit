@@ -4,6 +4,8 @@
  * already hand-rolls ICS parsing, and a correct writer is small.
  */
 
+import { addUtcDays } from "@/lib/dates";
+
 /** RFC 5545 3.3.11. Backslash MUST be escaped first or later escapes get double-hit. */
 export function escapeIcsText(value: string) {
   return value
@@ -75,12 +77,6 @@ export type IcsFeedEvent = {
   alarmTrigger?: string;
 };
 
-function addDays(d: Date, days: number) {
-  const out = new Date(d);
-  out.setUTCDate(out.getUTCDate() + days);
-  return out;
-}
-
 function buildEvent(event: IcsFeedEvent): string[] {
   const lines: string[] = ["BEGIN:VEVENT"];
   lines.push(`UID:${event.uid}`);
@@ -90,7 +86,7 @@ function buildEvent(event: IcsFeedEvent): string[] {
     // Floating date: renders on the intended calendar day in every timezone, which is
     // how this feed stays correct without knowing the user's timezone.
     lines.push(`DTSTART;VALUE=DATE:${formatIcsDate(event.start)}`);
-    lines.push(`DTEND;VALUE=DATE:${formatIcsDate(addDays(event.start, 1))}`);
+    lines.push(`DTEND;VALUE=DATE:${formatIcsDate(addUtcDays(event.start, 1))}`);
   } else {
     const end = event.end ?? new Date(event.start.getTime() + 30 * 60_000);
     lines.push(`DTSTART:${formatIcsUtc(event.start)}`);

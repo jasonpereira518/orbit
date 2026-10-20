@@ -39,6 +39,7 @@ import {
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { LINKEDIN_IMPORT_TYPE, LINKEDIN_MESSAGES_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-import-types";
+import { num } from "@/lib/admin-metrics";
 
 /**
  * The server half of account alerts: loads the facts, hands them to the pure predicates in
@@ -69,12 +70,6 @@ function bool(value: unknown): boolean {
   return value === true || value === 1 || value === "t" || value === "true";
 }
 
-/** `count(*)::int` is not guaranteed to arrive as a JS number on both drivers. */
-function num(value: unknown): number {
-  if (value == null) return 0;
-  const n = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
 
 /** timestamptz can come back as a string. */
 function toDate(value: unknown): Date | null {

@@ -16,6 +16,8 @@
  * Pure: no database. `buildOutreachSuggestions` does the query and passes rows here.
  */
 
+import { daysBetweenFloor } from "@/lib/dates";
+
 /**
  * The intervals offered in the UI, in days.
  *
@@ -65,10 +67,6 @@ export function normalizeCadence(value: unknown): number | null {
   return days;
 }
 
-function daysBetween(from: Date, to: Date): number {
-  return Math.floor((to.getTime() - from.getTime()) / 86_400_000);
-}
-
 function asDate(value: Date | string | null): Date | null {
   if (!value) return null;
   const d = value instanceof Date ? value : new Date(value);
@@ -97,7 +95,7 @@ export function keepInTouchDue(
     if (cadenceDays === null) continue;
     const last = asDate(row.lastInteractionAt);
     if (!last) continue;
-    const daysSince = daysBetween(last, now);
+    const daysSince = daysBetweenFloor(last, now);
     // A future timestamp means clock skew or bad import data, never a real touch. Treating
     // the negative as "0 days since" is right either way: not overdue.
     if (daysSince < cadenceDays) continue;

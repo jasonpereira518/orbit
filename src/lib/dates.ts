@@ -6,6 +6,8 @@
  * pulled into a client component. Date formatting is needed on both sides.
  */
 
+import { atLocalNoon } from "@/lib/interaction-date";
+
 /** Formats a Date as YYYY-MM-DD in the *local* calendar, never UTC. */
 export function isoDay(d: Date) {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -50,6 +52,32 @@ export function parseDueDateInput(value: string): Date {
 /** Start of the local calendar day containing `d`. */
 export function startOfLocalDay(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+}
+
+/**
+ * `d` moved by `n` local calendar days and pinned to local noon. Uses `setDate`, not
+ * millisecond arithmetic, so a DST transition inside the span cannot shift the day.
+ */
+export function addLocalDaysAtNoon(d: Date, n: number) {
+  const out = new Date(d);
+  out.setDate(out.getDate() + n);
+  return atLocalNoon(out);
+}
+
+/** `d` moved by `days` UTC calendar days; time of day is kept. For floating all-day feeds. */
+export function addUtcDays(d: Date, days: number) {
+  const out = new Date(d);
+  out.setUTCDate(out.getUTCDate() + days);
+  return out;
+}
+
+/**
+ * Elapsed 24-hour periods from `from` to `to`, FLOORED (negative when `to` is earlier).
+ * Pure millisecond arithmetic: not calendar-aware, so a DST day counts as 23 or 25 hours.
+ * Use `calendarDaysBetween` for calendar days; this one is for "how many full days old".
+ */
+export function daysBetweenFloor(from: Date, to: Date): number {
+  return Math.floor((to.getTime() - from.getTime()) / 86_400_000);
 }
 
 /**

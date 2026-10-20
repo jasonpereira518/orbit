@@ -2,8 +2,8 @@ import { sql } from "drizzle-orm";
 import { TOUR_EXAMPLE_SOURCE } from "@/lib/onboarding-examples/marker";
 import { getDb, rowsOf } from "@/db";
 import { resolvePlan, type Plan, type PlanSource } from "@/lib/entitlements";
-import type { AdminUserRow } from "@/lib/admin-metrics";
 import { PRESENCE_WINDOW_MS } from "@/lib/presence-window";
+import { maxDate, num, toDate, type AdminUserRow } from "@/lib/admin-metrics";
 
 /**
  * The paginated roster query.
@@ -165,31 +165,6 @@ type RosterRecord = {
   last_write_at: string | Date | null;
   total_count: string | number;
 };
-
-/** `sum(int4)` promotes to bigint, which both drivers serialize as a string. */
-function num(value: string | number | null | undefined): number {
-  if (value == null) return 0;
-  const n = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
-
-/** Raw `sql<Date>` aggregates come back as strings on PGlite and Neon alike. */
-function toDate(value: Date | string | null | undefined): Date | null {
-  if (value == null) return null;
-  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
-function maxDate(...values: Array<Date | string | null | undefined>): Date | null {
-  let best: Date | null = null;
-  for (const raw of values) {
-    const d = toDate(raw);
-    if (!d) continue;
-    if (!best || d.getTime() > best.getTime()) best = d;
-  }
-  return best;
-}
 
 function toRow(record: RosterRecord): AdminUserRow {
   // Plan comes from `resolvePlan` over the billing columns, NOT from PLAN_SQL. The SQL

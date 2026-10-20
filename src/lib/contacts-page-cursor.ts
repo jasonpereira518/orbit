@@ -20,6 +20,7 @@
 import { asc, desc, sql, type SQL } from "drizzle-orm";
 import { contacts } from "@/db/schema";
 import type { ContactSort } from "@/lib/contacts-page";
+import { decodeJsonCursor, encodeJsonCursor } from "@/lib/cursor";
 
 export type ContactsCursor =
   | { s: "name"; k: string; n: string; id: string; t?: number }
@@ -40,21 +41,16 @@ type CursorRow = {
 };
 
 export function encodeContactsCursor(cursor: ContactsCursor): string {
-  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+  return encodeJsonCursor(cursor);
 }
 
 export function decodeContactsCursor(raw: string | undefined, sort: ContactSort, searching: boolean): ContactsCursor | null {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
-    // A cursor from a different sort, or from a search when this is not one (or the other
-    // way round), describes a position that does not exist in this ordering.
-    if (!parsed || parsed.s !== sort) return null;
-    if (searching !== (typeof parsed.t === "number")) return null;
-    return parsed as ContactsCursor;
-  } catch {
-    return null;
-  }
+  const parsed = decodeJsonCursor(raw) as { s?: unknown; t?: unknown } | null;
+  // A cursor from a different sort, or from a search when this is not one (or the other
+  // way round), describes a position that does not exist in this ordering.
+  if (!parsed || parsed.s !== sort) return null;
+  if (searching !== (typeof parsed.t === "number")) return null;
+  return parsed as ContactsCursor;
 }
 
 /**

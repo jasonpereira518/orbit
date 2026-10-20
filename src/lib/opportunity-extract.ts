@@ -17,6 +17,7 @@
  */
 import type { ParsedOpportunity } from "@/lib/ai-opportunity-schema";
 import { deriveMonthDay } from "@/lib/date-commitment-extract";
+import { startOfLocalDay } from "@/lib/dates";
 import { atLocalNoon } from "@/lib/interaction-date";
 import {
   looksLikeReferral,
@@ -77,12 +78,6 @@ export function emptyOpportunityResult(): OpportunityExtractResult {
   };
 }
 
-function startOfDay(d: Date) {
-  const out = new Date(d);
-  out.setHours(0, 0, 0, 0);
-  return out;
-}
-
 /**
  * A deadline from the phrase, or null.
  *
@@ -101,15 +96,15 @@ export function resolveDuePhrase(phrase: string, opts: { today: Date; anchor: Da
     const year = md.statedYear ?? opts.today.getFullYear();
     const d = new Date(year, md.month, md.day, 12, 0, 0, 0);
     if (Number.isNaN(d.getTime()) || d.getMonth() !== md.month) return null;
-    if (md.statedYear == null && d < startOfDay(opts.today)) {
+    if (md.statedYear == null && d < startOfLocalDay(opts.today)) {
       d.setFullYear(year + 1);
     }
-    return d < startOfDay(opts.today) ? null : atLocalNoon(d);
+    return d < startOfLocalDay(opts.today) ? null : atLocalNoon(d);
   }
 
   const relative = resolveRelativeDate(phrase, opts.anchor);
   if (!relative) return null;
-  return relative.date < startOfDay(opts.today) ? null : atLocalNoon(relative.date);
+  return relative.date < startOfLocalDay(opts.today) ? null : atLocalNoon(relative.date);
 }
 
 /**

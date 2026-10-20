@@ -9,6 +9,7 @@
  * Deliberately NOT `parseInteractionDateFromNotes`: that walks yearless dates backwards to
  * date a past interaction. This always looks forward.
  */
+import { addLocalDaysAtNoon } from "@/lib/dates";
 import { WEEKDAYS, atLocalNoon } from "@/lib/interaction-date";
 import { formatDistance } from "date-fns";
 
@@ -43,12 +44,6 @@ function norm(phrase: string) {
   return phrase.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-function addDays(d: Date, n: number) {
-  const out = new Date(d);
-  out.setDate(out.getDate() + n);
-  return atLocalNoon(out);
-}
-
 /** Month arithmetic that clamps to the last day of the target month instead of overflowing. */
 function addMonths(d: Date, n: number) {
   const target = new Date(d.getFullYear(), d.getMonth() + n, 1, 12);
@@ -64,14 +59,14 @@ function endOfMonth(d: Date) {
 /** First strictly-after occurrence of a weekday. "Friday" on a Friday means next week. */
 function nextWeekday(from: Date, weekday: number) {
   const delta = (weekday - from.getDay() + 7) % 7 || 7;
-  return addDays(from, delta);
+  return addLocalDaysAtNoon(from, delta);
 }
 
 /** Monday of the week after the anchor's week (weeks start Monday). */
 function nextWeekMonday(from: Date) {
   const dow = from.getDay(); // 0 = Sunday
   const daysUntilNextMonday = dow === 0 ? 1 : 8 - dow;
-  return addDays(from, daysUntilNextMonday);
+  return addLocalDaysAtNoon(from, daysUntilNextMonday);
 }
 
 function parseCount(raw: string): number | null {
@@ -90,7 +85,7 @@ export function resolveRelativeDate(
   const base = atLocalNoon(anchor);
   const relative = (date: Date, rule: string): ResolvedRelativeDate => ({ date, basis: "relative", rule });
 
-  if (p === "tomorrow") return relative(addDays(base, 1), "tomorrow");
+  if (p === "tomorrow") return relative(addLocalDaysAtNoon(base, 1), "tomorrow");
 
   // "in N days|weeks|months", N numeric or a small number word.
   const inN = p.match(/^in ([a-z]+(?: [a-z]+){0,2}|\d+) (day|week|month)s?$/);
@@ -98,8 +93,8 @@ export function resolveRelativeDate(
     const n = parseCount(inN[1]);
     if (n == null || n <= 0) return null;
     const unit = inN[2];
-    if (unit === "day") return relative(addDays(base, n), "in-n-units");
-    if (unit === "week") return relative(addDays(base, n * 7), "in-n-units");
+    if (unit === "day") return relative(addLocalDaysAtNoon(base, n), "in-n-units");
+    if (unit === "week") return relative(addLocalDaysAtNoon(base, n * 7), "in-n-units");
     return relative(addMonths(base, n), "in-n-units");
   }
 
@@ -120,7 +115,7 @@ export function resolveRelativeDate(
     // Friday of the anchor's week; if the anchor is already Friday or later, next Friday.
     const friday = 5;
     const delta = (friday - base.getDay() + 7) % 7;
-    return relative(addDays(base, delta === 0 ? 0 : delta), "end-of-week");
+    return relative(addLocalDaysAtNoon(base, delta === 0 ? 0 : delta), "end-of-week");
   }
   if (/^(end of (the )?month|eom)$/.test(p)) return relative(endOfMonth(base), "end-of-month");
   if (/^(end of (the )?quarter|eoq)$/.test(p)) {
@@ -147,7 +142,7 @@ export function resolveRelativeDate(
 
   if (VAGUE_RE.test(p)) {
     const days = opts?.defaultWindowDays ?? DEFAULT_VAGUE_WINDOW_DAYS;
-    return { date: addDays(base, days), basis: "vague", rule: "vague" };
+    return { date: addLocalDaysAtNoon(base, days), basis: "vague", rule: "vague" };
   }
 
   return null;

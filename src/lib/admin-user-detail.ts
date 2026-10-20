@@ -28,6 +28,7 @@ import { entitlementsForPlan, resolvePlan } from "@/lib/entitlements";
 import { managedKeysConfigured } from "@/lib/ai-access";
 import type { Entitlements, Plan, PlanSource } from "@/lib/entitlements";
 import { assertRevealable } from "@/lib/admin-redaction";
+import { maxDate, num, toDate } from "@/lib/admin-metrics";
 
 /**
  * Read-only inspection of one account, for operator support.
@@ -193,28 +194,8 @@ export type AdminContactFields = {
   opportunities: string[];
 };
 
-function num(value: string | number | null | undefined): number {
-  if (value == null) return 0;
-  const n = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
 
-function toDate(value: Date | string | null | undefined): Date | null {
-  if (value == null) return null;
-  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
 
-function maxDate(...values: Array<Date | string | null | undefined>): Date | null {
-  let best: Date | null = null;
-  for (const raw of values) {
-    const d = toDate(raw);
-    if (!d) continue;
-    if (!best || d.getTime() > best.getTime()) best = d;
-  }
-  return best;
-}
 
 const countInt = sql<number>`count(*)::int`;
 

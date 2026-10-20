@@ -6,6 +6,7 @@ import { series, type Grain } from "@/lib/admin-trends";
 import { mrrMovement, type MrrMovement } from "@/lib/billing-events";
 import { FEATURE_KEYS, PLAN_CONFIG } from "@/lib/plans/plan-config";
 import { monthlyCostSeries, type MonthlyCosts } from "@/lib/money-costs";
+import { num } from "@/lib/admin-metrics";
 
 /**
  * Time-series and distribution reads for the Money section.
@@ -23,11 +24,6 @@ function toDate(value: Date | string | null | undefined): Date {
   return value instanceof Date ? value : new Date(String(value));
 }
 
-function num(value: string | number | null | undefined): number {
-  if (value == null) return 0;
-  const n = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
 
 /* ------------------------------------------------------------ MRR over time -------- */
 

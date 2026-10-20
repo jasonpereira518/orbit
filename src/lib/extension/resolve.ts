@@ -15,6 +15,7 @@ import { contacts, interactions, reminders } from "@/db/schema";
 import type { Contact } from "@/db/schema";
 import { computeCloseness } from "@/lib/closeness";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
+import { escapeLike } from "@/lib/contact-search-rank";
 import {
   heuristicStarters,
   pageValue,
@@ -50,10 +51,6 @@ const NOTES_PREVIEW_CHARS = 300;
 /* -------------------------------------------------------------------------- */
 /* Page → probe                                                               */
 /* -------------------------------------------------------------------------- */
-
-function escapeLike(value: string) {
-  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
-}
 
 /** Split a display name the way the contact form does: first token, rest. */
 function splitName(fullName: string | null) {

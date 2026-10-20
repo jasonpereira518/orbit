@@ -22,6 +22,8 @@ import {
   reminders,
   suggestedReminders,
 } from "@/db/schema";
+import { escapeLike } from "@/lib/contact-search-rank";
+import { decodeJsonCursor, encodeJsonCursor } from "@/lib/cursor";
 import { dueDayOf, ymdInZone } from "@/lib/reminder-due-bucket";
 import {
   REMINDERS_PAGE_SIZE,
@@ -60,25 +62,16 @@ type DoneCursor = { v: "d"; c: string; id: string };
 type Cursor = ActiveCursor | DoneCursor;
 
 function encodeCursor(cursor: Cursor): string {
-  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+  return encodeJsonCursor(cursor);
 }
 
 function decodeCursor(raw: string | undefined, done: boolean): Cursor | null {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
-    // A cursor from the other ordering describes a position that does not exist in this
-    // one. Starting over beats silently skipping or repeating reminders.
-    if (!parsed || typeof parsed.id !== "string") return null;
-    if (done ? parsed.v !== "d" : parsed.v !== "a") return null;
-    return parsed as Cursor;
-  } catch {
-    return null;
-  }
-}
-
-function escapeLike(q: string) {
-  return q.replace(/[\\%_]/g, (c) => `\\${c}`);
+  const parsed = decodeJsonCursor(raw) as { id?: unknown; v?: unknown } | null;
+  // A cursor from the other ordering describes a position that does not exist in this
+  // one. Starting over beats silently skipping or repeating reminders.
+  if (!parsed || typeof parsed.id !== "string") return null;
+  if (done ? parsed.v !== "d" : parsed.v !== "a") return null;
+  return parsed as Cursor;
 }
 
 function sourceCondition(source: ReminderSource): SQL | undefined {

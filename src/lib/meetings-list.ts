@@ -16,6 +16,7 @@
 import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { getDb } from "@/db";
 import { meetingSessions, meetingTranscriptSegments, type MeetingSessionStatus } from "@/db/schema";
+import { decodePgTimestampIdCursor, encodeIsoIdCursor } from "@/lib/cursor";
 
 export const MEETINGS_PAGE = 20;
 const LISTED: MeetingSessionStatus[] = ["analyzed", "saved"];
@@ -44,14 +45,7 @@ export type MeetingsPage = {
 
 /** `started_at` as Postgres prints it (microseconds survive; a JS Date would round them), then the id. */
 function decodeCursor(cursor: string | null | undefined): { at: string; id: string } | null {
-  if (!cursor) return null;
-  const bar = cursor.lastIndexOf("|");
-  if (bar <= 0) return null;
-  const at = cursor.slice(0, bar);
-  const id = cursor.slice(bar + 1);
-  if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
-  if (!/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d{1,6})?([+-]\d{2}(:?\d{2})?|Z)?$/.test(at)) return null;
-  return { at, id };
+  return decodePgTimestampIdCursor(cursor);
 }
 
 /** A user's text as a LIKE pattern: wildcards are theirs to type, not to have interpreted. */
@@ -157,7 +151,7 @@ export async function listMeetingsFor(
   }));
 
   const last = page[page.length - 1];
-  return { items, nextCursor: rows.length > limit && last ? `${last.startedAtText}|${last.id}` : null };
+  return { items, nextCursor: rows.length > limit && last ? encodeIsoIdCursor(last.startedAtText, last.id, "plain") : null };
 }
 
 // ── Chat: passages across meetings ────────────────────────────────────────────────────

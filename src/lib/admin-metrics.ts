@@ -134,7 +134,7 @@ export const countInt = sql<number>`count(*)::int`;
  *
  * Deliberately not cast to ::int — token totals will outgrow int4.
  */
-export function num(value: string | number | null | undefined): number {
+export function num(value: unknown): number {
   if (value == null) return 0;
   const n = typeof value === "number" ? value : Number(value);
   return Number.isFinite(n) ? n : 0;
@@ -152,7 +152,7 @@ export function toDate(value: Date | string | null | undefined): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function maxDate(
+export function maxDate(
   ...dates: Array<Date | string | null | undefined>
 ): Date | null {
   let best: Date | null = null;

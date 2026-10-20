@@ -7,6 +7,8 @@
  * keeps the boundary cases (a chat from 23:50 last night, opened at 00:10) testable.
  */
 
+import { startOfLocalDay } from "@/lib/dates";
+
 export type ThreadLike = {
   id: string;
   title: string | null;
@@ -21,16 +23,11 @@ export type ThreadGroup<T extends ThreadLike> = {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** Midnight at the start of `d`'s local calendar day. */
-function startOfDay(d: Date): number {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-}
-
 export function groupThreadsByDay<T extends ThreadLike>(
   threads: readonly T[],
   now: Date = new Date()
 ): ThreadGroup<T>[] {
-  const today = startOfDay(now);
+  const today = startOfLocalDay(now).getTime();
   const buckets: Record<ThreadGroup<T>["label"], T[]> = {
     Today: [],
     Yesterday: [],
@@ -50,7 +47,7 @@ export function groupThreadsByDay<T extends ThreadLike>(
       buckets.Earlier.push(thread);
       continue;
     }
-    const day = startOfDay(when);
+    const day = startOfLocalDay(when).getTime();
     if (day >= today) buckets.Today.push(thread);
     else if (day >= today - DAY_MS) buckets.Yesterday.push(thread);
     else if (day >= today - 7 * DAY_MS) buckets["Previous 7 days"].push(thread);

@@ -38,6 +38,7 @@ import {
   type RecommendationBucket,
   type RecommendationKind,
 } from "@/lib/radar/types";
+import { daysBetweenFloor } from "@/lib/dates";
 import { isLearnableReason, kindMultiplier, reasonMultiplier } from "@/lib/radar/model";
 import {
   DORMANT_DAYS,
@@ -217,14 +218,10 @@ export type RadarPick = {
   expiresAt: Date;
 };
 
-function daysBetween(later: Date, earlier: Date): number {
-  return Math.floor((later.getTime() - earlier.getTime()) / DAY_MS);
-}
-
 /** Days since a date, clamped at zero: calendar sync writes meetings up to 60 days ahead. */
 function daysSince(date: Date | null, now: Date): number | null {
   if (!date) return null;
-  return Math.max(0, daysBetween(now, date));
+  return Math.max(0, daysBetweenFloor(date, now));
 }
 
 export function decayed(points: number, ageDays: number, halfLifeDays: number): number {
@@ -237,7 +234,7 @@ function plural(n: number, word: string): string {
 }
 
 function dayLabel(date: Date, now: Date): string {
-  const days = daysBetween(date, now);
+  const days = daysBetweenFloor(now, date);
   if (days <= 0) return "today";
   if (days === 1) return "tomorrow";
   return `in ${days} days`;
@@ -492,9 +489,9 @@ export function scoreContactKinds(
     const snoozed = suppression.snoozedUntil[kind];
     if (snoozed && snoozed > now) continue;
     const accepted = suppression.acceptedAt[kind];
-    if (accepted && daysBetween(now, accepted) < RADAR_WINDOWS.acceptExclude) continue;
+    if (accepted && daysBetweenFloor(accepted, now) < RADAR_WINDOWS.acceptExclude) continue;
     const dismissed = suppression.dismissedAt[kind];
-    const dismissedDays = dismissed ? daysBetween(now, dismissed) : null;
+    const dismissedDays = dismissed ? daysBetweenFloor(dismissed, now) : null;
     if (dismissedDays !== null && dismissedDays < RADAR_WINDOWS.dismissExclude) continue;
     if (scheduled && kind !== "prep" && kind !== "heads_up") continue;
 

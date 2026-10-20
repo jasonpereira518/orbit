@@ -3,6 +3,7 @@ import { getDb, rowsOf } from "@/db";
 import { billingEvents, creditGrants, usageEvents, userSettings } from "@/db/schema";
 import { MICROS_PER_CREDIT } from "@/lib/credits/grants";
 import type { Plan } from "@/lib/plans/plan-config";
+import { num } from "@/lib/admin-metrics";
 
 /**
  * The Money section's view of credits (pricing v2): packs as one-time revenue, what the
@@ -13,11 +14,6 @@ import type { Plan } from "@/lib/plans/plan-config";
  * cached, because the screen is visited rarely and a stale liability is worse than a slow one.
  */
 
-function num(value: string | number | null | undefined): number {
-  if (value == null) return 0;
-  const n = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
 
 export type CreditsMoney = {
   packs: {
