@@ -21,6 +21,7 @@ import {
   tags,
 } from "../src/db/schema";
 import { ORBIT_TOOLS } from "../src/lib/tools/definitions";
+import { FEATURE_TOOLS } from "../src/lib/tools/definitions-features";
 import { isToolError, runTool } from "../src/lib/tools/registry";
 
 const USER = "smoke-chat-feature-tools-user";
@@ -244,11 +245,18 @@ async function main() {
     check("…not someone else's contact", isToolError(await runToolAs("get_dossier", { contactId: stripe0.id }, OTHER)));
   }
 
-  console.log("\nThe tools are chat's, read-only");
+  console.log("\nRead-only, and shaped for MCP by its own allowlist");
   {
     const tool = ORBIT_TOOLS.find((t) => t.name === "query_contacts")!;
     const overMcp = await runTool(tool, USER, {}, { surface: "mcp", scopes: ["read"] });
-    check("not offered over MCP yet", isToolError(overMcp));
+    check("offered over MCP on a read scope", !isToolError(overMcp) && typeof (overMcp as { total: number }).total === "number", JSON.stringify(overMcp).slice(0, 160));
+    check(
+      "every feature read declares an MCP field allowlist",
+      FEATURE_TOOLS.every((t) => t.scope === "read" && t.surfaces.includes("mcp") && Array.isArray(t.fields?.mcp)),
+      FEATURE_TOOLS.filter((t) => !t.fields?.mcp).map((t) => t.name).join(", ")
+    );
+    const captures = FEATURE_TOOLS.find((t) => t.name === "recent_captures")!;
+    check("a capture's raw text (title, excerpt) never reaches MCP", !captures.fields!.mcp!.some((f) => f === "title" || f === "excerpt"));
     const bad = await runTool(tool, USER, { group_by: "salary" }, { surface: "chat", scopes: ["read"] });
     check("an argument outside the schema is refused with a message", isToolError(bad));
   }

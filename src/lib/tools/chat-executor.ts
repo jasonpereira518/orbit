@@ -13,9 +13,9 @@ import { recordAiSecurityEvent } from "@/lib/ai-security";
 import type { ChatContext } from "@/lib/chat-context";
 import { plural } from "@/lib/chat-steps";
 import { sanitizeProfileLine } from "@/lib/contact-profile-format";
-import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
+import { releasedToolsFor } from "@/lib/tools/released";
 import { ORBIT_TOOLS } from "@/lib/tools/definitions";
-import { isToolError, releasedTools, runTool, toolsFor, type OrbitTool } from "@/lib/tools/registry";
+import { isToolError, runTool, toolsFor, type OrbitTool } from "@/lib/tools/registry";
 
 /** "Searching your notes…" → "Searched your notes…", for a lookup that finished. */
 export function pastTense(label: string): string {
@@ -267,13 +267,6 @@ export function executorFor(
  * been released to them. A visibility read that fails drops the gated tools — closed, not open.
  */
 export async function chatToolsFor(userId: string): Promise<OrbitTool[]> {
-  const all = toolsFor(ORBIT_TOOLS, "chat", ["read"]);
-  if (!all.some((t) => t.releasedSurface)) return all;
-  try {
-    const { hidden, comingSoon } = await resolveSurfaceVisibility(userId);
-    return releasedTools(all, (key) => !hidden.has(key) && !comingSoon.has(key));
-  } catch {
-    return releasedTools(all, () => false);
-  }
+  return releasedToolsFor(userId, toolsFor(ORBIT_TOOLS, "chat", ["read"]));
 }
 

@@ -4,8 +4,10 @@
  * each feature chat could not see before — events, opportunities, radar, outreach,
  * recruiters, the knowledge dossier, sent email, captures and imports.
  *
- * Chat only for now: MCP gets these once each has an MCP field allowlist (Phase 4). Every
- * one is read-only, user-scoped by the lib function it wraps, and returns no raw note text.
+ * On both surfaces since Phase 4, each with an MCP field allowlist written next to it. Every
+ * one is read-only, user-scoped by the lib function it wraps, and returns no raw note text; a
+ * tool behind a page that can ship closed (`releasedSurface`) is offered to an outside agent
+ * only once that page is released to the user, exactly as in chat (`releasedToolsFor`).
  */
 import { z } from "zod";
 import { and, desc, eq, ne, sql } from "drizzle-orm";
@@ -38,7 +40,7 @@ import {
 import { INTERACTION_GROUPS, queryInteractions } from "@/lib/interaction-queries";
 import type { OrbitTool } from "@/lib/tools/registry";
 
-const CHAT_ONLY = ["chat"] as const;
+const BOTH = ["mcp", "chat"] as const;
 const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD.");
 const few = (max = 4) => z.array(z.string().min(1).max(80)).max(max).optional();
 const day = (v: Date | string | null | undefined) => (v ? new Date(v).toISOString().slice(0, 10) : null);
@@ -71,10 +73,10 @@ export const FEATURE_TOOLS: OrbitTool[] = [
       limit: z.number().int().min(0).max(50).default(20),
     },
     annotations: { readOnlyHint: true },
-    surfaces: CHAT_ONLY,
+    surfaces: BOTH,
     scope: "read",
     resultLabel: "contacts",
-    fields: { chat: ["total", "groups", "rows"] },
+    fields: { chat: ["total", "groups", "rows"], mcp: ["total", "groups", "rows"] },
     async run(
       userId,
       args: {
@@ -138,10 +140,10 @@ export const FEATURE_TOOLS: OrbitTool[] = [
       limit: z.number().int().min(0).max(50).default(20),
     },
     annotations: { readOnlyHint: true },
-    surfaces: CHAT_ONLY,
+    surfaces: BOTH,
     scope: "read",
     resultLabel: "interactions",
-    fields: { chat: ["total", "groups", "rows"] },
+    fields: { chat: ["total", "groups", "rows"], mcp: ["total", "groups", "rows"] },
     async run(
       userId,
       args: {
@@ -178,9 +180,10 @@ export const FEATURE_TOOLS: OrbitTool[] = [
       limit: z.number().int().min(1).max(20).default(10),
     },
     annotations: { readOnlyHint: true },
-    surfaces: CHAT_ONLY,
+    surfaces: BOTH,
     scope: "read",
     resultLabel: "events",
+    fields: { mcp: ["id", "title", "date", "venue", "city", "hosted", "rosterSize", "inYourContacts"] },
     releasedSurface: "page.events",
     async run(userId, args: { when: "upcoming" | "past" | "all"; limit: number }) {
       const rows = await listEventsForUser(userId, args.limit, args.when === "all" ? {} : { when: args.when });
@@ -211,9 +214,10 @@ export const FEATURE_TOOLS: OrbitTool[] = [
       limit: z.number().int().min(1).max(100).default(50),
     },
     annotations: { readOnlyHint: true },
-    surfaces: CHAT_ONLY,
+    surfaces: BOTH,
     scope: "read",
     resultLabel: "people",
+    fields: { mcp: ["event", "total", "people"] },
     releasedSurface: "page.events",
     async run(userId, args: { eventId: string; spoke_to?: boolean; in_contacts?: boolean; limit: number }) {
       const event = await getEventForUser(userId, args.eventId);
@@ -251,9 +255,10 @@ export const FEATURE_TOOLS: OrbitTool[] = [
       limit: z.number().int().min(1).max(10).default(5),
     },
     annotations: { readOnlyHint: true },
-    surfaces: CHAT_ONLY,
+    surfaces: BOTH,
     scope: "read",
     resultLabel: "people",
+    fields: { mcp: ["event", "when", "people"] },
     releasedSurface: "page.events",
     async run(userId, args: { eventId: string; limit: number }) {
       const event = await getEventForUser(userId, args.eventId);
@@ -281,9 +286,10 @@ export const FEATURE_TOOLS: OrbitTool[] = [
     description: "Every event a contact was on the roster of, newest first, and whether the user spoke to them there.",
     inputSchema: { contactId: z.string().uuid() },
     annotations: { readOnlyHint: true },
-    surfaces: CHAT_ONLY,
+    surfaces: BOTH,
     scope: "read",
     resultLabel: "events",
+    fields: { mcp: ["eventId", "title", "date", "spokeTo"] },
     releasedSurface: "page.events",
     async run(userId, args: { contactId: string }) {
       const rows = await listEventsTogetherForContact(userId, args.contactId);
@@ -304,9 +310,10 @@ export const FEATURE_TOOLS: OrbitTool[] = [
       limit: z.number().int().min(1).max(30).default(15),
     },
     annotations: { readOnlyHint: true },
-    surfaces: CHAT_ONLY,
+    surfaces: BOTH,
     scope: "read",
     resultLabel: "opportunities",
+    fields: { mcp: ["id", "contactId", "contactName", "kind", "label", "status", "direction", "dueDate"] },
     async run(userId, args: { contactId?: string; status: "open" | "all"; limit: number }) {
       const db = await getDb();
       const rows = await db
@@ -343,9 +350,10 @@ export const FEATURE_TOOLS: OrbitTool[] = [
       "events, going quiet, goals — the same cards the radar page shows.",
     inputSchema: { limit: z.number().int().min(1).max(10).default(5) },
     annotations: { readOnlyHint: true },
-    surfaces: CHAT_ONLY,
+    surfaces: BOTH,
     scope: "read",
     resultLabel: "suggestions",
+    fields: { mcp: ["contactId", "name", "company", "kind", "priority", "why"] },
     releasedSurface: "page.radar",
     async run(userId, args: { limit: number }) {
       const cards = await listPendingRecommendations(userId, args.limit);
@@ -367,9 +375,10 @@ export const FEATURE_TOOLS: OrbitTool[] = [
     description: "The user's outreach campaigns with their status and counts: prospects, drafts, sent, replies.",
     inputSchema: {},
     annotations: { readOnlyHint: true },
-    surfaces: CHAT_ONLY,
+    surfaces: BOTH,
     scope: "read",
     resultLabel: "campaigns",
+    fields: { mcp: ["id", "name", "status", "updated", "metrics"] },
     releasedSurface: "page.outreach",
     async run(userId) {
       const db = await getDb();
@@ -404,9 +413,10 @@ export const FEATURE_TOOLS: OrbitTool[] = [
     description: "Recruiters the user has logged: name, firm, specialty, the user's status with them and their own rating.",
     inputSchema: { limit: z.number().int().min(1).max(30).default(15) },
     annotations: { readOnlyHint: true },
-    surfaces: CHAT_ONLY,
+    surfaces: BOTH,
     scope: "read",
     resultLabel: "recruiters",
+    fields: { mcp: ["recruiterId", "name", "firm", "specialty", "status", "personalRating", "updated"] },
     releasedSurface: "page.recruiters",
     async run(userId, args: { limit: number }) {
       const db = await getDb();
@@ -438,11 +448,11 @@ export const FEATURE_TOOLS: OrbitTool[] = [
       "recent discussions, and which of the user's goals the person bears on.",
     inputSchema: { contactId: z.string().uuid() },
     annotations: { readOnlyHint: true },
-    surfaces: CHAT_ONLY,
+    surfaces: BOTH,
     scope: "read",
     resultLabel: "dossier",
     releasedSurface: "page.knowledge",
-    fields: { chat: ["contact", "brief", "goals", "stale"] },
+    fields: { chat: ["contact", "brief", "goals", "stale"], mcp: ["contact", "brief", "goals", "stale"] },
     async run(userId, args: { contactId: string }) {
       const dossier = await loadKnowledgeDossier(userId, args.contactId);
       return dossier ?? toolError("No contact with that id.");
@@ -461,9 +471,10 @@ export const FEATURE_TOOLS: OrbitTool[] = [
       limit: z.number().int().min(1).max(20).default(10),
     },
     annotations: { readOnlyHint: true },
-    surfaces: CHAT_ONLY,
+    surfaces: BOTH,
     scope: "read",
     resultLabel: "emails",
+    fields: { mcp: ["to", "subject", "status", "date", "from"] },
     async run(userId, args: { contactId?: string; limit: number }) {
       const db = await getDb();
       const rows = await db
@@ -502,9 +513,12 @@ export const FEATURE_TOOLS: OrbitTool[] = [
       "people and reminders each one saved.",
     inputSchema: { limit: z.number().int().min(1).max(10).default(5) },
     annotations: { readOnlyHint: true },
-    surfaces: CHAT_ONLY,
+    surfaces: BOTH,
     scope: "read",
     resultLabel: "captures",
+    // A capture's title and excerpt are its raw text: they stay in Orbit's own chat, behind
+    // its fence, and never fan out to an outside agent across several captures at once.
+    fields: { mcp: ["date", "status", "kinds", "people", "reminders"] },
     releasedSurface: "page.capture",
     async run(userId, args: { limit: number }) {
       const page = await listCaptureHistoryFor(userId, { limit: args.limit });
@@ -526,9 +540,10 @@ export const FEATURE_TOOLS: OrbitTool[] = [
     description: "The user's recent imports (LinkedIn, CSV, calendar, Google, Outlook, chats): what, when, status and how many contacts each added.",
     inputSchema: { limit: z.number().int().min(1).max(10).default(5) },
     annotations: { readOnlyHint: true },
-    surfaces: CHAT_ONLY,
+    surfaces: BOTH,
     scope: "read",
     resultLabel: "imports",
+    fields: { mcp: ["type", "fileName", "status", "createdAt", "contactsCreated"] },
     releasedSurface: "page.imports",
     async run(userId, args: { limit: number }) {
       const db = await getDb();
