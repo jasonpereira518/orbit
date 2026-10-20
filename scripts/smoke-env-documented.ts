@@ -24,7 +24,7 @@ const PLATFORM_INJECTED = new Set([
   "VERCEL", "VERCEL_ENV", "VERCEL_URL", "VERCEL_GIT_COMMIT_SHA", "VERCEL_DEPLOYMENT_ID",
   "VERCEL_PROJECT_PRODUCTION_URL", "NEXT_PUBLIC_VERCEL_ENV", "ORBIT_PGLITE_DIR", "SMOKE_ALLOW_REMOTE",
   // Test-only knobs read by *.test.ts / src/test-support (never by a deployed code path).
-  "UPDATE_SNAPSHOT", "UPDATE_GOLDEN", "TZ",
+  "UPDATE_SNAPSHOT", "UPDATE_GOLDEN", "TZ", "PRINT_TABLE",
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
