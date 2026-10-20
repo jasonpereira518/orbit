@@ -1,7 +1,7 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { getAppBaseUrl } from "@/lib/app-url";
+import { signToken, verifyToken } from "@/lib/crypto";
 import { getCreditBalance } from "@/lib/credits/ledger";
 import { MICROS_PER_CREDIT } from "@/lib/credits/grants";
 import { getEntitlements } from "@/lib/entitlements";
@@ -9,6 +9,7 @@ import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { escapeHtml } from "@/lib/interest-list-email";
 import { PLAN_CONFIG, PLAN_LABELS, type Plan } from "@/lib/plans/plan-config";
 import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_CENTS } from "@/lib/stripe-config";
+import { sleep } from "@/lib/async";
 
 /**
  * The emails at 80% and 100% of an account's monthly AI credits (pricing v2). The in-app
@@ -42,29 +43,15 @@ export function noticeLevelFor(grantedMicros: number, remainingMicros: number): 
 
 const UNSUBSCRIBE_LABEL = "orbit:credit-email-unsubscribe:v1";
 
-function unsubscribeKey(): Buffer {
-  // ENCRYPTION_SECRET is required in production (src/lib/env.ts); the fallback is dev-only,
-  // and refused outright in production: a known key would let anyone sign a token.
-  const secret = process.env.ENCRYPTION_SECRET;
-  if (!secret && process.env.NODE_ENV === "production") throw new Error("ENCRYPTION_SECRET must be set in production");
-  return createHmac("sha256", secret || "orbit-dev-credit-email").update(UNSUBSCRIBE_LABEL).digest();
-}
+const UNSUBSCRIBE_DEV_SECRET = "orbit-dev-credit-email";
 
 export function creditEmailUnsubscribeToken(userId: string): string {
-  const id = Buffer.from(userId, "utf8").toString("base64url");
-  const mac = createHmac("sha256", unsubscribeKey()).update(id).digest("base64url");
-  return `${id}.${mac}`;
+  return signToken(UNSUBSCRIBE_LABEL, userId, UNSUBSCRIBE_DEV_SECRET);
 }
 
 /** The account a token was issued for, or null when this app did not sign it. */
 export function readCreditEmailUnsubscribeToken(token: string | null | undefined): string | null {
-  if (!token || token.length > 400) return null;
-  const [id, mac, extra] = token.split(".");
-  if (!id || !mac || extra !== undefined) return null;
-  const expected = Buffer.from(createHmac("sha256", unsubscribeKey()).update(id).digest("base64url"));
-  const given = Buffer.from(mac);
-  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
-  return Buffer.from(id, "base64url").toString("utf8") || null;
+  return verifyToken(UNSUBSCRIBE_LABEL, token, UNSUBSCRIBE_DEV_SECRET);
 }
 
 export function creditEmailUnsubscribeUrl(userId: string): string {
@@ -324,7 +311,7 @@ export async function sendCreditNotices(
       });
     }
     // Under Resend's default of two requests a second.
-    if (opts.pauseMs !== 0) await new Promise((r) => setTimeout(r, opts.pauseMs ?? 600));
+    if (opts.pauseMs !== 0) await sleep(opts.pauseMs ?? 600);
   }
   return stats;
 }

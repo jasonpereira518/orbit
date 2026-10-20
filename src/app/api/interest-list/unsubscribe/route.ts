@@ -2,7 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { NextResponse, type NextRequest } from "next/server";
 import { getDb } from "@/db";
 import { interestListSignups } from "@/db/schema";
-import { escapeHtml } from "@/lib/interest-list-email";
+import { unsubscribePage, unsubscribeTokenOf } from "@/lib/unsubscribe-page";
 
 // Clicked from an email by someone who has never signed in — authenticated by the opaque
 // token in the query string, same pattern as the calendar feed's token-in-path route.
@@ -14,36 +14,10 @@ export const runtime = "nodejs";
  * link anywhere. See `lib/waitlist-host.ts`.
  */
 function page(message: string, action?: { href: string; label: string }) {
-  return `<!doctype html>
-<html>
-  <body style="margin:0;padding:0;background-color:#05070f;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="min-height:100vh;">
-      <tr>
-        <td align="center" valign="middle" style="padding:40px 20px;">
-          <table role="presentation" width="420" cellpadding="0" cellspacing="0" style="max-width:420px;width:100%;text-align:center;">
-            <tr><td style="font-size:15px;line-height:1.6;color:#9aada8;">${message}</td></tr>
-            ${
-              action
-                ? `<tr><td style="padding-top:22px;">
-              <form method="post" action="${escapeHtml(action.href)}" style="margin:0;">
-                <button type="submit" style="font:inherit;font-size:15px;font-weight:600;color:#05070f;background:#f2c14e;border:0;border-radius:10px;padding:12px 24px;cursor:pointer;">${escapeHtml(action.label)}</button>
-              </form>
-            </td></tr>`
-                : ""
-            }
-          </table>
-        </td>
-      </tr>
-    </table>
-  </body>
-</html>`;
+  return unsubscribePage(message, action);
 }
 
 const HTML_HEADERS = { "Content-Type": "text/html; charset=utf-8" };
-
-function tokenOf(request: NextRequest) {
-  return request.nextUrl.searchParams.get("token")?.trim() || null;
-}
 
 function missingToken() {
   return new NextResponse(page("This link is missing its token."), {
@@ -61,7 +35,7 @@ function missingToken() {
  * learns nothing either.
  */
 export async function GET(request: NextRequest) {
-  const token = tokenOf(request);
+  const token = unsubscribeTokenOf(request);
   if (!token) return missingToken();
   const self = `${request.nextUrl.pathname}?token=${encodeURIComponent(token)}`;
   return new NextResponse(
@@ -71,7 +45,7 @@ export async function GET(request: NextRequest) {
 }
 
 async function unsubscribe(request: NextRequest) {
-  const token = tokenOf(request);
+  const token = unsubscribeTokenOf(request);
   if (!token) return missingToken();
 
   const db = await getDb();

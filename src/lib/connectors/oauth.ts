@@ -9,7 +9,8 @@
  * touches the database. The caller persists the result through
  * `upsertConnectorConnection`.
  */
-import { createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { createHmac, randomBytes } from "crypto";
+import { safeEqual } from "@/lib/crypto";
 import { safeReturnPath } from "@/lib/safe-return-path";
 
 export type OAuthProviderConfig = {
@@ -184,12 +185,7 @@ export function parseOAuthState(raw: string | null | undefined): OAuthState | nu
   const [payload, mac] = raw.split(".");
   if (!payload || !mac) return null;
   const expected = createHmac("sha256", stateKey()).update(payload).digest("base64url");
-  const a = Buffer.from(mac);
-  const b = Buffer.from(expected);
-  // timingSafeEqual throws on a buffer-length mismatch rather than returning false, so an
-  // attacker-controlled mac of the "wrong" length must be caught before it ever reaches
-  // that call, not after.
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  if (!safeEqual(mac, expected)) return null;
   try {
     const parsed = JSON.parse(
       Buffer.from(payload, "base64url").toString("utf8")

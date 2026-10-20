@@ -6,7 +6,7 @@
  * that adds `requireUserId()`.
  */
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
-import { createHash } from "node:crypto";
+import { sha256Hex } from "@/lib/crypto";
 import { getDb } from "@/db";
 import { contactOpportunities, contacts, type ContactOpportunity } from "@/db/schema";
 import { UserFacingError } from "@/lib/errors";
@@ -33,9 +33,7 @@ export function buildOpportunityItemHash(
   kind: string,
   label: string
 ): string {
-  return createHash("sha256")
-    .update(`${sourceHash}|${contactId}|${kind}|${label.trim().toLowerCase()}`)
-    .digest("hex");
+  return sha256Hex(`${sourceHash}|${contactId}|${kind}|${label.trim().toLowerCase()}`);
 }
 
 /**

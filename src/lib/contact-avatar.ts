@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256Hex } from "@/lib/crypto";
 import { putAvatarBlob, putSharedAvatarBlob } from "@/lib/avatar-blob";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { linkedinSlug } from "@/lib/duplicates";
@@ -333,7 +333,7 @@ export async function fetchGravatarPhotoUrl(
 ): Promise<string | null> {
   const normalized = email.trim().toLowerCase();
   if (!normalized.includes("@")) return null;
-  const hash = createHash("sha256").update(normalized, "utf8").digest("hex");
+  const hash = sha256Hex(normalized);
   return downloadAndPersistAvatar(
     contactId,
     `https://gravatar.com/avatar/${hash}?s=256&d=404`

@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { safeEqual } from "@/lib/crypto";
 import { getAppBaseUrl } from "@/lib/app-url";
 
 /**
@@ -24,11 +24,7 @@ export function isInternalRequest(request: Request): boolean {
   const secret = process.env.CRON_SECRET;
   if (!secret) return isLocalDevelopment();
 
-  const presented = Buffer.from(request.headers.get("authorization") ?? "");
-  const expected = Buffer.from(`Bearer ${secret}`);
-  // `timingSafeEqual` throws on unequal lengths; a length mismatch is simply a wrong secret.
-  if (presented.length !== expected.length) return false;
-  return timingSafeEqual(presented, expected);
+  return safeEqual(request.headers.get("authorization") ?? "", `Bearer ${secret}`);
 }
 
 /** Local `next dev` with no secret configured. `VERCEL` is set on every Vercel build/runtime. */
@@ -76,9 +72,7 @@ export function isHealthTokenValid(request: Request): boolean {
   const url = new URL(request.url);
   const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
   const presented = url.searchParams.get("token") ?? bearer;
-  const a = Buffer.from(presented);
-  const b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
+  return safeEqual(presented, expected);
 }
 
 export type HealthTokenState = "absent" | "valid" | "invalid";

@@ -6,7 +6,8 @@
  * Each surface is written independently and a failure in one is logged rather than taking
  * the rest down, the same contract as the base seeder.
  */
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { sha256Hex } from "@/lib/crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
@@ -256,7 +257,7 @@ async function seedCaptures(
     await db.insert(noteBatches).values({
       id: batchId,
       userId,
-      sourceHash: sha256(c.text),
+      sourceHash: sha256Hex(c.text),
       sourceText: c.text,
       entryPoint: "capture",
       anchorDate: at,
@@ -411,7 +412,7 @@ async function seedOpportunities(
         dueDate: o.dueInDays == null ? null : new Date(now + o.dueInDays * DAY),
         confidenceScore: 90,
         createdBy: "ai" as const,
-        itemHash: sha256(`demo-opportunity:${o.person}:${o.label}`),
+        itemHash: sha256Hex(`demo-opportunity:${o.person}:${o.label}`),
         closedAt: o.status === "landed" ? new Date(now - 20 * DAY) : null,
       },
     ];
@@ -636,7 +637,7 @@ async function seedCareerMoves(
         startedYear: at.getUTCFullYear(),
         startedMonth: at.getUTCMonth() + 1,
         source: "web" as const,
-        dedupeKey: sha256(`demo-move:${m.person}:${m.toOrg}:${m.toTitle}`),
+        dedupeKey: sha256Hex(`demo-move:${m.person}:${m.toOrg}:${m.toTitle}`),
         detectedAt: at,
       },
     ];
@@ -664,7 +665,7 @@ async function seedSignals(
         occurredAt: ago(s.daysAgo),
         source: "extension",
         payload: { excerpt: s.excerpt, network: "linkedin" as const, url: null, sourceLabel: "LinkedIn" },
-        dedupeHash: sha256(`demo-signal:${s.person}:${s.excerpt}`),
+        dedupeHash: sha256Hex(`demo-signal:${s.person}:${s.excerpt}`),
       },
     ];
   });
@@ -750,6 +751,3 @@ async function settleInteractionStamps(userId: string) {
   `);
 }
 
-function sha256(text: string) {
-  return createHash("sha256").update(text).digest("hex");
-}

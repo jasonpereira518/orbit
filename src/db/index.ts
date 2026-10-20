@@ -10,7 +10,8 @@ import type { PGlite } from "@electric-sql/pglite";
 import * as schema from "./schema";
 import { formatVectorLiteral } from "@/lib/pgvector";
 import { noteQuery } from "@/lib/query-counter";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { sha256Hex } from "@/lib/crypto";
 import path from "node:path";
 import fs from "node:fs";
 
@@ -3364,7 +3365,7 @@ export function schemaFingerprint(): string {
     const statements = [DDL, ...SCALE_DDL, ...alters]
       .map((s) => s.replace(/\s+/g, " ").trim())
       .filter(Boolean);
-    fingerprintMemo = createHash("sha256").update(statements.join("\n")).digest("hex");
+    fingerprintMemo = sha256Hex(statements.join("\n"));
   }
   return fingerprintMemo;
 }

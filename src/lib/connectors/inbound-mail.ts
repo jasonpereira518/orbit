@@ -27,7 +27,8 @@
  * carries the real recipients in To/Cc, so the counterparties are simply those minus self —
  * the same shape `counterpartsOf` computes for a calendar event's attendees.
  */
-import { createHash, randomBytes } from "crypto";
+import { randomBytes } from "crypto";
+import { sha256Hex } from "@/lib/crypto";
 import type { NetworkEvent, NetworkParticipant } from "@/lib/ingest/events";
 import { mailExternalIdBase } from "@/lib/ingest/external-id";
 
@@ -63,7 +64,7 @@ export function generateInboundLogToken(): string {
 
 /** What `user_settings.inbound_log_token` stores. Same convention as the calendar feed's. */
 export function hashInboundLogToken(token: string): string {
-  return createHash("sha256").update(token, "utf8").digest("hex");
+  return sha256Hex(token);
 }
 
 /** The address a person BCCs. The domain is configuration, not a constant, so it can move. */

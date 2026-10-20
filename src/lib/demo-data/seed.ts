@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { sha256Hex } from "@/lib/crypto";
 import { and, eq, isNull } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
@@ -492,7 +493,7 @@ async function seedReminders(
   // One capture awaiting review, so the "from your notes" queue is not empty.
   const captureBatchId = randomUUID();
   const { source, pending } = extras.suggested;
-  const sourceHash = sha256(source);
+  const sourceHash = sha256Hex(source);
   await db.insert(suggestedReminders).values(
     pending.map((s) => {
       const due = ahead(s.inDays);
@@ -505,7 +506,7 @@ async function seedReminders(
         dueDate: due,
         sourceExcerpt: s.excerpt,
         sourceHash,
-        itemHash: sha256(`${sourceHash}|${due.toISOString().slice(0, 10)}|${s.title.toLowerCase()}`),
+        itemHash: sha256Hex(`${sourceHash}|${due.toISOString().slice(0, 10)}|${s.title.toLowerCase()}`),
         actionKind: "email" as const,
         confidenceScore: 88,
       };
@@ -1128,6 +1129,3 @@ async function seedGoals(userId: string, summary: DemoSeedSummary, goals: readon
   summary.goals = goals.length;
 }
 
-function sha256(text: string) {
-  return createHash("sha256").update(text).digest("hex");
-}

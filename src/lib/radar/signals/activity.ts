@@ -7,7 +7,7 @@
  * the link through `safeHttpUrl`, before it is stored. It reaches a prompt only inside a
  * fence, and the card only as text.
  */
-import { createHash } from "node:crypto";
+import { sha256Hex } from "@/lib/crypto";
 import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contactSignals, contacts } from "@/db/schema";
@@ -27,7 +27,7 @@ export function cleanExcerpt(text: string | null | undefined): string | null {
 }
 
 export function postDedupeHash(contactId: string, network: SocialNetwork, idOrUrl: string): string {
-  return createHash("sha256").update(`post:${network}:${contactId}:${idOrUrl}`).digest("hex");
+  return sha256Hex(`post:${network}:${contactId}:${idOrUrl}`);
 }
 
 export type PostToStore = {

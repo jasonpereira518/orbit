@@ -1,4 +1,12 @@
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  createHmac,
+  randomBytes,
+  scryptSync,
+  timingSafeEqual,
+} from "crypto";
 
 const ALGO = "aes-256-gcm";
 
@@ -54,4 +62,55 @@ export function decryptOrNull(encrypted?: string | null): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Timing-safe string comparison. `timingSafeEqual` throws on unequal lengths, so the lengths
+ * are compared first (a wrong-length value is simply unequal). Compares the UTF-8 bytes.
+ */
+export function safeEqual(a: string, b: string): boolean {
+  const left = Buffer.from(a, "utf8");
+  const right = Buffer.from(b, "utf8");
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
+}
+
+/** Lowercase hex SHA-256 of a UTF-8 string. */
+export function sha256Hex(input: string): string {
+  return createHash("sha256").update(input).digest("hex");
+}
+
+/**
+ * Signed, domain-separated tokens: `${base64url(payload)}.${base64url(HMAC)}`. The HMAC key is
+ * HMAC-SHA256(ENCRYPTION_SECRET, label), so a token minted under one label never verifies under
+ * another. `devSecret` is the dev-only stand-in when ENCRYPTION_SECRET is unset; it is refused
+ * outright in production, because a known key would let anyone sign a token.
+ * The format is frozen: changing it invalidates every token already sent in an email.
+ */
+function tokenKey(label: string, devSecret: string): Buffer {
+  const secret = process.env.ENCRYPTION_SECRET;
+  if (!secret && process.env.NODE_ENV === "production") {
+    throw new Error("ENCRYPTION_SECRET must be set in production");
+  }
+  return createHmac("sha256", secret || devSecret).update(label).digest();
+}
+
+export function signToken(label: string, payload: string, devSecret = "orbit-dev-token"): string {
+  const id = Buffer.from(payload, "utf8").toString("base64url");
+  const mac = createHmac("sha256", tokenKey(label, devSecret)).update(id).digest("base64url");
+  return `${id}.${mac}`;
+}
+
+/** The payload a token was signed for, or null when this app did not sign it (or it is empty). */
+export function verifyToken(
+  label: string,
+  token: string | null | undefined,
+  devSecret = "orbit-dev-token"
+): string | null {
+  if (!token || token.length > 400) return null;
+  const [id, mac, extra] = token.split(".");
+  if (!id || !mac || extra !== undefined) return null;
+  const expected = createHmac("sha256", tokenKey(label, devSecret)).update(id).digest("base64url");
+  if (!safeEqual(mac, expected)) return null;
+  return Buffer.from(id, "base64url").toString("utf8") || null;
 }

@@ -23,14 +23,15 @@
  * claimed, and the route honours only a token whose hash matches: a link works for an account
  * that was actually sent one.
  */
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { getAppBaseUrl } from "@/lib/app-url";
+import { sha256Hex, signToken, verifyToken } from "@/lib/crypto";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { isValidTimeZone } from "@/lib/reminder-due-bucket";
 import { buildRadarDigestEmail, type DigestContent } from "@/lib/radar/digest-email";
 import { leadReason, type RadarReason, type RecommendationKind } from "@/lib/radar/types";
+import { sleep } from "@/lib/async";
 
 /** People shown in the email; the rest are counted. */
 export const RADAR_DIGEST_TOP = 5;
@@ -118,34 +119,19 @@ export async function captureRadarTimeZone(userId: string, raw: string | null | 
 
 // ---- Unsubscribe -------------------------------------------------------------------------
 
-function unsubscribeKey(): Buffer {
-  // ENCRYPTION_SECRET is required in production (src/lib/env.ts); the fallback is dev-only,
-  // and refused outright in production: a known key would let anyone sign a token.
-  const secret = process.env.ENCRYPTION_SECRET;
-  if (!secret && process.env.NODE_ENV === "production") throw new Error("ENCRYPTION_SECRET must be set in production");
-  return createHmac("sha256", secret || "orbit-dev-radar-digest").update(UNSUBSCRIBE_LABEL).digest();
-}
+const UNSUBSCRIBE_DEV_SECRET = "orbit-dev-radar-digest";
 
 export function radarDigestUnsubscribeToken(userId: string): string {
-  const id = Buffer.from(userId, "utf8").toString("base64url");
-  const mac = createHmac("sha256", unsubscribeKey()).update(id).digest("base64url");
-  return `${id}.${mac}`;
+  return signToken(UNSUBSCRIBE_LABEL, userId, UNSUBSCRIBE_DEV_SECRET);
 }
 
 /** The account a token was issued for, or null when it is not one this app signed. */
 export function readRadarDigestUnsubscribeToken(token: string | null | undefined): string | null {
-  if (!token || token.length > 400) return null;
-  const [id, mac, extra] = token.split(".");
-  if (!id || !mac || extra !== undefined) return null;
-  const expected = Buffer.from(createHmac("sha256", unsubscribeKey()).update(id).digest("base64url"));
-  const given = Buffer.from(mac);
-  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
-  const userId = Buffer.from(id, "base64url").toString("utf8");
-  return userId || null;
+  return verifyToken(UNSUBSCRIBE_LABEL, token, UNSUBSCRIBE_DEV_SECRET);
 }
 
 export function hashRadarDigestToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
+  return sha256Hex(token);
 }
 
 export function radarDigestUnsubscribeUrl(token: string): string {
@@ -356,8 +342,6 @@ async function releaseRadarDigestWeek(userId: string, week: string, prev: string
   `);
 }
 
-const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
 /**
  * One run: every person whose Monday morning it is, not yet sent this week, up to the budget.
  * Never throws for one person's failure; the caller records the stats.
@@ -398,7 +382,7 @@ export async function sendRadarDigests(
         }
         const unsubscribeUrl = radarDigestUnsubscribeUrl(token);
         const message = buildRadarDigestEmail(content, { appUrl, unsubscribeUrl });
-        if (sentAny && gapMs > 0) await pause(gapMs);
+        if (sentAny && gapMs > 0) await sleep(gapMs);
         sentAny = true;
         const result = await deliver({ to: person.email.trim(), ...message, unsubscribeUrl });
         if (result.ok) {

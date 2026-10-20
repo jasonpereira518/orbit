@@ -11,7 +11,7 @@
  * not turn the list into a newsfeed. Each one is also written to `contact_signals`
  * (deduplicated), which is what "What changed overnight" and the digest read.
  */
-import { createHash } from "node:crypto";
+import { sha256Hex } from "@/lib/crypto";
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { contactSignals } from "@/db/schema";
@@ -104,7 +104,7 @@ export async function probeCompanyNews(
           source: s.source,
           externalItemId: s.itemId,
           payload: { title: s.title, company: s.company, url: s.url, sourceLabel: s.source },
-          dedupeHash: createHash("sha256").update(`company_news:${s.itemId}:${s.contactId}`).digest("hex"),
+          dedupeHash: sha256Hex(`company_news:${s.itemId}:${s.contactId}`),
         }))
       )
       .onConflictDoNothing({ target: [contactSignals.userId, contactSignals.dedupeHash] });

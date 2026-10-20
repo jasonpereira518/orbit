@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256Hex } from "@/lib/crypto";
 import { eq, and, inArray, sql } from "drizzle-orm";
 import { getDb, isPgvectorAvailable, rowsOf } from "@/db";
 import { contactEmbeddings, contacts } from "@/db/schema";
@@ -8,7 +8,7 @@ import { createEmbedding, createEmbeddingsBatch } from "@/lib/ai";
 import { formatVectorLiteral } from "@/lib/pgvector";
 
 export function computeContentHash(content: string): string {
-  return createHash("sha256").update(content).digest("hex");
+  return sha256Hex(content);
 }
 
 /**

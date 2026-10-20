@@ -1,4 +1,5 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { sha256Hex } from "@/lib/crypto";
 import { and, asc, eq, gte, isNotNull, lte } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, reminders, userSettings } from "@/db/schema";
@@ -52,7 +53,7 @@ export function generateCalendarFeedToken() {
  * encode(sha256(convert_to(token, 'UTF8')), 'hex').
  */
 export function hashCalendarFeedToken(token: string): string {
-  return createHash("sha256").update(token, "utf8").digest("hex");
+  return sha256Hex(token);
 }
 
 /** Mint a token, store its hash, and return the token — the only time it exists in plaintext. */
