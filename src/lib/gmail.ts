@@ -13,6 +13,14 @@ import {
 
 export { hasGmailReadScope } from "@/lib/google-scopes";
 import { googleFetchWithRetry as gmailFetchWithRetry } from "@/lib/google-fetch";
+import { readUpstream } from "@/lib/http/parse-response";
+import {
+  gmailMessageListSchema,
+  gmailMessageSchema,
+  gmailThreadSchema,
+  googlePeoplePageSchema,
+  googleUserInfoSchema,
+} from "@/lib/upstream/gmail";
 
 /** Token exchange and refresh sit on the shared sync path; a hung provider must not hold it. */
 const OAUTH_FETCH_TIMEOUT_MS = 10_000;
@@ -461,7 +469,7 @@ export async function fetchGoogleProfileEmail(accessToken: string) {
   });
   // "profile" stays in this message: the callback's classifyOAuthFailure keys on it.
   if (!res.ok) throw new Error("Failed to load Google profile");
-  const data = (await res.json()) as { email?: string };
+  const data = await readUpstream(res, googleUserInfoSchema, "Google userinfo");
   if (!data.email) throw new Error("Google account has no email");
   return data.email;
 }
@@ -476,15 +484,6 @@ export type GooglePeopleContact = {
   email: string;
   phone: string;
   photoUrl: string | null;
-};
-
-type PeopleApiPerson = {
-  resourceName?: string;
-  names?: Array<{ displayName?: string; givenName?: string; familyName?: string }>;
-  organizations?: Array<{ name?: string; title?: string }>;
-  emailAddresses?: Array<{ value?: string }>;
-  phoneNumbers?: Array<{ value?: string }>;
-  photos?: Array<{ url?: string; default?: boolean }>;
 };
 
 /**
@@ -515,10 +514,7 @@ export async function fetchGooglePeopleContacts(
       const text = await res.text();
       throw new Error(`Google Contacts fetch failed: ${text.slice(0, 200)}`);
     }
-    const data = (await res.json()) as {
-      connections?: PeopleApiPerson[];
-      nextPageToken?: string;
-    };
+    const data = await readUpstream(res, googlePeoplePageSchema, "Google People connections");
 
     for (const person of data.connections || []) {
       const name = person.names?.[0];
@@ -717,10 +713,7 @@ export async function listGmailMessagePage(
   if (!res.ok) {
     throw new Error(`Gmail list failed: ${(await res.text()).slice(0, 200)}`);
   }
-  const data = (await res.json()) as {
-    messages?: GmailMessageRef[];
-    nextPageToken?: string;
-  };
+  const data = await readUpstream(res, gmailMessageListSchema, "Gmail message list");
   return {
     messages: data.messages || [],
     nextPageToken: data.nextPageToken || null,
@@ -811,7 +804,7 @@ export async function fetchGmailHeaders(
       // page of expired-token failures as "scanned, nothing recruiter-shaped".
       if (res.status === 401) throw new ReauthRequiredError("Gmail session expired — reconnect");
       if (!res.ok) return null;
-      const msg = (await res.json()) as RawGmailMessage;
+      const msg = await readUpstream(res, gmailMessageSchema, "Gmail message");
       const internal = Number(msg.internalDate);
       return {
         id: ref.id,
@@ -921,7 +914,7 @@ export async function fetchGmailMessageLinks(
         }
       );
       if (!res.ok) return null;
-      const msg = (await res.json()) as RawGmailMessage;
+      const msg = await readUpstream(res, gmailMessageSchema, "Gmail message");
       const internal = Number(msg.internalDate);
       return {
         id,
@@ -962,7 +955,7 @@ export async function fetchGmailMessages(
         }
       );
       if (!res.ok) return null;
-      const msg = (await res.json()) as RawGmailMessage;
+      const msg = await readUpstream(res, gmailMessageSchema, "Gmail message");
       const internal = Number(msg.internalDate);
       return {
         id,
@@ -1137,7 +1130,7 @@ export async function fetchGmailThread(
       }
     );
     if (!res.ok) return null;
-    return parseThread((await res.json()) as RawGmailThread, threadId);
+    return parseThread(await readUpstream(res, gmailThreadSchema, "Gmail thread"), threadId);
   } catch {
     return null;
   }
