@@ -123,6 +123,7 @@
 @source "../lib/ai-opportunity-schema.ts";
 @source "../lib/ai-pricing.ts";
 @source "../lib/ai-providers.ts";
+@source "../lib/ai-reply-schemas.ts";
 @source "../lib/ai-request-options.ts";
 @source "../lib/ai-result-cache.ts";
 @source "../lib/ai-security.ts";
