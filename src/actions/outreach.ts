@@ -11,7 +11,8 @@ import {
   type AudienceFilters,
   type OutreachSequenceStep,
 } from "@/db/schema";
-import { createContact, logInteraction } from "@/actions/contacts";
+import { logInteraction } from "@/actions/contacts";
+import { createContactDetailedForUser } from "@/lib/contact-create";
 import { listActiveGoalTexts } from "@/actions/goals";
 import {
   companyMatchesOrganizations,
@@ -1527,7 +1528,8 @@ export async function saveProspectAsContact(input: {
     }
   }
 
-  const contact = await createContact(
+  const { contact } = await createContactDetailedForUser(
+    userId,
     {
       fullName: prospect.fullName,
       title: prospect.title ?? undefined,

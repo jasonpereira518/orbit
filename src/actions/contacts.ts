@@ -33,7 +33,6 @@ import {
   logInteractionForUser,
   updateContactForUser,
   type ContactInput,
-  type ContactWriteOptions,
   type LogInteractionInput,
 } from "@/lib/contact-writes";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
@@ -49,7 +48,7 @@ import {
   type LinkedInProfileEnrichment,
 } from "@/lib/apollo";
 import { kickWorkHistoryResearch } from "@/lib/work-history-research";
-import { resolveOrCreateContact } from "@/lib/contact-resolve";
+import { createContactDetailedForUser } from "@/lib/contact-create";
 import { LINKEDIN_REFRESH_BATCH_SIZE } from "@/lib/outreach-types";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import {
@@ -88,10 +87,7 @@ import { enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
 import { scheduleDispatch } from "@/lib/email/schedule";
 import { getSendCapability, type MailboxId, type SendBlockReason } from "@/lib/email/sender";
 
-export type {
-  ContactInput,
-  ContactWriteOptions,
-} from "@/lib/contact-writes";
+export type { ContactInput } from "@/lib/contact-writes";
 
 export type {
   ContactListRow,
@@ -681,11 +677,8 @@ function clientContactInput<T extends Partial<ContactInput>>(input: T): T {
  * record's identifiers already belonged to someone, the data is folded into them and their
  * row comes back instead.
  */
-export async function createContact(
-  input: ContactInput,
-  options?: ContactWriteOptions
-) {
-  const { contact } = await createContactDetailed(input, options);
+export async function createContact(input: ContactInput) {
+  const { contact } = await createContactDetailed(input);
   return contact;
 }
 
@@ -701,30 +694,17 @@ export async function createContact(
  * Separate from `createContact` rather than a changed return type, so the importer and
  * outreach paths that only want the row keep working unchanged.
  */
-export async function createContactDetailed(
-  input: ContactInput,
-  options?: ContactWriteOptions
-) {
-  const userId = await requireUserId();
-  const { contactId, outcome, reason } = await resolveOrCreateContact(
-    userId,
-    clientContactInput(input),
-    options
-  );
-  const db = await getDb();
-  const [contact] = await db
-    .select()
-    .from(contacts)
-    .where(and(eq(contacts.userId, userId), eq(contacts.id, contactId)))
-    .limit(1);
-  return { contact, outcome, reason: reason ?? null };
+export async function createContactDetailed(input: ContactInput) {
+  return createContactDetailedForUser(await requireUserId(), clientContactInput(input));
 }
-export async function updateContact(
-  id: string,
-  input: Partial<ContactInput>,
-  options?: ContactWriteOptions
-) {
-  return updateContactForUser(await requireUserId(), id, clientContactInput(input), options);
+
+/**
+ * Takes only the person's own fields. The write options are not a parameter: an action id is
+ * callable from anywhere, and a caller must not be able to skip the embedding, the closeness
+ * score or the allowance check. Server paths that need them call `updateContactForUser`.
+ */
+export async function updateContact(id: string, input: Partial<ContactInput>) {
+  return updateContactForUser(await requireUserId(), id, clientContactInput(input));
 }
 
 /** Valid range for a user-supplied closeness rating (matches the 1–5 scale used throughout, e.g. contact-form.tsx's "Strength" field). */

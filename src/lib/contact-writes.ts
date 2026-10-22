@@ -55,6 +55,10 @@ import {
   parseContactPatch,
 } from "@/lib/contact-input";
 
+/**
+ * Knobs for trusted server paths (imports, outreach, extraction). @internal — never a parameter
+ * of an exported Server Action: an action id is callable by anyone, and these skip checks.
+ */
 export type ContactWriteOptions = {
   /** Skip path revalidation during bulk imports. */
   skipRevalidate?: boolean;
