@@ -38,6 +38,8 @@ import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { speechAllowance } from "@/lib/speech-quota";
 import { isoDay } from "@/lib/suggested-reminder-utils";
 import { actionFailure } from "@/lib/action-failure";
+import { parseInput } from "@/lib/action";
+import { analyzeMeetingSessionSchema, createMeetingSessionSchema } from "@/lib/meeting-input";
 
 /**
  * Meeting capture's session lifecycle. The audio itself never passes through here — chunks
@@ -73,6 +75,9 @@ export async function createMeetingSession(input: {
 }): Promise<{ ok: true; id: string; startedAtIso: string } | Fail> {
   try {
     const userId = await requireMeetingsUser();
+    const parsed = parseInput(createMeetingSessionSchema, input, "meetings.create-meeting-session");
+    if (!parsed.ok) return parsed;
+    input = parsed.value;
     // The entitlement says this plan MAY record; the allowance says whether there is
     // anything left to record with. Without this, an account at 100% got the whole ceremony
     // — a share picker, a started recording — and then an instant "Recording stopped" from
@@ -214,6 +219,9 @@ export async function analyzeMeetingSession(
   let userId: string;
   try {
     userId = await requireMeetingsUser();
+    const parsed = parseInput(analyzeMeetingSessionSchema, { id, opts }, "meetings.analyze-meeting-session");
+    if (!parsed.ok) return parsed;
+    ({ id, opts } = parsed.value);
     await consumeBucket("capture", userId, RATE_LIMITS.capture);
   } catch (err) {
     return { ok: false, error: await actionFailure(err, "Couldn’t analyze the meeting", "meetings.analyze-meeting-session") };

@@ -22,6 +22,8 @@ import {
 } from "@/lib/contact-opportunities";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { friendlyError } from "@/lib/errors";
+import { parseInput } from "@/lib/action";
+import { createOpportunitySchema, updateOpportunitySchema } from "@/lib/opportunity-input";
 import {
   MAX_OPPORTUNITY_LABEL_CHARS,
   normalizeOpportunityDirection,
@@ -70,6 +72,9 @@ export async function createOpportunity(input: {
 }): Promise<Ok | Fail> {
   try {
     const userId = await requireUserId();
+    const parsed = parseInput(createOpportunitySchema, input, "opportunities.create-opportunity");
+    if (!parsed.ok) return parsed;
+    input = parsed.value;
     const contactId = typeof input.contactId === "string" ? input.contactId.trim() : "";
     if (!contactId) return { ok: false, error: "Pick a contact first" };
 
@@ -115,7 +120,10 @@ export async function updateOpportunity(
 ): Promise<Ok | Fail> {
   try {
     const userId = await requireUserId();
-    if (typeof id !== "string" || !id.trim()) return { ok: false, error: "That opportunity is gone" };
+    const parsed = parseInput(updateOpportunitySchema, { id, patch }, "opportunities.update-opportunity");
+    if (!parsed.ok) return parsed;
+    ({ id, patch } = parsed.value);
+    if (!id.trim()) return { ok: false, error: "That opportunity is gone" };
 
     const set: Partial<typeof contactOpportunities.$inferInsert> = { updatedAt: new Date() };
     if (patch.kind !== undefined) set.kind = normalizeOpportunityKind(patch.kind);
