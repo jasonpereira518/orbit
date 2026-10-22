@@ -27,6 +27,7 @@ import { and, desc, eq, gt, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { aiResultCache } from "@/db/schema";
 import { parseAiJson, userCanUseAi, webSearchJson, type WebSource } from "@/lib/ai";
+import { companyResearchSchema, discoveryResearchSchema, personResearchSchema } from "@/lib/ai-reply-schemas";
 import { RESEARCH_CACHE_DAYS, aiResultCacheKey, withAiResultCache } from "@/lib/ai-result-cache";
 import { fenceUntrusted } from "@/lib/ai-security";
 import { saveContactProfile, sanitizeIncomingExperiences, type IncomingExperience } from "@/lib/contact-profile";
@@ -187,16 +188,6 @@ function subjectPrompt(subject: PersonSubject): string {
   return `Research this person:\n\n${fenceUntrusted("person", lines.join("\n"))}`;
 }
 
-type RawPerson = {
-  match?: unknown;
-  name?: unknown;
-  headline?: unknown;
-  current?: { organization?: unknown; title?: unknown } | null;
-  location?: unknown;
-  summary?: unknown;
-  talkingPoints?: unknown;
-  experiences?: unknown;
-};
 
 /** The model's answer, bounded and — unless it is sure — emptied of every fact. */
 export function toPersonDossier(
@@ -205,7 +196,7 @@ export function toPersonDossier(
   sources: WebSource[],
   now: Date,
 ): PersonDossier {
-  const raw = parseAiJson<RawPerson>(json);
+  const raw = parseAiJson(personResearchSchema, json);
   const match = raw.match === "confident" || raw.match === "unsure" ? raw.match : "none";
   const seen = new Set<string>();
   const dossier: PersonDossier = {
@@ -549,16 +540,6 @@ function companyPrompt(subject: CompanySubject, website: string | null, homepage
   return parts.join("\n\n");
 }
 
-type RawCompany = {
-  match?: unknown;
-  website?: unknown;
-  description?: unknown;
-  headquarters?: unknown;
-  founded?: unknown;
-  size?: unknown;
-  news?: unknown;
-  people?: unknown;
-};
 
 /** The model's answer, bounded and — unless it is sure — emptied of every fact. */
 export function toCompanyDossier(
@@ -568,7 +549,7 @@ export function toCompanyDossier(
   sources: WebSource[],
   now: Date,
 ): CompanyDossier {
-  const raw = parseAiJson<RawCompany>(json);
+  const raw = parseAiJson(companyResearchSchema, json);
   const match = raw.match === "confident" || raw.match === "unsure" ? raw.match : "none";
   const seen = new Set<string>();
   const dossier: CompanyDossier = {
@@ -745,7 +726,7 @@ export function normalizeDiscoveryQuery(input: unknown): { ok: true; query: stri
 
 /** The model's list, keeping only cited, explained, distinct people. */
 export function toDiscoveryResult(query: string, json: string, sources: WebSource[], now: Date): DiscoveryResult {
-  const raw = parseAiJson<{ candidates?: unknown }>(json);
+  const raw = parseAiJson(discoveryResearchSchema, json);
   const seenPeople = new Set<string>();
   const candidates = (Array.isArray(raw.candidates) ? raw.candidates : [])
     .map((c: { fullName?: unknown; title?: unknown; company?: unknown; whyMatches?: unknown; url?: unknown } | null) => ({

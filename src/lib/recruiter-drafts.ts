@@ -1,4 +1,5 @@
 import { completeJson, parseAiJson } from "@/lib/ai";
+import { recruiterDraftReplySchema } from "@/lib/ai-reply-schemas";
 import { fenceUntrusted } from "@/lib/ai-security";
 import { renderWritingPreferences } from "@/lib/writing-instructions";
 
@@ -135,7 +136,7 @@ Return JSON: {"subject": string, "body": string}`,
 ${input.variationHint ? `Vary phrasing from other drafts in this batch: ${input.variationHint}` : ""}`,
   });
 
-  const parsed = parseAiJson<{ subject?: string; body?: string }>(content);
+  const parsed = parseAiJson(recruiterDraftReplySchema, content);
   const subject = scrubPlaceholders(parsed.subject?.trim() || "");
   const body = scrubPlaceholders(parsed.body?.trim() || "");
   if (!body) throw new Error("The model returned an empty draft");

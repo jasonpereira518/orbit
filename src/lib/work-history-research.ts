@@ -27,6 +27,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contactProfiles, contacts } from "@/db/schema";
 import { userCanUseAi, webSearchJson, parseAiJson, type WebSource } from "@/lib/ai";
+import { currentRoleAnswerSchema, workHistoryAnswerSchema } from "@/lib/ai-reply-schemas";
 import { auditUntrustedWrite, cleanSingleLine, fenceUntrusted } from "@/lib/ai-security";
 import {
   sanitizeIncomingExperiences,
@@ -153,7 +154,6 @@ function subjectPrompt(subject: WorkHistorySubject): string {
   return `Find the work history and education of this person:\n\n${fenceUntrusted("contact", lines.join("\n"))}`;
 }
 
-type RawAnswer = { match?: unknown; headline?: unknown; experiences?: unknown };
 
 /**
  * The re-check prompt. Asks ONE thing — where they work now — so it needs one search and a
@@ -170,7 +170,6 @@ Respond with JSON only:
 /** Output cap for the re-check: one small object. */
 const CURRENT_ROLE_OUTPUT_TOKENS = 200;
 
-type RawCurrentRole = { match?: unknown; current?: { organization?: unknown; title?: unknown } | null };
 
 /** The production re-check: one search, one short answer. */
 export const checkCurrentRoleWithWebSearch: CurrentRoleChecker = async (userId, subject) => {
@@ -181,7 +180,7 @@ export const checkCurrentRoleWithWebSearch: CurrentRoleChecker = async (userId, 
     maxSearches: 1,
     maxOutputTokens: CURRENT_ROLE_OUTPUT_TOKENS,
   });
-  const raw = parseAiJson<RawCurrentRole>(json);
+  const raw = parseAiJson(currentRoleAnswerSchema, json);
   auditUntrustedWrite(userId, "work_history.recheck", "answer", json);
   const org = cleanSingleLine(typeof raw.current?.organization === "string" ? raw.current.organization : null, 200) ?? "";
   const title = cleanSingleLine(typeof raw.current?.title === "string" ? raw.current.title : null, 200);
@@ -200,7 +199,7 @@ export const researchWithWebSearch: WorkHistoryResearcher = async (userId, subje
     maxSearches: MAX_SEARCHES_PER_PERSON,
     maxOutputTokens: MAX_OUTPUT_TOKENS,
   });
-  const raw = parseAiJson<RawAnswer>(json);
+  const raw = parseAiJson(workHistoryAnswerSchema, json);
   // Tripwire, never a block: the answer was read off pages anyone can publish.
   auditUntrustedWrite(userId, "work_history.research", "answer", json);
   return {

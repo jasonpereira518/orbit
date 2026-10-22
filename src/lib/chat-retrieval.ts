@@ -1,4 +1,5 @@
 import { completeJson, parseAiJson } from "@/lib/ai";
+import { rerankReplySchema } from "@/lib/ai-reply-schemas";
 import { RERANK_TUNING, rerankQuestion } from "@/lib/decisions/catalog";
 import { askPerItem, type Decider } from "@/lib/decisions/jev";
 import type { RankedContact, SearchFilters } from "@/lib/hybrid-search";
@@ -441,7 +442,7 @@ export async function rerankCandidatesWithEngine(
       remaining,
       "stage timeout"
     );
-    const parsed = parseAiJson<{ scores?: Array<{ id?: unknown; relevance?: unknown }> }>(content);
+    const parsed = parseAiJson(rerankReplySchema, content);
     const byId = new Map(candidates.map((c) => [c.id, c]));
     const scored = (parsed.scores ?? [])
       .filter(

@@ -66,6 +66,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-action-user-scope": "pure",
   "smoke-action-no-internal-options": "pure",
   "smoke-action-input-validation": "pure",
+  "smoke-ai-json-schemas": "pure",
   "smoke-consume-bucket-args": "pure",
   "smoke-toast-copy": "pure",
   "smoke-drive-picker-token": "pure",

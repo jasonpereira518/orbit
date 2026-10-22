@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { completeJson, parseAiJson } from "@/lib/ai";
+import { chatRefineReplySchema } from "@/lib/ai-reply-schemas";
 import { gainedReach, sanitizeDraft } from "@/lib/chat-draft";
 import { renderWritingPreferences } from "@/lib/writing-instructions";
 
@@ -78,7 +79,7 @@ export async function refineDraft(
         timer = setTimeout(() => reject(new Error("refine timeout")), REFINE_TIMEOUT_MS);
       }),
     ]);
-    const parsed = parseAiJson<{ draft?: unknown } | null>(content);
+    const parsed = parseAiJson(chatRefineReplySchema, content);
     const next = sanitizeDraft(parsed?.draft);
     if (!next) return null;
     // A rewrite that reaches somewhere the draft did not is the exfiltration this guards.

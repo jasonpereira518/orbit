@@ -1,4 +1,5 @@
 import { completeJson, parseAiJson } from "@/lib/ai";
+import { chatTitleReplySchema } from "@/lib/ai-reply-schemas";
 import { withTimeout } from "@/lib/async";
 
 /**
@@ -104,7 +105,7 @@ export async function generateChatTitle(
       TITLE_TIMEOUT_MS,
       "title timeout"
     );
-    const parsed = parseAiJson<{ title?: unknown } | null>(content);
+    const parsed = parseAiJson(chatTitleReplySchema, content);
     return sanitizeChatTitle(parsed?.title);
   } catch {
     return null;
