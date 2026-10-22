@@ -27,6 +27,17 @@ export function isInternalRequest(request: Request): boolean {
   return safeEqual(request.headers.get("authorization") ?? "", `Bearer ${secret}`);
 }
 
+/**
+ * The `{ userId }` body every internal kick route receives, as a non-empty string or null.
+ * The caller holds the shared secret, but a cast (`as { userId?: string }`) still let a number
+ * or an object through to the job it names; this checks the type.
+ */
+export async function readInternalUserId(request: Request): Promise<string | null> {
+  const body: unknown = await request.json().catch(() => null);
+  const userId = typeof body === "object" && body !== null ? (body as { userId?: unknown }).userId : undefined;
+  return typeof userId === "string" && userId.length > 0 ? userId : null;
+}
+
 /** Local `next dev` with no secret configured. `VERCEL` is set on every Vercel build/runtime. */
 function isLocalDevelopment() {
   return process.env.NODE_ENV === "development" && !process.env.VERCEL;

@@ -1,7 +1,7 @@
 import { recordBackfillFailure } from "@/lib/backfill-failures";
 import { NextResponse } from "next/server";
 import { after } from "next/server";
-import { isInternalRequest } from "@/lib/internal-auth";
+import { isInternalRequest, readInternalUserId } from "@/lib/internal-auth";
 import {
   kickLinkedInTimelineBackfill,
   runLinkedInTimelineBackfill,
@@ -16,8 +16,7 @@ export async function POST(request: Request) {
     return new NextResponse(null, { status: 401 });
   }
 
-  const body = (await request.json().catch(() => null)) as { userId?: string } | null;
-  const userId = body?.userId;
+  const userId = await readInternalUserId(request);
   if (!userId) {
     return NextResponse.json({ error: "userId required" }, { status: 400 });
   }

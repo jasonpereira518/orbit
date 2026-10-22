@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { captureImageFiles, normalizeCaptureInput, type CaptureMediaFile } from "@/lib/capture-ingest";
+import { captureMediaFilesSchema } from "@/lib/capture-media-input";
 import { discardCapturePhotos, storeCapturePhotos } from "@/lib/capture-photos";
 import { CAPTURE_MAX_UPLOAD_BYTES, formatUploadSize } from "@/lib/capture-limits";
 import { RATE_LIMITS } from "@/lib/rate-limit";
@@ -47,8 +48,14 @@ export async function POST(
   let files: CaptureMediaFile[];
   let remainingPages = 0;
   try {
-    const body = (await request.json()) as { files?: CaptureMediaFile[]; remainingPages?: unknown };
-    files = Array.isArray(body?.files) ? body.files : [];
+    const body = (await request.json()) as { files?: unknown; remainingPages?: unknown };
+    // A missing or non-array `files` is "no photos" (the 400 below); an array with a bad
+    // element is a malformed body, not something to read `.base64.length` off.
+    const parsedFiles = captureMediaFilesSchema.safeParse(Array.isArray(body?.files) ? body.files : []);
+    if (!parsedFiles.success) {
+      return NextResponse.json({ error: "Malformed request body" }, { status: 400 });
+    }
+    files = parsedFiles.data;
     // The phone sends a scan in batches under Vercel's 4.5MB request cap. It says how many
     // pages are still to come (this batch included) so pages are numbered within the note.
     remainingPages = Number.isInteger(body?.remainingPages) ? Math.min(Number(body.remainingPages), 10 * MAX_SCAN_PAGES) : 0;

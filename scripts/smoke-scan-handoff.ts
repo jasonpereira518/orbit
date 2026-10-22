@@ -37,6 +37,7 @@ import {
   sweepExpiredHandoffs,
 } from "../src/lib/scan-handoff";
 import { ensureUserSettings } from "../src/lib/user-settings";
+import { POST as postScanPages } from "../src/app/api/scan/[token]/pages/route";
 
 const USER = "smoke-scan-handoff-user";
 const OTHER = "smoke-scan-handoff-intruder";
@@ -115,6 +116,28 @@ async function main() {
   console.log("\nOnly the minting account can see the job...");
   check("another signed-in account gets nothing from the token", (await handoffJobFor(OTHER, minted.token)) === null);
   check("...and the grant is untouched", Boolean(await findScanHandoff(minted.token)));
+
+  console.log("\nThe pages route refuses a malformed body instead of throwing on it...");
+  const scanPost = (body: string) =>
+    postScanPages(
+      new Request("http://localhost/api/scan/x/pages", { method: "POST", body }) as never,
+      { params: Promise.resolve({ token: minted.token }) }
+    );
+  const photo = { filename: "p.jpg", mimeType: "image/jpeg", base64: "AAAA" };
+  const pagesBefore = (await db.query.captureHandoffs.findFirst({ where: eq(captureHandoffs.userId, USER) }))?.pageCount;
+  for (const [label, body, status] of [
+    ["not JSON", "{", 400],
+    ["base64 a number", JSON.stringify({ files: [{ ...photo, base64: 5 }] }), 400],
+    ["a file that is null", JSON.stringify({ files: [null] }), 400],
+    ["a file missing its mime type", JSON.stringify({ files: [{ filename: "p.jpg", base64: "AAAA" }] }), 400],
+    ["files not an array: no photos", JSON.stringify({ files: "AAAA" }), 400],
+    ["no files at all", JSON.stringify({}), 400],
+  ] as const) {
+    const res = await scanPost(body);
+    check(`${label} -> ${status}, not a 500`, res.status === status, String(res.status));
+  }
+  const pagesAfter = (await db.query.captureHandoffs.findFirst({ where: eq(captureHandoffs.userId, USER) }))?.pageCount;
+  check("...and none of them recorded a page", pagesBefore === pagesAfter, `${pagesBefore} -> ${pagesAfter}`);
 
   console.log("\nFinishing is single-use...");
   const finished = await finishScanHandoff(found!.id);
