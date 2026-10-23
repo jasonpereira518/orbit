@@ -8,7 +8,10 @@
  * in front of the model this turn, and each commit is scoped to the caller by the lib function
  * it calls.
  */
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
+import { getDb } from "@/db";
+import { calendarEvents } from "@/db/schema";
 import { UserFacingError } from "@/lib/errors";
 import { listSchools, setSchools } from "@/lib/events/target-companies";
 import type { ContactOpportunity } from "@/db/schema";
@@ -45,6 +48,12 @@ import {
   updateMyLinkForUser,
   type RecruiterLinkPatch,
 } from "@/lib/recruiter-writes";
+import {
+  discardMeetingSessionRow,
+  getMeetingSession,
+  setMeetingSessionEventLink,
+  updateMeetingDetails,
+} from "@/lib/meeting-sessions";
 import { addGoalForUser, deleteGoalForUser, MAX_GOAL_CHARS, restoreGoalForUser, type GoalSnapshot } from "@/lib/user-goals";
 import { isoDay, name, s, text, uuid, type ChatWrite, type UndoFn } from "@/lib/tools/chat-write-kit";
 
@@ -451,6 +460,66 @@ export const FEATURE_WRITES: readonly ChatWrite[] = [
       };
     },
   },
+
+  /* ---------------------------------------------------------------------- meetings ----- */
+  {
+    name: "rename_meeting",
+    title: "Rename a recorded meeting",
+    description: "Propose giving one of the user's recorded meetings a clearer title (meetingId from search_meetings).",
+    inputSchema: { meetingId: uuid, title: z.string().min(1).max(200) },
+    tier: "auto",
+    refs: (i) => ({ meetings: [s(i.meetingId)] }),
+    preview: (i, sc) => `Rename the meeting ${quote(name(sc.meetings, i.meetingId, "this meeting"))} to ${quote(text(i.title, 200))}`,
+    async commit(userId, i) {
+      const before = await getMeetingSession(userId, s(i.meetingId));
+      if (!before) throw new UserFacingError("That meeting is gone — it may have been discarded");
+      const row = await updateMeetingDetails(userId, before.id, { title: text(i.title, 200) });
+      if (!row) throw new UserFacingError("That meeting is gone — it may have been discarded");
+      return { resultId: row.id, href: `/meetings/${row.id}`, undo: { tool: "restore_meeting_title", input: { meetingId: row.id, title: before.title } } };
+    },
+  },
+  {
+    name: "link_meeting_to_event",
+    title: "Say which calendar event a meeting was",
+    description:
+      "Propose linking one of the user's recorded meetings (meetingId from search_meetings) to the calendar event it was " +
+      "(eventId from upcoming_meetings or meeting_context), so its series and attendees line up.",
+    inputSchema: { meetingId: uuid, calendarEventId: uuid },
+    tier: "auto",
+    refs: (i) => ({ meetings: [s(i.meetingId)], calendarEvents: [s(i.calendarEventId)] }),
+    preview: (i, sc) =>
+      `Link the meeting ${quote(name(sc.meetings, i.meetingId, "this meeting"))} to the calendar event ${quote(name(sc.calendarEvents, i.calendarEventId, "this event"))}`,
+    async commit(userId, i) {
+      const before = await getMeetingSession(userId, s(i.meetingId));
+      if (!before) throw new UserFacingError("That meeting is gone — it may have been discarded");
+      const db = await getDb();
+      const event = await db.query.calendarEvents.findFirst({
+        where: and(eq(calendarEvents.id, s(i.calendarEventId)), eq(calendarEvents.userId, userId)),
+        columns: { providerEventId: true, seriesId: true },
+      });
+      if (!event) throw new UserFacingError("That calendar event is gone — try again after the calendar syncs");
+      await setMeetingSessionEventLink(userId, before.id, { eventKey: event.providerEventId, seriesId: event.seriesId });
+      return {
+        resultId: before.id,
+        href: `/meetings/${before.id}`,
+        undo: { tool: "restore_meeting_link", input: { meetingId: before.id, eventKey: before.calendarEventKey, seriesId: before.calendarSeriesId } },
+      };
+    },
+  },
+  {
+    name: "discard_meeting",
+    title: "Discard a recorded meeting",
+    description: "Propose throwing away one of the user's recorded meetings and its transcript (meetingId from search_meetings). Only when asked. Cannot be undone.",
+    inputSchema: { meetingId: uuid },
+    tier: "confirm",
+    destructive: true,
+    refs: (i) => ({ meetings: [s(i.meetingId)] }),
+    preview: (i, sc) => `Discard the meeting ${quote(name(sc.meetings, i.meetingId, "this meeting"))} and its whole transcript. This cannot be undone.`,
+    async commit(userId, i) {
+      if (!(await discardMeetingSessionRow(userId, s(i.meetingId)))) throw new UserFacingError("That meeting is gone — it may have been discarded");
+      return { resultId: null, href: "/meetings", undo: null };
+    },
+  },
 ];
 
 export const FEATURE_UNDO: Record<string, UndoFn> = {
@@ -496,5 +565,16 @@ export const FEATURE_UNDO: Record<string, UndoFn> = {
   async restore_recruiter_link(userId, input) {
     const changed = await updateMyLinkForUser(userId, s(input.recruiterId), (input.patch ?? {}) as RecruiterLinkPatch);
     if (!changed) throw new UserFacingError("You no longer have that recruiter logged");
+  },
+  async restore_meeting_title(userId, input) {
+    const row = await updateMeetingDetails(userId, s(input.meetingId), { title: (input.title as string | null) ?? null });
+    if (!row) throw new UserFacingError("That meeting is gone — it may have been discarded");
+  },
+  async restore_meeting_link(userId, input) {
+    const ok = await setMeetingSessionEventLink(userId, s(input.meetingId), {
+      eventKey: (input.eventKey as string | null) ?? null,
+      seriesId: (input.seriesId as string | null) ?? null,
+    });
+    if (!ok) throw new UserFacingError("That meeting is gone — it may have been discarded");
   },
 };

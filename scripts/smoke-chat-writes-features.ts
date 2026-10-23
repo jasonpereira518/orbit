@@ -15,12 +15,16 @@ delete process.env.CLERK_SECRET_KEY;
 
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
+import { randomUUID } from "node:crypto";
 import {
+  calendarEvents,
+  calendarSources,
   chatMessages,
   chatThreads,
   contactOpportunities,
   contacts,
   interactions,
+  meetingSessions,
   outreachCampaigns,
   outreachMessages,
   outreachProspects,
@@ -58,6 +62,9 @@ async function clear() {
   await db.delete(reminders).where(eq(reminders.userId, USER));
   await db.delete(outreachCampaigns).where(eq(outreachCampaigns.userId, USER));
   await db.delete(userRecruiterLinks).where(eq(userRecruiterLinks.userId, USER));
+  await db.delete(meetingSessions).where(eq(meetingSessions.userId, USER));
+  await db.delete(calendarEvents).where(eq(calendarEvents.userId, USER));
+  await db.delete(calendarSources).where(eq(calendarSources.userId, USER));
   await db.delete(recruiters).where(eq(recruiters.createdByUserId, USER));
   await db.delete(interactions).where(eq(interactions.userId, USER));
   await db.delete(contacts).where(eq(contacts.userId, USER));
@@ -315,6 +322,46 @@ async function main() {
 
     await undoProposedAction(m1, c1("log_recruiter").id);
     check("undoing the log removes the user's link, and leaves the shared row", !(await link(rid)) && Boolean(await db.query.recruiters.findFirst({ where: eq(recruiters.id, rid) })));
+  }
+
+  console.log("\nMeetings");
+  {
+    const [meeting] = await db.insert(meetingSessions).values({ userId: USER, title: "Untitled recording", status: "saved" }).returning();
+    const [doomed] = await db.insert(meetingSessions).values({ userId: USER, title: "Test recording", status: "saved" }).returning();
+    const [source] = await db
+      .insert(calendarSources)
+      .values({ userId: USER, provider: "google", connectionId: randomUUID(), calendarId: "primary" })
+      .returning();
+    const start = new Date(Date.now() + 3_600_000);
+    const [event] = await db
+      .insert(calendarEvents)
+      .values({ userId: USER, sourceId: source.id, providerEventId: "smoke-weekly-1on1", seriesId: "smoke-series", title: "Weekly 1:1", startAt: start, endAt: new Date(start.getTime() + 1_800_000) })
+      .returning();
+
+    const sink = createProposalSink({});
+    sink.harvest("search_meetings", [{ meetingId: meeting.id, title: "Untitled recording" }, { meetingId: doomed.id, title: "Test recording" }]);
+    const upcoming = (await lookup(sink, "upcoming_meetings")) as Array<{ eventId: string }>;
+    check("upcoming_meetings hands chat calendar event ids", Array.isArray(upcoming) && upcoming.some((e) => e.eventId === event.id), JSON.stringify(upcoming).slice(0, 200));
+    await propose(sink, "rename_meeting", { meetingId: meeting.id, title: "Weekly 1:1 with Sam" });
+    await propose(sink, "link_meeting_to_event", { meetingId: meeting.id, calendarEventId: event.id });
+    await propose(sink, "discard_meeting", { meetingId: doomed.id });
+    const list = sink.list();
+    check("three cards; discarding is destructive and asks", list.length === 3 && list[2].destructive === true && list[2].tier === "confirm", list.map((c) => c.preview).join(" | "));
+    const { messageId, card } = await store(list);
+    const now = async (id: string) => db.query.meetingSessions.findFirst({ where: eq(meetingSessions.id, id) });
+
+    await commitProposedAction(messageId, card("rename_meeting").id);
+    check("rename_meeting: retitled", (await now(meeting.id))?.title === "Weekly 1:1 with Sam");
+    await undoProposedAction(messageId, card("rename_meeting").id);
+    check("…undo restores the old title", (await now(meeting.id))?.title === "Untitled recording");
+
+    await commitProposedAction(messageId, card("link_meeting_to_event").id);
+    check("link_meeting_to_event: linked by the provider's event and series ids", (await now(meeting.id))?.calendarEventKey === "smoke-weekly-1on1" && (await now(meeting.id))?.calendarSeriesId === "smoke-series");
+    await undoProposedAction(messageId, card("link_meeting_to_event").id);
+    check("…undo clears the link it made", (await now(meeting.id))?.calendarEventKey === null);
+
+    const gone = await commitProposedAction(messageId, card("discard_meeting").id);
+    check("discard_meeting: the recording is gone, with no undo", gone.ok && !(await now(doomed.id)) && !(await undoProposedAction(messageId, card("discard_meeting").id)).ok);
   }
 
   await clear();
