@@ -246,6 +246,7 @@ export const FEATURE_WRITES: readonly ChatWrite[] = [
     refs: (i) => ({ recommendations: [s(i.recommendationId)] }),
     preview: (i, sc) => `Follow up with ${name(sc.recommendations, i.recommendationId, "this person")} in ${Number(i.days)} days, from radar`,
     async commit(userId, i) {
+      await requireReleasedSurface(userId, "page.radar");
       const out = await scheduleRecommendationForUser(userId, s(i.recommendationId), Number(i.days) as 3 | 7 | 14);
       if (!out.ok) throw new UserFacingError("That radar card has moved on — open radar to see it");
       return { resultId: null, href: "/reminders", undo: null };
@@ -261,6 +262,7 @@ export const FEATURE_WRITES: readonly ChatWrite[] = [
     preview: (i, sc) =>
       `Snooze the radar card for ${name(sc.recommendations, i.recommendationId, "this person")} for a ${s(i.length) === "1m" ? "month" : "week"}`,
     async commit(userId, i) {
+      await requireReleasedSurface(userId, "page.radar");
       const out = await snoozeRecommendationForUser(userId, s(i.recommendationId), s(i.length) as "1w" | "1m");
       if (!out.ok) throw new UserFacingError("That radar card has moved on — open radar to see it");
       return { resultId: null, href: "/radar", undo: { tool: "restore_recommendation", input: { recommendationId: s(i.recommendationId) } } };
@@ -275,6 +277,7 @@ export const FEATURE_WRITES: readonly ChatWrite[] = [
     refs: (i) => ({ recommendations: [s(i.recommendationId)] }),
     preview: (i, sc) => `Dismiss the radar card for ${name(sc.recommendations, i.recommendationId, "this person")}`,
     async commit(userId, i) {
+      await requireReleasedSurface(userId, "page.radar");
       const out = await dismissRecommendationForUser(userId, s(i.recommendationId));
       if (!out.ok) throw new UserFacingError("That radar card has moved on — open radar to see it");
       return { resultId: null, href: "/radar", undo: { tool: "restore_recommendation", input: { recommendationId: s(i.recommendationId) } } };

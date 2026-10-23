@@ -202,6 +202,10 @@ async function main() {
     check("…undo brings it back (under a new id)", restored.some((o) => o.label === "Intro to Babbage"), JSON.stringify(restored.map((o) => o.label)));
 
     const recNow = async () => db.query.recommendations.findFirst({ where: eq(recommendations.id, rec.id) });
+    await setSurfaceComingSoon("smoke-chat-writes-features", "page.radar", true);
+    const early = await commitProposedAction(messageId, card("snooze_recommendation").id);
+    check("while radar is coming soon, its cards cannot be acted on from chat", !early.ok && (await recNow())?.status === "pending", JSON.stringify(early));
+    await setSurfaceComingSoon("smoke-chat-writes-features", "page.radar", false);
     await commitProposedAction(messageId, card("snooze_recommendation").id);
     check("snooze_recommendation: snoozed", (await recNow())?.status === "snoozed");
     await undoProposedAction(messageId, card("snooze_recommendation").id);
@@ -218,6 +222,7 @@ async function main() {
       JSON.stringify({ sched, status: (await recNow())?.status, reminders: followUps.map((r) => [r.title, r.status]) })
     );
     check("…and offers no undo, since the reminder would stay", !(await undoProposedAction(messageId, card("schedule_recommendation").id)).ok);
+    await setSurfaceComingSoon("smoke-chat-writes-features", "page.radar", true);
   }
 
   console.log("\nOutreach — wording, drafts and outcomes, never a send");
