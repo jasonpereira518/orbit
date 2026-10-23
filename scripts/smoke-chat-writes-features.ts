@@ -35,6 +35,8 @@ import {
   userRecruiterLinks,
 } from "../src/db/schema";
 import { commitProposedAction, undoProposedAction } from "../src/actions/chat-actions";
+import { getChatSendContext } from "../src/actions/chat-send";
+import { loadRadarAutopilot } from "../src/lib/radar/autopilot";
 import type { StoredProposedAction } from "../src/lib/chat-proposed-actions";
 import { listSchools, setSchools } from "../src/lib/events/target-companies";
 import { setSurfaceComingSoon } from "../src/lib/surface-visibility";
@@ -96,6 +98,9 @@ async function store(cards: StoredProposedAction[]) {
   const card = (tool: string) => cards.find((c) => c.args.kind === "tool" && c.args.tool === tool)!;
   return { messageId: message.id, card };
 }
+
+/** An id that is no one's: a contact the draft card never names. */
+const ada_id = () => "00000000-0000-4000-8000-000000000000";
 
 async function main() {
   await clear();
@@ -362,6 +367,35 @@ async function main() {
 
     const gone = await commitProposedAction(messageId, card("discard_meeting").id);
     check("discard_meeting: the recording is gone, with no undo", gone.ok && !(await now(doomed.id)) && !(await undoProposedAction(messageId, card("discard_meeting").id)).ok);
+  }
+
+  console.log("\nAn email draft, and radar autopilot");
+  {
+    const [sam] = await db.insert(contacts).values({ userId: USER, fullName: "Sam Altman", email: "sam@example.com" }).returning();
+    const sink = createProposalSink({ contacts: new Map([[sam.id, "Sam Altman"]]) });
+    await propose(sink, "draft_email", { contactId: sam.id, body: "Hi Sam — great to meet you at the mixer." });
+    await propose(sink, "set_radar_autopilot", { kind: "follow_up", on: true });
+    const list = sink.list();
+    check("two cards, both asking; the draft says the user sends it", list.every((c) => c.tier === "confirm") && /you review and send it/.test(list[0].preview), list.map((c) => c.preview).join(" | "));
+    check("there is no write for the user's writing instructions", !proposerTools(sink).some((tool) => tool.name === "set_writing_instructions"));
+    const { messageId, card } = await store(list);
+
+    const ctx = await getChatSendContext(messageId, sam.id);
+    check("the send dialog opens for the person a draft card names (not only a recommended one)", ctx?.to === "sam@example.com", JSON.stringify(ctx));
+    check("…and for no one else on that message", (await getChatSendContext(messageId, ada_id())) === null);
+    const draftDone = await commitProposedAction(messageId, card("draft_email").id);
+    const sends = await db.query.emailSends.findMany({ where: (r, { eq: is }) => is(r.userId, USER) });
+    check("draft_email: marking the card done sends nothing", draftDone.ok && sends.length === 0, JSON.stringify({ draftDone, sends: sends.length }));
+
+    await setSurfaceComingSoon("smoke-chat-writes-features", "page.radar", true);
+    const closed = await commitProposedAction(messageId, card("set_radar_autopilot").id);
+    check("while radar is coming soon, its autopilot cannot be switched from chat", !closed.ok && (await loadRadarAutopilot(USER)).follow_up !== true, JSON.stringify(closed));
+    await setSurfaceComingSoon("smoke-chat-writes-features", "page.radar", false);
+    await commitProposedAction(messageId, card("set_radar_autopilot").id);
+    check("set_radar_autopilot: on for follow-up cards", (await loadRadarAutopilot(USER)).follow_up === true);
+    await undoProposedAction(messageId, card("set_radar_autopilot").id);
+    check("…undo turns it back off", (await loadRadarAutopilot(USER)).follow_up === false);
+    await setSurfaceComingSoon("smoke-chat-writes-features", "page.radar", true);
   }
 
   await clear();

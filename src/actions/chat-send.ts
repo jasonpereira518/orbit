@@ -105,11 +105,16 @@ async function loadTarget(userId: string, messageId: string, contactId: string) 
   const db = await getDb();
   const message = await db.query.chatMessages.findFirst({
     where: and(eq(chatMessages.id, messageId), eq(chatMessages.userId, userId), eq(chatMessages.role, "assistant")),
-    columns: { id: true, recommendations: true },
+    columns: { id: true, recommendations: true, proposedActions: true },
   });
   if (!message) return null;
+  // A person the answer recommended, or one its `draft_email` card names (@/lib/tools/
+  // chat-writes-features) — that card opens this same dialog, whose Send is the only send.
   const recommended = (message.recommendations ?? []).some((r) => r.contact_id === contactId);
-  if (!recommended) return null;
+  const drafted = (message.proposedActions ?? []).some(
+    (a) => a.args.kind === "tool" && a.args.tool === "draft_email" && a.args.input?.contactId === contactId
+  );
+  if (!recommended && !drafted) return null;
   const contact = await db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
     columns: { id: true, fullName: true, preferredName: true, email: true },

@@ -1,6 +1,10 @@
 /**
  * Chat writes for the rest of Orbit (plan Phase 2b): goals and schools, opportunities and
- * radar, outreach (never a send), recruiters, meetings, an email draft and two settings.
+ * radar, outreach (never a send), recruiters, meetings, an email draft and radar's autopilot.
+ *
+ * Deliberately absent: the user's writing instructions. They are injected into every draft
+ * prompt Orbit writes, so a model that could set them could plant a standing instruction —
+ * a smoke test keeps them out of src/lib/tools altogether.
  *
  * Same contract as the core catalog in @/lib/tools/chat-writes, whose top comment is the
  * write invariant: the model only proposes, a person's click (or an opted-in auto-apply,
@@ -54,6 +58,9 @@ import {
   setMeetingSessionEventLink,
   updateMeetingDetails,
 } from "@/lib/meeting-sessions";
+import { loadRadarAutopilot, setRadarAutopilotForUser } from "@/lib/radar/autopilot";
+import { KIND_LABELS, RECOMMENDATION_KINDS, type RecommendationKind } from "@/lib/radar/types";
+import { requireReleasedSurface } from "@/lib/surface-visibility";
 import { addGoalForUser, deleteGoalForUser, MAX_GOAL_CHARS, restoreGoalForUser, type GoalSnapshot } from "@/lib/user-goals";
 import { isoDay, name, s, text, uuid, type ChatWrite, type UndoFn } from "@/lib/tools/chat-write-kit";
 
@@ -520,6 +527,45 @@ export const FEATURE_WRITES: readonly ChatWrite[] = [
       return { resultId: null, href: "/meetings", undo: null };
     },
   },
+
+  /* --------------------------------------------------------- an email draft, settings ----- */
+  {
+    name: "draft_email",
+    title: "Draft an email",
+    description:
+      "Propose an email to one of the user's contacts, in the user's voice: the text only. The card opens Orbit's send " +
+      "dialog with it prefilled — the user checks the address and subject there and presses Send themselves. Nothing is sent from here.",
+    inputSchema: { contactId: uuid, body: z.string().min(1).max(4000) },
+    tier: "confirm",
+    opensDialog: "gmail_send",
+    refs: (i) => ({ contacts: [s(i.contactId)] }),
+    contactOf: (i) => s(i.contactId),
+    preview: (i, sc) => `Email ${name(sc.contacts, i.contactId, "this contact")}: ${quote(text(i.body, 4000), 120)} — you review and send it`,
+    // The card opens the send dialog; this only marks it done once the dialog says it went.
+    // It never sends: the dialog's own Send (`sendChatDraftViaGmail`) is the only send.
+    async commit() {
+      return { resultId: null, href: null, undo: null };
+    },
+  },
+  {
+    name: "set_radar_autopilot",
+    title: "Radar autopilot",
+    description:
+      "Propose turning radar's autopilot on or off for one kind of card (prep, heads_up, follow_up, opportunity, reach_out, " +
+      "reconnect). With it on, radar schedules a follow-up for that kind of card by itself. It never sends.",
+    inputSchema: { kind: z.enum(RECOMMENDATION_KINDS), on: z.boolean() },
+    tier: "confirm",
+    refs: () => ({}),
+    preview: (i) =>
+      `Turn radar autopilot ${i.on === true ? "on" : "off"} for ${KIND_LABELS[s(i.kind) as RecommendationKind] ?? "that kind of"} cards${i.on === true ? " — radar will schedule those follow-ups itself" : ""}`,
+    async commit(userId, i) {
+      await requireReleasedSurface(userId, "page.radar");
+      const kind = s(i.kind) as RecommendationKind;
+      const before = (await loadRadarAutopilot(userId))[kind] === true;
+      await setRadarAutopilotForUser(userId, kind, i.on === true);
+      return { resultId: null, href: "/radar", undo: { tool: "restore_radar_autopilot", input: { kind, on: before } } };
+    },
+  },
 ];
 
 export const FEATURE_UNDO: Record<string, UndoFn> = {
@@ -576,5 +622,8 @@ export const FEATURE_UNDO: Record<string, UndoFn> = {
       seriesId: (input.seriesId as string | null) ?? null,
     });
     if (!ok) throw new UserFacingError("That meeting is gone — it may have been discarded");
+  },
+  async restore_radar_autopilot(userId, input) {
+    await setRadarAutopilotForUser(userId, s(input.kind) as RecommendationKind, input.on === true);
   },
 };
