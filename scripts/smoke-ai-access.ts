@@ -945,8 +945,10 @@ async function transitions() {
   try {
     forgetManagedAiPause();
     r = await lastSent(() => json(U.proNone));
-    check("a Pro user is told Orbit's AI is down, not to top up a balance they don't hold",
-      r.req?.key === ANTHROPIC_MANAGED && r.err instanceof Error && r.err.message === MANAGED_PROVIDER_FAILURE_MESSAGE, r.err);
+    // The failing call is repeated once on the next provider (P1-3): the person gets an answer
+    // from Orbit's OpenAI key instead of an error, and the last request on the wire is that retry.
+    check("the call that found Anthropic dry is answered by Orbit's OpenAI key, not failed",
+      r.req?.key === OPENAI_MANAGED && !r.err, r.err);
     const quota = await db.select().from(errorEvents).where(quotaEvents);
     check("…and ops gets a quota error event naming the provider",
       quota.some((e) => (e.context as { provider?: string })?.provider === "anthropic"), JSON.stringify(quota));

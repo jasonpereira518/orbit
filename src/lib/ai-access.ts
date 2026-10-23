@@ -377,7 +377,14 @@ function keyFor(grant: AiGrant<AiProvider>, provider: AiProvider): string {
 export async function geminiClient(grant: AiGrant<AiProvider>): Promise<GoogleGenAI> {
   const apiKey = keyFor(grant, "gemini");
   const { GoogleGenAI } = await import("@google/genai");
-  return new GoogleGenAI({ apiKey });
+  // The OpenAI and Anthropic SDKs retry a transient failure twice on their own; this one does
+  // not retry at all unless told to, and Gemini is the default provider. Same budget here:
+  // one try plus two retries on 408/429/5xx, short delays (the call's own deadline still ends
+  // it). Embeddings opt out per request, having a backoff of their own.
+  return new GoogleGenAI({
+    apiKey,
+    httpOptions: { retryOptions: { attempts: 3, initialDelay: 0.5, maxDelay: 4 } },
+  });
 }
 
 export async function openaiClient(grant: AiGrant<AiProvider>): Promise<OpenAI> {

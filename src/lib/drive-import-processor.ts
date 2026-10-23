@@ -40,6 +40,7 @@ import {
 import { DRIVE_ROW_COPY } from "@/lib/imports/drive-row-copy";
 import { NO_PEOPLE_OR_DATES_MESSAGE, runCaptureParse } from "@/lib/capture-parse";
 import { saveNoteBatch } from "@/lib/note-batch-save";
+import type { ParsedNote } from "@/lib/ai";
 import { saveInputFromParse } from "@/lib/capture-job-runner";
 import type { CaptureDecisions } from "@/lib/capture/types";
 import { hashSourceNote } from "@/lib/suggested-reminder-utils";
@@ -199,8 +200,59 @@ export function nameGroundedInDoc(name: string | null | undefined, docText: stri
     .filter((w) => w.length >= 2);
   if (!words.length) return false;
   const haystack = ` ${docText.toLowerCase().replace(/[^\p{L}\p{N}'-]+/gu, " ")} `;
+  // One word is deliberately enough ("Priya" in the doc, "Priya Raman" from the parse). What
+  // stops an invented or hostile person from rewriting anyone is not this check but the two
+  // below it: contact details must be in the doc, and a merge only fills blanks.
   return words.some((w) => haystack.includes(` ${w} `));
 }
+
+const digitsOnly = (v: string) => v.replace(/\D/g, "");
+const alnum = (v: string) => v.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+
+/**
+ * Whether a contact detail the model returned is actually written in the doc. The prompt
+ * tells the model never to infer these, but nothing else checked, and an email or a LinkedIn
+ * URL is what a merge is matched on and what it overwrites.
+ */
+export function contactDetailInDoc(
+  kind: "email" | "linkedin" | "phone" | "website" | "x",
+  value: string | null | undefined,
+  docText: string,
+): boolean {
+  const v = (value ?? "").trim();
+  if (!v) return false;
+  const lower = docText.toLowerCase();
+  switch (kind) {
+    case "email":
+      return lower.includes(v.toLowerCase());
+    case "linkedin": {
+      const slug = v.toLowerCase().match(/linkedin\.com\/(?:in|pub)\/([^/?#\s]+)/)?.[1];
+      return slug ? lower.includes(slug) : lower.includes(v.toLowerCase());
+    }
+    case "phone": {
+      // Last ten digits: a doc often omits the country code the model added.
+      const d = digitsOnly(v).slice(-10);
+      return d.length >= 7 && digitsOnly(docText).includes(d);
+    }
+    case "website":
+    case "x": {
+      const core = alnum(v.replace(/^https?:\/\/(www\.)?/i, "").replace(/^@/, ""));
+      return core.length >= 3 && alnum(docText).includes(core);
+    }
+  }
+}
+
+/** Keeps only the contact details the doc itself contains. Mutates `parsed`. */
+function groundContactDetails(parsed: ParsedNote, docText: string): void {
+  if (!contactDetailInDoc("email", parsed.email, docText)) parsed.email = null;
+  if (!contactDetailInDoc("linkedin", parsed.linkedin_url, docText)) parsed.linkedin_url = null;
+  if (!contactDetailInDoc("phone", parsed.phone, docText)) parsed.phone = null;
+  if (!contactDetailInDoc("website", parsed.website, docText)) parsed.website = null;
+  if (!contactDetailInDoc("x", parsed.x_handle, docText)) parsed.x_handle = null;
+}
+
+/** Duplicate reasons that come from an identifier the model extracted (see `duplicates.ts`). */
+const IDENTIFIER_MATCH = /^Same (?:LinkedIn URL|X handle|email)/;
 
 /**
  * The decisions a reviewer would have made, made by rules instead — there is no review step.
@@ -225,11 +277,20 @@ function acceptUnattended(
   const people: NonNullable<CaptureDecisions["people"]> = {};
   let accepted = 0;
   items.forEach((item, index) => {
+    // The duplicate match was computed on the model's email/LinkedIn before they were checked.
+    // A merge resting on a detail the doc does not contain is not a confident merge.
+    const matchedOn = item.duplicates.find((d) => d.id === item.suggestedMergeId)?.reason ?? "";
+    const identifierGrounded =
+      !IDENTIFIER_MATCH.test(matchedOn) ||
+      (/email/i.test(matchedOn) && contactDetailInDoc("email", item.parsed.email, docText)) ||
+      (/LinkedIn/i.test(matchedOn) && contactDetailInDoc("linkedin", item.parsed.linkedin_url, docText)) ||
+      (/X handle/i.test(matchedOn) && contactDetailInDoc("x", item.parsed.x_handle, docText));
+    groundContactDetails(item.parsed, docText);
     const grounded = nameGroundedInDoc(item.parsed.name, docText);
     const accept = grounded && accepted < MAX_DRIVE_PEOPLE_PER_DOC;
     if (accept) accepted++;
     const confident = item.duplicates.find(
-      (d) => d.id === item.suggestedMergeId && d.confidence >= DUPLICATE_MERGE_CONFIDENCE,
+      (d) => identifierGrounded && d.id === item.suggestedMergeId && d.confidence >= DUPLICATE_MERGE_CONFIDENCE,
     );
     people[item.key] = {
       decision: accept ? "accept" : "skip",
@@ -348,7 +409,8 @@ async function processDoc(
   let result;
   try {
     // The doc's own date is the anchor, so "next Tuesday" in an old doc means next from then.
-    result = await deps.parse(userId, text, { eventDate: payload.modifiedTime.slice(0, 10) }, { now });
+    // No one waits on a Drive import or reviews it, so it runs as background work.
+    result = await deps.parse(userId, text, { eventDate: payload.modifiedTime.slice(0, 10) }, { now, background: true });
   } catch (err) {
     if (err instanceof UserFacingError && err.message === NO_PEOPLE_OR_DATES_MESSAGE) {
       return { status: "skipped", reason: DRIVE_ROW_COPY.nobody };
@@ -375,6 +437,8 @@ async function processDoc(
   // Rule 1 applies to the generic follow-up too: for an old doc it is already overdue.
   input.participants = input.participants.map((p) => ({
     ...p,
+    // No one reviews a Drive import: a merge may fill a contact's blanks, never rewrite them.
+    fillOnly: true,
     createReminder:
       p.createReminder &&
       followUpStillAhead(

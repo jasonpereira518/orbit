@@ -1,4 +1,7 @@
+import { z } from "zod";
 import { completeJson } from "@/lib/ai";
+import { AI_INCOMPLETE_MESSAGE } from "@/lib/errors";
+import { classifyAiError } from "@/lib/errors";
 import { fenceUntrusted } from "@/lib/ai-security";
 import { senderProfileBlock } from "@/lib/sender-profile";
 import { loadSenderBio } from "@/lib/sender-profile-server";
@@ -71,6 +74,10 @@ function scrubPlaceholders(text: string) {
     .trim();
 }
 
+/** The reply's shape on the wire (every field present), and what we accept back. */
+const outreachDraftWire = z.object({ subject: z.string().nullable(), body: z.string() });
+const outreachDraftReply = z.object({ subject: z.string().nullish(), body: z.string() });
+
 export async function generateOutreachDraft(
   userId: string,
   input: DraftInput
@@ -115,6 +122,7 @@ export async function generateOutreachDraft(
 
   const content = await completeJson(userId, {
     operation: "outreach.draft",
+    schema: { name: "outreach_draft", zod: outreachDraftWire },
     temperature: 0.55,
     system: `You write personalized outreach optimized for a successful reply.
 Primary campaign intent (must drive the message): ${input.messageIntent}
@@ -145,23 +153,38 @@ ${input.variationHint ? `Variation hint: ${input.variationHint}` : ""}
 ${input.templateSeed ? `Template seed:\n${input.templateSeed}` : ""}`,
   });
 
-  const parsed = JSON.parse(content) as GeneratedDraft;
+  // Was a bare cast: a reply with no `body`, or a non-string one, crashed on `.trim()` further
+  // down with nothing the person could read.
+  const reply = outreachDraftReply.safeParse(JSON.parse(content));
+  if (!reply.success) throw new Error(AI_INCOMPLETE_MESSAGE);
+  const parsed = reply.data;
   return {
     subject: scrubPlaceholders(parsed.subject?.trim() || "") || null,
     body: scrubPlaceholders(parsed.body?.trim() || ""),
   };
 }
 
+/**
+ * One draft per input; a draft that failed is `null`, not a failure of the batch.
+ *
+ * It used to be `Promise.all` over the workers, so the first bad reply rejected the whole
+ * call while the other workers kept generating (and billing) drafts nobody would receive.
+ * Now each draft stands alone. A failure that every remaining draft would repeat (no key, an
+ * exhausted quota, a rate limit) stops new drafts being started, and when NOTHING was drafted
+ * the first error is thrown so the person is told why instead of seeing an empty result.
+ */
 export async function generateOutreachDraftsBatch(
   userId: string,
   inputs: DraftInput[],
   concurrency = 5
-): Promise<GeneratedDraft[]> {
-  const results: GeneratedDraft[] = new Array(inputs.length);
+): Promise<Array<GeneratedDraft | null>> {
+  const results: Array<GeneratedDraft | null> = new Array(inputs.length).fill(null);
   let index = 0;
+  let halted = false;
+  let firstError: unknown = null;
 
   async function worker() {
-    while (index < inputs.length) {
+    while (!halted && index < inputs.length) {
       const current = index++;
       const input = {
         ...inputs[current],
@@ -169,7 +192,13 @@ export async function generateOutreachDraftsBatch(
           inputs[current].variationHint ||
           `Variant ${current + 1} of ${inputs.length}`,
       };
-      results[current] = await generateOutreachDraft(userId, input);
+      try {
+        results[current] = await generateOutreachDraft(userId, input);
+      } catch (err) {
+        firstError ??= err;
+        const kind = classifyAiError(err);
+        if (kind === "auth" || kind === "quota" || kind === "rate_limit") halted = true;
+      }
     }
   }
 
@@ -178,5 +207,6 @@ export async function generateOutreachDraftsBatch(
     () => worker()
   );
   await Promise.all(workers);
+  if (inputs.length > 0 && firstError && results.every((r) => r === null)) throw firstError;
   return results;
 }

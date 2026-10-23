@@ -302,6 +302,7 @@ const AI_SENTINEL_MESSAGES = new Set<string>([
   "Empty embedding response",
   "Incomplete embedding batch response",
   AI_INCOMPLETE_MESSAGE,
+  "The AI declined to answer that — try rewording it",
 ]);
 
 /**
@@ -513,9 +514,15 @@ export type AiErrorKind =
   | "timeout"
   | "model_unavailable"
   | "empty_response"
+  | "truncated"
+  | "refusal"
   | "other";
 
 export function classifyAiError(err: unknown): AiErrorKind {
+  // `AiFinishError` (ai-finish.ts) is matched by name, not instanceof: that module imports this one.
+  if (err instanceof Error && err.name === "AiFinishError") {
+    return (err as Error & { kind?: string }).kind === "refusal" ? "refusal" : "truncated";
+  }
   const message = toUserFacingError(err, "request failed").message;
 
   if (/^Empty AI response$/i.test(message)) return "empty_response";

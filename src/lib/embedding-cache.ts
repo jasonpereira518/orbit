@@ -67,7 +67,7 @@ export async function getQueryEmbedding(
   query: string,
   embed: (userId: string, text: string, access?: AiAccess) => Promise<number[]> = createEmbedding,
   resolveScope: (userId: string, access?: AiAccess) => Promise<string> = defaultResolveScope,
-  options: { access?: AiAccess } = {}
+  options: { access?: AiAccess; softTimeoutMs?: number } = {}
 ): Promise<number[]> {
   // Only the real gate-backed halves need an access; injected stand-ins get none opened.
   const needsAccess = embed === createEmbedding || resolveScope === defaultResolveScope;
@@ -87,13 +87,30 @@ export async function getQueryEmbedding(
   }
   if (hit) store.delete(key);
 
-  const value = await embed(userId, query, access);
+  // A soft deadline for callers that would rather fall back (keyword search) than wait out the
+  // provider's own 45 s. The request itself is not cancelled: its answer still lands in the
+  // cache below, so the next identical question is instant.
+  const pending = embed(userId, query, access);
+  const value = await (options.softTimeoutMs
+    ? new Promise<number[]>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("embedding timeout")), options.softTimeoutMs);
+        pending.then(
+          (v) => { clearTimeout(timer); resolve(v); },
+          (e) => { clearTimeout(timer); reject(e); },
+        );
+        pending.then((v) => remember(key, v, store), () => undefined);
+      })
+    : pending);
+  remember(key, value, store);
+  return value;
+}
+
+function remember(key: string, value: number[], store: ReturnType<typeof cache>) {
   if (store.size >= MAX_ENTRIES) {
     const oldest = store.keys().next().value;
     if (oldest !== undefined) store.delete(oldest);
   }
-  store.set(key, { value, expiresAt: now + TTL_MS });
-  return value;
+  store.set(key, { value, expiresAt: nowFn() + TTL_MS });
 }
 
 export function __clearEmbeddingCacheForTests() {

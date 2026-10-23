@@ -15,6 +15,8 @@ export const SECRET_PATTERNS: ReadonlyArray<[string, RegExp]> = [
   ["slack_token", /\bxox[abprs]-[A-Za-z0-9-]{10,}/g],
   ["stripe_key", /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{20,}/g],
   ["aws_access_key", /\bAKIA[0-9A-Z]{16}\b/g],
+  ["resend_key", /\bre_[A-Za-z0-9]{8,}_[A-Za-z0-9]{20,}/g],
+  ["twilio_api_key_sid", /\bSK[0-9a-f]{32}\b/g],
   ["jwt", /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g],
   ["private_key", /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g],
 ];

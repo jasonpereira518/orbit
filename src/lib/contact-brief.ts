@@ -4,7 +4,9 @@ import { z } from "zod";
 import { isAiAccessError } from "@/lib/ai-access";
 import { getDb } from "@/db";
 import { contactBriefs, contactOpportunities, contacts, interactions, relationshipDigests, reminders } from "@/db/schema";
-import { completeJson, getAiConfig } from "@/lib/ai";
+import { completeJson } from "@/lib/ai";
+import { resolveAiAccess } from "@/lib/ai-access";
+import { chooseCompletionKey } from "@/lib/managed-ai-policy";
 import { gateSkips, gateText } from "@/lib/decisions/gates";
 import { openEngines, type Engines } from "@/lib/decisions/engine";
 import { formatHowMetSummary, metContextLabel } from "@/lib/met-context";
@@ -568,9 +570,15 @@ export async function generateAndStoreContactBrief(
   let goalFit: GoalFit | null = null;
 
   try {
-    const config = await getAiConfig(userId, "contact.brief");
+    // The account is opened once and handed to the call. This used to mint a second grant just to
+    // read the model name (`getAiConfig`): on Orbit's key that placed a credit hold nothing ever
+    // settled, so each brief reserved its estimate twice for ten minutes, and near an empty
+    // balance the stray hold could get the real call refused.
+    const access = await resolveAiAccess(userId);
+    const planned = chooseCompletionKey(access.facts());
     const content = await completeJson(userId, {
       operation: "contact.brief",
+      access,
       temperature: 0.3,
       // Fenced for the model only: `inputHash` and the skip gate stay on the plain input, so
       // adding the fence did not make every brief on file look stale.
@@ -581,7 +589,8 @@ export async function generateAndStoreContactBrief(
     summary = parsed.summary.trim();
     standing = parsed.standing;
     nextStep = parsed.next_step;
-    model = config.model;
+    // contact.brief is on the user tier, so the model that ran is the one the gate chose.
+    model = planned.ok ? planned.model : access.selectedModel;
     // Null, not empty, when there were no goals to judge: nothing was looked at.
     goalFit = goals.length
       ? { judged: goals.map((g) => g.id), items: sanitizeGoalFit(parsed.goal_fit, goals) }
