@@ -1,6 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { userGoals } from "@/db/schema";
+import { UserFacingError } from "@/lib/errors";
 
 /**
  * The user's active goal texts, used to weight closeness and to steer AI
@@ -45,4 +46,54 @@ export async function listActiveGoalsForUser(
     orderBy: [desc(userGoals.createdAt)],
     ...(options.limit ? { limit: options.limit } : {}),
   });
+}
+
+/** A deleted goal, exactly as `restoreGoalForUser` needs it to put it back. */
+export type GoalSnapshot = { id: string; text: string; active: number; createdAt: string };
+
+/** Longest goal text Settings and chat accept. */
+export const MAX_GOAL_CHARS = 200;
+
+/**
+ * Add one active goal. The body of `addGoal` (src/actions/goals.ts), user-scoped so chat's
+ * writes (@/lib/tools/chat-writes) can call it; revalidation stays with the callers.
+ */
+export async function addGoalForUser(userId: string, text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) throw new UserFacingError("Write the goal first");
+  if (trimmed.length > MAX_GOAL_CHARS) throw new UserFacingError("Keep the goal under 200 characters");
+  const db = await getDb();
+  const [row] = await db.insert(userGoals).values({ userId, text: trimmed, active: 1 }).returning();
+  return row;
+}
+
+/** Hard-delete one of the user's goals — see `deleteGoal` for why — returning what Undo needs. */
+export async function deleteGoalForUser(userId: string, id: string): Promise<GoalSnapshot | null> {
+  const db = await getDb();
+  const [deleted] = await db
+    .delete(userGoals)
+    .where(and(eq(userGoals.id, id), eq(userGoals.userId, userId)))
+    .returning();
+  return deleted
+    ? { id: deleted.id, text: deleted.text, active: deleted.active, createdAt: deleted.createdAt.toISOString() }
+    : null;
+}
+
+/**
+ * Undo for `deleteGoalForUser`: the row back with its own id and `createdAt`. The snapshot is
+ * re-validated as an add would be, and an id that already exists is left alone.
+ */
+export async function restoreGoalForUser(userId: string, snapshot: GoalSnapshot): Promise<{ restored: boolean }> {
+  const text = typeof snapshot?.text === "string" ? snapshot.text.trim() : "";
+  const createdAt = new Date(snapshot?.createdAt);
+  if (typeof snapshot?.id !== "string" || !text || text.length > MAX_GOAL_CHARS || Number.isNaN(createdAt.getTime())) {
+    return { restored: false };
+  }
+  const db = await getDb();
+  const inserted = await db
+    .insert(userGoals)
+    .values({ id: snapshot.id, userId, text, active: snapshot.active === 0 ? 0 : 1, createdAt })
+    .onConflictDoNothing()
+    .returning();
+  return { restored: inserted.length > 0 };
 }
