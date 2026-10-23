@@ -15,10 +15,23 @@ delete process.env.CLERK_SECRET_KEY;
 
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { chatMessages, chatThreads, contactOpportunities, contacts, recommendations, reminders, userGoals } from "../src/db/schema";
+import {
+  chatMessages,
+  chatThreads,
+  contactOpportunities,
+  contacts,
+  interactions,
+  outreachCampaigns,
+  outreachMessages,
+  outreachProspects,
+  recommendations,
+  reminders,
+  userGoals,
+} from "../src/db/schema";
 import { commitProposedAction, undoProposedAction } from "../src/actions/chat-actions";
 import type { StoredProposedAction } from "../src/lib/chat-proposed-actions";
 import { listSchools, setSchools } from "../src/lib/events/target-companies";
+import { setSurfaceComingSoon } from "../src/lib/surface-visibility";
 import { createProposalSink, proposerTools, type ProposalSink } from "../src/lib/tools/chat-proposals";
 import { ORBIT_TOOLS } from "../src/lib/tools/definitions";
 import { isToolError, runTool } from "../src/lib/tools/registry";
@@ -41,6 +54,8 @@ async function clear() {
   await db.delete(recommendations).where(eq(recommendations.userId, USER));
   await db.delete(contactOpportunities).where(eq(contactOpportunities.userId, USER));
   await db.delete(reminders).where(eq(reminders.userId, USER));
+  await db.delete(outreachCampaigns).where(eq(outreachCampaigns.userId, USER));
+  await db.delete(interactions).where(eq(interactions.userId, USER));
   await db.delete(contacts).where(eq(contacts.userId, USER));
   await setSchools(USER, []);
 }
@@ -187,6 +202,81 @@ async function main() {
       JSON.stringify({ sched, status: (await recNow())?.status, reminders: followUps.map((r) => [r.title, r.status]) })
     );
     check("…and offers no undo, since the reminder would stay", !(await undoProposedAction(messageId, card("schedule_recommendation").id)).ok);
+  }
+
+  console.log("\nOutreach — wording, drafts and outcomes, never a send");
+  {
+    const [grace] = await db.insert(contacts).values({ userId: USER, fullName: "Grace Hopper" }).returning();
+    const [campaign] = await db
+      .insert(outreachCampaigns)
+      .values({ userId: USER, name: "Compiler founders", tone: "warm", messageIntent: "Ask for 20 minutes" })
+      .returning();
+    const [prospect] = await db
+      .insert(outreachProspects)
+      .values({ campaignId: campaign.id, externalId: "smoke-grace", fullName: "Grace Hopper", contactId: grace.id })
+      .returning();
+    const [draft] = await db
+      .insert(outreachMessages)
+      .values({ prospectId: prospect.id, channel: "email", subject: "Hello", body: "Hi Grace — first draft", status: "draft" })
+      .returning();
+    const [sent] = await db
+      .insert(outreachMessages)
+      .values({ prospectId: prospect.id, channel: "email", subject: "Earlier", body: "Sent already", status: "sent", stepIndex: 1 })
+      .returning();
+    const [followUp] = await db
+      .insert(outreachMessages)
+      .values({ prospectId: prospect.id, channel: "email", body: "Bumping this", status: "scheduled", stepIndex: 2 })
+      .returning();
+
+    const sink = createProposalSink({});
+    await lookup(sink, "list_campaigns");
+    const msgs = (await lookup(sink, "list_outreach_messages", { campaignId: campaign.id })) as { messages?: Array<{ messageId: string; prospect: string }> };
+    check("list_outreach_messages hands chat each message's id and prospect", msgs.messages?.length === 3 && msgs.messages.every((m) => m.prospect === "Grace Hopper"), JSON.stringify(msgs).slice(0, 200));
+
+    await propose(sink, "update_campaign", { campaignId: campaign.id, tone: "direct" });
+    await propose(sink, "update_outreach_draft", { messageId: draft.id, body: "Hi Grace — shorter draft" });
+    await propose(sink, "update_outreach_draft", { messageId: sent.id, body: "Rewriting history" });
+    await propose(sink, "log_outreach_outcome", { messageId: sent.id, outcome: "positive_reply", notes: "Keen to chat" });
+    const list = sink.list();
+    check("four cards, all of which ask", list.length === 4 && list.every((c) => c.tier === "confirm"), list.map((c) => `${c.tier}:${c.preview}`).join(" | "));
+    check(
+      "no chat write can send, activate a campaign or search for prospects",
+      !proposerTools(sink).some((tool) => /send|activate|prospect/.test(tool.name) && tool.name !== "draft_email"),
+      proposerTools(sink).map((tool) => tool.name).join(", ")
+    );
+    const { messageId, card } = await store(list);
+
+    // Outreach ships coming soon: its writes refuse, exactly as the page's own actions do.
+    await setSurfaceComingSoon("smoke-chat-writes-features", "page.outreach", true);
+    const closed = await commitProposedAction(messageId, card("update_campaign").id);
+    check("while outreach is coming soon, its writes refuse", !closed.ok && (await db.query.outreachCampaigns.findFirst({ where: eq(outreachCampaigns.id, campaign.id) }))?.tone === "warm", JSON.stringify(closed));
+    await setSurfaceComingSoon("smoke-chat-writes-features", "page.outreach", false);
+    const draftCards = list.filter((c) => c.args.kind === "tool" && c.args.tool === "update_outreach_draft");
+
+    const camp = async () => db.query.outreachCampaigns.findFirst({ where: eq(outreachCampaigns.id, campaign.id) });
+    const res = await commitProposedAction(messageId, card("update_campaign").id);
+    check("update_campaign: the tone changes, nothing else", res.ok && (await camp())?.tone === "direct" && (await camp())?.status === "draft", JSON.stringify(res));
+    await undoProposedAction(messageId, card("update_campaign").id);
+    check("…undo restores it", (await camp())?.tone === "warm");
+
+    const msg = async (id: string) => db.query.outreachMessages.findFirst({ where: eq(outreachMessages.id, id) });
+    await commitProposedAction(messageId, draftCards[0].id);
+    check("update_outreach_draft: an unsent draft is rewritten", (await msg(draft.id))?.body === "Hi Grace — shorter draft");
+    await undoProposedAction(messageId, draftCards[0].id);
+    check("…undo restores the text", (await msg(draft.id))?.body === "Hi Grace — first draft");
+    const refused = await commitProposedAction(messageId, draftCards[1].id);
+    check("…a message that has gone out is not rewritten", !refused.ok && (await msg(sent.id))?.body === "Sent already", JSON.stringify(refused));
+
+    const out = await commitProposedAction(messageId, card("log_outreach_outcome").id);
+    const p = await db.query.outreachProspects.findFirst({ where: eq(outreachProspects.id, prospect.id) });
+    const logged = await db.query.interactions.findMany({ where: eq(interactions.contactId, grace.id) });
+    check(
+      "log_outreach_outcome: outcome on the message, prospect interested, follow-up skipped, interaction on Grace",
+      out.ok && (await msg(sent.id))?.outcome === "positive_reply" && p?.status === "interested" && (await msg(followUp.id))?.status === "skipped" && logged.length === 1,
+      JSON.stringify({ out, prospect: p?.status, followUp: (await msg(followUp.id))?.status, logged: logged.length })
+    );
+    // Back to the default, so a later script in this PGlite does not inherit the release.
+    await setSurfaceComingSoon("smoke-chat-writes-features", "page.outreach", true);
   }
 
   await clear();

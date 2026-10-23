@@ -410,6 +410,59 @@ export const FEATURE_TOOLS: OrbitTool[] = [
   },
 
   {
+    name: "list_outreach_messages",
+    title: "A campaign's messages",
+    description:
+      "One outreach campaign's messages (campaign id from list_campaigns): each message's messageId, the prospect, " +
+      "channel, step, status, outcome and current subject and text — so a draft can be edited or a reply logged.",
+    inputSchema: {
+      campaignId: z.string().uuid(),
+      status: z.enum(["unsent", "sent", "all"]).default("all"),
+      limit: z.number().int().min(1).max(40).default(20),
+    },
+    annotations: { readOnlyHint: true },
+    // Chat only: a draft's text is the user's own, but this is not a door outside agents need.
+    surfaces: ["chat"],
+    scope: "read",
+    resultLabel: "messages",
+    releasedSurface: "page.outreach",
+    async run(userId, args: { campaignId: string; status: "unsent" | "sent" | "all"; limit: number }) {
+      const db = await getDb();
+      const campaign = await db.query.outreachCampaigns.findFirst({
+        where: and(eq(outreachCampaigns.id, args.campaignId), eq(outreachCampaigns.userId, userId)),
+        columns: { id: true, name: true },
+      });
+      if (!campaign) return toolError("No campaign with that id.");
+      const rows = await db
+        .select({
+          messageId: outreachMessages.id,
+          prospect: outreachProspects.fullName,
+          channel: outreachMessages.channel,
+          step: outreachMessages.stepIndex,
+          status: outreachMessages.status,
+          outcome: outreachMessages.outcome,
+          subject: outreachMessages.subject,
+          body: outreachMessages.body,
+        })
+        .from(outreachMessages)
+        .innerJoin(outreachProspects, eq(outreachProspects.id, outreachMessages.prospectId))
+        .where(
+          and(
+            eq(outreachProspects.campaignId, campaign.id),
+            ...(args.status === "sent" ? [eq(outreachMessages.status, "sent")] : []),
+            ...(args.status === "unsent" ? [ne(outreachMessages.status, "sent")] : [])
+          )
+        )
+        .orderBy(desc(outreachMessages.updatedAt))
+        .limit(args.limit);
+      return {
+        campaign: { id: campaign.id, name: campaign.name },
+        messages: rows.map((r) => ({ ...r, body: r.body.slice(0, 1500) })),
+      };
+    },
+  },
+
+  {
     name: "list_my_recruiters",
     title: "The user's recruiters",
     description: "Recruiters the user has logged: name, firm, specialty, the user's status with them and their own rating.",

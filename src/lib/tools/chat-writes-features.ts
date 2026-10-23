@@ -31,6 +31,13 @@ import {
   scheduleRecommendationForUser,
   snoozeRecommendationForUser,
 } from "@/lib/radar/actions-core";
+import {
+  assertOutreachForUser,
+  logMessageOutcomeForUser,
+  updateCampaignWordingForUser,
+  updateOutreachDraftForUser,
+  type CampaignWording,
+} from "@/lib/outreach-writes";
 import { addGoalForUser, deleteGoalForUser, MAX_GOAL_CHARS, restoreGoalForUser, type GoalSnapshot } from "@/lib/user-goals";
 import { isoDay, name, s, text, uuid, type ChatWrite, type UndoFn } from "@/lib/tools/chat-write-kit";
 
@@ -250,6 +257,115 @@ export const FEATURE_WRITES: readonly ChatWrite[] = [
       return { resultId: null, href: "/radar", undo: { tool: "restore_recommendation", input: { recommendationId: s(i.recommendationId) } } };
     },
   },
+
+  /* ------------------------------------------------------------- outreach (no sends) ----- */
+  {
+    name: "update_campaign",
+    title: "Edit a campaign's wording",
+    description:
+      "Propose changing an outreach campaign's name, message intent, call to action or tone (campaign id from list_campaigns). " +
+      "Never its audience, status or schedule, and nothing is sent.",
+    inputSchema: {
+      campaignId: uuid,
+      name: z.string().min(1).max(200).optional(),
+      message_intent: z.string().max(2000).optional(),
+      reply_cta: z.string().max(500).optional(),
+      tone: z.string().max(64).optional(),
+    },
+    tier: "confirm",
+    refs: (i) => ({ campaigns: [s(i.campaignId)] }),
+    preview(i, sc) {
+      const parts = [
+        i.name ? `name → ${quote(text(i.name, 200))}` : "",
+        i.message_intent ? `intent → ${quote(text(i.message_intent, 2000))}` : "",
+        i.reply_cta ? `call to action → ${quote(text(i.reply_cta, 500))}` : "",
+        i.tone ? `tone → ${quote(text(i.tone, 64))}` : "",
+      ].filter(Boolean);
+      return `Update the campaign ${quote(name(sc.campaigns, i.campaignId, "this campaign"))}: ${parts.join(", ") || "no change"}`;
+    },
+    async commit(userId, i) {
+      await assertOutreachForUser(userId);
+      const wording: CampaignWording = {
+        ...(i.name ? { name: text(i.name, 200) } : {}),
+        ...(i.message_intent ? { messageIntent: text(i.message_intent, 2000) } : {}),
+        ...(i.reply_cta ? { replyCta: text(i.reply_cta, 500) } : {}),
+        ...(i.tone ? { tone: text(i.tone, 64) } : {}),
+      };
+      if (!Object.keys(wording).length) throw new UserFacingError("Nothing to change");
+      const changed = await updateCampaignWordingForUser(userId, s(i.campaignId), wording);
+      if (!changed) throw new UserFacingError("That campaign is gone — it may have been deleted");
+      return {
+        resultId: changed.after.id,
+        href: `/outreach/${changed.after.id}`,
+        undo: { tool: "restore_campaign_wording", input: { campaignId: changed.after.id, wording: changed.before } },
+      };
+    },
+  },
+  {
+    name: "update_outreach_draft",
+    title: "Edit an outreach draft",
+    description:
+      "Propose rewriting an outreach message that has not gone out (messageId from list_outreach_messages): its subject, " +
+      "its text, or both. The user still sends it from the outreach page.",
+    inputSchema: {
+      messageId: uuid,
+      subject: z.string().max(200).optional(),
+      body: z.string().min(1).max(4000).optional(),
+    },
+    tier: "confirm",
+    refs: (i) => ({ outreachMessages: [s(i.messageId)] }),
+    preview(i, sc) {
+      const what = [i.subject ? `subject → ${quote(text(i.subject, 200))}` : "", i.body ? `text → ${quote(text(i.body, 4000), 120)}` : ""].filter(Boolean);
+      return `Rewrite the draft to ${name(sc.outreachMessages, i.messageId, "this prospect")}: ${what.join(", ") || "no change"}`;
+    },
+    async commit(userId, i) {
+      await assertOutreachForUser(userId);
+      if (!i.subject && !i.body) throw new UserFacingError("Nothing to change");
+      const changed = await updateOutreachDraftForUser(
+        userId,
+        {
+          messageId: s(i.messageId),
+          ...(i.subject ? { subject: text(i.subject, 200) } : {}),
+          ...(i.body ? { body: text(i.body, 4000) } : {}),
+        },
+        { unsentOnly: true }
+      );
+      if (!changed) throw new UserFacingError("That message is gone — it may have been deleted");
+      return {
+        resultId: changed.after.id,
+        href: `/outreach/${changed.campaignId}`,
+        undo: { tool: "restore_outreach_draft", input: { messageId: changed.after.id, ...changed.before } },
+      };
+    },
+  },
+  {
+    name: "log_outreach_outcome",
+    title: "Log how an outreach message landed",
+    description:
+      "Propose recording the outcome of an outreach message the user sent (messageId from list_outreach_messages): " +
+      "positive_reply, negative_reply, neutral_reply, bounced or unsubscribed, with a short note.",
+    inputSchema: {
+      messageId: uuid,
+      outcome: z.enum(["positive_reply", "negative_reply", "neutral_reply", "bounced", "unsubscribed"]),
+      notes: z.string().max(1000).optional(),
+    },
+    // Moves the prospect's status and skips their scheduled follow-ups, which no undo would
+    // put back exactly — so this asks, and has none.
+    tier: "confirm",
+    refs: (i) => ({ outreachMessages: [s(i.messageId)] }),
+    preview: (i, sc) =>
+      `Log ${s(i.outcome).replace(/_/g, " ")} from ${name(sc.outreachMessages, i.messageId, "this prospect")}${s(i.outcome) === "bounced" ? "" : " (their scheduled follow-ups stop)"}`,
+    async commit(userId, i) {
+      await assertOutreachForUser(userId);
+      const logged = await logMessageOutcomeForUser(userId, {
+        messageId: s(i.messageId),
+        outcome: s(i.outcome) as "positive_reply",
+        notes: i.notes ? text(i.notes, 1000) : null,
+      });
+      if (!logged) throw new UserFacingError("That message is gone — it may have been deleted");
+      return { resultId: logged.message.id, href: `/outreach/${logged.campaignId}`, undo: null };
+    },
+  },
 ];
 
 export const FEATURE_UNDO: Record<string, UndoFn> = {
@@ -276,5 +392,17 @@ export const FEATURE_UNDO: Record<string, UndoFn> = {
   async restore_recommendation(userId, input) {
     const { restored } = await restoreRecommendationForUser(userId, s(input.recommendationId));
     if (!restored) throw new UserFacingError("Radar has a newer card for that person now");
+  },
+  async restore_campaign_wording(userId, input) {
+    const changed = await updateCampaignWordingForUser(userId, s(input.campaignId), (input.wording ?? {}) as CampaignWording);
+    if (!changed) throw new UserFacingError("That campaign is gone — it may have been deleted");
+  },
+  async restore_outreach_draft(userId, input) {
+    const changed = await updateOutreachDraftForUser(
+      userId,
+      { messageId: s(input.messageId), subject: (input.subject as string | null) ?? null, body: s(input.body) },
+      { unsentOnly: true }
+    );
+    if (!changed) throw new UserFacingError("That message is gone — it may have been deleted");
   },
 };
