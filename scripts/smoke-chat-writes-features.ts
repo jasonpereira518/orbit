@@ -25,8 +25,10 @@ import {
   outreachMessages,
   outreachProspects,
   recommendations,
+  recruiters,
   reminders,
   userGoals,
+  userRecruiterLinks,
 } from "../src/db/schema";
 import { commitProposedAction, undoProposedAction } from "../src/actions/chat-actions";
 import type { StoredProposedAction } from "../src/lib/chat-proposed-actions";
@@ -55,6 +57,8 @@ async function clear() {
   await db.delete(contactOpportunities).where(eq(contactOpportunities.userId, USER));
   await db.delete(reminders).where(eq(reminders.userId, USER));
   await db.delete(outreachCampaigns).where(eq(outreachCampaigns.userId, USER));
+  await db.delete(userRecruiterLinks).where(eq(userRecruiterLinks.userId, USER));
+  await db.delete(recruiters).where(eq(recruiters.createdByUserId, USER));
   await db.delete(interactions).where(eq(interactions.userId, USER));
   await db.delete(contacts).where(eq(contacts.userId, USER));
   await setSchools(USER, []);
@@ -277,6 +281,40 @@ async function main() {
     );
     // Back to the default, so a later script in this PGlite does not inherit the release.
     await setSurfaceComingSoon("smoke-chat-writes-features", "page.outreach", true);
+  }
+
+  console.log("\nRecruiters");
+  {
+    const sink = createProposalSink({});
+    await propose(sink, "log_recruiter", { full_name: "Joan Clarke", firm: "Bletchley Talent", status: "contacted", notes: "Met at the meetup" });
+    const logCard = sink.list()[0];
+    check("log_recruiter asks, and says the directory entry is shared", logCard?.tier === "confirm" && /shared directory entry/.test(logCard.preview), logCard?.preview);
+    const { messageId: m1, card: c1 } = await store(sink.list());
+    const logged = await commitProposedAction(m1, c1("log_recruiter").id);
+    const link = async (rid: string) =>
+      db.query.userRecruiterLinks.findFirst({ where: (l, { and: both, eq: is }) => both(is(l.userId, USER), is(l.recruiterId, rid)) });
+    const rid = logged.ok ? logged.resultId! : "";
+    check("…logged: a shared row and the user's own link, from chat", logged.ok && (await link(rid))?.status === "contacted" && (await link(rid))?.source === "chat", JSON.stringify(logged));
+
+    // A later turn: the recruiter is named by the id list_my_recruiters returns.
+    const later = createProposalSink({});
+    await lookup(later, "list_my_recruiters");
+    await propose(later, "update_recruiter_link", { recruiterId: rid, status: "active", personal_rating: 4 });
+    await propose(later, "update_recruiter_link", { recruiterId: rid, notes: "Prefers mornings" });
+    const [statusCard, notesCard] = later.list();
+    check("a status or rating change can apply itself; notes ask", statusCard?.tier === "auto" && notesCard?.tier === "confirm", later.list().map((c) => c.tier).join(","));
+    const { messageId: m2 } = await store(later.list());
+    await commitProposedAction(m2, statusCard.id);
+    check("update_recruiter_link: status and rating on the user's own link", (await link(rid))?.status === "active" && (await link(rid))?.personalRating === 4);
+    await undoProposedAction(m2, statusCard.id);
+    check("…undo restores them", (await link(rid))?.status === "contacted" && (await link(rid))?.personalRating === null);
+    await commitProposedAction(m2, notesCard.id);
+    check("notes change", (await link(rid))?.notes === "Prefers mornings");
+    await undoProposedAction(m2, notesCard.id);
+    check("…undo restores the old notes", (await link(rid))?.notes === "Met at the meetup");
+
+    await undoProposedAction(m1, c1("log_recruiter").id);
+    check("undoing the log removes the user's link, and leaves the shared row", !(await link(rid)) && Boolean(await db.query.recruiters.findFirst({ where: eq(recruiters.id, rid) })));
   }
 
   await clear();

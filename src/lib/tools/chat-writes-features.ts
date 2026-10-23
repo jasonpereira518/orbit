@@ -38,6 +38,13 @@ import {
   updateOutreachDraftForUser,
   type CampaignWording,
 } from "@/lib/outreach-writes";
+import {
+  assertRecruitersForUser,
+  logRecruiterForUser,
+  removeMyLinkForUser,
+  updateMyLinkForUser,
+  type RecruiterLinkPatch,
+} from "@/lib/recruiter-writes";
 import { addGoalForUser, deleteGoalForUser, MAX_GOAL_CHARS, restoreGoalForUser, type GoalSnapshot } from "@/lib/user-goals";
 import { isoDay, name, s, text, uuid, type ChatWrite, type UndoFn } from "@/lib/tools/chat-write-kit";
 
@@ -366,6 +373,84 @@ export const FEATURE_WRITES: readonly ChatWrite[] = [
       return { resultId: logged.message.id, href: `/outreach/${logged.campaignId}`, undo: null };
     },
   },
+
+  /* -------------------------------------------------------------------- recruiters ----- */
+  {
+    name: "log_recruiter",
+    title: "Log a recruiter",
+    description:
+      "Propose adding a recruiter the user is working with: name, firm, specialty, contact details, status and notes. " +
+      "Orbit keeps one shared directory entry per recruiter; the user's status, rating and notes stay theirs.",
+    inputSchema: {
+      full_name: z.string().min(1).max(200),
+      firm: z.string().max(200).optional(),
+      specialty: z.array(z.string().min(1).max(60)).max(5).optional(),
+      email: z.string().email().max(320).optional(),
+      linkedin_url: z.string().url().max(500).optional(),
+      status: z.enum(["planned", "contacted", "active", "archived"]).optional(),
+      notes: z.string().max(2000).optional(),
+    },
+    tier: "confirm",
+    refs: () => ({}),
+    preview: (i) =>
+      `Log ${text(i.full_name, 200)}${i.firm ? ` (${text(i.firm, 200)})` : ""} as a recruiter — Orbit keeps one shared directory entry per recruiter; your status and notes stay yours`,
+    async commit(userId, i) {
+      await assertRecruitersForUser(userId);
+      const { id, linkCreated } = await logRecruiterForUser(userId, {
+        fullName: text(i.full_name, 200),
+        ...(i.firm ? { firm: text(i.firm, 200) } : {}),
+        ...(i.specialty ? { specialty: list(i.specialty).map((x) => text(x, 60)) } : {}),
+        ...(i.email ? { email: s(i.email).trim() } : {}),
+        ...(i.linkedin_url ? { linkedinUrl: s(i.linkedin_url).trim() } : {}),
+        ...(i.status ? { status: s(i.status) as "planned" } : {}),
+        ...(i.notes ? { notes: text(i.notes, 2000) } : {}),
+        source: "chat",
+      });
+      // Undo takes back the user's own link — only if this made it; the shared row stays.
+      return { resultId: id, href: `/recruiters/${id}`, undo: linkCreated ? { tool: "remove_recruiter_link", input: { recruiterId: id } } : null };
+    },
+  },
+  {
+    name: "update_recruiter_link",
+    title: "Update a recruiter",
+    description:
+      "Propose changing the user's own status (planned, contacted, active, archived), rating (1–5) or notes for a recruiter " +
+      "they have logged (recruiterId from list_my_recruiters).",
+    inputSchema: {
+      recruiterId: uuid,
+      status: z.enum(["planned", "contacted", "active", "archived"]).optional(),
+      personal_rating: z.number().int().min(1).max(5).optional(),
+      notes: z.string().max(2000).optional(),
+    },
+    tier: "auto",
+    // A status or a rating is the user's own bookkeeping; notes are free text, so they ask.
+    tierFor: (i) => (i.notes !== undefined ? "confirm" : "auto"),
+    refs: (i) => ({ recruiters: [s(i.recruiterId)] }),
+    preview(i, sc) {
+      const parts = [
+        i.status ? `status → ${s(i.status)}` : "",
+        i.personal_rating ? `your rating → ${Number(i.personal_rating)}/5` : "",
+        i.notes !== undefined ? `notes → ${quote(text(i.notes, 2000))}` : "",
+      ].filter(Boolean);
+      return `Update ${name(sc.recruiters, i.recruiterId, "this recruiter")}: ${parts.join(", ") || "no change"}`;
+    },
+    async commit(userId, i) {
+      await assertRecruitersForUser(userId);
+      const patch: RecruiterLinkPatch = {
+        ...(i.status ? { status: s(i.status) as "planned" } : {}),
+        ...(i.personal_rating ? { personalRating: Number(i.personal_rating) } : {}),
+        ...(i.notes !== undefined ? { notes: text(i.notes, 2000) || null } : {}),
+      };
+      if (!Object.keys(patch).length) throw new UserFacingError("Nothing to change");
+      const changed = await updateMyLinkForUser(userId, s(i.recruiterId), patch);
+      if (!changed) throw new UserFacingError("You haven’t logged that recruiter yet");
+      return {
+        resultId: s(i.recruiterId),
+        href: `/recruiters/${s(i.recruiterId)}`,
+        undo: { tool: "restore_recruiter_link", input: { recruiterId: s(i.recruiterId), patch: changed.before } },
+      };
+    },
+  },
 ];
 
 export const FEATURE_UNDO: Record<string, UndoFn> = {
@@ -404,5 +489,12 @@ export const FEATURE_UNDO: Record<string, UndoFn> = {
       { unsentOnly: true }
     );
     if (!changed) throw new UserFacingError("That message is gone — it may have been deleted");
+  },
+  async remove_recruiter_link(userId, input) {
+    await removeMyLinkForUser(userId, s(input.recruiterId));
+  },
+  async restore_recruiter_link(userId, input) {
+    const changed = await updateMyLinkForUser(userId, s(input.recruiterId), (input.patch ?? {}) as RecruiterLinkPatch);
+    if (!changed) throw new UserFacingError("You no longer have that recruiter logged");
   },
 };
