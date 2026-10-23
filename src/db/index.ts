@@ -841,6 +841,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   proposed_actions jsonb DEFAULT '[]',
   feedback text,
   feedback_note text,
+  answer_outcome text,
   slot uuid,
   version integer NOT NULL DEFAULT 1,
   is_active boolean NOT NULL DEFAULT true,
@@ -2799,7 +2800,16 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // .join_session_id / user_id / converted_at, and two new tables: site_invites (Orbit's own
 // invitation ledger) and product_events (append-only, schema-validated telemetry). Renumbered from 171 on Oct 19 2026
 // after main reached 179; rescanned every remote ref that day: 180 was the highest claimed anywhere.
-export const SCHEMA_VERSION = 181;
+//
+// 182 = chat_messages.answer_outcome: each chat answer labelled answered, partial or abstained
+// (`@/lib/chat-abstention`), so the share of "I don't know" answers is measured. Built as 176 on
+// Oct 19 and renumbered the same day when main reached 178: a database stamped 178 would never
+// apply a 176. Rescanned every remote ref and worktree on Oct 19 2026: 179
+// (claude/web-search-cost-reduction-3e2210, now main) was the highest claimed anywhere; rescanned
+// again on merging it: 181 (claude/sweet-maxwell-bu2l9z) sat above. Renumbered 180 → 182 when that
+// 181 reached main (a database stamped 181 would never apply a 180); rescanned every remote ref:
+// 181 (main) was the highest claimed anywhere.
+export const SCHEMA_VERSION = 182;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3824,6 +3834,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "interest_list_signups", "join_session_id", "text");
   await ensureColumn(client, "interest_list_signups", "user_id", "text");
   await ensureColumn(client, "interest_list_signups", "converted_at", "timestamptz");
+  await ensureColumn(client, "chat_messages", "answer_outcome", "text");
   await ensureColumn(client, "user_settings", "email_activity_sync", "integer NOT NULL DEFAULT 0");
   await ensureColumn(
     client,
@@ -4667,6 +4678,8 @@ const alters = [
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS proposed_actions jsonb DEFAULT '[]'`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback text`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback_note text`,
+  // Schema v182: whether a chat answer answered (`@/lib/chat-abstention`).
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS answer_outcome text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS writing_instructions text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_path text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS tour_started_at timestamptz`,

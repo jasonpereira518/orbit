@@ -96,11 +96,31 @@ async function main() {
       recommendations: [],
       title: "Who to start with",
       activity: [{ id: "rank", kind: "rank", label: "Kept 1", status: "done", ms: 12 }],
+      answerOutcome: "partial",
     });
     const msg = await db.query.chatMessages.findFirst({ where: eq(chatMessages.id, saved.messageId ?? "") });
     check("the assistant message is saved", msg?.content === "Start with Ada." && msg.role === "assistant");
     check("its activity is saved", Array.isArray(msg?.activity) && msg?.activity?.length === 1);
     check("the message id is returned", typeof saved.messageId === "string" && saved.messageId.length > 0);
+    check("its answer outcome is saved", msg?.answerOutcome === "partial", String(msg?.answerOutcome));
+
+    const unlabelled = await persistAssistantTurn(USER, await newThread(), null, QUESTION, turn);
+    const bare = await db.query.chatMessages.findFirst({ where: eq(chatMessages.id, unlabelled.messageId ?? "") });
+    check("a turn stored without a label leaves the column null", bare?.answerOutcome === null, String(bare?.answerOutcome));
+  }
+
+  console.log("\nThe admin outcome summary counts labels and never reads the answer");
+  {
+    const { getChatOutcomeSummary } = await import("../src/lib/admin-chat-feedback");
+    const before = await getChatOutcomeSummary();
+    const id = await newThread();
+    for (const answerOutcome of ["answered", "answered", "abstained"] as const) {
+      await persistAssistantTurn(USER, id, null, QUESTION, { ...turn, answerOutcome });
+    }
+    const after = await getChatOutcomeSummary();
+    check("answered rises by two", after.answered - before.answered === 2, JSON.stringify({ before, after }));
+    check("abstained rises by one", after.abstained - before.abstained === 1);
+    check("labelled is the sum", after.labelled === after.answered + after.partial + after.abstained);
   }
 
   await db.delete(chatThreads).where(eq(chatThreads.userId, USER));

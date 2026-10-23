@@ -16,6 +16,7 @@ import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { requireUserId } from "@/lib/auth";
 import { prepareChatContext } from "@/lib/chat-context";
 import { maybeGather } from "@/lib/chat-gather";
+import { labelAnswer } from "@/lib/chat-abstention";
 import { citedIds, stripUnresolvedMarkers } from "@/lib/chat-evidence";
 import { validateProposedActions } from "@/lib/chat-proposed-actions";
 import {
@@ -425,7 +426,8 @@ async function askNetworkInner(
       notePassages,
       ctx.writingInstructions,
       ctx.openReminders ?? null,
-      ctx.calendar?.text ?? null
+      ctx.calendar?.text ?? null,
+      { commitments: ctx.commitments ?? null, events: ctx.events ?? null }
     );
     const recommendations = ctx.filterRecommendations(
       (result.recommendations || []) as ChatRecommendation[]
@@ -447,6 +449,10 @@ async function askNetworkInner(
       recommendations,
       evidence: citedEvidence,
       proposedActions,
+      answerOutcome: labelAnswer(cleanAnswer, {
+        citedCount: Object.keys(citedEvidence).length,
+        recommendedCount: recommendations.length,
+      }),
       metrics: { durationMs: Date.now() - requestStartedAt, toolRounds: research?.rounds ?? 0 },
     });
 

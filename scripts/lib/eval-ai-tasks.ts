@@ -14,7 +14,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../../src/db";
-import { chatMessages, chatThreads, contactTags, contacts, interactions, memoryChunks, tags } from "../../src/db/schema";
+import { actionItems, chatMessages, chatThreads, contactTags, contacts, interactions, memoryChunks, reminders, tags } from "../../src/db/schema";
+import { labelAnswer } from "../../src/lib/chat-abstention";
+import { citedIds } from "../../src/lib/chat-evidence";
 import { runCaptureParse } from "../../src/lib/capture-parse";
 import { classifyRecruiterSender, RECRUITER_CONFIDENCE_FLOOR, RULED_OUT_VERDICT } from "../../src/lib/recruiter-scan";
 import { looksLikeRecruiter } from "../../src/lib/recruiter-detect";
@@ -1490,8 +1492,12 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
       }))
     );
   }
+  if (chatFixture.records) await seedChatRecords(userId, network, chatFixture.records);
   const answered = tally();
   const retrieved = tally();
+  const abstainedRight = tally();
+  /** Cases with an answer in the records that came back labelled `abstained`. */
+  let falseAbstentions = 0;
   const listed = tally();
   const counted = tally();
   const resolved = tally();
@@ -1541,7 +1547,13 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
             evidence,
             notePassages,
             writingPreferences: ctx.writingInstructions,
+            // Every section production sends — see the route — so a case about a reminder,
+            // a commitment, an event or a meeting is scored on what the model really sees.
             openReminders: ctx.openReminders ?? null,
+            commitments: ctx.commitments ?? null,
+            events: ctx.events ?? null,
+            calendar: ctx.calendar?.text ?? null,
+            userSchools: ctx.userSchools,
           }
         );
         if (firstAt !== null && depth.depth === "single") firstTokenMs.push(firstAt - requestStartedAt);
@@ -1557,6 +1569,20 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
       ]);
       const shown = new Set(ctx.modelContacts.map((m) => m.id));
       const why: string[] = [];
+      const outcome = labelAnswer(result.answer ?? "", {
+        citedCount: citedIds(result.answer ?? "").length,
+        recommendedCount: recommended.size,
+      });
+      if (c.mustAbstain) {
+        // "I don't have Hana's phone, but her email is …" is the right answer too: what fails
+        // is an answer with no admission (it made something up) or one that names people.
+        const ok = outcome !== "answered" && recommended.size === 0;
+        count(abstainedRight, ok);
+        if (!ok) why.push(`should have said it did not know, was ${outcome}${recommended.size ? " and named people" : ""}`);
+      } else if (outcome === "abstained") {
+        falseAbstentions++;
+        why.push("said it did not know");
+      }
       if (c.expectList) {
         const ok = ctx.orgRosters.some((r) => r.kind === "filter" && r.total === c.expectList!.total);
         count(listed, ok);
@@ -1596,6 +1622,7 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
       if (c.expectList) count(listed, false);
       if (c.expectCount !== undefined) count(counted, false);
       if (c.expectPerson) count(resolved, false);
+      if (c.mustAbstain) count(abstainedRight, false);
       for (let i = 0; i < (c.mustSay?.length ?? 0); i++) count(said, false);
       log(`  FAIL chat/${c.id} — ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -1614,6 +1641,8 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
       countAccuracy: rate(counted),
       personResolution: rate(resolved),
       inventedDirectiveIds,
+      falseAbstentions,
+      ...(cases.some((c) => c.mustAbstain) ? { abstainAccuracy: rate(abstainedRight) } : {}),
       ...(cases.some((c) => c.mustSay?.length) ? { factRecall: rate(said) } : {}),
     },
   };
@@ -1628,8 +1657,65 @@ async function clearResearchUser(userId: string) {
   await db.delete(interactions).where(eq(interactions.userId, userId));
   await db.delete(chatMessages).where(eq(chatMessages.userId, userId));
   await db.delete(chatThreads).where(eq(chatThreads.userId, userId));
+  await db.delete(reminders).where(eq(reminders.userId, userId));
+  await db.delete(actionItems).where(eq(actionItems.userId, userId));
   await db.delete(contacts).where(eq(contacts.userId, userId));
   await db.delete(tags).where(eq(tags.userId, userId));
+}
+
+/**
+ * `ChatEvalFixture.records`: the contact details, reminders and commitments the chat cases ask
+ * about, written beside the network. Dates are relative to the run so "next week" stays true.
+ */
+async function seedChatRecords(
+  userId: string,
+  network: Map<string, { id: string; fullName: string }>,
+  records: NonNullable<ChatEvalFixture["records"]>
+) {
+  const db = await getDb();
+  const idOf = (email: string) => {
+    const person = network.get(email);
+    if (!person) throw new Error(`fixture records name ${email}, which the seeded network does not have`);
+    return person.id;
+  };
+  const inDays = (n: number) => new Date(Date.now() + n * 86_400_000);
+  for (const d of records.details ?? []) {
+    await db
+      .update(contacts)
+      .set({
+        phone: d.phone ?? null,
+        linkedinUrl: d.linkedinUrl ?? null,
+        howMet: d.howMet ?? null,
+        dateMet: d.dateMet ? new Date(`${d.dateMet}T12:00:00Z`) : null,
+        nextFollowUpAt: d.nextFollowUpInDays !== undefined ? inDays(d.nextFollowUpInDays) : null,
+      })
+      .where(and(eq(contacts.userId, userId), eq(contacts.id, idOf(d.email))));
+  }
+  for (const r of records.reminders ?? []) {
+    await db.insert(reminders).values({
+      userId,
+      title: r.title,
+      contactId: r.email ? idOf(r.email) : null,
+      dueDate: r.dueInDays === null ? null : inDays(r.dueInDays),
+      status: "pending",
+      reminderType: "manual",
+    });
+  }
+  for (const [i, a] of (records.actionItems ?? []).entries()) {
+    const contactId = idOf(a.email);
+    const [note] = await db
+      .insert(interactions)
+      .values({ userId, contactId, interactionType: "note", rawNotes: a.text, interactionDate: inDays(-3) })
+      .returning();
+    await db.insert(actionItems).values({
+      userId,
+      contactId,
+      interactionId: note.id,
+      text: a.text,
+      itemHash: `eval-${i}`,
+      owedBy: a.owedBy,
+    });
+  }
 }
 
 /**
@@ -1701,7 +1787,9 @@ export async function runResearchTask({ userId, limit, log }: RunOpts): Promise<
           gathered.evidence,
           gathered.notePassages,
           ctx.writingInstructions,
-          ctx.openReminders ?? null
+          ctx.openReminders ?? null,
+          ctx.calendar?.text ?? null,
+          { commitments: ctx.commitments ?? null, events: ctx.events ?? null }
         );
         return { ctx, gathered, result };
       });
