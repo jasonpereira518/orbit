@@ -46,7 +46,6 @@ import {
   text,
   uuid,
   type ChatWrite,
-  type ProposalScope,
   type UndoFn,
   type UndoStep,
 } from "@/lib/tools/chat-write-kit";

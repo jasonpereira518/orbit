@@ -353,11 +353,13 @@ export const FEATURE_TOOLS: OrbitTool[] = [
     surfaces: BOTH,
     scope: "read",
     resultLabel: "suggestions",
-    fields: { mcp: ["contactId", "name", "company", "kind", "priority", "why"] },
+    fields: { mcp: ["id", "contactId", "name", "company", "kind", "priority", "why"] },
     releasedSurface: "page.radar",
     async run(userId, args: { limit: number }) {
       const cards = await listPendingRecommendations(userId, args.limit);
       return cards.map((c) => ({
+        // The card's own id: what schedule/snooze/dismiss_recommendation name.
+        id: c.id,
         contactId: c.contactId,
         name: c.contactName,
         company: c.company,
