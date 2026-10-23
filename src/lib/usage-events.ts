@@ -42,7 +42,14 @@ export type TokenCounts = {
    * path as the token counts above — OpenRouter puts it on the same `usage` object.
    */
   reportedCostMicros?: number | null;
-  /** Web searches the provider ran for this call; billed per search, on top of tokens. */
+  /**
+   * Per-call fees the provider bills ON TOP of tokens — today, hosted web searches
+   * (`WEB_SEARCH_FEE_MICROS`). Added to the cost whichever figure it starts from, because
+   * neither Orbit's token estimate nor a token-only provider figure contains it. Without it,
+   * a search on Orbit's key spent credit and pool money that neither ever saw.
+   */
+  surchargeMicros?: number | null;
+  /** Hosted web searches the call ran (`webSearchJson`), stored for the per-feature breakdown. */
   webSearches?: number | null;
 };
 
@@ -89,6 +96,18 @@ export type UsageRecord = UsageMeta &
  */
 export function usageRow(rec: UsageRecord) {
   const reported = rec.reportedCostMicros ?? null;
+  const base =
+    reported ??
+    estimateCostMicros({
+      model: rec.model,
+      inputTokens: rec.inputTokens,
+      outputTokens: rec.outputTokens,
+      cachedInputTokens: rec.cachedInputTokens,
+      cacheWriteTokens: rec.cacheWriteTokens,
+      audioInputTokens: rec.audioInputTokens,
+      batch: rec.batch,
+    });
+  const surcharge = Math.max(0, Math.round(rec.surchargeMicros ?? 0));
   return {
     userId: rec.userId,
     operation: rec.operation,
@@ -99,23 +118,12 @@ export function usageRow(rec: UsageRecord) {
     inputTokens: rec.inputTokens ?? null,
     outputTokens: rec.outputTokens ?? null,
     cachedInputTokens: rec.cachedInputTokens ?? null,
-    estimatedCostMicros:
-      reported ??
-      estimateCostMicros({
-        model: rec.model,
-        inputTokens: rec.inputTokens,
-        outputTokens: rec.outputTokens,
-        cachedInputTokens: rec.cachedInputTokens,
-        cacheWriteTokens: rec.cacheWriteTokens,
-        audioInputTokens: rec.audioInputTokens,
-        webSearches: rec.webSearches,
-        batch: rec.batch,
-      }),
+    estimatedCostMicros: surcharge > 0 ? (base ?? 0) + surcharge : base,
     costSource: (reported === null ? "estimated" : "reported") as "estimated" | "reported",
+    webSearches: rec.webSearches ?? null,
     success: rec.success ? 1 : 0,
     errorKind: rec.errorKind ?? null,
     durationMs: rec.durationMs ?? null,
-    webSearches: rec.webSearches ?? null,
   };
 }
 

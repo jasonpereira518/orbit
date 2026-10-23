@@ -95,7 +95,7 @@ function RadarReport({ metrics }: { metrics: RadarMetrics }) {
         {totals.shown === 0 ? (
           <EmptyState>No cards were shown in this window.</EmptyState>
         ) : (
-          <AdminTable
+          <AdminTable label="By kind"
             minWidth="sm"
             head={
               <>
@@ -130,6 +130,7 @@ function RadarReport({ metrics }: { metrics: RadarMetrics }) {
 
       <AdminPanel title="Did the AI rerank help?">
         <CompareTable
+          label="Did the AI rerank help?"
           rows={[
             ["Moved up by the AI", metrics.rerank.promoted],
             ["Moved down by the AI", metrics.rerank.demoted],
@@ -143,6 +144,7 @@ function RadarReport({ metrics }: { metrics: RadarMetrics }) {
 
       <AdminPanel title="Pre-written drafts">
         <CompareTable
+          label="Pre-written drafts"
           rows={[
             ["With a draft ready", metrics.drafts.withDraft],
             ["Without", metrics.drafts.without],
@@ -165,10 +167,11 @@ function RadarReport({ metrics }: { metrics: RadarMetrics }) {
   );
 }
 
-function CompareTable({ rows }: { rows: Array<[string, RadarRates]> }) {
+function CompareTable({ rows, label }: { rows: Array<[string, RadarRates]>; label: string }) {
   if (rows.every(([, r]) => r.shown === 0)) return <EmptyState>No cards were shown in this window.</EmptyState>;
   return (
     <AdminTable
+      label={label}
       minWidth="sm"
       head={
         <>

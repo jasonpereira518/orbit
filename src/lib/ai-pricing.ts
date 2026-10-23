@@ -101,10 +101,15 @@ const PRICES: Record<string, PriceEntry> = {
 
   // Deepgram — Orbit's own hosted speech-to-text (`@/lib/deepgram`), metered on Orbit's key
   // rather than BYOK. It bills per second of audio, not per token, and `usage_events` has no
-  // separate duration column — so the caller reports the audio length in `inputTokens` (one
-  // "token" = one second) and this row prices that unit like any other: $0.0043/min ÷ 60 ≈
-  // 72 micros/sec, i.e. $72 per 1,000,000 seconds of audio. `output` stays 0; there is no
-  // second leg to a transcription call.
+  // duration column. This row is the pre-recorded list rate expressed as a per-"token" price
+  // (one "token" = one second): $0.0043/min ÷ 60 ≈ 72 micros/sec, i.e. $72 per 1,000,000
+  // seconds. It is only ever applied if a caller reports audio seconds in `inputTokens`, and
+  // NO caller does: Deepgram `usage_events` rows carry null `estimated_cost_micros`, and they
+  // are excluded from managed-credit settlement on purpose (`credits/ledger.ts`). What
+  // Deepgram actually costs Orbit — streaming vs file, the diarize and keyterm add-ons and
+  // the opt-out premium — is priced from `speech_usage` seconds in `speech-cost.ts`, and THAT
+  // is the figure every money view reads. Do not "fix" the null by writing seconds here: it
+  // would price at the wrong rate and leak Deepgram dollars into the credit ledger.
   [DEEPGRAM_MODEL]: { input: 72, output: 0 },
 };
 
@@ -114,32 +119,6 @@ const PRICES: Record<string, PriceEntry> = {
  */
 const CACHE_WRITE_MULTIPLIER = 1.25;
 const BATCH_MULTIPLIER = 0.5;
-
-/**
- * What a provider charges per web search, on top of the tokens the results add. USD per 1,000
- * searches, matched by model-id prefix.
- *
- * Entered from the providers' published rates as remembered (Claude API web search $10, OpenAI
- * `web_search` $10, Gemini grounded search $14 per 1,000) and NOT re-checked against their
- * pricing pages: confirm before relying on the dollar figure, like every row in this file.
- * An OpenRouter slug (`vendor/model`) is absent on purpose: OpenRouter reports its own cost,
- * which already includes the search, and `usageRow` prefers that over this estimate.
- */
-const SEARCH_FEE_PER_1000_USD: ReadonlyArray<readonly [prefix: string, usd: number]> = [
-  ["claude-", 10],
-  ["gpt-", 10],
-  ["o1", 10],
-  ["o3", 10],
-  ["o4", 10],
-  ["gemini-", 14],
-];
-
-/** Micro-dollars for `searches` web searches by this model; 0 when unknown or none. */
-export function searchFeeMicros(model: string, searches: number | null | undefined): number {
-  if (!searches || searches < 0 || model.includes("/")) return 0;
-  const hit = SEARCH_FEE_PER_1000_USD.find(([prefix]) => model.startsWith(prefix));
-  return hit ? Math.round(searches * hit[1] * 1000) : 0; // $/1000 searches = micros per search
-}
 
 /**
  * Exact id first, then longest matching prefix so dated snapshots resolve
@@ -188,8 +167,6 @@ export function estimateCostMicros(input: {
   cachedInputTokens?: number | null;
   cacheWriteTokens?: number | null;
   audioInputTokens?: number | null;
-  /** Web searches the call ran, billed per search on top of the tokens. */
-  webSearches?: number | null;
   /** Sent through a provider Batch API, which bills at half price. */
   batch?: boolean;
   /** When the call was made, for announced price changes. Defaults to now. */
@@ -218,8 +195,7 @@ export function estimateCostMicros(input: {
       outTok * price.output) /
     1_000_000;
 
-  const tokensMicros = Math.round(usd * (input.batch ? BATCH_MULTIPLIER : 1) * 1_000_000);
-  return tokensMicros + searchFeeMicros(input.model, input.webSearches);
+  return Math.round(usd * (input.batch ? BATCH_MULTIPLIER : 1) * 1_000_000);
 }
 
 /** Human-readable dollars for the admin UI. Null in, null out — never a fake $0.00. */
@@ -232,3 +208,18 @@ export function formatCostMicros(micros: number | null | undefined): string | nu
 }
 
 export type { AiProvider };
+
+/**
+ * What one hosted web search costs on top of its tokens, in micros, by provider — charged by
+ * `webSearchJson` through `surchargeMicros` so included AI's credits and pools see it.
+ *
+ *  - anthropic: $10 per 1,000 searches (platform.claude.com/docs/en/about-claude/pricing,
+ *    checked 2026-10-18), counted from `usage.server_tool_use.web_search_requests`.
+ *  - openai: UNCONFIRMED; the hosted `web_search` tool's per-call fee priced at a pessimistic
+ *    $25 per 1,000 calls until checked against openai.com/api/pricing. One per
+ *    `web_search_call` output item.
+ *  - gemini: UNCONFIRMED; Google Search grounding priced at a pessimistic $35 per 1,000
+ *    grounded prompts (ai.google.dev pricing). One per grounded response.
+ *  - openrouter reports its own cost, plugin included, so it needs no entry.
+ */
+export const WEB_SEARCH_FEE_MICROS = { anthropic: 10_000, openai: 25_000, gemini: 35_000 } as const;

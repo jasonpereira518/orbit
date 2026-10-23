@@ -12,6 +12,7 @@
  * Run: npx tsx scripts/smoke-usage-events.ts
  */
 import "./smoke/_env";
+import { WEB_SEARCH_FEE_MICROS } from "../src/lib/ai-pricing";
 
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
@@ -24,7 +25,7 @@ import {
   withUsage,
   type UsageRecord,
 } from "../src/lib/usage-events";
-import { estimateCostMicros, priceFor, searchFeeMicros } from "../src/lib/ai-pricing";
+import { estimateCostMicros, priceFor } from "../src/lib/ai-pricing";
 
 const USER = "smoke-usage-user";
 
@@ -369,20 +370,18 @@ async function main() {
     check("an unaborted signal keeps the real classification", other?.errorKind === "rate_limit", String(other?.errorKind));
   }
 
-  console.log("\nWeb search fees");
+  console.log("\nWeb-search fees ride on top of tokens");
   {
-    const base = { model: "gemini-3.8-flash", inputTokens: 1000, outputTokens: 200 } as const;
-    const plain = estimateCostMicros(base)!;
-    const searched = estimateCostMicros({ ...base, webSearches: 3 })!;
-    check("a grounded search adds its fee to the tokens", searched - plain === searchFeeMicros("gemini-3.8-flash", 3) && searched > plain, `${plain} → ${searched}`);
-    check("three Gemini searches are three fourteen-thousandths of a dollar", searchFeeMicros("gemini-3.8-flash", 3) === 42_000);
-    check("a Claude search costs a cent", searchFeeMicros("claude-haiku-5-5", 1) === 10_000);
-    check("an OpenRouter slug adds nothing (its reported cost already has it)", searchFeeMicros("google/gemini-3.8-flash", 5) === 0);
-    check("no searches, no fee", searchFeeMicros("gpt-4o-mini", 0) === 0 && searchFeeMicros("gpt-4o-mini", null) === 0);
-    const row = rowFor({ model: "claude-haiku-5-5", inputTokens: 500, outputTokens: 100, webSearches: 2 });
-    check("the row records the count", row.webSearches === 2);
-    check("and its cost includes the fee", (row.estimatedCostMicros ?? 0) >= 20_000, String(row.estimatedCostMicros));
-    check("a call with no searching records null, not zero", rowFor({ model: "gpt-4o-mini", inputTokens: 5, outputTokens: 5 }).webSearches === null);
+    const tokensOnly = rowFor({ model: "claude-haiku-5-5", provider: "anthropic", inputTokens: 1_000, outputTokens: 200 });
+    const withSearches = rowFor({ model: "claude-haiku-5-5", provider: "anthropic", inputTokens: 1_000, outputTokens: 200, surchargeMicros: 3 * WEB_SEARCH_FEE_MICROS.anthropic });
+    check("three Anthropic searches add $0.03 to the token estimate",
+      (withSearches.estimatedCostMicros ?? 0) - (tokensOnly.estimatedCostMicros ?? 0) === 30_000,
+      `${tokensOnly.estimatedCostMicros} -> ${withSearches.estimatedCostMicros}`);
+    const reported = rowFor({ model: "openrouter/x", provider: "openrouter", reportedCostMicros: 1_234, surchargeMicros: 1_000 });
+    check("…and on top of a provider-reported figure too", reported.estimatedCostMicros === 2_234 && reported.costSource === "reported");
+    const unpriced = rowFor({ model: "no-such-model", surchargeMicros: WEB_SEARCH_FEE_MICROS.openai });
+    check("an unpriced model still carries its search fee", unpriced.estimatedCostMicros === WEB_SEARCH_FEE_MICROS.openai);
+    check("no surcharge leaves an unpriced model null, not zero", rowFor({ model: "no-such-model" }).estimatedCostMicros === null);
   }
 
   await cleanup();

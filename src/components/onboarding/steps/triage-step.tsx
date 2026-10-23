@@ -8,6 +8,7 @@ import {
 } from "@/actions/contacts";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Button } from "@/components/ui/button";
+import { FormError } from "@/components/ui/field";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/lib/toast";
 import { useDelayedLoading } from "@/lib/use-delayed-loading";
@@ -32,6 +33,8 @@ export function TriageStep({ onDone }: { onDone: () => void }) {
   // see submitScreenAndAdvance, which keeps whatever didn't save instead of
   // discarding it.
   const [ratings, setRatings] = useState<Record<string, number>>({});
+  // A save that failed stays above Next until the retry; the toast alone could time out.
+  const [saveError, setSaveError] = useState<string | null>(null);
   // Candidates usually resolve well under this on a warm connection — showing the
   // skeleton unconditionally made it flash for a single frame even then.
   const showLoadingSkeleton = useDelayedLoading(loading);
@@ -101,6 +104,7 @@ export function TriageStep({ onDone }: { onDone: () => void }) {
       .filter((c) => ratings[c.id] != null)
       .map((c) => ({ contactId: c.id, closeness: ratings[c.id] }));
 
+    setSaveError(null);
     start(async () => {
       if (screenRatings.length > 0) {
         let result: { updated: number; failedContactIds: string[] };
@@ -110,6 +114,7 @@ export function TriageStep({ onDone }: { onDone: () => void }) {
           // Nothing saved — keep every local rating so "Next" can be
           // retried, and say so instead of silently advancing as if it had.
           toast.error("These ratings didn’t save — try again?");
+          setSaveError("These ratings didn’t save — try again?");
           return;
         }
         if (result.failedContactIds.length > 0) {
@@ -123,11 +128,12 @@ export function TriageStep({ onDone }: { onDone: () => void }) {
             }
             return next;
           });
-          toast.error(
+          const message =
             result.failedContactIds.length === 1
               ? "1 rating didn’t save — try again?"
-              : `${result.failedContactIds.length} ratings didn’t save — try again?`
-          );
+              : `${result.failedContactIds.length} ratings didn’t save — try again?`;
+          toast.error(message);
+          setSaveError(message);
           // Stay on this screen — advancing would make the failure
           // indistinguishable from success, and a lost rating is exactly the
           // contact that stays stuck below the evidence floor.
@@ -269,6 +275,7 @@ export function TriageStep({ onDone }: { onDone: () => void }) {
         ))}
       </div>
 
+      <FormError>{saveError}</FormError>
       <div className="flex items-center justify-between border-t border-border/60 pt-4">
         <p className="text-xs text-muted-foreground">
           Screen {screen + 1} of {screens}

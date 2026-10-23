@@ -7,8 +7,6 @@ import {
   confirmContactsFileImport,
   confirmGoogleContactsImport,
   confirmOutlookContactsImport,
-  getImportJobStatus,
-  startLinkedInImport,
   startLinkedInMessagesImport,
   type ImportJobStatus,
 } from "@/actions/imports";
@@ -39,6 +37,21 @@ import {
 } from "@/lib/background-jobs";
 
 const POLL_INTERVAL_MS = 1500;
+
+/**
+ * One progress poll, through `/api/imports/[id]/status` rather than the `getImportJobStatus`
+ * Server Action: a tab runs its actions one at a time, and this poll runs every 1.5 s for the
+ * whole import, so as an action every click during an import waited behind it
+ * (LATENCY_PLAN SRV-5). Same function on the server; throws where the action threw.
+ */
+async function fetchImportJobStatus(importId: string): Promise<ImportJobStatus> {
+  const res = await fetch(`/api/imports/${encodeURIComponent(importId)}/status`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+  });
+  if (!res.ok) throw new Error(`Import status poll failed (${res.status})`);
+  return (await res.json()) as ImportJobStatus;
+}
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
@@ -365,7 +378,7 @@ async function pollServerOwnedImportJob(
 
     let status: ImportJobStatus;
     try {
-      status = await getImportJobStatus(importId);
+      status = await fetchImportJobStatus(importId);
     } catch {
       await sleep(POLL_INTERVAL_MS);
       continue;
@@ -700,8 +713,9 @@ function importStarter(
     // The preview already refused anything this big; this covers the cards, which hold their
     // own copy of the text, and keeps every kind from reaching a 413. Measured as the whole
     // payload: the text plus the selected ids that ride in the same action argument.
+    // Connections go up in chunks (`stageAndStartConnections`), so only the others are bounded.
     const text =
-      job.kind === "connections" || job.kind === "messages"
+      job.kind === "messages"
         ? job.csvText
         : job.kind === "contacts_file" || job.kind === "calendar"
           ? job.text
@@ -711,7 +725,11 @@ function importStarter(
     }
     switch (job.kind) {
       case "connections":
-        return startLinkedInImport(job.csvText, job.fileName, job.ids);
+        // Loaded when a connections import starts: it brings the CSV parser, and this module
+        // is in every signed-in page's first load (the import progress watcher).
+        return import("@/lib/imports/linkedin-connections-client").then(({ stageAndStartConnections }) =>
+          stageAndStartConnections(job.csvText, job.fileName, job.ids),
+        );
       case "google_contacts":
         return confirmGoogleContactsImport(job.ids);
       case "outlook_contacts":

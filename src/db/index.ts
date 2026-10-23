@@ -10,6 +10,8 @@ import type { PGlite } from "@electric-sql/pglite";
 import * as schema from "./schema";
 import { formatVectorLiteral } from "@/lib/pgvector";
 import { noteQuery } from "@/lib/query-counter";
+import { RELATED_SQL_LOWER } from "@/lib/related-contacts";
+import { AI_DERIVED_SOURCE, EXCHANGE_TOUCH_TYPES, MEETING_TOUCH_TYPES, NOTE_TOUCH_TYPES, sqlList } from "@/lib/touch-kinds";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
@@ -76,6 +78,12 @@ CREATE TABLE IF NOT EXISTS user_settings (
   signup_utm_campaign text,
   signup_landing_path text,
   signup_attributed_at timestamptz,
+  signup_attribution_source text,
+  signup_session_id text,
+  account_kind text,
+  ai_key_added_at timestamptz,
+  invite_id uuid,
+  interest_signup_id uuid,
   comped_plan text,
   lifetime_purchased_at timestamptz,
   lifetime_checkout_session_id text,
@@ -183,6 +191,8 @@ CREATE TABLE IF NOT EXISTS contacts (
   notes text,
   embedding_stale_at timestamptz,
   work_history_due_at timestamptz,
+  work_history_misses integer NOT NULL DEFAULT 0,
+  work_history_miss_slug text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -195,7 +205,9 @@ CREATE TABLE IF NOT EXISTS extension_usage (
   request_count integer NOT NULL DEFAULT 0,
   ai_window_started_at timestamptz NOT NULL DEFAULT now(),
   ai_count integer NOT NULL DEFAULT 0,
-  last_seen_at timestamptz
+  last_seen_at timestamptz,
+  first_seen_at timestamptz,
+  version text
 );
 CREATE TABLE IF NOT EXISTS user_goals (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -269,6 +281,7 @@ CREATE TABLE IF NOT EXISTS reminders (
   date_basis text,
   item_hash text,
   calendar_event_key text,
+  completed_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS suggested_reminders (
@@ -1027,6 +1040,7 @@ CREATE TABLE IF NOT EXISTS usage_events (
   output_tokens integer,
   cached_input_tokens integer,
   estimated_cost_micros integer,
+  web_searches integer,
   cost_source text NOT NULL DEFAULT 'estimated',
   key_owner text NOT NULL DEFAULT 'user',
   success integer NOT NULL DEFAULT 1,
@@ -1368,6 +1382,9 @@ CREATE TABLE IF NOT EXISTS interest_list_signups (
   pass_check_count integer NOT NULL DEFAULT 0,
   pass_last_checked_at timestamptz,
   signup_event_label text,
+  join_session_id text,
+  user_id text,
+  converted_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_email_uidx ON interest_list_signups(email);
@@ -1376,6 +1393,40 @@ CREATE INDEX IF NOT EXISTS interest_list_signups_created_idx ON interest_list_si
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_token_uidx ON interest_list_signups(share_token);
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_referral_slug_uidx ON interest_list_signups(referral_slug);
 CREATE INDEX IF NOT EXISTS interest_list_signups_referred_by_idx ON interest_list_signups(referred_by_id);
+CREATE TABLE IF NOT EXISTS site_invites (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  email text NOT NULL,
+  interest_list_signup_id uuid,
+  wave_id text,
+  clerk_invitation_id text,
+  source text NOT NULL DEFAULT 'manual',
+  invited_by text,
+  emailed boolean NOT NULL DEFAULT false,
+  sent_at timestamptz NOT NULL DEFAULT now(),
+  accepted_user_id text,
+  accepted_at timestamptz,
+  revoked_at timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS site_invites_clerk_invitation_uidx ON site_invites(clerk_invitation_id);
+CREATE INDEX IF NOT EXISTS site_invites_email_idx ON site_invites(email);
+CREATE INDEX IF NOT EXISTS site_invites_wave_sent_idx ON site_invites(wave_id, sent_at);
+CREATE INDEX IF NOT EXISTS site_invites_accepted_user_idx ON site_invites(accepted_user_id);
+CREATE TABLE IF NOT EXISTS product_events (
+  id uuid PRIMARY KEY,
+  name text NOT NULL,
+  version integer NOT NULL DEFAULT 1,
+  occurred_at timestamptz NOT NULL DEFAULT now(),
+  user_id text,
+  session_id text,
+  surface text NOT NULL,
+  actor text NOT NULL,
+  is_internal boolean NOT NULL DEFAULT false,
+  properties jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS product_events_name_occurred_idx ON product_events(name, occurred_at);
+CREATE INDEX IF NOT EXISTS product_events_user_occurred_idx ON product_events(user_id, occurred_at);
+CREATE INDEX IF NOT EXISTS product_events_session_idx ON product_events(session_id);
 CREATE TABLE IF NOT EXISTS waitlist_poll_votes (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   option_id text NOT NULL,
@@ -1567,6 +1618,7 @@ CREATE TABLE IF NOT EXISTS site_settings (
   stealth_since timestamptz,
   waitlist_demo_enabled boolean,
   managed_ai_paused boolean,
+  web_search_paused boolean,
   updated_at timestamptz NOT NULL DEFAULT now(),
   updated_by text,
   CONSTRAINT site_settings_single_row CHECK (id = 1)
@@ -2716,15 +2768,44 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // is not a contact. Built as 158 on Oct 13, renumbered to 163 on Oct 14 and to 169 on Oct 15,
 // above 168, since main reached 164. Rescanned Oct 15 2026: 168 (this stack) was the highest claimed.
 //
-// 171 = embedding_model on contact_embeddings and memory_chunks, web_searches on usage_events
-// (AI audit P0-3, P0-7). Additive and nullable, so no backfill. Highest SCHEMA_VERSION claimed
-// anywhere when this was written (every ref and worktree, Oct 20 2026): 170.
-//
 // 170 = guest_profiles dropped: guest "Look up" runs on Find people's research (researchPerson)
 // and its briefs live in ai_result_cache, read back by key. The table was a day old (v169) and
 // held only cached web lookups. Rescanned every ref and worktree on Oct 15 2026: 169 was the
 // highest claimed anywhere.
-export const SCHEMA_VERSION = 171;
+//
+// 171 = the performance pass (PERFORMANCE_AUDIT.md): indexes only — contacts_user_name_norm_idx,
+// contacts_unscored_idx, interactions_user_contact_date_idx, contact_career_moves_contact_fk_idx,
+// contacts_user_email_prefix_idx, the related-contacts corpus functions with
+// contacts_unusual_json_idx and contacts_related_corpus_trgm, contacts_goal_relevance_idx.
+// Rescanned every remote ref on Oct 17 2026: 170 was the highest claimed anywhere.
+//
+// 178 = contact_touch_counts (new table) with its statement-level triggers on interactions and a
+// one-time recount; contacts_with_notes_idx. The dashboard reads eligibility tallies from it
+// instead of aggregating every interaction (PERFORMANCE_AUDIT.md, round 3 follow-up). NOT
+// 172-177: branches claim up to 177 (claude/trusting-wozniak-ebsks3 at 177). Rescanned every
+// remote ref on Oct 19 2026: 177 was the highest claimed anywhere.
+//
+// 179 = this branch's web-search budget, renumbered from 175 + 178 when merging main (main took
+// 178 for contact_touch_counts, and a database stamped 178 would never run a 175):
+// site_settings.web_search_paused (the admin switch that stops hosted web search for every
+// account), usage_events.web_searches (searches per call, for the per-feature breakdown), and
+// contacts.work_history_misses + work_history_miss_slug (two misses against the same LinkedIn
+// slug stop automatic work-history checks; a new URL lifts it). Rescanned every remote ref on
+// Oct 19 2026: 178 (main) was the highest claimed anywhere.
+//
+// 181 = measurement (docs: ANALYTICS_PLAN.md): user_settings.account_kind / ai_key_added_at /
+// signup_attribution_source / signup_session_id / invite_id / interest_signup_id,
+// reminders.completed_at, extension_usage.first_seen_at + version, interest_list_signups
+// .join_session_id / user_id / converted_at, and two new tables: site_invites (Orbit's own
+// invitation ledger) and product_events (append-only, schema-validated telemetry). Renumbered from 171 on Oct 19 2026
+// after main reached 179; rescanned every remote ref that day: 180 was the highest claimed anywhere.
+//
+// 182 = embedding_model on contact_embeddings and memory_chunks (AI audit P0-3): which model made
+// each stored vector, so a vector another model made is recognised and re-embedded instead of
+// being compared. Additive and nullable, no backfill. (usage_events.web_searches, which this
+// branch also added at 171, is main's at 179 and was dropped here.) Rescanned origin/main on
+// Oct 23 2026: 181 was the highest claimed anywhere.
+export const SCHEMA_VERSION = 182;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2775,6 +2856,153 @@ async function storedLinkedinSlugExpression(run: StatementRunner): Promise<strin
  *
  * Ordering matters: generated columns before the indexes that read them.
  */
+/**
+ * IMMUTABLE wrappers for the related-contacts SQL (`src/actions/contacts.ts`), so it can be
+ * indexed. `orbit_related_corpus` is exactly the corpus `listRelatedContacts` lowers and
+ * LIKEs — pieces joined with a space, lowered with `RELATED_SQL_LOWER`, U+0130 expanded —
+ * and is built from that constant so the two cannot drift. `orbit_unusual_json_array` is
+ * `unusualJsonArraySql`. Immutable is true of both: no table, setting or time is read.
+ *
+ * The nested call is schema-qualified because index builds evaluate expressions with a
+ * restricted `search_path` (Postgres 17+): unqualified, `CREATE INDEX` fails with
+ * "function orbit_json_text(jsonb) does not exist".
+ */
+const RELATED_CORPUS_FUNCTIONS = [
+  `CREATE OR REPLACE FUNCTION orbit_json_text(j jsonb) RETURNS text
+     LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $f$
+     SELECT CASE WHEN jsonb_typeof(j) = 'array'
+       THEN coalesce((SELECT string_agg(t.e, ' ') FROM jsonb_array_elements_text(j) AS t(e)), '')
+       ELSE '' END $f$`,
+  `CREATE OR REPLACE FUNCTION orbit_related_corpus(a text, n text, kf jsonb, si jsonb) RETURNS text
+     LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $f$
+     SELECT replace(translate(
+       coalesce(a, '') || ' ' || coalesce(n, '') || ' ' || public.orbit_json_text(kf) || ' ' || public.orbit_json_text(si),
+       '${RELATED_SQL_LOWER.from}', '${RELATED_SQL_LOWER.to}'), chr(304), chr(105) || chr(775)) $f$`,
+  `CREATE OR REPLACE FUNCTION orbit_unusual_json_array(j jsonb) RETURNS boolean
+     LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $f$
+     SELECT CASE WHEN j IS NULL THEN false
+       WHEN jsonb_typeof(j) = 'null' THEN false
+       WHEN jsonb_typeof(j) <> 'array' THEN true
+       ELSE EXISTS (SELECT 1 FROM jsonb_array_elements(j) AS u(v) WHERE jsonb_typeof(u.v) NOT IN ('string', 'null'))
+     END $f$`,
+];
+
+/**
+ * `contact_touch_counts`: each contact's constellation-eligibility tallies
+ * (`constellationSignalAggregates`), kept current by statement-level triggers on
+ * `interactions` so the dashboard reads them instead of aggregating every interaction in the
+ * account on each load (~350 ms of its chart statement at 100k contacts on Postgres 16).
+ *
+ * Triggers rather than refreshing at scoring time: several writers change interactions
+ * without rescoring anyone (an interaction's type edited, a note batch undone, an import
+ * until it finalises), and eligibility has always been read live. A trigger is exact for
+ * every writer, present and future. Statement-level with transition tables, so a bulk
+ * import pays one grouped upsert per INSERT statement, not one per row; an UPDATE that
+ * changes no tally (a reorder, a note edited) writes nothing.
+ *
+ * The kinds come from `src/lib/touch-kinds.ts`, the same lists the SQL aggregates use.
+ * `scripts/smoke-touch-counts.ts` holds the table to a live recount after every kind of write.
+ */
+const TOUCH_IS = `(source IS NULL OR source <> '${AI_DERIVED_SOURCE}')`;
+const TOUCH_COLUMNS = [
+  ["note_interactions", `interaction_type IN ${sqlList(NOTE_TOUCH_TYPES)}`],
+  ["meeting_interactions", `interaction_type IN ${sqlList(MEETING_TOUCH_TYPES)}`],
+  ["message_inbound", `interaction_type IN ${sqlList(EXCHANGE_TOUCH_TYPES)} AND direction = 'in'`],
+  ["message_outbound", `interaction_type IN ${sqlList(EXCHANGE_TOUCH_TYPES)} AND direction = 'out'`],
+  ["message_undirected", `interaction_type IN ${sqlList(EXCHANGE_TOUCH_TYPES)} AND direction IS NULL`],
+  ["total", "true"],
+] as const;
+const TOUCH_NAMES = TOUCH_COLUMNS.map(([c]) => c).join(", ");
+/** Per-column `sum(case …)` of `weight` over rows that count as a touch. */
+const touchSums = (weight: string) =>
+  TOUCH_COLUMNS.map(([c, when]) => `sum(CASE WHEN ${when} THEN ${weight} ELSE 0 END)::int AS ${c}`).join(",\n       ");
+const touchAdd = (target: string, delta: string) =>
+  TOUCH_COLUMNS.map(([c]) => `${c} = ${target}.${c} + ${delta}.${c}`).join(", ");
+const touchChanged = TOUCH_COLUMNS.map(([c]) => `${c} <> 0`).join(" OR ");
+
+/** The one-time recount, run with writes to `interactions` blocked (see TOUCH_COUNT_DDL). */
+const TOUCH_RECOUNT = `INSERT INTO contact_touch_counts (contact_id, user_id, ${TOUCH_NAMES})
+     SELECT contact_id, min(user_id),
+       ${touchSums("1")}
+       FROM interactions WHERE ${TOUCH_IS}
+      GROUP BY contact_id
+     ON CONFLICT (contact_id) DO NOTHING`;
+
+const TOUCH_COUNT_DDL = [
+  `CREATE TABLE IF NOT EXISTS contact_touch_counts (
+     contact_id uuid PRIMARY KEY REFERENCES contacts(id) ON DELETE CASCADE,
+     user_id text NOT NULL,
+     note_interactions integer NOT NULL DEFAULT 0,
+     meeting_interactions integer NOT NULL DEFAULT 0,
+     message_inbound integer NOT NULL DEFAULT 0,
+     message_outbound integer NOT NULL DEFAULT 0,
+     message_undirected integer NOT NULL DEFAULT 0,
+     total integer NOT NULL DEFAULT 0
+   )`,
+  // The dashboard reads one user's rows whole: an index-only scan.
+  `CREATE INDEX IF NOT EXISTS contact_touch_counts_user_idx
+     ON contact_touch_counts(user_id, contact_id) INCLUDE (${TOUCH_NAMES})`,
+  `CREATE OR REPLACE FUNCTION orbit_touch_counts_insert() RETURNS trigger LANGUAGE plpgsql AS $f$
+   BEGIN
+     INSERT INTO contact_touch_counts AS c (contact_id, user_id, ${TOUCH_NAMES})
+     SELECT contact_id, min(user_id),
+       ${touchSums("1")}
+       FROM changed WHERE ${TOUCH_IS}
+      GROUP BY contact_id
+     ON CONFLICT (contact_id) DO UPDATE SET ${touchAdd("c", "EXCLUDED")};
+     RETURN NULL;
+   END $f$`,
+  // Only ever an UPDATE: when the contact itself is being deleted its row goes by cascade, and
+  // inserting one back would fail the foreign key.
+  `CREATE OR REPLACE FUNCTION orbit_touch_counts_delete() RETURNS trigger LANGUAGE plpgsql AS $f$
+   BEGIN
+     UPDATE contact_touch_counts c SET ${touchAdd("c", "d")}
+       FROM (SELECT contact_id,
+               ${touchSums("-1")}
+               FROM changed WHERE ${TOUCH_IS}
+              GROUP BY contact_id) d
+      WHERE c.contact_id = d.contact_id;
+     RETURN NULL;
+   END $f$`,
+  // An interaction re-typed, re-directed, re-sourced, or moved to another contact (a merge):
+  // the new rows counted in, the old ones out, and only contacts whose tallies moved written.
+  `CREATE OR REPLACE FUNCTION orbit_touch_counts_update() RETURNS trigger LANGUAGE plpgsql AS $f$
+   BEGIN
+     INSERT INTO contact_touch_counts AS c (contact_id, user_id, ${TOUCH_NAMES})
+     SELECT contact_id, user_id, ${TOUCH_NAMES} FROM (
+       SELECT contact_id, min(user_id) AS user_id,
+         ${touchSums("w")}
+         FROM (SELECT contact_id, user_id, interaction_type, direction, 1 AS w FROM after_rows WHERE ${TOUCH_IS}
+               UNION ALL
+               SELECT contact_id, user_id, interaction_type, direction, -1 FROM before_rows WHERE ${TOUCH_IS}) moved
+        GROUP BY contact_id) delta
+      WHERE ${touchChanged}
+     ON CONFLICT (contact_id) DO UPDATE SET ${touchAdd("c", "EXCLUDED")};
+     RETURN NULL;
+   END $f$`,
+  // The triggers and the recount in one transaction, with writes to interactions blocked, so
+  // no row can land between them: counted twice or not at all. The recount runs only while
+  // the table is empty (the first boot of this version, or a database with no history).
+  `DO $do$ BEGIN
+     LOCK TABLE interactions IN SHARE ROW EXCLUSIVE MODE;
+     CREATE OR REPLACE TRIGGER interactions_touch_counts_insert AFTER INSERT ON interactions
+       REFERENCING NEW TABLE AS changed FOR EACH STATEMENT EXECUTE FUNCTION orbit_touch_counts_insert();
+     CREATE OR REPLACE TRIGGER interactions_touch_counts_delete AFTER DELETE ON interactions
+       REFERENCING OLD TABLE AS changed FOR EACH STATEMENT EXECUTE FUNCTION orbit_touch_counts_delete();
+     CREATE OR REPLACE TRIGGER interactions_touch_counts_update AFTER UPDATE ON interactions
+       REFERENCING OLD TABLE AS before_rows NEW TABLE AS after_rows
+       FOR EACH STATEMENT EXECUTE FUNCTION orbit_touch_counts_update();
+     IF NOT EXISTS (SELECT 1 FROM contact_touch_counts) THEN
+       ${TOUCH_RECOUNT};
+     END IF;
+   END $do$`,
+  // "Has notes", answered without reading every contact's notes (TOAST) to find out: the
+  // dashboard's eligibility predicate joins to this instead of testing contactHasNotesSql
+  // per row, which was ~380 ms of its chart statement at 100k. Same predicate exactly.
+  `CREATE INDEX IF NOT EXISTS contacts_with_notes_idx ON contacts(user_id, id)
+     WHERE notes IS NOT NULL AND btrim(notes) <> ''`,
+];
+
 export const SCALE_DDL: string[] = [
   // --- v62: meeting-notes workflow ---------------------------------------------------
   //
@@ -2917,6 +3145,8 @@ export const SCALE_DDL: string[] = [
      computed_at timestamptz NOT NULL DEFAULT now(),
      dirty_at timestamptz
    )`,
+
+  ...TOUCH_COUNT_DDL,
 
   // --- Indexes ---------------------------------------------------------------------
   //
@@ -3224,6 +3454,55 @@ export const SCALE_DDL: string[] = [
      ON chat_messages(created_at DESC) WHERE feedback IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS page_views_user_created_idx
      ON page_views(user_id, created_at) WHERE user_id IS NOT NULL`,
+
+  // v171, the performance pass (PERFORMANCE_AUDIT.md). Measured on Postgres 16 at 100k
+  // contacts / 300k interactions.
+  //
+  // Same-name duplicate detection (`findNameCollisions`, behind the badge on every /contacts
+  // render) joins contacts to themselves on `lower(btrim(full_name))`. With nothing indexing
+  // that expression the planner nested-looped over the primary key: 82 s at 10k contacts,
+  // cancelled at 240 s at 100k. With this index: 49 ms and 458 ms. `trim(x)` is how Postgres
+  // spells `btrim(x)`, so this matches the query's predicate exactly. Rewriting the query
+  // instead does not hold: Postgres 16 inlined a GROUP BY rewrite back into the same loop.
+  `CREATE INDEX IF NOT EXISTS contacts_user_name_norm_idx
+     ON contacts(user_id, lower(trim(full_name)))`,
+  // Every closeness-cohort read counts the user's unscored contacts first. Near-empty in
+  // steady state; without it the count scanned the whole network (73 ms at 100k).
+  `CREATE INDEX IF NOT EXISTS contacts_unscored_idx
+     ON contacts(user_id) WHERE closeness_computed_at IS NULL`,
+  // Per-contact reads over a user's history: the cohort's touch counts (GROUP BY contact_id
+  // with type/direction/source filters), last touch per contact (DISTINCT ON contact_id
+  // ORDER BY interaction_date DESC, id DESC) and newest-first timelines. The INCLUDEd
+  // columns make the first two index-only: 1,169 -> 186 ms and 298 -> 74 ms at 100k.
+  // `interactions_contact_idx` stays: it is the FK index for the contacts cascade.
+  `CREATE INDEX IF NOT EXISTS interactions_user_contact_date_idx
+     ON interactions(user_id, contact_id, interaction_date DESC, id DESC)
+     INCLUDE (interaction_type, direction, source)`,
+  // The contacts cascade into contact_career_moves had only (user_id, contact_id, ...) to
+  // use, which the per-parent `WHERE contact_id = $1` cannot (see docs/performance.md).
+  `CREATE INDEX IF NOT EXISTS contact_career_moves_contact_fk_idx
+     ON contact_career_moves(contact_id)`,
+  // The email arm of contact search (`contactSearchIdsCondition`): a prefix LIKE on the
+  // lowered address. `text_pattern_ops` is what lets a b-tree answer LIKE 'x%' under a
+  // non-C collation. Postgres 16, 100k contacts: 68 ms seq scan -> 0.06 ms.
+  `CREATE INDEX IF NOT EXISTS contacts_user_email_prefix_idx
+     ON contacts(user_id, lower(coalesce(email, '')) text_pattern_ops)`,
+  // Related contacts (`listRelatedContacts`) prefilter every contact's text for a mention of
+  // the source with a superset LIKE (see `mentionLikePatterns`). Written inline, that is a
+  // full scan that detoasts every note and summary on every profile view and hover prefetch:
+  // 11 s at 100k contacts on Postgres 16. These are the same expressions as IMMUTABLE
+  // functions, so they can be indexed (`contacts_related_corpus_trgm` in applyScaleSchema,
+  // and the partial index below), and the query's arms become index scans: 167 ms.
+  ...RELATED_CORPUS_FUNCTIONS,
+  `CREATE INDEX IF NOT EXISTS contacts_unusual_json_idx ON contacts(user_id)
+     WHERE orbit_unusual_json_array(key_facts) OR orbit_unusual_json_array(shared_interests)`,
+  // The dashboard's goal-aligned card (`getGoalAlignedContactIds`): the top few contacts by
+  // stored goal relevance, in exactly the query's order, so it reads them instead of
+  // sorting every scored contact. Partial, so contacts with no relevance cost nothing.
+  // Postgres 16, 100k contacts: 60 ms -> 0.15 ms.
+  `CREATE INDEX IF NOT EXISTS contacts_goal_relevance_idx
+     ON contacts(user_id, ((closeness_breakdown->>'goalRelevance')::float8) DESC, updated_at DESC, id DESC)
+     WHERE (closeness_breakdown->>'goalRelevance')::float8 > 0`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */
@@ -3298,6 +3577,22 @@ export async function applyScaleSchema(run: StatementRunner, failed?: SchemaFail
     globalForDb.orbitTrigram = true;
   } catch {
     globalForDb.orbitTrigram = false;
+  }
+
+  // The related-contacts mention prefilter (see RELATED_CORPUS_FUNCTIONS): LIKE '%name%' is
+  // only index-backed through trigrams. Its own guard, so a failure here cannot switch off
+  // trigram matching elsewhere; without it the query is still correct, just a full scan.
+  if (globalForDb.orbitTrigram) {
+    try {
+      await run(
+        `CREATE INDEX IF NOT EXISTS contacts_related_corpus_trgm ON contacts
+         USING gin(orbit_related_corpus(ai_summary, notes, key_facts, shared_interests) gin_trgm_ops)`
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (failed) failed.push({ statement: "CREATE INDEX contacts_related_corpus_trgm", message });
+      else console.error("[db] contacts_related_corpus_trgm failed\n", message);
+    }
   }
 
   // `contact_tags` has a surrogate primary key and no natural uniqueness, so a double write
@@ -3523,6 +3818,18 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "meeting_sessions", "calendar_event_key", "text");
   await ensureColumn(client, "meeting_sessions", "calendar_series_id", "text");
   await ensureColumn(client, "calendar_events", "agenda", "text");
+  await ensureColumn(client, "user_settings", "signup_attribution_source", "text");
+  await ensureColumn(client, "user_settings", "signup_session_id", "text");
+  await ensureColumn(client, "user_settings", "account_kind", "text");
+  await ensureColumn(client, "user_settings", "ai_key_added_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "invite_id", "uuid");
+  await ensureColumn(client, "user_settings", "interest_signup_id", "uuid");
+  await ensureColumn(client, "reminders", "completed_at", "timestamptz");
+  await ensureColumn(client, "extension_usage", "first_seen_at", "timestamptz");
+  await ensureColumn(client, "extension_usage", "version", "text");
+  await ensureColumn(client, "interest_list_signups", "join_session_id", "text");
+  await ensureColumn(client, "interest_list_signups", "user_id", "text");
+  await ensureColumn(client, "interest_list_signups", "converted_at", "timestamptz");
   await ensureColumn(client, "user_settings", "email_activity_sync", "integer NOT NULL DEFAULT 0");
   await ensureColumn(
     client,
@@ -3785,6 +4092,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   // existence check entirely when no `source_id` is supplied.
   await ensureColumn(client, "contacts", "embedding_stale_at", "timestamptz");
   await ensureColumn(client, "contacts", "work_history_due_at", "timestamptz");
+  await ensureColumn(client, "contacts", "work_history_misses", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "contacts", "work_history_miss_slug", "text");
+  await ensureColumn(client, "usage_events", "web_searches", "integer");
   await ensureColumn(client, "user_settings", "work_history_auto_enabled", "integer NOT NULL DEFAULT 1");
   await ensureColumn(client, "user_settings", "relationship_engine_enabled", "integer NOT NULL DEFAULT 1");
   await ensureColumn(client, "user_settings", "chat_self_names", "jsonb NOT NULL DEFAULT '[]'");
@@ -3905,10 +4215,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "email_signature_text", "text");
   await ensureColumn(client, "user_settings", "email_signature_html", "text");
   await ensureColumn(client, "user_settings", "default_send_provider", "text");
-  // v171: which model made a stored vector, and how many web searches a call ran.
+  // v182: which model made a stored vector.
   await ensureColumn(client, "contact_embeddings", "embedding_model", "text");
   await ensureColumn(client, "memory_chunks", "embedding_model", "text");
-  await ensureColumn(client, "usage_events", "web_searches", "integer");
 
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
@@ -4094,13 +4403,11 @@ const alters = [
   // by that pass: syncMemoryChunks carries vectors across by content_hash, which unchanged
   // text does not move.
   `ALTER TABLE memory_chunks ADD COLUMN IF NOT EXISTS source_hash text`,
-  // Schema v171: which embedding model made each stored vector, and how many web searches a
-  // call ran. Vectors from two models cannot be compared, and until now nothing recorded which
-  // one a row held (a key change cleared contact_embeddings but not memory_chunks). Search
-  // fees are billed per search on top of tokens and appeared nowhere in usage_events.
+  // Schema v182: which embedding model made each stored vector. Vectors from two models cannot
+  // be compared, and until now nothing recorded which one a row held (a key change cleared
+  // contact_embeddings but not memory_chunks).
   `ALTER TABLE contact_embeddings ADD COLUMN IF NOT EXISTS embedding_model text`,
   `ALTER TABLE memory_chunks ADD COLUMN IF NOT EXISTS embedding_model text`,
-  `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS web_searches integer`,
   // Deliberately not backfilled from `committed_at` — see the column's comment in schema.ts.
   `ALTER TABLE fundraising_investors ADD COLUMN IF NOT EXISTS received_at timestamptz`,
   // The events feature landed whole at v32, so these are its first incremental columns.
@@ -4307,6 +4614,12 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS max_nudge_seen_at timestamptz`,
   `ALTER TABLE gate_events ADD COLUMN IF NOT EXISTS unlock_plan text`,
   `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS managed_ai_paused boolean`,
+  // Schema v179: the admin console's web-search switch (null = never set = running).
+  `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS web_search_paused boolean`,
+  // Schema v179: searches per call, and the work-history miss streak that stops auto checks.
+  `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS web_searches integer`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS work_history_misses integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS work_history_miss_slug text`,
   // Schema v139: the credit emails at 80% and 100% of the monthly allowance — the switch, and
   // which cycle and level were last sent (claimed in one UPDATE before each send).
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credit_email_enabled integer NOT NULL DEFAULT 1`,
@@ -4337,6 +4650,21 @@ const alters = [
   // Schema v162: the invite’s agenda (for the meeting summarizer) and the recurring series a
   // recording belongs to (for "last time" in the next one).
   `ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS agenda text`,
+  // Schema v181: measurement. Account kind and attribution/identity links on user_settings, the
+  // moment a reminder was completed, extension first-seen/version, and the waitlist-to-account
+  // link. The two new tables (site_invites, product_events) are in the DDL template.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_attribution_source text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_session_id text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS account_kind text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_key_added_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS invite_id uuid`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS interest_signup_id uuid`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS completed_at timestamptz`,
+  `ALTER TABLE extension_usage ADD COLUMN IF NOT EXISTS first_seen_at timestamptz`,
+  `ALTER TABLE extension_usage ADD COLUMN IF NOT EXISTS version text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS join_session_id text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS user_id text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS converted_at timestamptz`,
   `ALTER TABLE meeting_sessions ADD COLUMN IF NOT EXISTS calendar_series_id text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_activity_sync integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,

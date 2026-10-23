@@ -63,6 +63,8 @@ import {
 } from "@/lib/note-batch-save";
 import { hashSourceNote } from "@/lib/suggested-reminder-utils";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { trackCaptureFailed, trackCaptureSaved } from "@/lib/capture-events";
+import { eventErrorKind } from "@/lib/event-error-kind";
 import {
   MAX_PERSONAL_DETAILS,
   MAX_TAKEAWAYS,
@@ -197,7 +199,7 @@ async function runExtraction(id: string, deps: CaptureRunnerDeps): Promise<Captu
     if (err instanceof ClaimLostError) return getCaptureJobById(id);
     // The job row keeps the person's copy; the real error is reported with its reference
     // so "Couldn’t read those notes" is never the only trace of what went wrong.
-    await settleCaptureJob(id, token, {
+    const landed = await settleCaptureJob(id, token, {
       status: "failed",
       error: reportedFailure(err, TOAST_COPY.notesReadFailed, {
         where: "job.capture.parse",
@@ -205,6 +207,9 @@ async function runExtraction(id: string, deps: CaptureRunnerDeps): Promise<Captu
         extra: { jobId: id, sourceKind: row.sourceKind },
       }).error,
     });
+    // Only the runner that held the claim records the outcome; the claim token names the
+    // attempt, so a re-run after a retry is a new failure and a replay is not.
+    if (landed) trackCaptureFailed(row, "parse", eventErrorKind(err), token);
   }
   return getCaptureJobById(id);
 }
@@ -235,7 +240,8 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
     if (existing) {
       out = summarizeExistingBatch(existing);
     } else {
-      const input = await buildSaveInput(row);
+      // A job in the review flow: the person ticked these reminders, so each is a follow-up they set.
+      const input = { ...(await buildSaveInput(row)), trackFollowUps: true };
       out = await save(userId, input);
       linkedInContactIds = linkedInCaptureContactIds(input.participants, out.contactIds);
     }
@@ -243,6 +249,9 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
     const saved = savedSummary(row, out);
     const result: CaptureJobResult = { ...row.result, saved };
     await settleCaptureJob(id, token, { status: "saved", noteBatchId: out.batchId, result, error: null });
+    // The batch is written whether or not this runner still held the claim, so the fact is
+    // recorded either way; the id is the job's, so a resumed save lands on the same row.
+    trackCaptureSaved(row, { created: out.created, updated: out.updated });
 
     // The photos this capture was read from, claimed for its batch so the history can show
     // them. Idempotent: an attached photo is not claimable twice.
@@ -283,7 +292,7 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
       }
     }
   } catch (err) {
-    await settleCaptureJob(id, token, {
+    const landed = await settleCaptureJob(id, token, {
       status: "failed",
       error: reportedFailure(err, "Couldn’t save those people — try again?", {
         where: "job.capture.save",
@@ -291,6 +300,9 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
         extra: { jobId: id },
       }).error,
     });
+    if (landed) {
+      trackCaptureFailed(row, "save", err instanceof Error && err.message === "Extract people before saving" ? "not_extracted" : eventErrorKind(err), token);
+    }
   }
   return getCaptureJobById(id);
 }

@@ -131,24 +131,18 @@ export async function withAiResultCache<T>(
   return value;
 }
 
-/**
- * `completeJson`, answered from the cache when the identical prompt was asked before.
- * The key is the operation plus everything that shapes the reply: system, user, the provider
- * and model the account has chosen, temperature and output cap. Who answers is part of the
- * question: without it, switching model replayed the old model's drafts and recruiter
- * verdicts (up to 90 days) as if the new one had written them.
- *
- * The account is opened once here and handed on, so keying on the model costs no second read.
- */
+/** What a cached completion is keyed on; see `cachedCompleteJson`. */
 function completionKeyParts(access: Awaited<ReturnType<typeof resolveAiAccess>>, input: Parameters<typeof completeJson>[1]) {
   const { system, user, temperature, maxOutputTokens, sharedPrefix } = input;
+  // Field order is part of the key (it is hashed as JSON): this is the order entries were
+  // already stored under, so answers cached before this helper existed still hit.
   return {
-    provider: access.selectedProvider,
-    model: access.selectedModel,
     system,
     user: `${sharedPrefix?.text ?? ""}${user}`,
     temperature: temperature ?? null,
     maxOutputTokens: maxOutputTokens ?? null,
+    provider: access.selectedProvider,
+    model: access.selectedModel,
   };
 }
 
@@ -164,12 +158,27 @@ export async function completionCacheKey(
   return aiResultCacheKey(input.operation, completionKeyParts(access, input));
 }
 
+/**
+ * `completeJson`, answered from the cache when the identical prompt was asked before.
+ * The key is the operation plus everything that shapes the reply: system, user,
+ * temperature, output cap, and the provider and model the account has selected. The last two
+ * were missing, so after switching model in Settings a person kept getting the old model's
+ * answers for the whole TTL. They are the account's selection, not the exact model a grant
+ * routes to (minting a grant to find out would spend it), which is what a switch changes.
+ * The access resolved for the key is handed on, so a miss does not read the account twice.
+ */
 export async function cachedCompleteJson(
   userId: string,
   input: Parameters<typeof completeJson>[1],
   opts: CacheOptions<string>
 ): Promise<string> {
-  const access = input.access?.forUser(userId) ?? (await resolveAiAccess(userId));
+  let access;
+  try {
+    access = input.access?.forUser(userId) ?? (await resolveAiAccess(userId));
+  } catch {
+    // No usable account: let the call itself fail (or succeed) exactly as it would uncached.
+    return completeJson(userId, input);
+  }
   return withAiResultCache(
     userId,
     input.operation,

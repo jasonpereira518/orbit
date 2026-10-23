@@ -11,8 +11,13 @@
  */
 import "./smoke/_env";
 import { run } from "./smoke/_env";
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
+import { productEvents } from "../src/db/schema";
+import { eventSchemas } from "../src/lib/product-event-schemas";
+import { ORBIT_TOOLS } from "../src/lib/tools/definitions";
+import { mcpClientFrom, resetMcpClientCache } from "../src/lib/mcp/client";
+import { resultCountOf } from "../src/lib/mcp/events";
 import { generateApiKey } from "../src/lib/api/keys";
 import { sanitizeAgentText } from "../src/lib/mcp/sanitize";
 import { POST } from "../src/app/api/mcp/route";
@@ -415,6 +420,103 @@ run(async () => {
     sanitizeAgentText("[click](javascript:alert(1))") === "click"
   );
 
+  // --- Product events (audit D9) -------------------------------------------------------------
+  //
+  // One mcp_connected per (user, client, via) and one mcp_tool_called per tool call, refusals and
+  // errors included, with nothing the user wrote in either. The responses above are byte-for-byte
+  // what they were: this section only reads the events table.
+  console.log("\nproduct events");
+  const eventsFor = async (name: string) =>
+    (await db.select().from(productEvents).where(and(eq(productEvents.userId, USER), eq(productEvents.name, name)))).sort(
+      (a, b) => a.occurredAt.getTime() - b.occurredAt.getTime()
+    );
+  const settle = async (name: string, want: number) => {
+    for (let i = 0; i < 80; i++) {
+      if ((await eventsFor(name)).length >= want) return;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  };
+
+  // The registry's names must fit the schema's pattern, or track() throws in development and
+  // drops the event in production. This is the guard for the day a tool is renamed or added.
+  const toolPattern = (eventSchemas.mcp_tool_called as unknown as { shape: { tool: { safeParse(v: unknown): { success: boolean } } } }).shape.tool;
+  const badNames = ORBIT_TOOLS.map((t) => t.name).filter((n) => !/^[a-z_]{1,48}$/.test(n) || !toolPattern.safeParse(n).success);
+  check("every registered tool name satisfies the event schema", badNames.length === 0 && ORBIT_TOOLS.length > 10, badNames.join(","));
+
+  check(
+    "the client enum is conservative",
+    mcpClientFrom({ clientId: "https://claude.ai/oauth/mcp-client-metadata.json" }) === "claude" &&
+      mcpClientFrom({ clientName: "ChatGPT" }) === "chatgpt" &&
+      mcpClientFrom({ userAgent: "openai-mcp/1.0.0" }) === "chatgpt" &&
+      mcpClientFrom({ userAgent: "Claude-User (+https://support.anthropic.com/)" }) === "claude" &&
+      mcpClientFrom({ clientId: "oac_opaque123", userAgent: "node" }) === "other" &&
+      mcpClientFrom({}) === "other" &&
+      // both named, or a lookalike word: unsure, so other
+      mcpClientFrom({ userAgent: "claude chatgpt bridge" }) === "other" &&
+      mcpClientFrom({ clientName: "declaudeify" }) === "other" &&
+      mcpClientFrom({ userAgent: "Cursor/0.45" }) === "other"
+  );
+  // An opaque OAuth client id is remembered once another signal names it.
+  resetMcpClientCache();
+  check(
+    "an opaque client id is learned from a stronger signal and then holds",
+    mcpClientFrom({ clientId: "oac_learned", clientName: "Claude" }) === "claude" &&
+      mcpClientFrom({ clientId: "oac_learned", userAgent: "node-fetch" }) === "claude"
+  );
+  check("a result's item count is a length, never content", resultCountOf([1, 2, 3]) === 3 && resultCountOf({ goals: ["a", "b"] }) === 2 && resultCountOf({ a: [1], b: [2] }) === undefined && resultCountOf({ created: true }) === undefined && resultCountOf("x") === undefined);
+
+  // Connections. The earlier requests were all this one key with no recognisable assistant.
+  await settle("mcp_connected", 1);
+  let connected = await eventsFor("mcp_connected");
+  check(
+    "many requests from one key are ONE mcp_connected, as client 'other' via api_key",
+    connected.length === 1 && connected[0]?.properties.client === "other" && connected[0]?.properties.via === "api_key" && connected[0]?.surface === "mcp",
+    JSON.stringify(connected.map((c) => c.properties))
+  );
+  await rpc(writeKey, "tools/list", {}, { "user-agent": "Claude-User/1.0 (+https://support.anthropic.com)" });
+  await rpc(writeKey, "initialize", { ...INITIALIZE, clientInfo: { name: "ChatGPT", version: "1" } });
+  await settle("mcp_connected", 3);
+  connected = await eventsFor("mcp_connected");
+  const kinds = connected.map((c) => c.properties.client).sort().join();
+  check("a Claude User-Agent and a ChatGPT initialize are each their own connection", kinds === "chatgpt,claude,other", kinds);
+  await rpc(writeKey, "tools/list", {}, { "user-agent": "Claude-User/1.0" });
+  await new Promise((r) => setTimeout(r, 150));
+  check("…and a repeat adds nothing", (await eventsFor("mcp_connected")).length === 3);
+
+  // Tool calls.
+  const before = (await eventsFor("mcp_tool_called")).length;
+  await rpc(writeKey, "tools/call", { name: "search_contacts", arguments: { query: "Ada" } }, { "user-agent": "Claude-User/1.0" });
+  await rpc(writeKey, "tools/call", { name: "complete_reminder", arguments: { reminderId: "00000000-0000-4000-8000-000000000000" } });
+  await settle("mcp_tool_called", before + 2);
+  const calls = (await eventsFor("mcp_tool_called")).slice(before);
+  const searchCall = calls.find((c) => c.properties.tool === "search_contacts");
+  const errorCall = calls.find((c) => c.properties.tool === "complete_reminder");
+  check(
+    "a tool call records tool, client, ok, duration and an item count",
+    searchCall?.properties.client === "claude" && searchCall.properties.ok === true && Number.isInteger(searchCall.properties.duration_ms) && (searchCall.properties.result_count as number) >= 1,
+    JSON.stringify(searchCall?.properties)
+  );
+  check(
+    "a call that returns an error envelope is still counted, as ok=false",
+    errorCall?.properties.ok === false && errorCall.properties.client === "other" && errorCall.properties.result_count === undefined,
+    JSON.stringify(errorCall?.properties)
+  );
+  check(
+    "…with nothing a user wrote: only the five schema keys, never arguments or results",
+    calls.every((c) => Object.keys(c.properties).every((k) => ["tool", "client", "ok", "duration_ms", "result_count"].includes(k))) &&
+      !JSON.stringify(calls).includes("Ada") &&
+      !JSON.stringify(calls).includes("00000000-0000-4000")
+  );
+  check("…attributed to the user, on the mcp surface", calls.every((c) => c.userId === USER && c.surface === "mcp" && c.actor === "user"));
+  await rpc(writeKey, "tools/list");
+  await new Promise((r) => setTimeout(r, 100));
+  check("only tools/call is a tool call: listing records none", (await eventsFor("mcp_tool_called")).length === before + 2);
+
+  // The key still stamps last_used_at, as before.
+  const stamped = await db.execute(sql`SELECT count(*)::int AS n FROM api_keys WHERE user_id = ${USER} AND last_used_at IS NOT NULL`);
+  check("an API key still stamps last_used_at", (stamped.rows[0] as { n: number }).n >= 1);
+
+  await db.execute(sql`DELETE FROM product_events WHERE user_id = ${USER}`);
   await db.execute(sql`DELETE FROM api_keys WHERE user_id = ${USER}`);
   await db.execute(sql`DELETE FROM contacts WHERE user_id = ${USER}`);
   if (failures > 0) {

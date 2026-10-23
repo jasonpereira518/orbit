@@ -11,6 +11,7 @@ import {
 } from "react";
 import {
   getFullGraphData,
+  getGraphContactDetail,
   getGraphData,
   refreshConstellationBatch,
 } from "@/actions/graph";
@@ -181,6 +182,38 @@ export function NetworkGraph({
   const [peekPersonId, setPeekPersonId] = useState<string | null>(null);
   const [peekToken, setPeekToken] = useState(0);
   const [selection, setSelection] = useState<InspectSelection>(null);
+  // How you met and contact details are not in the chart payload (see `loadGraphData`): they
+  // are read for the one star the inspect panel opens, and merged in when they arrive.
+  const selectedContactId = selection?.type === "contact" ? selection.id : null;
+  useEffect(() => {
+    if (!selectedContactId) return;
+    let live = true;
+    getGraphContactDetail(selectedContactId)
+      .then((detail) => {
+        if (!live || !detail) return;
+        setSelection((prev) =>
+          prev?.type === "contact" && prev.id === selectedContactId
+            ? {
+                ...prev,
+                data: {
+                  ...prev.data,
+                  howMet: detail.howMet,
+                  metContext: detail.metContext,
+                  dateMet: detail.dateMet ? new Date(detail.dateMet).toISOString() : null,
+                  email: detail.email,
+                  phone: detail.phone,
+                  linkedinUrl: detail.linkedinUrl,
+                  website: detail.website,
+                },
+              }
+            : prev
+        );
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [selectedContactId]);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [keyOpen, setKeyOpen] = useState(false);
@@ -837,6 +870,9 @@ export function NetworkGraph({
             // Keep in step with CONSTELLATION_STAGE_HEIGHT and the nav's height
             // (layout/mobile-nav.tsx).
             "h-[calc(100dvh-15.125rem)] max-h-[calc(100dvh-15.125rem)] rounded-2xl md:h-[calc(100dvh-10.5rem)] md:max-h-[calc(100dvh-10.5rem)]",
+          // Under 500px tall (a landscape phone, 200% zoom) the page scrolls instead of
+          // fitting the viewport (app-shell.tsx), and a viewport-relative stage was a sliver.
+          !compact && "[@media(max-height:500px)]:h-[26rem] [@media(max-height:500px)]:max-h-none",
           fullscreenActive &&
             "rounded-none border-0 !h-dvh !max-h-none",
           cssFullscreen && "!fixed inset-0 z-[100] w-screen"
@@ -858,7 +894,7 @@ export function NetworkGraph({
                 >
                   <Sparkles className="mr-1.5 h-3.5 w-3.5" />
                   Clusters
-                  <span className="ml-1.5 rounded-full bg-white/10 px-1.5 text-[10px]">
+                  <span className="ml-1.5 rounded-full bg-white/10 px-1.5 text-3xs">
                     {data.clusters.length}
                   </span>
                 </PopoverTrigger>
@@ -893,7 +929,7 @@ export function NetworkGraph({
                             }}
                           >
                             <span className="min-w-0 truncate">
-                              <span className="mr-1.5 text-[9px] uppercase tracking-wider text-white/35">
+                              <span className="mr-1.5 text-3xs uppercase tracking-wider text-white/35">
                                 {c.kind}
                               </span>
                               <span
@@ -935,6 +971,7 @@ export function NetworkGraph({
                     setSearch(next);
                   }}
                   placeholder="Search name, role, school, keywords…"
+                  aria-label="Search your network"
                   className="h-9 border-white/15 bg-[#080b12]/92 pl-9 text-white placeholder:text-white/35"
                 />
               </div>
@@ -954,9 +991,12 @@ export function NetworkGraph({
                   className="w-72 space-y-3 border-white/10 bg-[#0a0e16] text-white"
                 >
                   <div className="space-y-1.5">
-                    <p className="text-[11px] uppercase tracking-wide text-white/45">
+                    <label
+                      htmlFor="graph-filter-company"
+                      className="block text-2xs uppercase tracking-wide text-white/45"
+                    >
                       Company
-                    </p>
+                    </label>
                     <Select
                       value={company}
                       onValueChange={(v) => {
@@ -964,7 +1004,7 @@ export function NetworkGraph({
                         setFocusCluster(null);
                       }}
                     >
-                      <SelectTrigger className="w-full border-white/15 bg-white/5 text-white">
+                      <SelectTrigger id="graph-filter-company" className="w-full border-white/15 bg-white/5 text-white">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -978,14 +1018,17 @@ export function NetworkGraph({
                     </Select>
                   </div>
                   <div className="space-y-1.5">
-                    <p className="text-[11px] uppercase tracking-wide text-white/45">
+                    <label
+                      htmlFor="graph-filter-school"
+                      className="block text-2xs uppercase tracking-wide text-white/45"
+                    >
                       School
-                    </p>
+                    </label>
                     <Select
                       value={school}
                       onValueChange={(v) => setSchool(v || "all")}
                     >
-                      <SelectTrigger className="w-full border-white/15 bg-white/5 text-white">
+                      <SelectTrigger id="graph-filter-school" className="w-full border-white/15 bg-white/5 text-white">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -999,10 +1042,14 @@ export function NetworkGraph({
                     </Select>
                   </div>
                   <div className="space-y-1.5">
-                    <p className="text-[11px] uppercase tracking-wide text-white/45">
+                    <label
+                      htmlFor="graph-filter-keyword"
+                      className="block text-2xs uppercase tracking-wide text-white/45"
+                    >
                       Keyword
-                    </p>
+                    </label>
                     <Input
+                      id="graph-filter-keyword"
                       value={keyword}
                       onChange={(e) => setKeyword(e.target.value)}
                       placeholder="Tag, note, fact…"
@@ -1010,14 +1057,17 @@ export function NetworkGraph({
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <p className="text-[11px] uppercase tracking-wide text-white/45">
+                    <label
+                      htmlFor="graph-filter-strength"
+                      className="block text-2xs uppercase tracking-wide text-white/45"
+                    >
                       Min strength (orbit)
-                    </p>
+                    </label>
                     <Select
                       value={minScore}
                       onValueChange={(v) => setMinScore(v || "1")}
                     >
-                      <SelectTrigger className="w-full border-white/15 bg-white/5 text-white">
+                      <SelectTrigger id="graph-filter-strength" className="w-full border-white/15 bg-white/5 text-white">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -1054,7 +1104,7 @@ export function NetworkGraph({
                 >
                   Re-engage
                   {cometContacts.length > 0 && (
-                    <span className="ml-1.5 rounded-full bg-[#c4452d]/40 px-1.5 text-[10px]">
+                    <span className="ml-1.5 rounded-full bg-[#c4452d]/40 px-1.5 text-3xs">
                       {cometContacts.length}
                     </span>
                   )}
@@ -1063,7 +1113,7 @@ export function NetworkGraph({
                   align="end"
                   className="max-h-80 w-72 overflow-y-auto border-white/10 bg-[#0a0e16] p-2 text-white"
                 >
-                  <p className="mb-2 px-2 text-[11px] uppercase tracking-wide text-white/45">
+                  <p className="mb-2 px-2 text-2xs uppercase tracking-wide text-white/45">
                     Drifting away
                   </p>
                   {cometContacts.length === 0 ? (
@@ -1129,11 +1179,6 @@ export function NetworkGraph({
                                   nextFollowUpAt: c.nextFollowUpAt
                                     ? String(c.nextFollowUpAt)
                                     : null,
-                                  email: c.email,
-                                  phone: c.phone,
-                                  linkedinUrl: c.linkedinUrl,
-                                  website: c.website,
-                                  howMet: c.howMet,
                                 };
                                 setSelection({
                                   type: "contact",
@@ -1146,7 +1191,7 @@ export function NetworkGraph({
                               <span className="text-sm text-[#ffb4a0]">
                                 {name}
                               </span>
-                              <span className="text-[11px] text-white/40">
+                              <span className="text-2xs text-white/40">
                                 {[c.company, c.title]
                                   .filter(Boolean)
                                   .join(" · ") || "No company"}
@@ -1174,14 +1219,14 @@ export function NetworkGraph({
                 )}
                 {/* Icon-only below sm: with the label, this row's three pills were
                     14px wider than a 375px canvas and Re-engage sat on top of Clusters. */}
-                <span className="hidden lg:inline">Refresh</span>
+                <span className="max-lg:sr-only">Refresh</span>
               </Button>
             </div>
 
             {/* Refresh progress */}
             {refreshing && (
               <div className="absolute left-1/2 top-14 z-30 w-[min(90vw,320px)] -translate-x-1/2 rounded-xl border border-white/10 bg-[#080b12]/95 px-3 py-2.5">
-                <div className="mb-1.5 flex items-center justify-between text-[11px] text-white/60">
+                <div className="mb-1.5 flex items-center justify-between text-2xs text-white/60">
                   <span>Refreshing constellation…</span>
                   <span>
                     {refreshProgress.processed}/{refreshProgress.total || "…"}
@@ -1214,7 +1259,7 @@ export function NetworkGraph({
                   side="top"
                   className="w-64 border-white/10 bg-[#0a0e16] text-white"
                 >
-                  <p className="mb-2 flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-white/45">
+                  <p className="mb-2 flex items-center gap-1.5 text-2xs uppercase tracking-wide text-white/45">
                     <Info className="h-3 w-3" />
                     Map legend
                   </p>
@@ -1228,7 +1273,7 @@ export function NetworkGraph({
                       Star — a person in your network (bigger = closer tie)
                     </li>
                     <li className="flex items-center gap-2">
-                      <span className="text-[9px] font-semibold uppercase tracking-wider text-[#ff9900]">
+                      <span className="text-3xs font-semibold uppercase tracking-wider text-[#ff9900]">
                         AWS
                       </span>
                       Cluster label — company, school or industry group

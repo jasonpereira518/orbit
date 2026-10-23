@@ -4,6 +4,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
 import { createHash, randomBytes } from "node:crypto";
 import { nothingUsable } from "@/lib/managed-ai-policy";
+import { WEB_SEARCH_FEE_MICROS } from "@/lib/ai-pricing";
 import { renderWritingPreferences } from "@/lib/writing-instructions";
 import {
   anthropicClient,
@@ -27,7 +28,8 @@ import {
   vocabularyToWhisperPrompt,
   WHISPER_PROMPT_MAX_CHARS,
 } from "@/lib/transcription-vocabulary";
-import { deepgramEnabled, transcribeFile } from "@/lib/deepgram";
+import { transcribeFile } from "@/lib/deepgram";
+import { deepgramOpenFor, meetingHasAudio } from "@/lib/speech-credit";
 import { DEEPGRAM_MODEL, meetingTag, shortformTag } from "@/lib/deepgram-params";
 import { speechAllowance, recordSpeechSeconds } from "@/lib/speech-quota";
 import { speechKindForOperation } from "@/lib/speech-limits";
@@ -48,6 +50,7 @@ import {
   tokensFromAnthropic,
   type TokenCounts,
 } from "@/lib/usage-events";
+import { anthropicSearchCount, reserveWebSearch, resumeMaxUses, settleWebSearch } from "@/lib/web-search-budget";
 import {
   AI_INCOMPLETE_MESSAGE,
   aiProviderErrorMessage,
@@ -486,8 +489,13 @@ function findJsonEnd(text: string, start: number) {
 }
 
 /**
- * Close dangling strings / braces when a model truncates mid-JSON
- * (common with short max-output limits).
+ * Close dangling braces when a model truncates mid-JSON (common with short max-output
+ * limits).
+ *
+ * Never a dangling STRING: closing one turns a cut-off value into a complete-looking one — a
+ * person named "Gra", a summary that stops mid-word — and schema validation cannot tell. An
+ * answer cut inside a string fails to parse instead, and callers report `AI_INCOMPLETE_MESSAGE`.
+ * What is still repaired is an answer cut between values, where every value present is whole.
  */
 function repairTruncatedJson(text: string): string | null {
   const start = text.search(/[\[{]/);
@@ -523,8 +531,7 @@ function repairTruncatedJson(text: string): string | null {
     }
   }
 
-  if (escaped) slice = slice.slice(0, -1);
-  if (inString) slice += '"';
+  if (inString) return null;
   while (stack.length > 0) slice += stack.pop();
 
   try {
@@ -722,7 +729,10 @@ async function completeJsonOnce(
       } catch (err) {
         if (err instanceof AiFinishError) throw err;
         if (schemaJson && isSchemaRejection(err)) throw new SchemaRejectedError(provider, model);
-        if (err instanceof Error && err.message === "Empty AI response")
+        if (
+          err instanceof Error &&
+          (err.message === "Empty AI response" || err.message === AI_INCOMPLETE_MESSAGE)
+        )
           throw err;
         if (
           err instanceof Error &&
@@ -994,7 +1004,11 @@ async function completeMultimodalJsonInner(
     return normalizeJsonResponse(block.text);
   } catch (err) {
     if (err instanceof AiFinishError) throw err;
-    if (err instanceof Error && err.message === "Empty AI response") throw err;
+    if (
+      err instanceof Error &&
+      (err.message === "Empty AI response" || err.message === AI_INCOMPLETE_MESSAGE)
+    )
+      throw err;
     if (
       err instanceof Error &&
       err.message.startsWith("Failed to parse AI JSON")
@@ -1065,24 +1079,28 @@ export async function transcribeAudioWithAI(
   // transcript with misspelled names beats no transcript.
   const vocabulary = await loadNetworkVocabulary(userId);
 
-  // Deepgram first, on Orbit's key, while the account has short-form seconds left. It is the
-  // only engine most accounts can reach: Whisper and Gemini below need a key the user pasted.
-  if (deepgramEnabled()) {
-    // The METER FOLLOWS THE OPERATION, not the call site. `meeting.transcribe` is meeting
-    // chunk recovery — the fallback that carries a whole meeting whenever the live socket
-    // cannot open — and it bills Orbit's key exactly like a live meeting does, so it must
-    // check and spend the `meeting` cap. Before this, it checked and spent `shortform`: a
-    // three-hour meeting behind a firewall cost Orbit three hours, left the 5 h meeting cap
-    // reading zero, and ate the user's voice-note allowance until voice notes stopped.
-    const kind = speechKindForOperation(operation);
+  // The METER FOLLOWS THE OPERATION, not the call site. `meeting.transcribe` is meeting
+  // chunk recovery — the fallback that carries a whole meeting whenever the live socket
+  // cannot open — and it bills Orbit's key exactly like a live meeting does, so it must
+  // check and spend the `meeting` cap. Before this, it checked and spent `shortform`: a
+  // three-hour meeting behind a firewall cost Orbit three hours, left the 5 h meeting cap
+  // reading zero, and ate the user's voice-note allowance until voice notes stopped.
+  const kind = speechKindForOperation(operation);
+
+  // Deepgram first, on Orbit's key, while the account has short-form seconds left and the
+  // Deepgram credit has not reached this plan's rung (`speech-cost.ts`). It is the only
+  // engine most accounts can reach: Whisper and Gemini below need a key the user pasted.
+  if (await deepgramOpenFor(userId, kind, { sessionId: opts.sessionId })) {
     const allowance = await speechAllowance(userId, kind);
-    if (kind === "meeting" && allowance.exhausted) {
+    // Lenient: a meeting already recording on Deepgram finishes past the cap.
+    if (kind === "meeting" && allowance.exhausted && !(opts.sessionId && (await meetingHasAudio(opts.sessionId)))) {
       // Not a fall-through to the user's own key, unlike short-form below: a meeting's cap is
       // the product promise ("5 hours a month"), and `ingestMeetingChunk` has already refused
       // this chunk with a 402 by the time we could get here. This is the backstop.
       throw new UserFacingError("You’ve used this month’s meeting transcription minutes");
     }
-    if (!allowance.exhausted) {
+    // A meeting reaching here past its cap is one already recording, which finishes on Deepgram.
+    if (!allowance.exhausted || kind === "meeting") {
       // A meeting is tagged by its session, which belongs to one recording. Everything else
       // is tagged with the account's OPAQUE id — never the user id, which would sit in
       // Deepgram's usage records linking every voice note an account ever made. See
@@ -2965,8 +2983,11 @@ export function anthropicWebSearchToolType(model: string): "web_search_20260209"
 /** A searched answer runs several fetches before it writes a word — more than a plain call. */
 const WEB_SEARCH_TIMEOUT_MS = 120_000;
 
-/** Server-tool turns Anthropic may pause mid-search; each resume is one more request. */
-const MAX_WEB_SEARCH_RESUMES = 3;
+/**
+ * Server-tool turns Anthropic may pause mid-search; each resume is one more request, and one
+ * more chance to search (`resumeMaxUses`). One is enough to finish a lookup.
+ */
+const MAX_WEB_SEARCH_RESUMES = 1;
 
 /**
  * A JSON answer grounded in a live web search, run on the account's own provider.
@@ -2978,9 +2999,11 @@ const MAX_WEB_SEARCH_RESUMES = 3;
  * JSON response format with search — so the answer is read with `parseAiJson`, which finds
  * the object inside any prose around it.
  *
- * Token usage is reported like any other call. Per-search fees are billed by the provider
- * on top and are NOT in those counts; callers bound them with `maxSearches` and by running
- * rarely.
+ * Each search is a provider fee on top of tokens: priced as `surchargeMicros`
+ * (`WEB_SEARCH_FEE_MICROS`), so on Orbit's key a search spends credits and the pool like the
+ * tokens around it, and counted as `webSearches` against the budget in `web-search-budget.ts`,
+ * which refuses the call up front when the account's month, Orbit's day, or the admin switch
+ * says no.
  */
 export async function webSearchJson(
   userId: string,
@@ -3008,7 +3031,10 @@ export async function webSearchJson(
     return input.signal ? AbortSignal.any([own, input.signal]) : own;
   };
 
-  return runOnGrant(grant, withUsage(
+  await reserveWebSearch(userId);
+  let searches = 0;
+  try {
+  return await runOnGrant(grant, withUsage(
     { userId, operation, provider, model, kind: "completion", keyOwner },
     async (report) => {
       try {
@@ -3026,11 +3052,12 @@ export async function webSearchJson(
               ...geminiThinking(model, operation),
             },
           });
-          // Gemini has no cap on grounded queries — `maxSearches` is only a request in the prompt
-          // here — so the count is recorded, and billed, rather than limited.
+          searches = response.candidates?.[0]?.groundingMetadata?.webSearchQueries?.length ?? 0;
+          const grounded = Boolean(response.candidates?.[0]?.groundingMetadata);
           report({
             ...tokensFromGemini(response),
-            webSearches: response.candidates?.[0]?.groundingMetadata?.webSearchQueries?.length ?? 0,
+            webSearches: searches,
+            surchargeMicros: grounded ? WEB_SEARCH_FEE_MICROS.gemini : 0,
           });
           assertUsableFinish(geminiFinish(response));
           const content = response.text;
@@ -3059,6 +3086,8 @@ export async function webSearchJson(
             }) as Parameters<typeof client.chat.completions.create>[0] & { stream?: false },
             { signal: callSignal() },
           );
+          // One plugin search per call; its fee is inside the reported cost.
+          searches = 1;
           report({ ...tokensFromOpenAi(response), reportedCostMicros: reportedCostMicros(response as OpenAiUsageWithCost) });
           assertUsableFinish(openaiFinish(response.choices[0]));
           const message = response.choices[0]?.message;
@@ -3089,11 +3118,13 @@ export async function webSearchJson(
             },
             { signal: callSignal() },
           );
+          searches = response.output.filter((item) => item.type === "web_search_call").length;
           report({
             inputTokens: response.usage?.input_tokens ?? null,
             outputTokens: response.usage?.output_tokens ?? null,
             cachedInputTokens: response.usage?.input_tokens_details?.cached_tokens ?? null,
-            webSearches: response.output.filter((item) => item.type === "web_search_call").length,
+            webSearches: searches,
+            surchargeMicros: searches * WEB_SEARCH_FEE_MICROS.openai,
           });
           assertUsableFinish(openaiResponsesFinish(response));
           const content = response.output_text;
@@ -3113,7 +3144,7 @@ export async function webSearchJson(
 
         const client = await anthropicClient(grant);
         const messages: Anthropic.MessageParam[] = [{ role: "user", content: input.user }];
-        const totals = { input: 0, output: 0, cached: 0, searches: 0 };
+        const totals = { input: 0, output: 0, cached: 0 };
         let response: Anthropic.Message | null = null;
         // A long search can end the turn with `pause_turn`; sending the partial turn back
         // lets it continue where it stopped rather than starting the research over.
@@ -3125,18 +3156,19 @@ export async function webSearchJson(
             ...anthropicEffort(model),
             system,
             messages,
-            tools: [{ type: anthropicWebSearchToolType(model), name: "web_search", max_uses: maxSearches }],
+            tools: [{ type: anthropicWebSearchToolType(model), name: "web_search", max_uses: resumeMaxUses(maxSearches, searches) }],
           }, { signal: callSignal() });
           const t = tokensFromAnthropic(response);
           totals.input += t.inputTokens ?? 0;
           totals.output += t.outputTokens ?? 0;
           totals.cached += t.cachedInputTokens ?? 0;
-          totals.searches += response.usage?.server_tool_use?.web_search_requests ?? 0;
+          searches += anthropicSearchCount(response);
           report({
             inputTokens: totals.input,
             outputTokens: totals.output,
             cachedInputTokens: totals.cached,
-            webSearches: totals.searches,
+            webSearches: searches,
+            surchargeMicros: searches * WEB_SEARCH_FEE_MICROS.anthropic,
           });
           if (response.stop_reason !== "pause_turn") break;
           messages.push({ role: "assistant", content: response.content });
@@ -3167,4 +3199,8 @@ export async function webSearchJson(
     },
     { cancelSignal: input.signal },
   ));
+  } finally {
+    // A failed call may still have searched (a parse error after the results came back).
+    await settleWebSearch(userId, searches);
+  }
 }

@@ -38,6 +38,7 @@ import {
   type StoredCalendarEvent,
 } from "@/lib/connectors/google-calendar";
 import type { CalendarSyncCursor } from "@/db/schema";
+import { assertGraphUrl, GRAPH_API, graphFetchWithRetry } from "@/lib/graph-fetch";
 
 export { CalendarSyncTokenExpiredError, toNetworkEvents };
 
@@ -161,14 +162,16 @@ export type FetchPageOptions = {
 export async function fetchCalendarPage(opts: FetchPageOptions): Promise<CalendarFetchResult> {
   const { accessToken, cursor, ownerEmail } = opts;
   const now = opts.now ?? new Date();
-  const doFetch = opts.fetchImpl ?? fetch;
 
+  // Both stored links are replayed with the bearer token, so each must be Graph's own.
   let url: string;
   if (cursor?.pageToken) {
     // Mid-run: always a full `@odata.nextLink` URL, valid regardless of how the run started.
+    assertGraphUrl(cursor.pageToken, "Bad Microsoft Calendar cursor");
     url = cursor.pageToken;
   } else if (cursor?.syncToken) {
     // Incremental: the stored `@odata.deltaLink` URL, refetched as-is.
+    assertGraphUrl(cursor.syncToken, "Bad Microsoft Calendar cursor");
     url = cursor.syncToken;
   } else {
     const start = new Date(now.getTime() - CALENDAR_WINDOW_PAST_MS).toISOString();
@@ -180,12 +183,18 @@ export async function fetchCalendarPage(opts: FetchPageOptions): Promise<Calenda
     url = `${CALENDAR_VIEW_DELTA_API}?${params}`;
   }
 
-  const res = await doFetch(url, {
+  // Through graph-fetch: a per-attempt timeout, because the scheduler's per-connection
+  // deadline is only checked between pages and a hung request would otherwise hold the lane
+  // for the whole invocation; and a wait on 429/503/504, because throttling is Graph saying
+  // "later", not a failed sync that walks the connection up the backoff ladder.
+  const res = await graphFetchWithRetry(url, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
       // Every event comes back already normalized to UTC — see `parseWhen`'s comment.
       Prefer: 'outlook.timezone="UTC"',
     },
+    timeoutMs: 20_000,
+    fetchImpl: opts.fetchImpl,
   });
 
   if (res.status === 410) throw new CalendarSyncTokenExpiredError();
@@ -292,6 +301,9 @@ export async function fetchCalendarWindow(opts: {
     items.push(...(body.value || []));
     url = body["@odata.nextLink"];
     if (!url) return { items, complete: true, status: res.status };
+    // Followed with the bearer token, so only ever Graph's own. A foreign link reads as an
+    // unfinished window — the caller then deletes nothing on absence.
+    if (!url.startsWith(`${GRAPH_API}/`)) return { items, complete: false, status: res.status };
   }
   return { items, complete: false, status: 200 };
 }

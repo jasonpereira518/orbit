@@ -10,6 +10,7 @@ import { persistOnboardingComplete } from "@/lib/onboarding";
 import { removeTourExamples } from "@/lib/onboarding-examples/remove";
 import { isOnboardingPath, isOnboardingStep, stepAllowedOnPath, type OnboardingPath } from "@/lib/onboarding-steps";
 import { ensureUserSettings, recordTermsAcceptance } from "@/lib/user-settings";
+import { trackOnboardingPathChosen, trackOnboardingStepAdvance } from "@/lib/onboarding-events";
 
 function revalidateOnboarding() {
   for (const path of ["/onboarding", "/dashboard", "/settings", "/contacts", "/capture", "/imports"]) {
@@ -45,6 +46,7 @@ export async function startOnboardingPath(path: string, first: string) {
       updatedAt: new Date(),
     })
     .where(eq(userSettings.userId, userId));
+  trackOnboardingPathChosen(userId, path);
   return { ok: true as const };
 }
 
@@ -54,11 +56,13 @@ export async function saveOnboardingStep(step: string) {
 
   const userId = await requireUserId();
   const db = await getDb();
-  await ensureUserSettings(userId);
+  // `ensureUserSettings` already reads the row: its step is the one being left.
+  const before = await ensureUserSettings(userId);
   await db
     .update(userSettings)
     .set({ onboardingStep: step, updatedAt: new Date() })
     .where(eq(userSettings.userId, userId));
+  trackOnboardingStepAdvance(userId, before.onboardingPath, before.onboardingStep, step);
 
   return { ok: true as const };
 }

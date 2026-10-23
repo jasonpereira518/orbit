@@ -67,8 +67,11 @@ export async function readLinkedInArchive(
   member: LinkedInArchiveMember,
 ): Promise<{ text: string; fileName: string }> {
   const lower = file.name.toLowerCase();
+  // Connections go up in chunks (linkedin-connections-client.ts); only messages still travel
+  // as one request.
+  const fits = (text: string) => (member === "connections" ? text : ensureFits(text));
   if (!lower.endsWith(".zip")) {
-    return { text: ensureFits(await file.text()), fileName: file.name };
+    return { text: fits(await file.text()), fileName: file.name };
   }
 
   const { pattern, fallbackName, missing } = ARCHIVE_MEMBERS[member];
@@ -82,7 +85,7 @@ export async function readLinkedInArchive(
     // as the generic fallback, which is why this is a `UserFacingError`.
     throw new UserFacingError(missing);
   }
-  const text = ensureFits(await entry.async("string"));
+  const text = fits(await entry.async("string"));
   return { text, fileName: entry.name.split("/").pop() || fallbackName };
 }
 
@@ -269,6 +272,7 @@ export function ImportProgress({
       <div
         className="h-1.5 overflow-hidden rounded-full bg-border/80"
         role="progressbar"
+        aria-label="Import progress"
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={pct}

@@ -19,6 +19,7 @@ import { getDb } from "../src/db";
 import { contacts, rateLimitBuckets, userSettings } from "../src/db/schema";
 import { consumeBucket, RATE_LIMITS } from "../src/lib/rate-limit";
 import { utcDayKey } from "../src/lib/timeline-cost";
+import { WEB_SEARCH_BACKGROUND_SHARE, WEB_SEARCH_SCOPE, webSearchMonthKey } from "../src/lib/web-search-budget";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import {
   nextWorkHistoryDue,
@@ -62,8 +63,6 @@ async function addContact(userId: string, name: string, closeness: number | null
       fullName: name,
       linkedinUrl: `https://www.linkedin.com/in/${name.toLowerCase().replace(/\s+/g, "-")}`,
       closeness,
-      // The sweep keeps up people the account is in touch with; a test contact is one by default.
-      lastInteractionAt: new Date(),
       ...extra,
     })
     .returning();
@@ -108,8 +107,8 @@ function cadence() {
   );
   check("…and a batch checked together lands on many different days", spread.size >= 10, String(spread.size));
   check(
-    "a failed check retries in about a day",
-    Math.abs(nextWorkHistoryDue(mid, "error", now, { random: () => 0.5 }).getTime() - now.getTime() - DAY) < 1000
+    "a failed check retries in about a week, not every day",
+    Math.abs(nextWorkHistoryDue(mid, "error", now, { random: () => 0.5 }).getTime() - now.getTime() - 7 * DAY) < 1000
   );
   const limited = nextWorkHistoryDue(mid, "rate_limited", now, { random: () => 0 });
   check("an exhausted budget waits for the next UTC day", limited.toISOString() === "2026-09-30T00:00:00.000Z", limited.toISOString());
@@ -139,8 +138,6 @@ async function sweep() {
     closenessTier: "inner",
     workHistoryDueAt: new Date(Date.now() + 10 * DAY),
   });
-  // Nobody has spoken to them in a year: checked on request, not on a timer.
-  await addContact(HEAVY, "Long Dormant", 99, { closenessTier: "inner", lastInteractionAt: new Date(Date.now() - 365 * DAY) });
   // No LinkedIn URL: nothing to anchor a search on.
   await db.insert(contacts).values({ userId: HEAVY, fullName: "No Url", closeness: 99 });
   const lightId = await addContact(LIGHT, "Only Contact", 10, { closenessTier: "outer" });
@@ -163,7 +160,6 @@ async function sweep() {
   check("a small network is not starved by a big one", names.includes("Only Contact"), names.join(", "));
   check("a contact not yet due is left alone", !names.includes("Checked Recently"));
   check("a contact without a LinkedIn URL is left alone", !names.includes("No Url"));
-  check("a contact nobody has been in touch with for 90+ days is not swept", !names.includes("Long Dormant"), names.join(", "));
   check("an account that switched it off is not searched", !names.includes("Switched Off"));
   check("an account with no AI is not searched", !names.includes("No Key") && stats.noAiUsers === 1, String(stats.noAiUsers));
 
@@ -190,18 +186,18 @@ async function sweep() {
   );
   check("the light account's contact was rescheduled", (await byId(lightId)).workHistoryDueAt !== null);
 
-  // Second run: the never-checked imports are what is left for HEAVY.
+  // Second run: what is left for HEAVY is two never-contacted imports — cold, so on demand only.
   const second = recorder();
   await runWorkHistorySweep({ researcher: second.researcher, canUseAi: aiFor });
   check(
-    "the next run picks up where the last left off",
-    ["Unscored Import", "Another Import"].every((n) => second.asked.some((a) => a.name === n)),
+    "the next run leaves cold imports alone",
+    !["Unscored Import", "Another Import"].some((n) => second.asked.some((a) => a.name === n)),
     second.asked.map((a) => a.name).join(", ")
   );
 
   // --- the daily budget --------------------------------------------------------------
   await reset();
-  for (let i = 0; i < 4; i++) await addContact(HEAVY, `Budget ${i}`, 50 - i);
+  for (let i = 0; i < 4; i++) await addContact(HEAVY, `Budget ${i}`, 50 - i, { closenessTier: "outer" });
   const key = `${HEAVY}:${utcDayKey(new Date())}`;
   for (let i = 0; i < BACKGROUND_DAILY_LIMIT - 1; i++) {
     await consumeBucket("work-history-background", key, RATE_LIMITS.workHistoryBackground);
@@ -229,7 +225,7 @@ async function sweep() {
 
   // --- the deadline --------------------------------------------------------------------
   await reset();
-  const late = await addContact(LIGHT, "Deadline Person", 50);
+  const late = await addContact(LIGHT, "Deadline Person", 50, { closenessTier: "outer" });
   const lateRun = recorder();
   const lateStats = await runWorkHistorySweep({
     researcher: lateRun.researcher,
@@ -242,6 +238,42 @@ async function sweep() {
     "…and the claim is handed back due now, not left leased",
     lateStats.released === 1 && released !== null && released.getTime() <= Date.now(),
     String(released)
+  );
+
+  // --- cold contacts, and background's share of the month -------------------------------
+  await reset();
+  const cold = await addContact(LIGHT, "Cold Import", null);
+  await addContact(LIGHT, "Warm Friend", 40, { closenessTier: "mid" });
+  const coldRun = recorder();
+  await runWorkHistorySweep({ researcher: coldRun.researcher, canUseAi: aiFor });
+  check(
+    "a cold import is never swept; a tiered contact is",
+    coldRun.asked.map((a) => a.name).join() === "Warm Friend",
+    JSON.stringify(coldRun.asked)
+  );
+  check("…and the cold one stays simply due, for the day it gains a tier", (await byId(cold)).workHistoryDueAt === null);
+
+  await reset();
+  await addContact(LIGHT, "Given Up", 40, { closenessTier: "mid", workHistoryMisses: 2, workHistoryMissSlug: "given-up" });
+  await addContact(LIGHT, "Moved On", 40, { closenessTier: "mid", workHistoryMisses: 2, workHistoryMissSlug: "an-older-url" });
+  const gaveUp = recorder();
+  await runWorkHistorySweep({ researcher: gaveUp.researcher, canUseAi: aiFor });
+  check(
+    "two misses on the same URL stop the sweep; misses on an older URL do not",
+    gaveUp.asked.map((a) => a.name).join() === "Moved On",
+    JSON.stringify(gaveUp.asked)
+  );
+
+  await reset();
+  await addContact(LIGHT, "Half Month", 40, { closenessTier: "mid" });
+  const monthly = RATE_LIMITS.webSearchMonthly;
+  await consumeBucket(WEB_SEARCH_SCOPE, webSearchMonthKey(LIGHT, new Date()), monthly, monthly.limit * WEB_SEARCH_BACKGROUND_SHARE);
+  const halfRun = recorder();
+  const halfStats = await runWorkHistorySweep({ researcher: halfRun.researcher, canUseAi: aiFor });
+  check(
+    "background stops once half the account's monthly searches are used",
+    halfRun.asked.length === 0 && halfStats.outcomes.rate_limited === 1,
+    JSON.stringify(halfStats.outcomes)
   );
 
   await reset();

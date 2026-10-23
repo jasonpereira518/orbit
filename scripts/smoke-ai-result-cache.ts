@@ -129,6 +129,13 @@ async function main() {
     messages: [...sender.messages, { ...sender.messages[0], id: "m2", subject: "Following up", body: "Any interest? The team is growing." }],
   });
   check("new mail from the sender is classified again", modelCalls === 2, `calls ${modelCalls}`);
+  // The selected model is part of the key: a switch in Settings must not keep serving the
+  // previous model's answer for the TTL.
+  await db.update(userSettings).set({ aiModel: "gemini-3.5-pro" }).where(eq(userSettings.userId, USER));
+  await classifyRecruiterSender(USER, sender);
+  check("after switching model the same sender is classified again", modelCalls === 3, `calls ${modelCalls}`);
+  await classifyRecruiterSender(USER, sender);
+  check("  and then served from the cache for the new model", modelCalls === 3, `calls ${modelCalls}`);
 
   // Who answers is part of the question: a verdict one model gave is not replayed as another's.
   await db.update(userSettings).set({ aiModel: "gemini-3.1-flash-lite" }).where(eq(userSettings.userId, USER));

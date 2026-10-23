@@ -9,6 +9,20 @@
  */
 export const GRAPH_MAX_RETRIES = 5;
 
+/** The only origin-and-version prefix a Graph page link, delta link or stored cursor may carry. */
+export const GRAPH_API = "https://graph.microsoft.com/v1.0";
+
+/**
+ * A cursor or page link is only ever one Graph handed back — never follow anything else with
+ * the token. Graph's `@odata.nextLink`/`@odata.deltaLink` are full URLs, and they are stored
+ * (sync cursors, scan job stats) and replayed with a fresh bearer token, so a link pointing
+ * anywhere else would hand that token to whoever named it. Graph never does; this is
+ * defence in depth against a tampered response or a written-to cursor column.
+ */
+export function assertGraphUrl(url: string, message = "Bad Microsoft Graph link"): void {
+  if (!url.startsWith(`${GRAPH_API}/`)) throw new Error(message);
+}
+
 /** Ceiling on one wait, so an uncapped `Retry-After` cannot spend a whole invocation asleep. */
 export const GRAPH_MAX_RETRY_DELAY_MS = 30_000;
 

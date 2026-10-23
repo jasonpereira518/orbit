@@ -1,4 +1,6 @@
 import Link from "next/link";
+import type { Metadata } from "next";
+import { cache } from "react";
 import { notFound } from "next/navigation";
 import { AlertTriangle, ArrowLeft, CircleAlert } from "lucide-react";
 import {
@@ -16,6 +18,8 @@ import { CompPlanButton } from "@/components/admin/comp-plan-dialog";
 import { LifetimeButton } from "@/components/admin/lifetime-dialog";
 import { SignInLinkButton } from "@/components/admin/sign-in-link-dialog";
 import { CopyId } from "@/components/admin/copy-id";
+import { AccountKindControl } from "@/components/admin/account-kind-control";
+import { getAccountKind } from "@/lib/admin-account-kind";
 import { ContactsFilterBar } from "@/components/admin/contacts-filter-bar";
 import { AccountDangerZone } from "@/components/admin/account-actions";
 import { Pager } from "@/components/admin/pager";
@@ -34,7 +38,24 @@ import { loadAdminTimeline } from "@/lib/admin-timeline";
 import { formatCostMicros } from "@/lib/ai-pricing";
 import { cn } from "@/lib/utils";
 
-export const metadata = { title: "Admin · Account" };
+/** Request-memoized so `generateMetadata` and the page share one read. */
+const loadAdminUserDetail = cache((userId: string) => getAdminUserDetail(userId));
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ userId: string }>;
+}): Promise<Metadata> {
+  const { userId } = await params;
+  try {
+    // The admin gate first, as the page does: an account's name is admin-only data.
+    await requireAdminUserId();
+    const detail = await loadAdminUserDetail(decodeURIComponent(userId));
+    return { title: detail ? `Admin · ${displayName(detail.identity)}` : "Admin · Account" };
+  } catch {
+    return { title: "Admin · Account" };
+  }
+}
 
 const SECTIONS = [
   { id: "identity", label: "Identity" },
@@ -75,7 +96,7 @@ export default async function AdminUserDetailPage({
 
   const adminUserId = await requireAdminUserId();
 
-  const detail = await getAdminUserDetail(decoded);
+  const detail = await loadAdminUserDetail(decoded);
   if (!detail) notFound();
 
   const contactsPage = Math.max(
@@ -88,7 +109,7 @@ export default async function AdminUserDetailPage({
   // `recordAccountView` depends only on `adminUserId`/`decoded`, not on `detail` — it stays
   // after the `notFound()` gate so a mistyped/nonexistent id never gets logged as a view,
   // but otherwise has no reason to block starting the three reads below.
-  const [, audit, contactPage, timeline, traffic] = await Promise.all([
+  const [, audit, contactPage, timeline, traffic, accountKind] = await Promise.all([
     // Opening an account is itself a recorded act. This is what remains of the reveal
     // gate: the operator no longer justifies a look, but the look is still on the record.
     // Throttled to one row an hour inside `recordAccountView`, and it never throws.
@@ -105,6 +126,8 @@ export default async function AdminUserDetailPage({
     // Degrades on its own: this account predates the traffic pipeline, or ANALYTICS_SALT
     // is unset, and neither is a reason for the inspector to 500.
     accountTraffic(decoded).catch(() => null),
+    // Not in `getAdminUserDetail`: the kind is the operator's own label, read for its control.
+    getAccountKind(decoded).catch(() => null),
   ]);
 
   const { identity, billing, configuration, footprint, health, usage } = detail;
@@ -227,6 +250,9 @@ export default async function AdminUserDetailPage({
                 </DefinitionRow>
                 <DefinitionRow label="User id">
                   <span className="font-mono text-xs">{identity.userId}</span>
+                </DefinitionRow>
+                <DefinitionRow label="Account kind">
+                  <AccountKindControl targetUserId={identity.userId} current={accountKind ?? null} />
                 </DefinitionRow>
                 <DefinitionRow label="Signed up">
                   <RelativeTime date={identity.signupAt} /> ago
@@ -810,7 +836,7 @@ export default async function AdminUserDetailPage({
                 </EmptyState>
               ) : (
                 <>
-                  <AdminTable
+                  <AdminTable label={`Contacts (${contactPage.total})`}
                     head={
                       <>
                         <Th>Contact</Th>

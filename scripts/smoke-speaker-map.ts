@@ -2,7 +2,8 @@
  * "You" is decided locally: Deepgram says WHICH speaker, the mic says WHO.
  * Run: npx tsx scripts/smoke-speaker-map.ts
  */
-import { LoudnessTimeline, labelSpeakers } from "../src/lib/speaker-map";
+import { LoudnessTimeline, claimedYou, labelSpeakers } from "../src/lib/speaker-map";
+import { speakerDisplayNames } from "../src/lib/speaker-display";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -42,10 +43,67 @@ console.log("\nlabelSpeakers");
   const mixed = [...Array.from({ length: 25 }, (_, i) => word("a", i * 400, 0)), ...Array.from({ length: 25 }, (_, i) => word("b", 10_000 + i * 400, 1))];
   const map = labelSpeakers(mixed, { micDominantShare: (start) => (start < 10_000 ? 1 : 0) });
   check("only one speaker becomes you", [...map.values()].filter((v) => v === "you").length === 1);
-  check("the other keeps a number", map.get(1) === "speaker-1");
+  check("the other keeps its own stable number, not a renumbered one", map.get(1) === "speaker-2");
+  check("…and claimedYou names the label you replaced", claimedYou(mixed) === "speaker-1");
   check("numbering follows order of appearance", labelSpeakers(mixed, theirs).get(0) === "speaker-1" && labelSpeakers(mixed, theirs).get(1) === "speaker-2");
   check("unknown loudness never claims you", labelSpeakers(words, { micDominantShare: () => null }).get(0) === "speaker-1");
   check("words with no speaker are ignored", labelSpeakers([word("x", 0, null)], mine).size === 0);
+}
+
+console.log("\nstable labels");
+{
+  // The user (speaker 0) speaks first but says too little to be claimed; speaker 1 answers.
+  const live: ReturnType<typeof word>[] = [];
+  const timeline = { micDominantShare: (start: number) => (start < 100_000 ? 1 : 0) };
+  for (let i = 0; i < 5; i++) live.push(word("hi", i * 400, 0));
+  for (let i = 0; i < 25; i++) live.push(word("yes", 100_000 + i * 400, 1));
+  let labels = labelSpeakers(live, timeline);
+  check("before there is evidence, the first voice is speaker-1", labels.get(0) === "speaker-1");
+  check("…and the second is speaker-2", labels.get(1) === "speaker-2");
+  check("…and nobody is claimed yet", claimedYou(live) === null);
+  for (let i = 0; i < 25; i++) live.push(word("so", 2_000 + i * 400, 0));
+  labels = labelSpeakers(live, timeline);
+  check("once the mic evidence is in, the first voice becomes you", labels.get(0) === "you");
+  check("…the other voice keeps speaker-2 — never renumbered", labels.get(1) === "speaker-2");
+  check("…and the claim names speaker-1, the label to rewrite", claimedYou(live) === "speaker-1");
+  for (let i = 0; i < 25; i++) live.push(word("no", 200_000 + i * 400, 0));
+  check("you stays pinned when later evidence disagrees", labelSpeakers(live, timeline).get(0) === "you");
+  const reconnected = [word("hey", 0, 0)];
+  check("a reconnect numbers on from the voices already heard", labelSpeakers(reconnected, timeline, { offset: 2 }).get(0) === "speaker-3");
+}
+
+console.log("\nin-person (mic only)");
+{
+  // No call audio at all: everyone is "mic-dominant", so loudness at the mic decides.
+  const near = new LoudnessTimeline();
+  for (let ms = 0; ms < 20_000; ms += 32) near.push({ atMs: ms, mic: 0.6, call: 0 });
+  for (let ms = 20_000; ms < 40_000; ms += 32) near.push({ atMs: ms, mic: 0.2, call: 0 });
+  const words = [
+    ...Array.from({ length: 25 }, (_, i) => word("me", i * 700, 0)),
+    ...Array.from({ length: 25 }, (_, i) => word("them", 20_000 + i * 700, 1)),
+  ];
+  const labels = labelSpeakers(words, near);
+  check("the clearly loudest voice at the mic is you", labels.get(0) === "you" && labels.get(1) === "speaker-2");
+  const even = new LoudnessTimeline();
+  for (let ms = 0; ms < 40_000; ms += 32) even.push({ atMs: ms, mic: 0.4, call: 0 });
+  const evenWords = words.map((w) => ({ ...w }));
+  const evenLabels = labelSpeakers(evenWords, even);
+  check("voices equally loud (a phone mid-table) claim nobody", ![...evenLabels.values()].includes("you"));
+  const alone = new LoudnessTimeline();
+  for (let ms = 0; ms < 20_000; ms += 32) alone.push({ atMs: ms, mic: 0.6, call: 0 });
+  const aloneWords = Array.from({ length: 25 }, (_, i) => word("me", i * 700, 0));
+  check("one voice alone is not compared with anything, so not claimed", labelSpeakers(aloneWords, alone).get(0) === "speaker-1");
+}
+
+console.log("\nwhat a person reads");
+{
+  const names = speakerDisplayNames([
+    { speaker: "speaker-2" }, { speaker: "you" }, { speaker: "speaker-5" }, { speaker: "speaker-2" }, { speaker: null },
+  ]);
+  check("you reads as You", names.get("you") === "You");
+  check("the other voices are numbered 1, 2 by first appearance", names.get("speaker-2") === "Speaker 1" && names.get("speaker-5") === "Speaker 2");
+  const oneOnOne = speakerDisplayNames([{ speaker: "you" }, { speaker: "speaker-2" }], ["Priya Raman"]);
+  check("a 1:1's other voice is the other person", oneOnOne.get("speaker-2") === "Priya Raman");
 }
 
 /**
@@ -96,7 +154,7 @@ console.log("\ncost at three hours");
   check(`${passes} passes over ${words.length} words stay under ${BUDGET_MS}ms`, elapsed < BUDGET_MS, `took ${elapsed}ms`);
   check("…and the labels are still right", (() => {
     const map = labelSpeakers(words, timeline);
-    return map.get(0) === "you" && map.get(1) === "speaker-1";
+    return map.get(0) === "you" && map.get(1) === "speaker-2";
   })());
 
   // The direct canary: ONE pass over three hours of words, from a cold tally.

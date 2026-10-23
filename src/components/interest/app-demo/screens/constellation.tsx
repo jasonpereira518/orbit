@@ -21,7 +21,7 @@ export function ConstellationScreen() {
   return (
     <div className="flex h-full flex-col gap-3">
       <header>
-        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-primary">Star chart</p>
+        <p className="text-2xs font-medium uppercase tracking-[0.2em] text-primary">Star chart</p>
         <h2 className={cn(DISPLAY, "mt-1 text-3xl")}>Constellation</h2>
         <p className="mt-1.5 max-w-xl text-muted-foreground">
           You are the sun. Companies and schools form constellations around you — each figure traced by its own people.
@@ -107,7 +107,7 @@ export function ConstellationScreen() {
                 <Avatar person={selected} size={36} />
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-ink">{selected.name}</p>
-                  <p className="truncate text-[11px] text-muted-foreground">
+                  <p className="truncate text-2xs text-muted-foreground">
                     {selected.title} · {selected.company}
                   </p>
                 </div>
@@ -116,7 +116,7 @@ export function ConstellationScreen() {
                 <ClosenessChip closeness={closenessOf(state, selected)} />
                 <TierBadge closeness={closenessOf(state, selected)} />
               </div>
-              <p className="mt-2 text-[11px] text-muted-foreground">Last touch {daysLabel(lastTouchOf(state, selected))}</p>
+              <p className="mt-2 text-2xs text-muted-foreground">Last touch {daysLabel(lastTouchOf(state, selected))}</p>
               <p className="mt-1.5 text-xs leading-relaxed text-ink/85">{selected.nextStep}</p>
               <button
                 type="button"

@@ -74,7 +74,7 @@ export function ReplyPicker({
         <button
           type="button"
           aria-label="Send as a new email"
-          className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-50"
+          className="relative tap-target grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:text-foreground disabled:opacity-50"
           onClick={() => onChange(null)}
           disabled={disabled}
         >

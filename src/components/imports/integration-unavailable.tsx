@@ -29,7 +29,7 @@ export function IntegrationUnavailable({
       <h2 className="text-lg font-medium text-ink">{title}</h2>
       <p className="text-sm text-muted-foreground">{blurb}</p>
       {process.env.NODE_ENV === "development" && envVars.length > 0 ? (
-        <p className="text-xs text-muted-foreground/70">
+        <p className="text-xs text-muted-foreground-subtle">
           Dev only — set {envVars.join(", ")} to enable.
         </p>
       ) : null}

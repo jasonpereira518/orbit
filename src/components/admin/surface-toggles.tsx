@@ -228,7 +228,7 @@ export function PreviewUnreleasedButton({ active }: { active: boolean }) {
       className={cn(
         "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition-colors duration-fast disabled:opacity-60",
         active
-          ? "border-warning/40 bg-warning/10 text-warning"
+          ? "border-warning/40 bg-warning/10 text-amber-800 dark:text-warning"
           : "border-border/70 text-muted-foreground hover:text-foreground"
       )}
     >

@@ -25,6 +25,8 @@ import {
 import { loadManagedAiOpsFacts } from "@/lib/managed-ai-ops";
 import { deliverToSlack, type OpsDelivery } from "@/lib/ops-notify";
 import { prunePageViews } from "@/lib/page-views";
+import { loadProductOpsFacts } from "@/lib/product-ops";
+import { formatWeeklyCostReport, isoWeekKey, loadSpendOpsFacts, loadWeeklyCostReport, weeklyReportDue } from "@/lib/spend-ops";
 import { reportError } from "@/lib/report-error";
 
 export type { OpsDelivery } from "@/lib/ops-notify";
@@ -76,6 +78,8 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     statementTimeout,
     syncOldestDueAgeMs,
     [aiSecurityRow],
+    spend,
+    product,
   ] = await Promise.all([
       db
         .select()
@@ -198,6 +202,16 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         })
         .from(errorEvents)
         .where(and(eq(errorEvents.source, ERROR_SOURCES.aiSecurity), gt(errorEvents.createdAt, hourAgo))),
+      // Money facts are optional in the snapshot: a failed read costs the spend alerts for one
+      // sweep, never the whole alerting run.
+      loadSpendOpsFacts(now).catch((err) => {
+        reportError(err, { where: "job.ops-sweep.spend", level: "warning" });
+        return undefined;
+      }),
+      loadProductOpsFacts(now).catch((err) => {
+        reportError(err, { where: "job.ops-sweep.product", level: "warning" });
+        return undefined;
+      }),
     ]);
 
   const bySource = new Map(errorsLastHour.map((r) => [r.source, r.n]));
@@ -321,6 +335,8 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     failingSyncs: issues.syncFailing,
     stuckPurges: stuckPurgeRow?.n ?? 0,
     managedAi,
+    spend,
+    product,
   };
 }
 
@@ -329,6 +345,8 @@ export type OpsSweepDeps = {
   now: () => Date;
   /** Tells the uptime monitor the sweep is alive. Only ever called after a completed sweep. */
   heartbeat: () => Promise<void>;
+  /** Whether this sweep sends the Monday cost line. A seam so a test is not at the mercy of the weekday. */
+  weeklyReportDue: (now: Date) => boolean;
 };
 
 /**
@@ -396,6 +414,7 @@ export async function runOpsSweep(options: {
 }): Promise<OpsSweepResult> {
   const deliver = options.deps?.deliver ?? deliverToSlack;
   const heartbeat = options.deps?.heartbeat ?? pingHeartbeat;
+  const reportDue = options.deps?.weeklyReportDue ?? weeklyReportDue;
   const now = (options.deps?.now ?? (() => new Date()))();
 
   // Fails loudly (throws) if the database is down — see the module note.
@@ -507,6 +526,29 @@ export async function runOpsSweep(options: {
         reportError(err, { where: "job.ops-sweep.deliver", extra: { kind: "recover", condition: row.id } });
         result.deliveryFailures += 1;
         result.undelivered.push(row.id);
+      }
+    }
+
+    // The Monday cost line. Recorded in `ops_alert_state` as an INACTIVE row keyed by ISO
+    // week, so it is said once per week, never shows as an open condition, and never
+    // "recovers". A failed delivery writes nothing, so the next sweep tries again.
+    if (reportDue(now)) {
+      const id = `report.weekly:${isoWeekKey(now)}`;
+      if (!prevById.has(id)) {
+        try {
+          const report = formatWeeklyCostReport(await loadWeeklyCostReport(now));
+          const condition: OpsCondition = { id, severity: "info", href: "/admin/billing/costs", ...report };
+          await deliver({ kind: "open", condition });
+          await db.insert(opsAlertState).values({
+            id, severity: "info", active: false, openedAt: now, lastSeenAt: now,
+            lastNotifiedAt: now, notifyCount: 1, detail: detailOf(condition), updatedAt: now,
+          }).onConflictDoNothing();
+          result.opened.push(id);
+        } catch (err) {
+          reportError(err, { where: "job.ops-sweep.weekly-report", level: "warning" });
+          result.deliveryFailures += 1;
+          result.undelivered.push(id);
+        }
       }
     }
 

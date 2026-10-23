@@ -98,7 +98,10 @@ export async function POST(request: Request, ctx: Params) {
   try {
     const result = await ingestMeetingChunk(userId, id, meta, wav);
     if (!result.ok) {
-      return NextResponse.json({ error: result.error }, { status: result.status });
+      // 429 here is another upload of this same chunk mid-transcription: the recorder waits
+      // and retries, and then gets the stored segment back as a duplicate.
+      const headers = result.status === 429 ? { "Retry-After": String(result.retryAfterSec) } : undefined;
+      return NextResponse.json({ error: result.error }, { status: result.status, headers });
     }
     return NextResponse.json({
       seq: result.seq,

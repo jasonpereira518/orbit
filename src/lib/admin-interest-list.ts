@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { getDb, rowsOf, runAtomicBatch } from "@/db";
-import { interestListSignups, userSettings, waitlistPollVotes } from "@/db/schema";
+import { interestListSignups, waitlistPollVotes } from "@/db/schema";
 import { countInt } from "@/lib/admin-metrics";
 import { getWaitlistPageUrl } from "@/lib/app-url";
 import { UserFacingError } from "@/lib/errors";
@@ -22,6 +22,8 @@ import {
   sendInterestListWelcomeEmail,
 } from "@/lib/interest-list-email";
 import { generateShareToken } from "@/lib/interest-list-join";
+import { convertedSql, operatorTestJoinSql } from "@/lib/interest-list-converted";
+import { track } from "@/lib/product-events";
 import {
   invalidateInterestProof,
   readStandings,
@@ -134,24 +136,10 @@ export type InterestListSummary = {
 };
 
 /**
- * Did this address go on to create an account?
- *
- * Matched against the `user_settings.email` mirror the Clerk webhook maintains — the same
- * join the broadcast sender suppresses on, so the console and the mailer agree on who
- * counts as converted. Both sides are lowercased on write, but this is mirrored data with
- * no unique constraint, so the comparison does not assume it.
- *
- * THE ALIAS AND THE QUALIFIERS ARE LOad-BEARING. Interpolating bare `${userSettings.email}`
- * and `${interestListSignups.email}` renders both as an unqualified `"email"`, and inside
- * the subquery both then bind to `user_settings.email` — the correlation silently collapses
- * to `lower(u.email) = u.email`, which is true for any lowercase address, so EXISTS returns
- * true for every row and the whole list reads as converted. Aliasing the inner table and
- * qualifying each side is what keeps the outer reference an outer reference.
+ * "Converted" is {@link convertedSql} (`src/lib/interest-list-converted.ts`), the same fragment
+ * the broadcast sender suppresses on: the row is linked to an account by id, or its address
+ * matches an account's email. One definition, so the console and the mailer agree.
  */
-const convertedSql = sql<boolean>`exists (
-  select 1 from ${userSettings} as u
-  where lower(u.email) = ${interestListSignups}.email
-)`;
 
 /**
  * Still-waiting referrals, per row. Same aliasing discipline as `convertedSql`: the inner
@@ -195,7 +183,9 @@ export async function getInterestListSummary(): Promise<InterestListSummary> {
         where ${interestListSignups.unsubscribedAt} is null and not ${convertedSql}
       )::int`,
     })
-    .from(interestListSignups);
+    .from(interestListSignups)
+    // The operator's own test joins are not demand: leave them out of every tile.
+    .where(sql`not ${operatorTestJoinSql()}`);
 
   return {
     total: row?.total ?? 0,
@@ -210,8 +200,16 @@ export type WaitlistStats = InterestListSummary & {
   /** Joined in the last 24 hours / 7 days — every row, including ones that later left. */
   joined24h: number;
   joined7d: number;
-  /** Rows that arrived through someone's invite link. */
+  /**
+   * THE referral number: people still waiting who arrived through someone's invite link.
+   * Over {@link WaitlistStats.referralBase}, never over `total` — a numerator that counted
+   * people who left, over a denominator that counted everyone, answered neither question.
+   */
   referred: number;
+  /** The population `referred` is a share of: everyone still waiting (subscribed, operator joins excluded). */
+  referralBase: number;
+  /** The operator's own test joins left out of every figure above (the roster still lists them). */
+  operatorTestJoins: number;
   /** The people bringing others in: most still-waiting referrals first. */
   topReferrers: Array<{ email: string; referrals: number; position: number | null }>;
 };
@@ -226,14 +224,20 @@ const TOP_REFERRERS = 5;
  */
 export async function getWaitlistStats(): Promise<WaitlistStats> {
   const db = await getDb();
-  const [summary, [growth], leaders, standings] = await Promise.all([
+  const [summary, [growth], [operator], leaders, standings] = await Promise.all([
     getInterestListSummary(),
     db
       .select({
         joined24h: sql<number>`count(*) filter (where ${interestListSignups.createdAt} > now() - interval '24 hours')::int`,
         joined7d: sql<number>`count(*) filter (where ${interestListSignups.createdAt} > now() - interval '7 days')::int`,
-        referred: sql<number>`count(*) filter (where ${interestListSignups.referredById} is not null)::int`,
+        // Live still-waiting referrals: the same condition `referralsSql` counts per row.
+        referred: sql<number>`count(*) filter (where ${interestListSignups.referredById} is not null and ${interestListSignups.unsubscribedAt} is null)::int`,
+        referralBase: sql<number>`count(*) filter (where ${interestListSignups.unsubscribedAt} is null)::int`,
       })
+      .from(interestListSignups)
+      .where(sql`not ${operatorTestJoinSql()}`),
+    db
+      .select({ n: sql<number>`count(*) filter (where ${operatorTestJoinSql()})::int` })
       .from(interestListSignups),
     db
       .select({ id: interestListSignups.id, email: interestListSignups.email, referrals: referralsSql })
@@ -249,6 +253,8 @@ export async function getWaitlistStats(): Promise<WaitlistStats> {
     joined24h: growth?.joined24h ?? 0,
     joined7d: growth?.joined7d ?? 0,
     referred: growth?.referred ?? 0,
+    referralBase: growth?.referralBase ?? 0,
+    operatorTestJoins: operator?.n ?? 0,
     topReferrers: leaders.map((l) => ({
       email: l.email,
       referrals: Number(l.referrals),
@@ -422,7 +428,15 @@ export type InterestListSourceRow = {
  */
 export async function interestListSources(): Promise<InterestListSourceRow[]> {
   const db = await getDb();
-  const bucket = sql<string>`coalesce(nullif(${interestListSignups.utmSource}, ''), nullif(${interestListSignups.referrer}, ''), 'direct')`;
+  // An operator's event paste is stored with utm_source = 'admin' so it can be told apart, but
+  // "admin" is not a channel anyone could act on: those rows are named for the event, exactly as
+  // `sourceLabel` names them in the roster. The operator's own test joins are left out.
+  const bucket = sql<string>`coalesce(
+    case when ${interestListSignups.signupEventLabel} is not null then 'Event · ' || ${interestListSignups.signupEventLabel} end,
+    nullif(${interestListSignups.utmSource}, ''),
+    nullif(${interestListSignups.referrer}, ''),
+    'direct'
+  )`;
 
   const rows = await db
     .select({
@@ -431,6 +445,7 @@ export async function interestListSources(): Promise<InterestListSourceRow[]> {
       converted: sql<number>`count(*) filter (where ${convertedSql})::int`,
     })
     .from(interestListSignups)
+    .where(sql`not ${operatorTestJoinSql()}`)
     .groupBy(bucket)
     .orderBy(sql`count(*) desc`);
 
@@ -709,7 +724,7 @@ export async function addManualInterestListSignup(
   });
 
   const pageUrl = getWaitlistPageUrl();
-  await sendInterestListWelcomeEmail(
+  const sent = await sendInterestListWelcomeEmail(
     row.email,
     buildUnsubscribeUrl(row.unsubscribeToken),
     asWelcomePlanet(row.welcomePlanet),
@@ -720,6 +735,7 @@ export async function addManualInterestListSignup(
     ticket.position,
     eventLabel
   );
+  if (sent) track("waitlist_email_sent", { kind: "welcome" }, { actor: "system" });
 
   return { email: row.email, id: row.id };
 }

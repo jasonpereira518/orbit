@@ -6,6 +6,7 @@
  * Run: npx tsx scripts/smoke-meeting-sessions.ts
  */
 import "./smoke/_env";
+import { SPEECH_LIMITS } from "../src/lib/speech-limits";
 import { setDeepgramEnabledForSmoke } from "./smoke/_env";
 // The meeting cap is only enforced while Orbit is the one paying, and `_env` strips the key
 // from every smoke — so the checks below that expect a 402 need the switch back on.
@@ -17,6 +18,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import {
   contacts,
+  gateEvents,
   meetingSessions,
   meetingTranscriptSegments,
   noteBatches,
@@ -37,6 +39,7 @@ import {
   markMeetingSessionSaved,
   missingSeqs,
   recordLiveSegments,
+  validYouClaim,
   type LiveSegmentInput,
   resumeMeetingSessionRow,
   storeMeetingDigest,
@@ -47,6 +50,9 @@ import { saveNoteBatch, undoNoteBatchForUser, type SaveNoteBatchInput } from "..
 import { hashSourceNote } from "../src/lib/suggested-reminder-utils";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { encodeWav16 } from "../src/lib/voice-recording";
+
+/** More meeting seconds than any plan allows in a month, whatever the allowances are set to. */
+const SPENT_MONTH_SECONDS = Math.max(...Object.values(SPEECH_LIMITS.meeting)) + 60;
 
 const USER = "smoke-meeting-sessions-user";
 const OTHER = "smoke-meeting-sessions-other";
@@ -188,6 +194,53 @@ async function main() {
   const transcript = (await getMeetingTranscript(USER, first.id))!;
   check("segments come back in seq order", transcript.segments.map((s) => s.seq).join() === "0,1,2,3,5");
   check("the text skips silence and keeps order", transcript.text === "line 0\n\nline 1\n\nline 2\n\nline 5");
+
+  // ── One chunk, one bill ──────────────────────────────────────────────────────────────
+  // Two uploads of the same seq at once (a retry racing a slow first attempt) used to both
+  // reach the transcriber. The claim makes the second wait for the first.
+  const racing = await createMeetingSessionRow(USER, { includesMic: false, recorderId: "rec-R" });
+  let slowCalls = 0;
+  const slow: Transcriber = async () => {
+    slowCalls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return { text: "once", engine: "deepgram" };
+  };
+  const [ra, rb] = await Promise.all([
+    ingestMeetingChunk(USER, racing.id, meta(0, "rec-R"), WAV, slow),
+    ingestMeetingChunk(USER, racing.id, meta(0, "rec-R"), WAV, slow),
+  ]);
+  check("two concurrent uploads of one chunk transcribe it once", slowCalls === 1, `calls=${slowCalls}`);
+  const loser = [ra, rb].find((r) => !r.ok);
+  check("…the second is told to retry later", loser !== undefined && !loser.ok && loser.status === 429 && "retryAfterSec" in loser && loser.retryAfterSec > 0, JSON.stringify([ra, rb]));
+  const raceRetry = await ingestMeetingChunk(USER, racing.id, meta(0, "rec-R"), WAV, slow);
+  check("…and its retry gets the stored segment back", raceRetry.ok && raceRetry.duplicate && raceRetry.text === "once" && slowCalls === 1);
+
+  const failing: Transcriber = async () => { throw new Error("provider down"); };
+  const failed = await ingestMeetingChunk(USER, racing.id, meta(1, "rec-R"), WAV, failing).then(() => null, (err: Error) => err);
+  check("a failed transcription still throws to the route", failed instanceof Error);
+  const retry = await ingestMeetingChunk(USER, racing.id, meta(1, "rec-R"), WAV, slow);
+  check("…and releases its claim, so the retry runs at once", retry.ok && retry.text === "once" && !retry.duplicate, JSON.stringify(retry));
+  await discardMeetingSessionRow(USER, racing.id);
+
+  // ── "You" is known late; the sentences before it are relabelled ─────────────────────
+  {
+    const talk = await createMeetingSessionRow(USER, { includesMic: true, recorderId: "rec-Y" });
+    const seg = (seq: number, speaker: string) => ({ seq, startMs: seq * 5_000, endMs: seq * 5_000 + 4_000, speaker, text: `line ${seq}` });
+    await recordLiveSegments(USER, talk.id, { recorderId: "rec-Y", segments: [seg(0, "speaker-1"), seg(1, "speaker-2"), seg(2, "speaker-1")] });
+    // A reconnect's connection began at seq 3 and numbered on; its first voice was the user too.
+    await recordLiveSegments(USER, talk.id, {
+      recorderId: "rec-Y",
+      segments: [seg(3, "speaker-3"), seg(4, "speaker-1")],
+      you: { label: "speaker-3", fromSeq: 3 },
+    });
+    let speakers = (await getMeetingTranscript(USER, talk.id))!.segments.map((s) => s.speaker).join(",");
+    check("a claim relabels only its own connection's sentences", speakers === "speaker-1,speaker-2,speaker-1,you,speaker-1", speakers);
+    const late = await recordLiveSegments(USER, talk.id, { recorderId: "rec-Y", segments: [], you: { label: "speaker-1", fromSeq: 0 } });
+    speakers = (await getMeetingTranscript(USER, talk.id))!.segments.map((s) => s.speaker).join(",");
+    check("a claim on an empty batch (the last flush at Stop) still lands", late.ok && speakers === "you,speaker-2,you,you,you", speakers);
+    check("a malformed claim is refused by the validator", validYouClaim({ label: "you", fromSeq: 0 }) === null && validYouClaim({ label: "speaker-1", fromSeq: -1 }) === null);
+    await discardMeetingSessionRow(USER, talk.id);
+  }
   check("a seq that never arrived is reported missing", transcript.missingSeqs.join() === "4");
   check("lastSeq tracks the highest stored", transcript.session.lastSeq === 5);
   check("duration tracks the furthest chunk end", transcript.session.durationMs === 360_000);
@@ -411,18 +464,19 @@ async function main() {
     usage = await db.select().from(speechUsage).where(eq(speechUsage.userId, USER));
     check("…but is not charged twice", usage.length === 1 && usage[0]?.seconds === 120, String(usage[0]?.seconds));
 
-    // And the cap actually bites: a spent month refuses the chunk before any audio is sent.
+    // LENIENT: the cap stops a NEW meeting, never one already recording. This session has
+    // audio on Deepgram, so a spent month lets it finish (`meetingSecondsAllowed`).
     await db.insert(speechUsage).values({
       userId: USER,
       kind: "meeting",
-      seconds: 18_000,
+      seconds: SPENT_MONTH_SECONDS,
       source: "stream",
       sessionId: "22222222-2222-4222-8222-222222222222",
     });
     const callsBefore = dg.calls.length;
-    const refused = await ingestMeetingChunk(USER, session.id, meta(12, "rec-M"), WAV, dg.fn);
-    check("a spent meeting cap refuses the chunk", !refused.ok && refused.status === 402, JSON.stringify(refused));
-    check("…before spending anything on it", dg.calls.length === callsBefore);
+    const pastCap = await ingestMeetingChunk(USER, session.id, meta(12, "rec-M"), WAV, dg.fn);
+    check("a meeting already recording finishes past a spent cap", pastCap.ok && pastCap.engine === "deepgram", JSON.stringify(pastCap));
+    check("…transcribing the chunk once", dg.calls.length === callsBefore + 1);
 
     const stillSilent = await ingestMeetingChunk(USER, session.id, meta(13, "rec-M"), null, dg.fn);
     check("…while a silent chunk, which costs nothing, still records", stillSilent.ok && stillSilent.engine === "silent");
@@ -439,6 +493,21 @@ async function main() {
       JSON.stringify(byokUnderSpentCap)
     );
     setDeepgramEnabledForSmoke(true);
+
+    // And the cap still bites where it should: a meeting with nothing recorded yet.
+    const fresh = await createMeetingSessionRow(USER, { includesMic: false, recorderId: "rec-F" });
+    const freshBefore = dg.calls.length;
+    const refused = await ingestMeetingChunk(USER, fresh.id, meta(0, "rec-F"), WAV, dg.fn);
+    check("a meeting with nothing recorded yet is refused once the month is spent", !refused.ok && refused.status === 402, JSON.stringify(refused));
+    check("…before spending anything on it", dg.calls.length === freshBefore);
+    // Audit D1: a speech-cap 402 used to leave no gate row; the refusal is unchanged.
+    const capRows = await db.select().from(gateEvents).where(and(eq(gateEvents.userId, USER), eq(gateEvents.feature, "speechMeeting")));
+    check("the spent-cap refusal is recorded as a speechMeeting gate hit, on the account's plan, with its route",
+      capRows.length === 1 && capRows[0]!.plan === "orbit" && (capRows[0]!.context as { route?: string }).route === "meeting.chunk", JSON.stringify(capRows));
+    const refusedAgain = await ingestMeetingChunk(USER, fresh.id, meta(1, "rec-F"), WAV, dg.fn);
+    check("…refused again with the same 402, and still one row (throttled)",
+      !refusedAgain.ok && refusedAgain.status === 402 && (await db.select().from(gateEvents).where(and(eq(gateEvents.userId, USER), eq(gateEvents.feature, "speechMeeting")))).length === 1);
+    await discardMeetingSessionRow(USER, fresh.id);
   }
 
   // ── What the meter books is the audio ORBIT paid for ────────────────────────────────

@@ -1,6 +1,6 @@
 /*
  * GENERATED — do not edit by hand.
- * Copied from src/app/globals.css by scripts/tokens.mjs.
+ * Copied from src/app/theme.css by scripts/tokens.mjs.
  * Run `npm run tokens:sync` after changing the app's tokens;
  * `npm run check:tokens` fails the build if these drift.
  */
@@ -44,6 +44,7 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
+  --color-muted-foreground-subtle: var(--muted-foreground-subtle);
   --color-muted: var(--muted);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-secondary: var(--secondary);
@@ -88,6 +89,11 @@
   --radius-xl: calc(var(--radius) * 1.4);
 }
 @theme {
+  /* The two smallest text steps, in rem so they follow the reader's own font-size setting
+   * (the px literals they replace did not). No line-height of their own, like the literals. */
+  --text-3xs: 0.625rem; /* 10px */
+  --text-2xs: 0.6875rem; /* 11px */
+
   --transition-duration-fast: 120ms; /* hover, press, tooltips, exits */
   --transition-duration-base: 180ms; /* overlays, toggles, small enters */
   --transition-duration-slow: 320ms; /* page/section reveals */
@@ -117,9 +123,14 @@
   --secondary-foreground: #1a1c1a;
   --muted: #f0f2ee;
   --muted-foreground: #5f6760;
+  /* One step quieter than muted, for secondary text that used to be `text-muted-foreground/70`
+     or `/80` (3.0-3.8:1). Still 4.6:1 on --muted and 5.2:1 on a card, so it can carry text. */
+  --muted-foreground-subtle: #686f69;
   --accent: #e7f0ee;
   --accent-foreground: #0f3d3e;
-  --destructive: oklch(0.577 0.245 27.325);
+  /* 6.0:1 on a card and 5.1:1 on its own 10% tint (the destructive button and error chips);
+     the shadcn default (0.577 0.245) fell to 4.0:1 there. */
+  --destructive: oklch(0.525 0.2 27.325);
   /* ── Status semantics ──
      `--destructive` above already owns error, so this names only the three it
      does not cover. Not new hues: these are the emerald/amber the app already
@@ -270,6 +281,7 @@
   --secondary-foreground: #e7ecf1;
   --muted: #1c1d20;
   --muted-foreground: #99a2aa; /* 6.0:1 on card, 5.4:1 on popover */
+  --muted-foreground-subtle: #8f98a0; /* 5.3:1 on card, 4.8:1 on popover */
   /* A dim slate-blue: the sky accent's own family, so accent text on it (9.5:1)
      reads as one piece, but dark enough to sit in the graphite without going navy. */
   --accent: #242e36;

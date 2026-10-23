@@ -15,7 +15,8 @@ import { isWaitlistHostHeader } from "@/lib/waitlist-host";
  * waitlist is sent out.
  */
 export const metadata: Metadata = {
-  title: "Privacy — early access waitlist",
+  // Absolute: the waitlist is its own surface and does not carry the app's "· Orbit" suffix.
+  title: { absolute: "Privacy — early access waitlist" },
   description: "What the early access waitlist collects, why, and how to leave.",
   metadataBase: new URL(getWaitlistOrigin()),
   icons: { icon: "/waitlist/icon.png", apple: "/waitlist/icon.png" },
@@ -39,7 +40,9 @@ const SECTIONS: ReadonlyArray<{ title: string; body: React.ReactNode }> = [
         </li>
         <li>
           Anonymous page-view counts — the page, rough location and device type. No cookies are
-          set for this, and it is never tied to your email address.
+          set for this. When you join, a random id for that browser tab (it disappears when you
+          close the tab) is saved with your entry so we can tell which page your sign-up came
+          from; it is not your IP address and identifies no one on its own.
         </li>
         <li>
           Your IP address, to rate-limit sign-ups and stop automated ones. It is kept apart
@@ -58,7 +61,7 @@ const SECTIONS: ReadonlyArray<{ title: string; body: React.ReactNode }> = [
   },
   {
     title: "How long we keep it",
-    body: "Until you leave the waitlist, or until early access opens and your invite has been sent. Leaving takes one click from any waitlist email.",
+    body: "Until you leave the waitlist. Once you have created an account, your email address and name are removed from the waitlist 30 days after you accept your invite, and at once if you delete your account; your place in line and where you came from are kept without them. Leaving takes one click from any waitlist email.",
   },
   {
     title: "Questions, or deletion",
@@ -72,7 +75,7 @@ export default async function WaitlistPrivacyPage() {
 
   return (
     <div className="landing-root relative min-h-dvh bg-[#03050c] text-[#e8f3f1]">
-      <main className="mx-auto w-full max-w-2xl px-6 pb-20 pt-16 md:pt-24">
+      <main id="main-content" className="mx-auto w-full max-w-2xl px-6 pb-20 pt-16 md:pt-24">
         <p className="text-xs uppercase tracking-[0.16em] text-landing-accent">
           Early access waitlist
         </p>

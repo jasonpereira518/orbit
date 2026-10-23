@@ -143,7 +143,7 @@ export default async function MoneyRunCostPage() {
           {breakdown.topSpenders.length === 0 ? (
             <EmptyState>No AI usage recorded in the last 30 days.</EmptyState>
           ) : (
-            <AdminTable minWidth="none"
+            <AdminTable label="Heaviest accounts, 30 days" minWidth="none"
               head={
                 <>
                   <Th>Account</Th>

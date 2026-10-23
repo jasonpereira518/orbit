@@ -4,7 +4,7 @@ import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useEffect, useState, useTransition } from "react";
 import { FileSpreadsheet } from "lucide-react";
 import { toast } from "@/lib/toast";
-import { previewLinkedInCsv } from "@/actions/imports";
+import { previewConnections, type ConnectionPerson, type ConnectionsPreview } from "@/lib/imports/linkedin-connections-client";
 import { Button } from "@/components/ui/button";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { connectionToReviewPerson } from "@/lib/imports/review-people";
@@ -21,9 +21,6 @@ import { startImportJob, useImportJob } from "@/lib/import-job-runner";
 import { UserFacingError, friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
-type PreviewResult = Awaited<ReturnType<typeof previewLinkedInCsv>>;
-type ConnectionsPreview = Exclude<PreviewResult, { error: string }>;
-type ConnectionPerson = ConnectionsPreview["people"][number];
 
 export function LinkedInConnectionsImport() {
   const job = useImportJob();
@@ -111,7 +108,7 @@ export function LinkedInConnectionsImport() {
               );
               setFileName(name);
               setCsvText(text);
-              const res = await previewLinkedInCsv(text);
+              const res = await previewConnections(text);
               // `UserFacingError`, not `Error`: these messages were written to be read
               // ("This looks like a Messages export…"), and `friendlyError` replaces any
               // plain Error with the generic fallback.
@@ -137,7 +134,7 @@ export function LinkedInConnectionsImport() {
           onClick={() =>
             start(async () => {
               try {
-                const res = await previewLinkedInCsv(csvText);
+                const res = await previewConnections(csvText);
                 if ("error" in res) throw new UserFacingError(res.error);
                 applyPreview(res);
                 toast.success(`Loaded ${res.totalRows} people`);

@@ -45,6 +45,8 @@ import {
 import { startQueryCount, stopQueryCount } from "@/lib/query-counter";
 import { reportAndContinue, reportError } from "@/lib/report-error";
 import { withReference } from "@/lib/errors";
+import { track } from "@/lib/product-events";
+import type { IMPORT_PROVIDERS } from "@/lib/product-event-schemas";
 
 /**
  * Rows pulled from the DB per processing loop iteration. Widened from 40 to cut the fixed
@@ -500,7 +502,7 @@ function accumulatedStats(
 export async function runImportJob(importId: string): Promise<void> {
   const db = await getDb();
   const jobStart = Date.now();
-  startQueryCount();
+  startQueryCount({ captureText: false });
 
   // Everything below runs inside this try so the `finally` is the *only* thing any exit
   // path — an early return, a caught failure, cancellation mid-loop, or a bug that throws
@@ -1422,6 +1424,26 @@ export function truncateStoredError(message: string): string {
   return message.length > STORED_ERROR_MAX ? message.slice(0, STORED_ERROR_MAX) : message;
 }
 
+/** `imports.import_type` as the closed provider list `import_failed` admits. */
+export function importProviderForEvent(importType: string): (typeof IMPORT_PROVIDERS)[number] {
+  switch (importType) {
+    case "linkedin_connections":
+    case "linkedin_messages":
+    case "google_contacts":
+    case "outlook_contacts":
+      return importType;
+    case "contacts_file":
+      return "csv";
+    case "calendar_ics":
+    case "calendar_csv":
+      return "calendar";
+    case "drive_docs":
+      return "drive_notes";
+    default:
+      return "other";
+  }
+}
+
 /** Exported so the Gmail recruiter scan runner shares one job-failure path. */
 export async function failImport(
   importId: string,
@@ -1436,6 +1458,12 @@ export async function failImport(
   // `code` are both gone once the message has been stringified into the column.
   const errorCode = classifyImportFailure(err);
   const db = await getDb();
+  // Read before the write so a second `failImport` for a job that is already failed (the
+  // stall sweep and the runner both reaching it) is not counted twice.
+  const before = await db.query.imports.findFirst({
+    where: eq(imports.id, importId),
+    columns: { userId: true, importType: true, status: true, stats: true },
+  });
   await db
     .update(imports)
     .set({
@@ -1456,4 +1484,17 @@ export async function failImport(
       })}::jsonb`,
     })
     .where(eq(imports.id, importId));
+
+  if (before && before.status !== "failed") {
+    track(
+      "import_failed",
+      {
+        import_id: importId,
+        provider: importProviderForEvent(before.importType),
+        error_kind: errorCode,
+        rows_failed: stats?.failedRows ?? before.stats?.failedRows ?? 0,
+      },
+      { userId: before.userId, actor: "system" }
+    );
+  }
 }
