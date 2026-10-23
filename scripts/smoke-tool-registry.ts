@@ -78,6 +78,28 @@ const EXPECTED_MCP_TOOLS = [
   // an agenda or an address; and the free gaps, which carry no one else's words at all.
   "upcoming_meetings",
   "free_time",
+  // Phase 4 (docs/superpowers/plans/2026-10-19-chat-agent.md): the feature reads, each with an
+  // MCP field allowlist (a capture's title and excerpt stay home), offered only once the page
+  // behind them is released to the user …
+  "query_contacts",
+  "query_interactions",
+  "list_events",
+  "get_event_roster",
+  "who_to_talk_to",
+  "events_with_contact",
+  "list_opportunities",
+  "list_radar_cards",
+  "list_campaigns",
+  "list_my_recruiters",
+  "get_dossier",
+  "list_sent_emails",
+  "recent_captures",
+  "recent_imports",
+  // … and the catalog writes MCP lacked. No delete and no remove_tags: MCP never removes.
+  "add_tags",
+  "reschedule_reminder",
+  "create_event",
+  "mark_spoke_to",
 ].sort();
 
 /** Every string anywhere in a payload, however deeply nested. */

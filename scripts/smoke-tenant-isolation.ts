@@ -31,6 +31,7 @@ import {
   calendarEvents,
   calendarSources,
   contactOpportunities,
+  contactTags,
   contacts,
   emailSends,
   eventAttendees,
@@ -152,11 +153,11 @@ run(async () => {
       rfcMessageId: `<${randomUUID()}@orbit>`,
     });
     const [vOrbitEvent] = await db.insert(events).values({ userId: VICTIM, title: "VICTIM-EVENT", startsAt: soon, endsAt: soon }).returning();
-    await db.insert(eventAttendees).values({ eventId: vOrbitEvent.id, userId: VICTIM, fullName: "VICTIM-ATTENDEE", contactId: vContact.id, identityKey: `xt-v-${randomUUID()}` });
+    const [vAttendee] = await db.insert(eventAttendees).values({ eventId: vOrbitEvent.id, userId: VICTIM, fullName: "VICTIM-ATTENDEE", contactId: vContact.id, identityKey: `xt-v-${randomUUID()}` }).returning();
     await db.insert(contactOpportunities).values({ userId: VICTIM, contactId: vContact.id, kind: "referral", label: "VICTIM-OPPORTUNITY" } as never);
     await db.insert(emailSends).values(sendRow(VICTIM, vContact.id, "VICTIM-EMAIL") as never);
     const [aOrbitEvent] = await db.insert(events).values({ userId: ATTACKER, title: "ATTACKER-EVENT", startsAt: soon, endsAt: soon }).returning();
-    await db.insert(eventAttendees).values({ eventId: aOrbitEvent.id, userId: ATTACKER, fullName: "ATTACKER-ATTENDEE", contactId: aContact.id, identityKey: `xt-a-${randomUUID()}` });
+    const [aAttendee] = await db.insert(eventAttendees).values({ eventId: aOrbitEvent.id, userId: ATTACKER, fullName: "ATTACKER-ATTENDEE", contactId: aContact.id, identityKey: `xt-a-${randomUUID()}` }).returning();
     await db.insert(contactOpportunities).values({ userId: ATTACKER, contactId: aContact.id, kind: "referral", label: "ATTACKER-OPPORTUNITY" } as never);
     await db.insert(emailSends).values(sendRow(ATTACKER, aContact.id, "ATTACKER-EMAIL") as never);
 
@@ -239,6 +240,23 @@ run(async () => {
     control("snooze_reminder", await call("snooze_reminder", { reminderId: aReminder2.id, days: 3 }), (r) => (r as { snoozed: boolean }).snoozed);
     refused("schedule_follow_up", await call("schedule_follow_up", { contactId: vContact.id, days: 3 }));
     control("schedule_follow_up", await call("schedule_follow_up", { contactId: aContact.id, days: 3 }), (r) => (r as { scheduled: boolean }).scheduled);
+
+    // The catalog writes MCP gained in Phase 4 (`MCP_CHAT_WRITE_TOOLS`).
+    refused("add_tags", await call("add_tags", { contactId: vContact.id, tags: ["pwned"] }), "gone");
+    control("add_tags", await call("add_tags", { contactId: aContact.id, tags: ["own-tag"] }), (r) => (r as { done: boolean }).done);
+    refused("reschedule_reminder", await call("reschedule_reminder", { reminderId: vReminder.id, due_date: "2026-12-01" }), "gone");
+    refused("mark_spoke_to", await call("mark_spoke_to", { eventId: vOrbitEvent.id, attendeeIds: [vAttendee.id] }), "gone");
+    // A's event, B's attendee: the event check passes, and the write still touches only A's rows.
+    await call("mark_spoke_to", { eventId: aOrbitEvent.id, attendeeIds: [vAttendee.id] });
+    t.check(
+      "mark_spoke_to: B's attendee stays unmarked whichever event is named",
+      (await db.query.eventAttendees.findFirst({ where: eq(eventAttendees.id, vAttendee.id) }))?.spokeTo === 0
+    );
+    control("mark_spoke_to", await call("mark_spoke_to", { eventId: aOrbitEvent.id, attendeeIds: [aAttendee.id] }), (r) => (r as { done: boolean }).done);
+    t.check(
+      "add_tags: B's contact carries no tag A tried to add",
+      (await db.select().from(contactTags).where(eq(contactTags.contactId, vContact.id))).length === 0
+    );
 
     // request_send with B's contact: the draft is A's own and is staged, but must not be linked to B's row.
     {
