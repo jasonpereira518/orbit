@@ -14,7 +14,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../../src/db";
-import { actionItems, chatMessages, chatThreads, contactTags, contacts, interactions, memoryChunks, reminders, tags } from "../../src/db/schema";
+import {
+  actionItems,
+  chatMessages,
+  chatThreads,
+  contactOpportunities,
+  contactTags,
+  contacts,
+  interactions,
+  memoryChunks,
+  reminders,
+  tags,
+  userGoals,
+} from "../../src/db/schema";
 import { labelAnswer } from "../../src/lib/chat-abstention";
 import type { StoredProposedAction } from "../../src/lib/chat-proposed-actions";
 import { saveChatAutoApplyFor } from "../../src/lib/chat-auto-apply";
@@ -1707,6 +1719,7 @@ async function clearResearchUser(userId: string) {
   await db.delete(chatThreads).where(eq(chatThreads.userId, userId));
   await db.delete(reminders).where(eq(reminders.userId, userId));
   await db.delete(actionItems).where(eq(actionItems.userId, userId));
+  await db.delete(userGoals).where(eq(userGoals.userId, userId));
   await db.delete(contacts).where(eq(contacts.userId, userId));
   await db.delete(tags).where(eq(tags.userId, userId));
 }
@@ -1748,6 +1761,12 @@ async function seedChatRecords(
       status: "pending",
       reminderType: "manual",
     });
+  }
+  for (const text of records.goals ?? []) {
+    await db.insert(userGoals).values({ userId, text, active: 1 });
+  }
+  for (const o of records.opportunities ?? []) {
+    await db.insert(contactOpportunities).values({ userId, contactId: idOf(o.email), kind: o.kind as never, label: o.label, createdBy: "user" });
   }
   for (const [i, a] of (records.actionItems ?? []).entries()) {
     const contactId = idOf(a.email);
