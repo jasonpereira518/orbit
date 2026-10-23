@@ -254,6 +254,57 @@
       "question": "What did Claire say about our Series B terms?",
       "mustMention": [],
       "mustAbstain": true
+    },
+    {
+      "id": "chat-34-propose-note",
+      "question": "Log a note on Omar Haddad: we talked about Stripe's new treasury product.",
+      "mustMention": [],
+      "mustPropose": [
+        "log_note"
+      ]
+    },
+    {
+      "id": "chat-35-propose-reminder",
+      "question": "Remind me to send Maya Chen the deck next Tuesday.",
+      "mustMention": [],
+      "mustPropose": [
+        "create_reminder",
+        "schedule_follow_up"
+      ]
+    },
+    {
+      "id": "chat-36-propose-complete",
+      "question": "I sent James the Q3 metrics — tick that off.",
+      "mustMention": [],
+      "mustPropose": [
+        "complete_action_item"
+      ]
+    },
+    {
+      "id": "chat-37-propose-snooze",
+      "question": "Push the growth plan reminder for Prisha back a week.",
+      "mustMention": [],
+      "mustPropose": [
+        "snooze_reminder",
+        "reschedule_reminder"
+      ]
+    },
+    {
+      "id": "chat-38-propose-tag",
+      "question": "Tag Lena Kowalski as advisor.",
+      "mustMention": [],
+      "mustPropose": [
+        "add_tags"
+      ]
+    },
+    {
+      "id": "chat-39-question-not-request",
+      "question": "What do I owe James?",
+      "mustMention": [],
+      "mustSay": [
+        "Q3 metrics"
+      ],
+      "mustNotPropose": true
     }
   ],
   "records": {

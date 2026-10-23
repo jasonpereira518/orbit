@@ -201,8 +201,8 @@ export const FEATURE_TOOLS: OrbitTool[] = [
     name: "get_event_roster",
     title: "Who is at an event",
     description:
-      "The roster of one event: each person's name, company, title, role, whether the user " +
-      "marked that they spoke to them, and their contact id when they are already a contact. " +
+      "The roster of one event: each person's attendeeId, name, company, title, role, whether " +
+      "the user marked that they spoke to them, and their contact id when they are already a contact. " +
       "Filter to the people the user spoke to, or to people already in their contacts.",
     inputSchema: {
       eventId: z.string().uuid(),
@@ -227,6 +227,8 @@ export const FEATURE_TOOLS: OrbitTool[] = [
         event: { id: event.id, title: event.title, date: day(event.startsAt) },
         total: roster.length,
         people: roster.slice(0, args.limit).map((r) => ({
+          // For mark_spoke_to: a roster row is named by its own id, contact or not.
+          attendeeId: r.id,
           name: r.fullName,
           company: r.company,
           title: r.title,
@@ -261,6 +263,7 @@ export const FEATURE_TOOLS: OrbitTool[] = [
         event: { id: event.id, title: event.title, date: day(event.startsAt) },
         when: ranked.when,
         people: ranked.rows.map((r) => ({
+          attendeeId: r.attendeeId,
           name: r.name,
           company: r.company,
           title: r.title,
