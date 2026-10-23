@@ -13,11 +13,14 @@ import { UserFacingError } from "@/lib/errors";
 import {
   OPEN_OPPORTUNITY_STATUSES,
   looksLikeReferral,
+  normalizeOpportunityDirection,
   normalizeOpportunityKind,
   normalizeOpportunityLabel,
+  normalizeOpportunityStatus,
   opportunityMirrorLabels,
   type OpportunityKind,
 } from "@/lib/opportunity-kinds";
+import { isoDayToLocalNoon } from "@/lib/suggested-reminder-utils";
 
 /**
  * Idempotency for opportunities written by a note paste.
@@ -306,4 +309,126 @@ export async function dismissOpportunitiesForBatch(
       )
     )
     .returning();
+}
+
+/* --------------------------------------------------- hand writes, by the user or chat ----- */
+//
+// The bodies of `createOpportunity` / `updateOpportunity` / `deleteOpportunity` /
+// `restoreOpportunity` (src/actions/opportunities.ts), user-scoped so chat's writes
+// (@/lib/tools/chat-writes-features) can call them. Each keeps the contact's mirror in step;
+// revalidation and the brief refresh stay with the callers that have a request.
+
+const ISO_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+export function parseOpportunityDueDate(iso: string | null | undefined): Date | null {
+  if (!iso || !ISO_DAY_RE.test(iso)) return null;
+  const d = isoDayToLocalNoon(iso);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+export type OpportunityPatch = {
+  kind?: string;
+  label?: string;
+  direction?: string | null;
+  dueDateIso?: string | null;
+  status?: string;
+};
+
+export async function createOpportunityForUser(
+  userId: string,
+  input: OpportunityPatch & { contactId: string; kind: string; label: string }
+): Promise<ContactOpportunity> {
+  const contactId = typeof input.contactId === "string" ? input.contactId.trim() : "";
+  if (!contactId) throw new UserFacingError("Pick a contact first");
+  const label = normalizeOpportunityLabel(input.label);
+  if (!label) throw new UserFacingError("Give the opportunity a short label");
+  const [row] = await insertOpportunities(userId, [
+    {
+      contactId,
+      kind: normalizeOpportunityKind(input.kind),
+      label,
+      status: normalizeOpportunityStatus(input.status),
+      direction: normalizeOpportunityDirection(input.direction),
+      dueDate: parseOpportunityDueDate(input.dueDateIso),
+      createdBy: "user",
+      // Hand-added rows carry no hash: there is no source note to dedupe against, and a
+      // null hash can never collide under the partial unique index.
+      itemHash: null,
+    },
+  ]);
+  if (!row) throw new UserFacingError("Couldn’t add that opportunity — try again?");
+  await syncContactOpportunityMirror(userId, contactId);
+  return row;
+}
+
+/** Patch one of the user's opportunities; returns it before and after, or null when it is gone. */
+export async function updateOpportunityForUser(
+  userId: string,
+  id: string,
+  patch: OpportunityPatch
+): Promise<{ before: ContactOpportunity; after: ContactOpportunity } | null> {
+  if (typeof id !== "string" || !id.trim()) return null;
+  const db = await getDb();
+  const where = and(eq(contactOpportunities.id, id.trim()), eq(contactOpportunities.userId, userId));
+  const before = await db.query.contactOpportunities.findFirst({ where });
+  if (!before) return null;
+  const set: Partial<typeof contactOpportunities.$inferInsert> = { updatedAt: new Date() };
+  if (patch.kind !== undefined) set.kind = normalizeOpportunityKind(patch.kind);
+  if (patch.label !== undefined) {
+    const label = normalizeOpportunityLabel(patch.label);
+    if (!label) throw new UserFacingError("Give the opportunity a short label");
+    set.label = label;
+  }
+  if (patch.direction !== undefined) set.direction = normalizeOpportunityDirection(patch.direction);
+  if (patch.dueDateIso !== undefined) set.dueDate = parseOpportunityDueDate(patch.dueDateIso);
+  if (patch.status !== undefined) {
+    const status = normalizeOpportunityStatus(patch.status);
+    set.status = status;
+    // Closing stamps the time; reopening clears it, so "closed on" never outlives the close.
+    set.closedAt = status === "open" || status === "in_progress" ? null : new Date();
+  }
+  const [after] = await db.update(contactOpportunities).set(set).where(where).returning();
+  if (!after) return null;
+  await syncContactOpportunityMirror(userId, after.contactId);
+  return { before, after };
+}
+
+/** Delete one of the user's opportunities, returning the row for Undo, or null when it is gone. */
+export async function deleteOpportunityForUser(userId: string, id: string): Promise<ContactOpportunity | null> {
+  if (typeof id !== "string" || !id.trim()) return null;
+  const db = await getDb();
+  const [row] = await db
+    .delete(contactOpportunities)
+    .where(and(eq(contactOpportunities.id, id.trim()), eq(contactOpportunities.userId, userId)))
+    .returning();
+  if (row) await syncContactOpportunityMirror(userId, row.contactId);
+  return row ?? null;
+}
+
+/**
+ * Undo for the delete: re-inserted under a NEW id, without the original `itemHash` — keeping
+ * it would let a restored row block a legitimate re-paste of the note it came from.
+ */
+export async function restoreOpportunityForUser(userId: string, row: ContactOpportunity): Promise<ContactOpportunity> {
+  if (!row || typeof row.contactId !== "string") throw new UserFacingError("Nothing to restore");
+  const [restored] = await insertOpportunities(userId, [
+    {
+      contactId: row.contactId,
+      kind: normalizeOpportunityKind(row.kind),
+      label: normalizeOpportunityLabel(row.label),
+      status: normalizeOpportunityStatus(row.status),
+      direction: normalizeOpportunityDirection(row.direction),
+      sourceInteractionId: row.sourceInteractionId,
+      noteBatchId: row.noteBatchId,
+      sourceExcerpt: row.sourceExcerpt,
+      dueDate: row.dueDate ? new Date(row.dueDate) : null,
+      rawDatePhrase: row.rawDatePhrase,
+      confidenceScore: row.confidenceScore,
+      createdBy: row.createdBy,
+      itemHash: null,
+    },
+  ]);
+  if (!restored) throw new UserFacingError("Couldn’t restore that opportunity");
+  await syncContactOpportunityMirror(userId, row.contactId);
+  return restored;
 }

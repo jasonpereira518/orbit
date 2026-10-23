@@ -162,6 +162,10 @@ export type ChatEvalFixture = {
     reminders?: Array<{ title: string; email?: string; dueInDays: number | null }>;
     /** Open action items, each on a seeded note with the contact. */
     actionItems?: Array<{ email: string; text: string; owedBy: "me" | "them" }>;
+    /** The user's active goals, in their words. */
+    goals?: string[];
+    /** Open opportunities on contacts — what `set_opportunity_status` cases name. */
+    opportunities?: Array<{ email: string; kind: string; label: string }>;
   };
 };
 

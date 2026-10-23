@@ -106,7 +106,9 @@ export function createAutoApplyGate(userId: string, enabled: boolean) {
         : Number.POSITIVE_INFINITY;
       return {
         enabled,
-        tier: write?.tier,
+        // The card's own tier: it can depend on the input (`tierFor`), and the stored one is
+        // what the person saw. A write that opens a dialog is never applied without them.
+        tier: write?.opensDialog ? "confirm" : (action.tier ?? write?.tier),
         destructive: Boolean(write?.destructive),
         identity: write ? touchesIdentity(write, input) : true,
         records,

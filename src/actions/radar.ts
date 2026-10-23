@@ -29,8 +29,8 @@ import { claimRadarLease, ensureRadarRun, maybeRefreshRadar, runRadarForUser } f
 import { markRecommendationsSeen } from "@/lib/radar/store";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
-import { eq, sql } from "drizzle-orm";
-import { undoAutopilotForUser } from "@/lib/radar/autopilot";
+import { eq } from "drizzle-orm";
+import { setRadarAutopilotForUser, undoAutopilotForUser } from "@/lib/radar/autopilot";
 import { captureRadarTimeZone } from "@/lib/radar/digest";
 import { TZ_COOKIE } from "@/lib/reminder-due-bucket";
 import { KIND_LABELS, RECOMMENDATION_KINDS, type RecommendationKind } from "@/lib/radar/types";
@@ -170,11 +170,7 @@ export async function undoAutopilot(id: string): Promise<RadarActionResult> {
 export async function setRadarAutopilot(kind: RecommendationKind, on: boolean): Promise<RadarActionResult> {
   const userId = await requireUserForReleasedSurface(SURFACE);
   if (!RECOMMENDATION_KINDS.includes(kind)) return { ok: false, message: "That isn’t a kind of card Radar makes" };
-  const db = await getDb();
-  await db
-    .update(userSettings)
-    .set({ radarAutopilot: sql`coalesce(${userSettings.radarAutopilot}, '{}'::jsonb) || ${JSON.stringify({ [kind]: on === true })}::jsonb` })
-    .where(eq(userSettings.userId, userId));
+  await setRadarAutopilotForUser(userId, kind, on);
   revalidateRadar();
   return { ok: true, message: on ? `Autopilot on for ${KIND_LABELS[kind]}` : `Autopilot off for ${KIND_LABELS[kind]}` };
 }

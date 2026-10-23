@@ -23,7 +23,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
-import { z, type ZodRawShape } from "zod";
+import { z } from "zod";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { setActionItemStatusForUser } from "@/lib/action-items";
@@ -38,8 +38,19 @@ import {
 import { DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
 import { UserFacingError } from "@/lib/errors";
 import { toolError, type OrbitTool } from "@/lib/tools/registry";
+import {
+  isoDay,
+  name,
+  plural,
+  s,
+  text,
+  uuid,
+  type ChatWrite,
+  type UndoFn,
+  type UndoStep,
+} from "@/lib/tools/chat-write-kit";
+import { FEATURE_UNDO, FEATURE_WRITES } from "@/lib/tools/chat-writes-features";
 import { createEventForUser, deleteEventForUser, getEventForUser, setSpokeToForUser } from "@/lib/events/store";
-import { sanitizeAgentText } from "@/lib/mcp/sanitize";
 import { createReminderForUser, scheduleContactFollowUpForUser } from "@/lib/reminder-writes";
 import {
   completeReminder,
@@ -54,48 +65,7 @@ import {
   type SnoozeSnapshot,
 } from "@/lib/reminders";
 
-/** Ids the turn has seen, by kind — what a proposal may name. Names, where known, for previews. */
-export type ProposalScope = {
-  contacts: ReadonlyMap<string, string>;
-  reminders: ReadonlyMap<string, string>;
-  events: ReadonlyMap<string, string>;
-  attendees: ReadonlyMap<string, string>;
-  actionItems: ReadonlyMap<string, string>;
-};
-
-/** An inverse a done card can run, stored on the proposal. Never offered to a model. */
-export type UndoStep = { tool: UndoName; input: Record<string, unknown> };
-
-export type CommitOutcome = {
-  resultId: string | null;
-  /** Where the card's "View" goes. */
-  href: string | null;
-  undo: UndoStep | null;
-};
-
-export type ChatWrite = {
-  name: string;
-  title: string;
-  description: string;
-  inputSchema: ZodRawShape;
-  tier: "auto" | "confirm";
-  destructive?: boolean;
-  /** Every id the input names, by kind; each must be in the turn's `ProposalScope`. */
-  refs(input: Record<string, unknown>): Partial<Record<keyof ProposalScope, string[]>>;
-  /** The card's sentence. Built from the input and the scope's names, never from model prose. */
-  preview(input: Record<string, unknown>, scope: ProposalScope): string;
-  /** The contact the card shows, when there is one. */
-  contactOf?(input: Record<string, unknown>): string | null;
-  commit(userId: string, input: Record<string, unknown>, ref: { messageId: string; actionId: string }): Promise<CommitOutcome>;
-};
-
-const uuid = z.string().uuid();
-const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}/, "Use YYYY-MM-DD.");
-/** Free text a write will store: sanitized the way every agent-written field is. */
-const text = (s: unknown, max: number) => sanitizeAgentText(String(s ?? "")).slice(0, max).trim();
-const s = (v: unknown) => (typeof v === "string" ? v : "");
-const name = (map: ReadonlyMap<string, string>, id: unknown, fallback: string) => map.get(s(id)) ?? fallback;
-const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
+export type { ChatWrite, CommitOutcome, ProposalScope, UndoStep } from "@/lib/tools/chat-write-kit";
 
 /** A due date inside the window `createReminderForUser` accepts, as ISO, or null. */
 function dueWithinYear(raw: unknown): string | null {
@@ -151,7 +121,7 @@ const FIELD_LABEL: Record<keyof typeof CONTACT_FIELDS, string> = {
 
 /* ------------------------------------------------------------------- the catalog ----- */
 
-export const CHAT_WRITES: readonly ChatWrite[] = [
+const CORE_WRITES: readonly ChatWrite[] = [
   // ------------------------------------------------------------------- contacts
   {
     name: "log_note",
@@ -517,9 +487,12 @@ export const CHAT_WRITES: readonly ChatWrite[] = [
   },
 ];
 
+/** Every change chat can make: the core catalog above and the feature writes. */
+export const CHAT_WRITES: readonly ChatWrite[] = [...CORE_WRITES, ...FEATURE_WRITES];
+
 /* ------------------------------------------------------------------------ undo ----- */
 
-const UNDO = {
+const CORE_UNDO = {
   async delete_interaction(userId: string, input: Record<string, unknown>) {
     await deleteInteractionForUser(userId, s(input.interactionId), { skipRevalidate: true });
   },
@@ -562,6 +535,8 @@ const UNDO = {
   },
 } as const;
 
+const UNDO: Record<string, UndoFn> = { ...CORE_UNDO, ...FEATURE_UNDO };
+
 export type UndoName = keyof typeof UNDO;
 
 export function chatWriteNamed(toolName: string): ChatWrite | undefined {
@@ -575,7 +550,7 @@ export function parseWriteInput(write: ChatWrite, input: unknown): Record<string
 }
 
 export async function runUndo(userId: string, step: UndoStep): Promise<void> {
-  const fn = (UNDO as Record<string, (u: string, i: Record<string, unknown>) => Promise<void>>)[step.tool];
+  const fn = UNDO[step.tool];
   if (!fn) throw new UserFacingError("That can’t be undone from here");
   await fn(userId, step.input ?? {});
 }

@@ -275,7 +275,7 @@ The loop becomes the default only when, against the Phase 0 after-run: every gat
 
 ## Changes chat makes itself (`EVAL_CHAT_AUTO_APPLY`, Phase 3)
 
-Chat cases 34–39 are change requests: on the loop path each must propose the right change
+Chat cases 34–39 and 40–45 (Phase 2b: goals, opportunities, a recruiter, an email draft) are change requests: on the loop path each must propose the right change
 (`proposalAccuracy`) and a plain question must propose none. With `EVAL_CHAT_AUTO_APPLY=1` as
 well, the eval account has "Let chat make small changes for you" switched on, and
 `autoApplyAccuracy` scores every card: an auto-tier change must come back applied, a

@@ -15,7 +15,25 @@
 import { randomUUID } from "node:crypto";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 import { CHAT_WRITES, type ProposalScope } from "@/lib/tools/chat-writes";
+import { SCOPE_KINDS, tierOf } from "@/lib/tools/chat-write-kit";
 import { toolError, type OrbitTool } from "@/lib/tools/registry";
+
+/** How a refusal names each kind of id. */
+const KIND_NOUN: Record<keyof ProposalScope, string> = {
+  contacts: "contact",
+  reminders: "reminder",
+  events: "event",
+  attendees: "attendee",
+  actionItems: "action item",
+  goals: "goal",
+  opportunities: "opportunity",
+  recommendations: "radar card",
+  campaigns: "campaign",
+  outreachMessages: "outreach message",
+  recruiters: "recruiter",
+  meetings: "meeting",
+  calendarEvents: "calendar event",
+};
 
 /** Cards per answer. A model that proposes more is told so, and the rest are not stored. */
 export const MAX_PROPOSALS = 10;
@@ -37,13 +55,7 @@ export type ProposalSink = {
 };
 
 export function createProposalSink(seen: Partial<{ [K in keyof ProposalScope]: ReadonlyMap<string, string> }>): ProposalSink {
-  const scope: MutableScope = {
-    contacts: new Map(seen.contacts ?? []),
-    reminders: new Map(seen.reminders ?? []),
-    events: new Map(seen.events ?? []),
-    attendees: new Map(seen.attendees ?? []),
-    actionItems: new Map(seen.actionItems ?? []),
-  };
+  const scope = Object.fromEntries(SCOPE_KINDS.map((kind) => [kind, new Map(seen[kind] ?? [])])) as MutableScope;
   const proposals: StoredProposedAction[] = [];
   const keys = new Set<string>();
   let latest: StoredProposedAction | null = null;
@@ -97,6 +109,35 @@ export function createProposalSink(seen: Partial<{ [K in keyof ProposalScope]: R
           for (const row of rowsOf(r.people)) add(scope.attendees, row.attendeeId, row.name);
           break;
         }
+        case "get_goals":
+          for (const row of rowsOf(r.items)) add(scope.goals, row.id, row.text);
+          break;
+        case "list_opportunities":
+          for (const row of rowsOf(result)) add(scope.opportunities, row.id, row.label);
+          break;
+        case "list_radar_cards":
+          for (const row of rowsOf(result)) add(scope.recommendations, row.id, row.name);
+          break;
+        case "list_campaigns":
+          for (const row of rowsOf(result)) add(scope.campaigns, row.id, row.name);
+          break;
+        case "list_outreach_messages":
+          for (const row of rowsOf(r.messages)) add(scope.outreachMessages, row.messageId, row.prospect);
+          break;
+        case "list_my_recruiters":
+          for (const row of rowsOf(result)) add(scope.recruiters, row.recruiterId, row.name);
+          break;
+        case "search_meetings":
+          for (const row of rowsOf(Array.isArray(result) ? result : r.meetings)) add(scope.meetings, row.meetingId, row.title);
+          break;
+        case "upcoming_meetings":
+          for (const row of rowsOf(result)) add(scope.calendarEvents, row.eventId, row.title);
+          break;
+        case "meeting_context": {
+          const event = (r.event ?? {}) as Record<string, unknown>;
+          add(scope.calendarEvents, event.eventId, event.title);
+          break;
+        }
       }
     },
     propose(toolName, input) {
@@ -109,7 +150,7 @@ export function createProposalSink(seen: Partial<{ [K in keyof ProposalScope]: R
       for (const [kind, ids] of Object.entries(refs) as Array<[keyof ProposalScope, string[] | undefined]>) {
         for (const id of ids ?? []) {
           if (!scope[kind].has(id)) {
-            return { ok: false, error: `That ${kind === "actionItems" ? "action item" : kind.slice(0, -1)} id was not in anything you were shown this turn. Use only ids from the sections or a lookup.` };
+            return { ok: false, error: `That ${KIND_NOUN[kind]} id was not in anything you were shown this turn. Use only ids from the sections or a lookup.` };
           }
         }
       }
@@ -125,7 +166,7 @@ export function createProposalSink(seen: Partial<{ [K in keyof ProposalScope]: R
         args: { kind: "tool", tool: write.name, input },
         preview: write.preview(input, scope),
         status: "proposed",
-        tier: write.tier,
+        tier: tierOf(write, input),
         destructive: Boolean(write.destructive),
         contactId: write.contactOf?.(input) ?? null,
       };

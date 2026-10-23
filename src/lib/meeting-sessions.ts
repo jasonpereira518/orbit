@@ -228,6 +228,24 @@ export async function linkMeetingSessionToEvent(
 }
 
 /**
+ * Set or clear which calendar event a recording was of — chat's `link_meeting_to_event` and
+ * its undo. Returns false when the session is not the user's.
+ */
+export async function setMeetingSessionEventLink(
+  userId: string,
+  sessionId: string,
+  link: { eventKey: string | null; seriesId: string | null }
+): Promise<boolean> {
+  const db = await getDb();
+  const rows = await db
+    .update(meetingSessions)
+    .set({ calendarEventKey: link.eventKey, calendarSeriesId: link.seriesId, updatedAt: new Date() })
+    .where(and(eq(meetingSessions.id, sessionId), eq(meetingSessions.userId, userId)))
+    .returning();
+  return rows.length > 0;
+}
+
+/**
  * The most recent summarized meeting in a recurring series, before `beforeSessionId` when given:
  * what "last time" means for a weekly 1:1.
  */

@@ -305,6 +305,54 @@
         "Q3 metrics"
       ],
       "mustNotPropose": true
+    },
+    {
+      "id": "chat-40-propose-add-goal",
+      "question": "Add a goal for me: hire a founding engineer this quarter.",
+      "mustMention": [],
+      "mustPropose": [
+        "add_goal"
+      ]
+    },
+    {
+      "id": "chat-41-propose-remove-goal",
+      "question": "I'm done with the design leads goal — remove it.",
+      "mustMention": [],
+      "mustPropose": [
+        "remove_goal"
+      ]
+    },
+    {
+      "id": "chat-42-propose-opportunity",
+      "question": "Omar Haddad offered to introduce me to Stripe's payments team — track that.",
+      "mustMention": [],
+      "mustPropose": [
+        "create_opportunity"
+      ]
+    },
+    {
+      "id": "chat-43-propose-opportunity-status",
+      "question": "The Sequoia partners intro from James happened. Mark it landed.",
+      "mustMention": [],
+      "mustPropose": [
+        "set_opportunity_status"
+      ]
+    },
+    {
+      "id": "chat-44-propose-recruiter",
+      "question": "Log Joan Clarke from Bletchley Talent as a recruiter I've already contacted.",
+      "mustMention": [],
+      "mustPropose": [
+        "log_recruiter"
+      ]
+    },
+    {
+      "id": "chat-45-propose-draft-email",
+      "question": "Draft an email to Maya Chen thanking her for the intro to Plaid.",
+      "mustMention": [],
+      "mustPropose": [
+        "draft_email"
+      ]
     }
   ],
   "records": {
@@ -348,6 +396,17 @@
         "email": "tom@datadog.example",
         "text": "Intro to the Datadog platform team",
         "owedBy": "them"
+      }
+    ],
+    "goals": [
+      "Raise a seed round by March",
+      "Meet three design leads"
+    ],
+    "opportunities": [
+      {
+        "email": "james@sequoia.example",
+        "kind": "introduction",
+        "label": "Intro to the Sequoia partners"
       }
     ]
   }
