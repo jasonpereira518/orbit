@@ -17,6 +17,7 @@ import { requireUserId } from "@/lib/auth";
 import { prepareChatContext } from "@/lib/chat-context";
 import { maybeGather } from "@/lib/chat-gather";
 import { labelAnswer } from "@/lib/chat-abstention";
+import { rollBackApplied } from "@/lib/chat-auto-apply";
 import { answerWithLookups, chatLoopEnabled } from "@/lib/chat-agent-loop";
 import { citedIds, stripUnresolvedMarkers } from "@/lib/chat-evidence";
 import { validateProposedActions, type StoredProposedAction } from "@/lib/chat-proposed-actions";
@@ -455,6 +456,8 @@ async function askNetworkInner(
       ...validateProposedActions(result.proposedActions, ctx.allowedContacts, ctx.contactNames, ctx.reminderTitles),
     ];
 
+    // A turn that applied changes itself and then failed to save would leave them with no card
+    // to undo from (`@/lib/chat-auto-apply`), so they are put back.
     const saved = await persistAssistantTurn(userId, threadId, ctx.thread?.title ?? null, ctx.q, {
       answer: cleanAnswer,
       recommendations,
@@ -465,6 +468,9 @@ async function askNetworkInner(
         recommendedCount: recommendations.length,
       }),
       metrics: { durationMs: Date.now() - requestStartedAt, toolRounds },
+    }).catch(async (err) => {
+      await rollBackApplied(userId, proposedActions);
+      throw err;
     });
 
     return {

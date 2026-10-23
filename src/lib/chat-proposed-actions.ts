@@ -111,6 +111,8 @@ export type StoredProposedAction = Omit<ProposedAction, "status"> & {
   destructive?: boolean;
   /** Tool proposals only: the contact the card shows. */
   contactId?: string | null;
+  /** Applied by chat itself under the person's auto-apply setting (`@/lib/chat-auto-apply`). */
+  autoApplied?: boolean;
 };
 
 function clampDays(raw: number | null | undefined): number {

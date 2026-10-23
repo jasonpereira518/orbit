@@ -17,6 +17,8 @@ import { getDb } from "../../src/db";
 import { actionItems, chatMessages, chatThreads, contactTags, contacts, interactions, memoryChunks, reminders, tags } from "../../src/db/schema";
 import { labelAnswer } from "../../src/lib/chat-abstention";
 import type { StoredProposedAction } from "../../src/lib/chat-proposed-actions";
+import { saveChatAutoApplyFor } from "../../src/lib/chat-auto-apply";
+import { runUndo, type UndoStep } from "../../src/lib/tools/chat-writes";
 import { citedIds } from "../../src/lib/chat-evidence";
 import { runCaptureParse } from "../../src/lib/capture-parse";
 import { classifyRecruiterSender, RECRUITER_CONFIDENCE_FLOOR, RULED_OUT_VERDICT } from "../../src/lib/recruiter-scan";
@@ -1495,6 +1497,10 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
     );
   }
   if (chatFixture.records) await seedChatRecords(userId, network, chatFixture.records);
+  // EVAL_CHAT_AUTO_APPLY=1 (with CHAT_LOOP_V2=1): the person's auto-apply setting on, so the
+  // write cases also score which changes chat made itself (`@/lib/chat-auto-apply`).
+  const autoApplyOn = chatLoopEnabled() && process.env.EVAL_CHAT_AUTO_APPLY === "1";
+  await saveChatAutoApplyFor(userId, autoApplyOn);
   const answered = tally();
   const retrieved = tally();
   const abstainedRight = tally();
@@ -1502,6 +1508,8 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
   let falseAbstentions = 0;
   /** Write requests that proposed the right change, and questions that proposed none. */
   const proposedRight = tally();
+  /** With auto-apply on: auto-tier changes applied, confirm-tier ones left as cards. */
+  const autoAppliedRight = tally();
   const listed = tally();
   const counted = tally();
   const resolved = tally();
@@ -1605,6 +1613,16 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
         const ok = c.mustNotPropose ? tools.length === 0 : tools.some((t) => c.mustPropose!.includes(t));
         count(proposedRight, ok);
         if (!ok) why.push(c.mustNotPropose ? `proposed ${tools.join(", ")} for a question` : `proposed ${tools.join(", ") || "nothing"}, wanted ${c.mustPropose!.join(" or ")}`);
+        if (autoApplyOn) {
+          const cards = "proposals" in result ? (result.proposals as StoredProposedAction[]) : [];
+          for (const card of cards) {
+            const right = card.tier === "auto" ? card.status === "done" : card.status === "proposed";
+            count(autoAppliedRight, right);
+            if (!right) why.push(`${card.args.kind === "tool" ? card.args.tool : card.args.kind} (${card.tier}) was ${card.status}`);
+            // Put the records back, so a later case sees the fixture as seeded.
+            if (card.status === "done" && card.undo) await runUndo(userId, card.undo as UndoStep).catch(() => {});
+          }
+        }
       }
       if (c.expectList) {
         const ok = ctx.orgRosters.some((r) => r.kind === "filter" && r.total === c.expectList!.total);
@@ -1669,6 +1687,7 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
       ...(cases.some((c) => c.mustAbstain) ? { abstainAccuracy: rate(abstainedRight) } : {}),
       ...(cases.some((c) => c.mustSay?.length) ? { factRecall: rate(said) } : {}),
       ...(proposedRight.total ? { proposalAccuracy: rate(proposedRight) } : {}),
+      ...(autoAppliedRight.total ? { autoApplyAccuracy: rate(autoAppliedRight) } : {}),
     },
   };
 }

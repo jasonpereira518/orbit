@@ -30,6 +30,10 @@ export type ProposalSink = {
   /** Admits one id the caller has confirmed (a contact a lookup found, checked as the user's own). */
   allow(kind: keyof ProposalScope, id: string, label: string): void;
   propose(toolName: string, input: Record<string, unknown>): { ok: true; action: StoredProposedAction } | { ok: false; error: string };
+  /** The card the last successful `propose` stored or found. */
+  latest(): StoredProposedAction | null;
+  /** Puts a card back as it now stands (an auto-applied one, done with its undo). */
+  replace(action: StoredProposedAction): void;
 };
 
 export function createProposalSink(seen: Partial<{ [K in keyof ProposalScope]: ReadonlyMap<string, string> }>): ProposalSink {
@@ -42,6 +46,7 @@ export function createProposalSink(seen: Partial<{ [K in keyof ProposalScope]: R
   };
   const proposals: StoredProposedAction[] = [];
   const keys = new Set<string>();
+  let latest: StoredProposedAction | null = null;
   const str = (v: unknown) => (typeof v === "string" ? v : null);
   const rowsOf = (v: unknown): Array<Record<string, unknown>> =>
     (Array.isArray(v) ? v : []).filter((r): r is Record<string, unknown> => Boolean(r) && typeof r === "object");
@@ -49,6 +54,12 @@ export function createProposalSink(seen: Partial<{ [K in keyof ProposalScope]: R
   return {
     scope,
     list: () => proposals.slice(),
+    latest: () => latest,
+    replace(action) {
+      const i = proposals.findIndex((p) => p.id === action.id);
+      if (i !== -1) proposals[i] = action;
+      if (latest?.id === action.id) latest = action;
+    },
     allow(kind, id, label) {
       if (!scope[kind].has(id)) scope[kind].set(id, label);
     },
@@ -104,7 +115,10 @@ export function createProposalSink(seen: Partial<{ [K in keyof ProposalScope]: R
       }
       const key = `${toolName}:${JSON.stringify(input)}`;
       const existing = proposals.find((p) => p.args.kind === "tool" && `${p.args.tool}:${JSON.stringify(p.args.input)}` === key);
-      if (keys.has(key) && existing) return { ok: true, action: existing };
+      if (keys.has(key) && existing) {
+        latest = existing;
+        return { ok: true, action: existing };
+      }
       keys.add(key);
       const action: StoredProposedAction = {
         id: randomUUID(),
@@ -116,6 +130,7 @@ export function createProposalSink(seen: Partial<{ [K in keyof ProposalScope]: R
         contactId: write.contactOf?.(input) ?? null,
       };
       proposals.push(action);
+      latest = action;
       return { ok: true, action };
     },
   };

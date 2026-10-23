@@ -561,6 +561,13 @@ export const userSettings = pgTable("user_settings", {
    * 0/1, not boolean, per this table's convention (see `timelineBackfillEnabled`).
    */
   workHistoryAutoEnabled: integer("work_history_auto_enabled").default(1).notNull(),
+  /**
+   * 1 = chat may make its small, reversible changes itself (a note, a tag, a reminder, a
+   * snooze, ticking something off) instead of asking first; each one lands as a done card
+   * with Undo. Off by default. The gate is `shouldAutoApply` (`@/lib/chat-auto-apply`).
+   * Integer 0/1 per this table's convention.
+   */
+  chatAutoApply: integer("chat_auto_apply").default(0).notNull(),
   /** 1 = analyze imported conversations with the relationship engine (on by default). */
   relationshipEngineEnabled: integer("relationship_engine_enabled").default(1).notNull(),
   /** Sender labels the owner picked as "me" in chat exports (WhatsApp has no "Me"). */
