@@ -63,7 +63,7 @@ async function main() {
   console.log("The answer deadline...");
   check(
     "the route hands the answer a deadline measured from the request's start",
-    /deadlineSignal:\s*AbortSignal\.timeout\(\s*answerDeadlineMs\(requestStartedAt\)\s*\)/.test(route)
+    /deadlineSignal\s*[:=]\s*AbortSignal\.timeout\(\s*answerDeadlineMs\(requestStartedAt\)\s*\)/.test(route)
   );
   check(
     "request.signal still goes through untouched, never merged with the deadline",

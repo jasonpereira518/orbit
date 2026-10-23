@@ -8,6 +8,7 @@ import { requireAuthenticatedUser, type AuthenticatedUser } from "@/lib/auth";
 import { buildChatBlocks, prepareChatContext } from "@/lib/chat-context";
 import { expandLists, peopleIdsIn, stripInvalidDirectives } from "@/lib/chat-directives";
 import { answerDeadlineMs, maybeGather } from "@/lib/chat-gather";
+import { answerWithLookups, chatLoopEnabled, type ChatAgentRun } from "@/lib/chat-agent-loop";
 import { isHandle } from "@/lib/meeting-context";
 import { CHAT_QUESTION_TOO_LONG_MESSAGE, isChatQuestionTooLong } from "@/lib/chat-question";
 import { discardEmptyThread, discardUnansweredQuestion, persistAssistantTurn, trackChatAnswerFailed } from "@/lib/chat-persist";
@@ -203,19 +204,27 @@ export async function POST(request: Request) {
         const titlePromise =
           threadId && !ctx.thread?.title ? generateChatTitle(userId, ctx.q, completeJsonOn(ctx.access)) : null;
 
-        // One retrieval answers most questions; the ones whose shape says it cannot — what
-        // was discussed and when, a path to someone, a follow-up that refers back — get a
-        // bounded research loop first. See `routeFromParsed` and `gatherEvidence`.
-        const { evidence, notePassages, named, research } = await maybeGather(userId, ctx, {
-          requestStartedAt,
-          signal: request.signal,
-          steps,
-        });
+        // Behind CHAT_LOOP_V2 the answer looks things up itself (`@/lib/chat-agent-loop`), so
+        // there is no separate research step. Otherwise one retrieval answers most questions,
+        // and the ones whose shape says it cannot — what was discussed and when, a path to
+        // someone, a follow-up that refers back — get a bounded research loop first. See
+        // `routeFromParsed` and `gatherEvidence`.
+        const loop = chatLoopEnabled();
+        const { evidence, notePassages, named, research } = loop
+          ? {
+              evidence: null,
+              notePassages: ctx.notePassages ?? [],
+              named: [] as Array<{ id: string; name: string }>,
+              research: null,
+            }
+          : await maybeGather(userId, ctx, { requestStartedAt, signal: request.signal, steps });
 
         // What the answer's `::people` / `::list` blocks may show, before its first word, so
         // a block renders the moment its line arrives. Built after research, which can add
-        // people the answer may name.
-        const blocks = buildChatBlocks(ctx);
+        // people the answer may name. `let`: a lookup mid-answer can find someone too, and the
+        // blocks are resent so a `::people` line naming them renders and survives
+        // `stripInvalidDirectives` below.
+        let blocks = buildChatBlocks(ctx);
         send({ type: "blocks", blocks });
 
         steps.start("answer", "Writing the answer");
@@ -223,49 +232,72 @@ export async function POST(request: Request) {
         // stored afterwards — see `createStreamRedactor`. (A scrub is recorded once the
         // stored copy is guarded, by `guardChatAnswer`; nothing is recorded here twice.)
         const redactor = createStreamRedactor();
-        const result = await traced(
-          "chat.stream",
-          () =>
-            chatWithNetworkStream(
-              userId,
-              ctx.scopedQuestion,
-              ctx.modelContacts,
-              ctx.priorTurns,
-              ctx.orgRosters,
-              ctx.attention,
-              ctx.modelRecruiters,
-              (delta) => {
-                const safe = redactor.push(delta);
-                if (safe) send({ type: "answer", delta: safe });
-              },
-              ctx.focusProfile,
-              ctx.attachedContext,
-              {
-                signal: request.signal,
-                // A slow answer is cut here, inside `maxDuration`, so it ends as an `error` event
-                // rather than the platform killing the function mid-stream. Separate from
-                // `request.signal`, which the catch below reads to mean the person pressed Stop.
-                deadlineSignal: AbortSignal.timeout(answerDeadlineMs(requestStartedAt)),
-                goals: ctx.goals,
-                attentionLite: ctx.attentionLite,
-                evidence,
-                notePassages,
-                writingPreferences: ctx.writingInstructions,
-                calendar: ctx.calendar?.text ?? null,
-                openReminders: ctx.openReminders,
-                commitments: ctx.commitments ?? null,
-                events: ctx.events ?? null,
-                userSchools: ctx.userSchools,
-                access: ctx.access,
-                // Every id the prompt minted, so `[eN]` becomes a chip as it streams. The cited
-                // subset replaces this once the answer is done.
-                onEvidence: (all) => {
-                  if (Object.keys(all).length) send({ type: "evidence", items: all });
-                },
-              }
-            ),
-          { userId }
-        );
+        const deadlineSignal = AbortSignal.timeout(answerDeadlineMs(requestStartedAt));
+        const onDelta = (delta: string) => {
+          const safe = redactor.push(delta);
+          if (safe) send({ type: "answer", delta: safe });
+        };
+        const result = loop
+          ? await traced(
+              "chat.stream",
+              () =>
+                answerWithLookups(userId, ctx, {
+                  onDelta,
+                  requestStartedAt,
+                  signal: request.signal,
+                  deadlineSignal,
+                  steps,
+                  notePassages,
+                  onEvidence: (all) => {
+                    if (Object.keys(all).length) send({ type: "evidence", items: all });
+                  },
+                  onPeopleAdded: () => {
+                    blocks = buildChatBlocks(ctx);
+                    send({ type: "blocks", blocks });
+                  },
+                }),
+              { userId }
+            )
+          : await traced(
+              "chat.stream",
+              () =>
+                chatWithNetworkStream(
+                  userId,
+                  ctx.scopedQuestion,
+                  ctx.modelContacts,
+                  ctx.priorTurns,
+                  ctx.orgRosters,
+                  ctx.attention,
+                  ctx.modelRecruiters,
+                  onDelta,
+                  ctx.focusProfile,
+                  ctx.attachedContext,
+                  {
+                    signal: request.signal,
+                    // A slow answer is cut here, inside `maxDuration`, so it ends as an `error` event
+                    // rather than the platform killing the function mid-stream. Separate from
+                    // `request.signal`, which the catch below reads to mean the person pressed Stop.
+                    deadlineSignal,
+                    goals: ctx.goals,
+                    attentionLite: ctx.attentionLite,
+                    evidence,
+                    notePassages,
+                    writingPreferences: ctx.writingInstructions,
+                    calendar: ctx.calendar?.text ?? null,
+                    openReminders: ctx.openReminders,
+                    commitments: ctx.commitments ?? null,
+                    events: ctx.events ?? null,
+                    userSchools: ctx.userSchools,
+                    access: ctx.access,
+                    // Every id the prompt minted, so `[eN]` becomes a chip as it streams. The cited
+                    // subset replaces this once the answer is done.
+                    onEvidence: (all) => {
+                      if (Object.keys(all).length) send({ type: "evidence", items: all });
+                    },
+                  }
+                ),
+            { userId }
+          );
         const tail = redactor.flush();
         if (tail) send({ type: "answer", delta: tail });
         steps.done("answer", { label: "Wrote the answer" });
@@ -366,7 +398,12 @@ export async function POST(request: Request) {
             versionTarget && persistedUserMessageId
               ? { slot: versionTarget.slot, version: versionTarget.nextVersion, userMessageId: persistedUserMessageId }
               : undefined,
-          metrics: { durationMs: Date.now() - requestStartedAt, toolRounds: research?.rounds ?? 0 },
+          metrics: {
+            durationMs: Date.now() - requestStartedAt,
+            // The research step's rounds, or the loop's rounds that looked something up (all
+            // but the last, which writes the answer).
+            toolRounds: research?.rounds ?? ("run" in result ? Math.max(0, (result.run as ChatAgentRun).rounds - 1) : 0),
+          },
         });
         send({
           type: "done",

@@ -837,3 +837,155 @@ async function hydrate(
   }
   return out;
 }
+
+/** How `queryContacts` can split its total. */
+export const CONTACT_GROUPS = ["company", "industry", "tag", "tier", "school", "location"] as const;
+export type ContactGroup = (typeof CONTACT_GROUPS)[number];
+export const CONTACT_SORTS = ["closeness", "last_touch", "name", "added"] as const;
+export type ContactMissingField = "email" | "phone" | "company" | "title" | "linkedin";
+
+export type ContactQuery = {
+  filters?: SearchFilters | null;
+  window?: InteractionWindow | null;
+  /** YYYY-MM-DD, inclusive: when the contact was added to Orbit. */
+  addedAfter?: string;
+  addedBefore?: string;
+  /** No interaction logged at all. */
+  neverInteracted?: boolean;
+  /** Contacts with each of these fields blank. */
+  missing?: ContactMissingField[];
+  sort?: (typeof CONTACT_SORTS)[number];
+  groupBy?: ContactGroup;
+  limit?: number;
+};
+
+export type ContactQueryResult = {
+  /** Everyone matching. Exact, whatever the row limit. */
+  total: number;
+  /** Counts per group, largest first (at most 25), when `groupBy` was asked for. */
+  groups?: Array<{ key: string; count: number }>;
+  rows: Array<{
+    id: string;
+    name: string;
+    title: string | null;
+    company: string | null;
+    closenessTier: string | null;
+    /** YYYY-MM-DD the contact was added. */
+    added: string | null;
+    /** YYYY-MM-DD of the newest logged interaction, or null when none is logged. */
+    lastInteraction: string | null;
+  }>;
+};
+
+const MISSING_COLUMN: Record<ContactMissingField, SQL> = {
+  email: sql`contacts.email`,
+  phone: sql`contacts.phone`,
+  company: sql`contacts.company`,
+  title: sql`contacts.title`,
+  linkedin: sql`contacts.linkedin_url`,
+};
+
+/**
+ * Counting and listing the network by anything the contacts table records — the questions a
+ * relevance-ranked search cannot answer: "how many people do I know in fintech", "who did I
+ * add last week", "who have I never actually talked to", "which contacts have no email",
+ * "break my network down by company". Unlike `listContactsMatching`, an unfiltered query is
+ * allowed: "how many contacts do I have" is a question.
+ */
+export async function queryContacts(userId: string, q: ContactQuery): Promise<ContactQueryResult> {
+  const lastAt = sql`(select max(i.interaction_date) from interactions i where i.user_id = ${userId} and i.contact_id = contacts.id)`;
+  const conditions = [
+    sql`contacts.user_id = ${userId}`,
+    filterCondition(userId, q.filters),
+    q.window ? windowCondition(userId, q.window) : null,
+    q.addedAfter ? sql`contacts.created_at >= ${dayStart(q.addedAfter)}::timestamptz` : null,
+    q.addedBefore ? sql`contacts.created_at < ${dayAfter(q.addedBefore)}::timestamptz` : null,
+    q.neverInteracted
+      ? sql`not exists (select 1 from interactions i where i.user_id = ${userId} and i.contact_id = contacts.id)`
+      : null,
+    ...(q.missing ?? []).map((field) => sql`nullif(trim(coalesce(${MISSING_COLUMN[field]}, '')), '') is null`),
+  ].filter((c): c is SQL => c !== null);
+  const where = sql.join(conditions, sql` and `);
+  const limit = Math.min(Math.max(q.limit ?? 25, 0), 50);
+  const order =
+    q.sort === "name"
+      ? sql`contacts.full_name`
+      : q.sort === "added"
+        ? sql`contacts.created_at desc`
+        : q.sort === "last_touch"
+          ? sql`last_at desc nulls last, contacts.full_name`
+          : sql`case contacts.closeness_tier when 'inner' then 0 when 'mid' then 1 when 'outer' then 2 else 3 end, last_at desc nulls last, contacts.full_name`;
+  const db = await getDb();
+  const [rowsResult, groupsResult] = await Promise.all([
+    db.execute(sql`
+      select contacts.id, contacts.full_name, contacts.title, contacts.company, contacts.closeness_tier,
+             contacts.created_at, count(*) over() as total, ${lastAt} as last_at
+        from contacts
+       where ${where}
+       order by ${order}
+       limit ${Math.max(limit, 1)}
+    `),
+    q.groupBy ? db.execute(groupQuery(q.groupBy, where)) : Promise.resolve(null),
+  ]);
+  const rows = rowsOf<{
+    id: string;
+    full_name: string;
+    title: string | null;
+    company: string | null;
+    closeness_tier: string | null;
+    created_at: Date | string | null;
+    total: number | string;
+    last_at: Date | string | null;
+  }>(rowsResult);
+  const day = (v: Date | string | null) => (v ? new Date(v).toISOString().slice(0, 10) : null);
+  // A row limit of 0 is a count: one row still runs, for the exact total, and is not returned.
+  const total = rows.length ? Number(rows[0]!.total) : 0;
+  return {
+    total,
+    ...(groupsResult
+      ? {
+          groups: rowsOf<{ key: string | null; count: number | string }>(groupsResult).map((g) => ({
+            key: g.key ?? "(not recorded)",
+            count: Number(g.count),
+          })),
+        }
+      : {}),
+    rows: (limit === 0 ? [] : rows).map((r) => ({
+      id: String(r.id),
+      name: r.full_name,
+      title: r.title,
+      company: r.company,
+      closenessTier: r.closeness_tier,
+      added: day(r.created_at),
+      lastInteraction: day(r.last_at),
+    })),
+  };
+}
+
+function groupQuery(group: ContactGroup, where: SQL): SQL {
+  if (group === "tag") {
+    return sql`
+      select t.name as key, count(distinct contacts.id) as count
+        from contacts
+        join contact_tags ct on ct.contact_id = contacts.id
+        join tags t on t.id = ct.tag_id
+       where ${where}
+       group by t.name
+       order by count desc, key
+       limit 25`;
+  }
+  const column = {
+    company: sql`contacts.company`,
+    industry: sql`contacts.industry`,
+    school: sql`contacts.school`,
+    location: sql`contacts.location`,
+    tier: sql`contacts.closeness_tier`,
+  }[group];
+  return sql`
+    select nullif(trim(coalesce(${column}, '')), '') as key, count(*) as count
+      from contacts
+     where ${where}
+     group by 1
+     order by count desc, key nulls last
+     limit 25`;
+}

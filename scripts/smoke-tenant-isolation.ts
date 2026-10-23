@@ -30,7 +30,11 @@ import {
   agentSendRequests,
   calendarEvents,
   calendarSources,
+  contactOpportunities,
   contacts,
+  emailSends,
+  eventAttendees,
+  events,
   interactions,
   memoryChunks,
   reminders,
@@ -131,6 +135,31 @@ run(async () => {
     const aReminder = await insertReminder(db, ATTACKER, aContact.id, { title: "ATTACKER-REMINDER", dueDate: new Date(Date.now() - 86_400_000) });
     const aReminder2 = await insertReminder(db, ATTACKER, aContact.id, { title: "ATTACKER-REMINDER-2" });
 
+    // Orbit events, opportunities and sent email, one of each per account, for the chat tools
+    // that read them by id (src/lib/tools/definitions-features.ts).
+    const soon = new Date(Date.now() + 5 * 86_400_000);
+    const sendRow = (userId: string, contactId: string, subject: string) => ({
+      userId,
+      provider: "gmail",
+      fromEmail: "me@example.com",
+      to: ["x@example.com"],
+      subject,
+      bodyText: `${subject} body`,
+      contactIds: [contactId],
+      origin: "compose",
+      sendAt: new Date(),
+      status: "sent",
+      rfcMessageId: `<${randomUUID()}@orbit>`,
+    });
+    const [vOrbitEvent] = await db.insert(events).values({ userId: VICTIM, title: "VICTIM-EVENT", startsAt: soon, endsAt: soon }).returning();
+    await db.insert(eventAttendees).values({ eventId: vOrbitEvent.id, userId: VICTIM, fullName: "VICTIM-ATTENDEE", contactId: vContact.id, identityKey: `xt-v-${randomUUID()}` });
+    await db.insert(contactOpportunities).values({ userId: VICTIM, contactId: vContact.id, kind: "referral", label: "VICTIM-OPPORTUNITY" } as never);
+    await db.insert(emailSends).values(sendRow(VICTIM, vContact.id, "VICTIM-EMAIL") as never);
+    const [aOrbitEvent] = await db.insert(events).values({ userId: ATTACKER, title: "ATTACKER-EVENT", startsAt: soon, endsAt: soon }).returning();
+    await db.insert(eventAttendees).values({ eventId: aOrbitEvent.id, userId: ATTACKER, fullName: "ATTACKER-ATTENDEE", contactId: aContact.id, identityKey: `xt-a-${randomUUID()}` });
+    await db.insert(contactOpportunities).values({ userId: ATTACKER, contactId: aContact.id, kind: "referral", label: "ATTACKER-OPPORTUNITY" } as never);
+    await db.insert(emailSends).values(sendRow(ATTACKER, aContact.id, "ATTACKER-EMAIL") as never);
+
     /** Everything B owns that a tool could touch, read back in full. */
     const victimState = async () => {
       const [c, i, r, d, e, m] = await Promise.all([
@@ -164,6 +193,12 @@ run(async () => {
     control("get_timeline", await call("get_timeline", { contactId: aContact.id }), (r) => (r as { total: number }).total >= 1);
     refused("get_send_status", await call("get_send_status", { draftId: vDraft.id }));
     refused("meeting_context", await call("meeting_context", { eventId: vEvent.id }), "No matching meeting");
+    refused("get_event_roster", await call("get_event_roster", { eventId: vOrbitEvent.id }), "No event");
+    control("get_event_roster", await call("get_event_roster", { eventId: aOrbitEvent.id }), (r) => (r as { total: number }).total === 1);
+    refused("who_to_talk_to", await call("who_to_talk_to", { eventId: vOrbitEvent.id }), "No event");
+    control("who_to_talk_to", await call("who_to_talk_to", { eventId: aOrbitEvent.id }), (r) => (r as { event: { id: string } }).event.id === aOrbitEvent.id);
+    refused("get_dossier", await call("get_dossier", { contactId: vContact.id }), "No contact");
+    control("get_dossier", await call("get_dossier", { contactId: aContact.id }), (r) => (r as { contact: { id: string } }).contact.id === aContact.id);
 
     // Reads filtered by an id: no refusal, but nothing of B's may come back.
     const leakFree = async (name: string, args: Record<string, unknown>, ownArgs: Record<string, unknown>, ownNeedle: string) => {
@@ -177,6 +212,10 @@ run(async () => {
     await leakFree("list_reminders", { view: "today", contactId: vContact.id }, { view: "today", contactId: aContact.id }, "ATTACKER-REMINDER");
     await leakFree("list_open_commitments", { contactId: vContact.id }, { contactId: aContact.id }, "ATTACKER-REMINDER");
     await leakFree("search_notes", { query: SECRET_WORD, contactId: vContact.id }, { query: SECRET_WORD, contactId: aContact.id }, "ATTACKER-PASSAGE");
+    await leakFree("query_interactions", { contactId: vContact.id }, { contactId: aContact.id }, aInteraction.id);
+    await leakFree("events_with_contact", { contactId: vContact.id }, { contactId: aContact.id }, "ATTACKER-EVENT");
+    await leakFree("list_opportunities", { contactId: vContact.id }, { contactId: aContact.id }, "ATTACKER-OPPORTUNITY");
+    await leakFree("list_sent_emails", { contactId: vContact.id }, { contactId: aContact.id }, "ATTACKER-EMAIL");
     {
       exercised.add("upcoming_meetings");
       const r = await call("upcoming_meetings", { contactId: vContact.id });

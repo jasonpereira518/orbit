@@ -54,6 +54,7 @@ import { loadNetworkVocabulary } from "../../src/lib/transcription-vocabulary";
 import { peopleIdsIn } from "../../src/lib/chat-directives";
 import { prepareChatContext } from "../../src/lib/chat-context";
 import { maybeGather } from "../../src/lib/chat-gather";
+import { answerWithLookups, chatLoopEnabled } from "../../src/lib/chat-agent-loop";
 import { runEmbeddingBackfill } from "../../src/lib/embedding-backfill";
 import { loadPassageFixture, seedPassageNotes } from "./eval-passage-notes";
 import { rebuildContactEmbeddingsBatch } from "../../src/lib/search";
@@ -1523,10 +1524,21 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
       const { ctx, result } = await timed(latenciesMs, async () => {
         const requestStartedAt = Date.now();
         const ctx = await prepareChatContext(userId, c.question, { threadId });
+        let firstAt: number | null = null;
+        if (chatLoopEnabled()) {
+          // CHAT_LOOP_V2: the production path is the answer loop, lookups and all.
+          const looped = await answerWithLookups(userId, ctx, {
+            onDelta: () => {
+              firstAt ??= Date.now();
+            },
+            requestStartedAt,
+          });
+          if (firstAt !== null && looped.run.calls.length === 0) firstTokenMs.push(firstAt - requestStartedAt);
+          return { ctx, result: looped };
+        }
         // The research round runs here as it does in production (the route), so this task's
         // cost and latency include it — and a routing change shows up in both.
         const { evidence, notePassages, depth } = await maybeGather(userId, ctx, { requestStartedAt });
-        let firstAt: number | null = null;
         // The streaming call the route makes, so time to first token is measured on the real path.
         const result = await chatWithNetworkStream(
           userId,
@@ -1770,6 +1782,27 @@ export async function runResearchTask({ userId, limit, log }: RunOpts): Promise<
 
       const { ctx, gathered, result } = await timed(latenciesMs, async () => {
         const ctx = await prepareChatContext(userId, c.question, { threadId });
+        if (chatLoopEnabled()) {
+          // CHAT_LOOP_V2: no separate research step; the answer looks things up itself. A
+          // research case is routed right when the answer made at least one lookup; a
+          // one-pass case is never wrong for looking (the cost shows in meanLookups).
+          const looped = await answerWithLookups(userId, ctx, { onDelta: () => {}, requestStartedAt: Date.now() });
+          const lookupsMade = looped.run.calls.filter((call) => call.ok).length;
+          routedOk = c.expectDepth === "research" ? lookupsMade > 0 : true;
+          const gathered = {
+            depth: { depth: lookupsMade > 0 ? ("research" as const) : ("single" as const), reason: "answer loop" },
+            evidence: null,
+            notePassages: ctx.notePassages ?? [],
+            named: [] as Array<{ id: string; name: string }>,
+            research: {
+              rounds: looped.run.rounds,
+              lookups: lookupsMade,
+              stoppedBy: looped.run.stoppedBy,
+              contactsFound: 0,
+            },
+          };
+          return { ctx, gathered, result: looped };
+        }
         const gathered = await maybeGather(userId, ctx, { requestStartedAt: Date.now() });
         routedOk = gathered.depth.depth === c.expectDepth;
         const result = await chatWithNetwork(

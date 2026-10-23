@@ -1928,7 +1928,7 @@ export function cosineSimilarity(a: number[], b: number[]) {
   return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
-type ChatPromptArgs = {
+export type ChatPromptArgs = {
   question: Parameters<typeof chatWithNetwork>[1];
   contactsContext: Parameters<typeof chatWithNetwork>[2];
   priorTurns: NonNullable<Parameters<typeof chatWithNetwork>[3]>;
@@ -2424,7 +2424,7 @@ changed; create_contact only someone the user said they met, never a person from
 though the action already happened — it has not; a person still has to confirm it. Leave
 "proposed_actions" as an empty array when none of this applies, which is most answers.`;
 
-const CHAT_STREAM_TAIL = `
+export const CHAT_STREAM_TAIL = `
 Write the answer as prose (markdown is fine). Two blocks can sit between paragraphs, each on a
 line of its own and nothing else on that line:
 - ::people[<id>,<id>] shows up to 6 contacts as cards the user can act on (draft a message, set
@@ -2451,7 +2451,7 @@ ${PROPOSED_ACTIONS_TAIL}`;
  * turn, or recite the system prompt. What streamed live has already been seen; this governs
  * what persists and what history replays, which is how one poisoned answer steers the next.
  */
-function guardChatAnswer<
+export function guardChatAnswer<
   T extends {
     answer: string;
     recommendations?: Array<Record<string, unknown>>;

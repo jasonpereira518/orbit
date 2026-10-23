@@ -20,6 +20,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { randomUUID } from "node:crypto";
 import { calendarEvents, calendarSources, contacts, interactions } from "../src/db/schema";
+import { FEATURE_TOOLS } from "../src/lib/tools/definitions-features";
 import { ORBIT_TOOLS } from "../src/lib/tools/definitions";
 import {
   isToolError,
@@ -118,9 +119,11 @@ async function main() {
     chatTools.every((t) => t.scope === "read"),
     chatTools.filter((t) => t.scope !== "read").map((t) => t.name).join(", ")
   );
+  // Nine of its own, plus the counts and feature reads in definitions-features.ts.
+  const featureTools = FEATURE_TOOLS.map((t) => t.name);
   check(
-    "chat gets every shared read tool plus its own nine",
-    chatTools.length === 18,
+    "chat gets every shared read tool, its own nine, and every feature read",
+    chatTools.length === 18 + featureTools.length && featureTools.every((n) => chatTools.some((t) => t.name === n)),
     chatTools.map((t) => t.name).join(", ")
   );
   check(
@@ -160,8 +163,18 @@ async function main() {
   check(
     "a tool whose page is not released is dropped from chat; ungated tools stay",
     !releasedTools(chatTools, () => false).some((t) => t.releasedSurface) &&
-      releasedTools(chatTools, () => false).length === chatTools.length - 3 &&
+      releasedTools(chatTools, () => false).length === chatTools.filter((t) => !t.releasedSurface).length &&
       releasedTools(chatTools, () => true).length === chatTools.length
+  );
+  check(
+    "every feature read that belongs to a page ships closed with it",
+    ["list_events", "get_event_roster", "who_to_talk_to", "events_with_contact"].every(
+      (n) => chatTools.find((t) => t.name === n)?.releasedSurface === "page.events"
+    ) &&
+      chatTools.find((t) => t.name === "list_radar_cards")?.releasedSurface === "page.radar" &&
+      chatTools.find((t) => t.name === "list_campaigns")?.releasedSurface === "page.outreach" &&
+      chatTools.find((t) => t.name === "list_my_recruiters")?.releasedSurface === "page.recruiters" &&
+      chatTools.find((t) => t.name === "get_dossier")?.releasedSurface === "page.knowledge"
   );
   const gatedRun = await runTool(
     chatTools.find((t) => t.name === "research_person")!,
