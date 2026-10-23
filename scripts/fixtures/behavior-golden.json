@@ -6285,6 +6285,212 @@
             "execution": {
               "taskSupport": "forbidden"
             }
+          },
+          {
+            "name": "add_goal",
+            "title": "Add a goal",
+            "description": "Add one goal to the user's list of what they are working toward (at most 200 characters). get_goals shows the list.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                }
+              },
+              "required": [
+                "text"
+              ]
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "create_opportunity",
+            "title": "Track an opportunity",
+            "description": "Track an opportunity on one of the user's contacts (contactId from search_contacts): its kind, a short label, optionally its direction (they_offer: they can help the user; you_ask: the user is asking them) and a due day (YYYY-MM-DD).",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "contactId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "internship",
+                    "job",
+                    "referral",
+                    "introduction",
+                    "startup_lead",
+                    "mentor",
+                    "investor",
+                    "speaker",
+                    "customer",
+                    "collaboration",
+                    "advice",
+                    "other"
+                  ]
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 140
+                },
+                "direction": {
+                  "type": "string",
+                  "enum": [
+                    "they_offer",
+                    "you_ask"
+                  ]
+                },
+                "due_date": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}"
+                }
+              },
+              "required": [
+                "contactId",
+                "kind",
+                "label"
+              ]
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "update_opportunity",
+            "title": "Edit an opportunity",
+            "description": "Change an opportunity's kind, label, direction or due day, by its id from list_opportunities.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "opportunityId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "internship",
+                    "job",
+                    "referral",
+                    "introduction",
+                    "startup_lead",
+                    "mentor",
+                    "investor",
+                    "speaker",
+                    "customer",
+                    "collaboration",
+                    "advice",
+                    "other"
+                  ]
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 140
+                },
+                "direction": {
+                  "type": "string",
+                  "enum": [
+                    "they_offer",
+                    "you_ask"
+                  ]
+                },
+                "due_date": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}"
+                }
+              },
+              "required": [
+                "opportunityId"
+              ]
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "set_opportunity_status",
+            "title": "Move an opportunity along",
+            "description": "Move an opportunity (id from list_opportunities) to open, in_progress, landed, passed or dismissed.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "opportunityId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "open",
+                    "in_progress",
+                    "landed",
+                    "passed",
+                    "dismissed"
+                  ]
+                }
+              },
+              "required": [
+                "opportunityId",
+                "status"
+              ]
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "update_recruiter_link",
+            "title": "Update a recruiter",
+            "description": "Change the user's own status (planned, contacted, active), rating (1–5) or notes for a recruiter they have logged (recruiterId from list_my_recruiters).",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "recruiterId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "planned",
+                    "contacted",
+                    "active"
+                  ]
+                },
+                "personal_rating": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 5
+                },
+                "notes": {
+                  "type": "string",
+                  "maxLength": 2000
+                }
+              },
+              "required": [
+                "recruiterId"
+              ]
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
           }
         ]
       },

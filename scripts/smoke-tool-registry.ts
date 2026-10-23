@@ -100,6 +100,15 @@ const EXPECTED_MCP_TOOLS = [
   "reschedule_reminder",
   "create_event",
   "mark_spoke_to",
+  // Phase 5: the Phase 2b writes that neither delete, remove nor send, each behind its page.
+  "add_goal",
+  "create_opportunity",
+  "update_opportunity",
+  "set_opportunity_status",
+  "schedule_recommendation",
+  "snooze_recommendation",
+  "update_campaign",
+  "update_recruiter_link",
 ].sort();
 
 /** Every string anywhere in a payload, however deeply nested. */
