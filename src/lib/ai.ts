@@ -4,7 +4,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
 import { createHash, randomBytes } from "node:crypto";
 import { nothingUsable } from "@/lib/managed-ai-policy";
-import { WEB_SEARCH_FEE_MICROS } from "@/lib/ai-pricing";
+import { geminiSearchFeeMicros, WEB_SEARCH_FEE_MICROS } from "@/lib/ai-pricing";
 import { renderWritingPreferences } from "@/lib/writing-instructions";
 import {
   anthropicClient,
@@ -3057,7 +3057,7 @@ export async function webSearchJson(
           report({
             ...tokensFromGemini(response),
             webSearches: searches,
-            surchargeMicros: grounded ? WEB_SEARCH_FEE_MICROS.gemini : 0,
+            surchargeMicros: geminiSearchFeeMicros(model, searches, grounded),
           });
           assertUsableFinish(geminiFinish(response));
           const content = response.text;
