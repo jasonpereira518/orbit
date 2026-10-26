@@ -120,6 +120,35 @@ type DriverInput = {
   onText?: (delta: string) => void;
 };
 
+/**
+ * One Anthropic tool round's request. Every round of a loop resends tools, system and the
+ * whole conversation so far, so it carries two cache breakpoints: one on the system block,
+ * which caches tools + system (they render first and are the same every round), and the
+ * top-level one, which caches the growing conversation — round N reads round N-1's prefix
+ * instead of paying for it again. Both at the default 5-minute TTL. Exported for
+ * `scripts/smoke-tool-stream-driver.ts`.
+ */
+export function anthropicRoundParams(p: {
+  model: string;
+  maxOutputTokens: number;
+  temperature: number;
+  system: string;
+  tools: Anthropic.Tool[];
+  noTools: boolean;
+  messages: Anthropic.MessageParam[];
+}) {
+  return {
+    model: p.model,
+    max_tokens: p.maxOutputTokens,
+    ...(anthropicAcceptsTemperature(p.model) ? { temperature: p.temperature } : {}),
+    system: [{ type: "text" as const, text: p.system, cache_control: { type: "ephemeral" as const } }],
+    cache_control: { type: "ephemeral" as const },
+    tools: p.tools,
+    ...(p.noTools ? { tool_choice: { type: "none" as const } } : {}),
+    messages: p.messages,
+  };
+}
+
 export async function createToolDriver(input: DriverInput): Promise<ToolDriver> {
   const access = input.access?.forUser(input.userId) ?? (await resolveAiAccess(input.userId));
   const grant = await access.completion(input.operation);
@@ -156,15 +185,15 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
     return {
       async step(signal, stepOptions) {
         const response = await metered(signal, async (report) => {
-          const params = {
+          const params = anthropicRoundParams({
             model,
-            max_tokens: maxOutputTokens,
-            ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
+            maxOutputTokens,
+            temperature,
             system: input.system,
             tools,
-            ...(stepOptions?.noTools ? { tool_choice: { type: "none" as const } } : {}),
+            noTools: Boolean(stepOptions?.noTools),
             messages,
-          };
+          });
           if (onText) {
             // The effort dial the answer stream has always used (`streamText`), since this
             // round is the answer now.

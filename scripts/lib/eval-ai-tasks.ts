@@ -18,7 +18,7 @@ import { actionItems, chatMessages, chatThreads, contactTags, contacts, interact
 import { labelAnswer } from "../../src/lib/chat-abstention";
 import type { StoredProposedAction } from "../../src/lib/chat-proposed-actions";
 import { saveChatAutoApplyFor } from "../../src/lib/chat-auto-apply";
-import { runUndo, type UndoStep } from "../../src/lib/tools/chat-writes";
+import { chatWriteNamed, runUndo, type UndoStep } from "../../src/lib/tools/chat-writes";
 import { citedIds } from "../../src/lib/chat-evidence";
 import { runCaptureParse } from "../../src/lib/capture-parse";
 import { classifyRecruiterSender, RECRUITER_CONFIDENCE_FLOOR, RULED_OUT_VERDICT } from "../../src/lib/recruiter-scan";
@@ -1510,6 +1510,8 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
   const proposedRight = tally();
   /** With auto-apply on: auto-tier changes applied, confirm-tier ones left as cards. */
   const autoAppliedRight = tally();
+  /** CHAT_LOOP_V2: lookups per answer (read tools only — a proposed change is not a lookup). */
+  const lookupsPerCase: number[] = [];
   const listed = tally();
   const counted = tally();
   const resolved = tally();
@@ -1545,6 +1547,7 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
             requestStartedAt,
           });
           if (firstAt !== null && looped.run.calls.length === 0) firstTokenMs.push(firstAt - requestStartedAt);
+          lookupsPerCase.push(looped.run.calls.filter((c) => !chatWriteNamed(c.call.name)).length);
           return { ctx, result: looped };
         }
         // The research round runs here as it does in production (the route), so this task's
@@ -1688,6 +1691,7 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
       ...(cases.some((c) => c.mustSay?.length) ? { factRecall: rate(said) } : {}),
       ...(proposedRight.total ? { proposalAccuracy: rate(proposedRight) } : {}),
       ...(autoAppliedRight.total ? { autoApplyAccuracy: rate(autoAppliedRight) } : {}),
+      ...(lookupsPerCase.length ? { meanLookups: mean(lookupsPerCase) } : {}),
     },
   };
 }

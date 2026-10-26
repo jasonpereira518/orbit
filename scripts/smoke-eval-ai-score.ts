@@ -5,6 +5,7 @@
  * No DB, no network. Run: npx tsx scripts/smoke-eval-ai-score.ts
  */
 import {
+  gatedMetrics,
   characterErrorRate,
   count,
   gate,
@@ -93,6 +94,19 @@ check(
   "a task only one side ran is skipped, not failed",
   gate(rules, { capture: { personRecall: 0.9 } }, {}).length === 0
 );
+
+{
+  const budget = { chat: { meanLookups: { max: 3.5 }, costPerCaseMicros: { maxRise: 0 } } };
+  check("a ceiling holds whatever the baseline was", gate(budget, { chat: { meanLookups: 5 } }, { chat: { meanLookups: 3.5 } }).length === 0);
+  check("…and over it fails, even with no baseline to compare", gate(budget, {}, { chat: { meanLookups: 3.6 } }).length === 1);
+  const report = { chat: { metrics: { mentionRecall: 0.9 }, costPerCaseMicros: 1200, p50LatencyMs: 4000 } };
+  const flat = gatedMetrics(report);
+  check("cost per case and p50 latency are gated beside the metrics", flat.chat.costPerCaseMicros === 1200 && flat.chat.p50LatencyMs === 4000 && flat.chat.mentionRecall === 0.9);
+  check(
+    "a cost rise past a zero-rise rule fails",
+    gate(budget, gatedMetrics(report), gatedMetrics({ chat: { ...report.chat, costPerCaseMicros: 1300 } })).length === 1
+  );
+}
 
 // --- scoreResearchAnswer ---------------------------------------------------------------
 

@@ -33,9 +33,10 @@ second model of ours ever reads a note an attacker may have written.
    that cost real money still bind underneath: the free contact cap bounds `create_contact`,
    the free plan has its own rate bucket, and Orbit's own sending credits stay paid.
 
-3. **Read broadly, write carefully, never delete.** Fourteen tools that read and write; none
-   that deletes a contact, merges two people, or archives anything. Everything an agent writes
-   carries `source: "mcp"`, so the timeline can always tell its words from the user's.
+3. **Read broadly, write carefully, never delete.** Tools that read and write; none that
+   deletes a contact, merges two people, removes a tag, or archives anything. Everything an
+   agent writes as text carries `source: "mcp"`, so the timeline can always tell its words from
+   the user's.
 
 4. **An agent can compose. Only a human can send.** `request_send` writes a row and returns
    `pending_approval`. The send happens in a Clerk-authenticated server action, from a card
@@ -67,6 +68,29 @@ has been talked into something by text it read, confidently and with a good expl
 model can now produce exactly one artefact: a card in the user's own dashboard, addressed to
 somewhere strange, saying what it is doing.
 
+## The tools Orbit's chat brought with it
+
+_Added Oct 20 2026, with the chat revamp (`docs/superpowers/plans/2026-10-19-chat-agent.md`)._
+
+Orbit's own chat gained read tools for every feature — exact counts over contacts and
+interactions, events and their rosters, opportunities, radar, outreach campaigns, recruiters,
+the relationship dossier, sent email, captures and imports — and a catalog of writes. MCP has
+them on the same terms as everything else here:
+
+- **Each read declares its MCP fields** next to the tool (`fields.mcp` in
+  `src/lib/tools/definitions-features.ts`). None returns raw note text; interaction rows carry
+  the short AI summary; sent email is subjects only; a capture's title and excerpt — its raw
+  text — never leave Orbit's own chat.
+- **A read behind a page follows the page.** Events, radar, outreach, recruiters, knowledge,
+  capture and imports can ship closed. Their tools are offered to an outside agent only once
+  that page is released to the user (`releasedToolsFor`), exactly as in chat — so a
+  coming-soon page cannot go live through an assistant first.
+- **The writes are the catalog's own** (`MCP_CHAT_WRITE_TOOLS` in
+  `src/lib/tools/chat-writes.ts`): add tags, reschedule a reminder, add an event, mark who the
+  user spoke to at one. Same validation and ownership checks as a confirmed chat card; on MCP
+  they run directly, as MCP writes always have. The catalog's deletes and `remove_tags` are
+  not offered, and `create_event` has no link field — Orbit fetches no page an agent names.
+
 ## What is deliberately absent
 
 - **No `send_email`, `fetch_url` or `create_webhook_endpoint`.** `hostedSending` exists in
@@ -77,8 +101,8 @@ somewhere strange, saying what it is doing.
   The client's model can reason over search results perfectly well.
 - **No capture or drafting tools.** Same reason in reverse: they are LLM calls, and this surface
   spends none.
-- **No delete or merge.** Destructive and irreversible-feeling actions stay where a person can
-  see the whole context.
+- **No delete, merge or remove.** Destructive and irreversible-feeling actions stay where a
+  person can see the whole context — in Orbit's own chat they are cards a person confirms.
 
 ## The shape of the code
 

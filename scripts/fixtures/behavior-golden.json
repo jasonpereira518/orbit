@@ -5806,6 +5806,485 @@
             "execution": {
               "taskSupport": "forbidden"
             }
+          },
+          {
+            "name": "query_contacts",
+            "title": "Count and list contacts",
+            "description": "Exact counts and lists over the whole network by what Orbit records about people. Use it for how many, who was added when, who has never been contacted, who is missing an email or company, and breakdowns (group_by company, industry, tag, tier, school or location). With no filters it covers everyone. limit 0 returns only the count and groups. interacted_after/before limits to people the user was in touch with in that window.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "companies": {
+                  "maxItems": 4,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  }
+                },
+                "industries": {
+                  "maxItems": 4,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  }
+                },
+                "schools": {
+                  "maxItems": 4,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  }
+                },
+                "locations": {
+                  "maxItems": 8,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  }
+                },
+                "tags": {
+                  "maxItems": 4,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  }
+                },
+                "tiers": {
+                  "description": "Closeness tiers.",
+                  "maxItems": 3,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "inner",
+                      "mid",
+                      "outer"
+                    ]
+                  }
+                },
+                "added_after": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "added_before": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "interacted_after": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "interacted_before": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "never_interacted": {
+                  "type": "boolean"
+                },
+                "missing": {
+                  "maxItems": 5,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "email",
+                      "phone",
+                      "company",
+                      "title",
+                      "linkedin"
+                    ]
+                  }
+                },
+                "sort": {
+                  "type": "string",
+                  "enum": [
+                    "closeness",
+                    "last_touch",
+                    "name",
+                    "added"
+                  ]
+                },
+                "group_by": {
+                  "type": "string",
+                  "enum": [
+                    "company",
+                    "industry",
+                    "tag",
+                    "tier",
+                    "school",
+                    "location"
+                  ]
+                },
+                "limit": {
+                  "default": 20,
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 50
+                }
+              }
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "query_interactions",
+            "title": "Count and list interactions",
+            "description": "Exact counts and lists of logged interactions (notes, coffees, meetings, calls, emails, messages) across the whole network or with one person: how many in a period, who the user saw most, a month-by-month breakdown (group_by type, month, contact or source). Rows carry a short summary, not the full note — use search_notes for what was said. limit 0 returns only the count and groups.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "contactId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                },
+                "types": {
+                  "description": "e.g. coffee, meeting, call, email, note.",
+                  "maxItems": 8,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 30
+                  }
+                },
+                "source": {
+                  "description": "Where it came from, e.g. gmail, linkedin, calendar, chat_proposed.",
+                  "type": "string",
+                  "maxLength": 40
+                },
+                "after": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "before": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "group_by": {
+                  "type": "string",
+                  "enum": [
+                    "type",
+                    "month",
+                    "contact",
+                    "source"
+                  ]
+                },
+                "limit": {
+                  "default": 20,
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 50
+                }
+              }
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "list_opportunities",
+            "title": "Opportunities",
+            "description": "Opportunities Orbit tracks on people — referrals, intros, roles, investments, asks — for one contact or across the network, open by default, with any due date.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "contactId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                },
+                "status": {
+                  "default": "open",
+                  "type": "string",
+                  "enum": [
+                    "open",
+                    "all"
+                  ]
+                },
+                "limit": {
+                  "default": 15,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 30
+                }
+              }
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "list_my_recruiters",
+            "title": "The user's recruiters",
+            "description": "Recruiters the user has logged: name, firm, specialty, the user's status with them and their own rating.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "limit": {
+                  "default": 15,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 30
+                }
+              }
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "get_dossier",
+            "title": "Relationship dossier",
+            "description": "Orbit's written brief on one relationship — where things stand, the suggested next step, recent discussions, and which of the user's goals the person bears on.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "contactId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                }
+              },
+              "required": [
+                "contactId"
+              ]
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "list_sent_emails",
+            "title": "Emails sent from Orbit",
+            "description": "Emails the user sent, scheduled or queued from Orbit — to whom, subject, status and when — for one contact or overall. Subjects only, never bodies.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "contactId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                },
+                "limit": {
+                  "default": 10,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 20
+                }
+              }
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "recent_captures",
+            "title": "Recent captures",
+            "description": "What the user recently captured — notes, photos, business cards, voice — with how many people and reminders each one saved.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "limit": {
+                  "default": 5,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10
+                }
+              }
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "recent_imports",
+            "title": "Recent imports",
+            "description": "The user's recent imports (LinkedIn, CSV, calendar, Google, Outlook, chats): what, when, status and how many contacts each added.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "limit": {
+                  "default": 5,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10
+                }
+              }
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "add_tags",
+            "title": "Tag a contact",
+            "description": "Add up to 5 tags to one of the user's contacts, by contactId. A tag the user does not have yet is created.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "contactId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                },
+                "tags": {
+                  "minItems": 1,
+                  "maxItems": 5,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40
+                  }
+                }
+              },
+              "required": [
+                "contactId",
+                "tags"
+              ]
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "reschedule_reminder",
+            "title": "Move a reminder to a date",
+            "description": "Move one of the user's reminders (reminderId from list_reminders) to a day in the next year, as YYYY-MM-DD.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "reminderId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                },
+                "due_date": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}"
+                }
+              },
+              "required": [
+                "reminderId",
+                "due_date"
+              ]
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "create_event",
+            "title": "Add an event",
+            "description": "Add an event the user is going to or went to: title, day (YYYY-MM-DD), venue and city. There is no link field: Orbit does not fetch pages an agent names.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "starts_on": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}"
+                },
+                "venue": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "city": {
+                  "type": "string",
+                  "maxLength": 120
+                }
+              },
+              "required": [
+                "title"
+              ]
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "mark_spoke_to",
+            "title": "Mark who the user spoke to",
+            "description": "Mark that the user spoke to people at one of their events, by eventId and the attendeeIds get_event_roster returned.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "eventId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                },
+                "attendeeIds": {
+                  "minItems": 1,
+                  "maxItems": 20,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                  }
+                }
+              },
+              "required": [
+                "eventId",
+                "attendeeIds"
+              ]
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
           }
         ]
       },

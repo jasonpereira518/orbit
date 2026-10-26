@@ -21,6 +21,7 @@
  *   - `tier: "confirm"`: always a click.
  *   - `destructive`: the card says what will be lost; there is no undo.
  */
+import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { z, type ZodRawShape } from "zod";
 import { getDb } from "@/db";
@@ -36,7 +37,8 @@ import {
 } from "@/lib/contact-writes";
 import { DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
 import { UserFacingError } from "@/lib/errors";
-import { createEventForUser, deleteEventForUser, setSpokeToForUser } from "@/lib/events/store";
+import { toolError, type OrbitTool } from "@/lib/tools/registry";
+import { createEventForUser, deleteEventForUser, getEventForUser, setSpokeToForUser } from "@/lib/events/store";
 import { sanitizeAgentText } from "@/lib/mcp/sanitize";
 import { createReminderForUser, scheduleContactFollowUpForUser } from "@/lib/reminder-writes";
 import {
@@ -492,6 +494,9 @@ export const CHAT_WRITES: readonly ChatWrite[] = [
     async commit(userId, i) {
       const eventId = s(i.eventId);
       const attendeeIds = (Array.isArray(i.attendeeIds) ? i.attendeeIds : []).map(s);
+      // The write below is scoped to the user's own rows already; this makes another account's
+      // event (or a deleted one) a refusal rather than a "done" that changed nothing.
+      if (!(await getEventForUser(userId, eventId))) throw new UserFacingError("That event is gone — it may have been deleted");
       await setSpokeToForUser(userId, eventId, attendeeIds, true);
       return { resultId: eventId, href: `/events/${eventId}`, undo: { tool: "unmark_spoke_to", input: { eventId, attendeeIds } } };
     },
@@ -579,3 +584,47 @@ export async function runUndo(userId: string, step: UndoStep): Promise<void> {
 export function touchesIdentity(write: ChatWrite, input: Record<string, unknown>): boolean {
   return write.name === "update_contact" && [...IDENTITY_FIELDS].some((k) => typeof input[k] === "string" && input[k]);
 }
+
+/* ------------------------------------------------------------ the MCP face ----- */
+
+/**
+ * The catalog writes an outside agent may make over MCP that it could not before (`docs/mcp-vision.md`:
+ * read broadly, write carefully, never delete), with the descriptions an agent reads. They run
+ * the catalog's own commit — same validation, same ownership checks — directly, as MCP writes
+ * always have; nothing here proposes. Left out: every delete and `remove_tags` (MCP never
+ * removes anything — `smoke-mcp-server` holds that line), the writes MCP
+ * already has under its own tools (`log_interaction`, `update_contact`, `create_reminder`,
+ * `complete_reminder`, `snooze_reminder`, `schedule_follow_up`, `create_contact`), and
+ * `complete_action_item`, since no MCP read returns an action item's id.
+ */
+const MCP_WRITE_DESCRIPTIONS: Record<string, string> = {
+  add_tags: "Add up to 5 tags to one of the user's contacts, by contactId. A tag the user does not have yet is created.",
+  reschedule_reminder:
+    "Move one of the user's reminders (reminderId from list_reminders) to a day in the next year, as YYYY-MM-DD.",
+  create_event:
+    "Add an event the user is going to or went to: title, day (YYYY-MM-DD), venue and city. There is no link field: " +
+    "Orbit does not fetch pages an agent names.",
+  mark_spoke_to:
+    "Mark that the user spoke to people at one of their events, by eventId and the attendeeIds get_event_roster returned.",
+};
+
+export const MCP_CHAT_WRITE_TOOLS: readonly OrbitTool[] = CHAT_WRITES.filter((w) => w.name in MCP_WRITE_DESCRIPTIONS).map(
+  (write): OrbitTool => ({
+    name: write.name,
+    title: write.title,
+    description: MCP_WRITE_DESCRIPTIONS[write.name],
+    inputSchema: write.inputSchema,
+    surfaces: ["mcp"],
+    scope: "write",
+    resultLabel: null,
+    async run(userId, args: Record<string, unknown>) {
+      try {
+        const out = await write.commit(userId, args, { messageId: "mcp", actionId: randomUUID() });
+        return { done: true, ...(out.resultId ? { id: out.resultId } : {}) };
+      } catch (err) {
+        if (err instanceof UserFacingError) return toolError(err.message);
+        throw err;
+      }
+    },
+  })
+);

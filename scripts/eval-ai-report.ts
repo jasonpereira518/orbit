@@ -9,7 +9,7 @@
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { formatMetric, gate, type GateRules, type TaskMetrics } from "./lib/eval-ai-score";
+import { formatMetric, gate, gatedMetrics, type GateRules, type TaskMetrics } from "./lib/eval-ai-score";
 
 type Report = {
   label: string;
@@ -81,15 +81,13 @@ function main() {
   if (!cand) return;
   const rules = JSON.parse(readFileSync(join("scripts", "eval-fixtures", "ai-eval-thresholds.json"), "utf8")) as GateRules & { $comment?: string };
   delete rules.$comment;
-  const metricsOf = (tasks: Report["tasks"]) =>
-    Object.fromEntries(Object.entries(tasks).map(([k, v]) => [k, v.metrics])) as Record<string, TaskMetrics>;
-  const findings = gate(rules, metricsOf(base), metricsOf(cand));
+  const findings = gate(rules, gatedMetrics(base), gatedMetrics(cand));
   if (findings.length === 0) {
     console.log("\nGATE: PASS — nothing the thresholds care about got worse.");
   } else {
     console.log("\nGATE: FAIL");
     for (const f of findings) {
-      console.log(`  ${f.task}.${f.metric}: ${f.baseline.toFixed(3)} → ${f.candidate.toFixed(3)} (allowed ${f.allowed})`);
+      console.log(`  ${f.task}.${f.metric}: ${Number.isNaN(f.baseline) ? "—" : f.baseline.toFixed(3)} → ${f.candidate.toFixed(3)} (allowed ${f.allowed})`);
     }
   }
 }
