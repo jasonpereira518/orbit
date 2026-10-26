@@ -70,7 +70,7 @@ export type SentItem = {
   tone: "neutral" | "good" | "warn";
   /** The first message's id when a follow-up is due, else null. */
   followUpOf: string | null;
-  /** The message the outcome buttons act on: the latest one that went out (status `sent`). */
+  /** The message the outcome buttons act on: the one that carries an outcome, else the latest that went out (status `sent`). */
   outcomeTarget: ViewMessage | null;
   /** When the latest message went out. */
   sentAt: Date | string | null;
@@ -87,9 +87,13 @@ export type MessageGroups = {
 
 function sentItem(person: ViewPerson, bucket: PipelineFilter): SentItem {
   const current = currentMessage(person)!;
-  const out = person.messages.find((m) => m.outcome);
-  const outcomeTarget =
-    person.messages.filter((m) => m.status === "sent").sort((a, b) => stepOf(b) - stepOf(a))[0] ?? null;
+  const sentMessages = person.messages.filter((m) => m.status === "sent").sort((a, b) => stepOf(b) - stepOf(a));
+  const latestSent = sentMessages[0] ?? null;
+  // The outcome buttons act on the message that already carries an outcome, so refining a
+  // detected "Replied" changes that message instead of adding a second outcome on the follow-up.
+  // With none set yet, they act on the latest message that went out.
+  const carrier = sentMessages.find((m) => m.outcome) ?? null;
+  const out = carrier ?? person.messages.find((m) => m.outcome);
 
   let label = "Waiting";
   let tone: SentItem["tone"] = "neutral";
@@ -111,8 +115,8 @@ function sentItem(person: ViewPerson, bucket: PipelineFilter): SentItem {
     label,
     tone,
     followUpOf: bucket === "follow_up_due" && !hasAnyOutcome(person) ? (firstMessage(person)?.id ?? null) : null,
-    outcomeTarget,
-    sentAt: outcomeTarget?.sentAt ?? null,
+    outcomeTarget: carrier ?? latestSent,
+    sentAt: latestSent?.sentAt ?? null,
     problem: current.status === "unsure" ? current.errorMessage : null,
   };
 }

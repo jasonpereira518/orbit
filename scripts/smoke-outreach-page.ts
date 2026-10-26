@@ -496,7 +496,10 @@ async function main() {
       check("…and is gated on nothing but its own lock", /<Button size="sm" onClick=\{confirmSent\} disabled=\{busy !== null\}>/.test(flat));
       check("Copy & open is off while the saved note is unsendable (over the limit, or unsaved edits)", /onClick=\{copyAndOpen\} disabled=\{busy !== null \|\| blocked !== null\}/.test(flat));
       check("a note over the limit is blocked from the saved text, not the typed text", /copyBlockedReason\(message, isDirty, person\.linkedinUrl\)/.test(flat));
-      check("a batch with a follow-up looks for replies first, and stops if one came in", /const hasFollowUp = [^;]*stepIndex[^;]*> 0\);[\s\S]*?if \(hasFollowUp\) \{[\s\S]*?checkReplies\(campaignId\)[\s\S]*?seen\.value\.replied[\s\S]*?return;[\s\S]*?sendMessages\(campaignId, ids\)/.test(flat));
+      check("sending does not run its own reply look (the server refuses a follow-up whose first message has an outcome)", !/hasFollowUp/.test(flat) && (() => {
+        const confirm = flat.slice(flat.indexOf("async function confirmSend()"), flat.indexOf("const nothing ="));
+        return confirm.includes("sendMessages(") && !confirm.includes("checkReplies(");
+      })());
       check("Write follow-up waits while replies are being checked", /disabled=\{followUpBusy !== null \|\| !canUseAi \|\| checking\}/.test(flat));
       check("Write drafts takes only the ids of people without a message", /draftMessages\(campaignId, batch\)/.test(flat) && /const draftIds = groups\.needsDraft\.filter/.test(flat));
       check("Send selected takes only ids of sendable drafts that are still on screen", /const sendIds = sendable\.filter\(\(r\) => selectedSends\.has/.test(flat));
@@ -523,6 +526,7 @@ async function main() {
     check("a follow-up has no Rewrite (drafting rewrites first messages only)", /stepIndex\s*===\s*0|!isFollowUp/.test(editor));
     check("the LinkedIn count is the string length, as the server counts it", /\.length/.test(editor) && !/Segmenter|Array\.from\(localBody|\[\.\.\.localBody/.test(editor));
     check("reports unsaved edits to the tab", editor.includes("onDirtyChange"));
+    check("…and a Save or Rewrite still running counts as unsaved, so Send and Copy wait for it", /onDirtyChange\?\.\(messageId, dirty \|\| busy !== null\)/.test(editor) && /\[onDirtyChange, messageId, dirty, busy\]/.test(editor));
     check("the legacy table still passes the status", read("src/components/outreach/prospect-table.tsx").includes("status={message.status}"));
 
     console.log("  the outcome buttons");
@@ -626,6 +630,22 @@ async function main() {
       check("the outcome buttons go on the latest sent message", (() => {
         const g = group([p("a", [sentAgo(8), sentAgo(1, { id: "fu", stepIndex: 1 })])]);
         return g.sent[0]?.outcomeTarget?.id === "fu";
+      })());
+      check("an outcome on the first message keeps the buttons there, even with a follow-up sent", (() => {
+        const g = group([p("a", [sentAgo(8, { outcome: "replied" }), sentAgo(1, { id: "fu", stepIndex: 1 })])]);
+        return g.sent[0]?.outcomeTarget?.id === "m-8" && g.sent[0]?.outcomeTarget?.outcome === "replied";
+      })());
+      check("…and on the follow-up when that is where the outcome is", (() => {
+        const g = group([p("a", [sentAgo(8), sentAgo(1, { id: "fu", stepIndex: 1, outcome: "positive_reply" })])]);
+        return g.sent[0]?.outcomeTarget?.id === "fu";
+      })());
+      check("the sent date is the latest send, whichever message carries the outcome", (() => {
+        const g = group([p("a", [sentAgo(8, { outcome: "replied" }), sentAgo(1, { id: "fu", stepIndex: 1 })])]);
+        return new Date(g.sent[0]?.sentAt as Date).getTime() === NOW.getTime() - 1 * day;
+      })());
+      check("an outcome on a message that did not go out is not a target", (() => {
+        const g = group([p("a", [sentAgo(8), m({ id: "o2", status: "opened", stepIndex: 1, outcome: "replied" })])]);
+        return g.sent[0]?.outcomeTarget?.id === "m-8";
       })());
       check("…and only on a sent one", group([p("a", [m({ id: "d1" })])]).sent.length === 0);
       check("a legacy opened message counts as out the door", group([p("a", [m({ id: "o1", status: "opened" })])]).sent.length === 1);

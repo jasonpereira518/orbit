@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
  * Save writes through `editDraft`; Rewrite asks `draftMessages` for a fresh first message for
  * this person (drafting only rewrites first messages, so a follow-up has no Rewrite). What is
  * on screen is what is typed, but what gets sent or copied is what is saved, so the row tells
- * its parent when there are unsaved edits (`onDirtyChange`).
+ * its parent while there are unsaved edits or a Save or Rewrite is running (`onDirtyChange`).
  */
 export function MessageEditorRow({
   campaignId,
@@ -72,9 +72,12 @@ export function MessageEditorRow({
     editable &&
     (localBody.trim() !== body.trim() ||
       (channel === "email" && !subjectLocked && localSubject.trim() !== (subject ?? "").trim()));
+  // A Save or Rewrite in flight counts too: server actions run one at a time, so a send or a
+  // copy pressed meanwhile would queue behind it and then take the text it just wrote, which
+  // the user has not seen.
   useEffect(() => {
-    onDirtyChange?.(messageId, dirty);
-  }, [onDirtyChange, messageId, dirty]);
+    onDirtyChange?.(messageId, dirty || busy !== null);
+  }, [onDirtyChange, messageId, dirty, busy]);
   // A row that goes away (sent, removed) no longer has edits to protect.
   useEffect(() => () => onDirtyChange?.(messageId, false), [onDirtyChange, messageId]);
 
