@@ -367,7 +367,7 @@ export async function editDraftForUser(
  * (sent a week ago, no outcome, no follow-up yet) allows it. Returns the new message's id.
  *
  * Step 1 stays one message per person, with the same lock-then-conditional-insert as step 0:
- * the model call sits between the check above and the write, so two runs for one person (a double
+ * the model call sits between the due check and the write, so two runs for one person (a double
  * click, two tabs) both pass the check. The prospect row is locked, then the insert is skipped if
  * a step-1 message exists — in any status — and the run that loses is told so.
  */
@@ -608,7 +608,8 @@ export async function sendCampaignMessagesForUser(
       // A follow-up (step 1) replies to its first message: "Re:" its subject, with the reply
       // headers and the provider thread when the first send is on record (`resolveReplyTarget`
       // re-reads it by owner and only trusts a thread from this exact mailbox). Without one it
-      // is a fresh message with the same "Re:" subject.
+      // is a fresh message with the same "Re:" subject. A step-1 message with no first message
+      // on file (a legacy sequence row) is sent as written.
       const parent = message.stepIndex === 1 && message.parentMessageId ? parents.get(message.parentMessageId) : undefined;
       const target = parent?.deliveryId ? await resolveReplyTarget(userId, `orbit:${parent.deliveryId}`) : null;
       const queued = await enqueueEmail(userId, {
