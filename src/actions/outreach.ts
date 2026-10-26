@@ -40,6 +40,12 @@ import {
   isDemoProspect,
   prospectSearchStatus,
 } from "@/lib/outreach-quality";
+import {
+  enrichmentSummary,
+  joinPriorNotes,
+  priorNoteSql,
+  priorNotesForContacts,
+} from "@/lib/outreach-messages";
 import { sendOutreachMessage } from "@/lib/outreach-send";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 import {
@@ -66,43 +72,6 @@ async function requireCampaign(userId: string, campaignId: string) {
   return campaign;
 }
 
-function enrichmentSummary(enrichment: unknown): string | null {
-  if (!enrichment || typeof enrichment !== "object") return null;
-  const record = enrichment as Record<string, unknown>;
-  const parts: string[] = [];
-  for (const key of [
-    "headline",
-    "summary",
-    "bio",
-    "seniority",
-    "departments",
-    "keywords",
-  ]) {
-    const value = record[key];
-    if (typeof value === "string" && value.trim()) {
-      parts.push(`${key}: ${value.trim()}`);
-    } else if (Array.isArray(value) && value.length) {
-      parts.push(`${key}: ${value.slice(0, 5).join(", ")}`);
-    }
-  }
-  return parts.length ? parts.join("; ").slice(0, 500) : null;
-}
-
-/**
- * One interaction's contribution to a prior-notes string: the summary, else the raw notes.
- *
- * Cut to 500 characters in SQL because the joined string is cut to 500 afterwards, so no
- * part can contribute more than that — and `raw_notes` on an imported email can be many KB.
- * `left()` counts code points and `.slice()` UTF-16 units; a 500-code-point prefix is at
- * least 500 units long, so the final `.slice(0, 500)` is unchanged. `nullif(…, '')` is the
- * `||` fallback: an empty summary falls through to the raw notes, as it did in JavaScript.
- */
-const priorNoteSql = sql<string | null>`left(coalesce(nullif(${interactions.aiSummary}, ''), ${interactions.rawNotes}), 500)`;
-
-function joinPriorNotes(notes: (string | null)[]) {
-  return notes.filter(Boolean).join(" | ").slice(0, 500);
-}
-
 async function priorNotesForContact(userId: string, contactId: string | null) {
   if (!contactId) return null;
   const db = await getDb();
@@ -114,51 +83,6 @@ async function priorNotesForContact(userId: string, contactId: string | null) {
     .limit(3);
   if (!rows.length) return null;
   return joinPriorNotes(rows.map((row) => row.note));
-}
-
-/**
- * Batched form of `priorNotesForContact` for draft generation over a whole prospect
- * list — one `interactions` query instead of one per prospect. Returns a map whose
- * values match `priorNotesForContact`'s per-contact string shape exactly (a contact
- * with no interaction rows simply has no entry, so callers fall back with `?? null`).
- *
- * The three newest per contact are chosen in SQL (`row_number()` over each contact, newest
- * first — the order the single-contact read uses), so only those rows, and only the one
- * column the string is built from, come back. It used to read every interaction of every
- * prospect's contact, whole rows, and keep three each in JavaScript. Scoped to the caller's
- * account like the single-contact read.
- */
-async function priorNotesForContacts(userId: string, contactIds: string[]) {
-  const byContact = new Map<string, string>();
-  if (!contactIds.length) return byContact;
-  const db = await getDb();
-  const ranked = db
-    .select({
-      contactId: interactions.contactId,
-      note: priorNoteSql.as("note"),
-      rn: sql<number>`row_number() over (
-        partition by ${interactions.contactId}
-        order by ${interactions.interactionDate} desc
-      )`.as("rn"),
-    })
-    .from(interactions)
-    .where(and(eq(interactions.userId, userId), inArray(interactions.contactId, contactIds)))
-    .as("ranked");
-  const rows = await db
-    .select({ contactId: ranked.contactId, note: ranked.note })
-    .from(ranked)
-    .where(sql`${ranked.rn} <= 3`)
-    .orderBy(ranked.contactId, ranked.rn);
-  const grouped = new Map<string, (string | null)[]>();
-  for (const row of rows) {
-    const list = grouped.get(row.contactId) ?? [];
-    list.push(row.note);
-    grouped.set(row.contactId, list);
-  }
-  for (const [contactId, notes] of grouped) {
-    byContact.set(contactId, joinPriorNotes(notes));
-  }
-  return byContact;
 }
 
 /**

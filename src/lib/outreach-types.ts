@@ -160,3 +160,7 @@ export type NewProspect = {
 };
 
 export const MAX_CAMPAIGN_PEOPLE = 100;
+/** People drafted in one go: each is a model call. */
+export const MAX_DRAFTS_PER_RUN = 10;
+/** LinkedIn's connection-note limit. */
+export const LINKEDIN_NOTE_MAX = 300;

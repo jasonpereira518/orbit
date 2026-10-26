@@ -3,7 +3,7 @@ import { fenceUntrusted } from "@/lib/ai-security";
 import { senderProfileBlock } from "@/lib/sender-profile";
 import { loadSenderBio } from "@/lib/sender-profile-server";
 import { withWritingPreferences } from "@/lib/writing-instructions";
-import type { OutreachChannel } from "@/lib/outreach-types";
+import { LINKEDIN_NOTE_MAX, type OutreachChannel } from "@/lib/outreach-types";
 
 export type DraftInput = {
   channel: OutreachChannel;
@@ -19,6 +19,10 @@ export type DraftInput = {
     location: string | null;
     enrichmentSummary?: string | null;
     priorNotes?: string | null;
+    /** Why a search or brief says they fit. Web-derived, so it only ever reaches the fenced block. */
+    whyMatches?: string | null;
+    /** Recent, specific things from their brief. Web-derived, fenced like `whyMatches`. */
+    talkingPoints?: string[];
   };
   templateSeed?: string;
   stepIndex?: number;
@@ -42,7 +46,7 @@ function channelRules(channel: OutreachChannel) {
     return "Write a cold email under 120 words with a clear subject line and exactly one reply-seeking CTA (a question or soft ask).";
   }
   if (channel === "linkedin") {
-    return "Write a short LinkedIn connection note or InMail under 280 characters with one clear reply ask. No subject line.";
+    return `Write a short LinkedIn connection note or InMail under ${LINKEDIN_NOTE_MAX} characters with one clear reply ask. No subject line.`;
   }
   return "Write a conversational SMS under 160 characters with one clear reply ask. No subject line.";
 }
@@ -71,10 +75,14 @@ function scrubPlaceholders(text: string) {
     .trim();
 }
 
-export async function generateOutreachDraft(
-  userId: string,
-  input: DraftInput
-): Promise<GeneratedDraft> {
+/**
+ * The system and user messages for one draft. Pure: the sender block is passed in, so a test
+ * can see exactly what the model is asked without a database or a provider.
+ */
+export function buildDraftPrompt(
+  input: DraftInput,
+  senderBlock: string | null
+): { system: string; user: string } {
   // These two were one block until now: the user's GOALS were being labelled "Sender
   // background", because that is the slot the prompt wanted and goals were the only thing
   // available to fill it. They are different things — a goal is what the user is trying to
@@ -86,13 +94,15 @@ export async function generateOutreachDraft(
       ? `Sender goals (secondary context only — do not invent a product pitch from these): ${input.userGoals.join("; ")}`
       : "Sender goals: (not specified)";
 
-  const senderBlock = senderProfileBlock(await loadSenderBio(userId));
-
   const prospectBlock = [
     `Name: ${input.prospect.fullName}`,
     `Title: ${input.prospect.title || "unknown"}`,
     `Company: ${input.prospect.company || "unknown"}`,
     `Location: ${input.prospect.location || "unknown"}`,
+    input.prospect.whyMatches ? `Why they fit: ${input.prospect.whyMatches}` : null,
+    input.prospect.talkingPoints?.length
+      ? `Recent: ${input.prospect.talkingPoints.join("; ")}`
+      : null,
     input.prospect.enrichmentSummary
       ? `Enrichment: ${input.prospect.enrichmentSummary}`
       : null,
@@ -113,9 +123,7 @@ export async function generateOutreachDraft(
     ? `Audience / ICP: ${input.audienceQuery.trim()}`
     : "";
 
-  const content = await completeJson(userId, {
-    operation: "outreach.draft",
-    temperature: 0.55,
+  return {
     system: `You write personalized outreach optimized for a successful reply.
 Primary campaign intent (must drive the message): ${input.messageIntent}
 ${audienceBlock}
@@ -143,6 +151,22 @@ ${stepBlock}
 ${input.variationHint ? `Variation hint: ${input.variationHint}` : ""}
 
 ${input.templateSeed ? `Template seed:\n${input.templateSeed}` : ""}`,
+  };
+}
+
+export async function generateOutreachDraft(
+  userId: string,
+  input: DraftInput
+): Promise<GeneratedDraft> {
+  const { system, user } = buildDraftPrompt(
+    input,
+    senderProfileBlock(await loadSenderBio(userId))
+  );
+  const content = await completeJson(userId, {
+    operation: "outreach.draft",
+    temperature: 0.55,
+    system,
+    user,
   });
 
   const parsed = JSON.parse(content) as GeneratedDraft;
