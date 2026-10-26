@@ -1,6 +1,7 @@
 import { completeJson, parseAiJson } from "@/lib/ai";
 import { RERANK_TUNING, rerankQuestion } from "@/lib/decisions/catalog";
 import { askPerItem, type Decider } from "@/lib/decisions/jev";
+import { sanitizeProfileLine } from "@/lib/contact-profile-format";
 import type { RankedContact, SearchFilters } from "@/lib/hybrid-search";
 import { pickNoteWindow } from "@/lib/note-window";
 
@@ -506,7 +507,54 @@ export type BudgetedContact = {
   /** Compact career summary — "Ramp, ex-Stripe · MIT". Null when no profile is stored. */
   career: string | null;
   school: string | null;
+  /**
+   * Contact details and relationship facts as one sanitized line — email, phone, LinkedIn,
+   * how and when you met, industry, closeness, the next follow-up and open opportunities —
+   * or null when none is recorded. See `contactDetailsLine`.
+   */
+  details: string | null;
 };
+
+/** One field of a details line: sanitized, capped, null when blank. */
+function detail(label: string, value: string | null | undefined, max = 160): string | null {
+  const clean = value ? sanitizeProfileLine(value).slice(0, max) : "";
+  return clean ? `${label} ${clean}` : null;
+}
+
+function isoDay(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+}
+
+/**
+ * The contact-card facts a question like "what's Maya's email?" or "how did I meet Omar?"
+ * turns on. They were never in the prompt: search found the right person and the model
+ * still had to say it did not know. Every value is the user's own record or an import,
+ * sanitized to one line — the row this joins is inside the CONTACTS fence either way.
+ */
+export function contactDetailsLine(c: RankedContact): string | null {
+  const met = [c.howMet ? sanitizeProfileLine(c.howMet).slice(0, 160) : "", isoDay(c.dateMet) ?? ""]
+    .filter(Boolean)
+    .join(", ");
+  const parts = [
+    detail("email", c.email),
+    detail("phone", c.phone, 40),
+    detail("LinkedIn", c.linkedinUrl, 200),
+    met ? `met ${met}` : null,
+    detail("industry", c.industry, 80),
+    detail("closeness", c.closenessTier, 40),
+    isoDay(c.nextFollowUpAt) ? `follow-up due ${isoDay(c.nextFollowUpAt)}` : null,
+    c.opportunities?.length
+      ? `open opportunities: ${c.opportunities
+          .slice(0, 3)
+          .map((o) => sanitizeProfileLine(o).slice(0, 120))
+          .filter(Boolean)
+          .join("; ")}`
+      : null,
+  ].filter((p): p is string => Boolean(p));
+  return parts.length ? parts.join(" | ") : null;
+}
 
 /**
  * Per-contact context caps by rank tier, under one total character budget
@@ -563,13 +611,14 @@ export function budgetContactsContext(
       .slice(0, tier.entries)
       .map((entry) => ({ ...entry, line: entry.line.slice(0, tier.entryChars) }));
     const career = careerLines.get(c.id) ?? null;
+    const details = contactDetailsLine(c);
 
     const cost =
       c.fullName.length + (c.company?.length ?? 0) + (c.title?.length ?? 0) +
       (c.location?.length ?? 0) +
       (notes?.length ?? 0) + (aiSummary?.length ?? 0) + (career?.length ?? 0) + (c.school?.length ?? 0) +
       keyFacts.join("").length + timeline.map((t) => t.line).join("").length +
-      c.tags.join("").length + 80; // formatting overhead
+      (details?.length ?? 0) + c.tags.join("").length + 80; // formatting overhead
     // Budget exhaustion stops serialization entirely — a later, cheaper
     // contact must not be appended out of rank order once we've run dry.
     if (spent + cost > TOTAL_CONTEXT_CHAR_BUDGET && out.length > 0) break;
@@ -590,6 +639,7 @@ export function budgetContactsContext(
       relevance: c.relevance,
       career,
       school: c.school ?? null,
+      details,
     });
   }
   return out;

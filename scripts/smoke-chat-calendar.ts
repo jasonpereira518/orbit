@@ -185,7 +185,13 @@ async function main() {
     JSON.stringify({ route: ctx.route, calendar: ctx.calendar?.text })
   );
   const plain = await prepareChatContext(USER, "Who do I know at Acme?", {});
-  check("any other question loads no calendar", plain.calendar === null && !plain.route?.calendar);
+  check(
+    "any other question still sees the coming week, quietly: not routed to the calendar, no step",
+    !plain.route?.calendar &&
+      plain.calendar?.text.includes("Coffee with Priya") === true &&
+      !JSON.stringify(plain).includes("Checking your calendar"),
+    JSON.stringify({ route: plain.route, calendar: plain.calendar?.text })
+  );
 
   if (failures) {
     console.error(`\nsmoke-chat-calendar: ${failures} failure(s)`);

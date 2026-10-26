@@ -1,6 +1,8 @@
 import Link from "next/link";
 import {
   CheckCircle2,
+  CircleHelp,
+  CircleSlash,
   Download,
   Image as ImageIcon,
   Inbox,
@@ -32,6 +34,7 @@ import {
 import {
   CHAT_FEEDBACK_PAGE_SIZE,
   getChatFeedbackSummary,
+  getChatOutcomeSummary,
   loadChatFeedbackList,
 } from "@/lib/admin-chat-feedback";
 import { cn } from "@/lib/utils";
@@ -72,7 +75,7 @@ export default async function AdminFeedbackPage({
   const requestedPage = Number.parseInt(params.page ?? "1", 10);
   const requestedChatPage = Number.parseInt(params.chatPage ?? "1", 10);
 
-  const [summary, listing, chatSummary, chatListing, themes] = await Promise.all([
+  const [summary, listing, chatSummary, chatListing, outcomes, themes] = await Promise.all([
     getFeedbackSummary(),
     loadFeedbackList({
       page: Number.isFinite(requestedPage) ? requestedPage : 1,
@@ -85,8 +88,11 @@ export default async function AdminFeedbackPage({
     loadChatFeedbackList({
       page: Number.isFinite(requestedChatPage) ? requestedChatPage : 1,
     }),
+    getChatOutcomeSummary(),
     getFeedbackThemes(28),
   ]);
+  const share = (n: number) =>
+    outcomes.labelled > 0 ? `${Math.round((n / outcomes.labelled) * 100)}%` : "—";
 
   const query = (over: Record<string, string | number>) => {
     const sp = new URLSearchParams();
@@ -342,6 +348,33 @@ export default async function AdminFeedbackPage({
           <MetricTile label="Thumbs up" value={chatSummary.up} icon={ThumbsUp} tone="muted" />
           <MetricTile label="Thumbs down" value={chatSummary.down} icon={ThumbsDown} tone="muted" />
           <MetricTile label="Last 7 days" value={chatSummary.last7Days} icon={MessageSquareText} />
+        </div>
+
+        {/* Every answer, rated or not — labelled when it was stored (`@/lib/chat-abstention`). */}
+        <h3 className="mb-3 text-sm font-medium text-muted-foreground">
+          Did chat answer? Last 7 days
+        </h3>
+        <div className="mb-4 grid gap-3 sm:grid-cols-3">
+          <MetricTile
+            label="Answered"
+            value={share(outcomes.answered)}
+            hint={`${outcomes.answered} of ${outcomes.labelled} answers`}
+            icon={CheckCircle2}
+          />
+          <MetricTile
+            label="Partly"
+            value={share(outcomes.partial)}
+            hint={`${outcomes.partial} said what the records did not show`}
+            icon={CircleHelp}
+            tone="muted"
+          />
+          <MetricTile
+            label="Didn't know"
+            value={share(outcomes.abstained)}
+            hint={`${outcomes.abstained} found nothing to go on`}
+            icon={CircleSlash}
+            tone={outcomes.labelled > 0 && outcomes.abstained / outcomes.labelled > 0.2 ? "danger" : "muted"}
+          />
         </div>
 
         {/*

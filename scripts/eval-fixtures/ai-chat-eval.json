@@ -1,5 +1,5 @@
 {
-  "$comment": "Whole chat answers over the contact-search-eval.json network. mustMention: contacts the answer must name. expectList: a list question whose complete filtered roster (chat-lanes filterLane) must reach the prompt with this total; `bulk` seeds 20 Duke alumni so it is more than the 12 a relevance rank keeps. expectCount: a number the answer must state. expectPerson: a person question whose name must resolve to this contact and pin it (chat-lanes personLane).",
+  "$comment": "Whole chat answers over the contact-search-eval.json network. mustMention: contacts the answer must name. expectList: a list question whose complete filtered roster (chat-lanes filterLane) must reach the prompt with this total; `bulk` seeds 20 Duke alumni so it is more than the 12 a relevance rank keeps. expectCount: a number the answer must state. expectPerson: a person question whose name must resolve to this contact and pin it (chat-lanes personLane). mustAbstain: the records hold no answer, so the answer must say it does not know (labelled abstained or partial by src/lib/chat-abstention.ts) and place no people; any other case labelled abstained counts as a false abstention. records: contact details, reminders and commitments seeded beside the network, so a case can ask about a field or section the search fixture does not write; dates are relative to the run.",
   "bulk": [
     {
       "count": 20,
@@ -160,6 +160,144 @@
         "tom@datadog.example"
       ],
       "expectPerson": "tom@datadog.example"
+    },
+    {
+      "id": "chat-21-detail-email",
+      "question": "What's Maya Chen's email?",
+      "mustMention": [],
+      "mustSay": [
+        "maya@stripe.example"
+      ]
+    },
+    {
+      "id": "chat-22-detail-phone",
+      "question": "What's Omar's phone number?",
+      "mustMention": [],
+      "mustSay": [
+        "0187"
+      ]
+    },
+    {
+      "id": "chat-23-detail-how-met",
+      "question": "How did I meet Dev Patel?",
+      "mustMention": [],
+      "mustSay": [
+        "demo day"
+      ]
+    },
+    {
+      "id": "chat-24-detail-follow-up",
+      "question": "Am I supposed to follow up with Lena at some point?",
+      "mustMention": [
+        "lena@figma.example"
+      ]
+    },
+    {
+      "id": "chat-25-reminder-coming-up",
+      "question": "What's on my to-do list for the next week?",
+      "mustMention": [],
+      "mustSay": [
+        "growth plan"
+      ]
+    },
+    {
+      "id": "chat-26-reminder-overdue",
+      "question": "Am I behind on anything?",
+      "mustMention": [],
+      "mustSay": [
+        "AWS Summit ticket"
+      ]
+    },
+    {
+      "id": "chat-27-reminder-undated",
+      "question": "Is there anything I meant to do but never put a date on?",
+      "mustMention": [],
+      "mustSay": [
+        "fundraising retro"
+      ]
+    },
+    {
+      "id": "chat-28-commitment-owed",
+      "question": "What did I promise James?",
+      "mustMention": [],
+      "mustSay": [
+        "Q3 metrics"
+      ]
+    },
+    {
+      "id": "chat-29-commitment-waiting",
+      "question": "Is anyone supposed to send me something?",
+      "mustMention": [
+        "tom@datadog.example"
+      ]
+    },
+    {
+      "id": "chat-30-abstain-unknown-person",
+      "question": "What's Zelda Moriarty's email?",
+      "mustMention": [],
+      "mustAbstain": true
+    },
+    {
+      "id": "chat-31-abstain-unrecorded-field",
+      "question": "What's Hana Suzuki's phone number?",
+      "mustMention": [],
+      "mustAbstain": true
+    },
+    {
+      "id": "chat-32-abstain-unknown-event",
+      "question": "Who did I meet at Web Summit Lisbon?",
+      "mustMention": [],
+      "mustAbstain": true
+    },
+    {
+      "id": "chat-33-abstain-unrecorded-topic",
+      "question": "What did Claire say about our Series B terms?",
+      "mustMention": [],
+      "mustAbstain": true
     }
-  ]
+  ],
+  "records": {
+    "details": [
+      {
+        "email": "omar@stripe.example",
+        "phone": "+1 416 555 0187"
+      },
+      {
+        "email": "dev@plaid.example",
+        "howMet": "Plaid demo day, introduced by Maya",
+        "dateMet": "2026-05-14"
+      },
+      {
+        "email": "lena@figma.example",
+        "nextFollowUpInDays": 9
+      }
+    ],
+    "reminders": [
+      {
+        "title": "Send Prisha the growth plan",
+        "email": "prisha@ramp.example",
+        "dueInDays": 5
+      },
+      {
+        "title": "Renew the AWS Summit ticket",
+        "dueInDays": -2
+      },
+      {
+        "title": "Write the fundraising retro post",
+        "dueInDays": null
+      }
+    ],
+    "actionItems": [
+      {
+        "email": "james@sequoia.example",
+        "text": "Send James the Q3 metrics",
+        "owedBy": "me"
+      },
+      {
+        "email": "tom@datadog.example",
+        "text": "Intro to the Datadog platform team",
+        "owedBy": "them"
+      }
+    ]
+  }
 }

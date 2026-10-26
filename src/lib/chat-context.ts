@@ -13,8 +13,9 @@ import {
 } from "@/db/schema";
 import { getContactBrief } from "@/lib/contact-brief";
 import { normalizeSenderBio } from "@/lib/sender-profile";
-import { queryRemindersPage } from "@/lib/reminders-page-query";
-import { getInboxListId } from "@/lib/reminder-lists";
+import { EMPTY_PREFETCH, loadChatPrefetch } from "@/lib/chat-prefetch";
+import { userTimeZone } from "@/lib/meeting-context";
+import { resolveTimeZone } from "@/lib/reminder-due-bucket";
 import {
   loadAttachedPeople,
   renderAttachedPeople,
@@ -83,8 +84,6 @@ const PRIOR_TURN_LIMIT = 8;
 const PREP_SEARCH_KEEP = 3;
 /** Characters of each earlier turn replayed as history. */
 const PRIOR_TURN_CHARS = 3000;
-/** Open reminders shown to the model, so it can answer "what's on my plate" and propose completing one. */
-const OPEN_REMINDER_LIMIT = 8;
 const ABOUT_USER_MAX_CHARS = 600;
 
 /**
@@ -167,7 +166,10 @@ export type ChatContext = {
   userSchools: string[];
   orgRosters: OrgRoster[];
   attention: AttentionBrief | null;
-  /** The user's upcoming meetings, for a schedule question; null otherwise. */
+  /**
+   * The user's meetings: the window a schedule question asked about, or for any other
+   * question the last two days and the next week when there is anything in them; else null.
+   */
   calendar: ChatCalendar | null;
   /**
    * The overdue queue as one line, present for every question.
@@ -209,10 +211,17 @@ export type ChatContext = {
   allowedRecruiters: Set<string>;
   /** The `contactsContext` argument of `chatWithNetwork`. */
   modelContacts: BudgetedContact[];
-  /** The user's open reminders (due today or overdue) as prompt lines, or null. */
+  /**
+   * The user's reminders across views — counts, then the nearest open ones by id — or null
+   * when they have none. See `renderReminders` (@/lib/chat-prefetch).
+   */
   openReminders?: string | null;
   /** Ids of `openReminders`, id → title: the allowlist for a reminder proposal. */
   reminderTitles?: Map<string, string>;
+  /** Open action items from notes, as prompt lines, or null. See `@/lib/chat-prefetch`. */
+  commitments?: string | null;
+  /** The user's upcoming and recent events, as prompt lines, or null. */
+  events?: string | null;
   /** The `recruitersContext` argument of `chatWithNetwork`. */
   modelRecruiters: Array<{
     id: string;
@@ -786,6 +795,11 @@ export async function prepareChatContext(
     ? Promise.resolve(options.access)
     : resolveAiAccess(userId).catch(() => undefined);
   const deciderP = accessP.then((access) => openDecider(userId, access));
+  // The user's zone for "today" and for meeting times, from the row the access already read —
+  // the prefetch and the calendar run on every question, and must not each re-read it.
+  const tzP: Promise<string> = accessP
+    .then((access) => (access?.settings ? resolveTimeZone(access.settings.radarDigestTz) : userTimeZone(userId)))
+    .catch(() => "UTC");
   let settleParsed: (parsed: ParsedQuery | null) => void = () => {};
   const parsedP = new Promise<ParsedQuery | null>((resolve) => {
     settleParsed = resolve;
@@ -806,7 +820,7 @@ export async function prepareChatContext(
     attachedPeople,
     writingInstructions,
     networkSize,
-    openReminderRows,
+    prefetch,
   ] = await Promise.all([
       threadId
         ? db.query.chatThreads.findFirst({
@@ -889,11 +903,11 @@ export async function prepareChatContext(
           })()
         : Promise.resolve([] as Recruiters)),
       // The stored calendar window, for a schedule question. Never fatal.
-      Promise.all([routeP, parsedP]).then(([route, parsed]) =>
+      Promise.all([routeP, parsedP, tzP]).then(([route, parsed, tz]) =>
         route.calendar
           ? (() => {
               steps.start("calendar", "Checking your calendar");
-              return loadChatCalendar(userId, parsed, route.availability, new Date())
+              return loadChatCalendar(userId, parsed, route.availability, new Date(), tz, { recentPast: true })
                 .catch(() => null)
                 .then((cal) => {
                   const refs = cal?.people.length ? toRefs(cal.people, "contact") : undefined;
@@ -905,7 +919,12 @@ export async function prepareChatContext(
                   return cal;
                 });
             })()
-          : null
+          : // Every other question still sees the next week and the last two days, quietly — no
+            // step, and no block at all when there is nothing in it, so a user with no calendar
+            // is never told they have "no meetings".
+            loadChatCalendar(userId, null, false, new Date(), tz, { recentPast: true })
+              .then((cal) => (cal.eventCount > 0 ? cal : null))
+              .catch(() => null)
       ),
       // Depends on ids the client already resolved, so it needs neither the question nor
       // the search. Never fatal: a question with a dead attachment is still a question.
@@ -942,13 +961,11 @@ export async function prepareChatContext(
         .where(eq(contacts.userId, userId))
         .then(([row]) => row?.n ?? null)
         .catch(() => null),
-      // UTC like the reminders tool: no request zone here, and each row carries its own date.
-      getInboxListId(userId)
-        .then((inboxId) =>
-          queryRemindersPage(db, userId, { view: "today", listId: null, limit: OPEN_REMINDER_LIMIT, tz: "UTC" }, { inboxId })
-        )
-        .then((page) => page.items)
-        .catch(() => []),
+      // Reminders across every view, open commitments and events — on every question, in
+      // the user's own zone so "today" is their today. See `@/lib/chat-prefetch`.
+      tzP
+        .then((tz) => loadChatPrefetch(userId, { tz }))
+        .catch(() => EMPTY_PREFETCH),
     ]);
 
   if (threadId && !thread) throw new Error("Chat not found");
@@ -984,6 +1001,8 @@ export async function prepareChatContext(
         title: true,
         location: true,
         email: true,
+        phone: true,
+        linkedinUrl: true,
         industry: true,
         notes: true,
         aiSummary: true,
@@ -1022,6 +1041,11 @@ export async function prepareChatContext(
         relationshipScore: focused.relationshipScore,
         priorityLevel: focused.priorityLevel,
         closenessTier: focused.closenessTier,
+        phone: focused.phone,
+        linkedinUrl: focused.linkedinUrl,
+        howMet: focused.howMet,
+        dateMet: focused.dateMet,
+        nextFollowUpAt: focused.nextFollowUpAt,
         tags: focused.contactTags.map((ct) => ct.tag.name),
         rrfScore: 1,
         relevance: 1,
@@ -1183,15 +1207,8 @@ export async function prepareChatContext(
     ...(attention?.suggestions.map((c): [string, string] => [c.id, c.name]) ?? []),
     ...retrieval.notePeople.map((p): [string, string] => [p.id, p.name]),
   ]);
-  const reminderTitles = new Map(openReminderRows.map((r) => [r.id, r.title]));
-  const openReminders = openReminderRows.length
-    ? openReminderRows
-        .map(
-          (r) =>
-            `- [reminder_id=${r.id}] ${sanitizeProfileLine(r.title)}${r.dueDate ? ` · due ${isoDay(new Date(r.dueDate))}` : " · no date"}${r.contactName ? ` · ${sanitizeProfileLine(r.contactName)}` : ""}`
-        )
-        .join("\n")
-    : null;
+  const reminderTitles = new Map(prefetch.reminderRows.map((r) => [r.id, r.title]));
+  const openReminders = prefetch.reminders;
   const allowedRecruiters = new Set(recruitersForChat.map((r) => r.id));
   const maxScore = Math.max(1, ...recruitersForChat.map((r) => r.score));
 
@@ -1222,6 +1239,8 @@ export async function prepareChatContext(
     modelContacts,
     openReminders,
     reminderTitles,
+    commitments: prefetch.commitments,
+    events: prefetch.events,
     focusProfile,
     writingInstructions,
     access: await accessP,
