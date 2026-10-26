@@ -531,6 +531,34 @@ async function main() {
       JSON.stringify({ provider: f3Send.provider, reply: f3Send.inReplyToRfcId, opts: f3Handoff.opts })
     );
 
+    // Same provider, but the first went out from a different address (another account was
+    // connected since): a thread id isn't valid in this mailbox either.
+    await addProspectsForUser(USER, camp, [{ fullName: "F4 Person", company: "Acme", email: "f4@acme-co.io", origin: "manual" }]);
+    const f4Prospect = (await db.query.outreachProspects.findMany({ where: eq(schema.outreachProspects.campaignId, camp) })).find((p) => p.fullName === "F4 Person")!;
+    await draftCampaignMessagesForUser(USER, camp, [f4Prospect.id], { drafter });
+    const f4First = (await db.query.outreachMessages.findFirst({ where: eq(schema.outreachMessages.prospectId, f4Prospect.id) }))!.id;
+    check("a first message to change accounts on is sent", (await send([f4First])).sent === 1);
+    await backdate(f4First, 8);
+    const f4Parent = await sendRow((await msg(f4First)).deliveryId!);
+    check("…from the connected address, with a thread on record", f4Parent.fromEmail === "me@x.org" && f4Parent.provider === "gmail" && f4Parent.providerThreadId === "pt");
+    await db.execute(sql`UPDATE email_sends SET from_email = 'old@x.org' WHERE id = ${f4Parent.id}::uuid`);
+    const f4 = await draftFollowUpForUser(USER, f4First, { drafter: followDrafter });
+    const handedF4 = handed.length;
+    check("a follow-up after changing accounts still sends", (await send([f4.messageId])).sent === 1 && (await msg(f4.messageId)).status === "sent");
+    const f4Send = await sendRow((await msg(f4.messageId)).deliveryId!);
+    const f4Handoff = handed[handed.length - 1]!;
+    check(
+      "…by reply headers, with no thread from the other account",
+      handed.length === handedF4 + 1 &&
+        f4Send.fromEmail === "me@x.org" &&
+        f4Send.subject.startsWith("Re:") &&
+        f4Send.inReplyToRfcId === f4Parent.rfcMessageId &&
+        f4Send.inReplyToSendId === f4Parent.id &&
+        f4Handoff.message.inReplyTo === f4Parent.rfcMessageId &&
+        !f4Handoff.opts.threadId,
+      JSON.stringify({ from: f4Send.fromEmail, reply: f4Send.inReplyToRfcId, opts: f4Handoff.opts })
+    );
+
     // Not due: a reply, or a model that wrote nothing.
     await backdate(m2!, 8);
     await db.update(schema.outreachMessages).set({ outcome: "replied" }).where(eq(schema.outreachMessages.id, m2!));

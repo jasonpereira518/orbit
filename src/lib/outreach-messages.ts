@@ -619,10 +619,14 @@ export async function sendCampaignMessagesForUser(
       // on file (a legacy sequence row) is sent as written.
       const parent = message.stepIndex === 1 && message.parentMessageId ? parents.get(message.parentMessageId) : undefined;
       const target = parent?.deliveryId ? await resolveReplyTarget(userId, `orbit:${parent.deliveryId}`) : null;
-      // A provider thread id only means something in the mailbox that made it. If the first
-      // went out from another one (the user has since switched), reply by headers alone rather
-      // than forcing a mailbox this send isn't using.
-      const thread = target?.thread && target.thread.provider === capability.provider ? target.thread : null;
+      // A provider thread id only means something in the mailbox that made it: the same provider
+      // and the same address, as in compose. If the first went out from another one (the user
+      // has since switched or reconnected a different account), reply by headers alone rather
+      // than hand this mailbox a thread it doesn't own.
+      const thread =
+        target?.thread && target.thread.provider === capability.provider && target.thread.email === capability.fromEmail
+          ? target.thread
+          : null;
       const queued = await enqueueEmail(userId, {
         to: [email],
         subject: parent ? replySubject(target?.subject ?? parent.subject ?? "") : (message.subject ?? ""),
