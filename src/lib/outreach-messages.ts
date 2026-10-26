@@ -338,6 +338,12 @@ export async function editDraftForUser(
 
 /** Spacing between sends in a batch, as recruiter sends do, so a batch trickles out. */
 const SEND_SPACING_MS = 1200;
+/**
+ * Stop handing messages to the outbox after this long. The page runs under a 60s
+ * `maxDuration`, and a killed function never runs the `finally` that puts unsent claims back:
+ * a message stranded in `queued` can't be claimed, edited or removed again.
+ */
+const SEND_BUDGET_MS = 40_000;
 /** Refusals that no later message in the batch could get past either. */
 const STOPS_BATCH: EnqueueRefusal[] = ["cap_reached", "not_connected", "no_send_scope", "needs_reauth"];
 
@@ -345,6 +351,8 @@ export type SendCampaignResult = {
   sent: number;
   /** Handed to the outbox but not settled yet (a slow provider): the outbox hook settles them. */
   pending: number;
+  /** Claimed, then put back as drafts because the batch ran out of time: send them again. */
+  notSent: number;
   failed: { messageId: string; name: string; error: string }[];
 };
 
@@ -356,7 +364,9 @@ export type SendCampaignResult = {
  * double click, two tabs — email once. The same statement also refuses a second message at
  * the same step for one person, whether it's already out or in the same batch. Anything
  * claimed that this call doesn't hand to the outbox goes back to `draft` before it returns,
- * error or not. Ids that aren't this campaign's emails are ignored.
+ * error or not. After `budgetMs` (40s) it stops handing messages over, well inside the
+ * page's 60s limit, and counts the rest as `notSent`. Ids that aren't this campaign's
+ * emails are ignored.
  *
  * A refused send (no mailbox, today's cap) throws before anything is claimed, so no message
  * moves and no contact is created. The contact is made only for a message about to go out.
@@ -365,14 +375,15 @@ export async function sendCampaignMessagesForUser(
   userId: string,
   campaignId: string,
   messageIds: string[],
-  opts: { fromName?: string | null; spacingMs?: number; contactWrite?: ContactWriteOptions } = {}
+  opts: { fromName?: string | null; spacingMs?: number; budgetMs?: number; contactWrite?: ContactWriteOptions } = {}
 ): Promise<SendCampaignResult> {
+  const start = Date.now();
   const list = Array.isArray(messageIds) ? messageIds : [];
   if (list.length > BULK_SEND_LIMIT) throw new UserFacingError(`Send up to ${BULK_SEND_LIMIT} at a time`);
   const campaign = await requireOwnCampaign(userId, campaignId);
   if (campaign.defaultChannel !== "email") throw new UserFacingError("This campaign isn’t set up for email");
   const ids = [...new Set(list.filter(isUuid))];
-  const result: SendCampaignResult = { sent: 0, pending: 0, failed: [] };
+  const result: SendCampaignResult = { sent: 0, pending: 0, notSent: 0, failed: [] };
   if (!ids.length) return result;
 
   const capability = await getSendCapability(userId);
@@ -419,29 +430,35 @@ export async function sendCampaignMessagesForUser(
   ).map((r) => r.id);
   if (!claimedIds.length) return result;
 
-  // Oldest first; a tie (one draft run) keeps the order the ids were given in.
-  const rows = (
-    await db
-      .select({ message: outreachMessages, prospect: outreachProspects })
-      .from(outreachMessages)
-      .innerJoin(outreachProspects, eq(outreachProspects.id, outreachMessages.prospectId))
-      .innerJoin(outreachCampaigns, eq(outreachCampaigns.id, outreachProspects.campaignId))
-      .where(and(inArray(outreachMessages.id, claimedIds), eq(outreachCampaigns.userId, userId)))
-  ).sort(
-    (a, b) =>
-      a.message.createdAt.getTime() - b.message.createdAt.getTime() ||
-      ids.indexOf(a.message.id) - ids.indexOf(b.message.id)
-  );
-
   // Claimed but not yet the outbox's: whatever is left here goes back to `draft` at the end.
+  // The try opens right here, so nothing after the claim can strand a claimed message.
   const unsent = new Set(claimedIds);
   const spacingMs = opts.spacingMs ?? SEND_SPACING_MS;
+  const budgetMs = opts.budgetMs ?? SEND_BUDGET_MS;
   let handedOff = 0;
   try {
+    // Oldest first; a tie (one draft run) keeps the order the ids were given in.
+    const rows = (
+      await db
+        .select({ message: outreachMessages, prospect: outreachProspects })
+        .from(outreachMessages)
+        .innerJoin(outreachProspects, eq(outreachProspects.id, outreachMessages.prospectId))
+        .innerJoin(outreachCampaigns, eq(outreachCampaigns.id, outreachProspects.campaignId))
+        .where(and(inArray(outreachMessages.id, claimedIds), eq(outreachCampaigns.userId, userId)))
+    ).sort(
+      (a, b) =>
+        a.message.createdAt.getTime() - b.message.createdAt.getTime() ||
+        ids.indexOf(a.message.id) - ids.indexOf(b.message.id)
+    );
+
     for (const [index, { message, prospect }] of rows.entries()) {
       const fail = (error: string) => result.failed.push({ messageId: message.id, name: prospect.fullName, error });
       if (index >= capability.remainingToday) {
         fail(ENQUEUE_COPY.cap_reached);
+        break;
+      }
+      if (Date.now() - start >= budgetMs) {
+        result.notSent = rows.length - index;
         break;
       }
       if (isDemoProspect(prospect.enrichment)) {

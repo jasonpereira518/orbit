@@ -124,6 +124,26 @@ async function clearDailyCap() {
   await db.execute(sql`DELETE FROM email_sends WHERE user_id = ${USER} AND subject = 'cap-fill'`);
 }
 
+/**
+ * Make the read right after the claim throw: the only `select` of a message with its prospect.
+ * `getDb()` builds a fresh wrapper per call outside production, so the patch goes on the
+ * prototype that owns `select`. Returns the undo.
+ */
+async function failPostClaimRead() {
+  let proto: object | null = Object.getPrototypeOf(await getDb());
+  while (proto && !Object.prototype.hasOwnProperty.call(proto, "select")) proto = Object.getPrototypeOf(proto);
+  if (!proto) throw new Error("no select to patch");
+  const owner = proto as { select: (...args: unknown[]) => unknown };
+  const real = owner.select;
+  owner.select = function (this: unknown, ...args: unknown[]) {
+    if ((args[0] as { message?: unknown } | undefined)?.message === schema.outreachMessages) throw new Error("post-claim read failed");
+    return real.apply(this, args);
+  };
+  return () => {
+    owner.select = real;
+  };
+}
+
 async function main() {
   const db = await getDb();
   await reset();
@@ -227,6 +247,35 @@ async function main() {
     const demo = await send([mDemo!]);
     check("demo prospect never sends", demo.sent === 0 && (await sendsFor(mDemo!)) === 0 && demo.failed[0]?.error === DEMO_PROSPECT_SEND_MESSAGE && (await msg(mDemo!)).status === "draft");
     check("…and makes no contact", (await contactsNamed("Demo Person")) === 0);
+
+    console.log("never stranded");
+    await addProspectsForUser(USER, camp, [
+      { fullName: "B1 Person", company: "Acme", email: "b1@acme-co.io", origin: "manual" },
+      { fullName: "B2 Person", company: "Acme", email: "b2@acme-co.io", origin: "manual" },
+    ]);
+    const bIds = (await db.query.outreachProspects.findMany({ where: eq(schema.outreachProspects.campaignId, camp) }))
+      .filter((p) => p.fullName.startsWith("B") && p.fullName.endsWith("Person"))
+      .map((p) => p.id);
+    await draftCampaignMessagesForUser(USER, camp, bIds, { drafter });
+    const bMsgs = (await db.query.outreachMessages.findMany({ where: eq(schema.outreachMessages.stepIndex, 0) }))
+      .filter((m) => bIds.includes(m.prospectId))
+      .map((m) => m.id);
+    const allDraftNoSend = async () =>
+      (await Promise.all(bMsgs.map(async (id) => (await msg(id)).status === "draft" && (await sendsFor(id)) === 0))).every(Boolean);
+    await resetBucket();
+    const out = await sendCampaignMessagesForUser(USER, camp, bMsgs, { spacingMs: 0, budgetMs: 0, contactWrite: OPTS });
+    check("a spent time budget hands nothing more to the outbox", bMsgs.length === 2 && out.sent === 0 && out.notSent === 2 && out.failed.length === 0, JSON.stringify(out));
+    check("…and puts every claimed message back as a draft", await allDraftNoSend());
+    await resetBucket();
+    const undo = await failPostClaimRead();
+    let readFailed: boolean;
+    try {
+      readFailed = await rejects(() => raw(bMsgs), "post-claim read failed");
+    } finally {
+      undo();
+    }
+    check("a failure right after the claim leaves nothing queued", readFailed && (await allDraftNoSend()));
+    check("…and they can still be sent", (await send(bMsgs)).sent === 2);
 
     console.log("guards");
     const [dup2] = await db.insert(schema.outreachMessages).values({ prospectId: pid("Dup Two"), channel: "email", subject: "Hi", body: "Again", status: "draft", stepIndex: 0 }).returning();
