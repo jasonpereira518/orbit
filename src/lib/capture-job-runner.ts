@@ -75,6 +75,7 @@ import {
   normalizeXHandle,
   summaryToTakeaways,
 } from "@/lib/capture/person-enrichment";
+import { recordMetAtEvent } from "@/lib/events/store";
 
 export type CaptureRunnerDeps = {
   parse?: typeof runCaptureParse;
@@ -266,6 +267,12 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
       await markMeetingSessionSaved(userId, row.meetingSessionId, out.batchId).catch(
         reportAndContinue(followOn("meeting"), null)
       );
+    }
+
+    // Opened from an event ("Log who you met"): everyone saved is now met there. A deleted
+    // event refuses inside `recordMetAtEvent`, which costs the badge, never the save.
+    if (row.eventId) {
+      await recordMetAtEvent(userId, row.eventId, out.contactIds).catch(reportAndContinue(followOn("event"), 0));
     }
 
     await upsertIgnoredPeople(userId, ignoredRowsFor(row, out)).catch(reportAndContinue(followOn("ignored"), null));

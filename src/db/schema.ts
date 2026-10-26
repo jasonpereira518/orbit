@@ -4078,6 +4078,12 @@ export const captureJobs = pgTable(
     sourceText: text("source_text"),
     sourceHash: text("source_hash"),
     meetingSessionId: uuid("meeting_session_id"),
+    /**
+     * The `events` row this capture debriefs — set when it was opened from an event ("Log who
+     * you met"). The save marks every saved person as met on that event. Not in `input_hints`
+     * for the same reason as `mentionPicks`; a bare uuid, re-checked against the user at save.
+     */
+    eventId: uuid("event_id"),
     result: jsonb("result").$type<CaptureJobResult>(),
     decisions: jsonb("decisions").$type<CaptureDecisions>().default({}).notNull(),
     claimToken: text("claim_token"),

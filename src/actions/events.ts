@@ -10,7 +10,6 @@
  * actions are reachable by direct POST, so a check anywhere else is not a check.
  */
 import { cookies } from "next/headers";
-import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { requireSyncUser, requireUserForReleasedSurface } from "@/lib/plan-guards";
 import { requireReleasedSurface } from "@/lib/surface-visibility";
@@ -64,7 +63,6 @@ import {
   type UpdateAttendeeResult,
 } from "@/lib/events/store";
 import {
-  connectAttendees,
   previewConnect,
   restampEventInteractions,
   type ConnectPreviewRow,
@@ -81,7 +79,6 @@ import { LumaAuthError, listCalendarEvents } from "@/lib/events/connectors/luma"
 import { isDemoWorkspace } from "@/lib/demo-workspace";
 import type {
   AttendeeRole,
-  ConnectSummary,
   EventConnectionProvider,
   RosterRow,
 } from "@/lib/events/types";
@@ -210,15 +207,10 @@ export async function createEvent(input: {
       revalidateEvents(found.id);
       return { id: found.id, existing: true };
     }
-    const event = { id: found.id };
-
-    if (input.url) {
-      // Off the request path: the user should land on their event, not wait on someone
-      // else's web server. `enrich_status` on the row is how the UI shows this is in flight.
-      after(() => enrichEvent(userId, event.id, input.url!).catch(() => {}));
-    }
+    // No background page read here: the dialog awaits `enrichEventFromUrl` right after this,
+    // and a second read in `after()` fetched the same page twice for every link.
     revalidateEvents();
-    return { id: event.id };
+    return { id: found.id };
   });
 }
 
@@ -567,9 +559,8 @@ export async function deleteAttendee(eventId: string, attendeeId: string): Promi
  * Who on this roster is already in your network.
  *
  * Built on `previewConnect` rather than a second, cheaper matcher on purpose. The badge this
- * feeds and the connect preview must never disagree — "already a contact" above a preview
- * that says "create" reads as a bug — and reuse is the only way to guarantee they agree at
- * the same threshold against the same index.
+ * feeds and the old connect preview had to agree at the same threshold against the same index,
+ * and ingest still matches at that floor.
  *
  * Only unconnected rows are asked about: a row with a `contactId` is already known to be
  * linked, and asking would pay for a match we already have.
@@ -582,33 +573,6 @@ export async function matchRosterToNetwork(eventId: string): Promise<ConnectPrev
   const unlinked = roster.filter((r) => !r.contactId).map((r) => r.id);
   if (unlinked.length === 0) return [];
   return previewConnect(userId, event, unlinked);
-}
-
-/** A dry run, so the user sees who will merge and who will be created before committing. */
-export async function previewConnectAttendees(
-  eventId: string,
-  attendeeIds: string[]
-): Promise<ConnectPreviewRow[]> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  const event = await getEventForUser(userId, eventId);
-  if (!event) throw new Error("That event no longer exists.");
-  return previewConnect(userId, event, attendeeIds);
-}
-
-export async function addSpokenToConnections(
-  eventId: string,
-  attendeeIds: string[]
-): Promise<ConnectSummary & { remaining: number }> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  const event = await getEventForUser(userId, eventId);
-  if (!event) throw new Error("That event no longer exists.");
-
-  const summary = await connectAttendees(userId, event, attendeeIds);
-  revalidateEvents(eventId);
-  // These people are now contacts, so the surfaces that count them are stale.
-  revalidatePath("/contacts");
-  revalidatePath("/dashboard");
-  return summary;
 }
 
 export async function removeSpokenToConnection(

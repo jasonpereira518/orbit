@@ -394,6 +394,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-connector-sync-pass": "pglite",
   "smoke-scan-handoff": "pglite",
   "smoke-capture-jobs": "pglite",
+  "smoke-capture-event-link": "pglite",
   "smoke-capture-merge-target": "pure",
   "smoke-capture-reminder-count": "pglite",
   "smoke-capture-job-stall": "pglite",

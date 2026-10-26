@@ -329,6 +329,11 @@ export type CaptureParseHints = {
     company?: string | null;
   }>;
   interactionType?: string | null;
+  /**
+   * Where everybody in this capture was met — the event's name when it was opened from an
+   * event. Never put in a prompt: it only fills `met_at` on a card the model left blank.
+   */
+  metAt?: string | null;
   /** The user's active goals, so the model can score each person's `relevance`. */
   goals?: string[];
 };

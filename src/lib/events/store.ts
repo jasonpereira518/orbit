@@ -18,7 +18,7 @@
  */
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { eventAttendees, events, type EventRecord } from "@/db/schema";
+import { contacts, eventAttendees, events, type EventRecord } from "@/db/schema";
 import { attendeeIdentityKey } from "@/lib/events/identity";
 import { personKeyOf } from "@/lib/events/people";
 import { UserFacingError } from "@/lib/errors";
@@ -457,6 +457,91 @@ export async function linkAttendeesToContacts(
       FROM (VALUES ${sql.join(values, sql`, `)}) AS v(attendee_id, contact_id)
      WHERE a.id = v.attendee_id AND a.user_id = ${userId}
   `);
+}
+
+/**
+ * "Log who you met": mark the contacts a capture just saved as met at this event.
+ *
+ * A contact already on the roster — linked to it, or sharing its LinkedIn URL, email or exact
+ * name with an unlinked row — is linked to that row, so a ticked guest never becomes a second
+ * line. Everyone else is added (source `capture`) and linked. Either way the row ends with
+ * `contact_id` set and `spoke_to = 1`, which is what "People you met", events-together and
+ * repeat people all read.
+ */
+export async function recordMetAtEvent(userId: string, eventId: string, contactIds: string[]): Promise<number> {
+  if (contactIds.length === 0) return 0;
+  await assertEventOwnedBy(userId, eventId);
+  const db = await getDb();
+  const people = await db
+    .select({
+      id: contacts.id,
+      fullName: contacts.fullName,
+      email: contacts.email,
+      linkedinUrl: contacts.linkedinUrl,
+      xHandle: contacts.xHandle,
+      company: contacts.company,
+      title: contacts.title,
+    })
+    .from(contacts)
+    .where(and(eq(contacts.userId, userId), inArray(contacts.id, contactIds)));
+  const roster = await db
+    .select({
+      id: eventAttendees.id,
+      contactId: eventAttendees.contactId,
+      fullName: eventAttendees.fullName,
+      email: eventAttendees.email,
+      linkedinUrl: eventAttendees.linkedinUrl,
+    })
+    .from(eventAttendees)
+    .where(and(eq(eventAttendees.userId, userId), eq(eventAttendees.eventId, eventId)));
+
+  const norm = (v: string | null | undefined) => v?.trim().toLowerCase().replace(/\s+/g, " ") || null;
+  const taken = new Set<string>();
+  const links: Array<{ attendeeId: string; contactId: string }> = [];
+  const missing: typeof people = [];
+  for (const person of people) {
+    const row =
+      roster.find((r) => r.contactId === person.id) ??
+      roster.find(
+        (r) =>
+          !r.contactId &&
+          !taken.has(r.id) &&
+          ((norm(r.linkedinUrl) && norm(r.linkedinUrl) === norm(person.linkedinUrl)) ||
+            (norm(r.email) && norm(r.email) === norm(person.email)) ||
+            (norm(r.fullName) && norm(r.fullName) === norm(person.fullName)))
+      );
+    if (row) {
+      taken.add(row.id);
+      links.push({ attendeeId: row.id, contactId: person.id });
+    } else {
+      missing.push(person);
+    }
+  }
+
+  const added: ParsedAttendee[] = [];
+  const keyToContact = new Map<string, string>();
+  for (const person of missing) {
+    const identityKey = attendeeIdentityKey(person);
+    if (!identityKey) continue;
+    keyToContact.set(identityKey, person.id);
+    added.push({ ...person, identityKey });
+  }
+  if (added.length) {
+    await upsertEventAttendees(userId, eventId, added, "capture");
+    const rows = await db
+      .select({ id: eventAttendees.id, identityKey: eventAttendees.identityKey })
+      .from(eventAttendees)
+      .where(
+        and(
+          eq(eventAttendees.userId, userId),
+          eq(eventAttendees.eventId, eventId),
+          inArray(eventAttendees.identityKey, [...keyToContact.keys()])
+        )
+      );
+    for (const row of rows) links.push({ attendeeId: row.id, contactId: keyToContact.get(row.identityKey)! });
+  }
+  await linkAttendeesToContacts(userId, links);
+  return links.length;
 }
 
 /**
