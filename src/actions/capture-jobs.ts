@@ -40,6 +40,7 @@ import type {
 } from "@/lib/capture/types";
 import { actionFailure } from "@/lib/action-failure";
 import { hashSourceNote } from "@/lib/suggested-reminder-utils";
+import { assertEventOwnedBy } from "@/lib/events/store";
 
 /**
  * The /capture page's contract with its durable job. Every export is async (one non-async
@@ -200,6 +201,8 @@ export async function queueCaptureJob(input: {
   entryPoint?: "capture" | "profile";
   seedContactId?: string | null;
   meetingSessionId?: string | null;
+  /** "Log who you met" opened from an event: the save marks every saved person as met on it. */
+  eventId?: string | null;
   /** Set when this job is one file of a multi-file drop. Suspends the discard rule below. */
   batchGroupId?: string | null;
   sourceLabel?: string | null;
@@ -224,6 +227,8 @@ export async function queueCaptureJob(input: {
     }
 
     await consumeBucket("capture", userId, RATE_LIMITS.capture);
+    const eventId = input.eventId || null;
+    if (eventId) await assertEventOwnedBy(userId, eventId);
 
     let row = input.jobId
       ? await queueCaptureJobRow(userId, input.jobId, {
@@ -239,7 +244,7 @@ export async function queueCaptureJob(input: {
       const db = await getDb();
       await db
         .update(captureJobs)
-        .set({ ingestedBlocks: [] })
+        .set(eventId ? { ingestedBlocks: [], eventId } : { ingestedBlocks: [] })
         .where(and(eq(captureJobs.id, row.id), eq(captureJobs.userId, userId)));
     }
     if (!row) {
@@ -290,6 +295,7 @@ export async function queueCaptureJob(input: {
         entryPoint: input.entryPoint,
         seedContactId: input.seedContactId,
         meetingSessionId: input.meetingSessionId,
+        eventId,
         batchGroupId: input.batchGroupId ?? null,
         sourceLabel: input.sourceLabel ?? null,
         mentionPicks: input.mentionPicks ?? null,

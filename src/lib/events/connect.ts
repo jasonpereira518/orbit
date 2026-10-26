@@ -1,13 +1,10 @@
 /**
- * Turning "I spoke to these people" into contacts.
+ * Roster rows against the network: who is already a contact, and keeping event-stamped
+ * interactions in step when the event changes.
  *
- * This is the point of the whole feature. A roster is inert until the user picks the handful
- * of people they actually talked to; this module takes that selection and folds it into the
- * network through `src/lib/ingest/events.ts` — the one write path every source goes through.
- *
- * **No contact SQL lives here.** `contact-writes.ts` warns that two writers is already one too
- * many, and ingest owns contact create/merge plus the interaction insert in about three
- * statements per batch. This module's job is to build `NetworkEvent`s and record the outcome.
+ * People met at an event become contacts through capture ("Log who you met", see
+ * `recordMetAtEvent` in store.ts). This module no longer writes contacts; `previewConnect`
+ * only answers "which existing contact is this row", for the roster's badges.
  *
  * ## Why `matchConfidence` is 0.85 and not calendar's 0.6
  *
@@ -26,41 +23,16 @@
  * So the floor is the standard one, passed explicitly — every other caller passes something,
  * and silence here would read as an oversight rather than a decision.
  *
- * `previewConnect` exists so the user sees which way each person is about to go before
- * anything is written. That is the honest answer to a genuinely ambiguous match, and it is
- * affordable here in a way a background sync could never afford.
+ * The badge uses the same floor, so "already a contact" never claims a weaker match than a
+ * merge would accept.
  */
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { DUPLICATE_MERGE_CONFIDENCE, findDuplicateCandidatesIndexed } from "@/lib/duplicates";
 import { eventExternalIdBase } from "@/lib/ingest/external-id";
-import {
-  finalizeIngest,
-  ingestEvents,
-  openIngestContext,
-  type IngestStats,
-  type NetworkEvent,
-  type NetworkParticipant,
-} from "@/lib/ingest/events";
-import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
-import {
-  linkAttendeesToContacts,
-  loadAttendeesForUser,
-  setSpokeToForUser,
-} from "@/lib/events/store";
-import { attendeeIdentityKey } from "@/lib/events/identity";
-import type { ConnectSummary } from "@/lib/events/types";
+import { openIngestContext, type NetworkParticipant } from "@/lib/ingest/events";
+import { loadAttendeesForUser } from "@/lib/events/store";
 import type { EventAttendeeRecord, EventRecord } from "@/db/schema";
-
-/**
- * Matches `CHUNK_SIZE` in the import engine. A roster is normally a room's worth of people, so
- * this rarely bites — but "select all" on a 2,000-row conference export must not become one
- * enormous statement.
- */
-const CHUNK_SIZE = 250;
-
-/** Leaves room under the route's `maxDuration = 300`, the same shape the sync pass uses. */
-const BUDGET_MS = 240_000;
 
 function toParticipant(row: EventAttendeeRecord): NetworkParticipant {
   return {
@@ -94,21 +66,6 @@ function eventTimestamp(event: EventRecord): Date {
 function meetingNote(event: EventRecord): string {
   const where = [event.venue, event.city].filter(Boolean).join(", ");
   return where ? `Met at ${event.title} (${where}).` : `Met at ${event.title}.`;
-}
-
-function buildNetworkEvent(event: EventRecord, rows: EventAttendeeRecord[]): NetworkEvent {
-  return {
-    // Ingest appends `:${contactId}`. Doing it here would make every attendee of one event
-    // collide on `interactions_user_external_uidx` — see external-id.ts.
-    externalIdBase: eventExternalIdBase(event.id),
-    // `NetworkEventType` has no "event" member; the stored interaction type comes from
-    // `IngestOptions.interactionType` below, which is where "event" actually lands.
-    type: "meeting",
-    timestamp: eventTimestamp(event),
-    participants: rows.map(toParticipant),
-    summary: event.title,
-    notes: meetingNote(event),
-  };
 }
 
 /**
@@ -224,87 +181,4 @@ export async function previewConnect(
 /** Provenance for the timeline badge — which acquisition path this person came from. */
 function connectSource(event: EventRecord): string {
   return event.provider ? `event:${event.provider}` : "event";
-}
-
-/**
- * Connect the selected attendees.
- *
- * Returns what actually happened, including how many were refused by the plan cap — that
- * number is carried to the UI rather than folded into a success message, because "we added
- * everyone" and "we silently dropped four people" must not look the same.
- */
-export async function connectAttendees(
-  userId: string,
-  event: EventRecord,
-  attendeeIds: string[]
-): Promise<ConnectSummary & { remaining: number }> {
-  const rows = await loadAttendeesForUser(userId, event.id, attendeeIds);
-  // Rows with nothing to identify them cannot be matched or created; ingest would drop them
-  // silently, so they are excluded here and reported as `unmatched` instead.
-  const usable = rows.filter((r) => attendeeIdentityKey(r) !== null && !r.contactId);
-
-  // Mark intent first. If the run is cut short by the budget, the selection survives and the
-  // user can pick up where it stopped rather than re-ticking every box.
-  await setSpokeToForUser(userId, event.id, usable.map((r) => r.id), true);
-
-  const ctx = await openIngestContext(userId, {
-    source: connectSource(event),
-    createsContacts: true,
-    matchConfidence: DUPLICATE_MERGE_CONFIDENCE,
-    // The stored `interactions.interaction_type`. Already a member of INTERACTION_TYPES —
-    // "Met them at a conference, talk or mixer" — so the timeline renders it with the right
-    // icon and colour with no new vocabulary.
-    interactionType: "event",
-    metContext: "event",
-    howMet: () => `Met at ${event.title}`,
-    reportResolutions: true,
-  });
-
-  const totals: ConnectSummary = {
-    created: 0,
-    matched: 0,
-    interactionsLogged: 0,
-    blockedByPlan: 0,
-    unmatched: rows.length - usable.length,
-  };
-  const links: Array<{ attendeeId: string; contactId: string }> = [];
-  const deadline = deadlineAfter(BUDGET_MS);
-  let processed = 0;
-
-  for (let i = 0; i < usable.length; i += CHUNK_SIZE) {
-    // Checked BEFORE the chunk, not after: starting work we cannot finish is how a run gets
-    // killed mid-write instead of stopping cleanly with everything so far recorded.
-    if (i > 0 && deadlineReached(deadline)) break;
-    const chunk = usable.slice(i, i + CHUNK_SIZE);
-    const stats: IngestStats = await ingestEvents(ctx, [buildNetworkEvent(event, chunk)]);
-
-    totals.created += stats.contactsCreated;
-    totals.matched += stats.contactsMatched;
-    totals.interactionsLogged += stats.interactionsLogged;
-    totals.blockedByPlan += stats.blockedByPlan;
-    processed += chunk.length;
-
-    // Map each resolved participant back to the attendee row it came from. Keyed on identity
-    // rather than array position: ingest collapses duplicate participants within an event, so
-    // the resolutions it returns do not line up index-for-index with the chunk.
-    const byKey = new Map(chunk.map((r) => [attendeeIdentityKey(r)!, r.id]));
-    for (const { participant, contactId } of stats.resolutions ?? []) {
-      const attendeeId = byKey.get(
-        attendeeIdentityKey({
-          linkedinUrl: participant.linkedinUrl,
-          email: participant.email,
-          xHandle: participant.handle,
-          fullName: participant.name,
-        }) ?? ""
-      );
-      if (attendeeId) links.push({ attendeeId, contactId });
-    }
-  }
-
-  await linkAttendeesToContacts(userId, links);
-  // Once per run, never per chunk — it marks the closeness cohort dirty and kicks the
-  // embedding backfill, both of which are debounced downstream.
-  await finalizeIngest(ctx);
-
-  return { ...totals, remaining: usable.length - processed };
 }

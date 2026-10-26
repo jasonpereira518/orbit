@@ -17,6 +17,46 @@ import { userTimeZone } from "@/lib/meeting-context";
 import { ymdInZone } from "@/lib/reminder-due-bucket";
 import { CLOUD_NOTES_SURFACE_KEY } from "@/lib/surfaces";
 import { isSurfaceLive } from "@/lib/surface-visibility";
+import { getEventForUser, loadAttendeesForUser } from "@/lib/events/store";
+
+const UUID = /^[0-9a-f-]{36}$/i;
+/** A row's worth of guests ticked on the roster; the URL carries their ids, never their names. */
+const MAX_DEBRIEF_GUESTS = 25;
+
+/**
+ * "Log who you met" from an Event (`/capture?eventId=&attendees=`): the note starts with the
+ * event and one line per ticked guest, the guests are seeded so the parse knows who they are,
+ * and `metAt` fills each card's "met at". The job carries `eventId`, so the save marks
+ * everyone it saved as met on the event. Null for an id that is not this user's event.
+ */
+async function eventDebrief(userId: string, eventId: string, attendeeParam: string | undefined) {
+  if (!UUID.test(eventId)) return null;
+  const event = await getEventForUser(userId, eventId);
+  if (!event) return null;
+  const ids = (attendeeParam ?? "").split(",").filter((id) => UUID.test(id)).slice(0, MAX_DEBRIEF_GUESTS);
+  const guests = await loadAttendeesForUser(userId, eventId, ids);
+  const title = event.title || "the event";
+  const lines = guests.map((g) => {
+    const role = [g.title, g.company].filter(Boolean).join(" at ");
+    return `- ${g.fullName || g.email || g.linkedinUrl}${role ? ` (${role})` : ""}: `;
+  });
+  return {
+    notes: `Met at “${title}”:\n${lines.length ? `${lines.join("\n")}\n` : ""}`,
+    eventId: event.id,
+    hints: {
+      eventDate: event.startsAt ? ymdInZone(event.startsAt, event.timezone || (await userTimeZone(userId))) : null,
+      interactionType: "event",
+      metAt: event.title || null,
+      seedPeople: guests.map((g) => ({
+        name: g.fullName,
+        email: g.email,
+        linkedinUrl: g.linkedinUrl,
+        title: g.title,
+        company: g.company,
+      })),
+    },
+  };
+}
 
 export const metadata = { title: "Capture" };
 
@@ -28,7 +68,14 @@ export const maxDuration = 300;
 export default async function CapturePage({
   searchParams,
 }: {
-  searchParams: Promise<{ contactId?: string; mode?: string; review?: string; event?: string }>;
+  searchParams: Promise<{
+    contactId?: string;
+    mode?: string;
+    review?: string;
+    event?: string;
+    eventId?: string;
+    attendees?: string;
+  }>;
 }) {
   const gate = await pageVisibilityGate("page.capture");
   if (gate) return gate;
@@ -81,7 +128,9 @@ export default async function CapturePage({
   // kind of interaction are known, so the parse starts from them instead of guessing.
   const event =
     params.event && /^[0-9a-f-]{36}$/i.test(params.event) ? await findEventById(userId, params.event).catch(() => null) : null;
-  const initialMeeting = event
+  const initialMeeting = params.eventId
+    ? await eventDebrief(userId, params.eventId, params.attendees).catch(() => null)
+    : event
     ? {
         notes: `Notes from “${event.title || "the meeting"}”${
           event.attendees.length ? ` with ${event.attendees.map((a) => a.name || a.email).join(", ")}` : ""
@@ -115,7 +164,9 @@ export default async function CapturePage({
       <div>
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">Capture</h1>
         <p className="mt-1 text-muted-foreground">
-          {contactName
+          {initialMeeting && "eventId" in initialMeeting
+            ? "Who did you meet? Type names and what you talked about, paste their LinkedIn links, or switch to Voice. Each person becomes a contact with a follow-up."
+            : contactName
             ? `Log an interaction with ${contactName} — or paste notes that mention others too.`
             : "Notes, a voice memo, a meeting, or docs from your drive. Orbit pulls out each person; you review them one card at a time."}
         </p>

@@ -97,8 +97,11 @@ export function CaptureFlow({
   initialJobs?: CaptureJobView[];
   initialContactId?: string | null;
   initialContactName?: string | null;
-  /** A calendar meeting to write up (`/capture?event=`): the box starts with its people seeded. */
-  initialMeeting?: { notes: string; hints: CaptureParseHints } | null;
+  /**
+   * A calendar meeting (`/capture?event=`) or an Event (`/capture?eventId=`) to write up: the box
+   * starts with its people seeded. `eventId` rides on the job so the save marks people as met.
+   */
+  initialMeeting?: { notes: string; hints: CaptureParseHints; eventId?: string | null } | null;
   defaultMode?: CaptureMode;
   hasApiKey?: boolean;
   /** The AI gate's reason when `hasApiKey` is false — which notice to show. */
@@ -255,6 +258,8 @@ export function CaptureFlow({
 
   const prefill = prefillJobFor(initialJob);
   const prefillText = prefill ? captureJobText(prefill) : "";
+  // A resumed job is not this event's debrief, so it never inherits the event.
+  const debriefEventId = prefill ? null : (initialMeeting?.eventId ?? null);
 
   const messy = useCaptureIngest({
     sourceKind: "messy",
@@ -339,6 +344,7 @@ export function CaptureFlow({
         entryPoint: initialContactId ? "profile" : "capture",
         seedContactId: initialContactId,
         meetingSessionId: input.meetingSessionId ?? null,
+        eventId: input.sourceKind === "meeting" ? null : debriefEventId,
         // Only the picks whose token is still in the text. The registry is append-only, so
         // a name the user typed and then deleted is still in it — and sending that would
         // link a note to somebody they took back out on purpose.
@@ -383,7 +389,7 @@ export function CaptureFlow({
       // Extracted means decided: the draft's job is done.
       if (userId && input.sourceKind === "messy") clearCaptureDraft(window.localStorage, captureDraftKey(userId, initialContactId));
     },
-    [initialContactId, messy, voice, userId]
+    [initialContactId, messy, voice, userId, debriefEventId]
   );
   useEffect(() => {
     startExtractionRef.current = startExtraction;

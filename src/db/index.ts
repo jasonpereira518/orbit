@@ -1996,6 +1996,7 @@ CREATE TABLE IF NOT EXISTS capture_jobs (
   source_text text,
   source_hash text,
   meeting_session_id uuid,
+  event_id uuid,
   result jsonb,
   decisions jsonb NOT NULL DEFAULT '{}'::jsonb,
   claim_token text,
@@ -2799,7 +2800,11 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // .join_session_id / user_id / converted_at, and two new tables: site_invites (Orbit's own
 // invitation ledger) and product_events (append-only, schema-validated telemetry). Renumbered from 171 on Oct 19 2026
 // after main reached 179; rescanned every remote ref that day: 180 was the highest claimed anywhere.
-export const SCHEMA_VERSION = 181;
+//
+// 184 = capture_jobs.event_id: the Event a capture debriefs ("log who you met"), so the save can
+// mark those people as met on the event. NOT 182-183: branches claim up to 183
+// (claude/chat-agent-p*). Rescanned every remote ref on Oct 25 2026: 183 was the highest claimed.
+export const SCHEMA_VERSION = 184;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -4629,6 +4634,9 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS sender_bio text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS career_profile jsonb`,
+  // Schema v184: the Event a capture debriefs. Bare uuid like meeting_session_id; the save
+  // re-reads the event, so a deleted one only means nobody gets marked as met.
+  `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS event_id uuid`,
   // Schema v161: the calendar event a reminder or a recording belongs to — the provider's
   // per-instance id, not a calendar_events FK, because that table only holds a two-week window.
   `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS calendar_event_key text`,
