@@ -694,6 +694,43 @@ async function main() {
     check("async states are announced", (messages.match(/role="status"|aria-live="polite"/g) ?? []).length >= 3);
   }
 
+  console.log("\nadd to campaign from Find people");
+  {
+    const findPage = "src/app/(clerk)/(app)/(main)/find/page.tsx";
+    const addFile = "src/components/find/add-to-campaign.tsx";
+    const findFile = "src/components/find/find-people.tsx";
+    const page = code(findPage);
+    const body = page.slice(Math.max(0, page.indexOf("export default async function")));
+    check("the Find page awaits its visibility gate first", body.match(/await\s+([^;]*)/)?.[1]?.trim() === 'pageVisibilityGate("page.find")');
+    check(
+      "choices load only for a plan that has Outreach, and only once the page is live",
+      /canUseOutreach\s*&&\s*\(await isSurfaceLive\(userId,\s*"page\.outreach"\)\)/.test(page) && page.includes("listCampaignChoicesForUser(userId)")
+    );
+    check("…and otherwise there are none", /\)\s*\?\s*listCampaignChoicesForUser\(userId\)\s*:\s*\[\]/.test(page));
+    check("the choices go to the client as props", /<FindPeople[^>]*campaigns=\{/.test(page));
+
+    const add = code(addFile);
+    check("the menu is a client component", readFileSync(addFile, "utf8").startsWith('"use client"'));
+    check("it is a dropdown menu", add.includes("DropdownMenu") && add.includes("DropdownMenuItem"));
+    check("it adds through the action, one person at a time", /addProspects\(\s*\w+(?:\.id)?,\s*\[\s*person\s*\]\s*\)/.test(add));
+    check("it names the campaign in the toast", add.includes("`Added to ${") && add.includes("`Already in ${"));
+    check("a person who can't be added says what they need", add.includes("Couldn’t add them — they need a company or LinkedIn link"));
+    check("the menu is off while an add is in flight", /disabled=\{pending\}/.test(add));
+    check("the trigger is named for the person", /aria-label=\{`Add to campaign: \$\{/.test(add));
+    check("nothing is offered without a campaign", /!choices\.length|choices\.length\s*===\s*0/.test(add) && /return null/.test(add));
+
+    for (const file of [addFile, findFile]) {
+      const source = code(file);
+      check(`${file} never value-imports the database`, !/import\s+(?!type\b)[^;]*from\s+["']@\/db/.test(source));
+      check(`${file} imports no server-only people module`, !/from\s+["']@\/lib\/outreach-people["']/.test(source));
+      check(`${file} has no escaped apostrophes`, !/\\u2019|&rsquo;|&#8217;/.test(source));
+    }
+    const find = code(findFile);
+    check("a discovery row adds as a find, with its page and why", /origin:\s*"find"/.test(find) && /whyMatches:\s*c\.whyMatches/.test(find) && /url:\s*c\.url/.test(find));
+    check("a brief adds as a brief, keyed to its research", /origin:\s*"brief"/.test(find) && /researchKey:\s*key/.test(find));
+    check("both cards offer the menu", (find.match(/<AddToCampaign\b/g) ?? []).length === 2);
+  }
+
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
     process.exit(1);

@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, outreachCampaigns, outreachMessages, outreachProspects } from "@/db/schema";
 import { findConfidentDuplicate, resolveOrCreateContact } from "@/lib/contact-resolve";
@@ -12,7 +12,9 @@ import {
   EMAIL_SHAPE,
   EMAILED_STATUSES,
   LINKEDIN_CONTACTED_STATUSES,
+  MAX_CAMPAIGN_CHOICES,
   MAX_CAMPAIGN_PEOPLE,
+  type CampaignChoice,
   type NewProspect,
   type ProspectEnrichment,
 } from "@/lib/outreach-types";
@@ -186,6 +188,22 @@ async function campaignIndex(campaignId: string) {
 
 function enrichmentOf(p: NewProspect, emailSource: ProspectEnrichment["emailSource"]): ProspectEnrichment {
   return { origin: p.origin, url: p.url, whyMatches: p.whyMatches, researchKey: p.researchKey, emailSource };
+}
+
+/**
+ * The campaigns `/find` offers "Add to campaign" for: the user's own that are not archived,
+ * most recently updated first, so the one they were just working in sits at the top. A campaign
+ * sends by LinkedIn or by email; anything but "linkedin" reads as email.
+ */
+export async function listCampaignChoicesForUser(userId: string): Promise<CampaignChoice[]> {
+  const db = await getDb();
+  const rows = await db
+    .select({ id: outreachCampaigns.id, name: outreachCampaigns.name, channel: outreachCampaigns.defaultChannel })
+    .from(outreachCampaigns)
+    .where(and(eq(outreachCampaigns.userId, userId), ne(outreachCampaigns.status, "archived")))
+    .orderBy(desc(outreachCampaigns.updatedAt), desc(outreachCampaigns.createdAt))
+    .limit(MAX_CAMPAIGN_CHOICES);
+  return rows.map((r) => ({ id: r.id, name: r.name, channel: r.channel === "linkedin" ? "linkedin" : "email" }));
 }
 
 /* ------------------------------------------------------------------ add / skip / remove ----- */

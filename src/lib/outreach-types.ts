@@ -197,6 +197,11 @@ export type NewProspect = {
 };
 
 export const MAX_CAMPAIGN_PEOPLE = 100;
+/** Campaigns the "Add to campaign" menu on /find lists: the most recently updated ones. */
+export const MAX_CAMPAIGN_CHOICES = 20;
+
+/** A campaign as /find offers it: enough to pick one and say where it sends. */
+export type CampaignChoice = { id: string; name: string; channel: "email" | "linkedin" };
 /** People drafted in one go: each is a model call. */
 export const MAX_DRAFTS_PER_RUN = 10;
 /** LinkedIn's connection-note limit. */

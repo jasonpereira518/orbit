@@ -13,6 +13,7 @@ import {
   attachBriefForUser,
   campaignKnownNamesForUser,
   ensureProspectContactForUser,
+  listCampaignChoicesForUser,
   normalizeNewProspect,
   prospectExternalId,
   prospectNameKey,
@@ -21,12 +22,13 @@ import {
   setProspectLinkedinUrlForUser,
   skipCandidateForUser,
 } from "../src/lib/outreach-people";
-import { MAX_CAMPAIGN_PEOPLE } from "../src/lib/outreach-types";
+import { MAX_CAMPAIGN_CHOICES, MAX_CAMPAIGN_PEOPLE } from "../src/lib/outreach-types";
 import { purgeUserData } from "../src/lib/user-data";
 import { researchPerson, type PersonResearcher } from "../src/lib/web-research";
 
 const USER = "smoke-outreach-people-user";
 const OTHER = "smoke-outreach-people-other";
+const CHOICES = "smoke-outreach-people-choices";
 const OPTS = { skipRevalidate: true, skipEmbedding: true, skipSummary: true, skipCloseness: true } as const;
 
 let failures = 0;
@@ -79,7 +81,7 @@ async function addMessage(prospectId: string, status: string, channel = "email")
 }
 
 async function reset() {
-  for (const id of [USER, OTHER]) await purgeUserData(id, { keepSettings: false }).catch(() => {});
+  for (const id of [USER, OTHER, CHOICES]) await purgeUserData(id, { keepSettings: false }).catch(() => {});
 }
 
 const CONFIDENT = {
@@ -121,6 +123,39 @@ async function normalizeSection() {
   check("name key folds accents, not letters", prospectNameKey({ fullName: "José García", company: "ZS" }) === "name:jose garcia|zs" && prospectNameKey({ fullName: "Jose Garcia", company: "ZS" }) === prospectNameKey({ fullName: "José García", company: "ZS" }));
 }
 
+/** The campaigns Find people offers: this user's, live ones only, newest activity first, 20 at most. */
+async function choicesSection() {
+  console.log("campaign choices");
+  const db = await getDb();
+  const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000);
+  await db.insert(schema.outreachCampaigns).values([
+    { userId: CHOICES, name: "Newest", updatedAt: ago(1) },
+    { userId: CHOICES, name: "On LinkedIn", defaultChannel: "linkedin", updatedAt: ago(2) },
+    { userId: CHOICES, name: "Odd channel", defaultChannel: "sms", updatedAt: ago(3) },
+    // The most recently touched of all, and still left out.
+    { userId: CHOICES, name: "Shelved", status: "archived", updatedAt: ago(0) },
+    { userId: OTHER, name: "Theirs too", updatedAt: ago(0) },
+  ]);
+  const got = await listCampaignChoicesForUser(CHOICES);
+  check(
+    "choices exclude other tenants and archived",
+    got.map((c) => c.name).join("|") === "Newest|On LinkedIn|Odd channel",
+    got.map((c) => c.name).join("|")
+  );
+  check("a choice is just an id, a name and a channel", got.every((c) => Object.keys(c).sort().join() === "channel,id,name" && c.id.length === 36));
+  check("a LinkedIn campaign says so", got.find((c) => c.name === "On LinkedIn")?.channel === "linkedin");
+  check("any other channel reads as email", got.find((c) => c.name === "Odd channel")?.channel === "email" && got.find((c) => c.name === "Newest")?.channel === "email");
+  check("someone with no campaigns gets none", (await listCampaignChoicesForUser("smoke-outreach-people-nobody")).length === 0);
+
+  await db.insert(schema.outreachCampaigns).values(
+    Array.from({ length: 25 }, (_, i) => ({ userId: CHOICES, name: `Bulk ${i}`, updatedAt: ago(10 + i) }))
+  );
+  const capped = await listCampaignChoicesForUser(CHOICES);
+  const names = capped.map((c) => c.name);
+  check("20 at most", MAX_CAMPAIGN_CHOICES === 20 && capped.length === 20, `${capped.length}`);
+  check("…the most recently updated ones", names[0] === "Newest" && names.includes("Bulk 16") && !names.includes("Bulk 17"), names.join("|"));
+}
+
 async function main() {
   const db = await getDb();
   await reset();
@@ -145,6 +180,7 @@ async function main() {
     const fullId = fullCamp!.id;
 
     await normalizeSection();
+    await choicesSection();
 
     console.log("add");
     const r1 = await addProspectsForUser(USER, campId, [{ fullName: "Ana Ruiz", company: "ZS", origin: "find", url: "https://zs.com/team", whyMatches: "UNC MPH" }]);

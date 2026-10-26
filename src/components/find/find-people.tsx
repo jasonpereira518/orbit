@@ -8,8 +8,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { saveResearchedPerson } from "@/actions/web-research";
+import { AddToCampaign, type AddablePerson } from "@/components/find/add-to-campaign";
 import { requestBrief, type Brief } from "@/components/find/request-brief";
 import { friendlyError } from "@/lib/errors";
+import { asLinkedInProfile } from "@/lib/outreach-channels";
+import type { CampaignChoice } from "@/lib/outreach-types";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import type { Candidate, CompanyDossier, DiscoveryResult, PersonDossier, ResearchBrief } from "@/lib/web-research";
@@ -22,7 +25,32 @@ type Mode = "person" | "company" | "discover";
 /** A LinkedIn profile page is the strongest anchor a brief can get. The server re-checks it. */
 const LINKEDIN_PROFILE = /^https?:\/\/([a-z]{2,3}\.)?linkedin\.com\/in\/[^/?#\s]+\/?$/i;
 
-export function FindPeople({ canUseAi, recent }: { canUseAi: boolean; recent: Brief[] }) {
+/**
+ * A discovery row as a campaign takes it. Their LinkedIn page, when that is the page that found
+ * them, is kept as their profile: the same person added from a campaign's own search is then
+ * recognised as the same.
+ */
+const candidatePerson = (c: Candidate): AddablePerson => ({
+  fullName: c.fullName,
+  title: c.title,
+  company: c.company,
+  linkedinUrl: asLinkedInProfile(c.url),
+  origin: "find",
+  url: c.url,
+  whyMatches: c.whyMatches,
+});
+
+/** A brief as a campaign takes it: the name, company and title its card shows (a confident brief's current role), tied to its research. */
+const dossierPerson = (key: string, d: PersonDossier): AddablePerson => ({
+  fullName: d.subject.fullName,
+  title: d.match === "confident" ? d.current?.title : null,
+  company: (d.match === "confident" ? d.current?.organization : null) ?? d.subject.company,
+  linkedinUrl: asLinkedInProfile(d.subject.linkedinUrl),
+  origin: "brief",
+  researchKey: key,
+});
+
+export function FindPeople({ canUseAi, recent, campaigns }: { canUseAi: boolean; recent: Brief[]; campaigns: CampaignChoice[] }) {
   const [mode, setMode] = useState<Mode>("person");
   const [fullName, setFullName] = useState("");
   const [company, setCompany] = useState("");
@@ -177,6 +205,7 @@ export function FindPeople({ canUseAi, recent }: { canUseAi: boolean; recent: Br
           <DossierCard
             key={brief.key}
             brief={brief as PersonBrief}
+            campaigns={campaigns}
             refreshing={pending}
             onRefresh={() => run({ kind: "person", ...(brief.dossier as PersonDossier).subject, fresh: true })}
           />
@@ -194,6 +223,7 @@ export function FindPeople({ canUseAi, recent }: { canUseAi: boolean; recent: Br
           <DiscoveryCard
             key={brief.key}
             brief={brief as DiscoveryBrief}
+            campaigns={campaigns}
             refreshing={pending}
             onRefresh={() => run({ kind: "discover", query: (brief.dossier as DiscoveryResult).query, fresh: true })}
             onBrief={briefCandidate}
@@ -247,7 +277,17 @@ function yearRange(e: PersonDossier["experiences"][number]): string {
   return e.startYear ? `${e.startYear}–${end}` : e.isCurrent ? "Current" : "";
 }
 
-function DossierCard({ brief, refreshing, onRefresh }: { brief: PersonBrief; refreshing: boolean; onRefresh: () => void }) {
+function DossierCard({
+  brief,
+  campaigns,
+  refreshing,
+  onRefresh,
+}: {
+  brief: PersonBrief;
+  campaigns: CampaignChoice[];
+  refreshing: boolean;
+  onRefresh: () => void;
+}) {
   const { dossier } = brief;
   const [saved, setSaved] = useState<{ contactId: string; existing: boolean } | null>(null);
   const [saving, startSave] = useTransition();
@@ -279,10 +319,11 @@ function DossierCard({ brief, refreshing, onRefresh }: { brief: PersonBrief; ref
           {subtitle && <p className="text-sm text-muted-foreground">{subtitle}</p>}
           {dossier.location && <p className="text-xs text-muted-foreground">{dossier.location}</p>}
         </div>
-        <div className="flex shrink-0 gap-2">
+        <div className="flex shrink-0 flex-wrap gap-2">
           <Button variant="outline" size="sm" disabled={refreshing} onClick={onRefresh} aria-label="Search again">
             <RefreshCw className={refreshing ? "size-4 animate-spin" : "size-4"} aria-hidden />
           </Button>
+          <AddToCampaign person={dossierPerson(brief.key, dossier)} choices={campaigns} />
           {saved ? (
             <Link href={`/contacts/${saved.contactId}`} className="inline-flex items-center gap-1.5 text-sm font-medium text-primary underline-offset-4 hover:underline">
               <Check className="size-4" aria-hidden />
@@ -456,11 +497,13 @@ function CompanyCard({
 
 function DiscoveryCard({
   brief,
+  campaigns,
   refreshing,
   onRefresh,
   onBrief,
 }: {
   brief: DiscoveryBrief;
+  campaigns: CampaignChoice[];
   refreshing: boolean;
   onRefresh: () => void;
   onBrief: (candidate: Candidate) => void;
@@ -485,20 +528,23 @@ function DiscoveryCard({
       {dossier.candidates.length > 0 && (
         <ul className="divide-y divide-border/60">
           {dossier.candidates.map((c) => (
-            <li key={c.url + c.fullName} className="flex items-start gap-3 py-2.5">
-              <div className="min-w-0 flex-1">
+            <li key={c.url + c.fullName} className="flex flex-wrap items-start gap-x-3 gap-y-2 py-2.5">
+              <div className="min-w-0 flex-1 basis-48">
                 <p className="truncate text-sm font-medium text-ink">{c.fullName}</p>
                 {(c.title || c.company) && (
                   <p className="truncate text-xs text-muted-foreground">{[c.title, c.company].filter(Boolean).join(" · ")}</p>
                 )}
                 <p className="mt-0.5 text-xs text-ink/80">{c.whyMatches}</p>
               </div>
-              <a href={c.url} target="_blank" rel="noopener noreferrer nofollow" className="mt-0.5 shrink-0 text-muted-foreground hover:text-ink" aria-label={`Where ${c.fullName} was found`}>
-                <ExternalLink className="size-3.5" aria-hidden />
-              </a>
-              <Button variant="outline" size="sm" disabled={refreshing} onClick={() => onBrief(c)}>
-                Brief
-              </Button>
+              <div className="flex shrink-0 items-center gap-2">
+                <a href={c.url} target="_blank" rel="noopener noreferrer nofollow" className="shrink-0 text-muted-foreground hover:text-ink" aria-label={`Where ${c.fullName} was found`}>
+                  <ExternalLink className="size-3.5" aria-hidden />
+                </a>
+                <Button variant="outline" size="sm" disabled={refreshing} onClick={() => onBrief(c)}>
+                  Brief
+                </Button>
+                <AddToCampaign person={candidatePerson(c)} choices={campaigns} />
+              </div>
             </li>
           ))}
         </ul>
