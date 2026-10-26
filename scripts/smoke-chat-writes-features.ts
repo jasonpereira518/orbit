@@ -95,7 +95,7 @@ async function store(cards: StoredProposedAction[]) {
     .insert(chatMessages)
     .values({ threadId: thread.id, userId: USER, role: "assistant", content: "x", proposedActions: cards })
     .returning();
-  const card = (tool: string) => cards.find((c) => c.args.kind === "tool" && c.args.tool === tool)!;
+  const card = (tool: string) => cards.find((c) => c.args.tool === tool)!;
   return { messageId: message.id, card };
 }
 
@@ -272,7 +272,7 @@ async function main() {
     const closed = await commitProposedAction(messageId, card("update_campaign").id);
     check("while outreach is coming soon, its writes refuse", !closed.ok && (await db.query.outreachCampaigns.findFirst({ where: eq(outreachCampaigns.id, campaign.id) }))?.tone === "warm", JSON.stringify(closed));
     await setSurfaceComingSoon("smoke-chat-writes-features", "page.outreach", false);
-    const draftCards = list.filter((c) => c.args.kind === "tool" && c.args.tool === "update_outreach_draft");
+    const draftCards = list.filter((c) => c.args.tool === "update_outreach_draft");
 
     const camp = async () => db.query.outreachCampaigns.findFirst({ where: eq(outreachCampaigns.id, campaign.id) });
     const res = await commitProposedAction(messageId, card("update_campaign").id);

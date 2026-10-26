@@ -38,18 +38,6 @@ import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { integrationHref } from "@/components/settings/sections";
 
-type LegacyKind = Exclude<StoredProposedAction["args"]["kind"], "tool">;
-
-const ICON: Record<LegacyKind, typeof NotebookPen> = {
-  log_interaction: NotebookPen,
-  create_reminder: Bell,
-  schedule_follow_up: Calendar,
-  update_contact: UserPen,
-  create_contact: UserPlus,
-  complete_reminder: CircleCheck,
-  snooze_reminder: AlarmClock,
-};
-
 /** Icons for the chat writes (`CHAT_WRITES` in @/lib/tools/chat-writes), by tool name. */
 const TOOL_ICON: Record<string, typeof NotebookPen> = {
   log_note: NotebookPen,
@@ -93,29 +81,9 @@ const TOOL_ICON: Record<string, typeof NotebookPen> = {
 
 /** A card whose button opens the send dialog instead of committing (`draft_email`). */
 function draftOf(action: StoredProposedAction): { contactId: string; body: string } | null {
-  if (action.args.kind !== "tool" || action.args.tool !== "draft_email") return null;
+  if (action.args.tool !== "draft_email") return null;
   const { contactId, body } = action.args.input as { contactId?: unknown; body?: unknown };
   return typeof contactId === "string" && typeof body === "string" ? { contactId, body } : null;
-}
-
-const RESULT_HREF: Record<LegacyKind, (resultId: string) => string | null> = {
-  log_interaction: () => null,
-  create_reminder: () => "/reminders",
-  schedule_follow_up: () => "/reminders",
-  update_contact: (id) => `/contacts/${id}`,
-  create_contact: (id) => `/contacts/${id}`,
-  complete_reminder: () => "/reminders",
-  snooze_reminder: () => "/reminders",
-};
-
-function contactIdOf(action: StoredProposedAction): string | null {
-  if (action.args.kind === "tool") return action.contactId ?? null;
-  return "contactId" in action.args ? (action.args.contactId ?? null) : null;
-}
-
-function hrefOf(action: StoredProposedAction): string | null {
-  if (action.args.kind === "tool") return action.href ?? null;
-  return action.resultId ? RESULT_HREF[action.args.kind](action.resultId) : null;
 }
 
 /** Commit one proposal and report the state the server settled it in. */
@@ -153,8 +121,8 @@ export function ProposedActionsCard({
   const [busy, setBusy] = useState(false);
   const [sending, setSending] = useState(false);
   const draft = draftOf(action);
-  const Icon = action.args.kind === "tool" ? (TOOL_ICON[action.args.tool] ?? NotebookPen) : ICON[action.args.kind];
-  const contactId = contactIdOf(action);
+  const Icon = TOOL_ICON[action.args.tool] ?? NotebookPen;
+  const contactId = action.contactId ?? null;
   const destructive = Boolean(action.destructive);
 
   async function confirm() {
@@ -195,7 +163,7 @@ export function ProposedActionsCard({
     }
   }
 
-  const resultHref = hrefOf(action);
+  const resultHref = action.href ?? null;
 
   return (
     <div
@@ -375,7 +343,7 @@ export function ProposedActionsList({
         </div>
       )}
       {actions.map((action) => {
-        const contactId = contactIdOf(action);
+        const contactId = action.contactId ?? null;
         return (
           <ProposedActionsCard
             key={action.id}

@@ -338,7 +338,8 @@ const CORE_WRITES: readonly ChatWrite[] = [
         description: i.description ? text(i.description, 2000) : undefined,
         dueDate: dueWithinYear(i.due_date) ?? undefined,
         reminderType: "manual",
-      });
+        // A chat card the person accepted, which `followup_set` counts as a suggestion.
+      }, { origin: "suggestion" });
       if (!row) throw new UserFacingError("Couldn’t set that reminder");
       return { resultId: row.id, href: "/reminders", undo: { tool: "dismiss_created_reminder", input: { reminderId: row.id } } };
     },
@@ -411,7 +412,7 @@ const CORE_WRITES: readonly ChatWrite[] = [
     contactOf: (i) => s(i.contactId),
     preview: (i, sc) => `Schedule a follow-up with ${name(sc.contacts, i.contactId, "this contact")} in ${plural(Number(i.days), "day")}`,
     async commit(userId, i) {
-      const result = await scheduleContactFollowUpForUser(userId, s(i.contactId), Number(i.days));
+      const result = await scheduleContactFollowUpForUser(userId, s(i.contactId), Number(i.days), { origin: "suggestion" });
       return { resultId: result.reminder?.id ?? null, href: "/reminders", undo: null };
     },
   },

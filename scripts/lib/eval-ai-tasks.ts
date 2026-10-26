@@ -1622,9 +1622,7 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
         why.push("said it did not know");
       }
       if (chatLoopEnabled() && (c.mustPropose?.length || c.mustNotPropose)) {
-        const tools = ("proposals" in result ? (result.proposals as StoredProposedAction[]) : []).flatMap((p) =>
-          p.args.kind === "tool" ? [p.args.tool] : []
-        );
+        const tools = ("proposals" in result ? (result.proposals as StoredProposedAction[]) : []).map((p) => p.args.tool);
         const ok = c.mustNotPropose ? tools.length === 0 : tools.some((t) => c.mustPropose!.includes(t));
         count(proposedRight, ok);
         if (!ok) why.push(c.mustNotPropose ? `proposed ${tools.join(", ")} for a question` : `proposed ${tools.join(", ") || "nothing"}, wanted ${c.mustPropose!.join(" or ")}`);
@@ -1633,7 +1631,7 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
           for (const card of cards) {
             const right = card.tier === "auto" ? card.status === "done" : card.status === "proposed";
             count(autoAppliedRight, right);
-            if (!right) why.push(`${card.args.kind === "tool" ? card.args.tool : card.args.kind} (${card.tier}) was ${card.status}`);
+            if (!right) why.push(`${card.args.tool} (${card.tier}) was ${card.status}`);
             // Put the records back, so a later case sees the fixture as seeded.
             if (card.status === "done" && card.undo) await runUndo(userId, card.undo as UndoStep).catch(() => {});
           }

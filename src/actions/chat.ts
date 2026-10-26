@@ -20,7 +20,8 @@ import { labelAnswer } from "@/lib/chat-abstention";
 import { rollBackApplied } from "@/lib/chat-auto-apply";
 import { answerWithLookups, chatLoopEnabled } from "@/lib/chat-agent-loop";
 import { citedIds, stripUnresolvedMarkers } from "@/lib/chat-evidence";
-import { validateProposedActions, type StoredProposedAction } from "@/lib/chat-proposed-actions";
+import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
+import { proposalsFromAnswerTail } from "@/lib/tools/chat-proposals";
 import {
   buildChatSuggestions,
   GENERIC_SUGGESTIONS,
@@ -453,7 +454,7 @@ async function askNetworkInner(
     const citedEvidence = Object.fromEntries(citedIds(cleanAnswer).map((id) => [id, result.evidence[id]]));
     const proposedActions: StoredProposedAction[] = [
       ...("proposals" in result ? (result.proposals as StoredProposedAction[]) : []),
-      ...validateProposedActions(result.proposedActions, ctx.allowedContacts, ctx.contactNames, ctx.reminderTitles),
+      ...proposalsFromAnswerTail(result.proposedActions, ctx.allowedContacts, ctx.contactNames, ctx.reminderTitles),
     ];
 
     // A turn that applied changes itself and then failed to save would leave them with no card

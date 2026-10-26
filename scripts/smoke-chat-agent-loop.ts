@@ -213,7 +213,7 @@ async function main() {
   check("a write the model reached for did not happen", (await db.query.reminders.findMany({ where: eq(reminders.userId, USER) })).length === 0);
   check(
     "…it became a card to confirm instead",
-    result.proposals.length === 1 && result.proposals[0].args.kind === "tool" && result.proposals[0].args.tool === "create_reminder",
+    result.proposals.length === 1 && result.proposals[0].args.tool === "create_reminder",
     JSON.stringify(result.proposals)
   );
 

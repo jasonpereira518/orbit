@@ -98,8 +98,8 @@ export function createAutoApplyGate(userId: string, enabled: boolean) {
     },
     /** Facts for `shouldAutoApply` about one stored proposal. */
     facts(action: StoredProposedAction): AutoApplyFacts {
-      const write = action.args.kind === "tool" ? chatWriteNamed(action.args.tool) : undefined;
-      const input = action.args.kind === "tool" ? action.args.input : {};
+      const write = chatWriteNamed(action.args.tool);
+      const input = action.args.input ?? {};
       const records = write
         ? Object.values(write.refs(input)).reduce((n, ids) => n + (ids?.length ?? 0), 0) +
           (Array.isArray(input.tags) ? Math.max(0, input.tags.length - 1) : 0)
@@ -122,7 +122,7 @@ export function createAutoApplyGate(userId: string, enabled: boolean) {
      * the person can still confirm is better than an error in the answer).
      */
     async maybeApply(action: StoredProposedAction, turnId: string): Promise<StoredProposedAction> {
-      if (!shouldAutoApply(this.facts(action)) || action.args.kind !== "tool") return action;
+      if (!shouldAutoApply(this.facts(action))) return action;
       const write = chatWriteNamed(action.args.tool);
       const input = write ? parseWriteInput(write, action.args.input) : null;
       if (!write || !input) return action;

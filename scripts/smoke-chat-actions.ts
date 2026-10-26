@@ -4,8 +4,8 @@
  * What has to hold: a double click (or two tabs) commits exactly once, thanks to the
  * compare-and-swap claim; the write itself comes from the STORED row, never from anything the
  * client sends; a contact deleted between propose and click fails the write and releases the
- * claim rather than stranding the card; and every one of the three action kinds actually
- * produces the record it says it will.
+ * claim rather than stranding the card; and every kind the one-pass answer can propose actually
+ * produces the record it says it will, through its catalog write (@/lib/tools/chat-writes).
  *
  * Local PGlite. Run: npx tsx scripts/smoke-chat-actions.ts
  */
@@ -19,7 +19,8 @@ delete process.env.CLERK_SECRET_KEY;
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { chatMessages, chatThreads, contacts, interactions, reminders } from "../src/db/schema";
-import { validateProposedActions, type StoredProposedAction } from "../src/lib/chat-proposed-actions";
+import type { StoredProposedAction } from "../src/lib/chat-proposed-actions";
+import { proposalsFromAnswerTail } from "../src/lib/tools/chat-proposals";
 import { commitProposedAction, dismissProposedAction } from "../src/actions/chat-actions";
 import { createReminderForUser } from "../src/lib/reminder-writes";
 
@@ -38,7 +39,7 @@ async function seedMessage(rawActions: (contactId: string) => unknown[]) {
   const db = await getDb();
   const [thread] = await db.insert(chatThreads).values({ userId: USER }).returning();
   const [contact] = await db.insert(contacts).values({ userId: USER, fullName: "Ada Lovelace" }).returning();
-  const actions = validateProposedActions(rawActions(contact!.id), new Set([contact!.id]), new Map([[contact!.id, "Ada Lovelace"]]));
+  const actions = proposalsFromAnswerTail(rawActions(contact!.id), new Set([contact!.id]), new Map([[contact!.id, "Ada Lovelace"]]));
   const [msg] = await db
     .insert(chatMessages)
     .values({ threadId: thread!.id, userId: USER, role: "assistant", content: "Here's what I found.", proposedActions: actions })
@@ -56,8 +57,6 @@ async function main() {
     const { messageId, contactId, actions } = await seedMessage((cid) => [
       { kind: "log_interaction", contact_id: cid, text: "Talked about the Series A." },
     ]);
-    // Re-key the placeholder to the real contact id (validateProposedActions needed a real
-    // allowlisted id, seeded before we knew it here).
     const action = actions[0]!;
     const res = await commitProposedAction(messageId, action.id);
     check("commits", res.ok === true, JSON.stringify(res));
@@ -141,7 +140,7 @@ async function main() {
         userId: "someone-else",
         role: "assistant",
         content: "x",
-        proposedActions: [{ id: "a1", args: { kind: "create_reminder", contactId: null, title: "Not yours", description: null, dueDate: null }, preview: "x", status: "proposed" } satisfies StoredProposedAction],
+        proposedActions: [{ id: "a1", args: { kind: "tool", tool: "create_reminder", input: { title: "Not yours" } }, preview: "x", status: "proposed" } satisfies StoredProposedAction],
       })
       .returning();
     const res = await commitProposedAction(foreignMsg!.id, "a1");
@@ -155,7 +154,7 @@ async function main() {
     const db2 = await getDb();
     const [thread] = await db2.insert(chatThreads).values({ userId: USER }).returning();
     const [c] = await db2.insert(contacts).values({ userId: USER, fullName: "Grace Hopper", title: "Engineer" }).returning();
-    const actions = validateProposedActions(
+    const actions = proposalsFromAnswerTail(
       [
         { kind: "update_contact", contact_id: c!.id, title: "Rear Admiral", company: "US Navy" },
         { kind: "create_contact", full_name: "Katherine Johnson", title: "Mathematician", email: "kj@nasa.example" },
@@ -165,7 +164,7 @@ async function main() {
       new Map([[c!.id, "Grace Hopper"]]),
       new Map([[reminder!.id, reminder!.title], [reminder2!.id, reminder2!.title]])
     );
-    const snooze = validateProposedActions([{ kind: "snooze_reminder", reminder_id: reminder2!.id, days: 3 }], new Set(), new Map(), new Map([[reminder2!.id, reminder2!.title]]));
+    const snooze = proposalsFromAnswerTail([{ kind: "snooze_reminder", reminder_id: reminder2!.id, days: 3 }], new Set(), new Map(), new Map([[reminder2!.id, reminder2!.title]]));
     const all = [...actions, ...snooze];
     const [msg] = await db2.insert(chatMessages).values({ threadId: thread!.id, userId: USER, role: "assistant", content: "x", proposedActions: all }).returning();
     const results = [];
@@ -183,7 +182,7 @@ async function main() {
     check("snooze_reminder pushed it out ~3 days", Boolean(snoozed?.dueDate) && new Date(snoozed!.dueDate!).getTime() > Date.now() + 2 * 86_400_000, JSON.stringify(snoozed?.dueDate));
 
     console.log("adding someone already in the network is refused, not doubled");
-    const dupe = validateProposedActions([{ kind: "create_contact", full_name: "Katherine Johnson", email: "kj@nasa.example" }], new Set(), new Map());
+    const dupe = proposalsFromAnswerTail([{ kind: "create_contact", full_name: "Katherine Johnson", email: "kj@nasa.example" }], new Set(), new Map());
     const [msg2] = await db2.insert(chatMessages).values({ threadId: thread!.id, userId: USER, role: "assistant", content: "x", proposedActions: dupe }).returning();
     const res = await commitProposedAction(msg2!.id, dupe[0]!.id);
     check("the commit fails with a reason a person can read", res.ok === false && /already in your contacts/.test(res.reason), JSON.stringify(res));
@@ -196,7 +195,7 @@ async function main() {
     const db2 = await getDb();
     const [c] = await db2.insert(contacts).values({ userId: USER, fullName: "About To Vanish" }).returning();
     const [thread] = await db2.insert(chatThreads).values({ userId: USER }).returning();
-    const actions = validateProposedActions([{ kind: "schedule_follow_up", contact_id: c!.id }], new Set([c!.id]), new Map([[c!.id, "About To Vanish"]]));
+    const actions = proposalsFromAnswerTail([{ kind: "schedule_follow_up", contact_id: c!.id }], new Set([c!.id]), new Map([[c!.id, "About To Vanish"]]));
     const [msg] = await db2.insert(chatMessages).values({ threadId: thread!.id, userId: USER, role: "assistant", content: "x", proposedActions: actions }).returning();
     await db2.delete(contacts).where(and(eq(contacts.id, c!.id), eq(contacts.userId, USER)));
     const res = await commitProposedAction(msg!.id, actions[0]!.id);
