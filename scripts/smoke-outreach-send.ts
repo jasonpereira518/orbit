@@ -488,6 +488,49 @@ async function main() {
       JSON.stringify({ subject: f2Send.subject, opts: f2Handoff.opts })
     );
 
+    // A reply since the draft: the claim refuses it, so nothing is emailed and no outbox row is made.
+    const guardFirst = bMsgs[0]!;
+    const guardProspect = (await msg(guardFirst)).prospectId;
+    await backdate(guardFirst, 8);
+    const guarded = await draftFollowUpForUser(USER, guardFirst, { drafter: followDrafter });
+    await db.update(schema.outreachMessages).set({ outcome: "replied" }).where(eq(schema.outreachMessages.id, guardFirst));
+    const delivered0 = delivered.length;
+    const refusedFollow = await send([guarded.messageId]);
+    check(
+      "a follow-up whose first message has a reply isn't claimed",
+      refusedFollow.sent === 0 && refusedFollow.failed.length === 0 && refusedFollow.notSent === 0 && (await msg(guarded.messageId)).status === "draft",
+      JSON.stringify(refusedFollow)
+    );
+    check("…and makes no outbox row or delivery", (await sendsFor(guarded.messageId)) === 0 && delivered.length === delivered0);
+    await db.update(schema.outreachMessages).set({ outcome: null }).where(eq(schema.outreachMessages.id, guardFirst));
+    check("…which was the only thing stopping it", (await send([guarded.messageId])).sent === 1 && (await followUpsOf(guardProspect)).length === 1);
+
+    // The first went out from another mailbox than the one connected now: reply by headers, no thread, no forced mailbox.
+    await addProspectsForUser(USER, camp, [{ fullName: "F3 Person", company: "Acme", email: "f3@acme-co.io", origin: "manual" }]);
+    const f3Prospect = (await db.query.outreachProspects.findMany({ where: eq(schema.outreachProspects.campaignId, camp) })).find((p) => p.fullName === "F3 Person")!;
+    await draftCampaignMessagesForUser(USER, camp, [f3Prospect.id], { drafter });
+    const f3First = (await db.query.outreachMessages.findFirst({ where: eq(schema.outreachMessages.prospectId, f3Prospect.id) }))!.id;
+    check("a first message to switch mailboxes on is sent", (await send([f3First])).sent === 1);
+    await backdate(f3First, 8);
+    const f3Parent = await sendRow((await msg(f3First)).deliveryId!);
+    await db.execute(sql`UPDATE email_sends SET provider = 'outlook' WHERE id = ${f3Parent.id}::uuid`);
+    const f3 = await draftFollowUpForUser(USER, f3First, { drafter: followDrafter });
+    const handedF3 = handed.length;
+    check("a follow-up after switching mailboxes still sends", (await send([f3.messageId])).sent === 1 && (await msg(f3.messageId)).status === "sent");
+    const f3Send = await sendRow((await msg(f3.messageId)).deliveryId!);
+    const f3Handoff = handed[handed.length - 1]!;
+    check(
+      "…by reply headers, with no thread and no forced mailbox",
+      handed.length === handedF3 + 1 &&
+        f3Send.provider === "gmail" &&
+        f3Send.subject.startsWith("Re:") &&
+        f3Send.inReplyToRfcId === f3Parent.rfcMessageId &&
+        f3Send.inReplyToSendId === f3Parent.id &&
+        f3Handoff.message.inReplyTo === f3Parent.rfcMessageId &&
+        !f3Handoff.opts.threadId,
+      JSON.stringify({ provider: f3Send.provider, reply: f3Send.inReplyToRfcId, opts: f3Handoff.opts })
+    );
+
     // Not due: a reply, or a model that wrote nothing.
     await backdate(m2!, 8);
     await db.update(schema.outreachMessages).set({ outcome: "replied" }).where(eq(schema.outreachMessages.id, m2!));

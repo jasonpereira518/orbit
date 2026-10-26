@@ -485,7 +485,9 @@ export type SendCampaignResult = {
  * A refused send (no mailbox, today's cap) throws before anything is claimed, so no message
  * moves and no contact is created. The contact is made only for a message about to go out.
  *
- * A follow-up (`step_index` 1) goes out as a reply to its first message, in the same thread.
+ * A follow-up (`step_index` 1) goes out as a reply to its first message, in the same thread when
+ * the first was sent from the mailbox this send will use. The claim refuses one whose first
+ * message has since got an outcome (a reply, a bounce).
  */
 export async function sendCampaignMessagesForUser(
   userId: string,
@@ -541,6 +543,11 @@ export async function sendCampaignMessagesForUser(
               AND o.step_index = m.step_index
               AND o.id <> m.id
               AND o.status IN ('queued', 'sent', 'unsure', 'copied', 'opened')
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM outreach_messages pm
+            WHERE pm.id = m.parent_message_id
+              AND pm.outcome IS NOT NULL
          )
       RETURNING m.id
     `)
@@ -612,13 +619,17 @@ export async function sendCampaignMessagesForUser(
       // on file (a legacy sequence row) is sent as written.
       const parent = message.stepIndex === 1 && message.parentMessageId ? parents.get(message.parentMessageId) : undefined;
       const target = parent?.deliveryId ? await resolveReplyTarget(userId, `orbit:${parent.deliveryId}`) : null;
+      // A provider thread id only means something in the mailbox that made it. If the first
+      // went out from another one (the user has since switched), reply by headers alone rather
+      // than forcing a mailbox this send isn't using.
+      const thread = target?.thread && target.thread.provider === capability.provider ? target.thread : null;
       const queued = await enqueueEmail(userId, {
         to: [email],
         subject: parent ? replySubject(target?.subject ?? parent.subject ?? "") : (message.subject ?? ""),
         inReplyToRfcId: target?.rfcMessageId,
         inReplyToSendId: target?.inReplyToSendId,
-        threadId: target?.thread?.threadId,
-        provider: target?.thread?.provider,
+        threadId: thread?.threadId,
+        provider: thread?.provider,
         bodyText: message.body,
         fromName: opts.fromName,
         origin: "outreach",
