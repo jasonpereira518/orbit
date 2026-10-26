@@ -311,14 +311,15 @@ async function main() {
       { fullName: "Li Twice", company: "Acme", linkedinUrl: liUrl("li-twice"), origin: "manual" },
       { fullName: "Li Long", company: "Acme", linkedinUrl: liUrl("li-long"), origin: "manual" },
       { fullName: "Li Bare", company: "Acme", origin: "manual" },
+      { fullName: "Li Race", company: "Acme", linkedinUrl: liUrl("li-race"), origin: "manual" },
     ]);
     const liPeople = await db.query.outreachProspects.findMany({ where: eq(schema.outreachProspects.campaignId, liC!.id) });
-    const liNames = ["Li Linked", "Li Twice", "Li Long", "Li Bare"];
+    const liNames = ["Li Linked", "Li Twice", "Li Long", "Li Bare", "Li Race"];
     const liPid = (name: string) => liPeople.find((p) => p.fullName === name)!.id;
     await draftCampaignMessagesForUser(USER, liC!.id, liNames.map(liPid), { drafter });
     const liMid = async (name: string) =>
       (await db.query.outreachMessages.findFirst({ where: eq(schema.outreachMessages.prospectId, liPid(name)) }))!.id;
-    const [mLinked, mTwice, mLong, mBare] = await Promise.all(liNames.map(liMid));
+    const [mLinked, mTwice, mLong, mBare, mRace] = await Promise.all(liNames.map(liMid));
     const interactionsOf = async (messageId: string) =>
       (await interactionsForContactOf(messageId)).filter((i) => i.externalId === `outreach:${messageId}`);
     const LI_LINK_COPY = "Add their LinkedIn profile link first";
@@ -373,6 +374,22 @@ async function main() {
       "two confirms at once log one interaction",
       raced.every((r) => r.status === "fulfilled") && (await interactionsOf(mTwice!)).length === 1 && (await contactsNamed("Li Twice")) === 1,
       JSON.stringify(raced.map((r) => r.status))
+    );
+    // A first confirm that died after its UPDATE: sent, but no contact and no interaction.
+    await copyLinkedInMessageForUser(USER, mLong!);
+    await db.execute(sql`UPDATE outreach_messages SET status = 'sent', sent_at = now() WHERE id = ${mLong!}::uuid`);
+    check("a sent note with no interaction starts the recovery case", (await interactionsOf(mLong!)).length === 0 && (await contactsNamed("Li Long")) === 0);
+    await confirmLinkedInSentForUser(USER, mLong!, OPTS);
+    check("pressing I sent it again finishes a failed confirm", (await interactionsOf(mLong!)).length === 1 && (await contactsNamed("Li Long")) === 1 && (await msg(mLong!)).status === "sent");
+    await confirmLinkedInSentForUser(USER, mLong!, OPTS);
+    check("…and once more logs nothing new", (await interactionsOf(mLong!)).length === 1 && (await contactsNamed("Li Long")) === 1);
+    await copyLinkedInMessageForUser(USER, mRace!);
+    await db.execute(sql`UPDATE outreach_messages SET status = 'sent', sent_at = now() WHERE id = ${mRace!}::uuid`);
+    const recovered = await Promise.allSettled([confirmLinkedInSentForUser(USER, mRace!, OPTS), confirmLinkedInSentForUser(USER, mRace!, OPTS)]);
+    check(
+      "two recoveries at once log one interaction",
+      recovered.every((r) => r.status === "fulfilled") && (await interactionsOf(mRace!)).length === 1 && (await contactsNamed("Li Race")) === 1,
+      JSON.stringify(recovered.map((r) => (r.status === "rejected" ? String(r.reason).slice(0, 80) : r.status)))
     );
     check("a sent note can still be copied, and stays sent", (await copyLinkedInMessageForUser(USER, mLinked!)).body === copy.body && (await msg(mLinked!)).status === "sent");
 

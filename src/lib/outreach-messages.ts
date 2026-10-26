@@ -593,10 +593,11 @@ export async function copyLinkedInMessageForUser(
  * The user says they sent a copied note on LinkedIn: `copied` → `sent`, the person becomes a
  * contact (if they weren't one), and the note goes on their timeline as an outgoing message.
  *
- * One conditional UPDATE decides whether this call is the confirmation, and only a call it
- * matched goes on. `logInteractionForUser` is a plain insert on a unique `external_id`, so a
- * double click or a second tab must not reach it: they find the message already `sent` and
- * return quietly.
+ * One conditional UPDATE decides whether this call is the confirmation. `logInteractionForUser`
+ * is a plain insert on a unique `external_id`, so a double click or a second tab must not log
+ * twice: a message that is already `sent` is only finished off when its interaction is missing
+ * (a first confirm that died after the UPDATE), and returns quietly when it is there. Pressing
+ * "I sent it" again is therefore how a failed first confirm is recovered.
  */
 export async function confirmLinkedInSentForUser(
   userId: string,
@@ -607,6 +608,7 @@ export async function confirmLinkedInSentForUser(
   if (campaign.defaultChannel !== "linkedin") throw new UserFacingError(NOT_LINKEDIN);
 
   const db = await getDb();
+  const externalId = `outreach:${message.id}`;
   const matched = rowsOf<{ id: string }>(
     await db.execute(sql`
       UPDATE outreach_messages
@@ -617,24 +619,38 @@ export async function confirmLinkedInSentForUser(
   );
   if (!matched.length) {
     // Judged on the status as it is now: a confirm that ran between the read above and the
-    // UPDATE has moved it on. `opened` is a delivered status on legacy rows.
+    // UPDATE has moved it on. `opened` is a delivered status on legacy rows, logged elsewhere.
     const [now] = await db.select({ status: outreachMessages.status }).from(outreachMessages).where(eq(outreachMessages.id, message.id));
-    if (now?.status === "sent" || now?.status === "opened") return;
-    throw new UserFacingError(REWRITABLE.includes(now?.status ?? "") ? "Copy the note first" : "This message can’t be marked as sent");
+    if (now?.status === "opened") return;
+    if (now?.status !== "sent") {
+      throw new UserFacingError(REWRITABLE.includes(now?.status ?? "") ? "Copy the note first" : "This message can’t be marked as sent");
+    }
+    const [logged] = await db
+      .select({ id: interactions.id })
+      .from(interactions)
+      .where(and(eq(interactions.userId, userId), eq(interactions.externalId, externalId)))
+      .limit(1);
+    if (logged) return;
   }
 
   const contactId = await ensureProspectContactForUser(userId, prospect.id, opts);
-  await logInteractionForUser(
-    userId,
-    {
-      contactId,
-      interactionType: "linkedin_message",
-      direction: "out",
-      source: "outreach_send",
-      externalId: `outreach:${message.id}`,
-      interactionDate: new Date(),
-      rawNotes: message.body,
-    },
-    opts
-  );
+  try {
+    await logInteractionForUser(
+      userId,
+      {
+        contactId,
+        interactionType: "linkedin_message",
+        direction: "out",
+        source: "outreach_send",
+        externalId,
+        interactionDate: new Date(),
+        rawNotes: message.body,
+      },
+      opts
+    );
+  } catch (err) {
+    // Two recoveries at once: the other one's insert won the unique `external_id`. Done.
+    const e = err as { code?: string; cause?: { code?: string } } | null;
+    if (e?.code !== "23505" && e?.cause?.code !== "23505") throw err;
+  }
 }
