@@ -16,9 +16,22 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
+  discoverExclusions,
+  requestBrief,
+} from "../src/components/find/request-brief";
+import {
+  hasBeenContacted,
+  hasBeenEmailed,
+  isInNetwork,
+} from "../src/lib/outreach-metrics";
+import { asLinkedInProfile } from "../src/lib/outreach-channels";
+import {
+  CONTACTED_STATUSES,
+  EMAILED_STATUSES,
   OUTREACH_REPLY_CTAS,
   OUTREACH_TONES,
   REPLY_CTA_LABELS,
+  readEnrichment,
 } from "../src/lib/outreach-types";
 
 let failures = 0;
@@ -53,7 +66,27 @@ function pages(dir: string): string[] {
 
 const OUTREACH_DIR = "src/app/(clerk)/(app)/(main)/outreach";
 
-function main() {
+/** Runs `fn` with `fetch` answering `status` and `body` once, and returns what was asked. */
+async function withFetch<T>(
+  status: number,
+  body: unknown,
+  fn: () => Promise<T>
+): Promise<{ result: PromiseSettledResult<T>; request: { url: string; init: RequestInit } | null }> {
+  const real = globalThis.fetch;
+  let request: { url: string; init: RequestInit } | null = null;
+  globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+    request = { url: String(url), init: init ?? {} };
+    return new Response(typeof body === "string" ? body : JSON.stringify(body), { status });
+  }) as typeof fetch;
+  try {
+    const [result] = await Promise.allSettled([fn()]);
+    return { result, request };
+  } finally {
+    globalThis.fetch = real;
+  }
+}
+
+async function main() {
   console.log("\nthe pages are gated, in order");
   {
     const files = pages(OUTREACH_DIR);
@@ -145,6 +178,165 @@ function main() {
     check("and the channel, people, sent and replied", /defaultChannel/.test(card) && /prospectCount/.test(card) && /sentCount/.test(card) && /replyCount/.test(card));
   }
 
+
+  console.log("\nthe people tab");
+  {
+    const peopleFiles = [
+      "src/components/outreach/campaign-people.tsx",
+      "src/components/outreach/find-candidates.tsx",
+      "src/components/outreach/warm-path-note.tsx",
+      "src/components/find/request-brief.ts",
+    ];
+    for (const file of peopleFiles) check(`${file} exists`, existsSync(file));
+    const read = (file: string) => (existsSync(file) ? code(file) : "");
+    const raw = (file: string) => (existsSync(file) ? readFileSync(file, "utf8") : "");
+
+    const finder = read("src/components/outreach/find-candidates.tsx");
+    const people = read("src/components/outreach/campaign-people.tsx");
+    const note = read("src/components/outreach/warm-path-note.tsx");
+    const table = read("src/components/outreach/prospect-table.tsx");
+    const find = read("src/components/find/find-people.tsx");
+    const page = read(`${OUTREACH_DIR}/[id]/page.tsx`);
+
+    console.log("  the brief request is shared");
+    check("/find imports it", /from\s+["']@\/components\/find\/request-brief["']/.test(find));
+    check("and no longer owns a copy", !/function requestBrief/.test(find));
+    check("the candidate finder imports it", /from\s+["']@\/components\/find\/request-brief["']/.test(finder));
+    check("the finder passes exclude to Find more", /\bexclude\b/.test(finder) && finder.includes("discoverExclusions("));
+    check("people research uses it too", /requestBrief(<[^>]*>)?\(/.test(people));
+
+    const noAi = await withFetch(402, { error: "Add an AI key first", reason: "no_ai" }, () =>
+      requestBrief({ kind: "discover", query: "x" })
+    );
+    const noAiErr = noAi.result.status === "rejected" ? (noAi.result.reason as Error & { status?: number; reason?: string }) : null;
+    check("a 402 carries its status and reason", noAiErr?.status === 402 && noAiErr?.reason === "no_ai", noAiErr?.message);
+    check("and the server's words", noAiErr?.message === "Add an AI key first");
+    const limited = await withFetch(429, { error: "That’s today’s limit", reason: "rate_limited" }, () =>
+      requestBrief({ kind: "person", fullName: "Jane Doe", company: "Stripe" })
+    );
+    const limitedErr = limited.result.status === "rejected" ? (limited.result.reason as Error & { status?: number; reason?: string }) : null;
+    check("a 429 carries its status and reason", limitedErr?.status === 429 && limitedErr?.reason === "rate_limited");
+    const broken = await withFetch(502, "<html>bad gateway</html>", () => requestBrief({ kind: "discover", query: "x" }));
+    const brokenErr = broken.result.status === "rejected" ? (broken.result.reason as Error & { status?: number; reason?: string }) : null;
+    check("an unreadable answer still has a status and a plain message", brokenErr?.status === 502 && brokenErr?.reason === undefined && /try again/.test(brokenErr?.message ?? ""));
+    const ok = await withFetch(200, { key: "k".repeat(64), dossier: { kind: "discover", query: "q", candidates: [], sources: [] } }, () =>
+      requestBrief({ kind: "discover", query: "q", exclude: ["A B"] })
+    );
+    check("a good answer comes back as key and dossier", ok.result.status === "fulfilled" && ok.result.value.key === "k".repeat(64));
+    const headers = (ok.request?.init.headers ?? {}) as Record<string, string>;
+    check("it posts to the research route with the CSRF header", ok.request?.url === "/api/research" && headers["x-orbit-research"] === "1");
+    check("and sends the body as given", JSON.parse(String(ok.request?.init.body)).exclude?.[0] === "A B");
+
+    check(
+      "Find more excludes what is shown first, then what the campaign knows",
+      JSON.stringify(discoverExclusions(["Ann Lee", "Bo Chen"], ["Cy Park", "ann lee", "Di Roy"])) ===
+        JSON.stringify(["Ann Lee", "Bo Chen", "Cy Park", "Di Roy"])
+    );
+    check("blank names are not sent", discoverExclusions(["  ", "Ann Lee"], [""]).length === 1);
+    const many = Array.from({ length: 80 }, (_, i) => `Person ${i}`);
+    check(
+      "no more than the route keeps, with the shown ones first",
+      discoverExclusions(many.slice(0, 5), many).length === 60 && discoverExclusions(many.slice(0, 5), many)[0] === "Person 0"
+    );
+
+    console.log("  what is typed or found becomes a LinkedIn link, or nothing");
+    check("a bare profile path gets https", asLinkedInProfile("linkedin.com/in/jane-doe") === "https://linkedin.com/in/jane-doe");
+    check("www and a trailing slash are kept", asLinkedInProfile("https://www.linkedin.com/in/jane-doe/") === "https://www.linkedin.com/in/jane-doe/");
+    check("http is upgraded and tracking dropped", asLinkedInProfile("http://uk.linkedin.com/in/jane-doe?trk=abc#x") === "https://uk.linkedin.com/in/jane-doe");
+    check("a company page is not a person", asLinkedInProfile("https://www.linkedin.com/company/stripe") === null);
+    check("a search page is not a person", asLinkedInProfile("https://www.linkedin.com/search/results/people/?keywords=jane") === null);
+    check("a plain company is not a link", asLinkedInProfile("Stripe") === null);
+    check("another site is not LinkedIn", asLinkedInProfile("https://example.com/in/jane-doe") === null);
+    check("empty is nothing", asLinkedInProfile("  ") === null && asLinkedInProfile(null) === null);
+
+    console.log("  what a stored enrichment may show");
+    const fromProvider = readEnrichment({ url: "javascript:alert(1)", whyMatches: "  Runs health economics ", researchKey: "", emailSource: "apollo", apolloBlob: { phone: "+1" } });
+    check("a link that is not http(s) is dropped", fromProvider.url === null);
+    check("text is trimmed, an empty key is nothing", fromProvider.whyMatches === "Runs health economics" && fromProvider.researchKey === null);
+    check("an unknown email source is nothing", fromProvider.emailSource === null);
+    check("and nothing else comes through", JSON.stringify(Object.keys(fromProvider).sort()) === JSON.stringify(["emailSource", "origin", "researchKey", "url", "whyMatches"]));
+    const ours = readEnrichment({ origin: "find", url: "https://example.org/team", whyMatches: "x", researchKey: "ab", emailSource: "contact" });
+    check("what Orbit stored is read back", ours.origin === "find" && ours.url === "https://example.org/team" && ours.emailSource === "contact" && ours.researchKey === "ab");
+    check("null and junk are empty", readEnrichment(null).url === null && readEnrichment("x").whyMatches === null);
+
+    console.log("  the warm-path note");
+    check("lives in its own file", /export function WarmPathNote/.test(note));
+    check("which the prospect table imports", /import\s*\{\s*WarmPathNote\s*\}\s*from\s*["']@\/components\/outreach\/warm-path-note["']/.test(table));
+    check("and no longer defines", !/function WarmPathNote/.test(table));
+    check("the people list shows it", people.includes("<WarmPathNote"));
+    check("so does each found candidate", finder.includes("<WarmPathNote"));
+
+    console.log("  finding people");
+    check("Find people searches the audience", /kind:\s*"discover"/.test(finder) && finder.includes("audienceQuery"));
+    check("rows can be added and skipped", finder.includes("addProspects(") && finder.includes("skipCandidate("));
+    check("warm paths are looked up once per result", finder.includes("warmPathsForCompanies("));
+    check("a ticket drops a stale response", /mine !== ticket\.current/.test(finder));
+    check("says what it is doing", finder.includes("Searching the web — this can take a minute"));
+    check("sends a missing key to Settings", finder.includes("/settings?section=ai") && /402/.test(finder));
+    check("shows the server's words when rate limited", /429/.test(finder));
+    check("an added person who was already there reads On the list", finder.includes("On the list"));
+
+    console.log("  each person");
+    check("email saves through setProspectEmail", people.includes("setProspectEmail("));
+    check("Research attaches the brief", people.includes("attachBrief(") && /kind:\s*"person"/.test(people));
+    check("Remove calls removeProspect", people.includes("removeProspect("));
+    check("the readiness cell reads the pipeline bucket", people.includes("prospectPipelineBucket("));
+    check("the network badge is there", people.includes("Already in your network") && people.includes("isInNetwork("));
+    check("Research is off without AI", /canUseAi/.test(people) && people.includes("Researching…"));
+    check("the manual form adds with origin manual", /origin:\s*"manual"/.test(people));
+    check("a person put back reads as on the list", people.includes("is on the list"));
+
+    console.log("  who counts as contacted");
+    check("the statuses are shared with the server", /CONTACTED_STATUSES/.test(code("src/lib/outreach-people.ts")) && /EMAILED_STATUSES/.test(code("src/lib/outreach-people.ts")));
+    check("contacted includes queued, sent, copied, opened, unsure", ["queued", "sent", "copied", "opened", "unsure"].every((s) => CONTACTED_STATUSES.includes(s)));
+    check("emailed is queued, sent, unsure", JSON.stringify([...EMAILED_STATUSES].sort()) === JSON.stringify(["queued", "sent", "unsure"]));
+    check("a draft has not been emailed", !hasBeenEmailed([{ status: "generated", channel: "email" }]));
+    check("a queued email has", hasBeenEmailed([{ status: "queued", channel: "email" }]));
+    check("a sent LinkedIn note has not been emailed", !hasBeenEmailed([{ status: "sent", channel: "linkedin" }]));
+    check("an unsure email has", hasBeenEmailed([{ status: "unsure", channel: "email" }]));
+    check("a copied note has been contacted", hasBeenContacted([{ status: "copied" }]));
+    check("a draft has not", !hasBeenContacted([{ status: "draft" }, { status: "generated" }]));
+    check("emailSource contact is in the network", isInNetwork({ contactId: null, enrichment: { emailSource: "contact" }, messages: [{ status: "sent" }] }));
+    check("a linked contact is, before any send", isInNetwork({ contactId: "c1", enrichment: null, messages: [{ status: "generated" }] }));
+    check("but a contact made at send time is not", !isInNetwork({ contactId: "c1", enrichment: { emailSource: "user" }, messages: [{ status: "sent" }] }));
+    check("nor someone with no contact", !isInNetwork({ contactId: null, enrichment: { emailSource: "user" }, messages: [] }));
+
+    console.log("  the campaign page");
+    check("reads warm paths", /import\s*\{[^}]*\bfindWarmPaths\b[^}]*\}\s*from/.test(page) && page.includes("findWarmPaths("));
+    check("reads the names Find more skips", page.includes("campaignKnownNamesForUser("));
+    check("asks whether AI is available", page.includes("userCanUseAi("));
+    check("renders the people list", page.includes("<CampaignPeople"));
+    check("has a tablist", page.includes('role="tablist"'));
+    check("with a People link", page.includes("?tab=${value}") && page.includes('value: "people"'));
+    check("and a Messages link", page.includes('value: "messages"'));
+    check("people is the default tab", /=== "messages" \? "messages" : "people"/.test(page));
+    check("Messages says what is coming", page.includes("Drafting and sending arrive here next."));
+    check("the legacy editor and workspace are not rendered", !page.includes("<CampaignEditor") && !page.includes("<CampaignWorkspace"));
+    check("the legacy files are still there for Task 14", existsSync("src/components/outreach/campaign-editor.tsx") && existsSync("src/components/outreach/campaign-workspace.tsx"));
+    check("people who were removed are not shown", /excluded/.test(page));
+
+    console.log("  client rules");
+    for (const file of [
+      "src/components/outreach/campaign-people.tsx",
+      "src/components/outreach/find-candidates.tsx",
+    ]) {
+      check(`${file} is a client component`, raw(file).startsWith('"use client"'));
+    }
+    for (const file of peopleFiles) {
+      const source = read(file);
+      check(`${file} never value-imports the database`, !/import\s+(?!type\b)[^;]*from\s+["']@\/db/.test(source));
+      check(`${file} has no escaped apostrophes`, !/\\u2019|&rsquo;|&#8217;/.test(source));
+      check(`${file} has no control bytes`, !/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(raw(file)));
+      const links = [...source.matchAll(/target="_blank"[^>]*>/g)];
+      check(
+        `${file} opens every external link safely`,
+        links.every((m) => m[0].includes('rel="noopener noreferrer nofollow"')),
+        `${links.length} link(s)`
+      );
+    }
+    check("the moved note keeps its control-byte-free source too", !/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(raw("src/components/outreach/prospect-table.tsx")));
+  }
+
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
     process.exit(1);
@@ -152,4 +344,7 @@ function main() {
   console.log("\nAll outreach page checks passed.");
 }
 
-main();
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

@@ -1,9 +1,11 @@
 import { followUpDue } from "@/lib/outreach-followups";
-import type {
-  CampaignMetrics,
-  OutreachChannel,
-  OutreachMessageOutcome,
-  PipelineFilter,
+import {
+  CONTACTED_STATUSES,
+  EMAILED_STATUSES,
+  type CampaignMetrics,
+  type OutreachChannel,
+  type OutreachMessageOutcome,
+  type PipelineFilter,
 } from "@/lib/outreach-types";
 
 export type MessageMetricRow = {
@@ -42,6 +44,30 @@ const REPLY_OUTCOMES = new Set<OutreachMessageOutcome>([
  */
 export function isDeliveredMessage(message: MessageMetricRow) {
   return message.status === "sent";
+}
+
+/** Orbit (or the person) has already reached out to them, on any channel. */
+export function hasBeenContacted(messages: { status: string }[]) {
+  return messages.some((m) => CONTACTED_STATUSES.includes(m.status));
+}
+
+/** An email to them is queued, sent or may have been: the address now stays as it is. */
+export function hasBeenEmailed(messages: { status: string; channel?: string | null }[]) {
+  return messages.some((m) => m.channel === "email" && EMAILED_STATUSES.includes(m.status));
+}
+
+/**
+ * Someone the user already knows. Either the address came from their contact, or the campaign
+ * linked them to one when they were added. A contact exists after a send too (made when the
+ * message goes out), so `contactId` alone only counts before anything was sent.
+ */
+export function isInNetwork(person: {
+  contactId: string | null;
+  enrichment: { emailSource?: string | null } | null;
+  messages: { status: string }[];
+}) {
+  if (person.enrichment?.emailSource === "contact") return true;
+  return Boolean(person.contactId) && !hasBeenContacted(person.messages);
 }
 
 /** Any reply counts, whatever its tone. A bounce and an unsubscribe are not replies. */

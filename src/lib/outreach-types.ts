@@ -137,6 +137,14 @@ export function isUnmailableAddress(email: string) {
   return /(^|\.)(example\.(com|net|org)|example|invalid|test|localhost)$/.test(domain);
 }
 
+/**
+ * Message statuses that mean Orbit (or the person) already reached out. `opened` is a delivered
+ * status on legacy rows; `unsure` means "may have sent". Someone with one stays on the list.
+ */
+export const CONTACTED_STATUSES: readonly string[] = ["queued", "sent", "copied", "opened", "unsure"];
+/** Email messages that tie a thread to the address it went to, or may have. The address then stays. */
+export const EMAILED_STATUSES: readonly string[] = ["queued", "sent", "unsure"];
+
 export type ProspectOrigin = "find" | "manual" | "brief" | "legacy";
 
 /** What `outreach_prospects.enrichment` holds for people added since this plan. */
@@ -150,6 +158,24 @@ export type ProspectEnrichment = {
   emailSource?: "contact" | "user" | null;
   demo?: boolean;
 };
+
+/**
+ * The parts of a stored `enrichment` a page may show, each checked. Older rows hold whatever
+ * the search provider returned, so nothing is trusted by name alone, and a link must be http(s)
+ * before it becomes an `href`.
+ */
+export function readEnrichment(raw: unknown): ProspectEnrichment {
+  const e = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const text = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+  const url = text(e.url);
+  return {
+    origin: e.origin === "find" || e.origin === "manual" || e.origin === "brief" || e.origin === "legacy" ? e.origin : undefined,
+    url: url && /^https?:\/\//i.test(url) ? url : null,
+    whyMatches: text(e.whyMatches),
+    researchKey: text(e.researchKey),
+    emailSource: e.emailSource === "contact" || e.emailSource === "user" ? e.emailSource : null,
+  };
+}
 
 export type NewProspect = {
   fullName: string;

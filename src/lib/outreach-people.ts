@@ -7,7 +7,13 @@ import { linkedinSlug } from "@/lib/duplicates";
 import { UserFacingError } from "@/lib/errors";
 import { isUuid } from "@/lib/ids";
 import { isPlaceholderAddress } from "@/lib/outreach-quality";
-import { MAX_CAMPAIGN_PEOPLE, type NewProspect, type ProspectEnrichment } from "@/lib/outreach-types";
+import {
+  CONTACTED_STATUSES,
+  EMAILED_STATUSES,
+  MAX_CAMPAIGN_PEOPLE,
+  type NewProspect,
+  type ProspectEnrichment,
+} from "@/lib/outreach-types";
 import { loadResearchedPerson, MAX_EXCLUDED_NAMES, saveResearchedPersonForUser } from "@/lib/web-research";
 
 /**
@@ -22,14 +28,6 @@ const MAX_PER_CALL = 10;
 const LINKEDIN_RE = /^https:\/\/([a-z]{2,3}\.)?linkedin\.com\/in\/[A-Za-z0-9\-_%]{2,100}\/?$/;
 const EMAIL_RE = /^[^\s@"<>():]+@[^\s@"<>():]+$/;
 const BRIEF_KEY_RE = /^[0-9a-f]{64}$/;
-/**
- * Messages that mean Orbit (or the person) already reached out. `opened` is a delivered
- * status on legacy rows; `unsure` means "may have sent".
- */
-const CONTACTED = ["queued", "sent", "copied", "opened", "unsure"];
-/** Messages that tie an email thread to the address it went to, or may have. */
-const EMAILED = ["queued", "sent", "unsure"];
-
 const CAMPAIGN_GONE = "That campaign isn’t yours or no longer exists";
 const PERSON_GONE = "That person isn’t on your list or was removed";
 const ALREADY_CONTACTED = "They’ve already been contacted, so they stay on the list";
@@ -146,7 +144,7 @@ async function requireOwnProspect(userId: string, prospectId: string) {
   throw new UserFacingError(PERSON_GONE);
 }
 
-async function hasMessage(prospectId: string, statuses: string[], channel?: string) {
+async function hasMessage(prospectId: string, statuses: readonly string[], channel?: string) {
   const db = await getDb();
   const [row] = await db
     .select({ id: outreachMessages.id })
@@ -154,7 +152,7 @@ async function hasMessage(prospectId: string, statuses: string[], channel?: stri
     .where(
       and(
         eq(outreachMessages.prospectId, prospectId),
-        inArray(outreachMessages.status, statuses),
+        inArray(outreachMessages.status, [...statuses]),
         channel ? eq(outreachMessages.channel, channel) : undefined
       )
     )
@@ -302,7 +300,7 @@ export async function skipCandidateForUser(userId: string, campaignId: string, p
   const db = await getDb();
   const row = (await campaignIndex(campaignId)).find(p);
   if (row) {
-    if (await hasMessage(row.id, CONTACTED)) throw new UserFacingError(ALREADY_CONTACTED);
+    if (await hasMessage(row.id, CONTACTED_STATUSES)) throw new UserFacingError(ALREADY_CONTACTED);
     await db.update(outreachProspects).set({ status: "excluded", updatedAt: new Date() }).where(eq(outreachProspects.id, row.id));
     return;
   }
@@ -326,7 +324,7 @@ export async function skipCandidateForUser(userId: string, campaignId: string, p
 /** Take someone off the list (`excluded`, so Find more won't bring them back). Returns their campaign. */
 export async function removeProspectForUser(userId: string, prospectId: string): Promise<string> {
   const prospect = await requireOwnProspect(userId, prospectId);
-  if (await hasMessage(prospect.id, CONTACTED)) throw new UserFacingError(ALREADY_CONTACTED);
+  if (await hasMessage(prospect.id, CONTACTED_STATUSES)) throw new UserFacingError(ALREADY_CONTACTED);
   const db = await getDb();
   await db.update(outreachProspects).set({ status: "excluded", updatedAt: new Date() }).where(eq(outreachProspects.id, prospect.id));
   return prospect.campaignId;
@@ -352,7 +350,7 @@ export async function setProspectEmailForUser(userId: string, prospectId: string
   const prospect = await requireOwnProspect(userId, prospectId);
   const wanted = typeof email === "string" && email.trim() ? cleanEmail(email) : null;
   if (typeof email === "string" && email.trim() && !wanted) throw new UserFacingError("That address doesn’t look right");
-  if (await hasMessage(prospect.id, EMAILED, "email")) {
+  if (await hasMessage(prospect.id, EMAILED_STATUSES, "email")) {
     throw new UserFacingError("They’ve already been emailed, so the address stays");
   }
   const db = await getDb();
