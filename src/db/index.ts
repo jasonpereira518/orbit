@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   terms_version text,
   timeline_backfill_enabled integer NOT NULL DEFAULT 1,
   work_history_auto_enabled integer NOT NULL DEFAULT 1,
+  chat_auto_apply integer NOT NULL DEFAULT 0,
   relationship_engine_enabled integer NOT NULL DEFAULT 1,
   chat_self_names jsonb NOT NULL DEFAULT '[]',
   timeline_backfill_forced_on integer NOT NULL DEFAULT 1,
@@ -2809,7 +2810,12 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // again on merging it: 181 (claude/sweet-maxwell-bu2l9z) sat above. Renumbered 180 → 182 when that
 // 181 reached main (a database stamped 181 would never apply a 180); rescanned every remote ref:
 // 181 (main) was the highest claimed anywhere.
-export const SCHEMA_VERSION = 182;
+//
+// 183 = user_settings.chat_auto_apply: the person lets chat make its small, reversible changes
+// itself (`@/lib/chat-auto-apply`), each a done card with Undo. Off by default. Rescanned every
+// remote ref on Oct 19 2026: 182 (claude/chat-agent-p0-prefetch, this branch's base) was the
+// highest claimed anywhere.
+export const SCHEMA_VERSION = 183;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3835,6 +3841,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "interest_list_signups", "user_id", "text");
   await ensureColumn(client, "interest_list_signups", "converted_at", "timestamptz");
   await ensureColumn(client, "chat_messages", "answer_outcome", "text");
+  await ensureColumn(client, "user_settings", "chat_auto_apply", "integer NOT NULL DEFAULT 0");
   await ensureColumn(client, "user_settings", "email_activity_sync", "integer NOT NULL DEFAULT 0");
   await ensureColumn(
     client,
@@ -4680,6 +4687,8 @@ const alters = [
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback_note text`,
   // Schema v182: whether a chat answer answered (`@/lib/chat-abstention`).
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS answer_outcome text`,
+  // Schema v183: chat may apply its small, reversible changes itself (`@/lib/chat-auto-apply`).
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS chat_auto_apply integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS writing_instructions text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_path text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS tour_started_at timestamptz`,
