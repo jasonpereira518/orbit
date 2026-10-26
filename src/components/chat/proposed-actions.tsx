@@ -2,6 +2,15 @@
 
 import {
   AlarmClock,
+  Briefcase,
+  Flag,
+  GraduationCap,
+  Mail,
+  Megaphone,
+  Mic,
+  Radar,
+  Settings2,
+  Target,
   Bell,
   Calendar,
   CalendarPlus,
@@ -22,6 +31,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { commitProposedAction, dismissProposedAction, undoProposedAction } from "@/actions/chat-actions";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
+import { GmailSendDialog } from "@/components/chat/gmail-send-dialog";
 import { Button } from "@/components/ui/button";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 import { toast } from "@/lib/toast";
@@ -58,7 +68,35 @@ const TOOL_ICON: Record<string, typeof NotebookPen> = {
   create_event: CalendarPlus,
   mark_spoke_to: MessageCircle,
   delete_event: Trash2,
+  add_goal: Target,
+  remove_goal: Target,
+  set_schools: GraduationCap,
+  create_opportunity: Flag,
+  update_opportunity: Flag,
+  set_opportunity_status: Flag,
+  delete_opportunity: Trash2,
+  schedule_recommendation: Radar,
+  snooze_recommendation: Radar,
+  dismiss_recommendation: Radar,
+  update_campaign: Megaphone,
+  update_outreach_draft: Megaphone,
+  log_outreach_outcome: Megaphone,
+  log_recruiter: Briefcase,
+  update_recruiter_link: Briefcase,
+  rename_meeting: Mic,
+  link_meeting_to_event: Mic,
+  discard_meeting: Trash2,
+  draft_email: Mail,
+  set_writing_instructions: Settings2,
+  set_radar_autopilot: Radar,
 };
+
+/** A card whose button opens the send dialog instead of committing (`draft_email`). */
+function draftOf(action: StoredProposedAction): { contactId: string; body: string } | null {
+  if (action.args.kind !== "tool" || action.args.tool !== "draft_email") return null;
+  const { contactId, body } = action.args.input as { contactId?: unknown; body?: unknown };
+  return typeof contactId === "string" && typeof body === "string" ? { contactId, body } : null;
+}
 
 const RESULT_HREF: Record<LegacyKind, (resultId: string) => string | null> = {
   log_interaction: () => null,
@@ -113,6 +151,8 @@ export function ProposedActionsCard({
   onSettled: (next: StoredProposedAction) => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const [sending, setSending] = useState(false);
+  const draft = draftOf(action);
   const Icon = action.args.kind === "tool" ? (TOOL_ICON[action.args.tool] ?? NotebookPen) : ICON[action.args.kind];
   const contactId = contactIdOf(action);
   const destructive = Boolean(action.destructive);
@@ -185,7 +225,33 @@ export function ProposedActionsCard({
       <div className="min-w-0 flex-1">
         <p className="text-xs leading-snug text-foreground">{action.preview}</p>
         <div className="mt-2 flex items-center gap-2">
-          {action.status === "proposed" && (
+          {action.status === "proposed" && draft && (
+            <>
+              <Button type="button" size="sm" onClick={() => setSending(true)} disabled={busy} aria-label={`Review and send: ${action.preview}`}>
+                <Mail className="size-3.5" aria-hidden />
+                Review and send…
+              </Button>
+              <Button type="button" size="sm" variant="outline" onClick={dismiss} disabled={busy} aria-label={`Dismiss: ${action.preview}`}>
+                <X className="size-3.5" aria-hidden />
+                Dismiss
+              </Button>
+              {/* The dialog shows From, To and Subject and sends only on its own button; this
+                  card only learns afterwards that it went, and marks itself done. */}
+              <GmailSendDialog
+                open={sending}
+                onOpenChange={setSending}
+                messageId={messageId}
+                contactId={draft.contactId}
+                name={contactName ?? ""}
+                body={draft.body}
+                onSent={() => {
+                  setSending(false);
+                  void commitOne(messageId, action).then(onSettled);
+                }}
+              />
+            </>
+          )}
+          {action.status === "proposed" && !draft && (
             <>
               <Button
                 type="button"
@@ -268,7 +334,8 @@ export function ProposedActionsList({
   onSettled: (actionId: string, next: StoredProposedAction) => void;
 }) {
   const [running, setRunning] = useState<{ done: number; of: number } | null>(null);
-  const waiting = actions.filter((a) => a.status === "proposed" && !a.destructive);
+  // Never a draft: Confirm all must not open, let alone press, a send dialog.
+  const waiting = actions.filter((a) => a.status === "proposed" && !a.destructive && !draftOf(a));
   const anyAutoApplied = actions.some((a) => a.autoApplied);
 
   async function confirmAll() {

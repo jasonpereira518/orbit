@@ -8,29 +8,26 @@ import {
   recruiters,
   userRecruiterLinks,
   userSettings,
-  type RecruiterLinkSource,
   type RecruiterLinkStatus,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { requireRecruitersUser } from "@/lib/plan-guards";
 import {
   communityScore,
-  ensureUserLink,
   isViewerSharing,
   listPoolDiscoveries,
   pooledRecruiterIds,
   recomputeRecruiterRating,
   resweepUserRatings,
   searchCanonicalRecruiters,
-  mergeRecruiterFields,
   pooledIdsForViewer,
   rederiveSharedRecruiterPii,
   resolveRecruiterPii,
   toPublicRecruiter,
-  upsertCanonicalRecruiter,
   type PublicRecruiter,
 } from "@/lib/recruiters";
-import { asActionResult, UserFacingError } from "@/lib/errors";
+import { asActionResult } from "@/lib/errors";
+import { logRecruiterForUser, updateMyLinkForUser, type LogRecruiterInput } from "@/lib/recruiter-writes";
 import { reportError } from "@/lib/report-error";
 
 function revalidateRecruiterPaths(id?: string) {
@@ -150,106 +147,16 @@ export async function setLinkShared(recruiterId: string, shared: boolean) {
   return { shared };
 }
 
-export type LogRecruiterInput = {
-  fullName: string;
-  firm?: string;
-  specialty?: string[];
-  email?: string;
-  linkedinUrl?: string;
-  phone?: string;
-  status?: RecruiterLinkStatus;
-  notes?: string;
-  personalRating?: number;
-  source?: RecruiterLinkSource;
-  /** When logging an existing directory entry */
-  recruiterId?: string;
-};
+export type { LogRecruiterInput } from "@/lib/recruiter-writes";
 
 export async function logRecruiter(input: LogRecruiterInput) {
   return asActionResult(async () => {
     const userId = await requireRecruitersUser();
-    // Contact details reach the SHARED row only from someone who shares; they always land
-    // on this user's own link.
-    const sharing = await isViewerSharing(userId);
-    const fullName = input.fullName?.trim();
-    if (!fullName && !input.recruiterId) {
-      throw new UserFacingError("Add the recruiter’s name first");
-    }
-
-    let recruiterId = input.recruiterId;
-
-    if (recruiterId) {
-      const db = await getDb();
-      const existing = await db.query.recruiters.findFirst({
-        where: eq(recruiters.id, recruiterId),
-      });
-      if (!existing) throw new Error("Recruiter not found");
-      // Only a row this viewer could already see: one they created or link, or one in the
-      // pool while they share. Any other id — someone's private recruiter — reads as missing.
-      const visible =
-        existing.createdByUserId === userId ||
-        Boolean(
-          await db.query.userRecruiterLinks.findFirst({
-            where: and(eq(userRecruiterLinks.userId, userId), eq(userRecruiterLinks.recruiterId, existing.id)),
-            columns: { id: true },
-          })
-        ) ||
-        (await pooledIdsForViewer(userId, [existing.id])).has(existing.id);
-      if (!visible) throw new Error("Recruiter not found");
-      // Patch THIS row directly: going back through upsertCanonicalRecruiter would let an
-      // email match — and then patch — a different recruiter than the one being logged.
-      // Only a sharing user may fill gaps on the shared row at all: firm and specialty are
-      // visible to everyone who can see it, so a private user's log stays on their own link.
-      if (sharing) {
-        const patch = mergeRecruiterFields(existing, {
-          fullName: fullName || existing.fullName,
-          firm: input.firm,
-          specialty: input.specialty,
-          email: input.email,
-          linkedinUrl: input.linkedinUrl,
-          phone: input.phone,
-        });
-        if (Object.keys(patch).length > 1) {
-          await db.update(recruiters).set(patch).where(eq(recruiters.id, existing.id));
-        }
-      }
-    } else {
-      const created = await upsertCanonicalRecruiter({
-        fullName: fullName!,
-        firm: input.firm,
-        specialty: input.specialty,
-        email: input.email,
-        linkedinUrl: input.linkedinUrl,
-        phone: input.phone,
-      }, { contributePii: sharing, createdByUserId: userId });
-      recruiterId = created.id;
-    }
-
-    const rating =
-      typeof input.personalRating === "number" &&
-      input.personalRating >= 1 &&
-      input.personalRating <= 5
-        ? input.personalRating
-        : null;
-
-    await ensureUserLink({
-      userId,
-      recruiterId: recruiterId!,
-      status: input.status || "planned",
-      email: input.email,
-      phone: input.phone,
-      linkedinUrl: input.linkedinUrl,
-      notes: input.notes || null,
-      source: input.source || "manual",
-      personalRating: rating,
-    });
-
-    if (rating !== null) {
-      await recomputeRecruiterRating(recruiterId!);
-    }
-
-    revalidateRecruiterPaths(recruiterId);
-    return { id: recruiterId! };
+    // The writes — shared row, the user's own link, the rating — are in `logRecruiterForUser`,
+    // shared with chat.
+    const { id } = await logRecruiterForUser(userId, input);
+    revalidateRecruiterPaths(id);
+    return { id };
   });
 }
 
@@ -262,39 +169,8 @@ export async function updateMyLink(
   }
 ) {
   const userId = await requireRecruitersUser();
-  const db = await getDb();
-  const link = await db.query.userRecruiterLinks.findFirst({
-    where: and(
-      eq(userRecruiterLinks.userId, userId),
-      eq(userRecruiterLinks.recruiterId, recruiterId)
-    ),
-  });
-  if (!link) throw new Error("You have not logged this recruiter yet");
-
-  const rating =
-    patch.personalRating === undefined
-      ? undefined
-      : patch.personalRating === null
-        ? null
-        : patch.personalRating >= 1 && patch.personalRating <= 5
-          ? patch.personalRating
-          : undefined;
-
-  await db
-    .update(userRecruiterLinks)
-    .set({
-      status: patch.status ?? link.status,
-      notes: patch.notes !== undefined ? patch.notes : link.notes,
-      personalRating:
-        rating !== undefined ? rating : link.personalRating,
-      updatedAt: new Date(),
-    })
-    .where(eq(userRecruiterLinks.id, link.id));
-
-  if (rating !== undefined) {
-    await recomputeRecruiterRating(recruiterId);
-  }
-
+  const changed = await updateMyLinkForUser(userId, recruiterId, patch);
+  if (!changed) throw new Error("You have not logged this recruiter yet");
   revalidateRecruiterPaths(recruiterId);
 }
 

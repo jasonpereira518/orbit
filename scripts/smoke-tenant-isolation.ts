@@ -34,6 +34,7 @@ import {
   contactTags,
   contacts,
   emailSends,
+  outreachCampaigns,
   eventAttendees,
   events,
   interactions,
@@ -155,6 +156,8 @@ run(async () => {
     const [vOrbitEvent] = await db.insert(events).values({ userId: VICTIM, title: "VICTIM-EVENT", startsAt: soon, endsAt: soon }).returning();
     const [vAttendee] = await db.insert(eventAttendees).values({ eventId: vOrbitEvent.id, userId: VICTIM, fullName: "VICTIM-ATTENDEE", contactId: vContact.id, identityKey: `xt-v-${randomUUID()}` }).returning();
     await db.insert(contactOpportunities).values({ userId: VICTIM, contactId: vContact.id, kind: "referral", label: "VICTIM-OPPORTUNITY" } as never);
+    const [vCampaign] = await db.insert(outreachCampaigns).values({ userId: VICTIM, name: "VICTIM-CAMPAIGN" }).returning();
+    const [aCampaign] = await db.insert(outreachCampaigns).values({ userId: ATTACKER, name: "ATTACKER-CAMPAIGN" }).returning();
     await db.insert(emailSends).values(sendRow(VICTIM, vContact.id, "VICTIM-EMAIL") as never);
     const [aOrbitEvent] = await db.insert(events).values({ userId: ATTACKER, title: "ATTACKER-EVENT", startsAt: soon, endsAt: soon }).returning();
     const [aAttendee] = await db.insert(eventAttendees).values({ eventId: aOrbitEvent.id, userId: ATTACKER, fullName: "ATTACKER-ATTENDEE", contactId: aContact.id, identityKey: `xt-a-${randomUUID()}` }).returning();
@@ -199,6 +202,8 @@ run(async () => {
     refused("who_to_talk_to", await call("who_to_talk_to", { eventId: vOrbitEvent.id }), "No event");
     control("who_to_talk_to", await call("who_to_talk_to", { eventId: aOrbitEvent.id }), (r) => (r as { event: { id: string } }).event.id === aOrbitEvent.id);
     refused("get_dossier", await call("get_dossier", { contactId: vContact.id }), "No contact");
+    refused("list_outreach_messages", await call("list_outreach_messages", { campaignId: vCampaign.id }), "No campaign");
+    control("list_outreach_messages", await call("list_outreach_messages", { campaignId: aCampaign.id }), (r) => (r as { campaign: { id: string } }).campaign.id === aCampaign.id);
     control("get_dossier", await call("get_dossier", { contactId: aContact.id }), (r) => (r as { contact: { id: string } }).contact.id === aContact.id);
 
     // Reads filtered by an id: no refusal, but nothing of B's may come back.

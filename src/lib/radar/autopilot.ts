@@ -35,6 +35,23 @@ export function enabledAutopilotKinds(settings: RadarAutopilot | null | undefine
   return RECOMMENDATION_KINDS.filter((k) => settings[k] === true);
 }
 
+/**
+ * Turn autopilot on or off for one kind of card — the Radar page's switch and chat's
+ * `set_radar_autopilot`. Upserts, so an account with no settings row yet still gets it.
+ * Autopilot schedules follow-ups; it never sends.
+ */
+export async function setRadarAutopilotForUser(userId: string, kind: RecommendationKind, on: boolean): Promise<void> {
+  const db = await getDb();
+  const value = JSON.stringify({ [kind]: on === true });
+  await db
+    .insert(userSettings)
+    .values({ userId, radarAutopilot: { [kind]: on === true } })
+    .onConflictDoUpdate({
+      target: userSettings.userId,
+      set: { radarAutopilot: sql`coalesce(${userSettings.radarAutopilot}, '{}'::jsonb) || ${value}::jsonb` },
+    });
+}
+
 export async function loadRadarAutopilot(userId: string): Promise<RadarAutopilot> {
   const db = await getDb();
   const [row] = await db

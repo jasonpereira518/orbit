@@ -23,7 +23,7 @@ import { hybridSearchContacts } from "@/lib/hybrid-search";
 import { matchContactsByName } from "@/lib/chat-lanes";
 import { findOrgRosters } from "@/lib/chat-roster";
 import { loadDueFollowUps } from "@/lib/due-follow-ups";
-import { listActiveGoalTextsForUser } from "@/lib/user-goals";
+import { listActiveGoalTextsForUser, listActiveGoalsForUser } from "@/lib/user-goals";
 import { finalizeIngest, ingestEvents, openIngestContext } from "@/lib/ingest/events";
 import { getNetworkStats } from "@/lib/network-stats";
 import { queryRemindersPage } from "@/lib/reminders-page-query";
@@ -472,9 +472,14 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
     surfaces: BOTH,
     scope: "read",
     resultLabel: "goals",
-    async run(userId) {
+    async run(userId, _args, ctx) {
       // The user's own words, typed into settings — not a field anything else writes, which
-      // is why this one crosses to MCP whole.
+      // is why this one crosses to MCP whole. Chat also gets each goal's id, which is how a
+      // `remove_goal` proposal names the one to remove.
+      if (ctx.surface === "chat") {
+        const items = await listActiveGoalsForUser(userId, { limit: 10 });
+        return { goals: items.map((g) => g.text), items };
+      }
       return { goals: await listActiveGoalTextsForUser(userId, { limit: 10 }) };
     },
   },
