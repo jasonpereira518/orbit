@@ -71,7 +71,14 @@ export type ProposedActionArgs =
   | { kind: "update_contact"; contactId: string; fields: ProposedContactFields }
   | { kind: "create_contact"; fullName: string; fields: ProposedContactFields }
   | { kind: "complete_reminder"; reminderId: string }
-  | { kind: "snooze_reminder"; reminderId: string; days: number };
+  | { kind: "snooze_reminder"; reminderId: string; days: number }
+  /**
+   * A proposal the answer loop made by calling one of the chat writes
+   * (`CHAT_WRITES` in @/lib/tools/chat-writes): which one, and the input it was called with,
+   * already validated against that write's schema and the turn's ids. Committed through the
+   * same catalog entry, never through the branches above.
+   */
+  | { kind: "tool"; tool: string; input: Record<string, unknown> };
 
 export type ProposedAction = {
   /** Minted here, never taken from the model — the commit action addresses a proposal by this. */
@@ -90,9 +97,20 @@ export type ProposedAction = {
  * to build UI around.
  */
 export type StoredProposedAction = Omit<ProposedAction, "status"> & {
-  status: "proposed" | "committing" | "done" | "dismissed" | "failed";
+  /** `undoing` and `undone` only ever follow `done`, on a proposal whose commit left an `undo`. */
+  status: "proposed" | "committing" | "done" | "dismissed" | "failed" | "undoing" | "undone";
   /** The reminder or interaction id the commit produced, once it has. */
   resultId?: string | null;
+  /** Tool proposals only: the inverse the done card's Undo runs, stored by the commit. */
+  undo?: { tool: string; input: Record<string, unknown> } | null;
+  /** Tool proposals only: where the done card's "View" goes. */
+  href?: string | null;
+  /** Tool proposals only: whether this may be applied without a click (Phase 3), or always asks. */
+  tier?: "auto" | "confirm";
+  /** Tool proposals only: the card warns, and there is no undo. */
+  destructive?: boolean;
+  /** Tool proposals only: the contact the card shows. */
+  contactId?: string | null;
 };
 
 function clampDays(raw: number | null | undefined): number {
@@ -160,6 +178,9 @@ function preview(args: ProposedActionArgs, contactName: string | null, reminderT
       return `Mark ${what} done`;
     case "snooze_reminder":
       return `Snooze ${what} for ${args.days} day${args.days === 1 ? "" : "s"}`;
+    case "tool":
+      // Tool proposals carry the preview their catalog entry wrote (@/lib/tools/chat-proposals).
+      return "";
   }
 }
 

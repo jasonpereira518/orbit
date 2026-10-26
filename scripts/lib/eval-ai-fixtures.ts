@@ -144,6 +144,13 @@ export type ChatEvalFixture = {
      * `abstained` label on a case is a false "I don't know".
      */
     mustAbstain?: boolean;
+    /**
+     * CHAT_LOOP_V2 only: the answer must propose a change through one of these chat writes
+     * (@/lib/tools/chat-writes) — a card, never a write. Scored as `proposalAccuracy`.
+     */
+    mustPropose?: string[];
+    /** CHAT_LOOP_V2 only: a question, not a request — the answer must propose nothing. */
+    mustNotPropose?: boolean;
   }>;
   /**
    * Records seeded beside the network, so a case can ask about a field or section that is

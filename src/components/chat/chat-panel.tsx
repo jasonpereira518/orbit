@@ -84,7 +84,7 @@ import { createThreadPrefetcher } from "@/lib/chat-thread-prefetch";
 import type { ChatStep } from "@/lib/chat-stream-protocol";
 import type { EvidenceSource } from "@/lib/chat-evidence";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
-import { ProposedActionsCard } from "@/components/chat/proposed-actions";
+import { ProposedActionsList } from "@/components/chat/proposed-actions";
 import type { ChatPerson } from "@/components/chat/chat-markdown";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Button } from "@/components/ui/button";
@@ -2157,17 +2157,12 @@ const AssistantBubble = memo(function AssistantBubble({
         {gridRecs.length > 0 && <div className="grid gap-2 sm:grid-cols-2">{gridRecs.map(renderCard)}</div>}
         {/* Only once persisted: committing needs a real row to address. */}
         {msg.persisted && (msg.proposedActions?.length ?? 0) > 0 && (
-          <div className="flex flex-col gap-2">
-            {msg.proposedActions!.map((action) => (
-              <ProposedActionsCard
-                key={action.id}
-                messageId={msg.id}
-                action={action}
-                contactName={"contactId" in action.args && action.args.contactId ? nameById.get(action.args.contactId) : null}
-                onSettled={(next) => onActionSettled?.(msg.id, action.id, next)}
-              />
-            ))}
-          </div>
+          <ProposedActionsList
+            messageId={msg.id}
+            actions={msg.proposedActions!}
+            nameById={nameById}
+            onSettled={(actionId, next) => onActionSettled?.(msg.id, actionId, next)}
+          />
         )}
         {!msg.streaming && msg.answer && (
           <div className="flex flex-wrap items-center gap-2">
