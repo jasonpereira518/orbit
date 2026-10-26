@@ -4,12 +4,12 @@ import type { CampaignMetrics } from "@/lib/outreach-types";
 export function CampaignKpiStrip({ metrics }: { metrics: CampaignMetrics }) {
   const items = [
     {
-      label: "Successful reply rate",
-      value: formatReplyRate(metrics.successfulReplyRate),
+      label: "Reply rate",
+      value: formatReplyRate(metrics.replyRate),
       primary: true,
     },
     { label: "Sent", value: String(metrics.sentCount) },
-    { label: "Positive replies", value: String(metrics.positiveReplyCount) },
+    { label: "Replies", value: String(metrics.replyCount) },
     { label: "Awaiting reply", value: String(metrics.awaitingReplyCount) },
     {
       label: "Follow-ups due",

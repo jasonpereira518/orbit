@@ -61,19 +61,20 @@ export type CampaignMetrics = {
   negativeReplyCount: number;
   awaitingReplyCount: number;
   pendingFollowUpCount: number;
-  /** positive replies / (sent − bounced); null when no eligible sends */
-  successfulReplyRate: number | null;
+  /** Replies of any tone / (sent − bounced); null when nothing eligible was sent. */
+  replyRate: number | null;
 };
 
+/** Where a person is in a campaign; `prospectPipelineBucket` assigns one, `all` is the unfiltered view. */
 export type PipelineFilter =
   | "all"
+  | "needs_info"
   | "needs_draft"
   | "ready"
-  | "sent"
-  | "awaiting_reply"
+  | "waiting"
+  | "follow_up_due"
   | "replied"
-  | "closed"
-  | "follow_up_due";
+  | "failed";
 
 export const OUTREACH_CHANNELS: OutreachChannel[] = ["email", "linkedin", "sms"];
 

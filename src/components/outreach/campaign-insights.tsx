@@ -7,15 +7,15 @@ export function CampaignInsights({
   channelBreakdown: Array<{
     channel: string;
     sent: number;
-    positiveReplies: number;
-    successfulReplyRate: number | null;
+    replies: number;
+    replyRate: number | null;
   }>;
   stepBreakdown: Array<{
     stepIndex: number;
     label: string;
     sent: number;
-    positiveReplies: number;
-    successfulReplyRate: number | null;
+    replies: number;
+    replyRate: number | null;
   }>;
 }) {
   if (!channelBreakdown.length && !stepBreakdown.length) return null;
@@ -23,11 +23,10 @@ export function CampaignInsights({
   const followUpShare = (() => {
     const initial = stepBreakdown.find((s) => s.stepIndex === 0);
     const followUps = stepBreakdown.filter((s) => s.stepIndex > 0);
-    const followPositive = followUps.reduce((n, s) => n + s.positiveReplies, 0);
-    const totalPositive =
-      (initial?.positiveReplies || 0) + followPositive;
-    if (!totalPositive) return null;
-    return followPositive / totalPositive;
+    const followReplies = followUps.reduce((n, s) => n + s.replies, 0);
+    const totalReplies = (initial?.replies || 0) + followReplies;
+    if (!totalReplies) return null;
+    return followReplies / totalReplies;
   })();
 
   return (
@@ -47,7 +46,7 @@ export function CampaignInsights({
                   {row.channel}
                 </span>
                 <span>
-                  {formatReplyRate(row.successfulReplyRate)} · {row.positiveReplies}/
+                  {formatReplyRate(row.replyRate)} · {row.replies}/
                   {row.sent}
                 </span>
               </div>
@@ -60,7 +59,7 @@ export function CampaignInsights({
         <h3 className="text-sm font-medium text-ink">By step</h3>
         {followUpShare != null && (
           <p className="mt-1 text-xs text-muted-foreground">
-            Follow-ups drive {Math.round(followUpShare * 100)}% of positive replies
+            Follow-ups drive {Math.round(followUpShare * 100)}% of replies
           </p>
         )}
         <div className="mt-3 space-y-2">
@@ -74,7 +73,7 @@ export function CampaignInsights({
               >
                 <span className="text-muted-foreground">{row.label}</span>
                 <span>
-                  {formatReplyRate(row.successfulReplyRate)} · {row.positiveReplies}/
+                  {formatReplyRate(row.replyRate)} · {row.replies}/
                   {row.sent}
                 </span>
               </div>

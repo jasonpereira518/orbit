@@ -16,10 +16,12 @@ import type { CampaignMetrics } from "@/lib/outreach-types";
  * included — keep the two in step (`scripts/smoke-bounded-reads.ts` compares them on a
  * fixture built to hit every edge):
  *
- *   - `isDeliveredMessage`: status is sent/opened, OR `Boolean(outcome)` (so NULL and '' are
- *     both "no outcome"), OR `Boolean(sentAt)` (any non-null timestamp).
- *   - `hasReplyOutcome`: outcome is one of the three reply outcomes.
- *   - `isAwaitingReply`: delivered AND `!outcome`.
+ *   - `isDeliveredMessage`: status is `sent`, and nothing else. A `copied`, `opened`, `queued`
+ *     or `unsure` row is not delivered, whatever its `sent_at` or outcome.
+ *   - `hasReplyOutcome`: outcome is one of the four reply outcomes (`replied` and the three
+ *     toned ones).
+ *   - `isAwaitingReply`: delivered AND `!outcome` (so NULL and '' are both "no outcome").
+ *   - the rate: replies / (sent − bounced), null when that is 0 (see `metricsFromAggregates`).
  *   - pending follow-ups: a `scheduled` message whose `scheduled_for <= now`, plus a
  *     `generated` message past step 0 that is not delivered. The two statuses differ, so one
  *     FILTER with OR counts them exactly as the two separate `+= 1`s did. `scheduled_for` is
@@ -36,11 +38,7 @@ import type { CampaignMetrics } from "@/lib/outreach-types";
 export function campaignMetricAggregates(now: Date) {
   const m = outreachMessages;
   const p = outreachProspects;
-  const delivered = sql`(
-    ${m.status} in ('sent', 'opened')
-    or coalesce(${m.outcome}, '') <> ''
-    or ${m.sentAt} is not null
-  )`;
+  const delivered = sql`(${m.status} = 'sent')`;
   const countMessages = (where: SQL) =>
     sql<number>`count(${m.id}) filter (where ${where})`.mapWith(Number);
   return {
@@ -48,7 +46,7 @@ export function campaignMetricAggregates(now: Date) {
     selectedCount: sql<number>`count(distinct ${p.id}) filter (where ${p.status} = 'selected')`.mapWith(Number),
     sentCount: countMessages(delivered),
     bouncedCount: countMessages(sql`${m.outcome} = 'bounced'`),
-    replyCount: countMessages(sql`${m.outcome} in ('positive_reply', 'negative_reply', 'neutral_reply')`),
+    replyCount: countMessages(sql`${m.outcome} in ('replied', 'positive_reply', 'negative_reply', 'neutral_reply')`),
     positiveReplyCount: countMessages(sql`${m.outcome} = 'positive_reply'`),
     negativeReplyCount: countMessages(sql`${m.outcome} = 'negative_reply'`),
     awaitingReplyCount: countMessages(sql`${delivered} and coalesce(${m.outcome}, '') = ''`),
@@ -67,7 +65,7 @@ export function campaignMetricAggregates(now: Date) {
   };
 }
 
-type MetricCounts = Omit<CampaignMetrics, "successfulReplyRate">;
+type MetricCounts = Omit<CampaignMetrics, "replyRate">;
 
 /** The aggregate row as `CampaignMetrics`, with the rate derived exactly as `computeCampaignMetrics` does. */
 export function metricsFromAggregates(row: MetricCounts): CampaignMetrics {
@@ -82,6 +80,6 @@ export function metricsFromAggregates(row: MetricCounts): CampaignMetrics {
     negativeReplyCount: row.negativeReplyCount,
     awaitingReplyCount: row.awaitingReplyCount,
     pendingFollowUpCount: row.pendingFollowUpCount,
-    successfulReplyRate: eligible > 0 ? row.positiveReplyCount / eligible : null,
+    replyRate: eligible > 0 ? row.replyCount / eligible : null,
   };
 }

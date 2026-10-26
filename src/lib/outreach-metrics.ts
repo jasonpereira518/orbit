@@ -1,5 +1,7 @@
+import { followUpDue } from "@/lib/outreach-followups";
 import type {
   CampaignMetrics,
+  OutreachChannel,
   OutreachMessageOutcome,
   PipelineFilter,
 } from "@/lib/outreach-types";
@@ -18,24 +20,31 @@ export type MessageMetricRow = {
 export type ProspectMetricRow = {
   id: string;
   status: string;
+  email: string | null;
+  linkedinUrl: string | null;
   messages: MessageMetricRow[];
 };
 
-const DELIVERED_STATUSES = new Set(["sent", "opened"]);
+/** What the counts need of a person; the pipeline bucket also needs where they can be reached. */
+type CountedProspect = Pick<ProspectMetricRow, "status" | "messages">;
+
 const REPLY_OUTCOMES = new Set<OutreachMessageOutcome>([
+  "replied",
   "positive_reply",
   "negative_reply",
   "neutral_reply",
 ]);
 
+/**
+ * Only a message the provider accepted counts as sent. A `copied` LinkedIn note, a legacy
+ * `opened` row, a `queued` or `unsure` send, and a draft that somehow carries a timestamp or
+ * an outcome are all not delivered. The SQL twin is `campaignMetricAggregates`.
+ */
 export function isDeliveredMessage(message: MessageMetricRow) {
-  return (
-    DELIVERED_STATUSES.has(message.status) ||
-    Boolean(message.outcome) ||
-    Boolean(message.sentAt)
-  );
+  return message.status === "sent";
 }
 
+/** Any reply counts, whatever its tone. A bounce and an unsubscribe are not replies. */
 export function hasReplyOutcome(message: MessageMetricRow) {
   return Boolean(message.outcome && REPLY_OUTCOMES.has(message.outcome as OutreachMessageOutcome));
 }
@@ -50,7 +59,7 @@ export function formatReplyRate(rate: number | null) {
 }
 
 export function computeCampaignMetrics(
-  prospects: ProspectMetricRow[],
+  prospects: CountedProspect[],
   now: Date = new Date()
 ): CampaignMetrics {
   const selectedCount = prospects.filter((p) => p.status === "selected").length;
@@ -101,8 +110,7 @@ export function computeCampaignMetrics(
   }
 
   const eligible = Math.max(0, sentCount - bouncedCount);
-  const successfulReplyRate =
-    eligible > 0 ? positiveReplyCount / eligible : null;
+  const replyRate = eligible > 0 ? replyCount / eligible : null;
 
   return {
     prospectCount: prospects.length,
@@ -114,11 +122,11 @@ export function computeCampaignMetrics(
     negativeReplyCount,
     awaitingReplyCount,
     pendingFollowUpCount,
-    successfulReplyRate,
+    replyRate,
   };
 }
 
-export function computeChannelBreakdown(prospects: ProspectMetricRow[]) {
+export function computeChannelBreakdown(prospects: CountedProspect[]) {
   const byChannel = new Map<
     string,
     { sent: number; bounced: number; positive: number; replies: number }
@@ -148,12 +156,12 @@ export function computeChannelBreakdown(prospects: ProspectMetricRow[]) {
       sent: stats.sent,
       positiveReplies: stats.positive,
       replies: stats.replies,
-      successfulReplyRate: eligible > 0 ? stats.positive / eligible : null,
+      replyRate: eligible > 0 ? stats.replies / eligible : null,
     };
   });
 }
 
-export function computeStepBreakdown(prospects: ProspectMetricRow[]) {
+export function computeStepBreakdown(prospects: CountedProspect[]) {
   const byStep = new Map<
     number,
     { sent: number; bounced: number; positive: number; replies: number }
@@ -186,65 +194,67 @@ export function computeStepBreakdown(prospects: ProspectMetricRow[]) {
         sent: stats.sent,
         positiveReplies: stats.positive,
         replies: stats.replies,
-        successfulReplyRate: eligible > 0 ? stats.positive / eligible : null,
+        replyRate: eligible > 0 ? stats.replies / eligible : null,
       };
     });
 }
 
+/**
+ * The stage a person is at, for the campaign's filter chips. Pure, and client-safe.
+ *
+ * Reads the person's first message (step 0), and their follow-up (the highest step above 0)
+ * when there is one. The prospect's own status only matters for `excluded`: a reply, a
+ * bounce or an unsubscribe is an outcome on a message and never rewrites it.
+ *
+ *   needs_info     no address on the campaign's channel (an email, or a LinkedIn url)
+ *   needs_draft    no first message (or one that was skipped)
+ *   ready          a draft, generated or copied message waits to be sent. A follow-up draft
+ *                  makes a due person ready: they have something to send.
+ *   waiting        sent (or being sent) and not yet due for a follow-up
+ *   follow_up_due  `followUpDue` on the first message
+ *   replied        any reply outcome on either message, or an unsubscribe (they answered,
+ *                  and there is nothing more to send)
+ *   failed         the current message failed, may have failed (`unsure`), or bounced
+ *
+ * `queued` buckets as `waiting` and `unsure` as `failed`. An `excluded` person is not in the
+ * pipeline at all; callers drop them first, and one that gets here is `needs_draft` rather
+ * than a stage of its own.
+ */
 export function prospectPipelineBucket(
   prospect: ProspectMetricRow,
+  channel: OutreachChannel,
   now: Date = new Date()
 ): PipelineFilter {
-  if (
-    prospect.status === "excluded" ||
-    prospect.status === "not_interested" ||
-    prospect.status === "interested"
-  ) {
-    return prospect.status === "interested" ? "replied" : "closed";
+  if (prospect.status === "excluded") return "needs_draft";
+  if (channel === "email" && !prospect.email?.trim()) return "needs_info";
+  if (channel === "linkedin" && !prospect.linkedinUrl?.trim()) return "needs_info";
+
+  const stepOf = (m: MessageMetricRow) => m.stepIndex ?? 0;
+  const first = prospect.messages.find((m) => stepOf(m) === 0);
+  if (!first) return "needs_draft";
+  const followUp = prospect.messages
+    .filter((m) => stepOf(m) > 0)
+    .sort((a, b) => stepOf(b) - stepOf(a))[0];
+
+  if (prospect.messages.some((m) => hasReplyOutcome(m) || m.outcome === "unsubscribed")) return "replied";
+  if (prospect.messages.some((m) => m.outcome === "bounced")) return "failed";
+
+  const current = followUp ?? first;
+  if (current.status === "failed" || current.status === "unsure") return "failed";
+  if (current.status === "queued") return "waiting";
+  if (current.status === "sent") {
+    const due = followUpDue(
+      {
+        stepIndex: 0,
+        status: first.status,
+        sentAt: first.sentAt ? new Date(first.sentAt) : null,
+        outcome: first.outcome || null,
+      },
+      Boolean(followUp),
+      now
+    );
+    return due ? "follow_up_due" : "waiting";
   }
-
-  const messages = prospect.messages;
-  if (!messages.length) return "needs_draft";
-
-  const hasPositive = messages.some((m) => m.outcome === "positive_reply");
-  const hasClosedOutcome = messages.some(
-    (m) =>
-      m.outcome === "negative_reply" ||
-      m.outcome === "unsubscribed" ||
-      m.outcome === "bounced"
-  );
-  const hasAnyReply = messages.some(hasReplyOutcome);
-
-  if (hasPositive || prospect.status === "replied") return "replied";
-  if (hasClosedOutcome) return "closed";
-  if (hasAnyReply) return "replied";
-
-  const dueFollowUp = messages.some(
-    (m) =>
-      (m.status === "scheduled" &&
-        m.scheduledFor &&
-        new Date(m.scheduledFor) <= now) ||
-      (m.status === "generated" &&
-        (m.stepIndex ?? 0) > 0 &&
-        !isDeliveredMessage(m))
-  );
-  if (dueFollowUp) return "follow_up_due";
-
-  const awaiting = messages.some(isAwaitingReply);
-  if (awaiting || prospect.status === "contacted") return "awaiting_reply";
-
-  const delivered = messages.some(isDeliveredMessage);
-  if (delivered) return "sent";
-
-  const hasUsableDraft = messages.some(
-    (m) =>
-      Boolean(m.id) &&
-      (m.status === "draft" ||
-        m.status === "generated" ||
-        m.status === "copied" ||
-        m.status === "scheduled")
-  );
-  if (hasUsableDraft) return "ready";
-
-  return "needs_draft";
+  if (current.status === "skipped") return "needs_draft";
+  return "ready";
 }

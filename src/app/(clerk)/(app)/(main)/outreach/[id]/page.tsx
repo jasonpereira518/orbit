@@ -87,7 +87,7 @@ export default async function OutreachCampaignPage({
               <Badge variant="outline">Demo search</Badge>
             )}
             <Badge variant="outline">
-              Reply rate {formatReplyRate(campaign.metrics.successfulReplyRate)}
+              Reply rate {formatReplyRate(campaign.metrics.replyRate)}
             </Badge>
           </div>
         </div>

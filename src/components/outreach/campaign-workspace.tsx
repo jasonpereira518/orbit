@@ -55,15 +55,15 @@ export function CampaignWorkspace({
     channelBreakdown: Array<{
       channel: string;
       sent: number;
-      positiveReplies: number;
-      successfulReplyRate: number | null;
+      replies: number;
+      replyRate: number | null;
     }>;
     stepBreakdown: Array<{
       stepIndex: number;
       label: string;
       sent: number;
-      positiveReplies: number;
-      successfulReplyRate: number | null;
+      replies: number;
+      replyRate: number | null;
     }>;
     prospects: Array<{
       id: string;
@@ -132,19 +132,24 @@ export function CampaignWorkspace({
       contactId: p.contactId,
       isDemo: Boolean(p.enrichment?.demo),
       companyMismatch: Boolean(p.enrichment?.companyMismatch),
-      pipeline: prospectPipelineBucket({
-        id: p.id,
-        status: p.status,
-        messages: p.messages.map((m) => ({
-          id: m.id,
-          status: m.status,
-          outcome: m.outcome ?? null,
-          stepIndex: m.stepIndex ?? 0,
-          channel: m.channel,
-          sentAt: m.sentAt ?? null,
-          scheduledFor: m.scheduledFor ?? null,
-        })),
-      }),
+      pipeline: prospectPipelineBucket(
+        {
+          id: p.id,
+          status: p.status,
+          email: p.email,
+          linkedinUrl: p.linkedinUrl,
+          messages: p.messages.map((m) => ({
+            id: m.id,
+            status: m.status,
+            outcome: m.outcome ?? null,
+            stepIndex: m.stepIndex ?? 0,
+            channel: m.channel,
+            sentAt: m.sentAt ?? null,
+            scheduledFor: m.scheduledFor ?? null,
+          })),
+        },
+        defaultChannel
+      ),
       message: active
         ? {
             id: active.id,

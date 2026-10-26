@@ -171,10 +171,10 @@ export async function getOutreachPerformanceSummary() {
   const ranked = [...withMetrics]
     .filter((c) => c.metrics.sentCount > 0)
     .sort((a, b) => {
-      const aRate = a.metrics.successfulReplyRate ?? -1;
-      const bRate = b.metrics.successfulReplyRate ?? -1;
+      const aRate = a.metrics.replyRate ?? -1;
+      const bRate = b.metrics.replyRate ?? -1;
       if (bRate !== aRate) return bRate - aRate;
-      return b.metrics.positiveReplyCount - a.metrics.positiveReplyCount;
+      return b.metrics.replyCount - a.metrics.replyCount;
     })
     .slice(0, 5)
     .map((c) => ({
@@ -203,7 +203,7 @@ export async function getOutreachPerformanceSummary() {
       sentCount: totals.sent,
       replyCount: totals.replies,
       positiveReplyCount: totals.positive,
-      successfulReplyRate: eligible > 0 ? totals.positive / eligible : null,
+      replyRate: eligible > 0 ? totals.replies / eligible : null,
       campaignCount: campaigns.length,
     },
   };

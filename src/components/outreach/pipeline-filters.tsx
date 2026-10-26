@@ -5,13 +5,13 @@ import type { PipelineFilter } from "@/lib/outreach-types";
 
 const FILTERS: Array<{ id: PipelineFilter; label: string }> = [
   { id: "all", label: "All" },
+  { id: "needs_info", label: "Needs info" },
   { id: "needs_draft", label: "Needs draft" },
   { id: "ready", label: "Ready" },
-  { id: "sent", label: "Sent" },
-  { id: "awaiting_reply", label: "Awaiting reply" },
+  { id: "waiting", label: "Waiting" },
   { id: "follow_up_due", label: "Follow-up due" },
   { id: "replied", label: "Replied" },
-  { id: "closed", label: "Closed" },
+  { id: "failed", label: "Failed" },
 ];
 
 export function PipelineFilters({

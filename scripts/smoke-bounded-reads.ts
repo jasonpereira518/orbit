@@ -4,9 +4,10 @@
  *
  *   - Outreach metrics (`campaignMetricAggregates`, `listCampaigns`,
  *     `getOutreachPerformanceSummary`) against `computeCampaignMetrics` over the full
- *     prospect/message tree — every predicate, NULL and '' outcomes, the scheduled-for
- *     boundary at microsecond precision, prospects without messages, campaigns without
- *     prospects, and another account's campaign.
+ *     prospect/message tree — every predicate (only `sent` is delivered; all four reply
+ *     outcomes are replies), NULL and '' outcomes, the scheduled-for boundary at microsecond
+ *     precision, prospects without messages, campaigns without prospects, and another
+ *     account's campaign.
  *   - The dashboard's reminder and suggestion cards (`loadDashboardReminders`,
  *     `loadDashboardSuggestions`, `getDashboardData`) against the old read-everything-then-
  *     filter code: the generated-reminder/due-contact drop, suggestion dedupe, ghosts,
@@ -181,18 +182,18 @@ async function outreachMetricsSection() {
   });
   await db.insert(outreachMessages).values([
     msg(pa.id, { status: "sent" }), // delivered, awaiting
-    msg(pa.id, { status: "opened", outcome: "positive_reply" }), // delivered, reply, positive
+    msg(pa.id, { status: "opened", outcome: "positive_reply" }), // legacy opened: NOT delivered, but a positive reply
     msg(pa.id, { status: "draft", outcome: "" }), // '' outcome: NOT delivered, not awaiting
-    msg(pa.id, { status: "draft", outcome: "bounced" }), // delivered via outcome, bounced
-    msg(pa.id, { status: "draft", sentAt: past }), // delivered via sent_at, awaiting
+    msg(pa.id, { status: "draft", outcome: "bounced" }), // NOT delivered (an outcome is not a send), still bounced
+    msg(pa.id, { status: "draft", sentAt: past }), // NOT delivered: a timestamp alone is not a send
     msg(pa.id, { status: "sent", outcome: "" }), // delivered, awaiting ('' is no outcome)
-    msg(pb.id, { status: "copied", outcome: "negative_reply" }),
+    msg(pb.id, { status: "copied", outcome: "negative_reply" }), // NOT delivered, a reply
     msg(pb.id, { status: "sent", outcome: "neutral_reply" }),
     msg(pb.id, { status: "sent", outcome: "unsubscribed" }), // delivered, not a reply
     msg(pb.id, { status: "generated", stepIndex: 1 }), // pending follow-up
-    msg(pb.id, { status: "generated", stepIndex: 1, sentAt: past }), // delivered, so not pending
+    msg(pb.id, { status: "generated", stepIndex: 1, sentAt: past }), // not delivered, so pending
     msg(pb.id, { status: "generated", stepIndex: 0 }), // step 0: not pending
-    msg(pb.id, { status: "generated", stepIndex: 2, outcome: "neutral_reply" }), // delivered via outcome
+    msg(pb.id, { status: "generated", stepIndex: 2, outcome: "neutral_reply" }), // not delivered, so pending; a reply
     msg(pc.id, { status: "scheduled", scheduledFor: past, stepIndex: 1 }), // pending
     msg(pc.id, { status: "scheduled", scheduledFor: future, stepIndex: 1 }), // not yet
     msg(pc.id, { status: "scheduled", scheduledFor: null, stepIndex: 1 }), // never
@@ -203,6 +204,13 @@ async function outreachMetricsSection() {
     msg(pf.id, { status: "sent", outcome: "positive_reply" }),
     msg(pf.id, { status: "sent" }),
     msg(px.id, { status: "sent", outcome: "positive_reply" }),
+    // Any reply counts, toned or not, and only `sent` is delivered: a copied note (sent_at or
+    // not), a queued or unsure send are not.
+    msg(pa.id, { status: "sent", outcome: "replied" }), // delivered, reply, not positive
+    msg(pf.id, { status: "copied", sentAt: past }), // NOT delivered
+    msg(pf.id, { status: "queued" }), // NOT delivered
+    msg(pf.id, { status: "unsure" }), // NOT delivered
+    msg(pf.id, { status: "sent", outcome: "replied" }),
   ]);
   // The boundary, at microsecond precision: stored 500 µs AFTER `boundaryNow`, which a
   // JavaScript Date (and so computeCampaignMetrics) truncates to exactly `boundaryNow`.
@@ -239,6 +247,13 @@ async function outreachMetricsSection() {
       );
     }
   }
+  const goodTree = trees.find((t) => t.id === c4.id);
+  const good = goodTree && computeCampaignMetrics(goodTree.prospects, new Date());
+  check(
+    "fixture: a replied outcome is a reply; copied, queued and unsure rows are not sent — 3 replies of 4 sent",
+    good?.sentCount === 4 && good.replyCount === 3 && good.replyRate === 0.75,
+    json(good)
+  );
   check(
     "the boundary case is live: one boundary message is due to JS, one is not",
     computeCampaignMetrics(nonTrivial!.prospects, boundaryNow).pendingFollowUpCount ===
@@ -276,10 +291,10 @@ async function outreachMetricsSection() {
   const expectedTop = [...withMetrics]
     .filter((c) => c.metrics.sentCount > 0)
     .sort((a, b) => {
-      const aRate = a.metrics.successfulReplyRate ?? -1;
-      const bRate = b.metrics.successfulReplyRate ?? -1;
+      const aRate = a.metrics.replyRate ?? -1;
+      const bRate = b.metrics.replyRate ?? -1;
       if (bRate !== aRate) return bRate - aRate;
-      return b.metrics.positiveReplyCount - a.metrics.positiveReplyCount;
+      return b.metrics.replyCount - a.metrics.replyCount;
     })
     .slice(0, 5)
     .map((c) => ({ id: c.id, name: c.name, metrics: c.metrics, defaultChannel: c.defaultChannel, status: c.status }));
@@ -300,7 +315,7 @@ async function outreachMetricsSection() {
       sentCount: totals.sent,
       replyCount: totals.replies,
       positiveReplyCount: totals.positive,
-      successfulReplyRate: eligible > 0 ? totals.positive / eligible : null,
+      replyRate: eligible > 0 ? totals.replies / eligible : null,
       campaignCount: trees.length,
     },
   };

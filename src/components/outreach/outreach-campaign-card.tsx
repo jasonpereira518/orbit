@@ -37,10 +37,10 @@ export function OutreachCampaignCard({
       <Link href={`/outreach/${campaign.id}`} className="mt-3 block">
         <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
           <span className="font-medium text-ink">
-            Reply rate {formatReplyRate(campaign.metrics.successfulReplyRate)}
+            Reply rate {formatReplyRate(campaign.metrics.replyRate)}
           </span>
           <span>{campaign.metrics.sentCount} sent</span>
-          <span>{campaign.metrics.positiveReplyCount} positive</span>
+          <span>{campaign.metrics.replyCount} replied</span>
           <span>{campaign.metrics.awaitingReplyCount} awaiting</span>
           <span>{campaign.metrics.prospectCount} prospects</span>
           <span>

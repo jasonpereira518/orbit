@@ -33,24 +33,24 @@ export default async function OutreachPage() {
     (acc, c) => {
       acc.sent += c.metrics.sentCount;
       acc.bounced += c.metrics.bouncedCount;
-      acc.positive += c.metrics.positiveReplyCount;
+      acc.replies += c.metrics.replyCount;
       return acc;
     },
-    { sent: 0, bounced: 0, positive: 0 }
+    { sent: 0, bounced: 0, replies: 0 }
   );
   const eligible = Math.max(0, totals.sent - totals.bounced);
-  const accountRate = eligible > 0 ? totals.positive / eligible : null;
+  const accountRate = eligible > 0 ? totals.replies / eligible : null;
 
   const ranked = [...campaigns].sort((a, b) => {
-    const aRate = a.metrics.successfulReplyRate;
-    const bRate = b.metrics.successfulReplyRate;
+    const aRate = a.metrics.replyRate;
+    const bRate = b.metrics.replyRate;
     if (aRate == null && bRate == null) {
       return b.metrics.sentCount - a.metrics.sentCount;
     }
     if (aRate == null) return 1;
     if (bRate == null) return -1;
     if (bRate !== aRate) return bRate - aRate;
-    return b.metrics.positiveReplyCount - a.metrics.positiveReplyCount;
+    return b.metrics.replyCount - a.metrics.replyCount;
   });
 
   return (
@@ -79,13 +79,13 @@ export default async function OutreachPage() {
 
       {campaigns.length > 0 && (
         <div className="rounded-2xl border border-border/70 bg-card px-5 py-4">
-          <div className="text-xs text-muted-foreground">Account successful reply rate</div>
+          <div className="text-xs text-muted-foreground">Account reply rate</div>
           <div className="mt-1 flex flex-wrap items-baseline gap-4">
             <span className="font-[family-name:var(--font-display)] text-3xl text-ink">
               {formatReplyRate(accountRate)}
             </span>
             <span className="text-sm text-muted-foreground">
-              {totals.positive} positive · {totals.sent} sent
+              {totals.replies} replied · {totals.sent} sent
             </span>
           </div>
         </div>

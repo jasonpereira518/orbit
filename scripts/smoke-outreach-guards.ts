@@ -222,8 +222,9 @@ run(async () => {
   check("…and bulk send under this campaign never touches it", sendableAfter?.status === "generated", String(sendableAfter?.status));
 
   console.log("\nA delivered message is never sent twice");
-  check("a copied row with a sentAt counts as delivered",
-    isDeliveredMessage({ id: "x", status: "copied", outcome: null, sentAt: new Date() }));
+  check("only a sent row counts as delivered: a copied row with a sentAt does not",
+    !isDeliveredMessage({ id: "x", status: "copied", outcome: null, sentAt: new Date() }) &&
+      isDeliveredMessage({ id: "x", status: "sent", outcome: null, sentAt: null }));
   const delivered = await seedProspectWithMessage(campaign.id, {
     externalId: "delivered-1",
     fullName: "Dana Delivered",

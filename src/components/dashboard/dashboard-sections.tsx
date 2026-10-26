@@ -422,12 +422,12 @@ async function OutreachReplyRate({ summary }: { summary: OutreachSummary }) {
   return (
     <Link
       href="/outreach"
-      title={`${accountMetrics.positiveReplyCount} positive replies from ${accountMetrics.sentCount} sent`}
+      title={`${accountMetrics.replyCount} replies from ${accountMetrics.sentCount} sent`}
       className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted"
     >
       Reply rate
       <span className="font-semibold text-ink">
-        {formatReplyRate(accountMetrics.successfulReplyRate)}
+        {formatReplyRate(accountMetrics.replyRate)}
       </span>
     </Link>
   );
