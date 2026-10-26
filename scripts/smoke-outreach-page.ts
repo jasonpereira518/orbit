@@ -25,7 +25,8 @@ import {
   hasBeenEmailed,
   isInNetwork,
 } from "../src/lib/outreach-metrics";
-import { asLinkedInProfile } from "../src/lib/outreach-channels";
+import { asLinkedInProfile, campaignHeaderLabels } from "../src/lib/outreach-channels";
+import { withoutOwnContact, type WarmPath } from "../src/lib/warm-paths";
 import {
   copyBlockedReason,
   linkedInOpenUrl,
@@ -38,6 +39,7 @@ import {
 } from "../src/lib/outreach-message-view";
 import {
   CONTACTED_STATUSES,
+  audienceSubtitle,
   EMAIL_SHAPE,
   EMAILED_STATUSES,
   LINKEDIN_CONTACTED_STATUSES,
@@ -729,6 +731,78 @@ async function main() {
     check("a discovery row adds as a find, with its page and why", /origin:\s*"find"/.test(find) && /whyMatches:\s*c\.whyMatches/.test(find) && /url:\s*c\.url/.test(find));
     check("a brief adds as a brief, keyed to its research", /origin:\s*"brief"/.test(find) && /researchKey:\s*key/.test(find));
     check("both cards offer the menu", (find.match(/<AddToCampaign\b/g) ?? []).length === 2);
+  }
+
+  console.log("\nbrowser-pass fixes");
+  {
+    console.log("  a person is never their own warm path");
+    const path = (contactId: string, fullName: string): WarmPath => ({
+      contactId,
+      fullName,
+      orgKey: "openai",
+      orgLabel: "OpenAI",
+      reason: "works_there",
+      reasonLabel: "works there now",
+      title: null,
+      closeness: null,
+      profileImageUrl: null,
+      linkedinUrl: null,
+      email: null,
+    });
+    const three = [path("c1", "Sarah Chen"), path("c2", "David Kim"), path("c3", "Paige Mercer")];
+    check(
+      "their own contact is dropped",
+      JSON.stringify(withoutOwnContact(three, "c2").map((p) => p.fullName)) === JSON.stringify(["Sarah Chen", "Paige Mercer"])
+    );
+    check("someone with no contact keeps every path", withoutOwnContact(three, null).length === 3 && withoutOwnContact(three, undefined).length === 3);
+    check("another person’s contact changes nothing", withoutOwnContact(three, "zzz").length === 3);
+    check("only themselves leaves nothing, so the note hides", withoutOwnContact([path("c2", "David Kim")], "c2").length === 0);
+    check("no paths is none", withoutOwnContact(undefined, "c2").length === 0);
+    const note = code("src/components/outreach/warm-path-note.tsx");
+    const people = code("src/components/outreach/campaign-people.tsx");
+    check("the note filters through it", /withoutOwnContact\(/.test(note) && /!paths\.length|!paths\?\.length/.test(note));
+    check("the people list tells it who the row is", /<WarmPathNote[^>]*ownContactId=\{person\.contactId\}/.test(people));
+
+    console.log("  the header badges are words");
+    const labels = (over: Partial<Parameters<typeof campaignHeaderLabels>[0]> = {}) =>
+      campaignHeaderLabels({ status: "draft", defaultChannel: "linkedin", tone: "professional", replyCta: "ask_referral", ...over });
+    check(
+      "status, channel, tone and ask read as labels",
+      JSON.stringify(labels()) === JSON.stringify(["Draft", "LinkedIn", "Professional", "A referral"]),
+      JSON.stringify(labels())
+    );
+    check("an email campaign reads Email, active reads Active", JSON.stringify(labels({ status: "active", defaultChannel: "email" }).slice(0, 2)) === JSON.stringify(["Active", "Email"]));
+    check("no channel is Email and no tone is Professional", JSON.stringify(labels({ defaultChannel: null, tone: null }).slice(1, 3)) === JSON.stringify(["Email", "Professional"]));
+    check("no ask shows no ask badge", labels({ replyCta: null }).length === 3);
+    check(
+      "every ask has its label",
+      OUTREACH_REPLY_CTAS.every((cta) => labels({ replyCta: cta }).at(-1) === REPLY_CTA_LABELS[cta])
+    );
+    check("an ask this build doesn’t know is still readable", labels({ replyCta: "book_demo" }).at(-1) === "Book demo");
+    const page = code(`${OUTREACH_DIR}/[id]/page.tsx`);
+    check("the page renders them", /campaignHeaderLabels\(campaign\)/.test(page));
+    check("and no raw status, channel, tone or ask badge", !/\{campaign\.status\}|replaceAll\("_", " "\)|campaign\.tone \|\|/.test(page));
+    check("the v1 search-source badge is gone", !page.includes("Demo search") && !page.includes("lastSearchSource"));
+
+    console.log("  the audience is not said twice");
+    const AUDIENCE = "Health economists and outcomes researchers at pharma companies in the Boston area";
+    check("the same text is a duplicate", audienceSubtitle("Marketing leads", "Marketing leads") === null);
+    check("trimmed and case-insensitive", audienceSubtitle("  marketing LEADS ", "Marketing leads  ") === null);
+    check("the default name of a short audience is a duplicate", audienceSubtitle("PMs at Stripe", "PMs at Stripe") === null);
+    check("the default name of a long audience (cut at 60) is a duplicate", audienceSubtitle(AUDIENCE.slice(0, 60).trim(), AUDIENCE) === null);
+    check("…even with spacing the name collapsed", audienceSubtitle("Product leads at fintechs", "Product  leads\nat fintechs") === null);
+    check("a different name keeps the audience", audienceSubtitle("Q4 push", AUDIENCE) === AUDIENCE);
+    check("a short audience that merely starts with the name keeps it", audienceSubtitle("Marketing", "Marketing leads") === "Marketing leads");
+    check("exactly 60 characters is not “longer”, so a prefix is kept", audienceSubtitle("a".repeat(30), "a".repeat(30) + "b".repeat(30)) === "a".repeat(30) + "b".repeat(30));
+    check("an empty name never matches", audienceSubtitle("", AUDIENCE) === AUDIENCE);
+    check("no audience shows nothing", audienceSubtitle("Q4 push", "  ") === null && audienceSubtitle("Q4 push", null) === null);
+    check("the page asks the helper", /audienceSubtitle\(campaign\.name,\s*campaign\.audienceQuery\)/.test(page));
+
+    console.log("  a locked, empty address is text, not a box");
+    const field = declaration(people, "function SavedField(");
+    check("the field says No address on file", people.includes('"No address on file"') || people.includes("No address on file"));
+    check("in place of the input, only when locked and empty", /locked\s*&&\s*!saved/.test(field) || /!saved\s*&&\s*locked/.test(field));
+    check("a locked address with a value keeps the read-only input", /readOnly=\{locked\}/.test(field));
   }
 
   if (failures > 0) {

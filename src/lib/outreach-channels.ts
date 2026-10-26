@@ -1,4 +1,9 @@
-import { isUnmailableAddress, type OutreachChannel } from "@/lib/outreach-types";
+import {
+  isUnmailableAddress,
+  REPLY_CTA_LABELS,
+  type OutreachChannel,
+  type OutreachReplyCta,
+} from "@/lib/outreach-types";
 
 export function buildMailtoUrl(input: {
   email: string;
@@ -50,6 +55,25 @@ export function channelLabel(channel: OutreachChannel) {
   if (channel === "email") return "Email";
   if (channel === "linkedin") return "LinkedIn";
   return "SMS";
+}
+
+const sentenceCase = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+/** The campaign header's badges as words, in order: status, channel, tone, and the ask when there is one. */
+export function campaignHeaderLabels(campaign: {
+  status: string;
+  defaultChannel: string | null;
+  tone: string | null;
+  replyCta: string | null;
+}): string[] {
+  const { replyCta } = campaign;
+  return [
+    sentenceCase(campaign.status),
+    channelLabel((campaign.defaultChannel || "email") as OutreachChannel),
+    sentenceCase(campaign.tone || "professional"),
+    // An ask this build doesn’t know (an older value) still reads as words.
+    ...(replyCta ? [REPLY_CTA_LABELS[replyCta as OutreachReplyCta] ?? sentenceCase(replyCta.replaceAll("_", " "))] : []),
+  ];
 }
 
 export function canOpenInApp(

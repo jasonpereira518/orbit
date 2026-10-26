@@ -246,7 +246,7 @@ function PersonRow({
               )}
             </p>
           )}
-          <WarmPathNote company={person.company} warmPaths={warmPaths} />
+          <WarmPathNote company={person.company} warmPaths={warmPaths} ownContactId={person.contactId} />
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Button
@@ -283,6 +283,7 @@ function PersonRow({
             prepare={(text) => asLinkedInProfile(text) ?? text}
             locked={hasBeenContactedOnLinkedin(person.messages)}
             lockedNote="Already contacted on LinkedIn, so the link stays"
+            emptyNote="No link on file"
             type="url"
             placeholder="linkedin.com/in/…"
             maxLength={300}
@@ -313,6 +314,7 @@ function PersonRow({
             save={(value) => setProspectEmail(person.id, value)}
             locked={hasBeenEmailed(person.messages)}
             lockedNote="Already emailed, so the address stays"
+            emptyNote="No address on file"
             type="email"
             inputMode="email"
             placeholder="name@company.com"
@@ -356,6 +358,7 @@ function SavedField({
   prepare = (text) => text,
   locked,
   lockedNote,
+  emptyNote,
   type,
   inputMode,
   placeholder,
@@ -374,6 +377,8 @@ function SavedField({
   prepare?: (text: string) => string;
   locked: boolean;
   lockedNote: string;
+  /** Said in place of the box when it is locked and has nothing in it: there is nothing to type into. */
+  emptyNote: string;
   type: "email" | "url";
   inputMode?: "email";
   placeholder: string;
@@ -387,6 +392,7 @@ function SavedField({
   const [value, setValue] = useState(saved);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const noBox = locked && !saved;
   // What was last sent, so Enter followed by blur saves once, and an unchanged box saves nothing.
   const [sent, setSent] = useState(saved);
   // When what is stored moves (this save landed, tidied, or it changed elsewhere) the box shows
@@ -426,25 +432,30 @@ function SavedField({
       noValidate
       className="space-y-1"
     >
-      <label htmlFor={id} className="block text-xs font-medium text-muted-foreground">
+      <label htmlFor={noBox ? undefined : id} className="block text-xs font-medium text-muted-foreground">
         {label}
         <span className="sr-only"> for {name}</span>
       </label>
-      <Input
-        id={id}
-        type={type}
-        inputMode={inputMode}
-        autoComplete="off"
-        maxLength={maxLength}
-        value={value}
-        readOnly={locked}
-        placeholder={placeholder}
-        onChange={(e) => setValue(e.target.value)}
-        onBlur={() => void save()}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={[hintId, error ? errorId : null].filter(Boolean).join(" ")}
-        className="max-w-sm"
-      />
+      {noBox ? (
+        // A box that can’t be typed into and has nothing in it only looks like it wants input.
+        <p className="text-sm text-muted-foreground">{emptyNote}</p>
+      ) : (
+        <Input
+          id={id}
+          type={type}
+          inputMode={inputMode}
+          autoComplete="off"
+          maxLength={maxLength}
+          value={value}
+          readOnly={locked}
+          placeholder={placeholder}
+          onChange={(e) => setValue(e.target.value)}
+          onBlur={() => void save()}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={[hintId, error ? errorId : null].filter(Boolean).join(" ")}
+          className="max-w-sm"
+        />
+      )}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <Readiness id={hintId} status={saving ? { text: "Saving…", needsInfo: false } : status} />
         {locked && <span className="text-xs text-muted-foreground">{lockedNote}</span>}

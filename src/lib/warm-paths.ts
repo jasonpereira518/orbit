@@ -86,6 +86,18 @@ export type WarmPath = {
   email: string | null;
 };
 
+/**
+ * The paths worth showing beside one person: you are never a warm path to yourself, so the
+ * person's own contact record is dropped. A prospect linked to a contact at the company would
+ * otherwise read "You know 3 people here" with themselves counted as one of them.
+ */
+export function withoutOwnContact(
+  paths: WarmPath[] | undefined,
+  ownContactId?: string | null
+): WarmPath[] {
+  return (paths ?? []).filter((p) => !ownContactId || p.contactId !== ownContactId);
+}
+
 /** How many connectors to keep per organisation. */
 export const WARM_PATHS_PER_ORG = 5;
 

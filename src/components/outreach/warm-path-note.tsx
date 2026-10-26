@@ -1,6 +1,6 @@
 import { IntentLink } from "@/components/ui/intent-link";
 import { normalizeCompanyKey } from "@/lib/company-name";
-import type { WarmPath } from "@/lib/warm-paths";
+import { withoutOwnContact, type WarmPath } from "@/lib/warm-paths";
 
 /**
  * "You already know 2 people at Stripe" — the line that should stop a cold email being sent.
@@ -9,18 +9,21 @@ import type { WarmPath } from "@/lib/warm-paths";
  * a row of empty "no warm path" labels would train people to ignore the one that matters.
  *
  * Names link straight to the contact, because the next action is reading what you know about
- * them before asking for anything.
+ * them before asking for anything. A row that is itself one of those contacts is not counted:
+ * pass `ownContactId` and they are left out, and the note hides if nobody else is left.
  */
 export function WarmPathNote({
   company,
   warmPaths,
+  ownContactId,
 }: {
   company?: string | null;
   warmPaths?: Record<string, WarmPath[]>;
+  ownContactId?: string | null;
 }) {
   if (!company || !warmPaths) return null;
-  const paths = warmPaths[normalizeCompanyKey(company)];
-  if (!paths?.length) return null;
+  const paths = withoutOwnContact(warmPaths[normalizeCompanyKey(company)], ownContactId);
+  if (!paths.length) return null;
 
   return (
     <div className="mt-1.5 rounded-lg border border-primary/30 bg-primary/5 px-2 py-1.5 text-xs">

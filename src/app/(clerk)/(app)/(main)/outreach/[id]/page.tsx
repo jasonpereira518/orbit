@@ -18,7 +18,8 @@ import { toSendLine, type SendLine, type ViewPerson } from "@/lib/outreach-messa
 import { campaignKnownNamesForUser } from "@/lib/outreach-people";
 import { formatReplyRate } from "@/lib/outreach-metrics";
 import { canSeeRepliesForUser } from "@/lib/outreach-replies";
-import { readEnrichment, type OutreachChannel } from "@/lib/outreach-types";
+import { audienceSubtitle, readEnrichment, type OutreachChannel } from "@/lib/outreach-types";
+import { campaignHeaderLabels } from "@/lib/outreach-channels";
 import { findWarmPaths } from "@/lib/warm-paths-server";
 import { orgKeysFor } from "@/lib/warm-paths";
 import { cn } from "@/lib/utils";
@@ -155,6 +156,8 @@ export default async function OutreachCampaignPage({
     messagesCanUseAi = ai;
   }
 
+  const subtitle = audienceSubtitle(campaign.name, campaign.audienceQuery);
+
   return (
     <div className="space-y-6">
       <RenderStamp />
@@ -169,19 +172,13 @@ export default async function OutreachCampaignPage({
           <h1 className="mt-2 font-[family-name:var(--font-display)] text-3xl text-ink">
             {campaign.name}
           </h1>
-          <p className="mt-1 max-w-2xl text-muted-foreground">
-            {campaign.audienceQuery}
-          </p>
+          {subtitle && <p className="mt-1 max-w-2xl text-muted-foreground">{subtitle}</p>}
           <div className="mt-2 flex flex-wrap gap-2">
-            <Badge variant="outline">{campaign.status}</Badge>
-            <Badge variant="outline">{campaign.defaultChannel || "email"}</Badge>
-            <Badge variant="outline">{campaign.tone || "professional"}</Badge>
-            {campaign.replyCta && (
-              <Badge variant="outline">{campaign.replyCta.replaceAll("_", " ")}</Badge>
-            )}
-            {campaign.lastSearchSource === "demo" && (
-              <Badge variant="outline">Demo search</Badge>
-            )}
+            {campaignHeaderLabels(campaign).map((label) => (
+              <Badge key={label} variant="outline">
+                {label}
+              </Badge>
+            ))}
             <Badge variant="outline">
               Reply rate {formatReplyRate(campaign.metrics.replyRate)}
             </Badge>

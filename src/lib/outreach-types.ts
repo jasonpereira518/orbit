@@ -103,6 +103,23 @@ export const REPLY_CTA_LABELS: Record<OutreachReplyCta, string> = {
   other: "Something else",
 };
 
+/**
+ * The audience line under a campaign's title, or null when the title already says it.
+ *
+ * A new campaign is named with its audience cut to 60 characters, so the name is either the
+ * audience or the start of a longer one; saying it again right under the title is noise.
+ * Compared trimmed, with runs of spaces collapsed (the cut collapses them too), ignoring case.
+ */
+export function audienceSubtitle(name: string, audience: string | null | undefined): string | null {
+  const shown = (audience ?? "").trim();
+  if (!shown) return null;
+  const squash = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
+  const title = squash(name);
+  const full = squash(shown);
+  const repeats = title !== "" && (title === full || (full.length > 60 && full.startsWith(title)));
+  return repeats ? null : shown;
+}
+
 export const OUTCOME_LABELS: Record<OutreachMessageOutcome, string> = {
   replied: "Replied",
   positive_reply: "Positive reply",
