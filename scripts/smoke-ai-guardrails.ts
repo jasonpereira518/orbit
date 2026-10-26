@@ -39,7 +39,7 @@ import {
 } from "../src/lib/ai-security";
 import { safeChatHref, safeHttpUrl } from "../src/lib/safe-links";
 import { untrustedPageBlock } from "../src/lib/conversation-starters";
-import { validateProposedActions } from "../src/lib/chat-proposed-actions";
+import { parseAnswerTail } from "../src/lib/chat-proposed-actions";
 import { classifyRecipient, recipientNeedsConfirmation } from "../src/lib/agent-sends";
 import { assessOutreachQuality, findLinkOrAddress } from "../src/lib/outreach-quality";
 import { composeDraftContext } from "../src/lib/follow-up-drafts";
@@ -372,7 +372,7 @@ run(async () => {
   check("stored URLs: bare linkedin path accepted as https", safeHttpUrl("linkedin.com/in/ada") === "https://linkedin.com/in/ada");
 
   console.log("\n   proposals the model makes");
-  const proposals = validateProposedActions(
+  const proposals = parseAnswerTail(
     [
       { kind: "log_interaction", contact_id: "someone-elses-contact", text: "hi" },
       { kind: "create_reminder", contact_id: "c1", title: "Follow up‮​moc.live@exfil", description: "<img src=x onerror=alert(1)>ok" },
@@ -381,13 +381,13 @@ run(async () => {
     ],
     new Set(["c1"])
   );
-  check("a proposal naming a contact the model wasn't shown is dropped", !proposals.some((p) => "contactId" in p.args && p.args.contactId === "someone-elses-contact"));
-  check("an unknown action kind (send_email) is dropped", proposals.every((p) => ["log_interaction", "create_reminder", "schedule_follow_up"].includes(p.args.kind)));
-  const reminder = proposals.find((p) => p.args.kind === "create_reminder");
+  check("a proposal naming a contact the model wasn't shown is dropped", !proposals.some((p) => p.input.contactId === "someone-elses-contact"));
+  check("an unknown action kind (send_email) is dropped", proposals.every((p) => ["log_note", "create_reminder", "schedule_follow_up"].includes(p.tool)));
+  const reminder = proposals.find((p) => p.tool === "create_reminder");
   check("hidden bidi text is stripped from a proposal", Boolean(reminder) && !/[​‮]/.test(JSON.stringify(reminder)));
   check("HTML is stripped from a proposal", Boolean(reminder) && !JSON.stringify(reminder).includes("<img"));
-  const followUp = proposals.find((p) => p.args.kind === "schedule_follow_up");
-  check("an absurd follow-up interval is clamped", followUp?.args.kind === "schedule_follow_up" && followUp.args.days === 90);
+  const followUp = proposals.find((p) => p.tool === "schedule_follow_up");
+  check("an absurd follow-up interval is clamped", followUp?.input.days === 90);
 
   console.log("\n   recipients an agent picks");
   const known = new Set(["priya@example.com"]);

@@ -116,14 +116,14 @@ async function main() {
   const cards = sink.list();
   check("previews come from the turn's own names", cards[0].preview === "Log a note on Ada Lovelace: “Talked about the difference engine”", cards[0].preview);
   check("…and say what is being changed", /Update Ada Lovelace: title → “Mathematician”, add to notes: “Prefers email”/.test(cards[1].preview), cards[1].preview);
-  check("each card carries its tier", cards.find((c) => c.args.kind === "tool" && c.args.tool === "update_contact")?.tier === "confirm" && cards[0].tier === "auto");
+  check("each card carries its tier", cards.find((c) => c.args.tool === "update_contact")?.tier === "confirm" && cards[0].tier === "auto");
 
   // --- store, commit, undo -------------------------------------------------------------------
   const [message] = await db
     .insert(chatMessages)
     .values({ threadId: thread.id, userId: USER, role: "assistant", content: "Set those up for you to confirm.", proposedActions: cards })
     .returning();
-  const byTool = (tool: string) => cards.find((c) => c.args.kind === "tool" && c.args.tool === tool)!;
+  const byTool = (tool: string) => cards.find((c) => c.args.tool === tool)!;
   const stored = async (id: string) =>
     ((await db.query.chatMessages.findFirst({ where: eq(chatMessages.id, message.id) }))?.proposedActions ?? []).find(
       (a: StoredProposedAction) => a.id === id
@@ -246,7 +246,7 @@ async function main() {
       .insert(chatMessages)
       .values({ threadId: thread.id, userId: USER, role: "assistant", content: "More changes.", proposedActions: cards2 })
       .returning();
-    const card = (tool: string) => cards2.find((c) => c.args.kind === "tool" && c.args.tool === tool)!;
+    const card = (tool: string) => cards2.find((c) => c.args.tool === tool)!;
     const tagNames = async () =>
       (await db.select({ name: tags.name }).from(contactTags).innerJoin(tags, eq(tags.id, contactTags.tagId)).where(eq(contactTags.contactId, ada.id))).map((r) => r.name).sort();
     const status = async (id: string) => (await db.query.reminders.findFirst({ where: eq(reminders.id, id) }))?.status;

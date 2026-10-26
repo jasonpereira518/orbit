@@ -28,7 +28,7 @@ export type RawRecommendation = {
   draft_message: string | null;
 };
 
-/** The model's own shape for a proposal — validated and re-typed by `validateProposedActions`. */
+/** The one-pass answer's own shape for a proposal — bounded by `parseAnswerTail` (@/lib/chat-proposed-actions). */
 export type RawProposedAction = unknown;
 
 export type SplitResult = {

@@ -112,7 +112,7 @@ async function loadTarget(userId: string, messageId: string, contactId: string) 
   // chat-writes-features) — that card opens this same dialog, whose Send is the only send.
   const recommended = (message.recommendations ?? []).some((r) => r.contact_id === contactId);
   const drafted = (message.proposedActions ?? []).some(
-    (a) => a.args.kind === "tool" && a.args.tool === "draft_email" && a.args.input?.contactId === contactId
+    (a) => a.args.tool === "draft_email" && a.args.input?.contactId === contactId
   );
   if (!recommended && !drafted) return null;
   const contact = await db.query.contacts.findFirst({

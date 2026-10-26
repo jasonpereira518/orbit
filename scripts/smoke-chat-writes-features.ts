@@ -95,7 +95,7 @@ async function store(cards: StoredProposedAction[]) {
     .insert(chatMessages)
     .values({ threadId: thread.id, userId: USER, role: "assistant", content: "x", proposedActions: cards })
     .returning();
-  const card = (tool: string) => cards.find((c) => c.args.kind === "tool" && c.args.tool === tool)!;
+  const card = (tool: string) => cards.find((c) => c.args.tool === tool)!;
   return { messageId: message.id, card };
 }
 
@@ -272,7 +272,7 @@ async function main() {
     const closed = await commitProposedAction(messageId, card("update_campaign").id);
     check("while outreach is coming soon, its writes refuse", !closed.ok && (await db.query.outreachCampaigns.findFirst({ where: eq(outreachCampaigns.id, campaign.id) }))?.tone === "warm", JSON.stringify(closed));
     await setSurfaceComingSoon("smoke-chat-writes-features", "page.outreach", false);
-    const draftCards = list.filter((c) => c.args.kind === "tool" && c.args.tool === "update_outreach_draft");
+    const draftCards = list.filter((c) => c.args.tool === "update_outreach_draft");
 
     const camp = async () => db.query.outreachCampaigns.findFirst({ where: eq(outreachCampaigns.id, campaign.id) });
     const res = await commitProposedAction(messageId, card("update_campaign").id);
@@ -388,9 +388,12 @@ async function main() {
     const ctx = await getChatSendContext(messageId, sam.id);
     check("the send dialog opens for the person a draft card names (not only a recommended one)", ctx?.to === "sam@example.com", JSON.stringify(ctx));
     check("…and for no one else on that message", (await getChatSendContext(messageId, ada_id())) === null);
+    // Counted before and after: other smokes sharing this database leave sends on the demo user.
+    const sendCount = async () => (await db.query.emailSends.findMany({ where: (r, { eq: is }) => is(r.userId, USER) })).length;
+    const sendsBefore = await sendCount();
     const draftDone = await commitProposedAction(messageId, card("draft_email").id);
-    const sends = await db.query.emailSends.findMany({ where: (r, { eq: is }) => is(r.userId, USER) });
-    check("draft_email: marking the card done sends nothing", draftDone.ok && sends.length === 0, JSON.stringify({ draftDone, sends: sends.length }));
+    const sendsAfter = await sendCount();
+    check("draft_email: marking the card done sends nothing", draftDone.ok && sendsAfter === sendsBefore, JSON.stringify({ draftDone, sendsBefore, sendsAfter }));
 
     await setSurfaceComingSoon("smoke-chat-writes-features", "page.radar", true);
     const closed = await commitProposedAction(messageId, card("set_radar_autopilot").id);

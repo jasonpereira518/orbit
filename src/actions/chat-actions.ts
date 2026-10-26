@@ -5,9 +5,9 @@
  *
  * Mirrors the two rules at the top of `src/lib/mcp/server.ts`: an agent composes, a human
  * sends; nothing sends, nothing approves a draft, without a click. The model proposed this
- * when the answer was written (`validateProposedActions`, @/lib/chat-proposed-actions) — the
- * arguments were validated then, against the ids the model was actually shown, and are taken
- * from the STORED row here, never re-read from the client. `commitProposedAction` takes no
+ * when the answer was written (@/lib/tools/chat-proposals) — the input was validated then,
+ * against the ids the model was actually shown, and is taken from the STORED row here, never
+ * re-read from the client. `commitProposedAction` takes no
  * argument beyond the two ids that address the proposal.
  *
  * Claiming is a single compare-and-swap UPDATE: the whole `proposed_actions` column is
@@ -19,11 +19,6 @@ import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { chatMessages } from "@/db/schema";
 import { requireUserForSurface } from "@/lib/plan-guards";
-import { createReminderForUser, scheduleContactFollowUpForUser } from "@/lib/reminder-writes";
-import { createContactForUser, logNoteInteractionForUser, updateContactForUser } from "@/lib/contact-writes";
-import { findConfidentDuplicate } from "@/lib/contact-resolve";
-import { DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
-import { completeReminder, snoozeReminder } from "@/lib/reminders";
 import { UserFacingError } from "@/lib/errors";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
@@ -133,89 +128,22 @@ export async function commitProposedAction(messageId: string, actionId: string):
 
   const { args } = claimed.action;
   try {
-    let resultId: string | null = null;
-    if (args.kind === "tool") {
-      // A chat write (@/lib/tools/chat-writes), committed through its own catalog entry from
-      // the stored input — re-validated against that entry's schema, never trusted as stored.
-      const write = chatWriteNamed(args.tool);
-      const input = write ? parseWriteInput(write, args.input) : null;
-      if (!write || !input) throw new UserFacingError("That change can’t be made any more");
-      const outcome = await write.commit(userId, input, { messageId, actionId });
-      for (const path of new Set([outcome.href, "/", "/reminders", "/contacts"].filter((p): p is string => Boolean(p)))) {
-        revalidatePathIfRequestScoped(path);
-      }
-      await settle(userId, messageId, claimed.actions, claimed.index, {
-        status: "done",
-        resultId: outcome.resultId,
-        href: outcome.href,
-        undo: outcome.undo,
-      });
-      return { ok: true, resultId: outcome.resultId };
+    // A chat write (@/lib/tools/chat-writes), committed through its own catalog entry from
+    // the stored input — re-validated against that entry's schema, never trusted as stored.
+    const write = chatWriteNamed(args.tool);
+    const input = write ? parseWriteInput(write, args.input) : null;
+    if (!write || !input) throw new UserFacingError("That change can’t be made any more");
+    const outcome = await write.commit(userId, input, { messageId, actionId });
+    for (const path of new Set([outcome.href, "/", "/reminders", "/contacts"].filter((p): p is string => Boolean(p)))) {
+      revalidatePathIfRequestScoped(path);
     }
-    if (args.kind === "log_interaction") {
-      // `skipRevalidate`: the lib function's own `revalidatePath` calls are unguarded and
-      // throw outside a request (a script exercising this action directly); this action
-      // does its own revalidation right after, through the safe wrapper.
-      const { row } = await logNoteInteractionForUser(
-        userId,
-        {
-          contactId: args.contactId,
-          rawNotes: args.text,
-          source: "chat_proposed",
-          externalId: `chat:${messageId}:${actionId}`,
-          direction: "out",
-        },
-        { skipRevalidate: true }
-      );
-      resultId = row.id;
-      revalidatePathIfRequestScoped(`/contacts/${args.contactId}`);
-      revalidatePathIfRequestScoped("/");
-      revalidatePathIfRequestScoped("/graph");
-    } else if (args.kind === "create_reminder") {
-      const row = await createReminderForUser(userId, {
-        contactId: args.contactId ?? undefined,
-        title: args.title,
-        description: args.description ?? undefined,
-        dueDate: args.dueDate ?? undefined,
-        reminderType: "manual",
-      }, { origin: "suggestion" });
-      resultId = row?.id ?? null;
-      revalidatePathIfRequestScoped("/reminders");
-    } else if (args.kind === "schedule_follow_up") {
-      const result = await scheduleContactFollowUpForUser(userId, args.contactId, args.days, { origin: "suggestion" });
-      resultId = result.reminder?.id ?? null;
-      revalidatePathIfRequestScoped(`/contacts/${args.contactId}`);
-    } else if (args.kind === "update_contact") {
-      // Scoped by userId inside; the id was on the allowlist when the answer was written.
-      await updateContactForUser(userId, args.contactId, args.fields, { skipRevalidate: true });
-      resultId = args.contactId;
-      revalidatePathIfRequestScoped(`/contacts/${args.contactId}`);
-    } else if (args.kind === "create_contact") {
-      // The same duplicate line MCP's create_contact draws: a confident identity match is
-      // refused rather than doubled. A bare name match is not confident, so it still creates.
-      const best = await findConfidentDuplicate(userId, { fullName: args.fullName, ...args.fields });
-      if (best && best.confidence >= DUPLICATE_MERGE_CONFIDENCE) {
-        throw new UserFacingError(`${best.contact.fullName} is already in your contacts`);
-      }
-      const created = await createContactForUser(
-        userId,
-        { fullName: args.fullName, ...args.fields, source: "chat_proposed" },
-        { skipRevalidate: true }
-      );
-      resultId = created.id;
-      revalidatePathIfRequestScoped("/contacts");
-    } else if (args.kind === "complete_reminder" || args.kind === "snooze_reminder") {
-      const done =
-        args.kind === "complete_reminder"
-          ? await completeReminder(userId, args.reminderId)
-          : await snoozeReminder(userId, args.reminderId, args.days);
-      if (!done) throw new UserFacingError("That reminder is gone — it may have been deleted");
-      resultId = args.reminderId;
-      revalidatePathIfRequestScoped("/reminders");
-    }
-
-    await settle(userId, messageId, claimed.actions, claimed.index, { status: "done", resultId });
-    return { ok: true, resultId };
+    await settle(userId, messageId, claimed.actions, claimed.index, {
+      status: "done",
+      resultId: outcome.resultId,
+      href: outcome.href,
+      undo: outcome.undo,
+    });
+    return { ok: true, resultId: outcome.resultId };
   } catch (err) {
     // Release the claim so a retry is possible — a transient failure (the contact was
     // deleted between propose and click, a DB hiccup) must not permanently strand the card.

@@ -206,7 +206,7 @@ export type ChatContext = {
   notePassages?: NotePassage[];
   /** Contacts the model may recommend: budgeted-in, on a roster, or in the attention brief. */
   allowedContacts: Set<string>;
-  /** A name for every id in `allowedContacts` — see `validateProposedActions`'s `contactNames`. */
+  /** A name for every id in `allowedContacts` — the names proposal cards are written with (`proposalsFromAnswerTail`). */
   contactNames: Map<string, string>;
   allowedRecruiters: Set<string>;
   /** The `contactsContext` argument of `chatWithNetwork`. */

@@ -18,7 +18,8 @@ import { generateChatTitle, settleWithin, TITLE_GRACE_MS } from "@/lib/chat-titl
 import { formatSse, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
 import { labelAnswer } from "@/lib/chat-abstention";
 import { citedIds, stripUnresolvedMarkers } from "@/lib/chat-evidence";
-import { validateProposedActions, type StoredProposedAction } from "@/lib/chat-proposed-actions";
+import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
+import { proposalsFromAnswerTail } from "@/lib/tools/chat-proposals";
 import { friendlyError } from "@/lib/errors";
 import { traced } from "@/lib/perf-trace";
 import { isPaywallError } from "@/lib/entitlements";
@@ -372,7 +373,7 @@ export async function POST(request: Request) {
         // the turn saw (`@/lib/tools/chat-proposals`); the one-pass answer's from its JSON tail.
         const proposedActions: StoredProposedAction[] = [
           ...("proposals" in result ? (result.proposals as StoredProposedAction[]) : []),
-          ...validateProposedActions(result.proposedActions, ctx.allowedContacts, ctx.contactNames, ctx.reminderTitles),
+          ...proposalsFromAnswerTail(result.proposedActions, ctx.allowedContacts, ctx.contactNames, ctx.reminderTitles),
         ];
         if (proposedActions.length > 0) send({ type: "actions", items: proposedActions });
 
