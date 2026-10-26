@@ -131,3 +131,32 @@ export function isUnmailableAddress(email: string) {
   if (!domain) return true;
   return /(^|\.)(example\.(com|net|org)|example|invalid|test|localhost)$/.test(domain);
 }
+
+export type ProspectOrigin = "find" | "manual" | "brief" | "legacy";
+
+/** What `outreach_prospects.enrichment` holds for people added since this plan. */
+export type ProspectEnrichment = {
+  origin?: ProspectOrigin;
+  /** The page that shows the match. Shown as a link; Orbit never fetches it. */
+  url?: string | null;
+  whyMatches?: string | null;
+  /** `ai_result_cache` key of a person brief (`research.person`). */
+  researchKey?: string | null;
+  emailSource?: "contact" | "user" | null;
+  demo?: boolean;
+};
+
+export type NewProspect = {
+  fullName: string;
+  title: string | null;
+  company: string | null;
+  email: string | null;
+  linkedinUrl: string | null;
+  location: string | null;
+  origin: "find" | "manual" | "brief";
+  url: string | null;
+  whyMatches: string | null;
+  researchKey: string | null;
+};
+
+export const MAX_CAMPAIGN_PEOPLE = 100;

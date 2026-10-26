@@ -691,7 +691,7 @@ const MAX_CANDIDATES = 10;
 const MIN_QUERY = 3;
 const MAX_QUERY = 300;
 /** People "Find more" tells the model to skip. Past this the prompt grows for little gain. */
-const MAX_EXCLUDED_NAMES = 60;
+export const MAX_EXCLUDED_NAMES = 60;
 
 /** One person a web search turned up for a description. Never a contact until briefed and saved. */
 export type Candidate = {
