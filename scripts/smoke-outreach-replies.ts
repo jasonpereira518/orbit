@@ -14,7 +14,7 @@ import { encrypt } from "../src/lib/crypto";
 import { gmailReplyQuery, outlookReplyFilter, repliedSince } from "../src/lib/email/inbox-threads";
 import { GOOGLE_SCOPES } from "../src/lib/google-scopes";
 import { MICROSOFT_SCOPES } from "../src/lib/microsoft-scopes";
-import { checkCampaignRepliesForUser, setMessageOutcomeForUser, type ReplyLookup } from "../src/lib/outreach-replies";
+import { canSeeRepliesForUser, checkCampaignRepliesForUser, setMessageOutcomeForUser, type ReplyLookup } from "../src/lib/outreach-replies";
 import { followUpDue } from "../src/lib/outreach-followups";
 import { addProspectsForUser } from "../src/lib/outreach-people";
 import { FOLLOW_UP_AFTER_DAYS, REPLY_CHECKS_PER_PASS, REPLY_CHECK_WINDOW_DAYS } from "../src/lib/outreach-types";
@@ -244,6 +244,31 @@ async function main() {
     const oDown = await withFetch(() => "fail", () => repliedSince(USER, "outlook", "bo@iqvia.com", since));
     check("outlook: a network failure is null", oDown.value === null);
     await db.delete(schema.gmailConnections).where(eq(schema.gmailConnections.userId, USER));
+    await db.delete(schema.outlookConnections).where(eq(schema.outlookConnections.userId, USER));
+
+    console.log("canSeeRepliesForUser");
+    const connection = (scopes: string) => ({
+      userId: USER,
+      emailAddress: "me@x.org",
+      accessTokenEncrypted: encrypt("tok"),
+      refreshTokenEncrypted: encrypt("r"),
+      tokenExpiresAt: new Date(Date.now() + 3_600_000),
+      scopes,
+      status: "active" as const,
+    });
+    check("no mailbox: no replies are seen", (await canSeeRepliesForUser(USER)) === false);
+    await db.insert(schema.gmailConnections).values(connection(GOOGLE_SCOPES.gmailSend));
+    check("a send-only Gmail grant can't see replies", (await canSeeRepliesForUser(USER)) === false);
+    await db.update(schema.gmailConnections).set({ scopes: `${GOOGLE_SCOPES.gmailSend} ${GOOGLE_SCOPES.gmailRead}` }).where(eq(schema.gmailConnections.userId, USER));
+    check("…with the read scope it can", (await canSeeRepliesForUser(USER)) === true);
+    await db.update(schema.gmailConnections).set({ status: "needs_reauth" }).where(eq(schema.gmailConnections.userId, USER));
+    check("…but not once the connection needs reconnecting", (await canSeeRepliesForUser(USER)) === false);
+    await db.delete(schema.gmailConnections).where(eq(schema.gmailConnections.userId, USER));
+    await db.insert(schema.outlookConnections).values(connection(MICROSOFT_SCOPES.mail));
+    check("an Outlook connection with mail read can", (await canSeeRepliesForUser(USER)) === true);
+    await db.update(schema.outlookConnections).set({ scopes: "offline_access User.Read" }).where(eq(schema.outlookConnections.userId, USER));
+    check("…without mail read it can't", (await canSeeRepliesForUser(USER)) === false);
+    check("someone else's mailbox doesn't count", (await canSeeRepliesForUser(OTHER)) === false);
     await db.delete(schema.outlookConnections).where(eq(schema.outlookConnections.userId, USER));
 
     console.log("checkCampaignRepliesForUser");

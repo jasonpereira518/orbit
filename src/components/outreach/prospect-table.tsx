@@ -299,6 +299,8 @@ export function ProspectTable({
                             prospectId={prospect.id}
                             messageId={message.id}
                             channel={channel}
+                            status={message.status}
+                            stepIndex={message.stepIndex ?? 0}
                             subject={message.subject}
                             body={message.body}
                             onUpdated={onUpdated}

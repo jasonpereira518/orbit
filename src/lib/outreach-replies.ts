@@ -1,10 +1,12 @@
 import { and, asc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { emailSends, outreachCampaigns, outreachMessages, outreachProspects } from "@/db/schema";
+import { emailSends, gmailConnections, outlookConnections, outreachCampaigns, outreachMessages, outreachProspects } from "@/db/schema";
 import { logInteractionForUser, type ContactWriteOptions } from "@/lib/contact-writes";
 import { repliedSince } from "@/lib/email/inbox-threads";
 import { UserFacingError } from "@/lib/errors";
+import { GOOGLE_SCOPES, hasScope } from "@/lib/google-scopes";
 import { isUuid } from "@/lib/ids";
+import { hasMailScope } from "@/lib/outlook";
 import { requireMessageForUser } from "@/lib/outreach-messages";
 import {
   OUTCOME_LABELS,
@@ -109,6 +111,30 @@ export async function setMessageOutcomeForUser(
     }
   }
   return campaign.id;
+}
+
+/**
+ * Whether any mailbox the user has connected can be read for replies. A grant that only lets
+ * Orbit send (Gmail without `gmail.readonly`, Outlook without mail read) sends fine and then
+ * finds no reply, ever, so the Messages tab says so. The same checks as `gmailAccess` /
+ * `outlookAccess` in `email/inbox-threads.ts`, without fetching a token: an active connection
+ * with the read scope. Never throws; a read that fails is "can't see".
+ */
+export async function canSeeRepliesForUser(userId: string): Promise<boolean> {
+  try {
+    const db = await getDb();
+    const columns = { status: true, scopes: true } as const;
+    const [gmail, outlook] = await Promise.all([
+      db.query.gmailConnections.findFirst({ where: eq(gmailConnections.userId, userId), columns }),
+      db.query.outlookConnections.findFirst({ where: eq(outlookConnections.userId, userId), columns }),
+    ]);
+    return (
+      Boolean(gmail && gmail.status === "active" && hasScope(gmail.scopes, GOOGLE_SCOPES.gmailRead)) ||
+      Boolean(outlook && outlook.status === "active" && hasMailScope(outlook.scopes))
+    );
+  } catch {
+    return false;
+  }
 }
 
 /* ------------------------------------------------------------------ detection ----- */

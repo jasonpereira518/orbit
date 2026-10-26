@@ -8,11 +8,16 @@ import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { OutreachLocked } from "@/components/locked-feature";
+import { CampaignMessages } from "@/components/outreach/campaign-messages";
 import { CampaignPeople, type CampaignPerson } from "@/components/outreach/campaign-people";
 import { buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { getSendCapability } from "@/lib/email/sender";
+import { releaseStrandedMessagesForUser } from "@/lib/outreach-messages";
+import { toSendLine, type SendLine, type ViewPerson } from "@/lib/outreach-message-view";
 import { campaignKnownNamesForUser } from "@/lib/outreach-people";
 import { formatReplyRate } from "@/lib/outreach-metrics";
+import { canSeeRepliesForUser } from "@/lib/outreach-replies";
 import { readEnrichment, type OutreachChannel } from "@/lib/outreach-types";
 import { findWarmPaths } from "@/lib/warm-paths-server";
 import { orgKeysFor } from "@/lib/warm-paths";
@@ -56,9 +61,14 @@ export default async function OutreachCampaignPage({
 
   const tab = (await searchParams).tab === "messages" ? "messages" : "people";
 
+  // A send that was killed mid-way leaves its messages stuck in "queued", which can’t be sent,
+  // edited or removed. They are put back before anything is read, and the read below is a fresh
+  // one: `loadCampaign` is memoized and `generateMetadata` may already have read the old rows.
+  if (tab === "messages") await releaseStrandedMessagesForUser(userId, id);
+
   let campaign;
   try {
-    campaign = await loadCampaign(id);
+    campaign = await (tab === "messages" ? getCampaign(id) : loadCampaign(id));
   } catch {
     notFound();
   }
@@ -99,6 +109,51 @@ export default async function OutreachCampaignPage({
           userCanUseAi(userId),
         ])
       : [{}, [], false];
+
+  // The Messages tab: the same people with what was written to them, what the mailbox can do
+  // (email campaigns only: LinkedIn never sends), and whether replies can be seen.
+  const supported = campaign.defaultChannel === "email" || campaign.defaultChannel === "linkedin";
+  const messageRows: ViewPerson[] =
+    tab === "messages"
+      ? campaign.prospects
+          .filter((p) => p.status !== "excluded")
+          .map((p) => ({
+            id: p.id,
+            status: p.status,
+            fullName: p.fullName,
+            title: p.title,
+            company: p.company,
+            email: p.email,
+            linkedinUrl: p.linkedinUrl,
+            messages: p.messages.map((m) => ({
+              id: m.id,
+              status: m.status,
+              outcome: m.outcome,
+              stepIndex: m.stepIndex,
+              channel: m.channel,
+              sentAt: m.sentAt,
+              scheduledFor: m.scheduledFor,
+              repliedAt: m.repliedAt,
+              subject: m.subject,
+              body: m.body,
+              errorMessage: m.errorMessage,
+            })),
+          }))
+      : [];
+  let sendCapability: SendLine | null = null;
+  let canSeeReplies = true;
+  let messagesCanUseAi = false;
+  if (tab === "messages" && supported) {
+    const [capability, readable, ai] = await Promise.all([
+      campaign.defaultChannel === "email" ? getSendCapability(userId) : null,
+      campaign.defaultChannel === "email" ? canSeeRepliesForUser(userId) : true,
+      userCanUseAi(userId),
+    ]);
+    sendCapability = capability && toSendLine(capability);
+    // The demo mailbox has no inbox to read and no real replies to miss.
+    canSeeReplies = readable || (capability?.ok === true && capability.provider === "demo");
+    messagesCanUseAi = ai;
+  }
 
   return (
     <div className="space-y-6">
@@ -173,9 +228,19 @@ export default async function OutreachCampaignPage({
             knownNames={knownNames}
             canUseAi={canUseAi}
           />
+        ) : supported ? (
+          <CampaignMessages
+            campaign={{ id: campaign.id }}
+            channel={channel}
+            rows={messageRows}
+            sendCapability={sendCapability}
+            canUseAi={messagesCanUseAi}
+            canSeeReplies={canSeeReplies}
+          />
         ) : (
           <p className="rounded-2xl border border-dashed border-border/70 p-8 text-center text-sm text-muted-foreground">
-            Drafting and sending arrive here next.
+            This campaign was set up for a way of reaching people Orbit no longer sends on. Start a new campaign to write
+            and send messages.
           </p>
         )}
       </div>
