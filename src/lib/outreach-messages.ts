@@ -1,7 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb, rowsOf, runAtomicBatch } from "@/db";
 import { interactions, outreachCampaigns, outreachMessages, outreachProspects } from "@/db/schema";
-import type { ContactWriteOptions } from "@/lib/contact-writes";
+import { logInteractionForUser, type ContactWriteOptions } from "@/lib/contact-writes";
 import "@/lib/email/origin-registrations";
 import { ENQUEUE_COPY, chargeEmailBurst, dispatchEmailSend, enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
 import { getSendCapability } from "@/lib/email/sender";
@@ -16,6 +16,7 @@ import { ensureProspectContactForUser } from "@/lib/outreach-people";
 import { DEMO_PROSPECT_SEND_MESSAGE, isDemoProspect, isPlaceholderAddress } from "@/lib/outreach-quality";
 import {
   BULK_SEND_LIMIT,
+  LINKEDIN_NOTE_MAX,
   MAX_DRAFTS_PER_RUN,
   type OutreachChannel,
   type ProspectEnrichment,
@@ -40,6 +41,13 @@ const MAX_SUBJECT = 200;
 const CAMPAIGN_GONE = "That campaign isn’t yours or no longer exists";
 const MESSAGE_GONE = "Message not found";
 const ALREADY_SENT = "This message was already sent, so it can’t be edited";
+const NOT_LINKEDIN = "This campaign isn’t set up for LinkedIn";
+/**
+ * A LinkedIn profile link the browser may be sent to. Prospects added through `/outreach` only
+ * ever hold an https one, but the older search path stores whatever its provider returned, and
+ * this URL is opened by the client — so a `javascript:` or off-site value is treated as no link.
+ */
+const LINKEDIN_PROFILE_RE = /^https?:\/\/([a-z0-9-]+\.)*linkedin\.com\/in\/[^\s]+$/i;
 
 /* ------------------------------------------------------------------ prompt context ----- */
 
@@ -347,6 +355,39 @@ const SEND_BUDGET_MS = 40_000;
 /** Refusals that no later message in the batch could get past either. */
 const STOPS_BATCH: EnqueueRefusal[] = ["cap_reached", "not_connected", "no_send_scope", "needs_reauth"];
 
+/**
+ * Put back as drafts the campaign's messages that a killed send left in `queued` with nothing
+ * in the outbox: one UPDATE, scoped to the user's own campaign through `outreach_campaigns`.
+ * Returns how many it released.
+ *
+ * A message is stranded when it was claimed, the function died before the `finally` below could
+ * put it back, and no `email_sends` row was ever made for it (an outbox row means the hook
+ * settles it, however slowly). Five minutes is safe because the page runs under a 60s
+ * `maxDuration`, so no live send still holds a claim that old.
+ */
+export async function releaseStrandedMessagesForUser(userId: string, campaignId: string): Promise<number> {
+  if (!isUuid(campaignId)) return 0;
+  const db = await getDb();
+  return rowsOf(
+    await db.execute(sql`
+      UPDATE outreach_messages m
+         SET status = 'draft', updated_at = now()
+        FROM outreach_prospects p
+        JOIN outreach_campaigns k ON k.id = p.campaign_id
+       WHERE p.id = m.prospect_id
+         AND k.id = ${campaignId}::uuid
+         AND k.user_id = ${userId}
+         AND m.status = 'queued'
+         AND m.updated_at < now() - interval '5 minutes'
+         AND NOT EXISTS (
+           SELECT 1 FROM email_sends s
+            WHERE s.user_id = ${userId} AND s.origin = 'outreach' AND s.origin_ref = m.id::text
+         )
+      RETURNING m.id
+    `)
+  ).length;
+}
+
 export type SendCampaignResult = {
   sent: number;
   /** Handed to the outbox but not settled yet (a slow provider): the outbox hook settles them. */
@@ -364,7 +405,8 @@ export type SendCampaignResult = {
  * double click, two tabs — email once. The same statement also refuses a second message at
  * the same step for one person, whether it's already out or in the same batch. Anything
  * claimed that this call doesn't hand to the outbox goes back to `draft` before it returns,
- * error or not. After `budgetMs` (40s) it stops handing messages over, well inside the
+ * error or not (and a message a killed send stranded in `queued` is released first, see
+ * `releaseStrandedMessagesForUser`). After `budgetMs` (40s) it stops handing messages over, well inside the
  * page's 60s limit, and counts the rest as `notSent`. Ids that aren't this campaign's
  * emails are ignored.
  *
@@ -382,6 +424,7 @@ export async function sendCampaignMessagesForUser(
   if (list.length > BULK_SEND_LIMIT) throw new UserFacingError(`Send up to ${BULK_SEND_LIMIT} at a time`);
   const campaign = await requireOwnCampaign(userId, campaignId);
   if (campaign.defaultChannel !== "email") throw new UserFacingError("This campaign isn’t set up for email");
+  await releaseStrandedMessagesForUser(userId, campaign.id);
   const ids = [...new Set(list.filter(isUuid))];
   const result: SendCampaignResult = { sent: 0, pending: 0, notSent: 0, failed: [] };
   if (!ids.length) return result;
@@ -513,4 +556,85 @@ export async function sendCampaignMessagesForUser(
     }
   }
   return result;
+}
+
+/* ------------------------------------------------------------------ LinkedIn ----- */
+
+/**
+ * The note and the profile link for a LinkedIn message, ready for the user to paste and send
+ * by hand — Orbit never sends or automates anything on LinkedIn. A `draft` (or legacy
+ * `generated`) message becomes `copied`; one already copied, or past that, comes back as is.
+ * The link is the one stored on the prospect, and only a `linkedin.com/in/…` one counts.
+ */
+export async function copyLinkedInMessageForUser(
+  userId: string,
+  messageId: string
+): Promise<{ body: string; linkedinUrl: string }> {
+  const { message, prospect, campaign } = await requireMessageForUser(userId, messageId);
+  if (campaign.defaultChannel !== "linkedin") throw new UserFacingError(NOT_LINKEDIN);
+  const linkedinUrl = prospect.linkedinUrl?.trim();
+  if (!linkedinUrl || !LINKEDIN_PROFILE_RE.test(linkedinUrl)) {
+    throw new UserFacingError("Add their LinkedIn profile link first");
+  }
+  if (message.body.length > LINKEDIN_NOTE_MAX) {
+    throw new UserFacingError(`LinkedIn notes are limited to ${LINKEDIN_NOTE_MAX} characters — shorten this one`);
+  }
+  if (REWRITABLE.includes(message.status)) {
+    const db = await getDb();
+    await db
+      .update(outreachMessages)
+      .set({ status: "copied", updatedAt: new Date() })
+      .where(and(eq(outreachMessages.id, message.id), inArray(outreachMessages.status, REWRITABLE)));
+  }
+  return { body: message.body, linkedinUrl };
+}
+
+/**
+ * The user says they sent a copied note on LinkedIn: `copied` → `sent`, the person becomes a
+ * contact (if they weren't one), and the note goes on their timeline as an outgoing message.
+ *
+ * One conditional UPDATE decides whether this call is the confirmation, and only a call it
+ * matched goes on. `logInteractionForUser` is a plain insert on a unique `external_id`, so a
+ * double click or a second tab must not reach it: they find the message already `sent` and
+ * return quietly.
+ */
+export async function confirmLinkedInSentForUser(
+  userId: string,
+  messageId: string,
+  opts?: ContactWriteOptions
+): Promise<void> {
+  const { message, prospect, campaign } = await requireMessageForUser(userId, messageId);
+  if (campaign.defaultChannel !== "linkedin") throw new UserFacingError(NOT_LINKEDIN);
+
+  const db = await getDb();
+  const matched = rowsOf<{ id: string }>(
+    await db.execute(sql`
+      UPDATE outreach_messages
+         SET status = 'sent', sent_at = now(), updated_at = now()
+       WHERE id = ${message.id}::uuid AND status = 'copied'
+      RETURNING id
+    `)
+  );
+  if (!matched.length) {
+    // Judged on the status as it is now: a confirm that ran between the read above and the
+    // UPDATE has moved it on. `opened` is a delivered status on legacy rows.
+    const [now] = await db.select({ status: outreachMessages.status }).from(outreachMessages).where(eq(outreachMessages.id, message.id));
+    if (now?.status === "sent" || now?.status === "opened") return;
+    throw new UserFacingError(REWRITABLE.includes(now?.status ?? "") ? "Copy the note first" : "This message can’t be marked as sent");
+  }
+
+  const contactId = await ensureProspectContactForUser(userId, prospect.id, opts);
+  await logInteractionForUser(
+    userId,
+    {
+      contactId,
+      interactionType: "linkedin_message",
+      direction: "out",
+      source: "outreach_send",
+      externalId: `outreach:${message.id}`,
+      interactionDate: new Date(),
+      rawNotes: message.body,
+    },
+    opts
+  );
 }

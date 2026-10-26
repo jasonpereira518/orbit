@@ -1,6 +1,8 @@
 /**
  * Campaign email from the user's own mailbox: claimed once, sent through the outbox, settled
- * by the outreach origin hook, and never sent twice or to the wrong person.
+ * by the outreach origin hook, and never sent twice or to the wrong person. LinkedIn notes are
+ * copied, then confirmed by hand (Orbit never sends them), and a killed send's stranded
+ * `queued` messages are released.
  * Run: npx tsx scripts/smoke-outreach-send.ts
  */
 import "./smoke/_env";
@@ -16,10 +18,18 @@ import { dispatchEmailSend } from "../src/lib/email/outbox";
 import { setProviderOverride } from "../src/lib/email/providers";
 import { MailProviderError, type MailProvider } from "../src/lib/email/providers/types";
 import { getSendCapability } from "../src/lib/email/sender";
-import { draftCampaignMessagesForUser, sendCampaignMessagesForUser, type Drafter } from "../src/lib/outreach-messages";
+import {
+  confirmLinkedInSentForUser,
+  copyLinkedInMessageForUser,
+  draftCampaignMessagesForUser,
+  editDraftForUser,
+  releaseStrandedMessagesForUser,
+  sendCampaignMessagesForUser,
+  type Drafter,
+} from "../src/lib/outreach-messages";
 import { addProspectsForUser } from "../src/lib/outreach-people";
 import { DEMO_PROSPECT_SEND_MESSAGE } from "../src/lib/outreach-quality";
-import { BULK_SEND_LIMIT } from "../src/lib/outreach-types";
+import { BULK_SEND_LIMIT, LINKEDIN_NOTE_MAX } from "../src/lib/outreach-types";
 import { purgeUserData } from "../src/lib/user-data";
 
 const USER = "smoke-outreach-send-user";
@@ -293,6 +303,100 @@ async function main() {
     check("a message from another campaign is ignored", wrongCamp.sent === 0 && wrongCamp.failed.length === 0 && (await msg(m4!)).status === "draft");
     check("junk ids are ignored", (await send(["nope", ""])).sent === 0);
     check("nobody else was ever emailed", delivered.every((to) => to !== "demo@acme-co.io" && to !== "m4@acme-co.io"), delivered.join());
+
+    console.log("linkedin");
+    const liUrl = (slug: string) => `https://www.linkedin.com/in/${slug}`;
+    await addProspectsForUser(USER, liC!.id, [
+      { fullName: "Li Linked", company: "Acme", linkedinUrl: liUrl("li-linked"), origin: "manual" },
+      { fullName: "Li Twice", company: "Acme", linkedinUrl: liUrl("li-twice"), origin: "manual" },
+      { fullName: "Li Long", company: "Acme", linkedinUrl: liUrl("li-long"), origin: "manual" },
+      { fullName: "Li Bare", company: "Acme", origin: "manual" },
+    ]);
+    const liPeople = await db.query.outreachProspects.findMany({ where: eq(schema.outreachProspects.campaignId, liC!.id) });
+    const liNames = ["Li Linked", "Li Twice", "Li Long", "Li Bare"];
+    const liPid = (name: string) => liPeople.find((p) => p.fullName === name)!.id;
+    await draftCampaignMessagesForUser(USER, liC!.id, liNames.map(liPid), { drafter });
+    const liMid = async (name: string) =>
+      (await db.query.outreachMessages.findFirst({ where: eq(schema.outreachMessages.prospectId, liPid(name)) }))!.id;
+    const [mLinked, mTwice, mLong, mBare] = await Promise.all(liNames.map(liMid));
+    const interactionsOf = async (messageId: string) =>
+      (await interactionsForContactOf(messageId)).filter((i) => i.externalId === `outreach:${messageId}`);
+    const LI_LINK_COPY = "Add their LinkedIn profile link first";
+
+    check("copy needs a profile link", (await rejects(() => copyLinkedInMessageForUser(USER, mBare!), LI_LINK_COPY)) && (await msg(mBare!)).status === "draft");
+    for (const bad of ["javascript:alert(1)//linkedin.com/in/x", "https://evil.example/linkedin.com/in/x", "https://notlinkedin.com/in/x", "https://linkedin.com@evil.example/in/x"]) {
+      await db.update(schema.outreachProspects).set({ linkedinUrl: bad }).where(eq(schema.outreachProspects.id, liPid("Li Bare")));
+      check(`an unsafe profile link counts as none: ${bad.slice(0, 24)}`, await rejects(() => copyLinkedInMessageForUser(USER, mBare!), LI_LINK_COPY));
+    }
+    await editDraftForUser(USER, mLong!, { subject: null, body: "x".repeat(LINKEDIN_NOTE_MAX + 1) });
+    check(
+      "301-char note refused",
+      (await rejects(() => copyLinkedInMessageForUser(USER, mLong!), "LinkedIn notes are limited to 300 characters — shorten this one")) && (await msg(mLong!)).status === "draft"
+    );
+    await editDraftForUser(USER, mLong!, { subject: null, body: "x".repeat(LINKEDIN_NOTE_MAX) });
+    check("a 300-char note is fine", (await copyLinkedInMessageForUser(USER, mLong!)).body.length === LINKEDIN_NOTE_MAX && (await msg(mLong!)).status === "copied");
+    check("an email campaign's message isn't a LinkedIn note", await rejects(() => copyLinkedInMessageForUser(USER, mBo!), "isn’t set up for LinkedIn"));
+    check(
+      "another user's message is refused",
+      (await rejects(() => copyLinkedInMessageForUser(OTHER, mLinked!), "Message not found")) &&
+        (await rejects(() => confirmLinkedInSentForUser(OTHER, mLinked!, OPTS), "Message not found")) &&
+        (await msg(mLinked!)).status === "draft"
+    );
+
+    check("confirm requires copy first", (await rejects(() => confirmLinkedInSentForUser(USER, mLinked!, OPTS), "Copy the note first")) && (await msg(mLinked!)).status === "draft");
+    check("…and made no contact or interaction", (await contactsNamed("Li Linked")) === 0 && (await interactionsOf(mLinked!)).length === 0);
+
+    const copy = await copyLinkedInMessageForUser(USER, mLinked!);
+    check("copy hands back the note and the profile link", copy.body === "Hello Li Linked" && copy.linkedinUrl === liUrl("li-linked") && (await msg(mLinked!)).status === "copied", JSON.stringify(copy));
+    const copyAgain = await copyLinkedInMessageForUser(USER, mLinked!);
+    check("copying a copied note returns it as is", copyAgain.body === copy.body && (await msg(mLinked!)).status === "copied");
+    check("copy makes no contact", (await contactsNamed("Li Linked")) === 0);
+
+    await confirmLinkedInSentForUser(USER, mLinked!, OPTS);
+    const confirmed = await msg(mLinked!);
+    check("confirm marks it sent", confirmed.status === "sent" && confirmed.sentAt != null);
+    check("confirm creates the contact once", (await contactsNamed("Li Linked")) === 1);
+    const [logged] = await interactionsOf(mLinked!);
+    check(
+      "…and logs the note as an outgoing LinkedIn message",
+      (await interactionsOf(mLinked!)).length === 1 &&
+        logged?.interactionType === "linkedin_message" &&
+        logged.direction === "out" &&
+        logged.source === "outreach_send" &&
+        logged.rawNotes === "Hello Li Linked"
+    );
+    await confirmLinkedInSentForUser(USER, mLinked!, OPTS);
+    check("double confirm logs one interaction", (await interactionsOf(mLinked!)).length === 1 && (await contactsNamed("Li Linked")) === 1 && (await msg(mLinked!)).status === "sent");
+    await copyLinkedInMessageForUser(USER, mTwice!);
+    const raced = await Promise.allSettled([confirmLinkedInSentForUser(USER, mTwice!, OPTS), confirmLinkedInSentForUser(USER, mTwice!, OPTS)]);
+    check(
+      "two confirms at once log one interaction",
+      raced.every((r) => r.status === "fulfilled") && (await interactionsOf(mTwice!)).length === 1 && (await contactsNamed("Li Twice")) === 1,
+      JSON.stringify(raced.map((r) => r.status))
+    );
+    check("a sent note can still be copied, and stays sent", (await copyLinkedInMessageForUser(USER, mLinked!)).body === copy.body && (await msg(mLinked!)).status === "sent");
+
+    console.log("stranded");
+    const sNames = ["S1 Person", "S2 Person", "S3 Person", "S4 Person", "S5 Person"];
+    await addProspectsForUser(USER, camp, sNames.map((fullName, i) => ({ fullName, company: "Acme", email: `s${i + 1}@acme-co.io`, origin: "manual" as const })));
+    const sProspects = await db.query.outreachProspects.findMany({ where: eq(schema.outreachProspects.campaignId, camp) });
+    await draftCampaignMessagesForUser(USER, camp, sNames.map((n) => sProspects.find((p) => p.fullName === n)!.id), { drafter });
+    const sMid = async (name: string) =>
+      (await db.query.outreachMessages.findFirst({ where: eq(schema.outreachMessages.prospectId, sProspects.find((p) => p.fullName === name)!.id) }))!.id;
+    const [s1, s2, s3, s4, s5] = await Promise.all(sNames.map(sMid));
+    const strand = (id: string, minutesOld: number) =>
+      db.execute(sql`UPDATE outreach_messages SET status = 'queued', updated_at = now() - make_interval(mins => ${minutesOld}::int) WHERE id = ${id}::uuid`);
+    for (const [id, age] of [[s1, 6], [s2, 6], [s3, 6], [s4, 1]] as const) await strand(id!, age);
+    await db.execute(sql`INSERT INTO email_sends (user_id, provider, from_email, to_emails, subject, body_text, origin, origin_ref, status, send_at, rfc_message_id)
+      VALUES (${USER}, 'gmail', 'me@x.org', '["s3@acme-co.io"]'::jsonb, 'stranded-fixture', 'b', 'outreach', ${s3!}, 'queued', now(), '<stranded-s3@orbit.mail>')`);
+
+    check("another user releases nothing of mine", (await releaseStrandedMessagesForUser(OTHER, camp)) === 0 && (await msg(s1!)).status === "queued");
+    check("a stale queued message with no outbox row is released", (await releaseStrandedMessagesForUser(USER, camp)) === 2 && (await msg(s1!)).status === "draft" && (await msg(s2!)).status === "draft");
+    check("…but one with an outbox row stays queued", (await msg(s3!)).status === "queued");
+    check("…and a fresh one stays queued", (await msg(s4!)).status === "queued");
+    check("…and a second pass releases nothing", (await releaseStrandedMessagesForUser(USER, camp)) === 0);
+    await strand(s5!, 6);
+    check("sending releases a stranded message first, then sends it", (await send([s5!])).sent === 1 && (await msg(s5!)).status === "sent");
   } finally {
     setProviderOverride("gmail", null);
     await resetBucket();
