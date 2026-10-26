@@ -79,8 +79,9 @@ function dayBound(day: string | undefined, end: boolean): Date | null {
 }
 
 /**
- * A web lookup's share of chat's research budget (`GATHER_MAX_MS` is 25s in chat-gather).
- * A search that needs longer is finished on /find, which has a 150s route.
+ * A web lookup's share of chat's lookup budget (lookups stop by `LOOKUPS_END_BY_MS`, 42s into
+ * the request, in @/lib/chat-agent-loop). A search that needs longer is finished on /find,
+ * which has a 150s route.
  */
 const RESEARCH_TOOL_TIMEOUT_MS = 20_000;
 const PREP_RESEARCH_TIMEOUT_MS = 15_000;
@@ -771,7 +772,7 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       // Prep is worth a web search on who is coming: up to two people, cached per account.
       const found = await getMeetingContext(userId, args, new Date(), {
         research: true,
-        // Shorter than research_person's: the research step must end by GATHER_ENDS_BY_MS.
+        // Shorter than research_person's: chat's lookups must end by LOOKUPS_END_BY_MS.
         signal: AbortSignal.timeout(PREP_RESEARCH_TIMEOUT_MS),
       });
       if (!found) return toolError("No matching meeting on the calendar in the next two weeks.");

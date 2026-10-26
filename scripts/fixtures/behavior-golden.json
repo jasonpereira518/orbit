@@ -4654,7 +4654,6 @@
     "hasApolloKey": false,
     "workHistoryAutoEnabled": true,
     "chatAutoApply": false,
-    "chatAutoApplyAvailable": false,
     "radarDigestEnabled": true,
     "hasApiKey": false,
     "providers": [

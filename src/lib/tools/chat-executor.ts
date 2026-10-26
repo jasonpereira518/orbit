@@ -1,8 +1,7 @@
 /**
- * Running Orbit's read tools for chat — shared by the research step (`@/lib/chat-gather`) and
- * the answer loop (`@/lib/chat-agent-loop`), so both use the same tool list, the same
- * validation and audit trail, the same step lines and the same rule for which contact ids a
- * result vouches for.
+ * Running Orbit's read tools for chat's answer loop (`@/lib/chat-agent-loop`): the tool list,
+ * the validation and audit trail, the step lines and the rule for which contact ids a result
+ * vouches for.
  *
  * SECURITY. Read-only by construction: the tools are `toolsFor(ORBIT_TOOLS, "chat", ["read"])`
  * and `runTool` refuses anything else on the chat surface (`checkToolCall`). A note an attacker

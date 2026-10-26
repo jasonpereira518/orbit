@@ -4,8 +4,8 @@
  * What has to hold: a double click (or two tabs) commits exactly once, thanks to the
  * compare-and-swap claim; the write itself comes from the STORED row, never from anything the
  * client sends; a contact deleted between propose and click fails the write and releases the
- * claim rather than stranding the card; and every kind the one-pass answer can propose actually
- * produces the record it says it will, through its catalog write (@/lib/tools/chat-writes).
+ * claim rather than stranding the card; and each write it covers actually produces the record
+ * it says it will, through its catalog entry (@/lib/tools/chat-writes).
  *
  * Local PGlite. Run: npx tsx scripts/smoke-chat-actions.ts
  */
@@ -20,7 +20,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { chatMessages, chatThreads, contacts, interactions, reminders } from "../src/db/schema";
 import type { StoredProposedAction } from "../src/lib/chat-proposed-actions";
-import { proposalsFromAnswerTail } from "../src/lib/tools/chat-proposals";
+import { createProposalSink } from "../src/lib/tools/chat-proposals";
 import { commitProposedAction, dismissProposedAction } from "../src/actions/chat-actions";
 import { createReminderForUser } from "../src/lib/reminder-writes";
 
@@ -35,11 +35,27 @@ function check(label: string, ok: boolean, detail?: string) {
   }
 }
 
-async function seedMessage(rawActions: (contactId: string) => unknown[]) {
+/**
+ * Cards as the answer loop stores them: each `[write, input]` proposed through a sink that has
+ * seen these contacts and reminders, exactly as a turn's lookups would have shown them.
+ */
+function cards(
+  proposals: Array<[string, Record<string, unknown>]>,
+  seen: { contacts?: Map<string, string>; reminders?: Map<string, string> } = {}
+): StoredProposedAction[] {
+  const sink = createProposalSink(seen);
+  for (const [tool, input] of proposals) {
+    const out = sink.propose(tool, input);
+    if (!out.ok) throw new Error(`could not propose ${tool}: ${out.error}`);
+  }
+  return sink.list();
+}
+
+async function seedMessage(proposals: (contactId: string) => Array<[string, Record<string, unknown>]>) {
   const db = await getDb();
   const [thread] = await db.insert(chatThreads).values({ userId: USER }).returning();
   const [contact] = await db.insert(contacts).values({ userId: USER, fullName: "Ada Lovelace" }).returning();
-  const actions = proposalsFromAnswerTail(rawActions(contact!.id), new Set([contact!.id]), new Map([[contact!.id, "Ada Lovelace"]]));
+  const actions = cards(proposals(contact!.id), { contacts: new Map([[contact!.id, "Ada Lovelace"]]) });
   const [msg] = await db
     .insert(chatMessages)
     .values({ threadId: thread!.id, userId: USER, role: "assistant", content: "Here's what I found.", proposedActions: actions })
@@ -52,11 +68,9 @@ async function main() {
   await db.delete(chatThreads).where(eq(chatThreads.userId, USER));
   await db.delete(contacts).where(eq(contacts.userId, USER));
 
-  console.log("committing log_interaction");
+  console.log("committing log_note");
   {
-    const { messageId, contactId, actions } = await seedMessage((cid) => [
-      { kind: "log_interaction", contact_id: cid, text: "Talked about the Series A." },
-    ]);
+    const { messageId, contactId, actions } = await seedMessage((cid) => [["log_note", { contactId: cid, text: "Talked about the Series A." }]]);
     const action = actions[0]!;
     const res = await commitProposedAction(messageId, action.id);
     check("commits", res.ok === true, JSON.stringify(res));
@@ -79,9 +93,7 @@ async function main() {
 
   console.log("committing create_reminder");
   {
-    const { messageId, actions } = await seedMessage(() => [
-      { kind: "create_reminder", contact_id: null, title: "Renew the domain", due_date: null },
-    ]);
+    const { messageId, actions } = await seedMessage(() => [["create_reminder", { title: "Renew the domain" }]]);
     const res = await commitProposedAction(messageId, actions[0]!.id);
     check("commits", res.ok === true, JSON.stringify(res));
     const created = res.ok && res.resultId ? await db.query.reminders.findFirst({ where: eq(reminders.id, res.resultId) }) : null;
@@ -91,7 +103,7 @@ async function main() {
 
   console.log("committing schedule_follow_up");
   {
-    const { messageId, contactId, actions } = await seedMessage((cid) => [{ kind: "schedule_follow_up", contact_id: cid, days: 5 }]);
+    const { messageId, contactId, actions } = await seedMessage((cid) => [["schedule_follow_up", { contactId: cid, days: 5 }]]);
     const res = await commitProposedAction(messageId, actions[0]!.id);
     check("commits", res.ok === true, JSON.stringify(res));
     const contact = await db.query.contacts.findFirst({ where: eq(contacts.id, contactId) });
@@ -100,7 +112,7 @@ async function main() {
 
   console.log("a double click races to commit exactly once");
   {
-    const { messageId, actions } = await seedMessage(() => [{ kind: "create_reminder", contact_id: null, title: "Race test" }]);
+    const { messageId, actions } = await seedMessage(() => [["create_reminder", { title: "Race test" }]]);
     const [a, b] = await Promise.all([commitProposedAction(messageId, actions[0]!.id), commitProposedAction(messageId, actions[0]!.id)]);
     const oks = [a, b].filter((r) => r.ok);
     check("exactly one of two simultaneous commits succeeds", oks.length === 1, JSON.stringify([a, b]));
@@ -110,7 +122,7 @@ async function main() {
 
   console.log("dismissing");
   {
-    const { messageId, actions } = await seedMessage(() => [{ kind: "create_reminder", contact_id: null, title: "Never mind" }]);
+    const { messageId, actions } = await seedMessage(() => [["create_reminder", { title: "Never mind" }]]);
     const res = await dismissProposedAction(messageId, actions[0]!.id);
     check("dismisses", res.ok === true);
     const row = await db.query.chatMessages.findFirst({ where: eq(chatMessages.id, messageId) });
@@ -122,10 +134,10 @@ async function main() {
 
   console.log("what must fail");
   {
-    const { actions } = await seedMessage(() => [{ kind: "create_reminder", contact_id: null, title: "x" }]);
+    const { actions } = await seedMessage(() => [["create_reminder", { title: "x" }]]);
     const wrongMessage = await commitProposedAction("00000000-0000-4000-8000-000000000000", actions[0]!.id);
     check("a message id that does not exist is refused", wrongMessage.ok === false);
-    const wrongAction = await seedMessage(() => [{ kind: "create_reminder", contact_id: null, title: "y" }]);
+    const wrongAction = await seedMessage(() => [["create_reminder", { title: "y" }]]);
     const wrongId = await commitProposedAction(wrongAction.messageId, "00000000-0000-4000-8000-000000000000");
     check("an action id that does not exist on that message is refused", wrongId.ok === false);
   }
@@ -154,18 +166,18 @@ async function main() {
     const db2 = await getDb();
     const [thread] = await db2.insert(chatThreads).values({ userId: USER }).returning();
     const [c] = await db2.insert(contacts).values({ userId: USER, fullName: "Grace Hopper", title: "Engineer" }).returning();
-    const actions = proposalsFromAnswerTail(
+    const all = cards(
       [
-        { kind: "update_contact", contact_id: c!.id, title: "Rear Admiral", company: "US Navy" },
-        { kind: "create_contact", full_name: "Katherine Johnson", title: "Mathematician", email: "kj@nasa.example" },
-        { kind: "complete_reminder", reminder_id: reminder!.id },
+        ["update_contact", { contactId: c!.id, title: "Rear Admiral", company: "US Navy" }],
+        ["create_contact", { full_name: "Katherine Johnson", title: "Mathematician", email: "kj@nasa.example" }],
+        ["complete_reminder", { reminderId: reminder!.id }],
+        ["snooze_reminder", { reminderId: reminder2!.id, days: 3 }],
       ],
-      new Set([c!.id]),
-      new Map([[c!.id, "Grace Hopper"]]),
-      new Map([[reminder!.id, reminder!.title], [reminder2!.id, reminder2!.title]])
+      {
+        contacts: new Map([[c!.id, "Grace Hopper"]]),
+        reminders: new Map([[reminder!.id, reminder!.title], [reminder2!.id, reminder2!.title]]),
+      }
     );
-    const snooze = proposalsFromAnswerTail([{ kind: "snooze_reminder", reminder_id: reminder2!.id, days: 3 }], new Set(), new Map(), new Map([[reminder2!.id, reminder2!.title]]));
-    const all = [...actions, ...snooze];
     const [msg] = await db2.insert(chatMessages).values({ threadId: thread!.id, userId: USER, role: "assistant", content: "x", proposedActions: all }).returning();
     const results = [];
     for (const a of all) results.push(await commitProposedAction(msg!.id, a.id));
@@ -182,7 +194,7 @@ async function main() {
     check("snooze_reminder pushed it out ~3 days", Boolean(snoozed?.dueDate) && new Date(snoozed!.dueDate!).getTime() > Date.now() + 2 * 86_400_000, JSON.stringify(snoozed?.dueDate));
 
     console.log("adding someone already in the network is refused, not doubled");
-    const dupe = proposalsFromAnswerTail([{ kind: "create_contact", full_name: "Katherine Johnson", email: "kj@nasa.example" }], new Set(), new Map());
+    const dupe = cards([["create_contact", { full_name: "Katherine Johnson", email: "kj@nasa.example" }]]);
     const [msg2] = await db2.insert(chatMessages).values({ threadId: thread!.id, userId: USER, role: "assistant", content: "x", proposedActions: dupe }).returning();
     const res = await commitProposedAction(msg2!.id, dupe[0]!.id);
     check("the commit fails with a reason a person can read", res.ok === false && /already in your contacts/.test(res.reason), JSON.stringify(res));
@@ -195,7 +207,7 @@ async function main() {
     const db2 = await getDb();
     const [c] = await db2.insert(contacts).values({ userId: USER, fullName: "About To Vanish" }).returning();
     const [thread] = await db2.insert(chatThreads).values({ userId: USER }).returning();
-    const actions = proposalsFromAnswerTail([{ kind: "schedule_follow_up", contact_id: c!.id }], new Set([c!.id]), new Map([[c!.id, "About To Vanish"]]));
+    const actions = cards([["schedule_follow_up", { contactId: c!.id, days: 7 }]], { contacts: new Map([[c!.id, "About To Vanish"]]) });
     const [msg] = await db2.insert(chatMessages).values({ threadId: thread!.id, userId: USER, role: "assistant", content: "x", proposedActions: actions }).returning();
     await db2.delete(contacts).where(and(eq(contacts.id, c!.id), eq(contacts.userId, USER)));
     const res = await commitProposedAction(msg!.id, actions[0]!.id);

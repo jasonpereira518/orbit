@@ -3,9 +3,10 @@
  *
  * The route gives the answer stream a deadline inside `maxDuration` (see `smoke-chat-limits`).
  * OpenAI's SDK treats an abort mid-stream as "the caller stopped the stream" and just ENDS the
- * iterator — no throw — so `streamText` used to return the half-written answer: the route then
+ * iterator — no throw — so a streamed answer could come back half-written: the route then
  * persisted it, sent `done`, and usage filed a success with no tokens. This drives the real
- * SDKs (OpenAI, Gemini, Anthropic) through a fake `fetch` whose SSE body hangs and then errors
+ * SDKs (OpenAI, Gemini, Anthropic) through the chat answer (`answerWithLookups`, whose rounds
+ * stream through `createToolDriver`) with a fake `fetch` whose SSE body hangs and then errors
  * when the request is aborted — what undici does — and pins, for each provider:
  *
  *  - a deadline abort throws the provider's timeout copy (after the prose already streamed),
@@ -21,7 +22,8 @@ import "./smoke/_env";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { usageEvents, userSettings } from "../src/db/schema";
-import { chatWithNetworkStream } from "../src/lib/ai";
+import { answerWithLookups } from "../src/lib/chat-agent-loop";
+import { prepareChatContext } from "../src/lib/chat-context";
 import { DEFAULT_MODELS } from "../src/lib/ai-providers";
 import { encrypt } from "../src/lib/crypto";
 
@@ -130,7 +132,11 @@ async function ask(userId: string, options: { signal?: AbortSignal; deadlineSign
   let result: unknown = null;
   let err: unknown = null;
   try {
-    result = await chatWithNetworkStream(userId, "Who should I call?", [], [], [], null, [], (d) => deltas.push(d), null, null, options);
+    // Built for an empty account with no key, so retrieval makes no model call of its own:
+    // the only requests the fake `fetch` sees are the answer's.
+    // Its own AI access is dropped, so the answer resolves the keyed account's.
+    const ctx = { ...(await prepareChatContext("smoke-deadline-empty", "Who should I call?", {})), access: undefined };
+    result = await answerWithLookups(userId, ctx, { onDelta: (d) => deltas.push(d), requestStartedAt: Date.now(), ...options });
   } catch (e) {
     err = e;
   }

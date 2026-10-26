@@ -70,14 +70,19 @@ async function main() {
     /signal:\s*request\.signal\s*,/.test(route) && !/AbortSignal\.any\(/.test(route)
   );
   check("and a Stop is still read from request.signal alone", route.includes("if (request.signal.aborted) return;"));
-  const ai = readFileSync("src/lib/ai.ts", "utf8");
-  check("streamText rethrows an abort the SDK swallowed (OpenAI's iterator just ends)", /signal\.throwIfAborted\(\)\s*;\s*if \(!full\.trim\(\)\)/.test(ai));
+  // The answer itself (`answerWithLookups`); `smoke-chat-answer-deadline` drives it through
+  // the real SDKs.
+  const loop = readFileSync("src/lib/chat-agent-loop.ts", "utf8");
   check(
-    "the stream aborts on the deadline but only request.signal is the usage cancelSignal",
-    /\[\s*input\.signal\s*,\s*input\.deadlineSignal\s*\]/.test(ai) && /\{\s*cancelSignal:\s*input\.signal\s*\}/.test(ai)
+    "the answer rethrows an abort the SDK swallowed (OpenAI's iterator just ends)",
+    /signal\.throwIfAborted\(\)\s*;\s*split = splitter\.finish\(\)/.test(loop)
+  );
+  check(
+    "the answer aborts on the deadline but only the person's Stop is the usage cancelSignal",
+    /\[options\.signal,\s*options\.deadlineSignal\]/.test(loop) && /cancelSignal:\s*options\.signal\b/.test(loop)
   );
 
-  // A real deadline abort, combined the way streamText combines it, with the user never pressing Stop.
+  // A real deadline abort, combined the way the answer combines it, with the user never pressing Stop.
   const stop = new AbortController();
   const deadline = AbortSignal.timeout(5);
   const combined = AbortSignal.any([stop.signal, deadline]);

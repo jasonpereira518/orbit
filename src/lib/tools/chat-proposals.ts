@@ -13,8 +13,8 @@
  * produces a refusal the model reads, and no card.
  */
 import { randomUUID } from "node:crypto";
-import { parseAnswerTail, type StoredProposedAction } from "@/lib/chat-proposed-actions";
-import { CHAT_WRITES, chatWriteNamed, parseWriteInput, type ProposalScope } from "@/lib/tools/chat-writes";
+import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
+import { CHAT_WRITES, type ProposalScope } from "@/lib/tools/chat-writes";
 import { SCOPE_KINDS, tierOf } from "@/lib/tools/chat-write-kit";
 import { toolError, type OrbitTool } from "@/lib/tools/registry";
 
@@ -175,28 +175,6 @@ export function createProposalSink(seen: Partial<{ [K in keyof ProposalScope]: R
       return { ok: true, action };
     },
   };
-}
-
-/**
- * The one-pass answer's proposals (its JSON tail, bounded by `parseAnswerTail`) as the same
- * cards the loop makes: each input checked against its catalog entry's schema, its ids against
- * what the answer was shown, its sentence written from those ids' own names. Used while the
- * loop is off (`CHAT_LOOP_V2`); the loop proposes through `proposerTools` instead.
- */
-export function proposalsFromAnswerTail(
-  raw: unknown,
-  allowedContacts: ReadonlySet<string>,
-  contactNames: ReadonlyMap<string, string>,
-  reminderTitles: ReadonlyMap<string, string> = new Map()
-): StoredProposedAction[] {
-  const contacts = new Map([...allowedContacts].map((id) => [id, contactNames.get(id) ?? "this contact"]));
-  const sink = createProposalSink({ contacts, reminders: reminderTitles });
-  for (const args of parseAnswerTail(raw, allowedContacts, new Set(reminderTitles.keys()))) {
-    const write = chatWriteNamed(args.tool);
-    const input = write ? parseWriteInput(write, args.input) : null;
-    if (input) sink.propose(args.tool, input);
-  }
-  return sink.list();
 }
 
 /**

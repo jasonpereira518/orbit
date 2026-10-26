@@ -59,11 +59,7 @@ import {
   friendlyError,
   UserFacingError,
 } from "@/lib/errors";
-import {
-  RECOMMENDATIONS_MARKER,
-  createAnswerSplitter,
-  type SplitResult,
-} from "@/lib/chat-stream-protocol";
+import { RECOMMENDATIONS_MARKER } from "@/lib/chat-stream-protocol";
 import type { AiProvider, EmbeddingBackend } from "@/lib/ai-providers";
 import { aiOperationThinking, type AiOperationId } from "@/lib/ai-operations";
 import { geminiThinkingConfig, openaiCompletionOptions } from "@/lib/ai-request-options";
@@ -1928,19 +1924,136 @@ export function cosineSimilarity(a: number[], b: number[]) {
   return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
+/** A contact as the chat prompt shows it — `ChatContext.modelContacts` (@/lib/chat-context). */
+export type ChatPromptContact = {
+  id: string;
+  fullName: string;
+  company: string | null;
+  title: string | null;
+  location?: string | null;
+  relationshipScore: number;
+  aiSummary: string | null;
+  notes: string | null;
+  keyFacts?: string[];
+  /**
+   * Recent interactions, each carrying the interaction id it came from so it can be
+   * cited — see `@/lib/chat-evidence`.
+   *
+   * Was LinkedIn messages only, which meant a retrieved contact reached the model with
+   * no record of ever having met the user. Same shape as the attached block's timeline,
+   * so a contact reads the same however they got into the prompt.
+   */
+  timeline?: Array<{ id: string; date: string; line: string }>;
+  tags: string[];
+  relevance: number;
+  /** `contacts.school`, when known. */
+  school?: string | null;
+  /** Compact career summary — "Ramp, ex-Stripe · MIT". Rendered in `contextBlock`
+   * alongside title/company; null when no profile is stored for this contact. */
+  career?: string | null;
+  /** Contact details as one sanitized line — `contactDetailsLine` (@/lib/chat-retrieval). */
+  details?: string | null;
+};
+
+/**
+ * Exhaustive membership for any organisation the question named. Unlike the contacts — a
+ * relevance-ranked top-K — this is a complete group-by, so the model can state a count
+ * instead of guessing one from a truncated list. See `@/lib/chat-roster`.
+ */
+export type ChatPromptRoster = {
+  kind: "company" | "school" | "filter";
+  name: string;
+  total: number;
+  people: Array<{ id: string; name: string; title: string | null }>;
+  truncated: boolean;
+};
+
+/**
+ * Who the product itself says needs attention — overdue follow-ups and the standing outreach
+ * queue. Present only for questions about reconnecting. See `@/lib/chat-attention`.
+ */
+export type ChatPromptAttention = {
+  overdue: Array<{
+    id: string;
+    name: string;
+    title: string | null;
+    company: string | null;
+    daysOverdue: number;
+    daysSinceTouch: number | null;
+    hasLoggedInteraction: boolean;
+  }>;
+  suggestions: Array<{
+    id: string;
+    name: string;
+    title: string | null;
+    company: string | null;
+    reason: string;
+  }>;
+};
+
+/** A recruiter as the chat prompt shows it — `ChatContext.modelRecruiters`. */
+export type ChatPromptRecruiter = {
+  id: string;
+  fullName: string;
+  firm: string | null;
+  specialty: string[];
+  avgRating: number;
+  logCount: number;
+  personalRating: number | null;
+  status: string | null;
+  notes: string | null;
+  piiUnlocked: boolean;
+  relevance: number;
+};
+
+/**
+ * A citable passage — one interaction or meeting — so each can carry its own `[eN]` marker.
+ * See `@/lib/chat-evidence`.
+ */
+export type ChatPromptNotePassage = {
+  sourceId: string;
+  contactId: string | null;
+  date: string | null;
+  snippet: string;
+  kind?: "interaction" | "meeting";
+  startMs?: number | null;
+  title?: string | null;
+  contactName?: string | null;
+};
+
 export type ChatPromptArgs = {
-  question: Parameters<typeof chatWithNetwork>[1];
-  contactsContext: Parameters<typeof chatWithNetwork>[2];
-  priorTurns: NonNullable<Parameters<typeof chatWithNetwork>[3]>;
-  orgRosters: NonNullable<Parameters<typeof chatWithNetwork>[4]>;
-  attention: Parameters<typeof chatWithNetwork>[5];
-  recruitersContext: NonNullable<Parameters<typeof chatWithNetwork>[6]>;
-  focusProfile: Parameters<typeof chatWithNetwork>[7];
-  attachedContext: Parameters<typeof chatWithNetwork>[8];
-  goals: NonNullable<Parameters<typeof chatWithNetwork>[9]>;
-  attentionLite: Parameters<typeof chatWithNetwork>[10];
-  evidence: Parameters<typeof chatWithNetwork>[11];
-  notePassages: NonNullable<Parameters<typeof chatWithNetwork>[12]>;
+  question: string;
+  contactsContext: ChatPromptContact[];
+  priorTurns: Array<{ role: "user" | "assistant"; content: string }>;
+  orgRosters: ChatPromptRoster[];
+  attention: ChatPromptAttention | null;
+  recruitersContext: ChatPromptRecruiter[];
+  /**
+   * The focused contact's whole LinkedIn profile, already rendered as text. Present only when
+   * the question was asked from that contact's own page. See `renderFocusProfile` in
+   * `@/lib/chat-context`.
+   */
+  focusProfile: string | null;
+  /**
+   * People the user attached with the composer's `+`, already rendered as text — role,
+   * standing and timeline per person. Unlike `contactsContext` this is not a guess about who
+   * the question concerns; the user said so. See `renderAttachedPeople` in `@/lib/chat-attached`.
+   */
+  attachedContext: string | null;
+  /**
+   * The user's active networking goals, in their own words. Trusted text — this is the one
+   * block in the prompt the user wrote themselves, so it steers the answer rather than being
+   * fenced as something to report on. See `listActiveGoalTextsForUser` (@/lib/user-goals).
+   */
+  goals: string[];
+  /**
+   * The overdue queue as one line, for every question. See `renderAttentionLite`
+   * (@/lib/chat-attention) for why this exists alongside the gated `attention` brief.
+   */
+  attentionLite: string | null;
+  /** Extra looked-up text, fenced as untrusted data. The answer loop passes null: its lookups arrive as tool results. */
+  evidence: string | null;
+  notePassages: ChatPromptNotePassage[];
   /** The user's writing notes, or null. Appended only when non-empty; see `writing-instructions.ts`. */
   writingPreferences?: string | null;
   /** The user's upcoming meetings (`@/lib/chat-calendar`), for a schedule question, or null. */
@@ -1959,8 +2072,8 @@ export type ChatPromptArgs = {
 };
 
 /**
- * The prompt both chat paths share. `chatWithNetwork` asks for a JSON object;
- * `chatWithNetworkStream` asks for prose, a marker, then JSON — same facts, same rules.
+ * The chat answer's prompt — the answer loop (`answerWithLookups`, @/lib/chat-agent-loop) adds
+ * its tool rules and `CHAT_STREAM_TAIL` to `systemCore`.
  */
 // Exported so the prompt text itself can be pinned in a smoke test (does the career line
 // actually reach the built string; does a hostile focused profile actually stay fenced) —
@@ -2206,13 +2319,11 @@ export function buildChatPrompt({
   // `career=` line built from that contact's LinkedIn profile, plus notes, key facts and an
   // AI summary. Fencing only the focused profile would have claimed a rule the sibling
   // surface from the same task did not follow.
-  // What the research step looked up for this question (`@/lib/chat-gather`): passages of
-  // the user's notes and the records of people found along the way. The same untrusted class
-  // as everything else here — notes and profiles, some of which other people wrote — so the
-  // same nonce fence, for the same reason: no content inside can forge the closer.
-  // Passages the research step found via `search_notes` — cited individually, unlike the
-  // rest of what it looked up (`evidence` below), because each one is a single dated note
-  // with a real interaction behind it. Minted from the SAME ledger as the timeline lines
+  // Looked-up text for this question (`evidence`) and the fact lane's passages: the user's
+  // notes and meetings. The same untrusted class as everything else here — notes and profiles,
+  // some of which other people wrote — so the same nonce fence, for the same reason: no content
+  // inside can forge the closer. Each passage is cited individually, unlike `evidence`, because
+  // each one is a single dated note or meeting with a real record behind it. Minted from the SAME ledger as the timeline lines
   // above, so a passage citing the same interaction a contact's timeline already cited
   // gets the identical id rather than a confusing second one for "the same coffee".
   const passagesBlock = notePassages.length
@@ -2280,176 +2391,11 @@ ${hasRecruiters ? "When the question is about recruiters, prefer recruiters the 
 }
 
 /**
- * A streamed completion: the model's text is handed to `onDelta` as it arrives, and the
- * full text is returned at the end. Same three providers, same usage accounting as
- * `completeJson`; token counts come from the final chunk where the provider reports them.
+ * The chat answer's output format (`@/lib/chat-agent-loop`): prose with blocks, then recruiter
+ * recommendations as JSON after a marker. A change is never written into the answer: it is
+ * proposed by calling one of the chat writes (`@/lib/tools/chat-writes`).
  */
-async function streamText(
-  userId: string,
-  input: {
-    system: string;
-    user: string;
-    temperature?: number;
-    maxOutputTokens?: number;
-    operation: AiOperationId;
-    signal?: AbortSignal;
-    /**
-     * A deadline the caller imposes (the route's `maxDuration`). Aborts the call like `signal`,
-     * but is not the caller walking away: it is not the `cancelSignal` below, so a cut-off
-     * stream is filed as `timeout`, not `cancelled`.
-     */
-    deadlineSignal?: AbortSignal;
-    /** As for `completeJson` — shares the account read, never the grant. */
-    access?: AiAccess;
-  },
-  onDelta: (delta: string) => void
-): Promise<string> {
-  const access = input.access?.forUser(userId) ?? (await resolveAiAccess(userId));
-  const grant = await access.completion(input.operation);
-  const { provider, keyOwner } = grant;
-  const model = modelForOperation(input.operation, grant);
-  const temperature = input.temperature ?? 0.3;
-  const maxOutputTokens = input.maxOutputTokens ?? 4096;
-  // One deadline per call plus the caller's own abort — a fresh deadline per call, as always.
-  const signal = AbortSignal.any([aiSignal(), ...[input.signal, input.deadlineSignal].filter((s) => s !== undefined)]);
-
-  return runOnGrant(grant, withUsage(
-    { userId, operation: input.operation, provider, model, kind: "completion", keyOwner },
-    (report) => translatingProviderErrors(aiProviderLabel(provider), async () => {
-      let full = "";
-      const emit = (t: string | undefined | null) => {
-        if (!t) return;
-        full += t;
-        onDelta(t);
-      };
-
-      if (provider === "gemini") {
-        const client = await geminiClient(grant);
-        const stream = await client.models.generateContentStream({
-          model,
-          contents: input.user,
-          config: {
-            abortSignal: signal,
-            temperature,
-            maxOutputTokens,
-            systemInstruction: input.system,
-            ...geminiThinking(model, input.operation),
-          },
-        });
-        let last: unknown = null;
-        for await (const chunk of stream) {
-          emit(chunk.text);
-          last = chunk;
-        }
-        if (last) report(tokensFromGemini(last));
-      } else if (isOpenAiShaped(provider)) {
-        const client = await openAiShapedClient(grant);
-        const stream = await client.chat.completions.create(
-          withOpenRouterRouting(provider, {
-            model,
-            ...openaiCompletionOptions(model, { temperature, maxOutputTokens, thinking: aiOperationThinking(input.operation) }),
-            stream: true,
-            stream_options: { include_usage: true },
-            messages: [
-              { role: "system", content: input.system },
-              { role: "user", content: input.user },
-            ],
-          }),
-          { signal }
-        );
-        let usage: unknown = null;
-        for await (const chunk of stream) {
-          emit(chunk.choices[0]?.delta?.content);
-          if (chunk.usage) usage = chunk.usage;
-        }
-        if (usage) {
-          report({
-            ...tokensFromOpenAi({ usage }),
-            reportedCostMicros: reportedCostMicros({ usage } as OpenAiUsageWithCost),
-          });
-        }
-      } else {
-        const client = await anthropicClient(grant);
-        const stream = client.messages.stream(
-          {
-            model,
-            max_tokens: maxOutputTokens,
-            // Claude 4.7 and later reject sampling parameters with a 400.
-            ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
-            ...anthropicEffort(model),
-            system: input.system,
-            messages: [{ role: "user", content: input.user }],
-          },
-          { signal }
-        );
-        for await (const event of stream) {
-          if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-            emit(event.delta.text);
-          }
-        }
-        report(tokensFromAnthropic(await stream.finalMessage()));
-      }
-
-      // OpenAI's stream iterator treats an abort as "the caller stopped the stream" and simply
-      // ENDS, so a cut-off answer would come back as a finished (shorter) one. Rethrow the abort:
-      // a deadline reads as a timeout, a Stop is filed as cancelled. (Gemini and Anthropic throw.)
-      signal.throwIfAborted();
-      if (!full.trim()) throw new Error("Empty AI response");
-      return full;
-    }),
-    { cancelSignal: input.signal }
-  ));
-}
-
-/**
- * Shared by both response shapes: the model may PROPOSE an action, never claim to have done
- * one. A person's own click is what commits it — see `commitProposedAction` (@/actions/chat-
- * actions) and the rule at the top of `src/lib/mcp/server.ts`, which this mirrors on the chat
- * surface's own output rather than through a tool. At most three per answer, and only when the
- * user asked for one or the answer's own single clear next step is worth turning into one — a
- * proposal on every answer would train a person to stop reading the confirm card.
- */
-const PROPOSED_ACTIONS_TAIL = `"proposed_actions" is an array of at most 3 objects, one of:
-{"kind":"log_interaction","contact_id":string,"text":string}
-{"kind":"create_reminder","contact_id":string|null,"title":string,"description":string|null,"due_date":string|null}
-{"kind":"schedule_follow_up","contact_id":string,"days":number|null}
-{"kind":"update_contact","contact_id":string,"title"?:string,"company"?:string,"location"?:string,"email"?:string,"how_met"?:string}
-{"kind":"create_contact","full_name":string,"title"?:string,"company"?:string,"email"?:string,"how_met"?:string}
-{"kind":"complete_reminder","reminder_id":string}
-{"kind":"snooze_reminder","reminder_id":string,"days":number|null}
-Only propose when the user asked for one of these — log, remind, follow up, change what Orbit
-knows about someone, add someone new, finish or push back a reminder — or the answer's single
-clear next step is exactly one of them. Only use contact_ids from the provided lists, and
-reminder_ids from "Reminders". update_contact carries only the fields the user said
-changed; create_contact only someone the user said they met, never a person from the lists.
-"due_date" is an ISO date or date-time, or null for no date. Never phrase the answer's prose as
-though the action already happened — it has not; a person still has to confirm it. Leave
-"proposed_actions" as an empty array when none of this applies, which is most answers.`;
-
 export const CHAT_STREAM_TAIL = `
-Write the answer as prose (markdown is fine). Two blocks can sit between paragraphs, each on a
-line of its own and nothing else on that line:
-- ::people[<id>,<id>] shows up to 6 contacts as cards the user can act on (draft a message, set
-  a reminder). Use it when the answer recommends specific people to reach out to or ask, after
-  the sentence that says why. Ids come from the [id=…] values in the provided lists.
-- ::list[r1] shows a whole "Complete roster" section as a table with its exact count. Use it
-  when the question asks who or how many — never type that list out yourself.
-Otherwise name people in the prose; most answers need no block at all, and a block never
-replaces saying in words why those people.
-Only when you recommend recruiters or propose an action, end with a line containing exactly
-${RECOMMENDATIONS_MARKER}
-followed by a JSON object: {"recommendations": [...], "proposed_actions": [...]}, and nothing
-after the JSON. "recommendations" is for recruiters only: objects with "contact_id" (null),
-"recruiter_id", "name", "reason", "suggested_action" and "draft_message" (string|null), ids from
-the provided lists.
-${PROPOSED_ACTIONS_TAIL}`;
-
-/**
- * The output format for the answer loop (`@/lib/chat-agent-loop`): the same blocks and
- * recruiter recommendations, but no `proposed_actions` — in the loop a change is proposed by
- * calling one of the chat writes (`@/lib/tools/chat-writes`), never written into the answer.
- */
-export const CHAT_STREAM_TAIL_LOOP = `
 Write the answer as prose (markdown is fine). Two blocks can sit between paragraphs, each on a
 line of its own and nothing else on that line:
 - ::people[<id>,<id>] shows up to 6 contacts as cards the user can act on (draft a message, set
@@ -2470,8 +2416,8 @@ the provided lists.`;
 /**
  * Every chat answer passes through here before anyone stores, replays or acts on it.
  *
- * The prose, each recommendation's reason and draft, and each proposed action's free text —
- * everything a compromised answer could use to carry a secret out, forge a fence for the next
+ * The prose and each recommendation's reason and draft — everything a compromised answer
+ * could use to carry a secret out, forge a fence for the next
  * turn, or recite the system prompt. What streamed live has already been seen; this governs
  * what persists and what history replays, which is how one poisoned answer steers the next.
  */
@@ -2479,7 +2425,6 @@ export function guardChatAnswer<
   T extends {
     answer: string;
     recommendations?: Array<Record<string, unknown>>;
-    proposedActions?: unknown[];
   },
 >(userId: string, result: T, system: string): T {
   const findings = new Set<OutputFinding>();
@@ -2505,7 +2450,6 @@ export function guardChatAnswer<
     recommendations: (result.recommendations ?? []).map(
       (r) => scrubValue(r) as Record<string, unknown>
     ),
-    proposedActions: (result.proposedActions ?? []).map(scrubValue),
   };
   if (findings.size) {
     void recordAiSecurityEvent({
@@ -2516,289 +2460,6 @@ export function guardChatAnswer<
     });
   }
   return guarded;
-}
-
-/**
- * The streaming twin of `chatWithNetwork`: same prompt, same grounding rules, but the model
- * writes the answer as prose first (streamed to `onDelta` as it arrives) and the
- * recommendations as JSON after a marker line, parsed once the stream ends.
- */
-export async function chatWithNetworkStream(
-  userId: string,
-  question: Parameters<typeof chatWithNetwork>[1],
-  contactsContext: Parameters<typeof chatWithNetwork>[2],
-  priorTurns: NonNullable<Parameters<typeof chatWithNetwork>[3]>,
-  orgRosters: NonNullable<Parameters<typeof chatWithNetwork>[4]>,
-  attention: Parameters<typeof chatWithNetwork>[5],
-  recruitersContext: NonNullable<Parameters<typeof chatWithNetwork>[6]>,
-  onDelta: (delta: string) => void,
-  focusProfile: Parameters<typeof chatWithNetwork>[7] = null,
-  attachedContext: Parameters<typeof chatWithNetwork>[8] = null,
-  options: {
-    signal?: AbortSignal;
-    /** The route's deadline for the answer; see `streamText`. */
-    deadlineSignal?: AbortSignal;
-    goals?: string[];
-    attentionLite?: string | null;
-    evidence?: string | null;
-    notePassages?: Parameters<typeof chatWithNetwork>[12];
-    writingPreferences?: string | null;
-    calendar?: string | null;
-    openReminders?: string | null;
-    commitments?: string | null;
-    events?: string | null;
-    userSchools?: string[];
-    /** The account already resolved for this request (see `AiAccess.forUser`). */
-    access?: AiAccess;
-    /**
-     * Every citation id the prompt minted, before the first word streams — so the client
-     * can render `[eN]` as a numbered chip as it arrives rather than as raw text.
-     */
-    onEvidence?: (evidence: Record<string, EvidenceSource>) => void;
-  } = {}
-): Promise<SplitResult & { evidence: Record<string, EvidenceSource> }> {
-  const prompt = buildChatPrompt({
-    question,
-    contactsContext,
-    priorTurns,
-    orgRosters,
-    attention,
-    recruitersContext,
-    focusProfile,
-    attachedContext,
-    goals: options.goals ?? [],
-    attentionLite: options.attentionLite ?? null,
-    evidence: options.evidence ?? null,
-    notePassages: options.notePassages ?? [],
-    writingPreferences: options.writingPreferences,
-    calendar: options.calendar ?? null,
-    openReminders: options.openReminders,
-    commitments: options.commitments ?? null,
-    events: options.events ?? null,
-    userSchools: options.userSchools,
-  });
-  const splitter = createAnswerSplitter();
-  const system = `${prompt.systemCore}${CHAT_STREAM_TAIL}`;
-  options.onEvidence?.(prompt.evidence);
-  await streamText(
-    userId,
-    {
-      operation: "chat.answer",
-      temperature: 0.3,
-      user: prompt.user,
-      system,
-      signal: options.signal,
-      deadlineSignal: options.deadlineSignal,
-      access: options.access,
-    },
-    (delta) => {
-      const out = splitter.push(delta);
-      if (out) onDelta(out);
-    }
-  );
-  return { ...guardChatAnswer(userId, splitter.finish(), system), evidence: prompt.evidence };
-}
-
-const CHAT_JSON_TAIL = `
-Return JSON:
-{
-  "answer": string,
-  "recommendations": [
-    {
-      "contact_id": string|null,
-      "recruiter_id": string|null,
-      "name": string,
-      "reason": string,
-      "suggested_action": string,
-      "draft_message": string|null
-    }
-  ],
-  "proposed_actions": [...]
-}
-Only use contact_ids and recruiter_ids from the provided lists. For recruiter recommendations set recruiter_id and leave contact_id null (unless recommending a contact who is also a recruiter).
-${PROPOSED_ACTIONS_TAIL}`;
-
-export async function chatWithNetwork(
-  userId: string,
-  question: string,
-  contactsContext: Array<{
-    id: string;
-    fullName: string;
-    company: string | null;
-    title: string | null;
-    location?: string | null;
-    relationshipScore: number;
-    aiSummary: string | null;
-    notes: string | null;
-    keyFacts?: string[];
-    /**
-     * Recent interactions, each carrying the interaction id it came from so it can be
-     * cited — see `@/lib/chat-evidence`.
-     *
-     * Was LinkedIn messages only, which meant a retrieved contact reached the model with
-     * no record of ever having met the user. Same shape as the attached block's timeline,
-     * so a contact reads the same however they got into the prompt.
-     */
-    timeline?: Array<{ id: string; date: string; line: string }>;
-    tags: string[];
-    relevance: number;
-    /** `contacts.school`, when known. */
-    school?: string | null;
-    /** Compact career summary — "Ramp, ex-Stripe · MIT". Rendered in `contextBlock`
-     * alongside title/company; null when no profile is stored for this contact. */
-    career?: string | null;
-    /** Contact details as one sanitized line — `contactDetailsLine` (@/lib/chat-retrieval). */
-    details?: string | null;
-  }>,
-  priorTurns: Array<{ role: "user" | "assistant"; content: string }> = [],
-  /**
-   * Exhaustive membership for any organisation the question named. Unlike `contactsContext`
-   * — a relevance-ranked top-K — this is a complete group-by, so the model can state a
-   * count instead of guessing one from a truncated list. See `@/lib/chat-roster`.
-   */
-  orgRosters: Array<{
-    kind: "company" | "school" | "filter";
-    name: string;
-    total: number;
-    people: Array<{ id: string; name: string; title: string | null }>;
-    truncated: boolean;
-  }> = [],
-  /**
-   * Who the product itself says needs attention — overdue follow-ups and the standing
-   * outreach queue. Present only for questions about reconnecting. See `@/lib/chat-attention`.
-   */
-  attention: {
-    overdue: Array<{
-      id: string;
-      name: string;
-      title: string | null;
-      company: string | null;
-      daysOverdue: number;
-      daysSinceTouch: number | null;
-      hasLoggedInteraction: boolean;
-    }>;
-    suggestions: Array<{
-      id: string;
-      name: string;
-      title: string | null;
-      company: string | null;
-      reason: string;
-    }>;
-  } | null = null,
-  recruitersContext: Array<{
-    id: string;
-    fullName: string;
-    firm: string | null;
-    specialty: string[];
-    avgRating: number;
-    logCount: number;
-    personalRating: number | null;
-    status: string | null;
-    notes: string | null;
-    piiUnlocked: boolean;
-    relevance: number;
-  }> = [],
-  /**
-   * The focused contact's whole LinkedIn profile, already rendered as text. Present only
-   * when the question was asked from that contact's own page. See `renderFocusProfile` in
-   * `@/lib/chat-context`.
-   */
-  focusProfile: string | null = null,
-  /**
-   * People the user attached with the composer's `+`, already rendered as text — role,
-   * standing and timeline per person. Unlike `contactsContext` this is not a guess about
-   * who the question concerns; the user said so. See `renderAttachedPeople` in
-   * `@/lib/chat-attached`.
-   */
-  attachedContext: string | null = null,
-  /**
-   * The user's active networking goals, in their own words. Trusted text — this is the one
-   * block in the prompt the user wrote themselves, so it steers the answer rather than being
-   * fenced as something to report on. See `listActiveGoalTextsForUser` (@/lib/user-goals).
-   */
-  goals: string[] = [],
-  /**
-   * The overdue queue as one line, for every question. See `renderAttentionLite`
-   * (@/lib/chat-attention) for why this exists alongside the gated `attention` brief.
-   */
-  attentionLite: string | null = null,
-  /**
-   * What the research step looked up, rendered as text. Present only when the question was
-   * routed to it — see `routeFromParsed` (@/lib/decisions/chat-route) and `gatherEvidence` (@/lib/chat-gather).
-   */
-  evidence: string | null = null,
-  /**
-   * Citable passages — the fact lane's and the research step's — one interaction or meeting
-   * each, so each can carry its own `[eN]` marker unlike the rest of `evidence`. See
-   * `@/lib/chat-evidence`.
-   */
-  notePassages: Array<{
-    sourceId: string;
-    contactId: string | null;
-    date: string | null;
-    snippet: string;
-    kind?: "interaction" | "meeting";
-    startMs?: number | null;
-    title?: string | null;
-    contactName?: string | null;
-  }> = [],
-  /** The user's writing notes. Loaded by the caller (`ChatContext.writingInstructions`). */
-  writingPreferences: string | null = null,
-  /** Open reminders, as `ChatContext.openReminders`. */
-  openReminders: string | null = null,
-  /** The user's upcoming meetings, for a schedule question. See `@/lib/chat-calendar`. */
-  calendar: string | null = null,
-  /** The other always-on sections — see `@/lib/chat-prefetch`. */
-  prefetched: { commitments?: string | null; events?: string | null } = {},
-) {
-  const prompt = buildChatPrompt({
-    writingPreferences,
-    openReminders,
-    calendar,
-    commitments: prefetched.commitments ?? null,
-    events: prefetched.events ?? null,
-    question,
-    contactsContext,
-    priorTurns,
-    orgRosters,
-    attention,
-    recruitersContext,
-    focusProfile,
-    attachedContext,
-    goals,
-    attentionLite,
-    evidence,
-    notePassages,
-  });
-  const system = `${prompt.systemCore}${CHAT_JSON_TAIL}`;
-  const content = await completeJson(userId, {
-    operation: "chat.answer",
-    temperature: 0.3,
-    user: prompt.user,
-    system,
-  });
-
-  const parsed = parseAiJson<{
-    answer: string;
-    recommendations: Array<{
-      contact_id?: string | null;
-      recruiter_id?: string | null;
-      name: string;
-      reason: string;
-      suggested_action: string;
-      draft_message: string | null;
-    }>;
-    proposed_actions?: unknown[];
-  }>(content);
-  const guarded = guardChatAnswer(
-    userId,
-    { ...parsed, answer: parsed.answer ?? "", proposedActions: parsed.proposed_actions ?? [] },
-    system
-  );
-  return {
-    ...guarded,
-    evidence: prompt.evidence,
-  };
 }
 
 /** One page a web-grounded answer drew on. */

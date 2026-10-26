@@ -39,7 +39,8 @@ import {
 } from "../src/lib/ai-security";
 import { safeChatHref, safeHttpUrl } from "../src/lib/safe-links";
 import { untrustedPageBlock } from "../src/lib/conversation-starters";
-import { parseAnswerTail } from "../src/lib/chat-proposed-actions";
+import { createProposalSink } from "../src/lib/tools/chat-proposals";
+import { chatWriteNamed, parseWriteInput } from "../src/lib/tools/chat-writes";
 import { classifyRecipient, recipientNeedsConfirmation } from "../src/lib/agent-sends";
 import { assessOutreachQuality, findLinkOrAddress } from "../src/lib/outreach-quality";
 import { composeDraftContext } from "../src/lib/follow-up-drafts";
@@ -372,22 +373,23 @@ run(async () => {
   check("stored URLs: bare linkedin path accepted as https", safeHttpUrl("linkedin.com/in/ada") === "https://linkedin.com/in/ada");
 
   console.log("\n   proposals the model makes");
-  const proposals = parseAnswerTail(
-    [
-      { kind: "log_interaction", contact_id: "someone-elses-contact", text: "hi" },
-      { kind: "create_reminder", contact_id: "c1", title: "Follow up‮​moc.live@exfil", description: "<img src=x onerror=alert(1)>ok" },
-      { kind: "send_email", contact_id: "c1", to: "attacker@evil.example" },
-      { kind: "schedule_follow_up", contact_id: "c1", days: 100000 },
-    ],
-    new Set(["c1"])
-  );
-  check("a proposal naming a contact the model wasn't shown is dropped", !proposals.some((p) => p.input.contactId === "someone-elses-contact"));
-  check("an unknown action kind (send_email) is dropped", proposals.every((p) => ["log_note", "create_reminder", "schedule_follow_up"].includes(p.tool)));
-  const reminder = proposals.find((p) => p.tool === "create_reminder");
-  check("hidden bidi text is stripped from a proposal", Boolean(reminder) && !/[​‮]/.test(JSON.stringify(reminder)));
-  check("HTML is stripped from a proposal", Boolean(reminder) && !JSON.stringify(reminder).includes("<img"));
-  const followUp = proposals.find((p) => p.tool === "schedule_follow_up");
-  check("an absurd follow-up interval is clamped", followUp?.input.days === 90);
+  // The answer loop's proposals (`@/lib/tools/chat-proposals`): what a turn has seen bounds
+  // which ids a card may name, and only the catalog's own writes exist.
+  const C1 = "11111111-1111-4111-8111-111111111111";
+  const sink = createProposalSink({ contacts: new Map([[C1, "Ada Lovelace"]]) });
+  const forged = sink.propose("log_note", { contactId: "22222222-2222-4222-8222-222222222222", text: "hi" });
+  check("a proposal naming a contact the model wasn't shown is refused", !forged.ok);
+  check("an unknown write (send_email) is refused", !sink.propose("send_email", { contactId: C1 }).ok);
+  const reminder = sink.propose("create_reminder", {
+    title: "Follow up\u202e\u200bmoc.live@exfil",
+    contactId: C1,
+    description: "<img src=x onerror=alert(1)>ok",
+  });
+  const preview = reminder.ok ? reminder.action.preview : "";
+  check("hidden bidi text is stripped from a card's sentence", reminder.ok && !/[\u200b\u202e]/.test(preview), preview);
+  check("HTML is stripped from a card's sentence", reminder.ok && !preview.includes("<img"), preview);
+  const followUp = chatWriteNamed("schedule_follow_up")!;
+  check("an absurd follow-up interval fails the write's own schema", parseWriteInput(followUp, { contactId: C1, days: 100000 }) === null);
 
   console.log("\n   recipients an agent picks");
   const known = new Set(["priya@example.com"]);

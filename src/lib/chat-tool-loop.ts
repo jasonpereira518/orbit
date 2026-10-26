@@ -100,7 +100,9 @@ export async function runToolLoop(
     try {
       step = await driver.step(roundSignal);
     } catch (error) {
-      if (options.signal?.aborted) return { calls, rounds, stoppedBy: "aborted" };
+      // The provider's own error is kept: for an answer cut at its deadline it is the
+      // provider's "timed out" copy, which the caller shows rather than a bare AbortError.
+      if (options.signal?.aborted) return { calls, rounds, stoppedBy: "aborted", error };
       return {
         calls,
         rounds,
