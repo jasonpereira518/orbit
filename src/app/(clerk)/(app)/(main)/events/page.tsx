@@ -68,7 +68,15 @@ async function HiddenList() {
   );
 }
 
-function EventGrid({ events, empty }: { events: EventListRow[]; empty: React.ReactNode }) {
+function EventGrid({
+  events,
+  empty,
+  past = false,
+}: {
+  events: EventListRow[];
+  empty: React.ReactNode;
+  past?: boolean;
+}) {
   if (events.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-border/70 px-4 py-10 text-center">
@@ -79,7 +87,7 @@ function EventGrid({ events, empty }: { events: EventListRow[]; empty: React.Rea
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       {events.map((event) => (
-        <EventCard key={event.id} event={event} />
+        <EventCard key={event.id} event={event} past={past} />
       ))}
     </div>
   );
@@ -114,7 +122,7 @@ async function EventsList() {
           empty="Nothing coming up. Events you RSVP to will appear here as soon as you're confirmed."
         />
       }
-      past={<EventGrid events={past} empty="No past events yet." />}
+      past={<EventGrid events={past} empty="No past events yet." past />}
     />
   );
 }

@@ -5,7 +5,8 @@
  * What has to hold: everyone saved is marked met on the event and linked to their contact, a
  * guest who was already on the roster stays one row, each person gets an `event` interaction,
  * a follow-up exists, and a job pointing at somebody else's event saves its people without
- * writing anything onto that event.
+ * writing anything onto that event. Plus the morning-after nudge (`lastUnloggedEvent`): offered
+ * for an event nobody has logged, and gone once a debrief starts.
  *
  * Run: npx tsx scripts/smoke-capture-event-link.ts
  */
@@ -21,6 +22,7 @@ import { runCaptureJobById } from "../src/lib/capture-job-runner";
 import type { CaptureParseResult } from "../src/lib/capture/types";
 import { createEventForUser, listRosterForUser, upsertEventAttendees } from "../src/lib/events/store";
 import { parseRosterText } from "../src/lib/events/parse-roster";
+import { lastUnloggedEvent } from "../src/lib/meeting-context";
 import { hashSourceNote } from "../src/lib/suggested-reminder-utils";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
@@ -111,7 +113,16 @@ async function main() {
   // Ada was on the guest list already; Raj was not.
   await upsertEventAttendees(USER, event.id, parseRosterText("Ada Lovelace <ada@analytical.io>").attendees, "paste");
 
-  console.log("Logging who you met…");
+  console.log("The morning after…");
+  const morning = new Date("2026-10-25T14:00:00Z");
+  check("an unlogged event is offered the next morning", (await lastUnloggedEvent(USER, morning))?.eventId === event.id);
+  check("but not before it has ended", (await lastUnloggedEvent(USER, new Date("2026-10-24T23:30:00Z"))) === null);
+  check("nor two days later", (await lastUnloggedEvent(USER, new Date("2026-10-27T14:00:00Z"))) === null);
+  const hidden = await createEventForUser(USER, { title: "Hidden", startsAt: new Date("2026-10-25T01:00:00Z") });
+  await db.update(events).set({ dismissedAt: new Date() }).where(eq(events.id, hidden.id));
+  check("a hidden event is never offered", (await lastUnloggedEvent(USER, morning))?.eventId === event.id);
+
+  console.log("\nLogging who you met…");
   await captureAndSave(event.id, "Met at Founders Mixer: Ada (infra hiring), Raj — follow up next week.");
 
   const people = await db.query.contacts.findMany({ where: eq(contacts.userId, USER) });
@@ -134,6 +145,12 @@ async function main() {
 
   const followUps = await db.query.reminders.findMany({ where: eq(reminders.userId, USER) });
   check("follow-ups were created", followUps.length > 0 && followUps.every((r) => people.some((p) => p.id === r.contactId)), String(followUps.length));
+
+  check("once people are logged the nudge stands down", (await lastUnloggedEvent(USER, morning)) === null);
+  const started = await createEventForUser(USER, { title: "Debrief started", startsAt: new Date("2026-10-24T22:00:00Z") });
+  check("a later unlogged event is offered", (await lastUnloggedEvent(USER, morning))?.eventId === started.id);
+  await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: "Met someone", eventId: started.id });
+  check("and stands down as soon as its debrief starts", (await lastUnloggedEvent(USER, morning)) === null);
 
   console.log("\nSomebody else's event…");
   const theirs = await createEventForUser(OTHER, { title: "Not yours" });

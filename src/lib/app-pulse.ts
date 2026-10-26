@@ -6,7 +6,7 @@ import { isAdminUser } from "@/lib/admin";
 import { resolveSurfaceVisibility, isViewingAsUser } from "@/lib/surface-visibility";
 import { CLOUD_NOTES_SURFACE_KEY } from "@/lib/surfaces";
 import type { Plan } from "@/lib/plan-limits";
-import { lastUnloggedMeeting, nextKnownMeeting } from "@/lib/meeting-context";
+import { lastUnloggedEvent, lastUnloggedMeeting, nextKnownMeeting } from "@/lib/meeting-context";
 
 /**
  * The one periodic read every authenticated tab makes.
@@ -44,6 +44,8 @@ export type AppPulse = {
   nextMeeting: Awaited<ReturnType<typeof nextKnownMeeting>>;
   /** A meeting that just ended with someone known and left no note — "How did it go?". */
   unloggedMeeting: Awaited<ReturnType<typeof lastUnloggedMeeting>>;
+  /** An event that ended in the last 36 hours with nobody logged — "How was it?". */
+  unloggedEvent: Awaited<ReturnType<typeof lastUnloggedEvent>>;
 };
 
 /** Far enough ahead that the prep card (15 minutes out) never waits a whole pulse for it. */
@@ -58,10 +60,14 @@ export async function loadAppPulse(
 ): Promise<AppPulse> {
   const settings = loadedSettings ?? (await ensureUserSettings(userId));
   const entitlements = entitlementsFromSettings(userId, settings);
-  const [rawPanel, canOpenAdmin, nextMeeting, unloggedMeeting] = await Promise.all([
-    // One visibility read for both gated rows (what `isSurfaceLive` checks, per key).
-    resolveSurfaceVisibility(userId).then(({ hidden, comingSoon }) => {
-      const live = (key: string) => !hidden.has(key) && !comingSoon.has(key);
+  // One visibility read for every gated row (what `isSurfaceLive` checks, per key).
+  const livePromise = resolveSurfaceVisibility(userId).then(
+    ({ hidden, comingSoon }) =>
+      (key: string) =>
+        !hidden.has(key) && !comingSoon.has(key)
+  );
+  const [rawPanel, canOpenAdmin, nextMeeting, rawUnloggedMeeting, rawUnloggedEvent, live] = await Promise.all([
+    livePromise.then((live) => {
       return loadNotificationPanel(userId, now, {
         withAlerts: true,
         settings,
@@ -74,7 +80,21 @@ export async function loadAppPulse(
     // Best-effort: a calendar read must never cost the panel its pulse.
     nextKnownMeeting(userId, now, NEXT_MEETING_WITHIN_MS).catch(() => null),
     lastUnloggedMeeting(userId, now).catch(() => null),
+    // Only once Events is open to this user: the card links into it.
+    livePromise
+      .then((live) => (live("page.events") ? lastUnloggedEvent(userId, now) : null))
+      .catch(() => null),
+    livePromise,
   ]);
+  const eventsLive = live("page.events");
+  // A meeting that IS an event is one thing to log, not two cards: the meeting card opens the
+  // event's debrief, and the event card stands down.
+  const unloggedMeeting = rawUnloggedMeeting && {
+    ...rawUnloggedMeeting,
+    debriefEventId: eventsLive ? rawUnloggedMeeting.debriefEventId : null,
+  };
+  const unloggedEvent =
+    rawUnloggedEvent && rawUnloggedEvent.eventId !== unloggedMeeting?.debriefEventId ? rawUnloggedEvent : null;
   const panel = { ...rawPanel, canOpenAdmin };
   const notified = new Set(settings.desktopNotifiedIds ?? []);
   const dueItems = panel.items
@@ -88,5 +108,6 @@ export async function loadAppPulse(
     desktopNotificationsEnabled: settings.desktopNotificationsEnabled ?? null,
     nextMeeting,
     unloggedMeeting,
+    unloggedEvent,
   };
 }
