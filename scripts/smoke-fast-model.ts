@@ -56,8 +56,8 @@ async function main() {
 
   const aiSource = readFileSync("src/lib/ai.ts", "utf8");
   check(
-    "all four Anthropic calls gate temperature (webSearchJson's included)",
-    (aiSource.match(/anthropicAcceptsTemperature\(model\)/g)?.length ?? 0) === 4
+    "all three Anthropic calls gate temperature (webSearchJson's included)",
+    (aiSource.match(/anthropicAcceptsTemperature\(model\)/g)?.length ?? 0) === 3
   );
 }
 
