@@ -116,6 +116,8 @@ async function normalizeSection() {
   check("LinkedIn external id is the lowercased slug", prospectExternalId({ fullName: "Ana", company: null, linkedinUrl: "https://www.linkedin.com/in/AnaRuiz/" }) === "li:anaruiz");
   check("no LinkedIn falls back to the name key", prospectExternalId({ fullName: "Ana Ruiz", company: "ZS", linkedinUrl: null }) === "name:ana ruiz|zs");
   check("name key folds punctuation", prospectNameKey({ fullName: "Ana Ruiz", company: "Z.S., Inc." }) === "name:ana ruiz|z s inc" && prospectNameKey({ fullName: "Ana Ruiz", company: null }) === "name:ana ruiz|");
+  check("name key keeps non-Latin names apart", prospectNameKey({ fullName: "李明", company: "ZS" }) !== prospectNameKey({ fullName: "王芳", company: "ZS" }) && prospectNameKey({ fullName: "Мария Иванова", company: "ZS" }) === "name:мария иванова|zs");
+  check("name key folds accents, not letters", prospectNameKey({ fullName: "José García", company: "ZS" }) === "name:jose garcia|zs" && prospectNameKey({ fullName: "Jose Garcia", company: "ZS" }) === prospectNameKey({ fullName: "José García", company: "ZS" }));
 }
 
 async function main() {
@@ -165,6 +167,8 @@ async function main() {
       { fullName: "Gus Ito", linkedinUrl: "https://www.linkedin.com/in/gus-ito" },
     ]);
     check("one call: dupes count once, bad rows are counted", mixed.added === 2 && mixed.alreadyThere === 1 && mixed.invalid === 2, JSON.stringify(mixed));
+    const cjk = await addProspectsForUser(USER, campId, [{ fullName: "李明", company: "ZS", origin: "manual" }, { fullName: "王芳", company: "ZS", origin: "manual" }]);
+    check("two non-Latin names at one company are both added", cjk.added === 2 && cjk.alreadyThere === 0, JSON.stringify(cjk));
     check("more than 10 people in a call is refused", await rejects(() => addProspectsForUser(USER, campId, Array.from({ length: 11 }, (_, i) => ({ fullName: `Many ${i}`, company: "ZS" }))), "10"));
 
     console.log("skip, remove, known names");
@@ -191,6 +195,14 @@ async function main() {
     const dee = await prospectNamed(campId, "Dee Pak");
     await addMessage(dee!.id, "copied");
     check("a copied message also keeps them on the list", await rejects(() => removeProspectForUser(USER, dee!.id), "already been contacted"));
+
+    const mia = await prospectNamed(campId, "李明");
+    await addMessage(mia!.id, "opened");
+    check("a legacy opened message keeps them on the list", await rejects(() => removeProspectForUser(USER, mia!.id), "already been contacted"));
+    const fang = await prospectNamed(campId, "王芳");
+    await addMessage(fang!.id, "unsure");
+    check("a may-have-sent message keeps them on the list", await rejects(() => removeProspectForUser(USER, fang!.id), "already been contacted"));
+    check("…and skipping them again does the same", await rejects(() => skipCandidateForUser(USER, campId, { fullName: "李明", company: "ZS" }), "already been contacted"));
 
     console.log("email");
     check("a bad address is refused", await rejects(() => setProspectEmailForUser(USER, fay!.id, "not an email"), "doesn’t look right") && await rejects(() => setProspectEmailForUser(USER, fay!.id, "a@example.com"), "doesn’t look right"));
@@ -248,6 +260,30 @@ async function main() {
 
     const boContact = await ensureProspectContactForUser(USER, bo!.id, OPTS);
     check("a linked contact is returned as is", boContact === bo!.contactId);
+
+    // A contact Orbit already knows is used as is: blanks filled, nothing overwritten.
+    await addProspectsForUser(USER, campId, [{ fullName: "Jo Kim", company: "Acme", title: "VP", origin: "manual" }]);
+    const jo = await prospectNamed(campId, "Jo Kim");
+    const [joContact] = await db
+      .insert(schema.contacts)
+      .values({ userId: USER, fullName: "Jo Kim", company: "Acme", title: "Director", source: "linkedin_import" })
+      .returning();
+    check("Jo was added before the contact existed", jo?.contactId === null);
+    const joId = await ensureProspectContactForUser(USER, jo!.id, OPTS);
+    const joNow = await contactById(joId);
+    check("a contact found at send time is the one used", joId === joContact!.id && (await prospectNamed(campId, "Jo Kim"))?.contactId === joId);
+    check("…and keeps its title and source", joNow?.title === "Director" && joNow?.source === "linkedin_import", `${joNow?.title} / ${joNow?.source}`);
+
+    const [kaiContact] = await db.insert(schema.contacts).values({ userId: USER, fullName: "Kai Moss", company: "Orbitz" }).returning();
+    await addProspectsForUser(USER, campId, [{ fullName: "Kai Moss", company: "Orbitz", origin: "manual" }]);
+    const kai = await prospectNamed(campId, "Kai Moss");
+    check("Kai is linked at add time, with no email to borrow", kai?.contactId === kaiContact!.id && kai?.email === null);
+    await setProspectEmailForUser(USER, kai!.id, "kai@orbitz.org");
+    check("a linked contact with no email gains the typed one", (await ensureProspectContactForUser(USER, kai!.id, OPTS)) === kaiContact!.id && (await contactById(kaiContact!.id))?.email === "kai@orbitz.org");
+
+    await setProspectEmailForUser(USER, bo!.id, "bo.li@other.org");
+    await ensureProspectContactForUser(USER, bo!.id, OPTS);
+    check("a linked contact's own email is never overwritten", (await contactById(bo!.contactId))?.email === "bo@iqvia.com");
 
     console.log("tenancy and the cap");
     check("other tenant's campaign refused", await rejects(() => addProspectsForUser(USER, otherCamp!.id, [{ fullName: "Di Ho", company: "ZS", origin: "manual" }]), "isn’t yours"));

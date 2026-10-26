@@ -1,7 +1,6 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, outreachCampaigns, outreachMessages, outreachProspects } from "@/db/schema";
-import { normalizeCompanyKey } from "@/lib/company-name";
 import { findConfidentDuplicate, resolveOrCreateContact } from "@/lib/contact-resolve";
 import { updateContactForUser, type ContactWriteOptions } from "@/lib/contact-writes";
 import { linkedinSlug } from "@/lib/duplicates";
@@ -23,8 +22,12 @@ const MAX_PER_CALL = 10;
 const LINKEDIN_RE = /^https:\/\/([a-z]{2,3}\.)?linkedin\.com\/in\/[A-Za-z0-9\-_%]{2,100}\/?$/;
 const EMAIL_RE = /^[^\s@"<>():]+@[^\s@"<>():]+$/;
 const BRIEF_KEY_RE = /^[0-9a-f]{64}$/;
-/** Messages that mean Orbit (or the person) already reached out. */
-const CONTACTED = ["queued", "sent", "copied"];
+/**
+ * Messages that mean Orbit (or the person) already reached out. `opened` is a delivered
+ * status on legacy rows; `unsure` (Task 5) means "may have sent". Plain strings: neither is
+ * in `OutreachMessageStatus` yet, and the column is free text.
+ */
+const CONTACTED = ["queued", "sent", "copied", "opened", "unsure"];
 /** Messages that tie an email thread to the address it went to. */
 const EMAILED = ["queued", "sent"];
 
@@ -34,9 +37,25 @@ const ALREADY_CONTACTED = "They’ve already been contacted, so they stay on the
 
 /* ------------------------------------------------------------------ keys + shape ----- */
 
+/**
+ * `normalizeCompanyKey` for people: the same folding, but Unicode-aware. That one is ASCII-only
+ * (warm paths rely on it), so "李明" and "王芳" both become "" and "José" becomes "jos". Here
+ * accents are stripped and any letter or digit in any script is kept. ASCII input comes out
+ * exactly as `normalizeCompanyKey` has it.
+ */
+function normalizePersonKey(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /** The name-and-company key two spellings of one person share, whatever else is known about them. */
 export function prospectNameKey(p: { fullName: string; company: string | null }): string {
-  return `name:${normalizeCompanyKey(p.fullName)}|${normalizeCompanyKey(p.company ?? "")}`;
+  return `name:${normalizePersonKey(p.fullName)}|${normalizePersonKey(p.company ?? "")}`;
 }
 
 /** `li:<slug>` when there is a LinkedIn `/in/` URL, else the name key. Unique per campaign. */
@@ -380,8 +399,11 @@ export async function attachBriefForUser(userId: string, prospectId: string, res
 /**
  * The contact behind a prospect, created if it doesn't exist yet. Called when a message is
  * about to go out, so a campaign never fills the address book with people nobody contacted.
- * A confident brief saves the contact (and its work history) the way "Save to Orbit" does;
- * otherwise the prospect's own details are resolved against the address book.
+ *
+ * Someone Orbit already knows is used as is: only their blank email and LinkedIn URL are
+ * filled in, never overwritten, and their source and history are left alone. Only a genuinely
+ * new person is created, through a confident brief when there is one (the way "Save to Orbit"
+ * does) and otherwise from the prospect's own details.
  */
 export async function ensureProspectContactForUser(
   userId: string,
@@ -389,14 +411,27 @@ export async function ensureProspectContactForUser(
   opts?: ContactWriteOptions
 ): Promise<string> {
   const prospect = await requireOwnProspect(userId, prospectId);
-  if (prospect.contactId) return prospect.contactId;
-
-  const key = (prospect.enrichment as ProspectEnrichment | null)?.researchKey;
-  let contactId: string | null = null;
-  if (key && (await loadResearchedPerson(userId, key))?.match === "confident") {
-    contactId = (await saveResearchedPersonForUser(userId, key, opts))?.contactId ?? null;
-  }
   const email = cleanEmail(prospect.email);
+  const linkedinUrl = linkedinSlug(prospect.linkedinUrl) ? prospect.linkedinUrl : null;
+
+  let contactId = prospect.contactId;
+  if (!contactId) {
+    contactId =
+      (
+        await findConfidentDuplicate(userId, {
+          fullName: prospect.fullName,
+          company: prospect.company ?? undefined,
+          email: email ?? undefined,
+          linkedinUrl: linkedinUrl ?? undefined,
+        })
+      )?.contact.id ?? null;
+  }
+  if (!contactId) {
+    const key = (prospect.enrichment as ProspectEnrichment | null)?.researchKey;
+    if (key && (await loadResearchedPerson(userId, key))?.match === "confident") {
+      contactId = (await saveResearchedPersonForUser(userId, key, opts))?.contactId ?? null;
+    }
+  }
   if (!contactId) {
     ({ contactId } = await resolveOrCreateContact(
       userId,
@@ -406,7 +441,7 @@ export async function ensureProspectContactForUser(
         title: prospect.title ?? undefined,
         location: prospect.location ?? undefined,
         email: email ?? undefined,
-        linkedinUrl: prospect.linkedinUrl ?? undefined,
+        linkedinUrl: linkedinUrl ?? undefined,
         source: "outreach",
       },
       { source: "outreach", ...opts }
@@ -416,9 +451,15 @@ export async function ensureProspectContactForUser(
   const db = await getDb();
   const contact = await db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
-    columns: { email: true },
+    columns: { email: true, linkedinUrl: true },
   });
-  if (email && contact && !contact.email) await updateContactForUser(userId, contactId, { email }, opts);
-  await db.update(outreachProspects).set({ contactId, updatedAt: new Date() }).where(eq(outreachProspects.id, prospect.id));
+  const blanks = {
+    ...(email && !contact?.email ? { email } : {}),
+    ...(linkedinUrl && !contact?.linkedinUrl ? { linkedinUrl } : {}),
+  };
+  if (contact && Object.keys(blanks).length) await updateContactForUser(userId, contactId, blanks, opts);
+  if (contactId !== prospect.contactId) {
+    await db.update(outreachProspects).set({ contactId, updatedAt: new Date() }).where(eq(outreachProspects.id, prospect.id));
+  }
   return contactId;
 }
