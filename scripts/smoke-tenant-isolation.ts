@@ -39,9 +39,13 @@ import {
   events,
   interactions,
   memoryChunks,
+  recommendations,
+  recruiters,
   reminders,
+  userRecruiterLinks,
   webhookEndpoints,
 } from "../src/db/schema";
+import { setSurfaceComingSoon } from "../src/lib/surface-visibility";
 import { ORBIT_TOOLS } from "../src/lib/tools/definitions";
 import { isToolError, runTool, type ToolSurface } from "../src/lib/tools/registry";
 import { createAgentSendRequest } from "../src/lib/agent-sends";
@@ -155,13 +159,29 @@ run(async () => {
     });
     const [vOrbitEvent] = await db.insert(events).values({ userId: VICTIM, title: "VICTIM-EVENT", startsAt: soon, endsAt: soon }).returning();
     const [vAttendee] = await db.insert(eventAttendees).values({ eventId: vOrbitEvent.id, userId: VICTIM, fullName: "VICTIM-ATTENDEE", contactId: vContact.id, identityKey: `xt-v-${randomUUID()}` }).returning();
-    await db.insert(contactOpportunities).values({ userId: VICTIM, contactId: vContact.id, kind: "referral", label: "VICTIM-OPPORTUNITY" } as never);
+    const [vOpportunity] = await db.insert(contactOpportunities).values({ userId: VICTIM, contactId: vContact.id, kind: "referral", label: "VICTIM-OPPORTUNITY" } as never).returning();
     const [vCampaign] = await db.insert(outreachCampaigns).values({ userId: VICTIM, name: "VICTIM-CAMPAIGN" }).returning();
     const [aCampaign] = await db.insert(outreachCampaigns).values({ userId: ATTACKER, name: "ATTACKER-CAMPAIGN" }).returning();
     await db.insert(emailSends).values(sendRow(VICTIM, vContact.id, "VICTIM-EMAIL") as never);
     const [aOrbitEvent] = await db.insert(events).values({ userId: ATTACKER, title: "ATTACKER-EVENT", startsAt: soon, endsAt: soon }).returning();
     const [aAttendee] = await db.insert(eventAttendees).values({ eventId: aOrbitEvent.id, userId: ATTACKER, fullName: "ATTACKER-ATTENDEE", contactId: aContact.id, identityKey: `xt-a-${randomUUID()}` }).returning();
-    await db.insert(contactOpportunities).values({ userId: ATTACKER, contactId: aContact.id, kind: "referral", label: "ATTACKER-OPPORTUNITY" } as never);
+    const [aOpportunity] = await db.insert(contactOpportunities).values({ userId: ATTACKER, contactId: aContact.id, kind: "referral", label: "ATTACKER-OPPORTUNITY" } as never).returning();
+    const recRow = (userId: string, contactId: string) => ({
+      userId,
+      contactId,
+      kind: "reconnect" as const,
+      score: 50,
+      bucket: "today" as never,
+      expiresAt: new Date(Date.now() + 7 * 86_400_000),
+      inputsHash: `xt-${userId}`,
+    });
+    const [vRecommendation] = await db.insert(recommendations).values(recRow(VICTIM, vContact.id)).returning();
+    const [aRecommendation] = await db.insert(recommendations).values(recRow(ATTACKER, aContact.id)).returning();
+    // Recruiters are shared rows; what is the user's own is their link to one.
+    const [vRecruiter] = await db.insert(recruiters).values({ fullName: "VICTIM-RECRUITER", nameNormalized: "victim-recruiter", createdByUserId: VICTIM }).returning();
+    const [aRecruiter] = await db.insert(recruiters).values({ fullName: "ATTACKER-RECRUITER", nameNormalized: "attacker-recruiter", createdByUserId: ATTACKER }).returning();
+    await db.insert(userRecruiterLinks).values({ userId: VICTIM, recruiterId: vRecruiter.id, status: "active", notes: "VICTIM-NOTES" });
+    await db.insert(userRecruiterLinks).values({ userId: ATTACKER, recruiterId: aRecruiter.id });
     await db.insert(emailSends).values(sendRow(ATTACKER, aContact.id, "ATTACKER-EMAIL") as never);
 
     /** Everything B owns that a tool could touch, read back in full. */
@@ -261,6 +281,50 @@ run(async () => {
     t.check(
       "add_tags: B's contact carries no tag A tried to add",
       (await db.select().from(contactTags).where(eq(contactTags.contactId, vContact.id))).length === 0
+    );
+
+    // …and the Phase 2b writes it gained after. Each commit refuses B's id on its own, since MCP
+    // has no proposal scope. Outreach and recruiters are paid features and radar and outreach
+    // can ship closed, so A is comped and the two pages released for this block only.
+    await db.execute(sql`
+      INSERT INTO user_settings (user_id, comped_plan, comped_at) VALUES (${ATTACKER}, 'max', now())
+      ON CONFLICT (user_id) DO UPDATE SET comped_plan = 'max', comped_at = now()
+    `);
+    await setSurfaceComingSoon("smoke-tenant-isolation", "page.radar", false);
+    await setSurfaceComingSoon("smoke-tenant-isolation", "page.outreach", false);
+    try {
+      refused("create_opportunity", await call("create_opportunity", { contactId: vContact.id, kind: "referral", label: "planted" }), "Contact not found");
+      control("create_opportunity", await call("create_opportunity", { contactId: aContact.id, kind: "referral", label: "own" }), (r) => (r as { done: boolean }).done);
+      refused("update_opportunity", await call("update_opportunity", { opportunityId: vOpportunity.id, label: "pwned" }), "gone");
+      control("update_opportunity", await call("update_opportunity", { opportunityId: aOpportunity.id, label: "ATTACKER-OPPORTUNITY 2" }), (r) => (r as { done: boolean }).done);
+      refused("set_opportunity_status", await call("set_opportunity_status", { opportunityId: vOpportunity.id, status: "dismissed" }), "gone");
+      control("set_opportunity_status", await call("set_opportunity_status", { opportunityId: aOpportunity.id, status: "landed" }), (r) => (r as { done: boolean }).done);
+      refused("snooze_recommendation", await call("snooze_recommendation", { recommendationId: vRecommendation.id, length: "1w" }), "moved on");
+      control("snooze_recommendation", await call("snooze_recommendation", { recommendationId: aRecommendation.id, length: "1w" }), (r) => (r as { done: boolean }).done);
+      refused("schedule_recommendation", await call("schedule_recommendation", { recommendationId: vRecommendation.id, days: 7 }), "moved on");
+      refused("update_campaign", await call("update_campaign", { campaignId: vCampaign.id, name: "pwned" }), "gone");
+      control("update_campaign", await call("update_campaign", { campaignId: aCampaign.id, tone: "direct" }), (r) => (r as { done: boolean }).done);
+      refused("update_recruiter_link", await call("update_recruiter_link", { recruiterId: vRecruiter.id, notes: "pwned" }), "haven’t logged");
+      control("update_recruiter_link", await call("update_recruiter_link", { recruiterId: aRecruiter.id, status: "contacted" }), (r) => (r as { done: boolean }).done);
+      t.check(
+        "update_recruiter_link: MCP cannot archive, even on A's own link",
+        isToolError(await call("update_recruiter_link", { recruiterId: aRecruiter.id, status: "archived" }))
+      );
+    } finally {
+      await setSurfaceComingSoon("smoke-tenant-isolation", "page.radar", true);
+      await setSurfaceComingSoon("smoke-tenant-isolation", "page.outreach", true);
+    }
+    const [vOppAfter, vRecAfter, vCampaignAfter, vLinkAfter] = await Promise.all([
+      db.query.contactOpportunities.findFirst({ where: eq(contactOpportunities.id, vOpportunity.id) }),
+      db.query.recommendations.findFirst({ where: eq(recommendations.id, vRecommendation.id) }),
+      db.query.outreachCampaigns.findFirst({ where: eq(outreachCampaigns.id, vCampaign.id) }),
+      db.query.userRecruiterLinks.findFirst({ where: and(eq(userRecruiterLinks.userId, VICTIM), eq(userRecruiterLinks.recruiterId, vRecruiter.id)) }),
+    ]);
+    t.check(
+      "B's opportunity, radar card, campaign and recruiter link are untouched",
+      vOppAfter?.label === "VICTIM-OPPORTUNITY" && vOppAfter.status === "open" && vRecAfter?.status === "pending" &&
+        vCampaignAfter?.name === "VICTIM-CAMPAIGN" && vLinkAfter?.notes === "VICTIM-NOTES" && vLinkAfter.status === "active",
+      JSON.stringify({ o: vOppAfter?.label, r: vRecAfter?.status, c: vCampaignAfter?.name, l: vLinkAfter?.notes })
     );
 
     // request_send with B's contact: the draft is A's own and is staged, but must not be linked to B's row.

@@ -90,6 +90,21 @@ them on the same terms as everything else here:
   user spoke to at one. Same validation and ownership checks as a confirmed chat card; on MCP
   they run directly, as MCP writes always have. The catalog's deletes and `remove_tags` are
   not offered, and `create_event` has no link field — Orbit fetches no page an agent names.
+- **Phase 5 added the feature writes that neither remove nor send:** add a goal; create an
+  opportunity, edit it or move its status; act on or snooze a radar card; change an outreach
+  campaign's wording; and change the user's own status, rating or notes on a recruiter. MCP
+  has no proposal scope, so each commit refuses an id that is not the caller's on its own
+  (`smoke-tenant-isolation` covers every one). A write behind a page follows the page, like
+  the reads: radar, outreach and recruiters writes are offered only once that page is
+  released. Left in chat, where a person confirms each card:
+  - every delete and removal, including dismissing a radar card, discarding a meeting and
+    replacing the schools list;
+  - the email draft and every outreach write that touches a message, since those messages'
+    bodies never leave Orbit;
+  - logging a new recruiter, because it can add to the directory other accounts share;
+  - archiving a recruiter (MCP's schema has no `archived` status);
+  - the meeting writes, since no MCP read returns a meeting's id;
+  - radar autopilot, because settings always ask a person.
 
 ## What is deliberately absent
 

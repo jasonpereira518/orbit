@@ -562,36 +562,107 @@ export function touchesIdentity(write: ChatWrite, input: Record<string, unknown>
 
 /* ------------------------------------------------------------ the MCP face ----- */
 
+/** How one catalog write is offered over MCP. */
+type McpWriteFace = {
+  /** What an outside agent reads: it says where each id comes from, since there is no proposal scope. */
+  description: string;
+  /** The page this write belongs to; MCP lists the tool only once that page is released. */
+  releasedSurface?: string;
+  /** A narrower schema than chat's, where chat's would let an agent do something MCP never does. */
+  inputSchema?: OrbitTool["inputSchema"];
+};
+
 /**
  * The catalog writes an outside agent may make over MCP that it could not before (`docs/mcp-vision.md`:
  * read broadly, write carefully, never delete), with the descriptions an agent reads. They run
- * the catalog's own commit — same validation, same ownership checks — directly, as MCP writes
- * always have; nothing here proposes. Left out: every delete and `remove_tags` (MCP never
- * removes anything — `smoke-mcp-server` holds that line), the writes MCP
- * already has under its own tools (`log_interaction`, `update_contact`, `create_reminder`,
- * `complete_reminder`, `snooze_reminder`, `schedule_follow_up`, `create_contact`), and
- * `complete_action_item`, since no MCP read returns an action item's id.
+ * the catalog's own commit — same validation, same ownership, entitlement and page checks —
+ * directly, as MCP writes always have; nothing here proposes. Each one's ids come from an MCP
+ * read, and each commit refuses an id that is not the caller's on its own, since MCP has no
+ * proposal scope.
+ *
+ * Left out:
+ * - every delete and removal: `delete_*`, `remove_tags`, `remove_goal`, `discard_meeting`,
+ *   `dismiss_recommendation`, and `set_schools`, which replaces the whole list (MCP never removes
+ *   anything — `smoke-mcp-server` holds that line);
+ * - `draft_email`, which only opens Orbit's own send dialog, and every outreach write that touches
+ *   a message (`update_outreach_draft`, `log_outreach_outcome`): their ids come from
+ *   `list_outreach_messages`, which carries message bodies and so stays in chat;
+ * - `log_recruiter`, which can add to the recruiter directory other accounts share;
+ * - the meeting writes, since no MCP read returns a meeting's id (transcripts stay in chat);
+ * - `set_radar_autopilot`: settings always ask a person;
+ * - the writes MCP already has under its own tools (`log_interaction`, `update_contact`,
+ *   `create_reminder`, `complete_reminder`, `snooze_reminder`, `schedule_follow_up`,
+ *   `create_contact`), and `complete_action_item`, since no MCP read returns an action item's id.
  */
-const MCP_WRITE_DESCRIPTIONS: Record<string, string> = {
-  add_tags: "Add up to 5 tags to one of the user's contacts, by contactId. A tag the user does not have yet is created.",
-  reschedule_reminder:
-    "Move one of the user's reminders (reminderId from list_reminders) to a day in the next year, as YYYY-MM-DD.",
-  create_event:
-    "Add an event the user is going to or went to: title, day (YYYY-MM-DD), venue and city. There is no link field: " +
-    "Orbit does not fetch pages an agent names.",
-  mark_spoke_to:
-    "Mark that the user spoke to people at one of their events, by eventId and the attendeeIds get_event_roster returned.",
+const MCP_WRITES: Record<string, McpWriteFace> = {
+  add_tags: { description: "Add up to 5 tags to one of the user's contacts, by contactId. A tag the user does not have yet is created." },
+  reschedule_reminder: {
+    description: "Move one of the user's reminders (reminderId from list_reminders) to a day in the next year, as YYYY-MM-DD.",
+  },
+  create_event: {
+    description:
+      "Add an event the user is going to or went to: title, day (YYYY-MM-DD), venue and city. There is no link field: " +
+      "Orbit does not fetch pages an agent names.",
+  },
+  mark_spoke_to: {
+    description: "Mark that the user spoke to people at one of their events, by eventId and the attendeeIds get_event_roster returned.",
+  },
+  add_goal: {
+    description: "Add one goal to the user's list of what they are working toward (at most 200 characters). get_goals shows the list.",
+  },
+  create_opportunity: {
+    description:
+      "Track an opportunity on one of the user's contacts (contactId from search_contacts): its kind, a short label, " +
+      "optionally its direction (they_offer: they can help the user; you_ask: the user is asking them) and a due day (YYYY-MM-DD).",
+  },
+  update_opportunity: {
+    description: "Change an opportunity's kind, label, direction or due day, by its id from list_opportunities.",
+  },
+  set_opportunity_status: {
+    description: "Move an opportunity (id from list_opportunities) to open, in_progress, landed, passed or dismissed.",
+  },
+  schedule_recommendation: {
+    description:
+      "Act on one of radar's suggestions (id from list_radar_cards) by scheduling a follow-up reminder with that person " +
+      "in 3, 7 or 14 days.",
+    releasedSurface: "page.radar",
+  },
+  snooze_recommendation: {
+    description: "Snooze one of radar's suggestions (id from list_radar_cards) for a week (1w) or a month (1m).",
+    releasedSurface: "page.radar",
+  },
+  update_campaign: {
+    description:
+      "Change an outreach campaign's name, message intent, reply call to action or tone (id from list_campaigns). " +
+      "Never its audience, status or schedule, and nothing is sent.",
+    releasedSurface: "page.outreach",
+  },
+  update_recruiter_link: {
+    description:
+      "Change the user's own status (planned, contacted, active), rating (1–5) or notes for a recruiter they have logged " +
+      "(recruiterId from list_my_recruiters).",
+    releasedSurface: "page.recruiters",
+    // Chat may archive one; MCP never archives.
+    inputSchema: {
+      recruiterId: z.string().uuid(),
+      status: z.enum(["planned", "contacted", "active"]).optional(),
+      personal_rating: z.number().int().min(1).max(5).optional(),
+      notes: z.string().max(2000).optional(),
+    },
+  },
 };
 
-export const MCP_CHAT_WRITE_TOOLS: readonly OrbitTool[] = CHAT_WRITES.filter((w) => w.name in MCP_WRITE_DESCRIPTIONS).map(
-  (write): OrbitTool => ({
+export const MCP_CHAT_WRITE_TOOLS: readonly OrbitTool[] = CHAT_WRITES.filter((w) => w.name in MCP_WRITES).map((write): OrbitTool => {
+  const face = MCP_WRITES[write.name];
+  return {
     name: write.name,
     title: write.title,
-    description: MCP_WRITE_DESCRIPTIONS[write.name],
-    inputSchema: write.inputSchema,
+    description: face.description,
+    inputSchema: face.inputSchema ?? write.inputSchema,
     surfaces: ["mcp"],
     scope: "write",
     resultLabel: null,
+    ...(face.releasedSurface ? { releasedSurface: face.releasedSurface } : {}),
     async run(userId, args: Record<string, unknown>) {
       try {
         const out = await write.commit(userId, args, { messageId: "mcp", actionId: randomUUID() });
@@ -601,5 +672,5 @@ export const MCP_CHAT_WRITE_TOOLS: readonly OrbitTool[] = CHAT_WRITES.filter((w)
         throw err;
       }
     },
-  })
-);
+  };
+});

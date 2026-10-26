@@ -246,6 +246,14 @@ run(async () => {
     tools.join(",")
   );
   check("a write key sees the write tools", tools.includes("log_interaction") && tools.includes("create_contact"), tools.join(","));
+  // So do the page-gated writes: radar and outreach ship as coming soon, so their writes are not
+  // offered either, while an ungated catalog write is.
+  check(
+    "a write behind a page not yet released to the user is not offered",
+    !tools.includes("snooze_recommendation") && !tools.includes("schedule_recommendation") && !tools.includes("update_campaign") &&
+      tools.includes("create_opportunity") && tools.includes("add_goal"),
+    tools.join(",")
+  );
 
   // --- Scope: a read-only key must not be offered write tools ---------------------------------
   const readListed = await rpc(readKey, "tools/list");
