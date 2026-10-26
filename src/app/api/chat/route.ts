@@ -2,14 +2,13 @@ import { NextResponse } from "next/server";
 import { chatMessages, type ChatRecommendation } from "@/db/schema";
 import { discardCountAfter, NotLastTurnError, resolveVersionTarget, truncateAfter } from "@/lib/chat-versions";
 import { getDb } from "@/db";
-import { chatWithNetworkStream, completeJsonOn } from "@/lib/ai";
+import { completeJsonOn } from "@/lib/ai";
 import { resolveAiAccess, type AiAccess } from "@/lib/ai-access";
 import { requireAuthenticatedUser, type AuthenticatedUser } from "@/lib/auth";
 import { buildChatBlocks, prepareChatContext } from "@/lib/chat-context";
 import { expandLists, peopleIdsIn, stripInvalidDirectives } from "@/lib/chat-directives";
-import { answerDeadlineMs, maybeGather } from "@/lib/chat-gather";
 import { rollBackApplied } from "@/lib/chat-auto-apply";
-import { answerWithLookups, chatLoopEnabled, type ChatAgentRun } from "@/lib/chat-agent-loop";
+import { answerDeadlineMs, answerWithLookups } from "@/lib/chat-agent-loop";
 import { isHandle } from "@/lib/meeting-context";
 import { CHAT_QUESTION_TOO_LONG_MESSAGE, isChatQuestionTooLong } from "@/lib/chat-question";
 import { discardEmptyThread, discardUnansweredQuestion, persistAssistantTurn, trackChatAnswerFailed } from "@/lib/chat-persist";
@@ -19,7 +18,6 @@ import { formatSse, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
 import { labelAnswer } from "@/lib/chat-abstention";
 import { citedIds, stripUnresolvedMarkers } from "@/lib/chat-evidence";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
-import { proposalsFromAnswerTail } from "@/lib/tools/chat-proposals";
 import { friendlyError } from "@/lib/errors";
 import { traced } from "@/lib/perf-trace";
 import { isPaywallError } from "@/lib/entitlements";
@@ -47,8 +45,8 @@ export const maxDuration = 60;
  * retrieval onwards arrives as an `error` event, because the status line is long gone.
  */
 export async function POST(request: Request) {
-  // The research step budgets against this, not against its own start: retrieval has
-  // already spent part of `maxDuration` by the time it runs.
+  // The answer's deadlines count from here, not from its own start: retrieval has already
+  // spent part of `maxDuration` by the time it runs.
   const requestStartedAt = Date.now();
   let userId: string;
   let settings: AuthenticatedUser["settings"];
@@ -151,7 +149,7 @@ export async function POST(request: Request) {
       try {
         // The account's AI access, resolved ONCE for the whole question from the row the
         // auth gate already read — the decider, query embedding, parse, rerank, writing
-        // notes, research, answer and title all used to re-read `user_settings` for it.
+        // notes, answer and title all used to re-read `user_settings` for it.
         // Only the read is shared: every model call still mints its own grant, which is
         // where the managed allowance is checked. Undefined if the open fails, and then
         // each call resolves its own, exactly as before.
@@ -206,24 +204,9 @@ export async function POST(request: Request) {
         const titlePromise =
           threadId && !ctx.thread?.title ? generateChatTitle(userId, ctx.q, completeJsonOn(ctx.access)) : null;
 
-        // Behind CHAT_LOOP_V2 the answer looks things up itself (`@/lib/chat-agent-loop`), so
-        // there is no separate research step. Otherwise one retrieval answers most questions,
-        // and the ones whose shape says it cannot — what was discussed and when, a path to
-        // someone, a follow-up that refers back — get a bounded research loop first. See
-        // `routeFromParsed` and `gatherEvidence`.
-        const loop = chatLoopEnabled();
-        const { evidence, notePassages, named, research } = loop
-          ? {
-              evidence: null,
-              notePassages: ctx.notePassages ?? [],
-              named: [] as Array<{ id: string; name: string }>,
-              research: null,
-            }
-          : await maybeGather(userId, ctx, { requestStartedAt, signal: request.signal, steps });
-
         // What the answer's `::people` / `::list` blocks may show, before its first word, so
-        // a block renders the moment its line arrives. Built after research, which can add
-        // people the answer may name. `let`: a lookup mid-answer can find someone too, and the
+        // a block renders the moment its line arrives. `let`: a lookup mid-answer can find
+        // someone, and the
         // blocks are resent so a `::people` line naming them renders and survives
         // `stripInvalidDirectives` below.
         let blocks = buildChatBlocks(ctx);
@@ -239,69 +222,28 @@ export async function POST(request: Request) {
           const safe = redactor.push(delta);
           if (safe) send({ type: "answer", delta: safe });
         };
-        const result = loop
-          ? await traced(
-              "chat.stream",
-              () =>
-                answerWithLookups(userId, ctx, {
-                  onDelta,
-                  requestStartedAt,
-                  signal: request.signal,
-                  deadlineSignal,
-                  steps,
-                  notePassages,
-                  onEvidence: (all) => {
-                    if (Object.keys(all).length) send({ type: "evidence", items: all });
-                  },
-                  onPeopleAdded: () => {
-                    blocks = buildChatBlocks(ctx);
-                    send({ type: "blocks", blocks });
-                  },
-                  // Cards appear as the loop drafts them, not only once the answer is done.
-                  onProposed: (items) => send({ type: "actions", items }),
-                }),
-              { userId }
-            )
-          : await traced(
-              "chat.stream",
-              () =>
-                chatWithNetworkStream(
-                  userId,
-                  ctx.scopedQuestion,
-                  ctx.modelContacts,
-                  ctx.priorTurns,
-                  ctx.orgRosters,
-                  ctx.attention,
-                  ctx.modelRecruiters,
-                  onDelta,
-                  ctx.focusProfile,
-                  ctx.attachedContext,
-                  {
-                    signal: request.signal,
-                    // A slow answer is cut here, inside `maxDuration`, so it ends as an `error` event
-                    // rather than the platform killing the function mid-stream. Separate from
-                    // `request.signal`, which the catch below reads to mean the person pressed Stop.
-                    deadlineSignal,
-                    goals: ctx.goals,
-                    attentionLite: ctx.attentionLite,
-                    evidence,
-                    notePassages,
-                    writingPreferences: ctx.writingInstructions,
-                    calendar: ctx.calendar?.text ?? null,
-                    openReminders: ctx.openReminders,
-                    commitments: ctx.commitments ?? null,
-                    events: ctx.events ?? null,
-                    userSchools: ctx.userSchools,
-                    access: ctx.access,
-                    // Every id the prompt minted, so `[eN]` becomes a chip as it streams. The cited
-                    // subset replaces this once the answer is done.
-                    onEvidence: (all) => {
-                      if (Object.keys(all).length) send({ type: "evidence", items: all });
-                    },
-                  }
-                ),
-            { userId }
-          );
+        const result = await traced(
+          "chat.stream",
+          () =>
+            answerWithLookups(userId, ctx, {
+              onDelta,
+              requestStartedAt,
+              signal: request.signal,
+              deadlineSignal,
+              steps,
+              notePassages: ctx.notePassages ?? [],
+              onEvidence: (all) => {
+                if (Object.keys(all).length) send({ type: "evidence", items: all });
+              },
+              onPeopleAdded: () => {
+                blocks = buildChatBlocks(ctx);
+                send({ type: "blocks", blocks });
+              },
+              // Cards appear as the loop drafts them, not only once the answer is done.
+              onProposed: (items) => send({ type: "actions", items }),
+            }),
+          { userId }
+        );
         const tail = redactor.flush();
         if (tail) send({ type: "answer", delta: tail });
         steps.done("answer", { label: "Wrote the answer" });
@@ -357,11 +299,8 @@ export async function POST(request: Request) {
         send({ type: "recommendations", items: recommendations });
         if (cited.length > 0) send({ type: "evidence", items: citedEvidence });
 
-        // Never a chat tool call, never executed here — only stored, for a person to confirm
-        // from the transcript. See `@/lib/chat-proposed-actions` and the rule at the top of
-        // `src/lib/mcp/server.ts`, which this mirrors on the chat surface's own output.
-        // A JSON tail that did not parse used to mean zero cards and zero actions with no trace
-        // anywhere. The answer still stands; this only makes the loss visible.
+        // A JSON tail (recruiter recommendations) that did not parse used to mean zero cards
+        // with no trace anywhere. The answer still stands; this only makes the loss visible.
         if (result.parseError) {
           reportError(new Error(`chat answer JSON did not parse: ${result.parseError}`), {
             where: "chat.stream.recommendations",
@@ -369,12 +308,10 @@ export async function POST(request: Request) {
             level: "warning",
           });
         }
-        // The loop's proposals come from its change tools, already validated against the ids
-        // the turn saw (`@/lib/tools/chat-proposals`); the one-pass answer's from its JSON tail.
-        const proposedActions: StoredProposedAction[] = [
-          ...("proposals" in result ? (result.proposals as StoredProposedAction[]) : []),
-          ...proposalsFromAnswerTail(result.proposedActions, ctx.allowedContacts, ctx.contactNames, ctx.reminderTitles),
-        ];
+        // Never executed here unless the person's auto-apply setting allowed it — otherwise only
+        // stored, for a person to confirm from the transcript. Each came from a chat write the
+        // loop called, already checked against the ids the turn saw (`@/lib/tools/chat-proposals`).
+        const proposedActions: StoredProposedAction[] = result.proposals;
         if (proposedActions.length > 0) send({ type: "actions", items: proposedActions });
 
         // A beat for a title that is nearly there, never longer: if it is not ready the thread
@@ -406,9 +343,8 @@ export async function POST(request: Request) {
               : undefined,
           metrics: {
             durationMs: Date.now() - requestStartedAt,
-            // The research step's rounds, or the loop's rounds that looked something up (all
-            // but the last, which writes the answer).
-            toolRounds: research?.rounds ?? ("run" in result ? Math.max(0, (result.run as ChatAgentRun).rounds - 1) : 0),
+            // The rounds that looked something up: all but the last, which writes the answer.
+            toolRounds: Math.max(0, result.run.rounds - 1),
           },
         }).catch(async (err) => {
           await rollBackApplied(userId, proposedActions);
@@ -426,11 +362,11 @@ export async function POST(request: Request) {
             question: ctx.q,
             topRosterCompany: ctx.orgRosters[0]?.name ?? null,
             firstOverdueName: ctx.attention?.overdue[0]?.name ?? null,
-            // Prep: the meeting's person, not the search's top hit. Never a handle ("calvintwong25").
-            topContactName:
-              (ctx.route?.prep
-                ? named.find((n) => !isHandle(n.name))?.name
-                : [ctx.retrieved[0]?.preferredName || ctx.retrieved[0]?.fullName].find((n) => n && !isHandle(n))) ?? null,
+            // Never for prep: the search's top hit is not the meeting's person. Never a handle
+            // ("calvintwong25").
+            topContactName: ctx.route?.prep
+              ? null
+              : ([ctx.retrieved[0]?.preferredName || ctx.retrieved[0]?.fullName].find((n) => n && !isHandle(n)) ?? null),
           }),
           retrieved: ctx.retrieved.map((c) => ({
             id: c.id,

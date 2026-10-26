@@ -56,38 +56,16 @@ async function main() {
   check("retrieval lives in chat-context.ts, not re-inlined in the action", !actionSrc.includes("hybridSearchContacts"));
   check("askNetwork delegates to prepareChatContext", actionSrc.includes("prepareChatContext"));
 
-  // Both new chatWithNetwork/chatWithNetworkStream parameters are optional-with-default,
-  // so a call site that simply omits the argument compiles clean and silently reverts that
-  // path to no focused profile — exactly the streaming/action divergence prepareChatContext
-  // exists to prevent. tsc cannot catch a missing trailing optional, so this is a real gap
-  // to guard structurally, the same way the checks above guard the rest of the pipeline.
-  const actionCall = extractCall(actionSrc, "chatWithNetwork");
-  check("the chatWithNetwork call site exists in the action", actionCall.length > 0, actionSrc);
-  check(
-    "askNetwork passes ctx.focusProfile to chatWithNetwork",
-    actionCall.includes("ctx.focusProfile"),
-    actionCall
-  );
-  // Same trailing-optional hole, and a costlier one: an omitted writing-preferences argument
-  // silently makes one of the two chat paths ignore the user's notes.
-  check(
-    "askNetwork passes ctx.writingInstructions to chatWithNetwork",
-    actionCall.includes("ctx.writingInstructions"),
-    actionCall
-  );
-
-  const routeCall = extractCall(routeSrc, "chatWithNetworkStream");
-  check("the chatWithNetworkStream call site exists in the streaming route", routeCall.length > 0, routeSrc);
-  check(
-    "the streaming route passes ctx.focusProfile to chatWithNetworkStream",
-    routeCall.includes("ctx.focusProfile"),
-    routeCall
-  );
-  check(
-    "the streaming route passes ctx.writingInstructions to chatWithNetworkStream",
-    routeCall.includes("ctx.writingInstructions"),
-    routeCall
-  );
+  // Both chat paths answer through one function, so they cannot drift: the route and the
+  // action each call `answerWithLookups`, and its prompt is built from the WHOLE context in one
+  // place (`promptArgsFromContext`), which a call site cannot leave an argument out of.
+  const loopSrc = readFileSync("src/lib/chat-agent-loop.ts", "utf8");
+  check("askNetwork answers through answerWithLookups", extractCall(actionSrc, "answerWithLookups").length > 0, actionSrc);
+  check("the streaming route answers through answerWithLookups", extractCall(routeSrc, "answerWithLookups").length > 0, routeSrc);
+  const promptArgs = loopSrc.slice(loopSrc.indexOf("export function promptArgsFromContext("));
+  check("the answer's prompt carries ctx.focusProfile", promptArgs.includes("ctx.focusProfile"));
+  // A missing writing-preferences argument would silently make the answer ignore the user's notes.
+  check("the answer's prompt carries ctx.writingInstructions", promptArgs.includes("ctx.writingInstructions"));
 
   // The action module must remain a valid "use server" file (async exports only).
   const exportsNonAsync = /export (function|const|let|var) /.test(actionSrc);

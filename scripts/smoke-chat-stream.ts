@@ -68,8 +68,8 @@ function main() {
 
   r = run([`Ada.\n${RECOMMENDATIONS_MARKER}\n{"proposed_actions":[{"kind":"create_reminder"}]}`]);
   check(
-    "a tail with only proposed_actions (people now sit in the prose) parses without an error",
-    r.result.recommendations.length === 0 && r.result.proposedActions.length === 1 && !r.result.parseError,
+    "a stray proposed_actions tail (the old format) parses as no recommendations, without an error, and proposes nothing",
+    r.result.recommendations.length === 0 && !r.result.parseError && !("proposedActions" in r.result),
     JSON.stringify(r.result)
   );
   r = run([`Ada.\n${RECOMMENDATIONS_MARKER}\n{"recommendations":"nope"}`]);
@@ -82,15 +82,15 @@ function main() {
   check("an object wrapping the array is tolerated", r.result.recommendations.length === 1);
 
   // The model sometimes drops the marker's leading dashes; the tail must still never reach the prose.
-  const ACTION = `{"recommendations":[], "proposed_actions":[{"kind":"log_interaction","contact_id":"c1","text":"Say hi"}]}`;
+  const ACTION = `{"recommendations":[${RECS.slice(1, -1)}]}`;
   r = run([`Ask about NVIDIA.\n\nRECOMMENDATIONS--- ${ACTION}`]);
   check("a marker without leading dashes, JSON on the same line, is split", r.emitted.join("") === "Ask about NVIDIA.\n\n", JSON.stringify(r.emitted));
-  check("its proposed action is parsed", r.result.proposedActions.length === 1 && !r.result.parseError, JSON.stringify(r.result));
+  check("its recommendation is parsed", r.result.recommendations.length === 1 && !r.result.parseError, JSON.stringify(r.result));
   check("the finished answer carries no marker or JSON", r.result.answer === "Ask about NVIDIA.");
 
   r = run(["Ask about NVIDIA.\nRECOMM", "ENDATIONS--", "-\n", ACTION.slice(0, 30), ACTION.slice(30)]);
   check("a dash-less marker split across chunks never leaks", r.emitted.join("") === "Ask about NVIDIA.\n", JSON.stringify(r.emitted));
-  check("and the JSON after it has no stray dash", r.result.proposedActions.length === 1 && !r.result.parseError, JSON.stringify(r.result));
+  check("and the JSON after it has no stray dash", r.result.recommendations.length === 1 && !r.result.parseError, JSON.stringify(r.result));
 
   r = run(["Ask about NVIDIA.\n", RECOMMENDATIONS_MARKER]);
   check("a stream that ends on the marker drops it from the prose", r.result.answer === "Ask about NVIDIA." && r.emitted.join("") === "Ask about NVIDIA.\n", JSON.stringify(r));

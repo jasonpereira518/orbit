@@ -11,17 +11,14 @@ import {
   meetingTranscriptSegments,
   type ChatRecommendation,
 } from "@/db/schema";
-import { chatWithNetwork } from "@/lib/ai";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { requireUserId } from "@/lib/auth";
 import { prepareChatContext } from "@/lib/chat-context";
-import { maybeGather } from "@/lib/chat-gather";
 import { labelAnswer } from "@/lib/chat-abstention";
 import { rollBackApplied } from "@/lib/chat-auto-apply";
-import { answerWithLookups, chatLoopEnabled } from "@/lib/chat-agent-loop";
+import { answerWithLookups } from "@/lib/chat-agent-loop";
 import { citedIds, stripUnresolvedMarkers } from "@/lib/chat-evidence";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
-import { proposalsFromAnswerTail } from "@/lib/tools/chat-proposals";
 import {
   buildChatSuggestions,
   GENERIC_SUGGESTIONS,
@@ -410,40 +407,10 @@ async function askNetworkInner(
       askedMessageId = userRow?.id ?? null;
     }
 
-    // The same routing as the streaming route, so the two paths cannot answer differently:
-    // behind CHAT_LOOP_V2 the answer looks things up itself, otherwise research decides first.
-    // Tool rounds for the metrics row: the research step's, or the loop's rounds that looked
-    // something up (every round but the last, which writes the answer).
-    let toolRounds = 0;
-    const result = chatLoopEnabled()
-      ? await answerWithLookups(userId, ctx, { onDelta: () => {}, requestStartedAt }).then((r) => {
-          toolRounds = Math.max(0, r.run.rounds - 1);
-          return r;
-        })
-      : await answerOnePass();
-    async function answerOnePass() {
-      const { evidence, notePassages, research } = await maybeGather(userId, ctx, { requestStartedAt });
-      toolRounds = research?.rounds ?? 0;
-      return chatWithNetwork(
-        userId,
-        ctx.scopedQuestion,
-        ctx.modelContacts,
-        ctx.priorTurns,
-        ctx.orgRosters,
-        ctx.attention,
-        ctx.modelRecruiters,
-        ctx.focusProfile,
-        ctx.attachedContext,
-        ctx.goals,
-        ctx.attentionLite,
-        evidence,
-        notePassages,
-        ctx.writingInstructions,
-        ctx.openReminders ?? null,
-        ctx.calendar?.text ?? null,
-        { commitments: ctx.commitments ?? null, events: ctx.events ?? null }
-      );
-    }
+    // The same answer as the streaming route (`answerWithLookups`), with nothing to stream to.
+    const result = await answerWithLookups(userId, ctx, { onDelta: () => {}, requestStartedAt });
+    // The rounds that looked something up: every round but the last, which writes the answer.
+    const toolRounds = Math.max(0, result.run.rounds - 1);
     const recommendations = ctx.filterRecommendations(
       (result.recommendations || []) as ChatRecommendation[]
     );
@@ -452,10 +419,7 @@ async function askNetworkInner(
     const validIds = new Set(Object.keys(result.evidence));
     const { text: cleanAnswer } = stripUnresolvedMarkers(result.answer, validIds);
     const citedEvidence = Object.fromEntries(citedIds(cleanAnswer).map((id) => [id, result.evidence[id]]));
-    const proposedActions: StoredProposedAction[] = [
-      ...("proposals" in result ? (result.proposals as StoredProposedAction[]) : []),
-      ...proposalsFromAnswerTail(result.proposedActions, ctx.allowedContacts, ctx.contactNames, ctx.reminderTitles),
-    ];
+    const proposedActions: StoredProposedAction[] = result.proposals;
 
     // A turn that applied changes itself and then failed to save would leave them with no card
     // to undo from (`@/lib/chat-auto-apply`), so they are put back.

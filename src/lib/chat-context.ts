@@ -39,8 +39,7 @@ import {
 import { openDecider, type Decider } from "@/lib/decisions/jev";
 import { gateRosters, routeFromParsed, type ChatRoute, type PriorTurn } from "@/lib/decisions/chat-route";
 import { findOrgRosters, type OrgRoster } from "@/lib/chat-roster";
-import { factLane, filterLane, personLane } from "@/lib/chat-lanes";
-import type { NotePassage } from "@/lib/chat-gather";
+import { factLane, filterLane, personLane, type NotePassage } from "@/lib/chat-lanes";
 import type { ChatBlocks } from "@/lib/chat-directives";
 import { attachPhotos, createPhotoCache, type PhotoCache } from "@/lib/chat-photos";
 import { describeArms, NULL_STEPS, plural, toRefs, type StepEmitter } from "@/lib/chat-steps";
@@ -158,8 +157,7 @@ export type ChatContext = {
    * The user's active networking goals, newest first.
    *
    * Trusted text: the user typed these into their own settings, so unlike notes and profile
-   * prose they are not fenced as untrusted in the prompt. The `goals` argument of
-   * `chatWithNetwork`.
+   * prose they are not fenced as untrusted in the prompt. The `goals` prompt argument.
    */
   goals: string[];
   /** `user_settings.schools`, so "my school" means something in the answer too. Trusted, like goals. */
@@ -190,26 +188,25 @@ export type ChatContext = {
    * afford and is exempt from the retrieval budget.
    */
   attachedPeople: AttachedPerson[];
-  /** The `attachedContext` argument of `chatWithNetwork` — the block above, as text. */
+  /** The `attachedContext` prompt argument (`ChatPromptArgs`) — the block above, as text. */
   attachedContext: string | null;
   /**
-   * How this question was routed — depth (one lookup or research), whether the attention
-   * brief and the recruiter list loaded — and which engine decided. `maybeGather` reads the
-   * depth from here instead of re-deciding it. Optional so hand-built contexts in tests work.
+   * How this question was routed — its shape, whether the attention brief and the recruiter
+   * list loaded — and which engine decided. Optional so hand-built contexts in tests work.
    */
   route?: ChatRoute;
   /**
    * Passages from the notes (and meetings) the fact lane found for a fact question, or for a
-   * person question once the name resolved. `maybeGather` hands them to the answer, with any
-   * the research step adds. Optional so hand-built contexts in tests work.
+   * person question once the name resolved, handed to the answer as citable passages.
+   * Optional so hand-built contexts in tests work.
    */
   notePassages?: NotePassage[];
   /** Contacts the model may recommend: budgeted-in, on a roster, or in the attention brief. */
   allowedContacts: Set<string>;
-  /** A name for every id in `allowedContacts` — the names proposal cards are written with (`proposalsFromAnswerTail`). */
+  /** A name for every id in `allowedContacts` — the names proposal cards are written with. */
   contactNames: Map<string, string>;
   allowedRecruiters: Set<string>;
-  /** The `contactsContext` argument of `chatWithNetwork`. */
+  /** The `contactsContext` prompt argument (`ChatPromptArgs`). */
   modelContacts: BudgetedContact[];
   /**
    * The user's reminders across views — counts, then the nearest open ones by id — or null
@@ -226,7 +223,7 @@ export type ChatContext = {
   commitmentIds?: Map<string, string>;
   /** Ids the events section shows, id → title — what a chat write may name. */
   eventIds?: Map<string, string>;
-  /** The `recruitersContext` argument of `chatWithNetwork`. */
+  /** The `recruitersContext` prompt argument (`ChatPromptArgs`). */
   modelRecruiters: Array<{
     id: string;
     fullName: string;

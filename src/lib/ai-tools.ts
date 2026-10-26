@@ -17,8 +17,8 @@
  * rounds to run lives in `@/lib/chat-tool-loop` and never sees any of it — which is also what
  * makes the loop testable with a fake driver and no key.
  *
- * Non-streaming on purpose: nothing a gather round writes is shown to the user. The answer
- * that IS shown is written afterwards by `chatWithNetworkStream`, unchanged.
+ * A round is one plain call unless `onText` is given; the chat answer loop
+ * (`@/lib/chat-agent-loop`) streams its rounds, since their prose is the answer.
  */
 import { z, type ZodRawShape } from "zod";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -114,10 +114,15 @@ type DriverInput = {
   /**
    * Stream each round: the model's prose is handed here as it arrives, and the round's tool
    * calls are returned once its stream ends. For the chat answer loop
-   * (`@/lib/chat-agent-loop`), whose prose IS the answer. Absent, a round is one plain call,
-   * as the research step has always used it.
+   * (`@/lib/chat-agent-loop`), whose prose IS the answer. Absent, a round is one plain call.
    */
   onText?: (delta: string) => void;
+  /**
+   * The caller walking away (the person pressed Stop), as distinct from a deadline. A round
+   * aborted by this is filed as `cancelled`; one cut by any other part of its signal — the
+   * answer's deadline — as the timeout it is. Absent, any abort of the round is `cancelled`.
+   */
+  cancelSignal?: AbortSignal;
 };
 
 /**
@@ -169,7 +174,7 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
     runOnGrant(
       grant,
       withUsage(usage, (report) => translatingProviderErrors(aiProviderLabel(provider), () => work(report)), {
-        cancelSignal: signal,
+        cancelSignal: input.cancelSignal ?? signal,
       })
     );
 

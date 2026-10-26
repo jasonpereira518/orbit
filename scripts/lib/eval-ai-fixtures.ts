@@ -145,11 +145,11 @@ export type ChatEvalFixture = {
      */
     mustAbstain?: boolean;
     /**
-     * CHAT_LOOP_V2 only: the answer must propose a change through one of these chat writes
+     * The answer must propose a change through one of these chat writes
      * (@/lib/tools/chat-writes) — a card, never a write. Scored as `proposalAccuracy`.
      */
     mustPropose?: string[];
-    /** CHAT_LOOP_V2 only: a question, not a request — the answer must propose nothing. */
+    /** A question, not a request — the answer must propose nothing. */
     mustNotPropose?: boolean;
   }>;
   /**

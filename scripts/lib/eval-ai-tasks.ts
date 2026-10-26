@@ -28,7 +28,6 @@ import {
   userGoals,
 } from "../../src/db/schema";
 import { labelAnswer } from "../../src/lib/chat-abstention";
-import type { StoredProposedAction } from "../../src/lib/chat-proposed-actions";
 import { saveChatAutoApplyFor } from "../../src/lib/chat-auto-apply";
 import { chatWriteNamed, runUndo, type UndoStep } from "../../src/lib/tools/chat-writes";
 import { citedIds } from "../../src/lib/chat-evidence";
@@ -57,8 +56,6 @@ import { resolveMentions } from "../../src/lib/mention-resolution";
 import { parseProfileFields } from "../../src/lib/extension/parse-profile";
 import type { PageContext } from "../../src/lib/extension/contract";
 import {
-  chatWithNetwork,
-  chatWithNetworkStream,
   completeJson,
   parseAiJson,
   transcribeAudioWithAI,
@@ -68,8 +65,7 @@ import { deepgramConfigured, transcribeFile as transcribeDeepgramFile } from "..
 import { loadNetworkVocabulary } from "../../src/lib/transcription-vocabulary";
 import { peopleIdsIn } from "../../src/lib/chat-directives";
 import { prepareChatContext } from "../../src/lib/chat-context";
-import { maybeGather } from "../../src/lib/chat-gather";
-import { answerWithLookups, chatLoopEnabled } from "../../src/lib/chat-agent-loop";
+import { answerWithLookups } from "../../src/lib/chat-agent-loop";
 import { runEmbeddingBackfill } from "../../src/lib/embedding-backfill";
 import { loadPassageFixture, seedPassageNotes } from "./eval-passage-notes";
 import { rebuildContactEmbeddingsBatch } from "../../src/lib/search";
@@ -1509,9 +1505,9 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
     );
   }
   if (chatFixture.records) await seedChatRecords(userId, network, chatFixture.records);
-  // EVAL_CHAT_AUTO_APPLY=1 (with CHAT_LOOP_V2=1): the person's auto-apply setting on, so the
-  // write cases also score which changes chat made itself (`@/lib/chat-auto-apply`).
-  const autoApplyOn = chatLoopEnabled() && process.env.EVAL_CHAT_AUTO_APPLY === "1";
+  // EVAL_CHAT_AUTO_APPLY=1: the person's auto-apply setting on, so the write cases also score
+  // which changes chat made itself (`@/lib/chat-auto-apply`).
+  const autoApplyOn = process.env.EVAL_CHAT_AUTO_APPLY === "1";
   await saveChatAutoApplyFor(userId, autoApplyOn);
   const answered = tally();
   const retrieved = tally();
@@ -1522,7 +1518,7 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
   const proposedRight = tally();
   /** With auto-apply on: auto-tier changes applied, confirm-tier ones left as cards. */
   const autoAppliedRight = tally();
-  /** CHAT_LOOP_V2: lookups per answer (read tools only — a proposed change is not a lookup). */
+  /** Lookups per answer (read tools only — a proposed change is not a lookup). */
   const lookupsPerCase: number[] = [];
   const listed = tally();
   const counted = tally();
@@ -1550,51 +1546,15 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
         const requestStartedAt = Date.now();
         const ctx = await prepareChatContext(userId, c.question, { threadId });
         let firstAt: number | null = null;
-        if (chatLoopEnabled()) {
-          // CHAT_LOOP_V2: the production path is the answer loop, lookups and all.
-          const looped = await answerWithLookups(userId, ctx, {
-            onDelta: () => {
-              firstAt ??= Date.now();
-            },
-            requestStartedAt,
-          });
-          if (firstAt !== null && looped.run.calls.length === 0) firstTokenMs.push(firstAt - requestStartedAt);
-          lookupsPerCase.push(looped.run.calls.filter((c) => !chatWriteNamed(c.call.name)).length);
-          return { ctx, result: looped };
-        }
-        // The research round runs here as it does in production (the route), so this task's
-        // cost and latency include it — and a routing change shows up in both.
-        const { evidence, notePassages, depth } = await maybeGather(userId, ctx, { requestStartedAt });
-        // The streaming call the route makes, so time to first token is measured on the real path.
-        const result = await chatWithNetworkStream(
-          userId,
-          ctx.scopedQuestion,
-          ctx.modelContacts,
-          ctx.priorTurns,
-          ctx.orgRosters,
-          ctx.attention,
-          ctx.modelRecruiters,
-          () => {
+        // The production path: the answer loop, lookups and all.
+        const result = await answerWithLookups(userId, ctx, {
+          onDelta: () => {
             firstAt ??= Date.now();
           },
-          ctx.focusProfile,
-          ctx.attachedContext,
-          {
-            goals: ctx.goals,
-            attentionLite: ctx.attentionLite,
-            evidence,
-            notePassages,
-            writingPreferences: ctx.writingInstructions,
-            // Every section production sends — see the route — so a case about a reminder,
-            // a commitment, an event or a meeting is scored on what the model really sees.
-            openReminders: ctx.openReminders ?? null,
-            commitments: ctx.commitments ?? null,
-            events: ctx.events ?? null,
-            calendar: ctx.calendar?.text ?? null,
-            userSchools: ctx.userSchools,
-          }
-        );
-        if (firstAt !== null && depth.depth === "single") firstTokenMs.push(firstAt - requestStartedAt);
+          requestStartedAt,
+        });
+        if (firstAt !== null && result.run.calls.length === 0) firstTokenMs.push(firstAt - requestStartedAt);
+        lookupsPerCase.push(result.run.calls.filter((c) => !chatWriteNamed(c.call.name)).length);
         return { ctx, result };
       });
       // People placed as `::people` cards count as named, exactly like the old JSON tail's
@@ -1621,14 +1581,13 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
         falseAbstentions++;
         why.push("said it did not know");
       }
-      if (chatLoopEnabled() && (c.mustPropose?.length || c.mustNotPropose)) {
-        const tools = ("proposals" in result ? (result.proposals as StoredProposedAction[]) : []).map((p) => p.args.tool);
+      if (c.mustPropose?.length || c.mustNotPropose) {
+        const tools = result.proposals.map((p) => p.args.tool);
         const ok = c.mustNotPropose ? tools.length === 0 : tools.some((t) => c.mustPropose!.includes(t));
         count(proposedRight, ok);
         if (!ok) why.push(c.mustNotPropose ? `proposed ${tools.join(", ")} for a question` : `proposed ${tools.join(", ") || "nothing"}, wanted ${c.mustPropose!.join(" or ")}`);
         if (autoApplyOn) {
-          const cards = "proposals" in result ? (result.proposals as StoredProposedAction[]) : [];
-          for (const card of cards) {
+          for (const card of result.proposals) {
             const right = card.tier === "auto" ? card.status === "done" : card.status === "proposed";
             count(autoAppliedRight, right);
             if (!right) why.push(`${card.args.tool} (${card.tier}) was ${card.status}`);
@@ -1677,7 +1636,7 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
       if (c.expectCount !== undefined) count(counted, false);
       if (c.expectPerson) count(resolved, false);
       if (c.mustAbstain) count(abstainedRight, false);
-      if (chatLoopEnabled() && (c.mustPropose?.length || c.mustNotPropose)) count(proposedRight, false);
+      if (c.mustPropose?.length || c.mustNotPropose) count(proposedRight, false);
       for (let i = 0; i < (c.mustSay?.length ?? 0); i++) count(said, false);
       log(`  FAIL chat/${c.id} — ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -1784,11 +1743,10 @@ async function seedChatRecords(
 }
 
 /**
- * Whole answers to questions one retrieval cannot answer — the research step's job.
+ * Whole answers to questions one retrieval cannot answer: the answer must look things up.
  *
- * Runs the production path end to end, in order: retrieval, the depth decision, the research
- * loop, the answer, the recommendation filter. Routing is scored the moment it is decided,
- * so a case whose answer then fails still says whether it went to the right path.
+ * Runs the production path end to end, in order: retrieval, the answer loop with its lookups,
+ * the recommendation filter. "Routing" is whether a research case made a lookup.
  *
  * Clears its user before AND after: the chat task seeds the same network into the same user,
  * and neither may see the other's rows when both run in one invocation.
@@ -1802,7 +1760,7 @@ export async function runResearchTask({ userId, limit, log }: RunOpts): Promise<
     loadPassageFixture(FIXTURE_DIR),
     new Map([...network].map(([email, c]) => [email, c.id]))
   );
-  // Passages embedded through the real drain, so the research step's search_notes has its
+  // Passages embedded through the real drain, so the answer's search_notes has its
   // meaning arm. Without an embedding key it runs on words, and says so.
   await runEmbeddingBackfill(userId).catch((err) =>
     log(`  (passage embeddings unavailable: ${err instanceof Error ? err.message : String(err)})`)
@@ -1833,51 +1791,15 @@ export async function runResearchTask({ userId, limit, log }: RunOpts): Promise<
         }
       }
 
-      const { ctx, gathered, result } = await timed(latenciesMs, async () => {
+      const { ctx, run, result } = await timed(latenciesMs, async () => {
         const ctx = await prepareChatContext(userId, c.question, { threadId });
-        if (chatLoopEnabled()) {
-          // CHAT_LOOP_V2: no separate research step; the answer looks things up itself. A
-          // research case is routed right when the answer made at least one lookup; a
-          // one-pass case is never wrong for looking (the cost shows in meanLookups).
-          const looped = await answerWithLookups(userId, ctx, { onDelta: () => {}, requestStartedAt: Date.now() });
-          const lookupsMade = looped.run.calls.filter((call) => call.ok).length;
-          routedOk = c.expectDepth === "research" ? lookupsMade > 0 : true;
-          const gathered = {
-            depth: { depth: lookupsMade > 0 ? ("research" as const) : ("single" as const), reason: "answer loop" },
-            evidence: null,
-            notePassages: ctx.notePassages ?? [],
-            named: [] as Array<{ id: string; name: string }>,
-            research: {
-              rounds: looped.run.rounds,
-              lookups: lookupsMade,
-              stoppedBy: looped.run.stoppedBy,
-              contactsFound: 0,
-            },
-          };
-          return { ctx, gathered, result: looped };
-        }
-        const gathered = await maybeGather(userId, ctx, { requestStartedAt: Date.now() });
-        routedOk = gathered.depth.depth === c.expectDepth;
-        const result = await chatWithNetwork(
-          userId,
-          ctx.scopedQuestion,
-          ctx.modelContacts,
-          ctx.priorTurns,
-          ctx.orgRosters,
-          ctx.attention,
-          ctx.modelRecruiters,
-          ctx.focusProfile,
-          ctx.attachedContext,
-          ctx.goals,
-          ctx.attentionLite,
-          gathered.evidence,
-          gathered.notePassages,
-          ctx.writingInstructions,
-          ctx.openReminders ?? null,
-          ctx.calendar?.text ?? null,
-          { commitments: ctx.commitments ?? null, events: ctx.events ?? null }
-        );
-        return { ctx, gathered, result };
+        // The answer looks things up itself. A research case is routed right when it made at
+        // least one lookup; a one-pass case is never wrong for looking (the cost shows in
+        // meanLookups).
+        const result = await answerWithLookups(userId, ctx, { onDelta: () => {}, requestStartedAt: Date.now() });
+        const lookupsMade = result.run.calls.filter((call) => call.ok).length;
+        routedOk = c.expectDepth === "research" ? lookupsMade > 0 : true;
+        return { ctx, run: { ...result.run, lookups: lookupsMade }, result };
       });
 
       const raw = (result.recommendations ?? []) as Array<{ contact_id?: string | null } & Record<string, unknown>>;
@@ -1902,10 +1824,8 @@ export async function runResearchTask({ userId, limit, log }: RunOpts): Promise<
       forbiddenHits += score.forbiddenHits;
       inventedContactIds += score.inventedIds;
       filteredRecommendations += score.filteredOut;
-      if (gathered.research) {
-        lookups.push(gathered.research.lookups);
-        rounds.push(gathered.research.rounds);
-      }
+      lookups.push(run.lookups);
+      rounds.push(run.rounds);
 
       const missed =
         !routedOk ||
@@ -1914,15 +1834,14 @@ export async function runResearchTask({ userId, limit, log }: RunOpts): Promise<
         score.forbiddenHits > 0 ||
         score.inventedIds > 0;
       if (missed) misses.push(c.id);
-      const research = gathered.research
-        ? ` — ${gathered.research.lookups} lookup(s), ${gathered.research.rounds} round(s), stopped: ${gathered.research.stoppedBy}`
-        : "";
+      const research = ` — ${run.lookups} lookup(s), ${run.rounds} round(s), stopped: ${run.stoppedBy}`;
+      const depth = run.lookups > 0 ? "research" : "single";
       // Say WHAT missed. A bare MISS on a one-off run leaves nothing to go on: the first
       // baseline had one, and whether it was the person, the fact or the routing could only
       // be guessed at afterwards.
       const why = missed
         ? [
-            !routedOk ? `routed ${gathered.depth.depth}, expected ${c.expectDepth}` : null,
+            !routedOk ? `routed ${depth}, expected ${c.expectDepth}` : null,
             ...people.flatMap((p, i) => (score.mentioned[i] ? [] : [`did not name ${p.fullName}`])),
             ...c.mustSay.flatMap((f, i) => (score.said[i] ? [] : [`did not say "${f}"`])),
             score.forbiddenHits ? `${score.forbiddenHits} unsupported claim(s)` : null,
@@ -1931,7 +1850,7 @@ export async function runResearchTask({ userId, limit, log }: RunOpts): Promise<
             .filter(Boolean)
             .join("; ")
         : "";
-      log(`  ${missed ? "MISS" : "ok  "} research/${c.id} [${gathered.depth.depth}]${research}${why ? ` — ${why}` : ""}`);
+      log(`  ${missed ? "MISS" : "ok  "} research/${c.id} [${depth}]${research}${why ? ` — ${why}` : ""}`);
       if (missed) log(`       answer: ${(result.answer ?? "").replace(/\s+/g, " ").slice(0, 300)}`);
     } catch (err) {
       misses.push(c.id);

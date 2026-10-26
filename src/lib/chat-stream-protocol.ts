@@ -28,14 +28,9 @@ export type RawRecommendation = {
   draft_message: string | null;
 };
 
-/** The one-pass answer's own shape for a proposal — bounded by `parseAnswerTail` (@/lib/chat-proposed-actions). */
-export type RawProposedAction = unknown;
-
 export type SplitResult = {
   answer: string;
   recommendations: RawRecommendation[];
-  /** Present when the model proposed an action. Unvalidated — see `@/lib/chat-proposed-actions`. */
-  proposedActions: RawProposedAction[];
   parseError?: string;
 };
 
@@ -94,7 +89,7 @@ export function createAnswerSplitter() {
       if (afterMarker === null) {
         prose += pending.replace(MARKER_AT_END_RE, "");
         pending = "";
-        return { answer: prose.trim(), recommendations: [], proposedActions: [] };
+        return { answer: prose.trim(), recommendations: [] };
       }
       const parsed = parseRecommendations(afterMarker);
       return { answer: prose.trim(), ...parsed };
@@ -102,18 +97,17 @@ export function createAnswerSplitter() {
   };
 }
 
-function parseRecommendations(raw: string): Pick<SplitResult, "recommendations" | "proposedActions" | "parseError"> {
+function parseRecommendations(raw: string): Pick<SplitResult, "recommendations" | "parseError"> {
   let text = raw.trim();
   // Tolerate a fenced block, and an object wrapping the array.
   text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-  if (!text) return { recommendations: [], proposedActions: [] };
+  if (!text) return { recommendations: [] };
   try {
     const value: unknown = JSON.parse(text);
-    // Both the bare array (recommendations only, the original shape) and the wrapper object
-    // (recommendations plus proposed_actions) are tolerated — a model that has not been asked
-    // for proposals, or answers a question with none, still parses the same way it always did.
-    // An object with only "proposed_actions" is the common case now that people are placed
-    // in the prose (`@/lib/chat-directives`): no recommendations, not a malformed list.
+    // Both the bare array (the original shape) and the wrapper object are tolerated. An object
+    // with no "recommendations" key — a stray "proposed_actions" from a model that remembers the
+    // old format, say — is no recommendations, not a malformed list; changes are proposed by
+    // calling a chat write, never written here, so anything else in the object is ignored.
     const wrapped = value && typeof value === "object" && !Array.isArray(value)
       ? (value as { recommendations?: unknown }).recommendations
       : undefined;
@@ -124,19 +118,14 @@ function parseRecommendations(raw: string): Pick<SplitResult, "recommendations" 
         : value && typeof value === "object" && wrapped === undefined
           ? []
           : null;
-    if (!list) return { recommendations: [], proposedActions: [], parseError: "recommendations is not an array" };
-    const proposedActions =
-      value && typeof value === "object" && Array.isArray((value as { proposed_actions?: unknown }).proposed_actions)
-        ? (value as { proposed_actions: unknown[] }).proposed_actions
-        : [];
+    if (!list) return { recommendations: [], parseError: "recommendations is not an array" };
     return {
       recommendations: list.filter(
         (r): r is RawRecommendation => Boolean(r) && typeof r === "object" && typeof (r as RawRecommendation).name === "string"
       ),
-      proposedActions,
     };
   } catch (err) {
-    return { recommendations: [], proposedActions: [], parseError: err instanceof Error ? err.message : String(err) };
+    return { recommendations: [], parseError: err instanceof Error ? err.message : String(err) };
   }
 }
 

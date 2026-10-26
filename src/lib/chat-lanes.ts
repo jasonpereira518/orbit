@@ -3,11 +3,29 @@ import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import type { ParsedQuery } from "@/lib/chat-retrieval";
 import type { OrgRoster } from "@/lib/chat-roster";
-import type { NotePassage } from "@/lib/chat-gather";
 import { plural, toRefs, type StepEmitter } from "@/lib/chat-steps";
 import { hybridSearchContacts, listContactsMatching } from "@/lib/hybrid-search";
 import { searchMeetingPassagesFor } from "@/lib/meetings-list";
 import { searchMemories } from "@/lib/memory-search";
+
+/**
+ * One passage about a single interaction or meeting, kept structured so the answer can cite
+ * it. Only interaction- and meeting-sourced passages: a note_batch or brief passage has no
+ * single dated event to cite and no page to deep-link to.
+ */
+export type NotePassage = {
+  sourceId: string;
+  contactId: string | null;
+  date: string | null;
+  snippet: string;
+  /** Omitted for an interaction (the original and still the common case). */
+  kind?: "interaction" | "meeting";
+  /** A meeting passage: when in the call it was said (null for its summary), and its title. */
+  startMs?: number | null;
+  title?: string | null;
+  /** Who an interaction passage is about, when that contact is still the user's. */
+  contactName?: string;
+};
 
 /**
  * The retrieval lanes the question's shape picks (see `QuestionShape`), run beside the
@@ -19,7 +37,7 @@ import { searchMemories } from "@/lib/memory-search";
  *  - person → `personLane`: the name resolved to one contact, who then gets the focused
  *    contact's deeper slice;
  *  - fact, and a resolved person → `factLane`: passages from the notes (and, for a fact,
- *    recorded meetings), cited like the research step's.
+ *    recorded meetings), each citable in the answer.
  *
  * Each lane narrates itself and never throws: a lane that fails leaves the answer to the
  * search, exactly as before the lanes existed.

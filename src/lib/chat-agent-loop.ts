@@ -1,10 +1,10 @@
 /**
  * The chat answer as one loop that can look things up while it writes.
  *
- * Before this, an answer was written in one pass from whatever retrieval had packed into the
- * prompt, and only questions the router sent to the research step (`@/lib/chat-gather`) ever
- * got a lookup — so a question worded in a way the router did not expect reached a model that
- * could not go and check, and the honest answer was "I don't know". Here the answer call itself
+ * It used to be written in one pass from whatever retrieval had packed into the prompt, with a
+ * separate research step for the questions a router picked — so a question worded in a way the
+ * router did not expect reached a model that could not go and check, and the honest answer was
+ * "I don't know". Here the answer call itself
  * holds Orbit's read tools: it streams prose, may stop to look something up, and carries on.
  * The prefetched sections stay in the prompt, so a question they cover still costs one round.
  *
@@ -19,12 +19,12 @@
  * SECURITY. Read tools only (`@/lib/tools/chat-executor`); nothing here writes, sends or
  * fetches a URL a model chose. Every result goes back to the model as data under the same
  * `UNTRUSTED_DATA_RULES` the answer's system prompt ends with, and the streamed prose passes
- * through the route's redactor and `guardChatAnswer` exactly as the one-pass answer did.
+ * through the route's redactor and `guardChatAnswer` before anything is stored.
  */
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
-import { buildChatPrompt, CHAT_STREAM_TAIL_LOOP, guardChatAnswer, type ChatPromptArgs } from "@/lib/ai";
+import { buildChatPrompt, CHAT_STREAM_TAIL, guardChatAnswer, type ChatPromptArgs } from "@/lib/ai";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 import { createProposalSink, proposerTools } from "@/lib/tools/chat-proposals";
 import { createAutoApplyGate, rollBackApplied, type AutoApplyGate } from "@/lib/chat-auto-apply";
@@ -44,15 +44,13 @@ import {
   executorFor,
   pastTense,
 } from "@/lib/tools/chat-executor";
-import { ANSWER_ENDS_BY_MS } from "@/lib/chat-gather";
 
-/**
- * Whether chat answers through this loop. Off unless `CHAT_LOOP_V2=1` until the chat and
- * research evals pass on it (docs/superpowers/plans/2026-10-19-chat-agent.md, Task 1.7);
- * until then the one-pass answer and the research step stay the default.
- */
-export function chatLoopEnabled(): boolean {
-  return process.env.CHAT_LOOP_V2 === "1";
+/** The answer stream is cut here, so it ends inside `maxDuration` (60s) with room left to persist. */
+export const ANSWER_ENDS_BY_MS = 55_000;
+
+/** Ms left for the answer stream. Floored at 1s: `AbortSignal.timeout` throws on a negative delay. */
+export function answerDeadlineMs(requestStartedAt: number, now = Date.now()): number {
+  return Math.max(1_000, requestStartedAt + ANSWER_ENDS_BY_MS - now);
 }
 
 /** Rounds include the last, tools-off one. Most answers need one round; a lookup makes two. */
@@ -61,7 +59,7 @@ export const AGENT_BOUNDS = { maxRounds: 4, maxCalls: 8, maxResultChars: 6_000 }
 export const LOOKUPS_END_BY_MS = 42_000;
 
 /**
- * What the answer is told about its tools. Appended to the one-pass system prompt, before the
+ * What the answer is told about its tools. Appended to the shared system prompt, before the
  * output format, so every grounding rule above it still holds.
  */
 export const AGENT_RULES = `
@@ -153,9 +151,11 @@ export async function runChatAgent(input: {
   if (outcome.stoppedBy === "done") {
     return { calls: outcome.calls, rounds: outcome.rounds, stoppedBy: "done", finishedWithoutTools: false };
   }
-  if (outcome.stoppedBy === "aborted") throw input.signal.reason ?? new Error("aborted");
+  // The provider's error when a round was cut (its "timed out" copy at the answer deadline),
+  // else the signal's reason.
+  if (outcome.stoppedBy === "aborted") throw outcome.error ?? input.signal.reason ?? new Error("aborted");
   // A provider failure before anything was looked up is the answer failing, not a lookup:
-  // surface it, as the one-pass answer would have.
+  // surface it as the error it is.
   if (outcome.stoppedBy === "error" && outcome.rounds === 0) throw outcome.error;
   await driver.step(input.signal, { noTools: true });
   return {
@@ -166,7 +166,7 @@ export async function runChatAgent(input: {
   };
 }
 
-/** The prompt arguments the route and `askNetwork` pass the one-pass answer, from the context. */
+/** The prompt arguments for an answer, from the context. */
 export function promptArgsFromContext(
   ctx: ChatContext,
   extra: { evidence: string | null; notePassages: ChatPromptArgs["notePassages"] }
@@ -194,10 +194,8 @@ export function promptArgsFromContext(
 }
 
 /**
- * The chat answer with lookups, for `/api/chat` and `askNetwork` behind `CHAT_LOOP_V2`.
- *
- * Same prompt as `chatWithNetworkStream`, same output format and guard; what differs is that
- * the model may call the read tools mid-answer. Contacts a lookup returns join
+ * The chat answer, for `/api/chat` and `askNetwork`: the shared prompt (`buildChatPrompt`),
+ * streamed, with the read tools available mid-answer and the chat writes as proposers. Contacts a lookup returns join
  * `ctx.allowedContacts` and `ctx.contactNames` (verified as this user's first), so they can be
  * shown as cards, recommended and named in a proposal like anyone retrieval found —
  * `onPeopleAdded` tells the caller to resend the blocks.
@@ -235,7 +233,7 @@ export async function answerWithLookups(
   const prompt = buildChatPrompt(
     promptArgsFromContext(ctx, { evidence: null, notePassages: options.notePassages ?? ctx.notePassages ?? [] })
   );
-  const system = `${prompt.systemCore}${AGENT_RULES}${WRITE_RULES}${CHAT_STREAM_TAIL_LOOP}`;
+  const system = `${prompt.systemCore}${AGENT_RULES}${WRITE_RULES}${CHAT_STREAM_TAIL}`;
   options.onEvidence?.(prompt.evidence);
 
   // Auto-apply (`@/lib/chat-auto-apply`): off unless the person switched it on, and off for the
@@ -282,6 +280,9 @@ export async function answerWithLookups(
       maxOutputTokens: 4096,
       access: options.access ?? ctx.access,
       onText,
+      // Only the person's Stop is a cancellation; the answer deadline cutting a round is a
+      // timeout. With no Stop to press, nothing is a cancellation.
+      cancelSignal: options.signal ?? new AbortController().signal,
     });
 
   const run = options.execute ?? executorFor(userId, tools, "chat.answer");
