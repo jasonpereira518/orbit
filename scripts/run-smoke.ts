@@ -375,6 +375,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-lanes": "pglite",
   "smoke-chat-citations": "pglite",
   "smoke-chat-actions": "pglite",
+  "smoke-chat-legacy-proposals": "pglite",
   "smoke-chat-writes": "pglite",
   "smoke-chat-auto-apply": "pglite",
   "smoke-chat-writes-features": "pglite",
