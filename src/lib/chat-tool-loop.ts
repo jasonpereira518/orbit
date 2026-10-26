@@ -46,6 +46,13 @@ export type ToolLoopOptions = {
   maxCalls: number;
   /** Absolute epoch ms. Gathering never runs past it. */
   deadline: number;
+  /**
+   * Absolute epoch ms a round already under way may run to, when that is later than
+   * `deadline`. For the answer loop, whose rounds stream the answer itself: no new lookup
+   * round starts after `deadline`, but a round that is writing must not be cut there — it runs
+   * to the answer's own deadline. Absent, a round is cut at `deadline`, as gathering always was.
+   */
+  roundDeadline?: number;
   /** The request's own signal — the user left. */
   signal?: AbortSignal;
   /** Per result sent back to the model, so one lookup cannot flood the conversation. */
@@ -84,9 +91,10 @@ export async function runToolLoop(
     // The round's own deadline, not the provider's default: a slow round must not borrow
     // from the time the answer needs. Combined with the caller's signal so a closed tab
     // stops the spend immediately.
+    const roundRemaining = Math.max(remaining, (options.roundDeadline ?? options.deadline) - now());
     const roundSignal = options.signal
-      ? AbortSignal.any([AbortSignal.timeout(remaining), options.signal])
-      : AbortSignal.timeout(remaining);
+      ? AbortSignal.any([AbortSignal.timeout(roundRemaining), options.signal])
+      : AbortSignal.timeout(roundRemaining);
 
     let step;
     try {

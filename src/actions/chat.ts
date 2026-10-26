@@ -17,6 +17,7 @@ import { requireUserId } from "@/lib/auth";
 import { prepareChatContext } from "@/lib/chat-context";
 import { maybeGather } from "@/lib/chat-gather";
 import { labelAnswer } from "@/lib/chat-abstention";
+import { answerWithLookups, chatLoopEnabled } from "@/lib/chat-agent-loop";
 import { citedIds, stripUnresolvedMarkers } from "@/lib/chat-evidence";
 import { validateProposedActions } from "@/lib/chat-proposed-actions";
 import {
@@ -407,28 +408,40 @@ async function askNetworkInner(
       askedMessageId = userRow?.id ?? null;
     }
 
-    // The same routing as the streaming route, so the two paths cannot answer differently.
-    const { evidence, notePassages, research } = await maybeGather(userId, ctx, { requestStartedAt });
-
-    const result = await chatWithNetwork(
-      userId,
-      ctx.scopedQuestion,
-      ctx.modelContacts,
-      ctx.priorTurns,
-      ctx.orgRosters,
-      ctx.attention,
-      ctx.modelRecruiters,
-      ctx.focusProfile,
-      ctx.attachedContext,
-      ctx.goals,
-      ctx.attentionLite,
-      evidence,
-      notePassages,
-      ctx.writingInstructions,
-      ctx.openReminders ?? null,
-      ctx.calendar?.text ?? null,
-      { commitments: ctx.commitments ?? null, events: ctx.events ?? null }
-    );
+    // The same routing as the streaming route, so the two paths cannot answer differently:
+    // behind CHAT_LOOP_V2 the answer looks things up itself, otherwise research decides first.
+    // Tool rounds for the metrics row: the research step's, or the loop's rounds that looked
+    // something up (every round but the last, which writes the answer).
+    let toolRounds = 0;
+    const result = chatLoopEnabled()
+      ? await answerWithLookups(userId, ctx, { onDelta: () => {}, requestStartedAt }).then((r) => {
+          toolRounds = Math.max(0, r.run.rounds - 1);
+          return r;
+        })
+      : await answerOnePass();
+    async function answerOnePass() {
+      const { evidence, notePassages, research } = await maybeGather(userId, ctx, { requestStartedAt });
+      toolRounds = research?.rounds ?? 0;
+      return chatWithNetwork(
+        userId,
+        ctx.scopedQuestion,
+        ctx.modelContacts,
+        ctx.priorTurns,
+        ctx.orgRosters,
+        ctx.attention,
+        ctx.modelRecruiters,
+        ctx.focusProfile,
+        ctx.attachedContext,
+        ctx.goals,
+        ctx.attentionLite,
+        evidence,
+        notePassages,
+        ctx.writingInstructions,
+        ctx.openReminders ?? null,
+        ctx.calendar?.text ?? null,
+        { commitments: ctx.commitments ?? null, events: ctx.events ?? null }
+      );
+    }
     const recommendations = ctx.filterRecommendations(
       (result.recommendations || []) as ChatRecommendation[]
     );
@@ -453,7 +466,7 @@ async function askNetworkInner(
         citedCount: Object.keys(citedEvidence).length,
         recommendedCount: recommendations.length,
       }),
-      metrics: { durationMs: Date.now() - requestStartedAt, toolRounds: research?.rounds ?? 0 },
+      metrics: { durationMs: Date.now() - requestStartedAt, toolRounds },
     });
 
     return {

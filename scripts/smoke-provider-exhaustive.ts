@@ -191,7 +191,7 @@ const ALLOWLIST: Record<string, string> = {
   // openrouter grant, throwing `No gemini grant` — fails closed, but breaks every chat
   // tool call for an OpenRouter user. Widened to isOpenAiShaped, same shape as ai.ts, so
   // only the anthropic arm's own literal is left for check 1 to find.
-  "src/lib/ai-tools.ts:131": OPENROUTER_ROUTED_AWAY + " (createToolDriver's anthropic arm; " +
+  "src/lib/ai-tools.ts:147": OPENROUTER_ROUTED_AWAY + " (createToolDriver's anthropic arm; " +
     "openai and openrouter both now take the isOpenAiShaped branch below, leaving only " +
     "Gemini as this arm's fallthrough.)",
   "src/lib/admin-metrics.ts:356": "the \"openai\" arm of the four-way ternary that now also " +

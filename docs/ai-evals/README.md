@@ -250,3 +250,25 @@ The cases were added with the Phase 0 chat changes (richer contact rows, reminde
 views, commitments and events in every prompt, the "look before you abstain" rule). The
 before/after baseline for them has not been recorded yet: run `chat` (and `--network large`)
 on `main` and on the branch with a key, and save both here.
+
+## The answer loop (`CHAT_LOOP_V2`, Phase 1)
+
+With `CHAT_LOOP_V2=1` the chat answers through `answerWithLookups`
+(`src/lib/chat-agent-loop.ts`): one streamed answer that can call Orbit's read tools mid-answer,
+with no separate research step. `chat` and `research` both run that path when the variable is
+set, so the same fixtures judge it:
+
+```bash
+for t in chat research; do
+  CHAT_LOOP_V2=1 npx tsx scripts/eval-ai.ts --keys-from .env.local --provider gemini \
+    --task "$t" --runs 3 --out "runs/loop/$t.json" &
+done; wait
+npx tsx scripts/eval-ai-report.ts docs/ai-evals/<phase-0-after> runs/loop
+```
+
+On the loop path, `research`'s `routingAccuracy` means "a research case made at least one
+lookup", and `meanLookups`/`meanRounds` count the loop's own lookups and rounds.
+
+The loop becomes the default only when, against the Phase 0 after-run: every gated metric holds;
+`meanLookups` ≤ 3.5; p50 latency is within +3 s; cost per case is within +60%. Run
+`--network large` too. Until then the flag stays off and the one-pass answer is what ships.
