@@ -57,6 +57,7 @@ function main() {
       title: "Deep Learning Summit",
       startsAt: new Date("2026-03-04T18:00:00Z"),
       endsAt: null,
+      timezone: null,
       venue: "Moscone",
       city: "San Francisco",
       url: null,
@@ -76,6 +77,13 @@ function main() {
     check("both counts are shown", attended.includes("6 of 40"), attended);
     check("a dateless event says so", text(React.createElement(EventCard, { event: { ...base, role: "attended" as const, startsAt: null } })).includes("Date not set"));
     check("a themed card renders without a cover", html(React.createElement(EventCard, { event: { ...base, role: "attended" as const } })).includes("linear-gradient"));
+    // A date typed with no time is stored as UTC midnight; the card must not slide it back a day.
+    const dayOnly = text(React.createElement(EventCard, { event: { ...base, role: "attended" as const, startsAt: new Date("2026-10-25T00:00:00.000Z") } }));
+    check("a date-only event shows its own day", dayOnly.includes("25"), dayOnly);
+    const nobody = { ...base, role: "attended" as const, connectedCount: 0 };
+    check("a past card with nobody logged offers the debrief", html(React.createElement(EventCard, { event: nobody, past: true })).includes(`/capture?eventId=${base.id}`));
+    check("an upcoming one does not", !html(React.createElement(EventCard, { event: nobody })).includes("/capture?eventId="));
+    check("nor a past one with people logged", !html(React.createElement(EventCard, { event: { ...base, role: "attended" as const }, past: true })).includes("/capture?eventId="));
   }
 
   console.log("\nnav and surface registration");

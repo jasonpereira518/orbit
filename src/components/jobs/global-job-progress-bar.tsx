@@ -10,7 +10,7 @@ import { toast } from "@/lib/toast";
 import { MeetingNudgeCard, useMeetingNudgeCard } from "@/components/capture/meeting-nudge";
 import { MeetingWidget } from "@/components/capture/meeting-widget";
 import { MeetingPrepCard, useMeetingPrepCard } from "@/components/calendar/meeting-prep-card";
-import { MeetingNoteCard, useMeetingNoteCard } from "@/components/calendar/meeting-note-card";
+import { EventNoteCard, MeetingNoteCard, useEventNoteCard, useMeetingNoteCard } from "@/components/calendar/meeting-note-card";
 import { useMeetingFlow } from "@/components/capture/meeting-session";
 import {
   dismissBackgroundJob,
@@ -44,7 +44,9 @@ export function GlobalJobProgressBar() {
   const showPrep = prep !== null;
   // After a meeting nobody recorded or wrote up: "How did it go?".
   const note = useMeetingNoteCard();
-  const showNote = note !== null;
+  // The morning after an event nobody has logged yet: "How was it?".
+  const eventNote = useEventNoteCard();
+  const showNote = note !== null || eventNote !== null;
 
   // Publish how much of the corner this widget occupies so the toast stack can
   // sit above it instead of painting over it. On <html>, because the toaster is
@@ -83,6 +85,7 @@ export function GlobalJobProgressBar() {
       role="status"
       aria-live="polite"
     >
+      {eventNote && <EventNoteCard offer={eventNote} />}
       {note && <MeetingNoteCard offer={note} />}
       {prep && <MeetingPrepCard offer={prep} />}
       {nudge && <MeetingNudgeCard snap={nudge} />}

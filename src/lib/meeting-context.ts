@@ -4,7 +4,7 @@
  * history and what is open, so the card costs nothing and the tool answers in one round.
  */
 import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, lt, ne, or, sql } from "drizzle-orm";
-import { getDb } from "@/db";
+import { getDb, rowsOf } from "@/db";
 import {
   actionItems,
   calendarEvents,
@@ -32,7 +32,7 @@ import { extractEventLinks, platformOf } from "@/lib/events/platforms";
 import { canonicalEventKey } from "@/lib/events/discovery/keys";
 import { combineResolutions, resolveAliases } from "@/lib/events/discovery/aliases";
 import type { AliasKey } from "@/lib/events/discovery/types";
-import { getEventForUser, listRosterForUser } from "@/lib/events/store";
+import { attendedEventFilter, getEventForUser, listRosterForUser } from "@/lib/events/store";
 import { whoToTalkTo, type WhoToTalkToRow } from "@/lib/events/who-to-talk-to";
 
 /** A stored name that is really an address handle: "", "dmcraver" for dmcraver@…, "calvintwong25". */
@@ -203,13 +203,14 @@ export type LinkedEvent = {
 };
 
 /**
- * Resolved through the same alias keys discovery wrote: the invite's own UID (`gcal:` from
- * Google, `ics:` from every other feed) and any event link in its location or agenda.
+ * The Event a calendar invite belongs to, by the same alias keys discovery wrote: the invite's
+ * own UID (`gcal:` from Google, `ics:` from every other feed) and any event link in its
+ * location or agenda. One small read; null when nothing links or the event was dismissed.
  */
-export async function linkedEventFor(
+export async function linkedEventIdFor(
   userId: string,
   e: Pick<CalendarEventRow, "icalUid" | "location" | "agenda">
-): Promise<LinkedEvent | null> {
+): Promise<string | null> {
   const keys: AliasKey[] = [];
   for (const href of extractEventLinks(`${e.location ?? ""}\n${e.agenda ?? ""}`, { max: 3 })) {
     const match = platformOf(href);
@@ -222,8 +223,17 @@ export async function linkedEventFor(
   }
   if (!keys.length) return null;
   const hit = combineResolutions(keys, await resolveAliases(userId, keys));
-  if (!hit.eventId || hit.dismissed) return null;
-  const record = await getEventForUser(userId, hit.eventId);
+  return hit.eventId && !hit.dismissed ? hit.eventId : null;
+}
+
+/** The linked Event with what meeting prep shows about it — see `linkedEventIdFor`. */
+export async function linkedEventFor(
+  userId: string,
+  e: Pick<CalendarEventRow, "icalUid" | "location" | "agenda">
+): Promise<LinkedEvent | null> {
+  const eventId = await linkedEventIdFor(userId, e);
+  if (!eventId) return null;
+  const record = await getEventForUser(userId, eventId);
   if (!record) return null;
   const roster = await listRosterForUser(userId, record.id);
   const ranked = roster.length ? await whoToTalkTo(userId, record, { limit: 5 }) : null;
@@ -592,12 +602,22 @@ const UNLOGGED_WITHIN_MS = 3 * 3_600_000;
 export async function lastUnloggedMeeting(
   userId: string,
   now: Date
-): Promise<{ eventId: string; title: string; endIso: string; people: string[] } | null> {
+): Promise<{
+  eventId: string;
+  title: string;
+  endIso: string;
+  people: string[];
+  /** The Event this meeting belongs to, so "Add a note" opens that event's debrief instead. */
+  debriefEventId: string | null;
+} | null> {
   const db = await getDb();
   const rows = await db
     .select({
       id: calendarEvents.id,
       providerEventId: calendarEvents.providerEventId,
+      icalUid: calendarEvents.icalUid,
+      location: calendarEvents.location,
+      agenda: calendarEvents.agenda,
       title: calendarEvents.title,
       startAt: calendarEvents.startAt,
       endAt: calendarEvents.endAt,
@@ -649,5 +669,41 @@ export async function lastUnloggedMeeting(
       .filter((a) => a.contactId)
       .map((a) => a.name || a.email)
       .slice(0, 4),
+    debriefEventId: await linkedEventIdFor(userId, e).catch(() => null),
   };
+}
+
+/** Long enough to cover the morning after an evening event. */
+const UNLOGGED_EVENT_WITHIN_MS = 36 * 3_600_000;
+
+/**
+ * The event that ended in the last day and a half with nobody logged as met and no debrief
+ * started — "How was it? Log who you met". An event with no end time is taken to run three
+ * hours. One indexed read (`events_user_starts_idx`).
+ */
+export async function lastUnloggedEvent(
+  userId: string,
+  now: Date
+): Promise<{ eventId: string; title: string; endIso: string } | null> {
+  const db = await getDb();
+  const since = new Date(now.getTime() - UNLOGGED_EVENT_WITHIN_MS);
+  const ended = sql`COALESCE(e.ends_at, e.starts_at + interval '3 hours')`;
+  const rows = rowsOf<{ id: string; title: string; ended: Date | string }>(
+    await db.execute(sql`
+      SELECT e.id, e.title, ${ended} AS ended
+        FROM events e
+       WHERE e.user_id = ${userId}
+         AND ${attendedEventFilter()}
+         AND e.starts_at >= ${new Date(since.getTime() - 7 * 86_400_000)}
+         AND ${ended} <= ${now}
+         AND ${ended} >= ${since}
+         AND NOT EXISTS (SELECT 1 FROM event_attendees a WHERE a.event_id = e.id AND a.spoke_to = 1)
+         AND NOT EXISTS (SELECT 1 FROM capture_jobs j WHERE j.user_id = ${userId} AND j.event_id = e.id)
+       ORDER BY ended DESC
+       LIMIT 1
+    `)
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return { eventId: row.id, title: row.title, endIso: new Date(row.ended).toISOString() };
 }
