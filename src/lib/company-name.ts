@@ -20,3 +20,13 @@ export function normalizeCompanyKey(value: string) {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+/**
+ * `normalizeCompanyKey` as a SQL expression over `column`, for `sql.raw`. A plain string, not
+ * a drizzle fragment, because this file must stay safe for client bundles.
+ *
+ * Unindexed: every caller is bounded by `user_id` first.
+ */
+export function companyKeySql(column: string) {
+  return `trim(regexp_replace(regexp_replace(lower(${column}), '[^a-z0-9\\s]', ' ', 'g'), '\\s+', ' ', 'g'))`;
+}

@@ -174,6 +174,25 @@ async function main() {
     !found.some((p) => p.fullName === "Unrelated Person")
   );
 
+  section("listed_there is keyed the way the org keys are");
+
+  // A punctuated company with no experience rows and no company_id: the old arm joined
+  // `companies.name_normalized` (lowercase only), so this key could never match.
+  const [meta] = await db
+    .insert(contacts)
+    .values({ userId: USER, fullName: "Meta Person", company: "Meta Platforms, Inc." })
+    .returning();
+  const metaPaths = await findWarmPaths(USER, orgKeysFor(["Meta Platforms, Inc."]));
+  check(
+    "listed_there matches a punctuated company",
+    metaPaths.get("meta platforms inc")?.[0]?.reason === "listed_there",
+    `got ${JSON.stringify([...metaPaths.entries()])}`
+  );
+  check(
+    "and finds the right contact",
+    metaPaths.get("meta platforms inc")?.[0]?.contactId === meta.id
+  );
+
   section("A known limit, pinned so it cannot surprise anyone later");
 
   // `normalizeCompanyKey` strips punctuation and case but NOT legal suffixes, so "Stripe"
