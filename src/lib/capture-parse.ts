@@ -94,6 +94,11 @@ export type CaptureParseOptions = {
    * only thing here that knows what the user owns.
    */
   mentionPicks?: readonly MentionPick[];
+  /**
+   * Nothing is waiting on this parse and nobody reviews its result (a Drive import): its model
+   * calls run under the unattended operation ids, so the managed background floor applies.
+   */
+  background?: boolean;
   /** Injectable clock, for the smoke suite. */
   now?: Date;
   /**
@@ -236,11 +241,12 @@ export async function runCaptureParse(
   // model, and it starts inside this same Promise.all.
   const enginesP = opts.engines ? Promise.resolve(opts.engines) : openEngines(userId, { llm: true });
   const [personParse, rawCommitments, existing] = await Promise.all([
-    parseMultiPersonNotesWithAI(userId, corpus, mergedHints, { onProgress: opts.onProgress }),
+    parseMultiPersonNotesWithAI(userId, corpus, mergedHints, { onProgress: opts.onProgress, background: opts.background }),
     fetchRawCommitments(userId, corpus, {
       today,
       knownPeople: seedPeople.map((p) => p.name).filter(Boolean) as string[],
       engines: enginesP,
+      background: opts.background,
     }).catch(
       () => ({ commitments: [], cadences: [] }) as Awaited<ReturnType<typeof fetchRawCommitments>>
     ),

@@ -215,11 +215,24 @@ export type { AiProvider };
  *
  *  - anthropic: $10 per 1,000 searches (platform.claude.com/docs/en/about-claude/pricing,
  *    checked 2026-10-18), counted from `usage.server_tool_use.web_search_requests`.
- *  - openai: UNCONFIRMED; the hosted `web_search` tool's per-call fee priced at a pessimistic
- *    $25 per 1,000 calls until checked against openai.com/api/pricing. One per
- *    `web_search_call` output item.
- *  - gemini: UNCONFIRMED; Google Search grounding priced at a pessimistic $35 per 1,000
- *    grounded prompts (ai.google.dev pricing). One per grounded response.
+ *  - openai: $10 per 1,000 calls for the hosted `web_search` tool, search content tokens not
+ *    billed. One per `web_search_call` output item. NOT CHECKED against OpenAI's pricing page
+ *    (unreachable when set): taken from a third-party tracker and an OpenAI community thread,
+ *    which put the older $25 rate at a 2026 cut to $10. Re-check before relying on it.
+ *  - gemini: Gemini 3 models bill $14 per 1,000 search QUERIES the model runs, so a prompt that
+ *    searches three times costs three; earlier models (2.5 and before) bill $35 per 1,000
+ *    GROUNDED PROMPTS, one per grounded response (`geminiSearchFeeMicros`). Same caveat: from a
+ *    single third-party comparison, not Google's pricing page.
  *  - openrouter reports its own cost, plugin included, so it needs no entry.
  */
-export const WEB_SEARCH_FEE_MICROS = { anthropic: 10_000, openai: 25_000, gemini: 35_000 } as const;
+export const WEB_SEARCH_FEE_MICROS = { anthropic: 10_000, openai: 10_000, gemini: 14_000 } as const;
+
+/** Gemini 2.5 and earlier: one fee per grounded response, however many queries it ran. */
+const GEMINI_LEGACY_GROUNDING_FEE_MICROS = 35_000;
+
+/** The search fee for one Gemini response: per query on Gemini 3 and later, per grounded prompt before. */
+export function geminiSearchFeeMicros(model: string, queries: number, grounded: boolean): number {
+  const major = Number(/^gemini-(\d+)/.exec(model)?.[1]);
+  if (Number.isFinite(major) && major >= 3) return queries * WEB_SEARCH_FEE_MICROS.gemini;
+  return grounded ? GEMINI_LEGACY_GROUNDING_FEE_MICROS : 0;
+}

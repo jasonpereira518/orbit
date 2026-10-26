@@ -274,7 +274,9 @@ export async function understandQuery(
     const content = await withTimeout(
       completeFn(userId, {
         operation: "chat.understand",
-            temperature: 0,
+        temperature: 0,
+        // Cancels the request itself when the stage gives up, instead of leaving it to bill on.
+        signal: AbortSignal.timeout(UNDERSTAND_TIMEOUT_MS),
         maxOutputTokens: 512,
         system: UNDERSTAND_SYSTEM,
         user: `${todayBlock}${aboutBlock}${goalsBlock}${historyBlock}Question: ${question}`,
@@ -300,13 +302,34 @@ const RERANK_MIN_SURVIVORS = 3;
 
 const RERANK_SYSTEM = `You score how relevant each candidate contact is to the user's question about their network.
 10 = directly answers the question. 5 = plausibly useful. 0 = unrelated.
-Judge from the card text only. Score every candidate you were given, using their exact ids.
+Judge from the card text only. Score every candidate you were given, using their exact ids (c01, c02, …).
 Candidates marked matches_filters=no did not satisfy the user's explicit filters and were included only as backup — prefer matches_filters=yes candidates when relevance is comparable.
 Return JSON: {"scores": [{"id": string, "relevance": number}]}`;
 
-function candidateCard(c: RankedContact): string {
+/**
+ * The short id a candidate goes by in the rerank prompt. A 36-character UUID is a dozen
+ * tokens, the model writes one back for every candidate it scores, and sixty of them is most of
+ * the answer's 2048-token cap: the same scores in `c01`-style ids are about a third the output.
+ */
+export function rerankAlias(index: number): string {
+  return `c${String(index + 1).padStart(2, "0")}`;
+}
+
+/** The candidate an id from the model means: its alias in any case or padding, or its real id. */
+export function resolveRerankId<T extends { id: string }>(
+  raw: string,
+  candidates: readonly T[],
+): T | undefined {
+  // A real id first: it can never be mistaken for a position, whatever it looks like.
+  const exact = candidates.find((c) => c.id === raw);
+  if (exact) return exact;
+  const digits = /^c0*(\d+)$/i.exec(raw.trim())?.[1];
+  return digits ? candidates[Number(digits) - 1] : undefined;
+}
+
+function candidateCard(c: RankedContact, index: number): string {
   const summary = (c.aiSummary || c.notes || "").replace(/\s+/g, " ").slice(0, 160);
-  return `[id=${c.id}] ${c.fullName} | ${c.title || "?"} @ ${c.company || "?"} | school=${c.school || "?"} | location=${c.location || "?"} | industry=${c.industry || "?"} | tier=${c.closenessTier || "?"} | tags=${c.tags.join(",") || "-"}${summary ? ` | ${summary}` : ""} | matches_filters=${c.filterMatched ? "yes" : "no"}`;
+  return `[id=${rerankAlias(index)}] ${c.fullName} | ${c.title || "?"} @ ${c.company || "?"} | school=${c.school || "?"} | location=${c.location || "?"} | industry=${c.industry || "?"} | tier=${c.closenessTier || "?"} | tags=${c.tags.join(",") || "-"}${summary ? ` | ${summary}` : ""} | matches_filters=${c.filterMatched ? "yes" : "no"}`;
 }
 
 /**
@@ -445,7 +468,7 @@ export async function rerankCandidatesWithEngine(
             ? `Looking for: ${semanticQuery.trim()}`
             : "",
           "",
-          `Candidates:\n${candidates.map(candidateCard).join("\n")}`,
+          `Candidates:\n${candidates.map((c, i) => candidateCard(c, i)).join("\n")}`,
         ]
           .filter(Boolean)
           .join("\n"),
@@ -453,22 +476,27 @@ export async function rerankCandidatesWithEngine(
       remaining
     );
     const parsed = parseAiJson<{ scores?: Array<{ id?: unknown; relevance?: unknown }> }>(content);
-    const byId = new Map(candidates.map((c) => [c.id, c]));
+    // Each id is checked against the candidates that were offered; an id nobody was offered
+    // (invented, or out of range) is dropped, and a candidate scored twice counts once.
+    const seen = new Set<string>();
     const scored = (parsed.scores ?? [])
-      .filter(
-        (s): s is { id: string; relevance: number } =>
-          typeof s.id === "string" && byId.has(s.id) && typeof s.relevance === "number"
-      )
+      .flatMap((s) => {
+        if (typeof s.id !== "string" || typeof s.relevance !== "number") return [];
+        const contact = resolveRerankId(s.id, candidates);
+        if (!contact || seen.has(contact.id)) return [];
+        seen.add(contact.id);
+        return [{ contact, relevance: s.relevance }];
+      })
       .sort((a, b) => b.relevance - a.relevance);
 
     const kept = scored
       .filter((s) => s.relevance >= RERANK_MIN_RELEVANCE)
       .slice(0, FINAL_CONTACT_COUNT)
-      .map((s) => byId.get(s.id)!);
+      .map((s) => s.contact);
     if (kept.length >= RERANK_MIN_SURVIVORS) return { contacts: kept, engine: "llm" };
 
     // Threshold starved the set — trust the model's ordering for a smaller page.
-    const ordered = scored.slice(0, 5).map((s) => byId.get(s.id)!);
+    const ordered = scored.slice(0, 5).map((s) => s.contact);
     return ordered.length > 0 ? { contacts: ordered, engine: "llm" } : searchOrder();
   } catch {
     return searchOrder();

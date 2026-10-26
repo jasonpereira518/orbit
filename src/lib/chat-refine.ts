@@ -70,6 +70,8 @@ export async function refineDraft(
       completeFn(userId, {
         operation: "chat.refine",
         temperature: 0.4,
+        // Cancels the request itself at the deadline, instead of leaving it to bill on.
+        signal: AbortSignal.timeout(REFINE_TIMEOUT_MS),
         maxOutputTokens: 1200,
         system: systemPrompt(input.kind, nonce),
         user: `<<<DRAFT_${nonce}\n${original}\nDRAFT_${nonce}${prefs ? `\n\n${prefs}` : ""}`,

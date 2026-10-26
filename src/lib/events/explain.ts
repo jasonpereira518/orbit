@@ -22,6 +22,7 @@
  * Cached on the attendee row under a hash of exactly those inputs, so it regenerates when the
  * facts change and never on a re-render.
  */
+import { z } from "zod";
 import { createHash } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
@@ -163,6 +164,7 @@ export async function explainAttendeeForUser(
       system: SYSTEM,
       user: JSON.stringify(inputs),
       operation: "events.why",
+      schema: { name: "event_why", zod: z.object({ why: z.string(), opener: z.string() }) },
         maxOutputTokens: 300,
     });
     parsed = JSON.parse(raw) as { why?: unknown; opener?: unknown };

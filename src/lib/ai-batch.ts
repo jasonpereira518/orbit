@@ -1,6 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { JSON_SYSTEM_SUFFIX } from "@/lib/ai-security";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { aiBatchJobs } from "@/db/schema";
 import {
@@ -58,10 +58,20 @@ export type BatchOutcome = {
 
 export type AiBatchJobRow = typeof aiBatchJobs.$inferSelect;
 
-type PollResult =
+/** What a provider adapter reports about a batch. */
+type AdapterPoll =
   | { state: "pending" }
   | { state: "ready"; outcomes: BatchOutcome[] }
   | { state: "failed"; reason: string };
+
+/** What `pollAiBatch` returns: a ready batch also says how many times it has come back ready. */
+type PollResult =
+  | { state: "pending" }
+  | { state: "ready"; outcomes: BatchOutcome[]; attempts: number }
+  | { state: "failed"; reason: string };
+
+/** A finished batch whose write-back keeps throwing is retired after this many tries. */
+export const MAX_BATCH_APPLY_ATTEMPTS = 3;
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 const DEFAULT_TEMPERATURE = 0.2;
@@ -70,7 +80,7 @@ const DEFAULT_TEMPERATURE = 0.2;
 
 type Adapter = {
   submit(grant: AiGrant, model: string, operation: AiOperationId, requests: BatchRequest[]): Promise<{ providerBatchId: string; meta?: Record<string, string> }>;
-  poll(grant: AiGrant, job: AiBatchJobRow): Promise<PollResult>;
+  poll(grant: AiGrant, job: AiBatchJobRow): Promise<AdapterPoll>;
   /** Best effort: delete what the provider is still holding for us. */
   cleanup(grant: AiGrant, job: AiBatchJobRow): Promise<void>;
 };
@@ -403,7 +413,7 @@ export async function pollAiBatch(job: AiBatchJobRow): Promise<PollResult> {
     return { state: "failed", reason: "provider changed" };
   }
 
-  let result: PollResult;
+  let result: AdapterPoll;
   try {
     result = await ADAPTERS[job.provider].poll(grant, job);
   } catch (err) {
@@ -431,6 +441,19 @@ export async function pollAiBatch(job: AiBatchJobRow): Promise<PollResult> {
     return result;
   }
 
+  // `attempts` counts how often this batch came back ready. The provider bills it once, so
+  // the ledger (and, on Orbit's key, the credit settlement `recordUsage` triggers) is written
+  // on the first sighting only: a write-back that throws leaves the job `submitted`, and the
+  // hourly sweep used to record the same outcomes again every time it polled.
+  const db = await getDb();
+  const [claimed] = await db
+    .update(aiBatchJobs)
+    .set({ attempts: sql`${aiBatchJobs.attempts} + 1`, updatedAt: new Date() })
+    .where(eq(aiBatchJobs.id, job.id))
+    .returning();
+  const attempts = claimed?.attempts ?? 1;
+  if (attempts > 1) return { ...result, attempts };
+
   // Every request in the batch lands in the ledger, priced at the batch rate it was billed.
   for (const outcome of result.outcomes) {
     recordUsage({
@@ -446,7 +469,7 @@ export async function pollAiBatch(job: AiBatchJobRow): Promise<PollResult> {
       errorKind: outcome.error ? "batch_request_failed" : null,
     });
   }
-  return result;
+  return { ...result, attempts };
 }
 
 /** Marks a batch done once its results have been written back, and tidies up at the provider. */

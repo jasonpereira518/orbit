@@ -254,9 +254,17 @@ export type KeyChoice<P extends string = AiProvider> =
   | { ok: true; provider: P; source: AiKeySource; model: string }
   | { ok: false; reason: Extract<AiAccessDenial, "key_required" | "managed_unavailable"> };
 
-function anyManaged(facts: KeyFacts) {
-  return MANAGED_PROVIDER_ORDER.some((p) => facts.managed[p]);
+function anyManaged(facts: KeyFacts, skip?: ReadonlySet<AiProvider>) {
+  return MANAGED_PROVIDER_ORDER.some((p) => !skip?.has(p) && facts.managed[p]);
 }
+
+/**
+ * Managed providers a hosted web search never runs on. Orbit pays for these searches, and Gemini's
+ * grounding fee is the dearest and the least predictable (billed per query on Gemini 3, per
+ * prompt before), so a search on Orbit's key goes to Anthropic, then OpenAI. An account's OWN
+ * Gemini key still searches; that is their spend.
+ */
+export const WEB_SEARCH_MANAGED_EXCLUDED: ReadonlySet<AiProvider> = new Set<AiProvider>(["gemini"]);
 
 /**
  * Denial for "nothing usable". Only an account whose plan includes AI was PROMISED Orbit's AI, so only it
@@ -283,14 +291,18 @@ function denied(facts: KeyFacts) {
  * account selected, because Orbit is paying. A key they saved for some OTHER provider is not
  * used for completions.
  */
-export function chooseCompletionKey(facts: KeyFacts): KeyChoice {
+export function chooseCompletionKey(
+  facts: KeyFacts,
+  opts: { skipManaged?: ReadonlySet<AiProvider> } = {},
+): KeyChoice {
   const selected = facts.selectedProvider;
-  const includedFirst = facts.preference === "included" && Boolean(facts.eligibility) && anyManaged(facts);
+  const skip = opts.skipManaged;
+  const includedFirst = facts.preference === "included" && Boolean(facts.eligibility) && anyManaged(facts, skip);
   if (facts.personal[selected] && !includedFirst) {
     return { ok: true, provider: selected, source: "personal", model: facts.selectedModel };
   }
-  if (!facts.eligibility || !anyManaged(facts)) return denied(facts);
-  const provider = MANAGED_PROVIDER_ORDER.find((p) => facts.managed[p])!;
+  if (!facts.eligibility || !anyManaged(facts, skip)) return denied(facts);
+  const provider = MANAGED_PROVIDER_ORDER.find((p) => !skip?.has(p) && facts.managed[p])!;
   return { ok: true, provider, source: "managed", model: managedModel(provider, null) };
 }
 

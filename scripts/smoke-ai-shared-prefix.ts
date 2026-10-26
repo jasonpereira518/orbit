@@ -145,7 +145,8 @@ async function main() {
   sent.length = 0;
   // More than DETAIL_BATCH_SIZE, so the notes are read by two calls and worth caching.
   const many = ["Ada Byron", "Grace Hopper", "Alan Turing", "Edsger Dijkstra", "Barbara Liskov", "Donald Knuth", "Karen Sparck Jones", "Tony Hoare"];
-  replies = [identify(many), details(many.slice(0, 6)), details(many.slice(6))];
+  // Each reply answers the people its batch asked about (DETAIL_BATCH_SIZE is 4): replies are matched by name.
+  replies = [identify(many), details(many.slice(0, 4)), details(many.slice(4))];
   const parsed = await parseMultiPersonNotesWithAI(USER, notes);
   const detailCalls = sent.slice(1);
   const blocks = detailCalls.map((s) => (s.body.messages as Array<{ content: Array<{ text: string; cache_control?: unknown }> | string }>)[0].content);
@@ -179,7 +180,8 @@ async function main() {
     const out = await parseMultiPersonNotesWithAI(USER, notes);
     replyFor = null;
     delayMs = 0;
-    check("three detail batches were in flight at once", maxInFlight >= 3, String(maxInFlight));
+    // The first batch goes alone (it writes the shared-notes cache), then the rest two at a time.
+    check("the batches after the first overlapped, two at a time", maxInFlight === 2, String(maxInFlight));
     check(
       "  everyone, in the identified order, each with their own fields",
       JSON.stringify(out.people.map((p) => [p.name, p.company])) === JSON.stringify(twelve.map((n) => [n, `${n} Co`])),

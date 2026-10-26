@@ -77,6 +77,12 @@ export type NoteBatchParticipantInput = {
   /** A cadence the notes stated for this person, resolved to days. */
   cadenceDays?: number | null;
   cadencePhrase?: string | null;
+  /**
+   * An unattended merge (a Drive import — no one reviews it). Fills the contact's EMPTY
+   * identity fields and leaves any value already there alone: a shared doc, or a model's
+   * misread of one, must not be able to rename a contact or change their email.
+   */
+  fillOnly?: boolean;
 };
 
 export type NoteBatchOpportunityInput = Pick<
@@ -295,7 +301,8 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
         // Tags are ADDED to the contact's own, never a replacement list: `updateContactForUser`
         // sets the full list, and the note's tags alone would delete the rest (an empty list
         // deleted them all).
-        const { tagNames, phone, xHandle, website, school, industry, keyFacts: noteFacts, relationshipScore, statedCloseness, ...rest } = fields;
+        const { tagNames, phone, xHandle, website, school, industry, keyFacts: noteFacts, relationshipScore, statedCloseness, ...restAll } = fields;
+        let rest: typeof restAll = restAll;
         // Handles fill gaps and never overwrite: a phone the person typed on the contact
         // outranks one a note happened to mention. Key facts accumulate — writing the note's
         // list outright would delete everything earlier notes taught Orbit about them.
@@ -307,10 +314,26 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
             school: contacts.school,
             industry: contacts.industry,
             keyFacts: contacts.keyFacts,
+            fullName: contacts.fullName,
+            company: contacts.company,
+            title: contacts.title,
+            location: contacts.location,
+            email: contacts.email,
+            linkedinUrl: contacts.linkedinUrl,
+            howMet: contacts.howMet,
+            aiSummary: contacts.aiSummary,
           })
           .from(contacts)
           .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)))
           .limit(1);
+        if (p.fillOnly && current) {
+          const IDENTITY = ["company", "title", "location", "email", "linkedinUrl", "howMet", "aiSummary"] as const;
+          const kept = { ...restAll } as Record<string, unknown>;
+          for (const key of IDENTITY) {
+            if (typeof current[key] === "string" && current[key]!.trim()) delete kept[key];
+          }
+          rest = kept as typeof restAll;
+        }
         const gaps = {
           ...(phone && !current?.phone ? { phone } : {}),
           ...(xHandle && !current?.xHandle ? { xHandle } : {}),
@@ -325,7 +348,7 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
           userId,
           contactId,
           {
-            fullName: parsed.name || undefined,
+            ...(p.fillOnly && current?.fullName?.trim() ? {} : { fullName: parsed.name || undefined }),
             ...rest,
             // updateContactForUser mirrors this into statedCloseness.
             ...(p.closenessChosen ? { relationshipScore } : {}),

@@ -12,7 +12,7 @@
  * Run: npx tsx scripts/smoke-usage-events.ts
  */
 import "./smoke/_env";
-import { WEB_SEARCH_FEE_MICROS } from "../src/lib/ai-pricing";
+import { geminiSearchFeeMicros, WEB_SEARCH_FEE_MICROS } from "../src/lib/ai-pricing";
 
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
@@ -380,6 +380,10 @@ async function main() {
     const reported = rowFor({ model: "openrouter/x", provider: "openrouter", reportedCostMicros: 1_234, surchargeMicros: 1_000 });
     check("…and on top of a provider-reported figure too", reported.estimatedCostMicros === 2_234 && reported.costSource === "reported");
     const unpriced = rowFor({ model: "no-such-model", surchargeMicros: WEB_SEARCH_FEE_MICROS.openai });
+    check("gemini 3 bills each search query", geminiSearchFeeMicros("gemini-3.1-flash-lite", 3, true) === 3 * WEB_SEARCH_FEE_MICROS.gemini);
+    check("gemini 3 with no queries owes nothing", geminiSearchFeeMicros("gemini-3.8-flash", 0, true) === 0);
+    check("gemini 2.5 bills once per grounded prompt", geminiSearchFeeMicros("gemini-2.5-flash", 3, true) === 35_000);
+    check("gemini 2.5 ungrounded owes nothing", geminiSearchFeeMicros("gemini-2.5-flash", 0, false) === 0);
     check("an unpriced model still carries its search fee", unpriced.estimatedCostMicros === WEB_SEARCH_FEE_MICROS.openai);
     check("no surcharge leaves an unpriced model null, not zero", rowFor({ model: "no-such-model" }).estimatedCostMicros === null);
   }

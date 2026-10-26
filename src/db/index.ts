@@ -2799,7 +2799,13 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // .join_session_id / user_id / converted_at, and two new tables: site_invites (Orbit's own
 // invitation ledger) and product_events (append-only, schema-validated telemetry). Renumbered from 171 on Oct 19 2026
 // after main reached 179; rescanned every remote ref that day: 180 was the highest claimed anywhere.
-export const SCHEMA_VERSION = 181;
+//
+// 182 = embedding_model on contact_embeddings and memory_chunks (AI audit P0-3): which model made
+// each stored vector, so a vector another model made is recognised and re-embedded instead of
+// being compared. Additive and nullable, no backfill. (usage_events.web_searches, which this
+// branch also added at 171, is main's at 179 and was dropped here.) Rescanned origin/main on
+// Oct 23 2026: 181 was the highest claimed anywhere.
+export const SCHEMA_VERSION = 182;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -4209,6 +4215,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "email_signature_text", "text");
   await ensureColumn(client, "user_settings", "email_signature_html", "text");
   await ensureColumn(client, "user_settings", "default_send_provider", "text");
+  // v182: which model made a stored vector.
+  await ensureColumn(client, "contact_embeddings", "embedding_model", "text");
+  await ensureColumn(client, "memory_chunks", "embedding_model", "text");
 
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
@@ -4394,6 +4403,11 @@ const alters = [
   // by that pass: syncMemoryChunks carries vectors across by content_hash, which unchanged
   // text does not move.
   `ALTER TABLE memory_chunks ADD COLUMN IF NOT EXISTS source_hash text`,
+  // Schema v182: which embedding model made each stored vector. Vectors from two models cannot
+  // be compared, and until now nothing recorded which one a row held (a key change cleared
+  // contact_embeddings but not memory_chunks).
+  `ALTER TABLE contact_embeddings ADD COLUMN IF NOT EXISTS embedding_model text`,
+  `ALTER TABLE memory_chunks ADD COLUMN IF NOT EXISTS embedding_model text`,
   // Deliberately not backfilled from `committed_at` — see the column's comment in schema.ts.
   `ALTER TABLE fundraising_investors ADD COLUMN IF NOT EXISTS received_at timestamptz`,
   // The events feature landed whole at v32, so these are its first incremental columns.

@@ -4,12 +4,13 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
 import { createHash, randomBytes } from "node:crypto";
 import { nothingUsable } from "@/lib/managed-ai-policy";
-import { WEB_SEARCH_FEE_MICROS } from "@/lib/ai-pricing";
+import { geminiSearchFeeMicros, WEB_SEARCH_FEE_MICROS } from "@/lib/ai-pricing";
 import { renderWritingPreferences } from "@/lib/writing-instructions";
 import {
   anthropicClient,
   geminiClient,
   getAiAccessStatus,
+  isAiAccessError,
   isOpenAiShaped,
   openaiClient,
   openAiShapedClient,
@@ -65,7 +66,23 @@ import {
   type SplitResult,
 } from "@/lib/chat-stream-protocol";
 import type { AiProvider, EmbeddingBackend } from "@/lib/ai-providers";
-import { aiOperationThinking, type AiOperationId } from "@/lib/ai-operations";
+import { aiOperationOnTruncate, aiOperationThinking, type AiOperationId } from "@/lib/ai-operations";
+import {
+  isSchemaRejection,
+  SchemaRejectedError,
+  structuredOutputAllowed,
+  toWireSchema,
+  type StructuredSchema,
+} from "@/lib/ai-structured";
+import {
+  AiFinishError,
+  anthropicFinish,
+  assertUsableFinish,
+  geminiFinish,
+  openaiFinish,
+  openaiResponsesFinish,
+  type AiFinish,
+} from "@/lib/ai-finish";
 import { geminiThinkingConfig, openaiCompletionOptions } from "@/lib/ai-request-options";
 import { EMBEDDING_MODELS, modelForOperation } from "@/lib/ai-models";
 import type { ThinkingConfig } from "@google/genai";
@@ -333,6 +350,17 @@ export type CaptureParseHints = {
   goals?: string[];
 };
 
+/** The capture parse's operation ids, and the unattended twins `background` selects. */
+const CAPTURE_OPERATIONS = {
+  "capture.parse": "capture.parse.bg",
+  "capture.parse.identify": "capture.parse.identify.bg",
+  "capture.parse.details": "capture.parse.details.bg",
+  "capture.parse.excerpt-retry": "capture.parse.excerpt-retry.bg",
+} as const satisfies Record<string, AiOperationId>;
+function captureOperation<K extends keyof typeof CAPTURE_OPERATIONS>(base: K, background?: boolean): AiOperationId {
+  return background ? CAPTURE_OPERATIONS[base] : base;
+}
+
 const TWO_PASS_CHAR_THRESHOLD = 2500;
 /**
  * People per details call. Every batch re-reads the whole note, so a wider batch is fewer
@@ -401,6 +429,22 @@ export async function resolveEmbeddingBackend(userId: string, access?: AiAccess)
 }> {
   const resolved = access?.forUser(userId) ?? (await resolveAiAccess(userId));
   return { backend: resolved.requireEmbeddingBackend() };
+}
+
+/**
+ * The embedding model this account's new vectors come from, or null when it has none (an
+ * Anthropic-only account) or the gate would not say. Stored beside every vector so a vector
+ * made by a different model is recognised later instead of being compared as if it were
+ * this one's.
+ */
+export async function currentEmbeddingModel(userId: string, access?: AiAccess): Promise<string | null> {
+  try {
+    const resolved = access?.forUser(userId) ?? (await resolveAiAccess(userId));
+    const backend = resolved.embeddingBackend();
+    return backend ? EMBEDDING_MODELS[backend] : null;
+  } catch {
+    return null;
+  }
 }
 
 function extractJsonText(raw: string) {
@@ -498,22 +542,6 @@ function repairTruncatedJson(text: string): string | null {
   }
 }
 
-/**
- * The provider's own "I ran out of output tokens" stop: OpenAI-shaped `finish_reason:
- * "length"`, Anthropic `stop_reason: "max_tokens"`, Gemini `finishReason: "MAX_TOKENS"`.
- *
- * Checked BEFORE parsing. A truncated answer can still parse — cut between two list items it
- * is valid JSON missing the rest — and the repair above would close it either way, so the
- * text alone cannot say whether it is complete. The provider can, so its word decides: the
- * call fails as `AI_INCOMPLETE_MESSAGE` ("got cut off — try again") rather than handing the
- * caller a partial capture as if it were the whole one (see `transcribeNotePage`).
- */
-const OUTPUT_LIMIT_STOPS = new Set(["length", "max_tokens", "MAX_TOKENS"]);
-
-function assertNotCutOff(stop: string | null | undefined): void {
-  if (stop && OUTPUT_LIMIT_STOPS.has(stop)) throw new Error(AI_INCOMPLETE_MESSAGE);
-}
-
 export function parseAiJson<T = unknown>(raw: string): T {
   const text = extractJsonText(raw);
   try {
@@ -557,7 +585,7 @@ export type MultimodalPart =
   | { type: "image"; mimeType: string; base64: string }
   | { type: "audio"; mimeType: string; base64: string };
 
-export async function completeJson(
+async function completeJsonOnce(
   userId: string,
   input: {
     system: string;
@@ -580,6 +608,14 @@ export async function completeJson(
      * provider request kept running (and billing) for up to AI_CALL_TIMEOUT_MS after the
      * caller had moved on. With a signal, the request itself is aborted.
      */
+    /**
+     * Ask the provider to constrain the reply to this shape (Gemini `responseJsonSchema`,
+     * OpenAI `json_schema`, Anthropic `output_config.format`) instead of only describing it in
+     * the prompt. Still validate the result: this guarantees the wire shape, not the meaning.
+     * A provider or model that cannot take a schema, or rejects this one, gets the prompt-only
+     * call it always had (`ai-structured.ts`).
+     */
+    schema?: StructuredSchema;
     signal?: AbortSignal;
     /**
      * The account already resolved for this request (see `AiAccess.forUser`): skips the
@@ -600,6 +636,10 @@ export async function completeJson(
   const prefix = input.sharedPrefix?.text ?? "";
   const userText = prefix + input.user;
   const callSignal = () => (input.signal ? AbortSignal.any([aiSignal(), input.signal]) : aiSignal());
+  const schemaJson =
+    input.schema && structuredOutputAllowed(provider, model) && !schemaRefused.has(`${provider}:${model}`)
+      ? toWireSchema(input.schema.zod)
+      : null;
 
   return runOnGrant(grant, withUsage(
     {
@@ -621,12 +661,13 @@ export async function completeJson(
               temperature,
               maxOutputTokens,
               responseMimeType: "application/json",
+              ...(schemaJson ? { responseJsonSchema: schemaJson } : {}),
               systemInstruction: system,
               ...geminiThinking(model, operation),
             },
           });
           report(tokensFromGemini(response));
-          assertNotCutOff(response.candidates?.[0]?.finishReason);
+          assertUsableFinish(geminiFinish(response));
           const content = response.text;
           if (!content) throw new Error("Empty AI response");
           return normalizeJsonResponse(content);
@@ -637,7 +678,10 @@ export async function completeJson(
           const response = await client.chat.completions.create(withOpenRouterRouting(provider, {
             model,
             ...openaiCompletionOptions(model, { temperature, maxOutputTokens, thinking: aiOperationThinking(operation) }),
-            response_format: { type: "json_object" },
+            response_format:
+              schemaJson && input.schema
+                ? { type: "json_schema", json_schema: { name: input.schema.name, strict: true, schema: schemaJson } }
+                : { type: "json_object" },
             messages: [
               { role: "system", content: system },
               { role: "user", content: userText },
@@ -645,7 +689,7 @@ export async function completeJson(
             ...(input.sharedPrefix ? { prompt_cache_key: input.sharedPrefix.cacheKey } : {}),
           }), { signal: callSignal() });
           report({ ...tokensFromOpenAi(response), reportedCostMicros: reportedCostMicros(response as OpenAiUsageWithCost) });
-          assertNotCutOff(response.choices[0]?.finish_reason);
+          assertUsableFinish(openaiFinish(response.choices[0]));
           const content = response.choices[0]?.message?.content;
           if (!content) throw new Error("Empty AI response");
           return normalizeJsonResponse(content);
@@ -657,7 +701,10 @@ export async function completeJson(
           max_tokens: maxOutputTokens,
           // Claude 4.7 and later reject sampling parameters with a 400.
           ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
-          ...anthropicEffort(model),
+          // `effort` and `format` share one `output_config`; spreading both would drop the first.
+          ...(schemaJson
+            ? { output_config: { ...anthropicEffort(model).output_config, format: { type: "json_schema" as const, schema: schemaJson } } }
+            : anthropicEffort(model)),
           system,
           messages: [
             {
@@ -673,13 +720,15 @@ export async function completeJson(
           ],
         }, { signal: callSignal() });
         report(tokensFromAnthropic(response));
-        assertNotCutOff(response.stop_reason);
+        assertUsableFinish(anthropicFinish(response.stop_reason));
         const block = response.content.find((b) => b.type === "text");
         if (!block || block.type !== "text" || !block.text) {
           throw new Error("Empty AI response");
         }
         return normalizeJsonResponse(block.text);
       } catch (err) {
+        if (err instanceof AiFinishError) throw err;
+        if (schemaJson && isSchemaRejection(err)) throw new SchemaRejectedError(provider, model);
         if (
           err instanceof Error &&
           (err.message === "Empty AI response" || err.message === AI_INCOMPLETE_MESSAGE)
@@ -698,6 +747,68 @@ export async function completeJson(
   ));
 }
 
+/** A truncation retry never asks for more than this; capture's own cap is 12,288. */
+const TRUNCATION_RETRY_MAX_OUTPUT_TOKENS = 32_768;
+
+/**
+ * Re-runs a call the model cut off at its output cap, once, with twice the room. The first
+ * attempt is its own `usage_events` row (a failure, `error_kind = 'truncated'`) because it was
+ * billed; what the caller gets is a whole answer or an honest error, never a repaired fragment.
+ */
+async function retryingOnTruncation<I extends { operation: AiOperationId; maxOutputTokens?: number; signal?: AbortSignal }, T>(
+  input: I,
+  run: (input: I) => Promise<T>,
+  defaultCap: number,
+): Promise<T> {
+  try {
+    return await run(input);
+  } catch (err) {
+    if (!(err instanceof AiFinishError) || err.kind !== "truncated") throw err;
+    if (aiOperationOnTruncate(input.operation) !== "retry" || input.signal?.aborted) throw err;
+    const was = input.maxOutputTokens ?? defaultCap;
+    const next = Math.min(was * 2, TRUNCATION_RETRY_MAX_OUTPUT_TOKENS);
+    if (next <= was) throw err;
+    return run({ ...input, maxOutputTokens: next });
+  }
+}
+
+/**
+ * A managed provider that just failed for Orbit (`runOnGrant` reworded it, and a spent pool was
+ * already taken out of the set) is tried once more: the retry mints a fresh grant, which lands
+ * on the next provider in `MANAGED_PROVIDER_ORDER` when the first was dropped. Before this the
+ * person saw an error and the NEXT call quietly worked. Only the call that failed is repeated,
+ * never one that produced an answer, and never on a person's own key.
+ */
+async function failingOverManaged<T>(signal: AbortSignal | undefined, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (!isAiAccessError(err) || err.reason !== "managed_unavailable" || signal?.aborted) throw err;
+    return run();
+  }
+}
+
+/** Provider+model pairs that refused a schema; not asked again by this instance. */
+const schemaRefused = new Set<string>();
+
+export async function completeJson(
+  userId: string,
+  input: Parameters<typeof completeJsonOnce>[1],
+): Promise<string> {
+  const run = (i: typeof input) =>
+    retryingOnTruncation(i, (j) => failingOverManaged(j.signal, () => completeJsonOnce(userId, j)), 4096);
+  try {
+    return await run(input);
+  } catch (err) {
+    if (!(err instanceof SchemaRejectedError)) throw err;
+    // The provider would not take the schema. Remember that, and make the call the way every
+    // call was made before schemas: describe the shape in the prompt, validate afterwards.
+    schemaRefused.add(`${err.provider}:${err.model}`);
+    const { schema: _dropped, ...promptOnly } = input;
+    return run(promptOnly);
+  }
+}
+
 /**
  * `completeJson` with the account already resolved for this request, for the helpers that
  * take an injectable `completeFn` (`understandQuery`, the rerank, `generateChatTitle`).
@@ -710,6 +821,17 @@ export function completeJsonOn(access: AiAccess | undefined): typeof completeJso
 
 /** Multimodal JSON completion for vision OCR / image+text prompts. */
 export async function completeMultimodalJson(
+  userId: string,
+  input: MultimodalInput,
+): Promise<string> {
+  return retryingOnTruncation(
+    input,
+    (i) => failingOverManaged(undefined, () => completeMultimodalJsonOnce(userId, i)),
+    4096,
+  );
+}
+
+async function completeMultimodalJsonOnce(
   userId: string,
   input: MultimodalInput,
 ): Promise<string> {
@@ -780,7 +902,7 @@ async function completeMultimodalJsonInner(
         },
       });
       report(tokensFromGemini(response));
-      assertNotCutOff(response.candidates?.[0]?.finishReason);
+      assertUsableFinish(geminiFinish(response));
       const content = response.text;
       if (!content) throw new Error("Empty AI response");
       return normalizeJsonResponse(content);
@@ -820,7 +942,7 @@ async function completeMultimodalJsonInner(
         ],
       }), { signal: aiSignal() });
       report({ ...tokensFromOpenAi(response), reportedCostMicros: reportedCostMicros(response as OpenAiUsageWithCost) });
-      assertNotCutOff(response.choices[0]?.finish_reason);
+      assertUsableFinish(openaiFinish(response.choices[0]));
       const out = response.choices[0]?.message?.content;
       if (!out) throw new Error("Empty AI response");
       return normalizeJsonResponse(out);
@@ -874,13 +996,14 @@ async function completeMultimodalJsonInner(
       messages: [{ role: "user", content }],
     }, { signal: aiSignal() });
     report(tokensFromAnthropic(response));
-    assertNotCutOff(response.stop_reason);
+    assertUsableFinish(anthropicFinish(response.stop_reason));
     const block = response.content.find((b) => b.type === "text");
     if (!block || block.type !== "text" || !block.text) {
       throw new Error("Empty AI response");
     }
     return normalizeJsonResponse(block.text);
   } catch (err) {
+    if (err instanceof AiFinishError) throw err;
     if (
       err instanceof Error &&
       (err.message === "Empty AI response" || err.message === AI_INCOMPLETE_MESSAGE)
@@ -1434,9 +1557,10 @@ async function parseMultiPersonSinglePass(
   userId: string,
   notes: string,
   hints?: CaptureParseHints | null,
+  background?: boolean,
 ): Promise<ParsedMultiPersonNotes> {
   const content = await completeJson(userId, {
-    operation: "capture.parse",
+    operation: captureOperation("capture.parse", background),
     temperature: 0.2,
     maxOutputTokens: CAPTURE_MAX_OUTPUT_TOKENS,
     user: fenceUntrusted("NOTES", notes.slice(0, 100_000)) + hintsPreamble(hints),
@@ -1525,9 +1649,10 @@ async function identifyPeople(
   sliced: string,
   hints: CaptureParseHints | null | undefined,
   onProgress: ParseProgress | undefined,
+  background?: boolean,
 ) {
   const identityRaw = await completeJson(userId, {
-    operation: "capture.parse.identify",
+    operation: captureOperation("capture.parse.identify", background),
     temperature: 0.2,
     maxOutputTokens: 4096,
     user: fenceUntrusted("NOTES", sliced) + hintsPreamble(hints),
@@ -1564,6 +1689,48 @@ Rules:
   return multiPersonIdentitySchema.parse(JSON.parse(identityRaw));
 }
 
+const DETAIL_CONCURRENCY = 2;
+
+const nameKey = (name: string | null | undefined) => (name ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+
+/**
+ * For each requested name, the index of the reply entry that answers it, or null. Exact name
+ * first; then the one unclaimed entry sharing first and last word (a reply that dropped a
+ * middle name), or for a one-word request the one unclaimed entry starting with it. Never by
+ * position, and an entry answers at most one request.
+ */
+export function matchDetailResults(
+  requested: readonly string[],
+  answered: ReadonlyArray<{ name?: string | null }>,
+): Array<number | null> {
+  const taken = new Set<number>();
+  const out: Array<number | null> = requested.map(() => null);
+  const claim = (j: number, matches: (a: string) => boolean) => {
+    const candidates = answered.flatMap((a, k) => (!taken.has(k) && matches(nameKey(a.name)) ? [k] : []));
+    if (candidates.length !== 1) return;
+    taken.add(candidates[0]!);
+    out[j] = candidates[0]!;
+  };
+  requested.forEach((name, j) => {
+    const want = nameKey(name);
+    const exact = answered.findIndex((a, k) => !taken.has(k) && nameKey(a.name) === want);
+    if (exact >= 0) {
+      taken.add(exact);
+      out[j] = exact;
+    }
+  });
+  requested.forEach((name, j) => {
+    if (out[j] !== null) return;
+    const words = nameKey(name).split(" ").filter(Boolean);
+    if (words.length === 0) return;
+    const first = words[0]!;
+    const last = words[words.length - 1]!;
+    if (words.length === 1) claim(j, (a) => a.split(" ")[0] === first);
+    else claim(j, (a) => a.split(" ")[0] === first && a.split(" ").pop() === last);
+  });
+  return out;
+}
+
 async function parseMultiPersonTwoPass(
   userId: string,
   notes: string,
@@ -1571,6 +1738,7 @@ async function parseMultiPersonTwoPass(
   onProgress?: ParseProgress,
   /** People a single pass already found, so an escalation need not pay to identify twice. */
   known?: ParsedMultiPersonNotes,
+  background?: boolean,
 ): Promise<ParsedMultiPersonNotes> {
   const sliced = notes.slice(0, 100_000);
   const identity = known
@@ -1587,7 +1755,7 @@ async function parseMultiPersonTwoPass(
         })),
         mentions: known.mentions,
       }
-    : await identifyPeople(userId, sliced, hints, onProgress);
+    : await identifyPeople(userId, sliced, hints, onProgress, background);
   const peopleIds = identity.people.filter((p) => p.name?.trim());
 
   // Merge seed people that weren't found by name/email.
@@ -1643,19 +1811,10 @@ async function parseMultiPersonTwoPass(
       ? { text: notesPrefix, cacheKey: `capture.details:${createHash("sha256").update(notesPrefix).digest("hex").slice(0, 32)}` }
       : undefined;
 
-  // The batches are independent, so they run concurrently and are merged back in batch
-  // order: the same people, fields and order as one-after-another, in the time of the
-  // slowest batch rather than the sum (LATENCY_PLAN AI-5: a 5-person note spent 8 s of its
-  // 12 s here). The trade: concurrent calls cannot read a prompt cache the first one writes,
-  // so a provider-side cache of `sharedPrefix` saves less input cost than it did serially.
-  const batches: (typeof peopleIds)[] = [];
-  for (let i = 0; i < peopleIds.length; i += DETAIL_BATCH_SIZE) {
-    batches.push(peopleIds.slice(i, i + DETAIL_BATCH_SIZE));
-  }
-  const detailedBatches = await Promise.all(batches.map(async (batch) => {
-    const merged: ParsedPersonNote[] = [];
+  type Requested = (typeof peopleIds)[number];
+  const callDetails = async (batch: Requested[]) => {
     const batchRaw = await completeJson(userId, {
-      operation: "capture.parse.details",
+      operation: captureOperation("capture.parse.details", background),
       temperature: 0.2,
       maxOutputTokens: CAPTURE_MAX_OUTPUT_TOKENS,
       ...(sharedPrefix ? { sharedPrefix } : {}),
@@ -1684,17 +1843,31 @@ ${PERSON_FIELD_RULES}`,
     });
 
     await beat(onProgress);
-    const batchParsed = personDetailBatchSchema.parse(JSON.parse(batchRaw));
-    for (let j = 0; j < batch.length; j++) {
-      const requested = batch[j]!;
-      const found =
-        batchParsed.people.find(
-          (p) =>
-            p.name?.trim().toLowerCase() ===
-            requested.name.trim().toLowerCase(),
-        ) || batchParsed.people[j];
+    return personDetailBatchSchema.parse(JSON.parse(batchRaw)).people;
+  };
 
-      const person: ParsedPersonNote = {
+  /**
+   * One batch, matched back to the people it asked about BY NAME. It used to fall back to the
+   * array position, so a reply that reordered or dropped someone put one person's fields on
+   * another — under the right name, on a review card nobody can tell is wrong. A person the
+   * reply did not answer is asked about once more on their own; if that fails too they keep the
+   * identity pass's facts and nothing else, which is true if thin.
+   */
+  const detailBatch = async (batch: Requested[]): Promise<ParsedPersonNote[]> => {
+    const answered = await callDetails(batch);
+    const foundList = matchDetailResults(batch.map((p) => p.name), answered).map((m) =>
+      m === null ? undefined : answered[m],
+    );
+    const missing = foundList.flatMap((f, j) => (f ? [] : [j]));
+    if (missing.length > 0) {
+      const again = await callDetails(missing.map((j) => batch[j]!)).catch(() => []);
+      matchDetailResults(missing.map((j) => batch[j]!.name), again).forEach((m, k) => {
+        if (m !== null) foundList[missing[k]!] = again[m];
+      });
+    }
+    return batch.map((requested, j) => {
+      const found = foundList[j];
+      const merged: ParsedPersonNote = {
         name: requested.name,
         presence: requested.presence,
         company: found?.company || requested.company || null,
@@ -1733,11 +1906,27 @@ ${PERSON_FIELD_RULES}`,
         source_excerpt: found?.source_excerpt || "",
       };
 
-      merged.push(person);
-    }
-    return merged;
-  }));
-  for (const batch of detailedBatches) detailed.push(...batch);
+      return merged;
+    });
+  };
+
+  // The first batch alone, so a provider that caches the shared notes has written them before
+  // the rest read them; the others two at a time, which is latency only (each call is
+  // independent) and stays under a BYOK key's per-minute limits.
+  const batches: Requested[][] = [];
+  for (let i = 0; i < peopleIds.length; i += DETAIL_BATCH_SIZE) batches.push(peopleIds.slice(i, i + DETAIL_BATCH_SIZE));
+  const detailedBatches: ParsedPersonNote[][] = new Array(batches.length);
+  if (batches.length > 0) detailedBatches[0] = await detailBatch(batches[0]!);
+  let nextBatch = 1;
+  await Promise.all(
+    Array.from({ length: Math.min(DETAIL_CONCURRENCY, Math.max(0, batches.length - 1)) }, async () => {
+      while (nextBatch < batches.length) {
+        const at = nextBatch++;
+        detailedBatches[at] = await detailBatch(batches[at]!);
+      }
+    }),
+  );
+  detailed.push(...detailedBatches.flat());
 
   // Excerpts that came back empty. The notes are already in hand, so look for the person's
   // own sentence first — free, and exact where the note names them. Only whoever is still
@@ -1754,7 +1943,7 @@ ${PERSON_FIELD_RULES}`,
   if (stillEmpty.length > 0) {
     try {
       const retryRaw = await completeJson(userId, {
-        operation: "capture.parse.excerpt-retry",
+        operation: captureOperation("capture.parse.excerpt-retry", background),
         temperature: 0.1,
         maxOutputTokens: 2048,
         user: `NOTES:\n${fenceUntrusted("NOTES", sliced)}\n\nPeople:\n${stillEmpty.map((p, i) => `${i + 1}. ${p.name}`).join("\n")}\n\nReturn JSON { "excerpts": [{ "name": string, "source_excerpt": string }] } with each person's own slice of the notes.`,
@@ -1789,22 +1978,26 @@ export async function parseMultiPersonNotesWithAI(
   userId: string,
   notes: string,
   hints?: CaptureParseHints | null,
-  opts: { onProgress?: ParseProgress } = {},
+  opts: {
+    onProgress?: ParseProgress;
+    /** Unattended work nobody reviews or waits on: runs under the `.bg` operation ids. */
+    background?: boolean;
+  } = {},
 ): Promise<ParsedMultiPersonNotes> {
   const useTwoPass =
     notes.length >= TWO_PASS_CHAR_THRESHOLD ||
     (hints?.seedPeople?.length || 0) >= 5;
 
   if (useTwoPass) {
-    return parseMultiPersonTwoPass(userId, notes, hints, opts.onProgress);
+    return parseMultiPersonTwoPass(userId, notes, hints, opts.onProgress, undefined, opts.background);
   }
 
-  const single = await parseMultiPersonSinglePass(userId, notes, hints);
+  const single = await parseMultiPersonSinglePass(userId, notes, hints, opts.background);
   await beat(opts.onProgress);
   // Escalate to two-pass when many people came back (token pressure risk) — reusing the
   // people this pass already found, rather than paying to identify them a second time.
   if (single.people.length > DETAIL_BATCH_SIZE) {
-    return parseMultiPersonTwoPass(userId, notes, hints, opts.onProgress, single);
+    return parseMultiPersonTwoPass(userId, notes, hints, opts.onProgress, single, opts.background);
   }
   return single;
 }
@@ -1847,7 +2040,7 @@ export async function createEmbedding(userId: string, text: string, access?: AiA
         const res = await client.models.embedContent({
           model: GEMINI_EMBEDDING_MODEL,
           contents: input,
-          config: { abortSignal: aiSignal() },
+          config: { abortSignal: aiSignal(), httpOptions: { retryOptions: { attempts: 1 } } },
         });
         // Gemini's embed endpoint reports no usage metadata — the row stores null tokens
         // rather than a fabricated zero, and counts as volume.
@@ -1902,7 +2095,7 @@ export async function createEmbeddingsBatch(
         const res = await client.models.embedContent({
           model: GEMINI_EMBEDDING_MODEL,
           contents: inputs,
-          config: { abortSignal: aiSignal() },
+          config: { abortSignal: aiSignal(), httpOptions: { retryOptions: { attempts: 1 } } },
         });
         // No usage metadata from Gemini embeddings; see createEmbedding.
         const values = res.embeddings?.map((e) => e.values ?? []) ?? [];
@@ -2306,6 +2499,7 @@ async function streamText(
     { userId, operation: input.operation, provider, model, kind: "completion", keyOwner },
     (report) => translatingProviderErrors(aiProviderLabel(provider), async () => {
       let full = "";
+      let finish: AiFinish = "stop";
       const emit = (t: string | undefined | null) => {
         if (!t) return;
         full += t;
@@ -2329,6 +2523,7 @@ async function streamText(
         for await (const chunk of stream) {
           emit(chunk.text);
           last = chunk;
+          if (chunk.candidates?.[0]?.finishReason) finish = geminiFinish(chunk);
         }
         if (last) report(tokensFromGemini(last));
       } else if (isOpenAiShaped(provider)) {
@@ -2349,6 +2544,7 @@ async function streamText(
         let usage: unknown = null;
         for await (const chunk of stream) {
           emit(chunk.choices[0]?.delta?.content);
+          if (chunk.choices[0]?.finish_reason) finish = openaiFinish(chunk.choices[0]);
           if (chunk.usage) usage = chunk.usage;
         }
         if (usage) {
@@ -2376,14 +2572,26 @@ async function streamText(
             emit(event.delta.text);
           }
         }
-        report(tokensFromAnthropic(await stream.finalMessage()));
+        const finalMessage = await stream.finalMessage();
+        report(tokensFromAnthropic(finalMessage));
+        finish = anthropicFinish(finalMessage.stop_reason);
       }
 
       // OpenAI's stream iterator treats an abort as "the caller stopped the stream" and simply
       // ENDS, so a cut-off answer would come back as a finished (shorter) one. Rethrow the abort:
       // a deadline reads as a timeout, a Stop is filed as cancelled. (Gemini and Anthropic throw.)
       signal.throwIfAborted();
-      if (!full.trim()) throw new Error("Empty AI response");
+      if (!full.trim()) {
+        // A refusal or a safety stop with nothing written is not an "empty response": say so.
+        assertUsableFinish(finish === "length" ? "other" : finish);
+        throw new Error("Empty AI response");
+      }
+      // Cut off at the output cap: the person has already read it, and it is about to be stored
+      // as the answer. Say so in the answer rather than let it pass as finished. (Not after the
+      // recommendations marker — there it would land inside the JSON.)
+      if (finish === "length" && !full.includes(RECOMMENDATIONS_MARKER)) {
+        emit("\n\n_The answer was cut short. Ask me to continue._");
+      }
       return full;
     }),
     { cancelSignal: input.signal }
@@ -2812,7 +3020,7 @@ export async function webSearchJson(
 ): Promise<{ json: string; sources: WebSource[] }> {
   const { operation } = input;
   const access = input.access?.forUser(userId) ?? (await resolveAiAccess(userId));
-  const grant = await access.completion(operation);
+  const grant = await access.completion(operation, { webSearch: true });
   const { provider, keyOwner } = grant;
   const model = modelForOperation(operation, grant);
   const maxOutputTokens = input.maxOutputTokens ?? 4096;
@@ -2849,8 +3057,9 @@ export async function webSearchJson(
           report({
             ...tokensFromGemini(response),
             webSearches: searches,
-            surchargeMicros: grounded ? WEB_SEARCH_FEE_MICROS.gemini : 0,
+            surchargeMicros: geminiSearchFeeMicros(model, searches, grounded),
           });
+          assertUsableFinish(geminiFinish(response));
           const content = response.text;
           if (!content) throw new Error("Empty AI response");
           const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
@@ -2880,6 +3089,7 @@ export async function webSearchJson(
           // One plugin search per call; its fee is inside the reported cost.
           searches = 1;
           report({ ...tokensFromOpenAi(response), reportedCostMicros: reportedCostMicros(response as OpenAiUsageWithCost) });
+          assertUsableFinish(openaiFinish(response.choices[0]));
           const message = response.choices[0]?.message;
           if (!message?.content) throw new Error("Empty AI response");
           const annotations =
@@ -2903,6 +3113,8 @@ export async function webSearchJson(
               // tier — enough to read a profile snippet, which is all a lookup needs.
               tools: [{ type: "web_search", search_context_size: "low" }],
               max_output_tokens: maxOutputTokens,
+              // No ceiling here: the installed SDK's request type has no `max_tool_calls`, so
+              // `maxSearches` is only a request in the prompt on OpenAI. The count is recorded below.
             },
             { signal: callSignal() },
           );
@@ -2914,6 +3126,7 @@ export async function webSearchJson(
             webSearches: searches,
             surchargeMicros: searches * WEB_SEARCH_FEE_MICROS.openai,
           });
+          assertUsableFinish(openaiResponsesFinish(response));
           const content = response.output_text;
           if (!content) throw new Error("Empty AI response");
           const sources: WebSource[] = [];
@@ -2960,7 +3173,9 @@ export async function webSearchJson(
           if (response.stop_reason !== "pause_turn") break;
           messages.push({ role: "assistant", content: response.content });
         }
-        if (!response || response.stop_reason === "refusal") throw new Error("Empty AI response");
+        if (!response) throw new Error("Empty AI response");
+        // A refusal is a refusal, and a reply cut off at the cap is not research to cache.
+        assertUsableFinish(anthropicFinish(response.stop_reason));
 
         // Citations split the answer into several text blocks; the JSON may span them.
         const text = response.content
@@ -2974,6 +3189,7 @@ export async function webSearchJson(
         }
         return { json: normalizeJsonResponse(text), sources };
       } catch (err) {
+        if (err instanceof AiFinishError) throw err;
         if (err instanceof Error && err.message === "Empty AI response") throw err;
         if (err instanceof Error && err.message.startsWith("Failed to parse AI JSON")) {
           throw new Error(AI_INCOMPLETE_MESSAGE);

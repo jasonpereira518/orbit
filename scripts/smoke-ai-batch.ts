@@ -401,6 +401,24 @@ async function main() {
     await db.delete(creditGrants).where(eq(creditGrants.userId, MANAGED));
   }
 
+  console.log("\nA finished batch whose write-back fails is billed once, not on every sweep");
+  {
+    await db.delete(usageEvents).where(eq(usageEvents.userId, USER));
+    await db.delete(aiBatchJobs).where(eq(aiBatchJobs.userId, USER));
+    await account(USER, "gemini");
+    await contactWithThread(USER);
+    batchDone = false;
+    await submitRelationshipBatch(USER);
+    batchDone = true;
+    const [job] = await listPendingBatchJobs();
+    const first = await pollAiBatch(job!);
+    const second = await pollAiBatch(job!);
+    const third = await pollAiBatch(job!);
+    check("each ready poll counts an attempt", first.state === "ready" && second.state === "ready" && third.state === "ready" && third.attempts === 3);
+    const rows = await db.select().from(usageEvents).where(and(eq(usageEvents.userId, USER), eq(usageEvents.operation, "relationship.digest")));
+    check("usage is recorded on the first poll only", rows.length === 1, String(rows.length));
+  }
+
   for (const u of [USER, MANAGED]) {
     await db.delete(aiBatchJobs).where(eq(aiBatchJobs.userId, u));
     await db.delete(usageEvents).where(eq(usageEvents.userId, u));

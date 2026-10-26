@@ -144,6 +144,11 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
               model,
               max_tokens: maxOutputTokens,
               ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
+              // A research turn is up to three rounds, each resending the system prompt, every
+              // tool definition (~4k tokens together) and the growing results. Automatic caching
+              // marks the last block, so round two reads round one's prefix at a tenth of the price
+              // instead of paying for it again. One round only is a 25% premium on those 4k tokens.
+              cache_control: { type: "ephemeral" as const },
               system: input.system,
               tools,
               messages,

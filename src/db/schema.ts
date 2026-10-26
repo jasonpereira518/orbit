@@ -2924,6 +2924,13 @@ export const memoryChunks = pgTable(
      */
     embeddedHash: text("embedded_hash"),
     embedding: jsonb("embedding").$type<number[]>(),
+    /**
+     * The embedding model that produced `embedding`, e.g. "text-embedding-3-small". Vectors
+     * from two models are not comparable, and nothing else records which one a row holds, so
+     * a backend switch used to leave old-space vectors silently queryable. NULL on rows that
+     * predate this column, which read as "unknown, re-embed".
+     */
+    embeddingModel: text("embedding_model"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -2947,6 +2954,8 @@ export const contactEmbeddings = pgTable(
     embedding: jsonb("embedding").$type<number[]>().notNull(),
     content: text("content").notNull(),
     contentHash: text("content_hash"),
+    /** The model that produced `embedding`; see `memoryChunks.embeddingModel`. NULL = unknown. */
+    embeddingModel: text("embedding_model"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
