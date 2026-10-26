@@ -189,6 +189,25 @@ async function draftSection(camp: string, liCamp: string, otherCamp: string, oth
   });
   check("a send that lands mid-draft is not overwritten", raced.drafted === 0 && raced.skipped === 1 && (await stepZero(di))?.body === "WENT OUT");
 
+  // Two runs for one person (two tabs, a retry after a timeout): both read "no first message"
+  // before either writes, because the model call sits between the read and the write.
+  await addProspectsForUser(USER, camp, [{ fullName: "Gus Ito", company: "ZS", origin: "manual" }]);
+  const gus = await idOf(camp, "Gus Ito");
+  let arrived = 0;
+  let open!: () => void;
+  const gate = new Promise<void>((resolve) => (open = resolve));
+  const barrier: Drafter = async (u, inputs) => {
+    if (++arrived === 2) open();
+    await gate;
+    return drafter(u, inputs);
+  };
+  const both = await Promise.all([
+    draftCampaignMessagesForUser(USER, camp, [gus], { drafter: barrier }),
+    draftCampaignMessagesForUser(USER, camp, [gus], { drafter: barrier }),
+  ]);
+  check("two runs at once leave exactly one first message", (await stepZeros(gus)).length === 1, `${(await stepZeros(gus)).length} rows`);
+  check("…one run drafted, the other skipped", both.reduce((n, r) => n + r.drafted, 0) === 1 && both.reduce((n, r) => n + r.skipped, 0) === 1, JSON.stringify(both));
+
   const empty = await draftCampaignMessagesForUser(USER, camp, [ed], { drafter: async () => [{ subject: null, body: "  " }] });
   check("an empty draft is not stored", empty.drafted === 0 && empty.skipped === 1 && (await stepZeros(ed)).length === 0);
 

@@ -239,7 +239,7 @@ export async function draftCampaignMessagesForUser(
 
   const drafts = await (opts.drafter ?? generateOutreachDraftsBatch)(userId, inputs);
 
-  const inserts: Array<typeof outreachMessages.$inferInsert> = [];
+  const inserts: Array<{ prospectId: string; subject: string | null; body: string }> = [];
   const rewrites: Array<{ id: string; subject: string | null; body: string }> = [];
   targets.forEach(({ prospect, rewriteId }, i) => {
     const body = drafts[i]?.body?.trim();
@@ -247,13 +247,29 @@ export async function draftCampaignMessagesForUser(
     // A LinkedIn note has no subject line, whatever the model sent.
     const subject = channel === "linkedin" ? null : drafts[i]!.subject?.trim() || null;
     if (rewriteId) rewrites.push({ id: rewriteId, subject, body });
-    else inserts.push({ prospectId: prospect.id, channel, subject, body, status: "draft", stepIndex: 0 });
+    else inserts.push({ prospectId: prospect.id, subject, body });
   });
 
-  // ponytail: two runs at once for one person can both insert; there is no unique index on
-  // (prospect, step) and no schema change is allowed here. Add one if a double click shows up.
+  // The model call sits between the read above and this write, so a second run for the same
+  // person (another tab, a retry) can have read "no first message" too. There is no unique
+  // index on (prospect, step) and no schema change is allowed, so the inserts are serialised
+  // per person instead: lock the prospect rows first (in id order, so two overlapping runs
+  // can't deadlock), then insert only where no first message exists. Under READ COMMITTED
+  // each later statement takes a fresh snapshot, so the run that waited on the lock sees
+  // whatever the winner committed and inserts nothing.
   const updatedAt = new Date();
+  const lockCount = inserts.length ? 1 : 0;
   const results = await runAtomicBatch(db, (tx) => [
+    ...(inserts.length
+      ? [
+          tx
+            .select({ id: outreachProspects.id })
+            .from(outreachProspects)
+            .where(inArray(outreachProspects.id, inserts.map((r) => r.prospectId)))
+            .orderBy(outreachProspects.id)
+            .for("update"),
+        ]
+      : []),
     ...rewrites.map((r) =>
       tx
         .update(outreachMessages)
@@ -261,10 +277,20 @@ export async function draftCampaignMessagesForUser(
         .where(and(eq(outreachMessages.id, r.id), inArray(outreachMessages.status, REWRITABLE)))
         .returning({ id: outreachMessages.id })
     ),
-    ...(inserts.length ? [tx.insert(outreachMessages).values(inserts)] : []),
+    ...inserts.map((r) =>
+      tx.execute(sql`
+        INSERT INTO outreach_messages (prospect_id, channel, subject, body, status, step_index)
+        SELECT ${r.prospectId}::uuid, ${channel}::text, ${r.subject}::text, ${r.body}::text, 'draft', 0
+         WHERE NOT EXISTS (
+           SELECT 1 FROM outreach_messages WHERE prospect_id = ${r.prospectId}::uuid AND step_index = 0
+         )
+        RETURNING id
+      `)
+    ),
   ]);
-  const rewritten = results.slice(0, rewrites.length).filter((r) => rowsOf(r).length > 0).length;
-  const drafted = rewritten + inserts.length;
+  // Counted from RETURNING: a rewrite that lost to a send, or an insert that lost to another
+  // run, wrote nothing and is skipped.
+  const drafted = results.slice(lockCount).filter((r) => rowsOf(r).length > 0).length;
   return { drafted, skipped: people.length - drafted };
 }
 
