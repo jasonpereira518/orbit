@@ -3020,7 +3020,7 @@ export async function webSearchJson(
 ): Promise<{ json: string; sources: WebSource[] }> {
   const { operation } = input;
   const access = input.access?.forUser(userId) ?? (await resolveAiAccess(userId));
-  const grant = await access.completion(operation);
+  const grant = await access.completion(operation, { webSearch: true });
   const { provider, keyOwner } = grant;
   const model = modelForOperation(operation, grant);
   const maxOutputTokens = input.maxOutputTokens ?? 4096;

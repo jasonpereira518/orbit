@@ -89,6 +89,7 @@ import {
   MANAGED_MODELS,
   MANAGED_PROVIDER_ORDER,
   chooseCompletionKey,
+  WEB_SEARCH_MANAGED_EXCLUDED,
   chooseEmbeddingKey,
   holdEstimateMicros,
   managedEligibility,
@@ -371,6 +372,20 @@ function purePolicy() {
     pick(facts({ eligibility: "plan", personal: own, preference: "included", managed: allManaged })) === "managed:anthropic:claude-haiku-5-5");
   check("…and with Gemini as Orbit's only key, its managed default rather than the account's model",
     pick(facts({ eligibility: "plan", personal: own, preference: "included" })) === `managed:gemini:${MANAGED_DEFAULT_MODELS.gemini}`);
+  // Web search on Orbit's key never runs on its Gemini key.
+  const search = (f: KeyFacts) => {
+    const c = chooseCompletionKey(f, { skipManaged: WEB_SEARCH_MANAGED_EXCLUDED });
+    return c.ok ? `${c.source}:${c.provider}` : `refused:${c.reason}`;
+  };
+  check("search on Orbit's keys → Anthropic first", search(facts({ eligibility: "plan", managed: allManaged })) === "managed:anthropic");
+  check("…then OpenAI when Anthropic is spent", search(facts({ eligibility: "plan", managed: { ...allManaged, anthropic: false } })) === "managed:openai");
+  check("…and refuses rather than fall to Orbit's Gemini key",
+    search(facts({ eligibility: "plan", managed: { ...allManaged, anthropic: false, openai: false } })) === "refused:managed_unavailable");
+  check("their own Gemini key still searches", search(facts({ eligibility: "plan", personal: own, managed: allManaged })) === "personal:gemini");
+  check("…but chose-included with only Orbit's Gemini key left uses their own key, not Orbit's",
+    search(facts({ eligibility: "plan", personal: own, preference: "included" })) === "personal:gemini");
+  check("ordinary completions are unchanged: Gemini is still the last managed fallback",
+    pick(facts({ eligibility: "plan", managed: { ...allManaged, anthropic: false, openai: false } })) === `managed:gemini:${MANAGED_DEFAULT_MODELS.gemini}`);
   check("Pro + own key + chose own → their key", pick(facts({ eligibility: "plan", personal: own, preference: "own" })) === "personal:gemini:gemini-3.5-flash");
   check("Pro + no key → Orbit's key, on Orbit's route (Anthropic first, Haiku 5.5)",
     pick(facts({ eligibility: "plan", managed: allManaged })) === "managed:anthropic:claude-haiku-5-5");

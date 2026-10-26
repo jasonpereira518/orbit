@@ -49,6 +49,7 @@ import {
 } from "@/lib/typesafe-api";
 import {
   chooseCompletionKey,
+  WEB_SEARCH_MANAGED_EXCLUDED,
   chooseEmbeddingKey,
   holdEstimateMicros,
   managedEligibility,
@@ -741,8 +742,11 @@ export class AiAccess {
   }
 
   /** A grant for "the user's model": chat, capture, drafts, briefs, OCR. */
-  async completion(operation: string): Promise<AiGrant> {
-    const choice = chooseCompletionKey(this.facts());
+  async completion(operation: string, opts: { webSearch?: boolean } = {}): Promise<AiGrant> {
+    const choice = chooseCompletionKey(
+      this.facts(),
+      opts.webSearch ? { skipManaged: WEB_SEARCH_MANAGED_EXCLUDED } : {},
+    );
     if (!choice.ok) throw this.refusal(choice.reason);
     return this.grant(choice.provider, choice.source, choice.model, operation);
   }
