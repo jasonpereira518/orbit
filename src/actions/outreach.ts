@@ -52,7 +52,10 @@ import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 import {
   BULK_SEND_LIMIT,
   OUTREACH_CHANNELS,
+  OUTREACH_REPLY_CTAS,
+  OUTREACH_TONES,
   type OutreachChannel,
+  type OutreachReplyCta,
   type OutreachMessageOutcome,
   type OutreachMessageStatus,
   type SequenceStep,
@@ -209,37 +212,70 @@ export async function getOutreachPerformanceSummary() {
   };
 }
 
+function boundedText(value: unknown, min: number, max: number, tooShort: string, tooLong: string) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (text.length < min) throw new UserFacingError(tooShort);
+  if (text.length > max) throw new UserFacingError(tooLong);
+  return text;
+}
+
+/**
+ * Starts a campaign from a description. No model call: the audience text is stored as typed and
+ * is the search itself (`discoverPeople`), so creating one costs nothing and cannot fail on a
+ * missing AI key. Everything is checked here because this is a public POST endpoint.
+ */
 export async function createCampaign(input: {
-  name: string;
+  name?: string;
   audienceQuery: string;
-  audienceFilters?: AudienceFilters;
-  replyCta?: string | null;
-  sequenceSteps?: SequenceStep[];
+  messageIntent: string;
+  replyCta: OutreachReplyCta;
+  defaultChannel: "email" | "linkedin";
+  tone: (typeof OUTREACH_TONES)[number];
 }) {
-  const userId = await requireOutreachUser();
-  const db = await getDb();
+  return asActionResult(async () => {
+    const userId = await requireOutreachUser();
 
-  const filters =
-    input.audienceFilters ??
-    (input.audienceQuery.trim()
-      ? await parseAudienceToFilters(userId, input.audienceQuery)
-      : {});
+    const audienceQuery = boundedText(
+      input.audienceQuery,
+      3,
+      300,
+      "Say who you want to reach, in a few words",
+      "Keep who you want to reach under 300 characters"
+    );
+    const messageIntent = boundedText(
+      input.messageIntent,
+      3,
+      1_000,
+      "Say why you’re reaching out, in a few words",
+      "Keep why you’re reaching out under 1,000 characters"
+    );
+    if (!OUTREACH_REPLY_CTAS.includes(input.replyCta)) throw new UserFacingError("Pick what you’re asking for");
+    if (input.defaultChannel !== "email" && input.defaultChannel !== "linkedin") {
+      throw new UserFacingError("Pick Email or LinkedIn");
+    }
+    if (!OUTREACH_TONES.includes(input.tone)) throw new UserFacingError("Pick a tone");
+    const name =
+      (typeof input.name === "string" ? input.name.trim().slice(0, 120) : "") ||
+      audienceQuery.replace(/\s+/g, " ").slice(0, 60).trim();
 
-  const [campaign] = await db
-    .insert(outreachCampaigns)
-    .values({
-      userId,
-      name: input.name.trim() || "Untitled campaign",
-      audienceQuery: input.audienceQuery.trim(),
-      audienceFilters: filters,
-      replyCta: input.replyCta ?? null,
-      sequenceSteps: (input.sequenceSteps ?? []) as OutreachSequenceStep[],
-      status: "draft",
-    })
-    .returning();
+    const db = await getDb();
+    const [campaign] = await db
+      .insert(outreachCampaigns)
+      .values({
+        userId,
+        name,
+        audienceQuery,
+        messageIntent,
+        replyCta: input.replyCta,
+        defaultChannel: input.defaultChannel,
+        tone: input.tone,
+        status: "draft",
+      })
+      .returning();
 
-  revalidatePath("/outreach");
-  return campaign;
+    revalidatePath("/outreach");
+    return { id: campaign.id };
+  });
 }
 
 const CAMPAIGN_TEXT_MAX = 4_000;

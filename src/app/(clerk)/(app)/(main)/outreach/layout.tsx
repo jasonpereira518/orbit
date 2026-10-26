@@ -7,7 +7,7 @@ import { LockedFeature } from "@/components/locked-feature";
  *
  * It lives in the layout rather than in each page because gating only the index
  * left `/outreach/new` and `/outreach/[id]` wide open: a free user could fill in
- * the entire campaign wizard and only discover the paywall when Continue threw a
+ * the entire campaign form and only discover the paywall when submitting threw a
  * 500 from `requireOutreachUser()` inside the action. Nothing was written — the
  * actions are gated correctly — but it is a dead end for exactly the people who
  * are trying to give you money, and in production Next redacts a thrown action's
@@ -28,14 +28,14 @@ export default async function OutreachLayout({
     return (
       <LockedFeature
         title="Outreach"
-        description="Find the right people, draft messages that sound like you, and track what actually gets replies — without leaving Orbit."
+        description="Describe who you want to reach, find real people to write to, and send from your own email — then see who answers."
         highlights={[
-          "Search prospects by role, company, and seniority",
-          "Personalized email and SMS drafts from your own notes",
-          "Reply tracking and per-campaign quality scores",
-          "Sequenced follow-ups that stop when someone replies",
+          "Find people from a sentence, each with the page that shows the match",
+          "Drafts written from real details about each person, in your voice",
+          "Sent from your own Gmail or Outlook, with LinkedIn notes you copy and send yourself",
+          "Replies found for you, and one follow-up in the same thread",
         ]}
-        note="Both send email and SMS on Orbit's credits. On Orbit Lifetime you supply your own Apollo key for prospect search."
+        note="Email goes out from your own mailbox, so replies land where you already read them."
       />
     );
   }

@@ -62,7 +62,7 @@ export default async function OutreachPage() {
             Outreach
           </h1>
           <p className="mt-1 text-muted-foreground">
-            Optimize for successful replies — quality ICP, personalized drafts, and logged outcomes
+            Reach people you don’t know yet — from your own email
           </p>
         </div>
         <Link
@@ -94,32 +94,19 @@ export default async function OutreachPage() {
       {ranked.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-border/70 p-12 text-center">
           <p className="text-muted-foreground">
-            No campaigns yet. Start with a tight ICP and a clear reply ask.
+            No campaigns yet. Describe who you want to reach and why.
           </p>
           <Link
             href="/outreach/new"
             className={cn(buttonVariants({ variant: "outline" }), "mt-4 inline-flex")}
           >
-            Start your first reply-optimized campaign
+            Start your first campaign
           </Link>
         </div>
       ) : (
         <div className="grid gap-4">
           {ranked.map((campaign) => (
-            <OutreachCampaignCard
-              key={campaign.id}
-              campaign={{
-                id: campaign.id,
-                name: campaign.name,
-                audienceQuery: campaign.audienceQuery,
-                messageIntent: campaign.messageIntent,
-                tone: campaign.tone,
-                defaultChannel: campaign.defaultChannel,
-                status: campaign.status,
-                updatedAt: campaign.updatedAt,
-                metrics: campaign.metrics,
-              }}
-            />
+            <OutreachCampaignCard key={campaign.id} campaign={campaign} />
           ))}
         </div>
       )}

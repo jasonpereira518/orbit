@@ -1,4 +1,4 @@
-import { OutreachWizard } from "@/components/outreach/outreach-wizard";
+import { NewCampaignForm } from "@/components/outreach/new-campaign-form";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
@@ -24,10 +24,10 @@ export default async function NewOutreachPage() {
           New outreach campaign
         </h1>
         <p className="mt-1 text-muted-foreground">
-          Define a tight audience, a desired reply, and personalized drafts optimized for response rate
+          Say who you want to reach and why — you’ll find the people next
         </p>
       </div>
-      <OutreachWizard />
+      <NewCampaignForm />
     </div>
   );
 }

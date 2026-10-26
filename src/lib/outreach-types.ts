@@ -96,11 +96,11 @@ export const OUTREACH_REPLY_CTAS = [
 export type OutreachReplyCta = (typeof OUTREACH_REPLY_CTAS)[number];
 
 export const REPLY_CTA_LABELS: Record<OutreachReplyCta, string> = {
-  book_intro: "Book an intro / call",
-  ask_referral: "Ask for a referral",
-  get_feedback: "Get feedback",
-  explore_partnership: "Explore a partnership",
-  other: "Other (from message intent)",
+  book_intro: "A short chat",
+  ask_referral: "A referral",
+  get_feedback: "Advice on a question",
+  explore_partnership: "Exploring working together",
+  other: "Something else",
 };
 
 export const OUTCOME_LABELS: Record<OutreachMessageOutcome, string> = {
