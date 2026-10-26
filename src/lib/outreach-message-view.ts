@@ -157,14 +157,36 @@ export function messageGroups(
 }
 
 /**
- * Why "Copy & open" is not available for this note right now, or null. The server copies the
- * text it has saved and refuses one over the limit, so unsaved edits and a long note both
- * block here. `.length` counts UTF-16 units, exactly as the server does.
+ * A LinkedIn profile link the browser may be sent to: the server’s own test
+ * (`LINKEDIN_PROFILE_RE` in `outreach-messages.ts`), so a link the server would refuse to
+ * copy for is not opened either. Older rows hold whatever a search returned, so a
+ * `javascript:` or off-site value is no link.
  */
-export function copyBlockedReason(message: Pick<ViewMessage, "body">, dirty: boolean): string | null {
+const LINKEDIN_OPEN_RE = /^https?:\/\/([a-z0-9-]+\.)*linkedin\.com\/in\/[^\s]+$/i;
+
+export function linkedInOpenUrl(raw: string | null | undefined): string | null {
+  const url = raw?.trim();
+  return url && LINKEDIN_OPEN_RE.test(url) ? url : null;
+}
+
+/**
+ * Why "Copy & open" is not available for this note right now, or null. The click copies and
+ * opens before the server is asked, so everything the server would refuse is checked here
+ * first: unsaved edits (the server holds the saved text), a note over the limit (`.length`
+ * counts UTF-16 units, exactly as the server does) and, when `linkedinUrl` is given, a missing
+ * or unusable profile link.
+ */
+export function copyBlockedReason(
+  message: Pick<ViewMessage, "body">,
+  dirty: boolean,
+  linkedinUrl?: string | null
+): string | null {
   if (dirty) return "Save your changes first — the saved note is what gets copied";
   if (message.body.length > LINKEDIN_NOTE_MAX) {
     return `LinkedIn notes are limited to ${LINKEDIN_NOTE_MAX} characters — shorten this one`;
+  }
+  if (linkedinUrl !== undefined && !linkedInOpenUrl(linkedinUrl)) {
+    return "Add their LinkedIn profile link on the People tab first";
   }
   return null;
 }

@@ -28,6 +28,7 @@ import {
 import { asLinkedInProfile } from "../src/lib/outreach-channels";
 import {
   copyBlockedReason,
+  linkedInOpenUrl,
   messageGroups,
   notSentLine,
   sendSummary,
@@ -433,14 +434,30 @@ async function main() {
     check("two views behind a segmented control", messages.includes("To send") && messages.includes("Sent") && messages.includes("aria-pressed"));
     check("Write drafts calls draftMessages", messages.includes("draftMessages("));
     check("…at most MAX_DRAFTS_PER_RUN at a time", messages.includes("MAX_DRAFTS_PER_RUN"));
-    check("Send selected calls sendMessages", messages.includes("sendMessages("));
-    check("…at most BULK_SEND_LIMIT at a time", messages.includes("BULK_SEND_LIMIT"));
-    check("Copy & open calls copyLinkedIn, then the clipboard, then the profile", (() => {
-      const copy = messages.indexOf("copyLinkedIn(");
-      const clip = messages.indexOf("navigator.clipboard.writeText(", copy);
-      const open = messages.indexOf('window.open(', clip);
-      return copy > 0 && clip > copy && open > clip && messages.includes('"_blank", "noopener"');
+    check("sendMessages is called once, and only from the confirm handler", (() => {
+      const start = messages.indexOf("async function confirmSend()");
+      const end = messages.indexOf("const nothing =");
+      const at = messages.indexOf("sendMessages(");
+      return start > 0 && end > start && at > start && at < end && messages.indexOf("sendMessages(", at + 1) < 0;
     })());
+    check("Send selected only asks: it opens the dialog", (() => {
+      const ask = messages.slice(messages.indexOf("function askToSend()"), messages.indexOf("async function confirmSend()"));
+      return /onClick=\{askToSend\}/.test(messages) && ask.includes("setConfirmOpen(true)") && !ask.includes("sendMessages(");
+    })());
+    check("the dialog’s Send is what confirms", /<Button onClick=\{confirmSend\} disabled=\{sending\}>/.test(messages.replace(/\s+/g, " ")));
+    check("the dialog asks ‘Send n emails from <address>?’ with Send and Cancel", /Send \{plural\(batch\.ids\.length, "email"\)\} from \{batch\.from\}\?/.test(messages) && messages.includes("Cancel") && messages.includes("@/components/ui/dialog"));
+    check("the dialog can’t be closed while a send runs, and the batch it names is the batch that goes", /if \(!sending\) setConfirmOpen\(open\)/.test(messages) && /const ids = batch\.ids/.test(messages) && /sendMessages\(campaignId, ids\)/.test(messages));
+    check("…at most BULK_SEND_LIMIT at a time", messages.includes("BULK_SEND_LIMIT"));
+    check("Copy & open writes the clipboard, then opens the profile, before its first await, and only then records the copy", (() => {
+      const body = messages.slice(messages.indexOf("async function copyAndOpen()"));
+      const clip = body.indexOf("navigator.clipboard");
+      const open = body.indexOf("window.open(");
+      const firstAwait = body.indexOf("await ");
+      const record = body.indexOf("await copyLinkedIn(");
+      return clip > 0 && open > clip && firstAwait > open && record === firstAwait && messages.includes('"_blank", "noopener"');
+    })());
+    check("…and catches a clipboard that rejects or is missing", /navigator\.clipboard[\s\S]*?\.catch\(/.test(messages) && /\} catch \{\s*onError\(message\.id, TOAST_COPY\.copyFailed\)/.test(messages));
+    check("…and shows the server’s refusal on the row", /const res = await copyLinkedIn\(message\.id\);\s*if \(!res\.ok\) onError\(message\.id, res\.error\)/.test(messages));
     check("I sent it calls confirmLinkedInSent", messages.includes("confirmLinkedInSent(") && messages.includes("I sent it"));
     check("Write follow-up calls draftFollowUp", messages.includes("draftFollowUp(") && messages.includes("Write follow-up"));
     check("a button checks for replies by hand", messages.includes("Check for replies"));
@@ -473,12 +490,13 @@ async function main() {
     }
     {
       const flat = messages.replace(/\s+/g, " ");
-      check("a send refuses to start while one is in flight, or with unsaved text", /async function send\(\) \{ if \(sendingRef\.current \|\| !sendCapability\?\.ok[^)]*unsaved\.length\)/.test(flat));
+      check("asking to send refuses while one is in flight, with unsaved text, or without a mailbox", /function askToSend\(\) \{ if \(sendingRef\.current \|\| !sendCapability\?\.ok[^)]*unsaved\.length\)/.test(flat));
+      check("confirming refuses while one is in flight", /async function confirmSend\(\) \{ if \(sendingRef\.current \|\| !batch\.ids\.length\) return;/.test(flat));
       check("I sent it releases its lock in a finally, so it can be pressed again after a failure", /async function confirmSent\(\) \{[\s\S]*?\} finally \{ setBusy\(null\);/.test(flat));
       check("…and is gated on nothing but its own lock", /<Button size="sm" onClick=\{confirmSent\} disabled=\{busy !== null\}>/.test(flat));
       check("Copy & open is off while the saved note is unsendable (over the limit, or unsaved edits)", /onClick=\{copyAndOpen\} disabled=\{busy !== null \|\| blocked !== null\}/.test(flat));
-      check("a note over the limit is blocked from the saved text, not the typed text", /copyBlockedReason\(message, isDirty\)/.test(flat));
-      check("a batch with a follow-up looks for replies first, and stops if one came in", /const hasFollowUp = [^;]*stepIndex[^;]*> 0\);[\s\S]*?if \(hasFollowUp\) \{[\s\S]*?checkReplies\(campaignId\)[\s\S]*?seen\.value\.replied[\s\S]*?return;[\s\S]*?sendMessages\(campaignId, batch\)/.test(flat));
+      check("a note over the limit is blocked from the saved text, not the typed text", /copyBlockedReason\(message, isDirty, person\.linkedinUrl\)/.test(flat));
+      check("a batch with a follow-up looks for replies first, and stops if one came in", /const hasFollowUp = [^;]*stepIndex[^;]*> 0\);[\s\S]*?if \(hasFollowUp\) \{[\s\S]*?checkReplies\(campaignId\)[\s\S]*?seen\.value\.replied[\s\S]*?return;[\s\S]*?sendMessages\(campaignId, ids\)/.test(flat));
       check("Write follow-up waits while replies are being checked", /disabled=\{followUpBusy !== null \|\| !canUseAi \|\| checking\}/.test(flat));
       check("Write drafts takes only the ids of people without a message", /draftMessages\(campaignId, batch\)/.test(flat) && /const draftIds = groups\.needsDraft\.filter/.test(flat));
       check("Send selected takes only ids of sendable drafts that are still on screen", /const sendIds = sendable\.filter\(\(r\) => selectedSends\.has/.test(flat));
@@ -634,6 +652,12 @@ async function main() {
       check("301 cannot", copyBlockedReason(note(301), false) !== null);
       check("it counts UTF-16 units, as the server does", copyBlockedReason(m({ id: "e", body: "😀".repeat(151), channel: "linkedin" }), false) !== null);
       check("unsaved edits cannot be copied", copyBlockedReason(note(10), true) !== null);
+      const profile = "https://www.linkedin.com/in/jane-doe";
+      check("a profile link the server accepts can be opened", copyBlockedReason(note(10), false, profile) === null && linkedInOpenUrl(profile) === profile);
+      check("no link blocks the copy, as the server would", copyBlockedReason(note(10), false, null) !== null && copyBlockedReason(note(10), false, "  ") !== null);
+      check("so does a link that isn’t a profile, or isn’t LinkedIn", copyBlockedReason(note(10), false, "https://www.linkedin.com/company/stripe") !== null && copyBlockedReason(note(10), false, "javascript:alert(1)") !== null && copyBlockedReason(note(10), false, "https://evil.example/in/jane") !== null);
+      check("a look-alike host is not LinkedIn", linkedInOpenUrl("https://notlinkedin.com/in/jane") === null && linkedInOpenUrl("https://linkedin.com.evil.io/in/jane") === null);
+      check("a legacy http link still opens, like the server’s", linkedInOpenUrl("http://uk.linkedin.com/in/jane-doe") === "http://uk.linkedin.com/in/jane-doe");
     }
 
     console.log("  client rules");

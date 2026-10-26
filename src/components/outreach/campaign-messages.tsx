@@ -16,13 +16,21 @@ import { OutcomeControls } from "@/components/outreach/outcome-controls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { friendlyError } from "@/lib/errors";
-import { asLinkedInProfile } from "@/lib/outreach-channels";
 import {
   SENDABLE_STATUSES,
   copyBlockedReason,
   draftedLine,
+  linkedInOpenUrl,
   messageGroups,
   sendSummary,
   type MessageGroups,
@@ -165,6 +173,10 @@ function ToSend({
   const [status, setStatus] = useState("");
   const [statusWarn, setStatusWarn] = useState(false);
   const [problem, setProblem] = useState("");
+  // What the confirm dialog is about to send. Frozen when it opens, so the count in its title is
+  // the count that goes, and kept (not cleared) on close so the dialog can finish fading out.
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [batch, setBatch] = useState<{ ids: string[]; from: string }>({ ids: [], from: "" });
 
   const markDirty = useCallback((messageId: string, isDirty: boolean) => {
     setDirty((prev) => (prev.has(messageId) === isDirty ? prev : toggled(prev, [messageId], isDirty)));
@@ -216,17 +228,24 @@ function ToSend({
     }
   }
 
-  async function send() {
+  // "Send selected" only asks. Nothing goes until the dialog’s own Send.
+  function askToSend() {
     if (sendingRef.current || !sendCapability?.ok || !sendIds.length || sendIds.length > BULK_SEND_LIMIT || unsaved.length) {
       return;
     }
+    setBatch({ ids: sendIds, from: sendCapability.fromEmail });
+    setConfirmOpen(true);
+  }
+
+  async function confirmSend() {
+    if (sendingRef.current || !batch.ids.length) return;
     sendingRef.current = true;
     setSending(true);
     setStatus("");
     setStatusWarn(false);
     setProblem("");
-    const batch = sendIds;
-    const hasFollowUp = sendable.some((r) => batch.includes(r.message.id) && (r.message.stepIndex ?? 0) > 0);
+    const ids = batch.ids;
+    const hasFollowUp = sendable.some((r) => ids.includes(r.message.id) && (r.message.stepIndex ?? 0) > 0);
     try {
       if (hasFollowUp) {
         // A follow-up is a second email to someone who hadn’t answered when it was written. Look
@@ -241,7 +260,7 @@ function ToSend({
           return;
         }
       }
-      const res = await sendMessages(campaignId, batch);
+      const res = await sendMessages(campaignId, ids);
       if (!res.ok) {
         setProblem(res.error);
         return;
@@ -249,7 +268,7 @@ function ToSend({
       const result = res.value;
       setErrors((prev) => {
         const next = { ...prev };
-        for (const id of batch) delete next[id];
+        for (const id of ids) delete next[id];
         for (const f of result.failed) next[f.messageId] = f.error;
         return next;
       });
@@ -262,13 +281,15 @@ function ToSend({
       // Clear the selection of what went. Which ones a run out of time left behind isn’t
       // reported, so then the whole batch stays: what went leaves the list on its own, and
       // what is left is still ticked for "send again".
-      if (!result.notSent) setSelectedSends((prev) => toggled(prev, batch, false));
+      if (!result.notSent) setSelectedSends((prev) => toggled(prev, ids, false));
     } catch (err) {
       setProblem(friendlyError(err, TOAST_COPY.sendFailed));
     } finally {
-      // Only now, with the answer in: until then a second click does nothing.
+      // Only now, with the answer in: until then a second click does nothing, and the dialog
+      // stays up saying Sending…
       sendingRef.current = false;
       setSending(false);
+      setConfirmOpen(false);
     }
   }
 
@@ -404,7 +425,7 @@ function ToSend({
                 </Button>
                 <Button
                   size="sm"
-                  onClick={send}
+                  onClick={askToSend}
                   disabled={
                     sending ||
                     !sendCapability?.ok ||
@@ -454,6 +475,35 @@ function ToSend({
             ))}
           </ul>
         </section>
+      )}
+      {channel === "email" && (
+        <Dialog
+          open={confirmOpen}
+          onOpenChange={(open) => {
+            // Not while it is sending: closing would hide a send that is still running.
+            if (!sending) setConfirmOpen(open);
+          }}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>
+                Send {plural(batch.ids.length, "email")} from {batch.from}?
+              </DialogTitle>
+              <DialogDescription>
+                Each one goes out from your own mailbox, one after another. A sent email can’t be taken back.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setConfirmOpen(false)} disabled={sending}>
+                Cancel
+              </Button>
+              <Button onClick={confirmSend} disabled={sending}>
+                {sending && <Loader2 className="animate-spin" aria-hidden />}
+                {sending ? "Sending…" : "Send"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );
@@ -589,28 +639,32 @@ function LinkedInActions({
   const { person, message } = item;
   const [busy, setBusy] = useState<"copy" | "confirm" | null>(null);
   const copied = message.status === "copied";
-  const blocked = copied ? null : copyBlockedReason(message, isDirty);
-  const profile = asLinkedInProfile(person.linkedinUrl);
+  // What the server would accept as the profile to open, and why Copy might not be available.
+  const openUrl = linkedInOpenUrl(person.linkedinUrl);
+  const blocked = copyBlockedReason(message, isDirty, person.linkedinUrl);
 
+  // The note and the profile go first, inside the click: a popup opened after an await is
+  // blocked by the browser. The saved body is already here (unsaved edits and a note over the
+  // limit are both blocked above), and the link was checked the way the server checks it.
+  // Only then is the copy recorded, so a refusal from the server shows on the row.
   async function copyAndOpen() {
-    if (busy) return;
+    if (busy || blocked || !openUrl) return;
     setBusy("copy");
     onError(message.id, null);
     try {
+      navigator.clipboard
+        .writeText(message.body)
+        .then(() => toast.success(TOAST_COPY.copied))
+        .catch(() => onError(message.id, TOAST_COPY.copyFailed));
+    } catch {
+      onError(message.id, TOAST_COPY.copyFailed);
+    }
+    window.open(openUrl, "_blank", "noopener");
+    try {
       const res = await copyLinkedIn(message.id);
-      if (!res.ok) {
-        onError(message.id, res.error);
-        return;
-      }
-      try {
-        await navigator.clipboard.writeText(res.value.body);
-        toast.success(TOAST_COPY.copied);
-      } catch {
-        onError(message.id, TOAST_COPY.copyFailed);
-      }
-      window.open(res.value.linkedinUrl, "_blank", "noopener");
+      if (!res.ok) onError(message.id, res.error);
     } catch (err) {
-      onError(message.id, friendlyError(err, "Couldn’t copy that note — try again?"));
+      onError(message.id, friendlyError(err, "Couldn’t save that the note was copied — try again?"));
     } finally {
       setBusy(null);
     }
@@ -651,9 +705,9 @@ function LinkedInActions({
           {busy === "copy" && <Loader2 className="animate-spin" aria-hidden />}
           {copied ? "Copy & open again" : "Copy & open"}
         </Button>
-        {copied && profile && (
+        {copied && openUrl && (
           <a
-            href={profile}
+            href={openUrl}
             target="_blank"
             rel="noopener noreferrer nofollow"
             className="inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline"
@@ -664,13 +718,12 @@ function LinkedInActions({
           </a>
         )}
       </div>
-      {copied ? (
+      {copied && (
         <p className="text-xs text-muted-foreground">
           Copied. Paste it on LinkedIn, send it there, then press I sent it.
         </p>
-      ) : (
-        blocked && <p className="text-xs text-muted-foreground">{blocked}</p>
       )}
+      {blocked && <p className="text-xs text-muted-foreground">{blocked}</p>}
     </div>
   );
 }
