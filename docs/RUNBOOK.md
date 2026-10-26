@@ -138,9 +138,9 @@ Monday email. Every switch, smallest first:
   `src/lib/surfaces.ts`). Either way round can be flipped without a deploy from the coming-soon
   toggle in `/admin/product` (a `live:page.radar` or `soon:page.radar` row, which wins over the
   code), or in code by deleting or restoring that line. While it is coming soon, the nightly
-  pass runs only for accounts that have opened Radar (admins previewing it, plus anyone who
-  opened it while it was out), the news sweep runs only once one of them has had a pass, and the
-  Monday email sends nothing. Once released, the pass claims every account active in the last
+  pass, the news sweep and the Monday email all stand down, so no AI is spent for anyone, even
+  accounts that opened Radar while it was out. Admins previewing it still get a list from page
+  views and "Refresh now". Once released, the pass claims every account active in the last
   60 days and the email goes to active accounts with a pending card. It was released on Sep 30
   2026 (#380) and put back behind coming soon the same day.
 

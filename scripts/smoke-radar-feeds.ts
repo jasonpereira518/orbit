@@ -14,9 +14,11 @@
 import "./smoke/_env";
 import { run } from "./smoke/_env";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, gte, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contactSignals, contacts, externalItemCompanies, externalItems, externalSources } from "../src/db/schema";
+import { contactSignals, contacts, cronRuns, externalItemCompanies, externalItems, externalSources, userSettings } from "../src/db/schema";
+import { DEFAULT_COMING_SOON_KEYS } from "../src/lib/surfaces";
+import { ensureUserSettings } from "../src/lib/user-settings";
 import { headlineCompanies } from "../src/lib/radar/feeds/companies";
 import { parseNewsDocument } from "../src/lib/radar/feeds/parse";
 import { DEFAULT_NEWS_SOURCES } from "../src/lib/radar/feeds/sources";
@@ -312,6 +314,32 @@ run(async () => {
     await pruneNews(new Date(NOW.getTime() + 30 * DAY));
     const left = await db.select().from(externalItems).where(and(inArray(externalItems.sourceId, TEST_SOURCES)));
     check("old headlines are pruned, and their company rows with them", left.length === 0, `${left.length}`);
+  }
+
+  console.log("\nthe hourly route");
+  if (DEFAULT_COMING_SOON_KEYS.has("page.radar")) {
+    // Someone has had a Radar run (an admin preview, or an account from the Sep 30 release),
+    // so only the coming-soon check can stand the sweep down.
+    const started = new Date();
+    const opener = "smoke-radar-feeds-opener";
+    await ensureUserSettings(opener);
+    await db.update(userSettings).set({ radarLastRunAt: started }).where(eq(userSettings.userId, opener));
+    process.env.CRON_SECRET = "smoke-radar-feeds-secret";
+    const { POST } = await import("../src/app/api/radar/feeds/sweep/route");
+    const res = await POST(
+      new Request("https://app.example/api/radar/feeds/sweep", {
+        method: "POST",
+        headers: { Authorization: "Bearer smoke-radar-feeds-secret" },
+      })
+    );
+    const body = (await res.json()) as { standDown?: boolean };
+    check("while Radar is coming soon, the sweep stands down even after someone opened it", res.status === 200 && body.standDown === true, JSON.stringify(body));
+    await db.delete(cronRuns).where(and(eq(cronRuns.job, "radar.feeds"), gte(cronRuns.startedAt, started)));
+    await db.delete(userSettings).where(eq(userSettings.userId, opener));
+    delete process.env.CRON_SECRET;
+  } else {
+    // Released, the route would fetch the real feeds; the sweep itself is covered above.
+    console.log("  skip  Radar is released: the route's coming-soon stand-down has nothing to stand down");
   }
 
   await reset();

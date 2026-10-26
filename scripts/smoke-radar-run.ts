@@ -16,7 +16,7 @@
 import "./smoke/_env";
 import { run } from "./smoke/_env";
 
-import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, notInArray, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import {
   actionItems,
@@ -24,6 +24,7 @@ import {
   contactCareerMoves,
   contactOpportunities,
   contacts,
+  cronRuns,
   eventAttendees,
   events,
   interactions,
@@ -751,18 +752,45 @@ run(async () => {
       if (others.length) await db.update(userSettings).set({ radarLeaseUntil: null }).where(inArray(userSettings.userId, others));
       await db.update(userSettings).set({ radarLeaseUntil: null }).where(inArray(userSettings.userId, [opened, unopened]));
     };
-    const gated = await claimRadarUsers(100, passNow, { includeUnopened: false });
-    await handBack(gated);
-    check("while coming-soon, an account that opened Radar is claimed", gated.includes(opened));
-    check("and one that never did is not", !gated.includes(unopened));
-    const released = await claimRadarUsers(100, passNow, { includeUnopened: true });
-    await handBack(released);
-    check("after release, both are", released.includes(opened) && released.includes(unopened));
+    const due = await claimRadarUsers(100, passNow);
+    await handBack(due);
+    check("a due, active account is claimed whether or not it has opened Radar", due.includes(opened) && due.includes(unopened));
     await db.update(userSettings).set({ lastActiveAt: new Date(passNow.getTime() - 90 * DAY) }).where(eq(userSettings.userId, unopened));
-    const idle = await claimRadarUsers(100, passNow, { includeUnopened: true });
+    const idle = await claimRadarUsers(100, passNow);
     await handBack(idle);
     check("an account idle for months is left alone", !idle.includes(unopened));
     await db.delete(userSettings).where(eq(userSettings.userId, unopened));
+  }
+
+  console.log("\nthe nightly route");
+  if (DEFAULT_COMING_SOON_KEYS.has("page.radar")) {
+    // An account that opened Radar, due and active: before this check, a coming-soon pass
+    // still claimed it and ran AI for a page its owner could not open.
+    const started = new Date();
+    await db
+      .update(userSettings)
+      .set({ radarPaused: 0, radarLeaseUntil: null, radarNextAt: ago(1), lastActiveAt: started })
+      .where(eq(userSettings.userId, USER));
+    // Counted, not dated: earlier sections ran scheduled passes on clocks in the future.
+    const scheduledRuns = async () =>
+      (await db.select({ id: radarRuns.id }).from(radarRuns).where(and(eq(radarRuns.userId, USER), eq(radarRuns.trigger, "schedule")))).length;
+    const before = await scheduledRuns();
+    process.env.CRON_SECRET = "smoke-radar-run-secret";
+    const { POST } = await import("../src/app/api/radar/run/route");
+    const res = await POST(
+      new Request("https://app.example/api/radar/run", {
+        method: "POST",
+        headers: { Authorization: "Bearer smoke-radar-run-secret" },
+      })
+    );
+    const body = (await res.json()) as { standDown?: boolean };
+    check("while Radar is coming soon, the pass stands down", res.status === 200 && body.standDown === true, JSON.stringify(body));
+    const after = await scheduledRuns();
+    check("and runs nobody, not even an account that opened Radar", after === before, `${before} → ${after}`);
+    await db.delete(cronRuns).where(and(eq(cronRuns.job, "radar.run"), gte(cronRuns.startedAt, started)));
+    delete process.env.CRON_SECRET;
+  } else {
+    console.log("  skip  Radar is released: the route's coming-soon stand-down has nothing to stand down");
   }
 
   await reset();

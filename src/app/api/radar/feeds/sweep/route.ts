@@ -6,9 +6,8 @@
  * Its own route and its own cron line, for the job feed's reason: a slow publisher must
  * never make the alerting path's cadence hostage to it.
  *
- * Stands down when an operator has hidden `page.radar`, and while nobody has opened Radar
- * yet (during coming-soon that is everyone but the previewing admins), so the sweep costs
- * nothing until someone can see what it finds.
+ * Stands down while `page.radar` is hidden or still coming soon, and until some account has
+ * had a Radar run, so the sweep costs nothing until someone can see what it finds.
  *
  * `POST` because it mutates. Route Handlers are uncached by default and `POST` can never be
  * cached, so no cache configuration is needed here.
@@ -20,7 +19,7 @@ import { finishCronRun, startCronRun } from "@/lib/cron-runs";
 import { isInternalRequest } from "@/lib/internal-auth";
 import { runNewsSweep } from "@/lib/radar/feeds/sweep";
 import { reportError } from "@/lib/report-error";
-import { getHiddenSurfaceKeys } from "@/lib/surface-visibility";
+import { getComingSoonKeys, getHiddenSurfaceKeys } from "@/lib/surface-visibility";
 
 export const maxDuration = 300;
 
@@ -42,8 +41,8 @@ export async function POST(request: Request) {
 
   const handle = await startCronRun("radar.feeds");
   try {
-    const hidden = await getHiddenSurfaceKeys();
-    if (hidden.has(SURFACE_KEY) || !(await anyoneUsesRadar())) {
+    const [hidden, soon] = await Promise.all([getHiddenSurfaceKeys(), getComingSoonKeys()]);
+    if (hidden.has(SURFACE_KEY) || soon.has(SURFACE_KEY) || !(await anyoneUsesRadar())) {
       await finishCronRun(handle, { status: "ok", stats: { standDown: true } });
       return NextResponse.json({ ok: true, standDown: true });
     }

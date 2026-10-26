@@ -5,9 +5,9 @@
  * scheduler. Self-continuation posts back to this same route when a claim came back full or
  * the budget ran out, the same shape as `/api/sync/run`.
  *
- * While `page.radar` is coming-soon, only accounts that have opened Radar are eligible
- * (`claimRadarUsers`), and an operator hiding the page stands the whole pass down, so
- * nobody's AI key is spent on a page they cannot see.
+ * Stands the whole pass down while `page.radar` is hidden or still coming soon, so no AI is
+ * spent, on anyone's key or Orbit's, for a page its owner cannot open. Admins previewing
+ * Radar still get their list from page views and "Refresh now".
  *
  * `POST` because it mutates. Route Handlers are uncached by default and `POST` can never be
  * cached, so no cache configuration is needed here.
@@ -32,12 +32,12 @@ export async function POST(request: Request) {
   const handle = await startCronRun("radar.run");
   try {
     const [hidden, soon] = await Promise.all([getHiddenSurfaceKeys(), getComingSoonKeys()]);
-    if (hidden.has(SURFACE_KEY)) {
+    if (hidden.has(SURFACE_KEY) || soon.has(SURFACE_KEY)) {
       await finishCronRun(handle, { status: "ok", stats: { standDown: true } });
       return NextResponse.json({ ok: true, standDown: true });
     }
 
-    const stats = await runRadarPass({ includeUnopened: !soon.has(SURFACE_KEY) });
+    const stats = await runRadarPass({});
 
     // More accounts are waiting. Best-effort: a lost kick is picked up by tomorrow's pass,
     // and the page rebuilds any list older than a day on its own.

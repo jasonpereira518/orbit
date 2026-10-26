@@ -499,12 +499,12 @@ export const RADAR_PER_USER_BUDGET_MS = 45_000;
 export const RADAR_ACTIVE_WITHIN_DAYS = 60;
 
 /**
- * Claim accounts that are due, in one statement. While Radar is coming-soon, only accounts
- * that have opened it (`radar_last_run_at IS NOT NULL`) are eligible, so nobody's AI key is
- * spent on a page they cannot see. `last_active_at` is null for accounts that predate the
- * column; they are treated as inactive until their next visit, which builds inline.
+ * Claim accounts that are due, in one statement. Only called once Radar is released: the
+ * route stands the pass down while it is coming soon. `last_active_at` is null for accounts
+ * that predate the column; they are treated as inactive until their next visit, which builds
+ * inline.
  */
-export async function claimRadarUsers(limit: number, now: Date, opts: { includeUnopened: boolean }): Promise<string[]> {
+export async function claimRadarUsers(limit: number, now: Date): Promise<string[]> {
   const db = await getDb();
   const lease = new Date(now.getTime() + RADAR_LEASE_MS);
   const activeSince = new Date(now.getTime() - RADAR_ACTIVE_WITHIN_DAYS * 24 * HOUR_MS);
@@ -517,7 +517,6 @@ export async function claimRadarUsers(limit: number, now: Date, opts: { includeU
             AND (radar_next_at IS NULL OR radar_next_at <= ${now})
             AND (radar_lease_until IS NULL OR radar_lease_until < ${now})
             AND last_active_at > ${activeSince}
-            AND ${opts.includeUnopened ? sql`TRUE` : sql`radar_last_run_at IS NOT NULL`}
           ORDER BY radar_next_at NULLS FIRST, id
           LIMIT ${limit})
       RETURNING user_id
@@ -550,7 +549,7 @@ export type RadarPassStats = {
  * whether more are waiting. A per-account failure is counted and never rethrown, because
  * `runSettledPool` would swallow it silently otherwise.
  */
-export async function runRadarPass(opts: { now?: Date; budgetMs?: number; includeUnopened: boolean }): Promise<RadarPassStats> {
+export async function runRadarPass(opts: { now?: Date; budgetMs?: number }): Promise<RadarPassStats> {
   const now = opts.now ?? new Date();
   const deadline = deadlineAfter(opts.budgetMs ?? RADAR_PASS_BUDGET_MS);
   const startCutoff = deadline - RADAR_PER_USER_BUDGET_MS;
@@ -563,7 +562,7 @@ export async function runRadarPass(opts: { now?: Date; budgetMs?: number; includ
     budgetExhausted: false,
     claimFull: false,
   };
-  const claimed = await claimRadarUsers(RADAR_USERS_PER_PASS, now, { includeUnopened: opts.includeUnopened });
+  const claimed = await claimRadarUsers(RADAR_USERS_PER_PASS, now);
   stats.claimed = claimed.length;
   stats.claimFull = claimed.length >= RADAR_USERS_PER_PASS;
 
