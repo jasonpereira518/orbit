@@ -25,6 +25,12 @@ import { consumeBucket, isRateLimitedError, RATE_LIMITS } from "@/lib/rate-limit
 const DAY_MS = 86_400_000;
 /** Mailbox searches in flight at once: 25 in a burst is a lot for one user's Gmail quota. */
 const LOOKUPS_AT_ONCE = 5;
+/**
+ * No new batch of searches starts after this long. A batch is two chained 8s provider timeouts
+ * at worst, so one started at 30s ends by ~46s, inside the page's 60s `maxDuration`: a pass
+ * that runs out of time returns what it did instead of being killed with its throttle spent.
+ */
+const LOOKUP_BUDGET_MS = 30_000;
 
 /** The outcomes that mean the person wrote back (a bounce or an unsubscribe is not a reply). */
 const REPLY_OUTCOMES: OutreachMessageOutcome[] = ["replied", "positive_reply", "negative_reply", "neutral_reply"];
@@ -123,11 +129,14 @@ export type ReplyLookup = typeof repliedSince;
  * A campaign that isn't the user's checks nothing. Once per ten minutes per user and
  * campaign (`throttled: true` otherwise); `skipThrottle` is for smokes. The mark is one
  * UPDATE guarded `outcome IS NULL`, so an outcome the user sets meanwhile is never overwritten.
+ *
+ * Stops starting new batches after `budgetMs` (30s, the real clock, not `now`): `checked` is
+ * how many people were actually looked up, and the rest wait for the next pass.
  */
 export async function checkCampaignRepliesForUser(
   userId: string,
   campaignId: string,
-  opts: { now?: Date; lookup?: ReplyLookup; skipThrottle?: boolean } = {}
+  opts: { now?: Date; lookup?: ReplyLookup; skipThrottle?: boolean; budgetMs?: number } = {}
 ): Promise<{ checked: number; replied: number; throttled: boolean }> {
   const nothing = { checked: 0, replied: 0, throttled: false };
   if (!isUuid(campaignId)) return nothing;
@@ -178,8 +187,11 @@ export async function checkCampaignRepliesForUser(
     .orderBy(asc(outreachMessages.sentAt), asc(outreachMessages.id))
     .limit(REPLY_CHECKS_PER_PASS);
 
+  const deadline = Date.now() + (opts.budgetMs ?? LOOKUP_BUDGET_MS);
+  let looked = 0;
   let replied = 0;
   for (let i = 0; i < rows.length; i += LOOKUPS_AT_ONCE) {
+    if (Date.now() > deadline) break;
     const batch = rows.slice(i, i + LOOKUPS_AT_ONCE);
     // sentAt and email are non-null: the WHERE above requires both.
     // ponytail: an auto-reply counts as a reply; telling them apart means reading bodies, which needs a privacy change
@@ -200,6 +212,7 @@ export async function checkCampaignRepliesForUser(
         `)
       ).length;
     }
+    looked += batch.length;
   }
-  return { checked: rows.length, replied, throttled: false };
+  return { checked: looked, replied, throttled: false };
 }

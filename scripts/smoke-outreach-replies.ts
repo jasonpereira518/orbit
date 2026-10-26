@@ -342,6 +342,23 @@ async function main() {
     const skew = await checkCampaignRepliesForUser(USER, skewC!.id, { lookup, skipThrottle: true, now: NOW });
     check("skipped rows don't use up the pass", skew.checked === 1 && seenAddrs().join() === "real@x.org", JSON.stringify([skew, seenAddrs()]));
 
+    // A slow mailbox: the pass stops starting batches once its budget is spent and says how many
+    // people it actually looked up. Five at a time, 60ms each, against a 30ms budget: one batch.
+    const [slowC] = await db.insert(schema.outreachCampaigns).values({ userId: USER, name: "Slow" }).returning();
+    for (let i = 0; i < 12; i++) await sentPerson({ campaignId: slowC!.id, name: `Slow ${String(i).padStart(2, "0")}`, email: `slow${i}@x.org`, sentAt: daysAgo(30 - i) });
+    seen.length = 0;
+    const slow: ReplyLookup = async (_u, provider, addr, sinceDate) => {
+      seen.push({ provider, addr, since: sinceDate.getTime() });
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      return null;
+    };
+    const slowPass = await checkCampaignRepliesForUser(USER, slowC!.id, { lookup: slow, skipThrottle: true, now: NOW, budgetMs: 30 });
+    check("a pass out of time stops after the batch it started", slowPass.checked === 5 && seen.length === 5 && !slowPass.throttled, JSON.stringify([slowPass, seenAddrs()]));
+    check("…having looked up the oldest five", seenAddrs().join() === "slow0@x.org,slow1@x.org,slow2@x.org,slow3@x.org,slow4@x.org", seenAddrs().join());
+    seen.length = 0;
+    const fastPass = await checkCampaignRepliesForUser(USER, slowC!.id, { lookup, skipThrottle: true, now: NOW });
+    check("the default budget lets a normal pass finish", fastPass.checked === 12 && seen.length === 12, JSON.stringify(fastPass));
+
     console.log("setMessageOutcomeForUser");
     const out = await sentPerson({ campaignId: camp, name: "Manual Outcome", email: "manual@x.org", sentAt: daysAgo(2) });
     // A contact on the timeline, so the logged outcome has somewhere to go.
