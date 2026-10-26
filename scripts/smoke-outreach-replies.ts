@@ -15,8 +15,9 @@ import { gmailReplyQuery, outlookReplyFilter, repliedSince } from "../src/lib/em
 import { GOOGLE_SCOPES } from "../src/lib/google-scopes";
 import { MICROSOFT_SCOPES } from "../src/lib/microsoft-scopes";
 import { checkCampaignRepliesForUser, setMessageOutcomeForUser, type ReplyLookup } from "../src/lib/outreach-replies";
+import { followUpDue } from "../src/lib/outreach-followups";
 import { addProspectsForUser } from "../src/lib/outreach-people";
-import { REPLY_CHECKS_PER_PASS, REPLY_CHECK_WINDOW_DAYS } from "../src/lib/outreach-types";
+import { FOLLOW_UP_AFTER_DAYS, REPLY_CHECKS_PER_PASS, REPLY_CHECK_WINDOW_DAYS } from "../src/lib/outreach-types";
 import { purgeUserData } from "../src/lib/user-data";
 
 const USER = "smoke-outreach-replies-user";
@@ -149,6 +150,25 @@ async function main() {
       outlookReplyFilter("bo@iqvia.com", new Date(0)) ===
         "from/emailAddress/address eq 'bo@iqvia.com' and receivedDateTime ge 1970-01-01T00:00:00.000Z"
     );
+
+    console.log("follow-up");
+    const first = (sentDaysAgo: number | null, over: Partial<Parameters<typeof followUpDue>[0]> = {}) => ({
+      stepIndex: 0,
+      status: "sent",
+      sentAt: sentDaysAgo === null ? null : daysAgo(sentDaysAgo),
+      outcome: null,
+      ...over,
+    });
+    check("a follow-up waits a week", FOLLOW_UP_AFTER_DAYS === 7);
+    check("not due at day 6", !followUpDue(first(6), false, NOW));
+    check("due at day 7", followUpDue(first(7), false, NOW));
+    check("…and after", followUpDue(first(30), false, NOW));
+    check("no follow-up after a reply", !followUpDue(first(8, { outcome: "replied" }), false, NOW));
+    check("…or a bounce", !followUpDue(first(8, { outcome: "bounced" }), false, NOW));
+    check("only one follow-up", followUpDue(first(8), false, NOW) && !followUpDue(first(8), true, NOW));
+    check("only a first message gets one", !followUpDue(first(8, { stepIndex: 1 }), false, NOW));
+    check("only a sent message gets one", !followUpDue(first(8, { status: "copied" }), false, NOW) && !followUpDue(first(8, { status: "unsure" }), false, NOW));
+    check("…with a send time", !followUpDue(first(null), false, NOW));
 
     console.log("repliedSince");
     check("no mailbox connected is null", (await repliedSince(USER, "gmail", "bo@iqvia.com", daysAgo(3))) === null);

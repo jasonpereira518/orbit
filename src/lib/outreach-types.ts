@@ -172,3 +172,5 @@ export const LINKEDIN_NOTE_MAX = 300;
 export const REPLY_CHECKS_PER_PASS = 25;
 /** A send older than this is no longer checked for a reply. */
 export const REPLY_CHECK_WINDOW_DAYS = 60;
+/** How long a sent first message waits, unanswered, before a follow-up is due. */
+export const FOLLOW_UP_AFTER_DAYS = 7;

@@ -7,6 +7,7 @@ import {
   confirmLinkedInSentForUser,
   copyLinkedInMessageForUser,
   draftCampaignMessagesForUser,
+  draftFollowUpForUser,
   editDraftForUser,
   requireMessageForUser,
   sendCampaignMessagesForUser,
@@ -31,6 +32,17 @@ export async function editDraft(messageId: string, input: { subject: string | nu
   return asActionResult(async () => {
     const userId = await requireOutreachUser();
     revalidateCampaign(await editDraftForUser(userId, messageId, input ?? { subject: null, body: "" }));
+  });
+}
+
+/** Write the one follow-up for a person who hasn't answered a week after the first message. */
+export async function draftFollowUp(messageId: string) {
+  return asActionResult(async () => {
+    const userId = await requireOutreachUser();
+    const { campaign } = await requireMessageForUser(userId, messageId);
+    const result = await draftFollowUpForUser(userId, messageId);
+    revalidateCampaign(campaign.id);
+    return result;
   });
 }
 

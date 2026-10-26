@@ -22,11 +22,13 @@ import {
   confirmLinkedInSentForUser,
   copyLinkedInMessageForUser,
   draftCampaignMessagesForUser,
+  draftFollowUpForUser,
   editDraftForUser,
   releaseStrandedMessagesForUser,
   sendCampaignMessagesForUser,
   type Drafter,
 } from "../src/lib/outreach-messages";
+import type { DraftInput } from "../src/lib/outreach-drafts";
 import { addProspectsForUser } from "../src/lib/outreach-people";
 import { DEMO_PROSPECT_SEND_MESSAGE } from "../src/lib/outreach-quality";
 import { BULK_SEND_LIMIT, LINKEDIN_NOTE_MAX } from "../src/lib/outreach-types";
@@ -54,13 +56,16 @@ async function rejects(fn: () => Promise<unknown>, substring?: string) {
 let fail: "permanent" | "ambiguous" | null = null;
 /** Every address the provider was actually asked to deliver to, in order. */
 const delivered: string[] = [];
+/** Every message the provider was handed, with the options it was handed with. */
+const handed: Array<{ message: Parameters<MailProvider["send"]>[1]; opts: Parameters<MailProvider["send"]>[2] }> = [];
 const fake: MailProvider = {
   id: "gmail",
   async identity() {
     return { email: "me@x.org" };
   },
-  async send(_user, message) {
+  async send(_user, message, opts) {
     delivered.push(...message.to);
+    handed.push({ message, opts });
     if (fail) throw new MailProviderError(fail, `Gmail 400: raw provider text`);
     return { providerMessageId: "pm", providerThreadId: "pt" };
   },
@@ -392,6 +397,119 @@ async function main() {
       JSON.stringify(recovered.map((r) => (r.status === "rejected" ? String(r.reason).slice(0, 80) : r.status)))
     );
     check("a sent note can still be copied, and stays sent", (await copyLinkedInMessageForUser(USER, mLinked!)).body === copy.body && (await msg(mLinked!)).status === "sent");
+
+    console.log("follow-up");
+    const NOT_DUE = "A follow-up isn’t due for this person yet";
+    const ALREADY_WRITTEN = "A follow-up is already written for this person";
+    const seen: DraftInput[] = [];
+    const followDrafter: Drafter = async (_user, inputs) => {
+      seen.push(...inputs);
+      return inputs.map(() => ({ subject: "Unrelated subject", body: "Following up on my note" }));
+    };
+    const backdate = (id: string, days: number) =>
+      db.execute(sql`UPDATE outreach_messages SET sent_at = now() - make_interval(days => ${days}::int) WHERE id = ${id}::uuid`);
+    const followUpsOf = (prospectId: string) =>
+      db.query.outreachMessages.findMany({ where: and(eq(schema.outreachMessages.prospectId, prospectId), eq(schema.outreachMessages.stepIndex, 1)) });
+    const sendRow = async (id: string) => (await db.query.emailSends.findFirst({ where: eq(schema.emailSends.id, id) }))!;
+
+    check("a message sent just now has no follow-up due", (await rejects(() => draftFollowUpForUser(USER, mBo!, { drafter: followDrafter }), NOT_DUE)) && seen.length === 0);
+    check("another user can't draft one", await rejects(() => draftFollowUpForUser(OTHER, mBo!, { drafter: followDrafter }), "Message not found"));
+
+    await backdate(mBo!, 8);
+    const raceTwice = await Promise.allSettled([
+      draftFollowUpForUser(USER, mBo!, { drafter: followDrafter }),
+      draftFollowUpForUser(USER, mBo!, { drafter: followDrafter }),
+    ]);
+    const fups = await followUpsOf(pid("Bo Li"));
+    const lost = raceTwice.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    check(
+      "two follow-ups at once leave one",
+      fups.length === 1 && raceTwice.filter((r) => r.status === "fulfilled").length === 1,
+      JSON.stringify(raceTwice.map((r) => r.status))
+    );
+    check("…and the other is told it exists", lost.length === 1 && String(lost[0]!.reason).includes(ALREADY_WRITTEN), String(lost[0]?.reason));
+    const fu = fups[0]!;
+    check(
+      "the follow-up is a draft under the first message",
+      fu.stepIndex === 1 && fu.parentMessageId === mBo && fu.status === "draft" && fu.channel === "email" && fu.subject === "Re: Hi" && fu.body === "Following up on my note",
+      JSON.stringify(fu)
+    );
+    check(
+      "the model is asked for step 1 with the first message",
+      seen[0]?.stepIndex === 1 && seen[0].previousBody === "Hello Bo Li" && seen[0].channel === "email" && seen[0].prospect.fullName === "Bo Li"
+    );
+    check("a second follow-up is refused, whatever its status", await rejects(() => draftFollowUpForUser(USER, mBo!, { drafter: followDrafter }), ALREADY_WRITTEN));
+    check("a follow-up has no follow-up of its own", await rejects(() => draftFollowUpForUser(USER, fu.id, { drafter: followDrafter })));
+
+    const handedBefore = handed.length;
+    const followRes = await send([fu.id]);
+    const followRow = await msg(fu.id);
+    check("the follow-up sends", followRes.sent === 1 && followRow.status === "sent" && followRow.deliveryId != null, JSON.stringify(followRes));
+    const parentSend = await sendRow((await msg(mBo!)).deliveryId!);
+    const followSend = await sendRow(followRow.deliveryId!);
+    check(
+      "follow-up replies in thread",
+      followSend.inReplyToSendId === parentSend.id &&
+        followSend.subject.startsWith("Re:") &&
+        followSend.inReplyToRfcId === parentSend.rfcMessageId &&
+        followSend.providerThreadId === "pt",
+      JSON.stringify({ reply: followSend.inReplyToSendId, subject: followSend.subject, thread: followSend.providerThreadId })
+    );
+    const lastHandoff = handed[handed.length - 1];
+    check(
+      "…and the provider gets the reply headers and thread",
+      handed.length === handedBefore + 1 &&
+        lastHandoff?.message.inReplyTo === parentSend.rfcMessageId &&
+        lastHandoff.opts.threadId === "pt" &&
+        lastHandoff.message.to.join() === "bo@iqvia.com",
+      JSON.stringify(lastHandoff?.opts)
+    );
+    check("a sent follow-up still blocks another", await rejects(() => draftFollowUpForUser(USER, mBo!, { drafter: followDrafter }), ALREADY_WRITTEN));
+
+    // A first message the outbox has no record of (deliveryId null) can't be threaded under.
+    await addProspectsForUser(USER, camp, [{ fullName: "F2 Person", company: "Acme", email: "f2@acme-co.io", origin: "manual" }]);
+    const f2Prospect = (await db.query.outreachProspects.findMany({ where: eq(schema.outreachProspects.campaignId, camp) })).find((p) => p.fullName === "F2 Person")!;
+    const [f2First] = await db
+      .insert(schema.outreachMessages)
+      .values({ prospectId: f2Prospect.id, channel: "email", subject: "Intro", body: "First note", status: "sent", stepIndex: 0, sentAt: new Date(Date.now() - 9 * 86_400_000) })
+      .returning();
+    const f2 = await draftFollowUpForUser(USER, f2First!.id, { drafter: followDrafter });
+    check("a follow-up to an unrecorded send sends as a fresh Re: message", (await send([f2.messageId])).sent === 1);
+    const f2Send = await sendRow((await msg(f2.messageId)).deliveryId!);
+    const f2Handoff = handed[handed.length - 1]!;
+    check(
+      "…with no thread to reply into",
+      f2Send.subject === "Re: Intro" &&
+        f2Send.inReplyToSendId === null &&
+        f2Send.inReplyToRfcId === null &&
+        !f2Handoff.message.inReplyTo &&
+        !f2Handoff.opts.threadId &&
+        f2Handoff.message.to.join() === "f2@acme-co.io",
+      JSON.stringify({ subject: f2Send.subject, opts: f2Handoff.opts })
+    );
+
+    // Not due: a reply, or a model that wrote nothing.
+    await backdate(m2!, 8);
+    await db.update(schema.outreachMessages).set({ outcome: "replied" }).where(eq(schema.outreachMessages.id, m2!));
+    check("no follow-up after a reply", (await rejects(() => draftFollowUpForUser(USER, m2!, { drafter: followDrafter }), NOT_DUE)) && (await followUpsOf(pid("M2 Person"))).length === 0);
+    await backdate(m3!, 8);
+    const blank: Drafter = async (_user, inputs) => inputs.map(() => ({ subject: null, body: "  " }));
+    check(
+      "a blank draft writes nothing",
+      (await rejects(() => draftFollowUpForUser(USER, m3!, { drafter: blank }), "Couldn’t write the follow-up")) && (await followUpsOf(pid("M3 Person"))).length === 0
+    );
+
+    // LinkedIn: drafted the same way, then the existing copy-and-confirm path.
+    await backdate(mLinked!, 8);
+    const liFollow = await draftFollowUpForUser(USER, mLinked!, { drafter: followDrafter });
+    const liRow = await msg(liFollow.messageId);
+    check(
+      "a LinkedIn follow-up is a subjectless linkedin draft",
+      liRow.channel === "linkedin" && liRow.subject === null && liRow.stepIndex === 1 && liRow.parentMessageId === mLinked && liRow.status === "draft" && seen[seen.length - 1]?.channel === "linkedin"
+    );
+    check("…copied by the same path", (await copyLinkedInMessageForUser(USER, liFollow.messageId)).body === "Following up on my note" && (await msg(liFollow.messageId)).status === "copied");
+    await confirmLinkedInSentForUser(USER, liFollow.messageId, OPTS);
+    check("…and confirmed by it", (await msg(liFollow.messageId)).status === "sent");
 
     console.log("stranded");
     const sNames = ["S1 Person", "S2 Person", "S3 Person", "S4 Person", "S5 Person"];

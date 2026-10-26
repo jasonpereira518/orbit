@@ -4,6 +4,7 @@ import { interactions, outreachCampaigns, outreachMessages, outreachProspects } 
 import { logInteractionForUser, type ContactWriteOptions } from "@/lib/contact-writes";
 import "@/lib/email/origin-registrations";
 import { ENQUEUE_COPY, chargeEmailBurst, dispatchEmailSend, enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
+import { replySubject, resolveReplyTarget } from "@/lib/email/reply-targets";
 import { getSendCapability } from "@/lib/email/sender";
 import { UserFacingError } from "@/lib/errors";
 import { isUuid } from "@/lib/ids";
@@ -12,6 +13,7 @@ import {
   type DraftInput,
   type GeneratedDraft,
 } from "@/lib/outreach-drafts";
+import { followUpDue } from "@/lib/outreach-followups";
 import { ensureProspectContactForUser } from "@/lib/outreach-people";
 import { DEMO_PROSPECT_SEND_MESSAGE, isDemoProspect, isPlaceholderAddress } from "@/lib/outreach-quality";
 import {
@@ -42,6 +44,8 @@ const CAMPAIGN_GONE = "That campaign isn’t yours or no longer exists";
 const MESSAGE_GONE = "Message not found";
 const ALREADY_SENT = "This message was already sent, so it can’t be edited";
 const NOT_LINKEDIN = "This campaign isn’t set up for LinkedIn";
+const FOLLOW_UP_NOT_DUE = "A follow-up isn’t due for this person yet";
+const FOLLOW_UP_EXISTS = "A follow-up is already written for this person";
 /**
  * A LinkedIn profile link the browser may be sent to. Prospects added through `/outreach` only
  * ever hold an https one, but the older search path stores whatever its provider returned, and
@@ -166,6 +170,51 @@ export async function requireMessageForUser(userId: string, messageId: string) {
 export type Drafter = (userId: string, inputs: DraftInput[]) => Promise<GeneratedDraft[]>;
 
 /**
+ * What the model is told about each person: the campaign's tone, intent and ask, the user's
+ * goals and writing notes, and per person what is known (a search's reason, their brief, what the
+ * user has logged with them). The one place that builds it, so a first message and a follow-up
+ * are written from the same context.
+ */
+async function draftInputsFor(
+  userId: string,
+  campaign: typeof outreachCampaigns.$inferSelect,
+  channel: OutreachChannel,
+  people: Array<typeof outreachProspects.$inferSelect>
+): Promise<DraftInput[]> {
+  const enrichments = people.map((p) => (p.enrichment ?? {}) as ProspectEnrichment);
+  const [goals, writingInstructions, priorNotes, briefs] = await Promise.all([
+    listActiveGoalTextsForUser(userId),
+    loadWritingInstructions(userId),
+    priorNotesForContacts(userId, people.flatMap((p) => (p.contactId ? [p.contactId] : []))),
+    loadResearchedPeople(userId, enrichments.flatMap((e) => (typeof e.researchKey === "string" ? [e.researchKey] : []))),
+  ]);
+
+  return people.map((prospect, i) => {
+    const enrichment = enrichments[i]!;
+    const brief = typeof enrichment.researchKey === "string" ? briefs.get(enrichment.researchKey) : undefined;
+    return {
+      channel,
+      tone: campaign.tone || "professional",
+      messageIntent: campaign.messageIntent || campaign.audienceQuery || "Introduce myself",
+      audienceQuery: campaign.audienceQuery,
+      replyCta: campaign.replyCta,
+      userGoals: goals,
+      prospect: {
+        fullName: prospect.fullName,
+        title: prospect.title,
+        company: prospect.company,
+        location: prospect.location,
+        enrichmentSummary: enrichmentSummary(prospect.enrichment),
+        priorNotes: prospect.contactId ? (priorNotes.get(prospect.contactId) ?? null) : null,
+        whyMatches: typeof enrichment.whyMatches === "string" ? enrichment.whyMatches : null,
+        talkingPoints: brief?.talkingPoints.map((p) => p.text),
+      },
+      writingInstructions,
+    };
+  });
+}
+
+/**
  * Write (or rewrite) the first message for up to ten people on a campaign, in the campaign's
  * channel, from what is known about each: why a search matched them, what their brief cites,
  * and what the user has already logged with them.
@@ -224,37 +273,7 @@ export async function draftCampaignMessagesForUser(
   if (!targets.length) return { drafted: 0, skipped: people.length };
 
   const channel: OutreachChannel = campaign.defaultChannel === "linkedin" ? "linkedin" : "email";
-  const enrichments = targets.map((t) => (t.prospect.enrichment ?? {}) as ProspectEnrichment);
-  const [goals, writingInstructions, priorNotes, briefs] = await Promise.all([
-    listActiveGoalTextsForUser(userId),
-    loadWritingInstructions(userId),
-    priorNotesForContacts(userId, targets.flatMap((t) => (t.prospect.contactId ? [t.prospect.contactId] : []))),
-    loadResearchedPeople(userId, enrichments.flatMap((e) => (typeof e.researchKey === "string" ? [e.researchKey] : []))),
-  ]);
-
-  const inputs: DraftInput[] = targets.map(({ prospect }, i) => {
-    const enrichment = enrichments[i]!;
-    const brief = typeof enrichment.researchKey === "string" ? briefs.get(enrichment.researchKey) : undefined;
-    return {
-      channel,
-      tone: campaign.tone || "professional",
-      messageIntent: campaign.messageIntent || campaign.audienceQuery || "Introduce myself",
-      audienceQuery: campaign.audienceQuery,
-      replyCta: campaign.replyCta,
-      userGoals: goals,
-      prospect: {
-        fullName: prospect.fullName,
-        title: prospect.title,
-        company: prospect.company,
-        location: prospect.location,
-        enrichmentSummary: enrichmentSummary(prospect.enrichment),
-        priorNotes: prospect.contactId ? (priorNotes.get(prospect.contactId) ?? null) : null,
-        whyMatches: typeof enrichment.whyMatches === "string" ? enrichment.whyMatches : null,
-        talkingPoints: brief?.talkingPoints.map((p) => p.text),
-      },
-      writingInstructions,
-    };
-  });
+  const inputs = await draftInputsFor(userId, campaign, channel, targets.map((t) => t.prospect));
 
   const drafts = await (opts.drafter ?? generateOutreachDraftsBatch)(userId, inputs);
 
@@ -342,6 +361,59 @@ export async function editDraftForUser(
   return campaign.id;
 }
 
+/**
+ * Write the one follow-up for a person whose first message went unanswered: a `draft` at
+ * `step_index` 1 under the first message, in the first message's channel. Only `followUpDue`
+ * (sent a week ago, no outcome, no follow-up yet) allows it. Returns the new message's id.
+ *
+ * Step 1 stays one message per person, with the same lock-then-conditional-insert as step 0:
+ * the model call sits between the check above and the write, so two runs for one person (a double
+ * click, two tabs) both pass the check. The prospect row is locked, then the insert is skipped if
+ * a step-1 message exists — in any status — and the run that loses is told so.
+ */
+export async function draftFollowUpForUser(
+  userId: string,
+  firstMessageId: string,
+  opts: { drafter?: Drafter; now?: Date } = {}
+): Promise<{ messageId: string }> {
+  const { message: first, prospect, campaign } = await requireMessageForUser(userId, firstMessageId);
+  const db = await getDb();
+  const [existing] = await db
+    .select({ id: outreachMessages.id })
+    .from(outreachMessages)
+    .where(and(eq(outreachMessages.prospectId, prospect.id), eq(outreachMessages.stepIndex, 1)))
+    .limit(1);
+  if (!followUpDue(first, Boolean(existing), opts.now ?? new Date())) {
+    throw new UserFacingError(existing ? FOLLOW_UP_EXISTS : FOLLOW_UP_NOT_DUE);
+  }
+
+  const channel = first.channel as OutreachChannel;
+  const [input] = await draftInputsFor(userId, campaign, channel, [prospect]);
+  const [draft] = await (opts.drafter ?? generateOutreachDraftsBatch)(userId, [
+    { ...input!, stepIndex: 1, previousBody: first.body },
+  ]);
+  const body = draft?.body?.trim();
+  if (!body) throw new UserFacingError("Couldn’t write the follow-up — try again");
+  // An email follow-up goes out under the first one's subject (see the send below); a LinkedIn
+  // note has none.
+  const subject = channel === "linkedin" ? null : replySubject(first.subject ?? "");
+
+  const [, insert] = await runAtomicBatch(db, (tx) => [
+    tx.select({ id: outreachProspects.id }).from(outreachProspects).where(eq(outreachProspects.id, prospect.id)).orderBy(outreachProspects.id).for("update"),
+    tx.execute(sql`
+      INSERT INTO outreach_messages (prospect_id, channel, subject, body, status, step_index, parent_message_id)
+      SELECT ${prospect.id}::uuid, ${first.channel}::text, ${subject}::text, ${body}::text, 'draft', 1, ${first.id}::uuid
+       WHERE NOT EXISTS (
+         SELECT 1 FROM outreach_messages WHERE prospect_id = ${prospect.id}::uuid AND step_index = 1
+       )
+      RETURNING id
+    `),
+  ]);
+  const inserted = rowsOf<{ id: string }>(insert)[0];
+  if (!inserted) throw new UserFacingError(FOLLOW_UP_EXISTS);
+  return { messageId: inserted.id };
+}
+
 /* ------------------------------------------------------------------ send ----- */
 
 /** Spacing between sends in a batch, as recruiter sends do, so a batch trickles out. */
@@ -412,6 +484,8 @@ export type SendCampaignResult = {
  *
  * A refused send (no mailbox, today's cap) throws before anything is claimed, so no message
  * moves and no contact is created. The contact is made only for a message about to go out.
+ *
+ * A follow-up (`step_index` 1) goes out as a reply to its first message, in the same thread.
  */
 export async function sendCampaignMessagesForUser(
   userId: string,
@@ -494,6 +568,21 @@ export async function sendCampaignMessagesForUser(
         ids.indexOf(a.message.id) - ids.indexOf(b.message.id)
     );
 
+    // A follow-up goes out as a reply under its first message, so that one is read up front: its
+    // subject and the outbox row it was sent as. Scoped to the user's own campaigns like the rest.
+    const parentIds = [...new Set(rows.flatMap((r) => (r.message.stepIndex === 1 && r.message.parentMessageId ? [r.message.parentMessageId] : [])))];
+    const parents = new Map(
+      (parentIds.length
+        ? await db
+            .select({ id: outreachMessages.id, subject: outreachMessages.subject, deliveryId: outreachMessages.deliveryId })
+            .from(outreachMessages)
+            .innerJoin(outreachProspects, eq(outreachProspects.id, outreachMessages.prospectId))
+            .innerJoin(outreachCampaigns, eq(outreachCampaigns.id, outreachProspects.campaignId))
+            .where(and(inArray(outreachMessages.id, parentIds), eq(outreachCampaigns.userId, userId)))
+        : []
+      ).map((p) => [p.id, p] as const)
+    );
+
     for (const [index, { message, prospect }] of rows.entries()) {
       const fail = (error: string) => result.failed.push({ messageId: message.id, name: prospect.fullName, error });
       if (index >= capability.remainingToday) {
@@ -516,10 +605,19 @@ export async function sendCampaignMessagesForUser(
       if (handedOff && spacingMs > 0) await new Promise((resolve) => setTimeout(resolve, spacingMs));
 
       const contactId = await ensureProspectContactForUser(userId, prospect.id, opts.contactWrite);
-      // A follow-up (step 1) goes out as its own message for now; Task 8 threads it under the first.
+      // A follow-up (step 1) replies to its first message: "Re:" its subject, with the reply
+      // headers and the provider thread when the first send is on record (`resolveReplyTarget`
+      // re-reads it by owner and only trusts a thread from this exact mailbox). Without one it
+      // is a fresh message with the same "Re:" subject.
+      const parent = message.stepIndex === 1 && message.parentMessageId ? parents.get(message.parentMessageId) : undefined;
+      const target = parent?.deliveryId ? await resolveReplyTarget(userId, `orbit:${parent.deliveryId}`) : null;
       const queued = await enqueueEmail(userId, {
         to: [email],
-        subject: message.subject ?? "",
+        subject: parent ? replySubject(target?.subject ?? parent.subject ?? "") : (message.subject ?? ""),
+        inReplyToRfcId: target?.rfcMessageId,
+        inReplyToSendId: target?.inReplyToSendId,
+        threadId: target?.thread?.threadId,
+        provider: target?.thread?.provider,
         bodyText: message.body,
         fromName: opts.fromName,
         origin: "outreach",
