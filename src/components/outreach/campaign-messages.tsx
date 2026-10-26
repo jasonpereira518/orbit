@@ -226,7 +226,21 @@ function ToSend({
     setStatusWarn(false);
     setProblem("");
     const batch = sendIds;
+    const hasFollowUp = sendable.some((r) => batch.includes(r.message.id) && (r.message.stepIndex ?? 0) > 0);
     try {
+      if (hasFollowUp) {
+        // A follow-up is a second email to someone who hadn’t answered when it was written. Look
+        // once more before it goes; a pass is throttled to one in ten minutes, so this costs
+        // nothing right after the Sent view checked. If the look itself fails, the send goes on:
+        // the server still refuses anyone already marked as having answered.
+        const seen = await checkReplies(campaignId).catch(() => null);
+        if (seen?.ok && seen.value.replied) {
+          setProblem(
+            `Nothing was sent: ${plural(seen.value.replied, "person has", "people have")} replied since. Review the list, then send again`
+          );
+          return;
+        }
+      }
       const res = await sendMessages(campaignId, batch);
       if (!res.ok) {
         setProblem(res.error);
@@ -807,8 +821,14 @@ function SentView({
                       size="sm"
                       variant="outline"
                       onClick={() => writeFollowUp(item.person.id, item.followUpOf!)}
-                      disabled={followUpBusy !== null || !canUseAi}
-                      title={canUseAi ? undefined : "Add an AI key to write follow-ups"}
+                      disabled={followUpBusy !== null || !canUseAi || checking}
+                      title={
+                        !canUseAi
+                          ? "Add an AI key to write follow-ups"
+                          : checking
+                            ? "Checking for replies first"
+                            : undefined
+                      }
                     >
                       {followUpBusy === item.person.id && <Loader2 className="animate-spin" aria-hidden />}
                       Write follow-up

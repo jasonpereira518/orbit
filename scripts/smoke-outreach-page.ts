@@ -478,6 +478,8 @@ async function main() {
       check("…and is gated on nothing but its own lock", /<Button size="sm" onClick=\{confirmSent\} disabled=\{busy !== null\}>/.test(flat));
       check("Copy & open is off while the saved note is unsendable (over the limit, or unsaved edits)", /onClick=\{copyAndOpen\} disabled=\{busy !== null \|\| blocked !== null\}/.test(flat));
       check("a note over the limit is blocked from the saved text, not the typed text", /copyBlockedReason\(message, isDirty\)/.test(flat));
+      check("a batch with a follow-up looks for replies first, and stops if one came in", /const hasFollowUp = [^;]*stepIndex[^;]*> 0\);[\s\S]*?if \(hasFollowUp\) \{[\s\S]*?checkReplies\(campaignId\)[\s\S]*?seen\.value\.replied[\s\S]*?return;[\s\S]*?sendMessages\(campaignId, batch\)/.test(flat));
+      check("Write follow-up waits while replies are being checked", /disabled=\{followUpBusy !== null \|\| !canUseAi \|\| checking\}/.test(flat));
       check("Write drafts takes only the ids of people without a message", /draftMessages\(campaignId, batch\)/.test(flat) && /const draftIds = groups\.needsDraft\.filter/.test(flat));
       check("Send selected takes only ids of sendable drafts that are still on screen", /const sendIds = sendable\.filter\(\(r\) => selectedSends\.has/.test(flat));
     }
