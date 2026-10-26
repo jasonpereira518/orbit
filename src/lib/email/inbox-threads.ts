@@ -151,3 +151,60 @@ export async function readInboxMessage(
   const m = await getJson<GraphMessage>(`${GRAPH}/messages/${encodeURIComponent(id)}?${GRAPH_SELECT}`, access.token);
   return m ? fromGraph(m, access.mailbox) : null;
 }
+
+/** Gmail search for mail FROM an address since a time. `after:` takes epoch seconds. */
+export function gmailReplyQuery(address: string, since: Date) {
+  return `from:${address} after:${Math.floor(since.getTime() / 1000)}`;
+}
+
+/** Graph filter for mail FROM an address since a time; a quote in the address is doubled. */
+export function outlookReplyFilter(address: string, since: Date) {
+  return `from/emailAddress/address eq '${address.replace(/'/g, "''")}' and receivedDateTime ge ${since.toISOString()}`;
+}
+
+/**
+ * When a person last wrote to the user's own mailbox since `since`, or null. Sender and date
+ * only: the Gmail list returns ids, then one read asks for `internalDate` alone (`fields=`);
+ * Graph is asked for `receivedDateTime` alone. No subject, snippet or body is requested, and
+ * nothing is stored here. Read scopes only (the recruiter scan's), and never throws — a
+ * missing grant, a bad address, a network error or an unreadable answer is all "no reply".
+ */
+export async function repliedSince(
+  userId: string,
+  provider: "gmail" | "outlook",
+  address: string,
+  since: Date
+): Promise<Date | null> {
+  const from = address.trim().toLowerCase();
+  if (!EMAIL.test(from) || Number.isNaN(since.getTime())) return null;
+  try {
+    let at: Date;
+    if (provider === "gmail") {
+      const access = await gmailAccess(userId);
+      if (!access) return null;
+      const list = await getJson<{ messages?: { id: string }[] }>(
+        `${GMAIL}/messages?q=${encodeURIComponent(gmailReplyQuery(from, since))}&maxResults=1&fields=messages/id`,
+        access.token
+      );
+      const id = list?.messages?.[0]?.id;
+      if (!id) return null;
+      const m = await getJson<{ internalDate?: string }>(
+        `${GMAIL}/messages/${encodeURIComponent(id)}?format=minimal&fields=internalDate`,
+        access.token
+      );
+      at = new Date(Number(m?.internalDate));
+    } else {
+      const access = await outlookAccess(userId);
+      if (!access) return null;
+      // Built by hand: URLSearchParams would encode the `$` of OData's system options.
+      const list = await getJson<{ value?: { receivedDateTime?: string }[] }>(
+        `${GRAPH}/messages?$filter=${encodeURIComponent(outlookReplyFilter(from, since))}&$top=1&$select=receivedDateTime`,
+        access.token
+      );
+      at = new Date(list?.value?.[0]?.receivedDateTime ?? Number.NaN);
+    }
+    return Number.isNaN(at.getTime()) ? null : at;
+  } catch {
+    return null;
+  }
+}

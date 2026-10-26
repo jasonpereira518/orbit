@@ -11,6 +11,7 @@ import {
   requireMessageForUser,
   sendCampaignMessagesForUser,
 } from "@/lib/outreach-messages";
+import { checkCampaignRepliesForUser } from "@/lib/outreach-replies";
 import { requireOutreachUser } from "@/lib/plan-guards";
 
 function revalidateCampaign(campaignId: string) {
@@ -64,5 +65,15 @@ export async function confirmLinkedInSent(messageId: string) {
     const { campaign } = await requireMessageForUser(userId, messageId);
     await confirmLinkedInSentForUser(userId, messageId);
     revalidateCampaign(campaign.id);
+  });
+}
+
+/** Look in the user's own mailbox for replies to this campaign's emails (once per ten minutes). */
+export async function checkReplies(campaignId: string) {
+  return asActionResult(async () => {
+    const userId = await requireOutreachUser();
+    const result = await checkCampaignRepliesForUser(userId, campaignId);
+    if (result.replied) revalidateCampaign(campaignId);
+    return result;
   });
 }

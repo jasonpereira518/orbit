@@ -13,6 +13,7 @@ export type OutreachMessageStatus =
   | "scheduled";
 
 export type OutreachMessageOutcome =
+  | "replied"
   | "positive_reply"
   | "negative_reply"
   | "neutral_reply"
@@ -102,6 +103,7 @@ export const REPLY_CTA_LABELS: Record<OutreachReplyCta, string> = {
 };
 
 export const OUTCOME_LABELS: Record<OutreachMessageOutcome, string> = {
+  replied: "Replied",
   positive_reply: "Positive reply",
   negative_reply: "Negative reply",
   neutral_reply: "Neutral / other reply",
@@ -166,3 +168,7 @@ export const MAX_CAMPAIGN_PEOPLE = 100;
 export const MAX_DRAFTS_PER_RUN = 10;
 /** LinkedIn's connection-note limit. */
 export const LINKEDIN_NOTE_MAX = 300;
+/** People looked up in the mailbox in one "check for replies" pass: each is a provider call. */
+export const REPLY_CHECKS_PER_PASS = 25;
+/** A send older than this is no longer checked for a reply. */
+export const REPLY_CHECK_WINDOW_DAYS = 60;

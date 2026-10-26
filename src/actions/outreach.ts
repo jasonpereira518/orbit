@@ -46,6 +46,7 @@ import {
   priorNoteSql,
   priorNotesForContacts,
 } from "@/lib/outreach-messages";
+import { setMessageOutcomeForUser } from "@/lib/outreach-replies";
 import { sendOutreachMessage } from "@/lib/outreach-send";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 import {
@@ -910,80 +911,10 @@ export async function logMessageOutcome(input: {
   notes?: string | null;
 }) {
   const userId = await requireOutreachUser();
-  const db = await getDb();
-
-  const message = await db.query.outreachMessages.findFirst({
-    where: eq(outreachMessages.id, input.messageId),
-    with: {
-      prospect: {
-        with: { campaign: true },
-      },
-    },
-  });
-
-  if (!message || message.prospect.campaign.userId !== userId) {
-    throw new Error("Message not found");
-  }
-
-  const now = new Date();
-  const [updated] = await db
-    .update(outreachMessages)
-    .set({
-      outcome: input.outcome,
-      outcomeNotes: input.notes?.trim() || null,
-      repliedAt: now,
-      lastActionAt: now,
-      updatedAt: now,
-    })
-    .where(eq(outreachMessages.id, input.messageId))
-    .returning();
-
-  let prospectStatus: string = message.prospect.status;
-  if (input.outcome === "positive_reply") {
-    prospectStatus = "interested";
-  } else if (
-    input.outcome === "negative_reply" ||
-    input.outcome === "unsubscribed"
-  ) {
-    prospectStatus = "not_interested";
-  } else if (input.outcome === "neutral_reply") {
-    prospectStatus = "replied";
-  } else if (input.outcome === "bounced") {
-    prospectStatus = message.prospect.status;
-  }
-
-  await db
-    .update(outreachProspects)
-    .set({ status: prospectStatus, updatedAt: now })
-    .where(eq(outreachProspects.id, message.prospectId));
-
-  // Cancel pending follow-ups once we have a reply or bounce/unsubscribe
-  if (input.outcome !== "bounced") {
-    await db
-      .update(outreachMessages)
-      .set({ status: "skipped", updatedAt: now })
-      .where(
-        and(
-          eq(outreachMessages.prospectId, message.prospectId),
-          eq(outreachMessages.status, "scheduled")
-        )
-      );
-  }
-
-  await maybeLogOutreachInteraction(
-    {
-      contactId: message.prospect.contactId,
-      campaignId: message.prospect.campaignId,
-    },
-    message.channel as OutreachChannel,
-    input.notes?.trim() || `Outcome: ${input.outcome}`,
-    input.outcome
-  );
-
-  revalidatePath(`/outreach/${message.prospect.campaignId}`);
+  const campaignId = await setMessageOutcomeForUser(userId, input.messageId, input.outcome, input.notes);
+  revalidatePath(`/outreach/${campaignId}`);
   revalidatePath("/outreach");
   revalidatePath("/dashboard");
-  return updated;
 }
 
 async function scheduleNextFollowUpIfNeeded(input: {

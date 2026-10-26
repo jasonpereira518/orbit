@@ -68,6 +68,7 @@ const BUCKET_LABELS: Record<string, string> = {
   "work-history-background": "background work-history check",
   "web-search": "monthly web search",
   "web-search-all": "Orbit-wide web search",
+  "outreach-reply-check": "reply check",
 };
 
 function formatRetryAfter(sec: number): string {
@@ -357,6 +358,12 @@ export const RATE_LIMITS = {
    * and only the mail is skipped, since the welcome is best-effort by design.
    */
   interestWelcome: { limit: 200, windowSec: 3600 },
+  /**
+   * "Check for replies" on one outreach campaign (`checkCampaignRepliesForUser`): up to 25
+   * searches of the user's own mailbox, one provider call or two each. Keyed per user and
+   * campaign, once per ten minutes, so a page that checks on load can't re-run the sweep.
+   */
+  outreachReplyCheck: { limit: 1, windowSec: 600 },
 } as const satisfies Record<string, BucketPolicy>;
 
 /**
