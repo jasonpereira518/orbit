@@ -388,9 +388,12 @@ async function main() {
     const ctx = await getChatSendContext(messageId, sam.id);
     check("the send dialog opens for the person a draft card names (not only a recommended one)", ctx?.to === "sam@example.com", JSON.stringify(ctx));
     check("…and for no one else on that message", (await getChatSendContext(messageId, ada_id())) === null);
+    // Counted before and after: other smokes sharing this database leave sends on the demo user.
+    const sendCount = async () => (await db.query.emailSends.findMany({ where: (r, { eq: is }) => is(r.userId, USER) })).length;
+    const sendsBefore = await sendCount();
     const draftDone = await commitProposedAction(messageId, card("draft_email").id);
-    const sends = await db.query.emailSends.findMany({ where: (r, { eq: is }) => is(r.userId, USER) });
-    check("draft_email: marking the card done sends nothing", draftDone.ok && sends.length === 0, JSON.stringify({ draftDone, sends: sends.length }));
+    const sendsAfter = await sendCount();
+    check("draft_email: marking the card done sends nothing", draftDone.ok && sendsAfter === sendsBefore, JSON.stringify({ draftDone, sendsBefore, sendsAfter }));
 
     await setSurfaceComingSoon("smoke-chat-writes-features", "page.radar", true);
     const closed = await commitProposedAction(messageId, card("set_radar_autopilot").id);
