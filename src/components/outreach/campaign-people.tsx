@@ -1,26 +1,33 @@
 "use client";
 
-import { useId, useRef, useState, type FormEvent } from "react";
+import { useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Check, ExternalLink, Loader2 } from "lucide-react";
-import { addProspects, attachBrief, removeProspect, setProspectEmail } from "@/actions/outreach-people";
+import {
+  addProspects,
+  attachBrief,
+  removeProspect,
+  setProspectEmail,
+  setProspectLinkedin,
+} from "@/actions/outreach-people";
 import { requestBrief } from "@/components/find/request-brief";
 import { FindCandidates } from "@/components/outreach/find-candidates";
 import { WarmPathNote } from "@/components/outreach/warm-path-note";
 import { Badge, badgeVariants } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Field, FormError } from "@/components/ui/field";
+import { Field, focusFirstInvalid, FormError } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { IntentLink } from "@/components/ui/intent-link";
-import { friendlyError } from "@/lib/errors";
+import { friendlyError, type ActionResult } from "@/lib/errors";
 import { asLinkedInProfile, buildLinkedInSearchUrl, buildLinkedInUrl } from "@/lib/outreach-channels";
 import {
   hasBeenContacted,
+  hasBeenContactedOnLinkedin,
   hasBeenEmailed,
   isInNetwork,
   prospectPipelineBucket,
   type MessageMetricRow,
 } from "@/lib/outreach-metrics";
-import type { OutreachChannel, PipelineFilter, ProspectEnrichment } from "@/lib/outreach-types";
+import { EMAIL_SHAPE, type OutreachChannel, type PipelineFilter, type ProspectEnrichment } from "@/lib/outreach-types";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import type { WarmPath } from "@/lib/warm-paths";
 import type { PersonDossier } from "@/lib/web-research";
@@ -266,14 +273,50 @@ function PersonRow({
 
       <div className="mt-3 border-t border-border/50 pt-3">
         {channel === "linkedin" ? (
-          <LinkedInCell person={person} hintId={hintId} status={status} />
+          <SavedField
+            label={person.linkedinUrl ? "LinkedIn link" : "Add LinkedIn link"}
+            name={person.fullName}
+            saved={person.linkedinUrl ?? ""}
+            save={(value) => setProspectLinkedin(person.id, value)}
+            // A pasted link is tidied the way Add someone does (https, no tracking); anything
+            // that still isn’t a profile goes to the server as typed, so its refusal is shown.
+            prepare={(text) => asLinkedInProfile(text) ?? text}
+            locked={hasBeenContactedOnLinkedin(person.messages)}
+            lockedNote="Already contacted on LinkedIn, so the link stays"
+            type="url"
+            placeholder="linkedin.com/in/…"
+            maxLength={300}
+            hintId={hintId}
+            status={status}
+            aside={
+              <a
+                href={
+                  person.linkedinUrl
+                    ? buildLinkedInUrl(person.linkedinUrl)
+                    : buildLinkedInSearchUrl(person.fullName, person.company)
+                }
+                target="_blank"
+                rel="noopener noreferrer nofollow"
+                className="inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline"
+              >
+                {person.linkedinUrl ? "View profile" : "Find on LinkedIn"}
+                <span className="sr-only"> for {person.fullName}</span>
+                <ExternalLink className="size-3" aria-hidden />
+              </a>
+            }
+          />
         ) : (
-          // Remounted when the saved address changes, so the box shows what was stored
-          // (lowercased, trimmed) rather than what was typed.
-          <EmailCell
-            key={person.email ?? ""}
-            person={person}
+          <SavedField
+            label="Email"
+            name={person.fullName}
+            saved={person.email ?? ""}
+            save={(value) => setProspectEmail(person.id, value)}
             locked={hasBeenEmailed(person.messages)}
+            lockedNote="Already emailed, so the address stays"
+            type="email"
+            inputMode="email"
+            placeholder="name@company.com"
+            maxLength={254}
             hintId={hintId}
             status={status}
           />
@@ -301,39 +344,71 @@ function Readiness({ id, status }: { id: string; status: { text: string; needsIn
 }
 
 /**
- * The address an email goes to. Saved on blur or Enter; the server's refusal (a bad address,
- * or one already emailed) shows under the box. Read-only once an email to them is queued or sent.
+ * One detail a message needs (an email address, a LinkedIn link), saved on blur or Enter. The
+ * server’s refusal (a bad value, or one already messaged) shows under the box. Read-only once
+ * a message to them has gone out on this channel.
  */
-function EmailCell({
-  person,
+function SavedField({
+  label,
+  name,
+  saved,
+  save: saveValue,
+  prepare = (text) => text,
   locked,
+  lockedNote,
+  type,
+  inputMode,
+  placeholder,
+  maxLength,
   hintId,
   status,
+  aside,
 }: {
-  person: CampaignPerson;
+  label: string;
+  /** Who it is for, said to screen readers after the label. */
+  name: string;
+  /** What is stored now. */
+  saved: string;
+  save: (value: string | null) => Promise<ActionResult<void>>;
+  /** What typed text becomes before it is sent. */
+  prepare?: (text: string) => string;
   locked: boolean;
+  lockedNote: string;
+  type: "email" | "url";
+  inputMode?: "email";
+  placeholder: string;
+  maxLength: number;
   hintId: string;
   status: { text: string; needsInfo: boolean };
+  aside?: ReactNode;
 }) {
   const id = useId();
   const errorId = `${id}-error`;
-  const [value, setValue] = useState(person.email ?? "");
+  const [value, setValue] = useState(saved);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   // What was last sent, so Enter followed by blur saves once, and an unchanged box saves nothing.
-  const sent = useRef(person.email ?? "");
+  const [sent, setSent] = useState(saved);
+  // When what is stored moves (this save landed, tidied, or it changed elsewhere) the box shows
+  // it. The box is not remounted for that: a keyboard user pressing Enter keeps their place.
+  const [seen, setSeen] = useState(saved);
+  if (saved !== seen) {
+    setSeen(saved);
+    setValue(saved);
+    setSent(saved);
+  }
 
   async function save() {
-    const next = value.trim();
-    if (locked || next === sent.current) return;
-    sent.current = next;
+    const next = prepare(value.trim());
+    if (locked || next === sent) return;
+    setSent(next);
     setSaving(true);
     setError(null);
     try {
-      const res = await setProspectEmail(person.id, next || null);
+      const res = await saveValue(next || null);
       if (!res.ok) setError(res.error);
     } catch (err) {
-      sent.current = person.email ?? "";
+      setSent(saved);
       setError(friendlyError(err, TOAST_COPY.saveFailed));
     } finally {
       setSaving(false);
@@ -346,32 +421,34 @@ function EmailCell({
         e.preventDefault();
         void save();
       }}
-      // The server says what is wrong with an address, in the same place whether it was saved
-      // by Enter or by leaving the box; the browser's own bubble would only cover Enter.
+      // The server says what is wrong, in the same place whether it was saved by Enter or by
+      // leaving the box; the browser’s own bubble would only cover Enter.
       noValidate
       className="space-y-1"
     >
       <label htmlFor={id} className="block text-xs font-medium text-muted-foreground">
-        Email<span className="sr-only"> for {person.fullName}</span>
+        {label}
+        <span className="sr-only"> for {name}</span>
       </label>
       <Input
         id={id}
-        type="email"
-        inputMode="email"
+        type={type}
+        inputMode={inputMode}
         autoComplete="off"
-        maxLength={254}
+        maxLength={maxLength}
         value={value}
         readOnly={locked}
-        placeholder="name@company.com"
+        placeholder={placeholder}
         onChange={(e) => setValue(e.target.value)}
         onBlur={() => void save()}
         aria-invalid={error ? true : undefined}
         aria-describedby={[hintId, error ? errorId : null].filter(Boolean).join(" ")}
         className="max-w-sm"
       />
-      <div className="flex flex-wrap items-center gap-x-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <Readiness id={hintId} status={saving ? { text: "Saving…", needsInfo: false } : status} />
-        {locked && <span className="text-xs text-muted-foreground">Already emailed, so the address stays</span>}
+        {locked && <span className="text-xs text-muted-foreground">{lockedNote}</span>}
+        {aside}
       </div>
       <FormError id={errorId} className="text-xs font-normal">
         {error}
@@ -381,56 +458,16 @@ function EmailCell({
 }
 
 /**
- * The profile a LinkedIn message goes to. There is no editor here: a link comes with the person
- * (added through Add someone, or found by Research), so a missing one points at where to look.
- */
-function LinkedInCell({
-  person,
-  hintId,
-  status,
-}: {
-  person: CampaignPerson;
-  hintId: string;
-  status: { text: string; needsInfo: boolean };
-}) {
-  return (
-    <div className="space-y-1">
-      <span className="block text-xs font-medium text-muted-foreground">LinkedIn</span>
-      {person.linkedinUrl ? (
-        <a
-          href={buildLinkedInUrl(person.linkedinUrl)}
-          target="_blank"
-          rel="noopener noreferrer nofollow"
-          className="inline-flex items-center gap-1 text-sm text-primary underline-offset-2 hover:underline"
-        >
-          View profile<span className="sr-only"> for {person.fullName}</span>
-          <ExternalLink className="size-3.5" aria-hidden />
-        </a>
-      ) : (
-        <a
-          href={buildLinkedInSearchUrl(person.fullName, person.company)}
-          target="_blank"
-          rel="noopener noreferrer nofollow"
-          className="inline-flex items-center gap-1 text-sm text-primary underline-offset-2 hover:underline"
-        >
-          Find on LinkedIn<span className="sr-only"> for {person.fullName}</span>
-          <ExternalLink className="size-3.5" aria-hidden />
-        </a>
-      )}
-      <Readiness id={hintId} status={status} />
-    </div>
-  );
-}
-
-/**
  * Add one person by hand: their name, where to pin them down (a company, or their LinkedIn
  * profile link), and an email if you have one. This is also where a LinkedIn link is added.
  */
 function AddSomeone({ campaignId, channel }: { campaignId: string; channel: OutreachChannel }) {
+  const formRef = useRef<HTMLFormElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
   const [where, setWhere] = useState("");
   const [email, setEmail] = useState("");
+  const [emailError, setEmailError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState("");
   const [busy, setBusy] = useState(false);
@@ -444,8 +481,16 @@ function AddSomeone({ campaignId, channel }: { campaignId: string; channel: Outr
       setError(`That isn’t a LinkedIn profile link. ${LINKEDIN_HINT}`);
       return;
     }
+    // The server drops an address it doesn’t like without a word, so it is checked here, where
+    // it can be said.
+    if (email.trim() && !EMAIL_SHAPE.test(email.trim().toLowerCase())) {
+      setEmailError("That address doesn’t look right");
+      requestAnimationFrame(() => focusFirstInvalid(formRef.current));
+      return;
+    }
     setBusy(true);
     setError(null);
+    setEmailError(null);
     setDone("");
     try {
       const res = await addProspects(campaignId, [
@@ -480,7 +525,7 @@ function AddSomeone({ campaignId, channel }: { campaignId: string; channel: Outr
   return (
     <details className="rounded-2xl border border-border/70 bg-card p-4">
       <summary className="cursor-pointer text-sm font-medium text-ink">Add someone</summary>
-      <form onSubmit={submit} className="mt-3 grid gap-3 sm:grid-cols-2">
+      <form ref={formRef} onSubmit={submit} className="mt-3 grid gap-3 sm:grid-cols-2">
         <Field label="Name" required>
           <Input
             ref={nameRef}
@@ -514,12 +559,16 @@ function AddSomeone({ campaignId, channel }: { campaignId: string; channel: Outr
             placeholder="Stripe, or linkedin.com/in/jane-doe"
           />
         </Field>
-        <Field label="Email" description="If you have it. You can add it later.">
+        <Field label="Email" description="If you have it. You can add it later." error={emailError}>
+          {/* Text, not type="email": the browser’s own check would answer before this form does. */}
           <Input
-            type="email"
+            type="text"
             inputMode="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              setEmailError(null);
+            }}
             maxLength={254}
             autoComplete="off"
             placeholder="jane@company.com"

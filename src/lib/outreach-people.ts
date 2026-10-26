@@ -9,7 +9,9 @@ import { isUuid } from "@/lib/ids";
 import { isPlaceholderAddress } from "@/lib/outreach-quality";
 import {
   CONTACTED_STATUSES,
+  EMAIL_SHAPE,
   EMAILED_STATUSES,
+  LINKEDIN_CONTACTED_STATUSES,
   MAX_CAMPAIGN_PEOPLE,
   type NewProspect,
   type ProspectEnrichment,
@@ -26,7 +28,6 @@ import { loadResearchedPerson, MAX_EXCLUDED_NAMES, saveResearchedPersonForUser }
 
 const MAX_PER_CALL = 10;
 const LINKEDIN_RE = /^https:\/\/([a-z]{2,3}\.)?linkedin\.com\/in\/[A-Za-z0-9\-_%]{2,100}\/?$/;
-const EMAIL_RE = /^[^\s@"<>():]+@[^\s@"<>():]+$/;
 const BRIEF_KEY_RE = /^[0-9a-f]{64}$/;
 const CAMPAIGN_GONE = "That campaign isn’t yours or no longer exists";
 const PERSON_GONE = "That person isn’t on your list or was removed";
@@ -67,7 +68,7 @@ function squash(value: unknown): string {
 
 function cleanEmail(value: unknown): string | null {
   const email = typeof value === "string" ? value.trim().toLowerCase() : "";
-  return email.length <= 254 && EMAIL_RE.test(email) && !isPlaceholderAddress(email) ? email : null;
+  return email.length <= 254 && EMAIL_SHAPE.test(email) && !isPlaceholderAddress(email) ? email : null;
 }
 
 function cleanLinkedin(value: unknown): string | null {
@@ -361,6 +362,24 @@ export async function setProspectEmailForUser(userId: string, prospectId: string
       enrichment: { ...prospect.enrichment, emailSource: wanted ? "user" : null },
       updatedAt: new Date(),
     })
+    .where(eq(outreachProspects.id, prospect.id));
+  return prospect.campaignId;
+}
+
+/** Set, or with null clear, the LinkedIn profile a person is messaged at. Returns their campaign. */
+export async function setProspectLinkedinUrlForUser(userId: string, prospectId: string, url: string | null): Promise<string> {
+  const prospect = await requireOwnProspect(userId, prospectId);
+  const wanted = typeof url === "string" && url.trim() ? cleanLinkedin(url) : null;
+  if (typeof url === "string" && url.trim() && !wanted) {
+    throw new UserFacingError("That doesn’t look like a LinkedIn profile link");
+  }
+  if (await hasMessage(prospect.id, LINKEDIN_CONTACTED_STATUSES, "linkedin")) {
+    throw new UserFacingError("They’ve already been contacted on LinkedIn, so the link stays");
+  }
+  const db = await getDb();
+  await db
+    .update(outreachProspects)
+    .set({ linkedinUrl: wanted, updatedAt: new Date() })
     .where(eq(outreachProspects.id, prospect.id));
   return prospect.campaignId;
 }

@@ -8,6 +8,7 @@ import {
   attachBriefForUser,
   removeProspectForUser,
   setProspectEmailForUser,
+  setProspectLinkedinUrlForUser,
   skipCandidateForUser,
 } from "@/lib/outreach-people";
 import { findWarmPaths } from "@/lib/warm-paths-server";
@@ -47,6 +48,13 @@ export async function setProspectEmail(prospectId: string, email: string | null)
   return asActionResult(async () => {
     const userId = await requireOutreachUser();
     revalidateCampaign(await setProspectEmailForUser(userId, prospectId, email));
+  });
+}
+
+export async function setProspectLinkedin(prospectId: string, url: string | null) {
+  return asActionResult(async () => {
+    const userId = await requireOutreachUser();
+    revalidateCampaign(await setProspectLinkedinUrlForUser(userId, prospectId, url));
   });
 }
 

@@ -18,6 +18,7 @@ import {
   prospectNameKey,
   removeProspectForUser,
   setProspectEmailForUser,
+  setProspectLinkedinUrlForUser,
   skipCandidateForUser,
 } from "../src/lib/outreach-people";
 import { MAX_CAMPAIGN_PEOPLE } from "../src/lib/outreach-types";
@@ -219,6 +220,34 @@ async function main() {
     await setProspectEmailForUser(USER, dee!.id, "dee@zs.com");
     check("a LinkedIn send doesn't lock the email", (await prospectNamed(campId, "Dee Pak"))?.email === "dee@zs.com");
 
+    console.log("linkedin link");
+    const FAY_LI = "https://www.linkedin.com/in/fay-oh";
+    check("a company page is refused", await rejects(() => setProspectLinkedinUrlForUser(USER, fay!.id, "https://www.linkedin.com/company/zs"), "doesn’t look like a LinkedIn profile link"));
+    check("another site's /in/ link is refused", await rejects(() => setProspectLinkedinUrlForUser(USER, fay!.id, "https://evil.example/in/fay-oh"), "doesn’t look like a LinkedIn profile link"));
+    check("a link with a query is refused (the page tidies it first)", await rejects(() => setProspectLinkedinUrlForUser(USER, fay!.id, `${FAY_LI}?trk=x`), "doesn’t look like"));
+    check("nothing was stored by the refusals", (await prospectNamed(campId, "Fay Oh"))?.linkedinUrl === null);
+    const campOfFay = await setProspectLinkedinUrlForUser(USER, fay!.id, ` ${FAY_LI} `);
+    const fayLi = await prospectNamed(campId, "Fay Oh");
+    check("a valid link is stored, trimmed, and the campaign comes back", fayLi?.linkedinUrl === FAY_LI && campOfFay === campId);
+    check("the rest of the person is untouched", fayLi?.email === null && (fayLi?.enrichment as Record<string, unknown>).origin === "manual" && fayLi?.externalId === fay!.externalId);
+    await setProspectLinkedinUrlForUser(USER, fay!.id, null);
+    check("null clears the link", (await prospectNamed(campId, "Fay Oh"))?.linkedinUrl === null);
+    await setProspectLinkedinUrlForUser(USER, fay!.id, "  ");
+    check("a blank also clears it", (await prospectNamed(campId, "Fay Oh"))?.linkedinUrl === null);
+    // fay has a sent EMAIL: only a LinkedIn send keeps the link.
+    await setProspectLinkedinUrlForUser(USER, fay!.id, FAY_LI);
+    check("an email send doesn't lock the link", (await prospectNamed(campId, "Fay Oh"))?.linkedinUrl === FAY_LI);
+    await addMessage(fang!.id, "generated", "linkedin");
+    await setProspectLinkedinUrlForUser(USER, fang!.id, "https://www.linkedin.com/in/fang-wang");
+    check("a LinkedIn draft doesn't lock it", (await prospectNamed(campId, "王芳"))?.linkedinUrl === "https://www.linkedin.com/in/fang-wang");
+    await addMessage(mia!.id, "copied", "linkedin");
+    check("a copied LinkedIn note keeps the link", await rejects(() => setProspectLinkedinUrlForUser(USER, mia!.id, "https://www.linkedin.com/in/li-ming"), "already been contacted on LinkedIn"));
+    check("…and a sent one", await rejects(() => setProspectLinkedinUrlForUser(USER, dee!.id, "https://www.linkedin.com/in/dee-pak"), "already been contacted on LinkedIn"));
+    check("…and the link is unchanged", (await prospectNamed(campId, "李明"))?.linkedinUrl === null);
+    const opened = await prospectNamed(campId, "Ana Ruiz");
+    await addMessage(opened!.id, "opened", "linkedin");
+    check("…and a legacy opened one", await rejects(() => setProspectLinkedinUrlForUser(USER, opened!.id, "https://www.linkedin.com/in/ana-ruiz"), "already been contacted on LinkedIn"));
+
     console.log("briefs");
     const brief = await researchPerson(USER, { fullName: "Eli Ross", company: "IQVIA", linkedinUrl: "https://www.linkedin.com/in/eli-ross" }, { researcher: briefer(CONFIDENT) });
     if (!brief.ok) throw new Error(`brief failed: ${brief.message}`);
@@ -290,6 +319,8 @@ async function main() {
     check("other tenant's campaign refused", await rejects(() => addProspectsForUser(USER, otherCamp!.id, [{ fullName: "Di Ho", company: "ZS", origin: "manual" }]), "isn’t yours"));
     check("…and for skipping", await rejects(() => skipCandidateForUser(USER, otherCamp!.id, { fullName: "Di Ho", company: "ZS" }), "isn’t yours"));
     check("other tenant's prospect refused", await rejects(() => setProspectEmailForUser(USER, otherProspect!.id, "x@y.org")));
+    check("…for a LinkedIn link", await rejects(() => setProspectLinkedinUrlForUser(USER, otherProspect!.id, "https://www.linkedin.com/in/zed-other")));
+    check("…and it stored nothing", (await prospectNamed(otherCamp!.id, "Zed Other"))?.linkedinUrl === null);
     check("…for remove", await rejects(() => removeProspectForUser(USER, otherProspect!.id)));
     check("…for a brief", await rejects(() => attachBriefForUser(USER, otherProspect!.id, brief.key)));
     check("…for a contact", await rejects(() => ensureProspectContactForUser(USER, otherProspect!.id, OPTS)));

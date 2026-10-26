@@ -2,6 +2,7 @@ import { followUpDue } from "@/lib/outreach-followups";
 import {
   CONTACTED_STATUSES,
   EMAILED_STATUSES,
+  LINKEDIN_CONTACTED_STATUSES,
   type CampaignMetrics,
   type OutreachChannel,
   type OutreachMessageOutcome,
@@ -54,6 +55,11 @@ export function hasBeenContacted(messages: { status: string }[]) {
 /** An email to them is queued, sent or may have been: the address now stays as it is. */
 export function hasBeenEmailed(messages: { status: string; channel?: string | null }[]) {
   return messages.some((m) => m.channel === "email" && EMAILED_STATUSES.includes(m.status));
+}
+
+/** A LinkedIn note to them is copied or sent: the profile link now stays as it is. */
+export function hasBeenContactedOnLinkedin(messages: { status: string; channel?: string | null }[]) {
+  return messages.some((m) => m.channel === "linkedin" && LINKEDIN_CONTACTED_STATUSES.includes(m.status));
 }
 
 /**

@@ -21,13 +21,16 @@ import {
 } from "../src/components/find/request-brief";
 import {
   hasBeenContacted,
+  hasBeenContactedOnLinkedin,
   hasBeenEmailed,
   isInNetwork,
 } from "../src/lib/outreach-metrics";
 import { asLinkedInProfile } from "../src/lib/outreach-channels";
 import {
   CONTACTED_STATUSES,
+  EMAIL_SHAPE,
   EMAILED_STATUSES,
+  LINKEDIN_CONTACTED_STATUSES,
   OUTREACH_REPLY_CTAS,
   OUTREACH_TONES,
   REPLY_CTA_LABELS,
@@ -278,11 +281,20 @@ async function main() {
 
     console.log("  each person");
     check("email saves through setProspectEmail", people.includes("setProspectEmail("));
+    check("a LinkedIn link saves through setProspectLinkedin", people.includes("setProspectLinkedin("));
+    check("a person with no link is offered Add LinkedIn link", people.includes("Add LinkedIn link"));
+    check("…beside the search for them on LinkedIn", people.includes("Find on LinkedIn"));
+    check("the action is guarded and wrapped like setProspectEmail", (() => {
+      const action = declaration(code("src/actions/outreach-people.ts"), "export async function setProspectLinkedin");
+      return action.includes("asActionResult") && action.indexOf("requireOutreachUser()") > 0 && action.includes("setProspectLinkedinUrlForUser(");
+    })());
     check("Research attaches the brief", people.includes("attachBrief(") && /kind:\s*"person"/.test(people));
     check("Remove calls removeProspect", people.includes("removeProspect("));
     check("the readiness cell reads the pipeline bucket", people.includes("prospectPipelineBucket("));
     check("the network badge is there", people.includes("Already in your network") && people.includes("isInNetwork("));
     check("Research is off without AI", /canUseAi/.test(people) && people.includes("Researching…"));
+    check("the manual form checks the email with the server’s shape", people.includes("EMAIL_SHAPE.test(") && people.includes("That address doesn’t look right"));
+    check("…and that shape is the server’s own, not a copy", /EMAIL_SHAPE/.test(code("src/lib/outreach-people.ts")) && !/const EMAIL_RE/.test(code("src/lib/outreach-people.ts")));
     check("the manual form adds with origin manual", /origin:\s*"manual"/.test(people));
     check("a person put back reads as on the list", people.includes("is on the list"));
 
@@ -294,6 +306,11 @@ async function main() {
     check("a queued email has", hasBeenEmailed([{ status: "queued", channel: "email" }]));
     check("a sent LinkedIn note has not been emailed", !hasBeenEmailed([{ status: "sent", channel: "linkedin" }]));
     check("an unsure email has", hasBeenEmailed([{ status: "unsure", channel: "email" }]));
+    check("LinkedIn keeps the link once a note is copied, sent or opened", ["copied", "sent", "opened"].every((x) => LINKEDIN_CONTACTED_STATUSES.includes(x)) && LINKEDIN_CONTACTED_STATUSES.length === 3);
+    check("a LinkedIn draft does not", !hasBeenContactedOnLinkedin([{ status: "generated", channel: "linkedin" }]));
+    check("a copied LinkedIn note does", hasBeenContactedOnLinkedin([{ status: "copied", channel: "linkedin" }]));
+    check("a sent email does not lock the LinkedIn link", !hasBeenContactedOnLinkedin([{ status: "sent", channel: "email" }]));
+    check("the email shape takes an address and refuses a name or a stray symbol", EMAIL_SHAPE.test("jane@zs.com") && !EMAIL_SHAPE.test("jane") && !EMAIL_SHAPE.test("Jane <jane@zs.com>") && !EMAIL_SHAPE.test("a b@zs.com") && !EMAIL_SHAPE.test("jane@"));
     check("a copied note has been contacted", hasBeenContacted([{ status: "copied" }]));
     check("a draft has not", !hasBeenContacted([{ status: "draft" }, { status: "generated" }]));
     check("emailSource contact is in the network", isInNetwork({ contactId: null, enrichment: { emailSource: "contact" }, messages: [{ status: "sent" }] }));
