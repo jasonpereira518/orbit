@@ -9,3 +9,4 @@ import "@/lib/email/origin-hooks/chat";
 import "@/lib/email/origin-hooks/agent";
 import "@/lib/email/origin-hooks/recruiter";
 import "@/lib/email/origin-hooks/compose";
+import "@/lib/email/origin-hooks/outreach";

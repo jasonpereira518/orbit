@@ -24,12 +24,11 @@ const EMAIL_RE = /^[^\s@"<>():]+@[^\s@"<>():]+$/;
 const BRIEF_KEY_RE = /^[0-9a-f]{64}$/;
 /**
  * Messages that mean Orbit (or the person) already reached out. `opened` is a delivered
- * status on legacy rows; `unsure` (Task 5) means "may have sent". Plain strings: neither is
- * in `OutreachMessageStatus` yet, and the column is free text.
+ * status on legacy rows; `unsure` means "may have sent".
  */
 const CONTACTED = ["queued", "sent", "copied", "opened", "unsure"];
-/** Messages that tie an email thread to the address it went to. */
-const EMAILED = ["queued", "sent"];
+/** Messages that tie an email thread to the address it went to, or may have. */
+const EMAILED = ["queued", "sent", "unsure"];
 
 const CAMPAIGN_GONE = "That campaign isn’t yours or no longer exists";
 const PERSON_GONE = "That person isn’t on your list or was removed";

@@ -3,6 +3,8 @@ export type OutreachChannel = "email" | "linkedin" | "sms";
 export type OutreachMessageStatus =
   | "draft"
   | "generated"
+  | "queued"
+  | "unsure"
   | "copied"
   | "opened"
   | "sent"

@@ -6219,7 +6219,7 @@ export const connectorOutbox = pgTable(
 export type ConnectorOutboxRow = typeof connectorOutbox.$inferSelect;
 
 export type EmailProviderId = "gmail" | "outlook" | "demo";
-export type EmailOrigin = "compose" | "follow_up" | "chat" | "agent" | "recruiter";
+export type EmailOrigin = "compose" | "follow_up" | "chat" | "agent" | "recruiter" | "outreach";
 export type EmailSendStatus = "queued" | "sending" | "sent" | "failed" | "canceled";
 export type EmailFailureKind = "auth" | "permanent" | "ambiguous" | "exhausted";
 export type EmailAttachmentRef = { blobKey: string; filename: string; contentType: string; size: number };

@@ -26,6 +26,7 @@ const HOOKS: Record<EmailOrigin, OriginHooks> = {
   chat: defaults("chat_send"),
   agent: defaults("mcp"),
   recruiter: defaults("recruiter_send"),
+  outreach: defaults("outreach_send"),
 };
 
 export function originHooks(origin: EmailOrigin): OriginHooks {

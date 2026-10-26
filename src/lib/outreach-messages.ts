@@ -1,6 +1,10 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb, rowsOf, runAtomicBatch } from "@/db";
 import { interactions, outreachCampaigns, outreachMessages, outreachProspects } from "@/db/schema";
+import type { ContactWriteOptions } from "@/lib/contact-writes";
+import "@/lib/email/origin-registrations";
+import { ENQUEUE_COPY, chargeEmailBurst, dispatchEmailSend, enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
+import { getSendCapability } from "@/lib/email/sender";
 import { UserFacingError } from "@/lib/errors";
 import { isUuid } from "@/lib/ids";
 import {
@@ -8,7 +12,14 @@ import {
   type DraftInput,
   type GeneratedDraft,
 } from "@/lib/outreach-drafts";
-import { MAX_DRAFTS_PER_RUN, type OutreachChannel, type ProspectEnrichment } from "@/lib/outreach-types";
+import { ensureProspectContactForUser } from "@/lib/outreach-people";
+import { DEMO_PROSPECT_SEND_MESSAGE, isDemoProspect, isPlaceholderAddress } from "@/lib/outreach-quality";
+import {
+  BULK_SEND_LIMIT,
+  MAX_DRAFTS_PER_RUN,
+  type OutreachChannel,
+  type ProspectEnrichment,
+} from "@/lib/outreach-types";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { loadResearchedPeople } from "@/lib/web-research";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
@@ -296,20 +307,20 @@ export async function draftCampaignMessagesForUser(
 
 /**
  * Save the user's own edit to a draft. Only a `draft` (or legacy `generated`) message can be
- * edited; one that has gone out is theirs to send, not ours to rewrite.
+ * edited; one that has gone out is theirs to send, not ours to rewrite. Returns its campaign.
  */
 export async function editDraftForUser(
   userId: string,
   messageId: string,
   input: { subject: string | null; body: string }
-): Promise<void> {
+): Promise<string> {
   const body = typeof input.body === "string" ? input.body.trim() : "";
   const subject = typeof input.subject === "string" ? input.subject.trim() : "";
   if (!body) throw new UserFacingError("Write a message before saving");
   if (body.length > MAX_BODY) throw new UserFacingError("Keep the message under 5,000 characters");
   if (subject.length > MAX_SUBJECT) throw new UserFacingError("Keep the subject under 200 characters");
 
-  const { message } = await requireMessageForUser(userId, messageId);
+  const { message, campaign } = await requireMessageForUser(userId, messageId);
   if (!REWRITABLE.includes(message.status)) throw new UserFacingError(ALREADY_SENT);
 
   const db = await getDb();
@@ -320,4 +331,169 @@ export async function editDraftForUser(
     .where(and(eq(outreachMessages.id, message.id), inArray(outreachMessages.status, REWRITABLE)))
     .returning();
   if (!updated.length) throw new UserFacingError(ALREADY_SENT);
+  return campaign.id;
+}
+
+/* ------------------------------------------------------------------ send ----- */
+
+/** Spacing between sends in a batch, as recruiter sends do, so a batch trickles out. */
+const SEND_SPACING_MS = 1200;
+/** Refusals that no later message in the batch could get past either. */
+const STOPS_BATCH: EnqueueRefusal[] = ["cap_reached", "not_connected", "no_send_scope", "needs_reauth"];
+
+export type SendCampaignResult = {
+  sent: number;
+  /** Handed to the outbox but not settled yet (a slow provider): the outbox hook settles them. */
+  pending: number;
+  failed: { messageId: string; name: string; error: string }[];
+};
+
+/**
+ * Email up to 25 of a campaign's messages from the user's own mailbox, through the outbox.
+ *
+ * One UPDATE claims the messages (`draft`, legacy `generated`, or a definite `failed`) by
+ * moving them to `queued`; only what it returns goes on, so two sends of one message — a
+ * double click, two tabs — email once. The same statement also refuses a second message at
+ * the same step for one person, whether it's already out or in the same batch. Anything
+ * claimed that this call doesn't hand to the outbox goes back to `draft` before it returns,
+ * error or not. Ids that aren't this campaign's emails are ignored.
+ *
+ * A refused send (no mailbox, today's cap) throws before anything is claimed, so no message
+ * moves and no contact is created. The contact is made only for a message about to go out.
+ */
+export async function sendCampaignMessagesForUser(
+  userId: string,
+  campaignId: string,
+  messageIds: string[],
+  opts: { fromName?: string | null; spacingMs?: number; contactWrite?: ContactWriteOptions } = {}
+): Promise<SendCampaignResult> {
+  const list = Array.isArray(messageIds) ? messageIds : [];
+  if (list.length > BULK_SEND_LIMIT) throw new UserFacingError(`Send up to ${BULK_SEND_LIMIT} at a time`);
+  const campaign = await requireOwnCampaign(userId, campaignId);
+  if (campaign.defaultChannel !== "email") throw new UserFacingError("This campaign isn’t set up for email");
+  const ids = [...new Set(list.filter(isUuid))];
+  const result: SendCampaignResult = { sent: 0, pending: 0, failed: [] };
+  if (!ids.length) return result;
+
+  const capability = await getSendCapability(userId);
+  if (!capability.ok) throw new UserFacingError(ENQUEUE_COPY[capability.reason]);
+  // One batch is one burst; the daily cap still counts every message.
+  const limited = await chargeEmailBurst(userId);
+  if (limited && !limited.ok) throw new UserFacingError(limited.message);
+
+  // The claim, and with it the double-send guard: one statement. The outer status check is
+  // re-evaluated against a row a concurrent claim just changed, so only one claim gets it.
+  // DISTINCT ON keeps one message per person and step out of this batch, and NOT EXISTS
+  // refuses one whose person already has another at that step that went out or may have.
+  // ponytail: two concurrent calls each holding a DIFFERENT message for one person and step
+  // can both pass NOT EXISTS (neither sees the other's uncommitted claim); drafting already
+  // keeps one step-0 message per person, so this is the belt, not the braces.
+  const db = await getDb();
+  const claimedIds = rowsOf<{ id: string }>(
+    await db.execute(sql`
+      UPDATE outreach_messages m
+         SET status = 'queued', error_message = NULL, updated_at = now()
+       WHERE m.status IN ('draft', 'generated', 'failed')
+         AND m.id IN (
+           SELECT DISTINCT ON (c.prospect_id, c.step_index) c.id
+             FROM outreach_messages c
+             JOIN outreach_prospects p ON p.id = c.prospect_id
+             JOIN outreach_campaigns k ON k.id = p.campaign_id
+            WHERE c.id IN (${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)})
+              AND c.status IN ('draft', 'generated', 'failed')
+              AND c.channel = 'email'
+              AND p.campaign_id = ${campaign.id}::uuid
+              AND p.status <> 'excluded'
+              AND k.user_id = ${userId}
+            ORDER BY c.prospect_id, c.step_index, c.created_at, c.id
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM outreach_messages o
+            WHERE o.prospect_id = m.prospect_id
+              AND o.step_index = m.step_index
+              AND o.id <> m.id
+              AND o.status IN ('queued', 'sent', 'unsure', 'copied', 'opened')
+         )
+      RETURNING m.id
+    `)
+  ).map((r) => r.id);
+  if (!claimedIds.length) return result;
+
+  // Oldest first; a tie (one draft run) keeps the order the ids were given in.
+  const rows = (
+    await db
+      .select({ message: outreachMessages, prospect: outreachProspects })
+      .from(outreachMessages)
+      .innerJoin(outreachProspects, eq(outreachProspects.id, outreachMessages.prospectId))
+      .innerJoin(outreachCampaigns, eq(outreachCampaigns.id, outreachProspects.campaignId))
+      .where(and(inArray(outreachMessages.id, claimedIds), eq(outreachCampaigns.userId, userId)))
+  ).sort(
+    (a, b) =>
+      a.message.createdAt.getTime() - b.message.createdAt.getTime() ||
+      ids.indexOf(a.message.id) - ids.indexOf(b.message.id)
+  );
+
+  // Claimed but not yet the outbox's: whatever is left here goes back to `draft` at the end.
+  const unsent = new Set(claimedIds);
+  const spacingMs = opts.spacingMs ?? SEND_SPACING_MS;
+  let handedOff = 0;
+  try {
+    for (const [index, { message, prospect }] of rows.entries()) {
+      const fail = (error: string) => result.failed.push({ messageId: message.id, name: prospect.fullName, error });
+      if (index >= capability.remainingToday) {
+        fail(ENQUEUE_COPY.cap_reached);
+        break;
+      }
+      if (isDemoProspect(prospect.enrichment)) {
+        fail(DEMO_PROSPECT_SEND_MESSAGE);
+        continue;
+      }
+      const email = prospect.email?.trim().toLowerCase();
+      if (!email || isPlaceholderAddress(email)) {
+        fail(`Add an email address for ${prospect.fullName} first`);
+        continue;
+      }
+      if (handedOff && spacingMs > 0) await new Promise((resolve) => setTimeout(resolve, spacingMs));
+
+      const contactId = await ensureProspectContactForUser(userId, prospect.id, opts.contactWrite);
+      // A follow-up (step 1) goes out as its own message for now; Task 8 threads it under the first.
+      const queued = await enqueueEmail(userId, {
+        to: [email],
+        subject: message.subject ?? "",
+        bodyText: message.body,
+        fromName: opts.fromName,
+        origin: "outreach",
+        originRef: message.id,
+        idempotencyKey: `outreach:${message.id}`,
+        contactIds: [contactId],
+        delayMs: 0,
+        chargeBurst: false,
+      });
+      if (!queued.ok) {
+        fail(queued.message);
+        if (STOPS_BATCH.includes(queued.reason)) break;
+        await db
+          .update(outreachMessages)
+          .set({ status: "failed", errorMessage: queued.message, updatedAt: new Date() })
+          .where(and(eq(outreachMessages.id, message.id), eq(outreachMessages.status, "queued")));
+        unsent.delete(message.id);
+        continue;
+      }
+      // The outbox owns it now: its hook (origin-hooks/outreach.ts) settles the message.
+      unsent.delete(message.id);
+      handedOff += 1;
+      const outcome = await dispatchEmailSend(queued.id);
+      if (outcome === "sent") result.sent += 1;
+      else if (outcome === "retry") result.pending += 1;
+      else fail(`Couldn’t send to ${prospect.fullName} — try again?`);
+    }
+  } finally {
+    if (unsent.size) {
+      await db
+        .update(outreachMessages)
+        .set({ status: "draft", updatedAt: new Date() })
+        .where(and(inArray(outreachMessages.id, [...unsent]), eq(outreachMessages.status, "queued")));
+    }
+  }
+  return result;
 }

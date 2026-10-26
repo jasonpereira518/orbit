@@ -245,6 +245,7 @@ const EMAIL_FAILED_KIND = {
   chat: "outreach",
   agent: "outreach",
   recruiter: "outreach",
+  outreach: "outreach",
 } as const satisfies Record<EmailOrigin, "outreach" | "followup">;
 
 export type DispatchOutcome = "sent" | "retry" | "failed" | "not_due" | "not_claimable";

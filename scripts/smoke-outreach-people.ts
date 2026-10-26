@@ -214,6 +214,7 @@ async function main() {
     check("null clears the address", (await prospectNamed(campId, "Fay Oh"))?.email === null);
     await addMessage(fay!.id, "sent");
     check("no change after an email went out", await rejects(() => setProspectEmailForUser(USER, fay!.id, "fay2@zs.com")));
+    check("…nor after one may have gone out", await rejects(() => setProspectEmailForUser(USER, fang!.id, "fang@zs.com"), "already been emailed"));
     await addMessage(dee!.id, "sent", "linkedin");
     await setProspectEmailForUser(USER, dee!.id, "dee@zs.com");
     check("a LinkedIn send doesn't lock the email", (await prospectNamed(campId, "Dee Pak"))?.email === "dee@zs.com");
