@@ -237,6 +237,25 @@ async function main() {
   check("the same description again is a cache hit", foundAgain.ok && discoverCalls === 1);
   check("recent includes discoveries", (await listRecentResearch(USER, 30)).some((r) => r.dossier.kind === "discover"));
 
+  // --- Find more: names already found are fenced into the prompt, deduped and capped ---
+  const seen: string[] = [];
+  const excludeResearcher = async (_u: string, user: string) => {
+    seen.push(user);
+    return { json: '{"candidates":[]}', sources: [] };
+  };
+  await discoverPeople(USER, "PMs at Stripe", { researcher: excludeResearcher, exclude: ["Ana Ruiz", "ana ruiz ", "Bo Li"] });
+  check(
+    "exclude block is fenced and deduped",
+    /ALREADYFOUND/.test(seen[0]) && seen[0].split(/ana ruiz/i).length === 2 && seen[0].includes("Bo Li"),
+  );
+  const excludeMany = Array.from({ length: 80 }, (_, i) => `Person ${i}`);
+  await discoverPeople(USER, "PMs at Stripe", { researcher: excludeResearcher, exclude: excludeMany });
+  check("exclude capped at 60", seen[1].includes("Person 59") && !seen[1].includes("Person 60"));
+  const plain = await discoverPeople(USER, "PMs at Stripe", { researcher: excludeResearcher });
+  const skipping = await discoverPeople(USER, "PMs at Stripe", { researcher: excludeResearcher, exclude: ["Bo Li"] });
+  check("exclude changes the cache key", plain.ok && skipping.ok && plain.key !== skipping.key);
+  check("no exclude, no already-found block", !/ALREADYFOUND/.test(seen[2]));
+
   // --- Save to Orbit -----------------------------------------------------------------
   const saved = await saveResearchedPersonForUser(USER, res.key, OPTS);
   check("save creates the contact", saved?.outcome === "created");

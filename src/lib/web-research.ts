@@ -690,6 +690,8 @@ const MAX_DISCOVERY_OUTPUT_TOKENS = 2000;
 const MAX_CANDIDATES = 10;
 const MIN_QUERY = 3;
 const MAX_QUERY = 300;
+/** People "Find more" tells the model to skip. Past this the prompt grows for little gain. */
+const MAX_EXCLUDED_NAMES = 60;
 
 /** One person a web search turned up for a description. Never a contact until briefed and saved. */
 export type Candidate = {
@@ -778,6 +780,20 @@ export function toDiscoveryResult(query: string, json: string, sources: WebSourc
   };
 }
 
+/** Names to skip: trimmed, one line each, deduped without regard to case (first spelling wins), capped. */
+function excludedNames(names: readonly string[] | undefined): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const name of names ?? []) {
+    const cleaned = clean(name, MAX_NAME);
+    if (!cleaned || seen.has(cleaned.toLowerCase())) continue;
+    seen.add(cleaned.toLowerCase());
+    out.push(cleaned);
+    if (out.length === MAX_EXCLUDED_NAMES) break;
+  }
+  return out;
+}
+
 /**
  * People who match a description ("product managers at Stripe who went to Michigan"),
  * found on the public web. Honest about its limits: a handful of cited candidates, never a
@@ -787,13 +803,26 @@ export function toDiscoveryResult(query: string, json: string, sources: WebSourc
 export async function discoverPeople(
   userId: string,
   input: unknown,
-  options: { fresh?: boolean; signal?: AbortSignal; now?: () => Date; researcher?: DiscoveryResearcher } = {},
+  options: {
+    fresh?: boolean;
+    signal?: AbortSignal;
+    now?: () => Date;
+    researcher?: DiscoveryResearcher;
+    /** People already found, so "Find more" returns different ones. Part of the cache key. */
+    exclude?: string[];
+  } = {},
 ): Promise<DiscoverPeopleResult> {
   const normalized = normalizeDiscoveryQuery(input);
   if (!normalized.ok) return normalized;
   const { query } = normalized;
   const now = options.now ?? (() => new Date());
-  const user = `Find people who match this description:\n\n${fenceUntrusted("description", query)}`;
+  const skip = excludedNames(options.exclude);
+  // The names came from the user's own rows but were web-derived once, so they stay fenced.
+  const user =
+    `Find people who match this description:\n\n${fenceUntrusted("description", query)}` +
+    (skip.length
+      ? `\n\nDo not list any of these people again; find different people who match.\n\n${fenceUntrusted("already_found", skip.join("\n"))}`
+      : "");
   const research: DiscoveryResearcher =
     options.researcher ??
     ((uid, prompt, signal) =>

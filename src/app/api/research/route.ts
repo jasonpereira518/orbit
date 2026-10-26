@@ -10,15 +10,20 @@ export const runtime = "nodejs";
 // allows 120s), past the 60s a (main) server action gets.
 export const maxDuration = 150;
 
-/** A typed name, company, domain and LinkedIn link: far under this. */
-const MAX_BODY_BYTES = 4_096;
+/** A typed name, company, domain and LinkedIn link: far under this. "Find more" adds up to 60 names. */
+const MAX_BODY_BYTES = 8_192;
+
+/** The array when every element is a string; `discoverPeople` trims, dedupes and caps it. */
+function stringArray(value: unknown): string[] | undefined {
+  return Array.isArray(value) && value.every((v) => typeof v === "string") ? value : undefined;
+}
 
 /**
  * Brief someone who is not in the network yet.
  *
  *   POST /api/research   { kind: "person", fullName, company?, domain?, linkedinUrl?, fresh? }
  *                        { kind: "company", name, domain?, fresh? }
- *                        { kind: "discover", query, fresh? }
+ *                        { kind: "discover", query, exclude?: string[], fresh? }
  *   x-orbit-research: 1
  *
  * A route rather than a server action for the time limit above. The custom header is the
@@ -57,7 +62,9 @@ export async function POST(request: Request) {
     const fresh = body.fresh === true;
     const result =
       body.kind === "discover"
-        ? await discoverPeople(userId, body.query, { fresh }).then((r) => (r.ok ? { ...r, dossier: r.result } : r))
+        ? await discoverPeople(userId, body.query, { fresh, exclude: stringArray(body.exclude) }).then((r) =>
+            r.ok ? { ...r, dossier: r.result } : r,
+          )
         : body.kind === "company"
           ? await researchCompany(userId, body, { fresh, readTypedHomepage: true })
           : await researchPerson(userId, body, { fresh });
