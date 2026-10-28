@@ -80,7 +80,7 @@ export function ContactName({
             // A row or card around the name may navigate on click; this click is only ours.
             onClick={(e) => e.stopPropagation()}
             className={cn(
-              "relative z-10 ml-0.5 inline-flex size-4 align-text-top items-center justify-center rounded-full border border-border bg-card font-sans text-[10px] leading-none font-semibold text-muted-foreground shadow-sm transition-opacity",
+              "relative z-10 ml-0.5 inline-flex size-4 align-text-top items-center justify-center rounded-full border border-border bg-card font-sans text-3xs leading-none font-semibold text-muted-foreground shadow-sm transition-opacity",
               "opacity-0 group-hover/name:opacity-100 focus-visible:opacity-100 data-popup-open:opacity-100 pointer-coarse:opacity-100",
               "hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             )}

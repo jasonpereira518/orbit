@@ -111,6 +111,7 @@ const COVERED_BY_INTERNAL_AUTH = new Set([
   "embeddings/backfill",
   "work-history/research",
   "work-history/sweep",
+  "contacts/name-sweep",
   "linkedin/timeline-events/backfill",
   "capture/jobs/[id]/run",
   "radar/run",
