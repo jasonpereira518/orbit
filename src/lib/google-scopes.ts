@@ -16,6 +16,9 @@ export const GOOGLE_SCOPES = {
   gmailRead: "https://www.googleapis.com/auth/gmail.readonly",
   gmailSend: "https://www.googleapis.com/auth/gmail.send",
   calendar: "https://www.googleapis.com/auth/calendar.readonly",
+  // Adding the meetings chat sets up to the person's own calendar, only when they ask for it.
+  // Events only — never the calendars themselves or their sharing. Sensitive, like `calendar`.
+  calendarWrite: "https://www.googleapis.com/auth/calendar.events",
   // Only files the person picks in the Google Picker. Non-sensitive.
   drive: "https://www.googleapis.com/auth/drive.file",
   // Cloud notes: list recent Docs and read their first lines to spot meeting notes. Restricted —
@@ -26,7 +29,7 @@ export const GOOGLE_SCOPES = {
 
 export type GoogleScope = (typeof GOOGLE_SCOPES)[keyof typeof GOOGLE_SCOPES];
 
-export const GOOGLE_PURPOSES = ["contacts", "recruiter_scan", "send", "calendar", "event_mail", "drive", "drive_scan"] as const;
+export const GOOGLE_PURPOSES = ["contacts", "recruiter_scan", "send", "calendar", "calendar_write", "event_mail", "drive", "drive_scan"] as const;
 export type GooglePurpose = (typeof GOOGLE_PURPOSES)[number];
 
 const IDENTITY_SCOPES: readonly GoogleScope[] = [GOOGLE_SCOPES.openid, GOOGLE_SCOPES.email];
@@ -36,6 +39,7 @@ const PURPOSE_SCOPE: Record<GooglePurpose, GoogleScope> = {
   recruiter_scan: GOOGLE_SCOPES.gmailRead,
   send: GOOGLE_SCOPES.gmailSend,
   calendar: GOOGLE_SCOPES.calendar,
+  calendar_write: GOOGLE_SCOPES.calendarWrite,
   event_mail: GOOGLE_SCOPES.gmailRead,
   drive: GOOGLE_SCOPES.drive,
   drive_scan: GOOGLE_SCOPES.driveRead,
@@ -126,6 +130,8 @@ export function missingScopeMessage(purpose: GooglePurpose | null | undefined): 
       return "Google didn’t grant contacts access — reconnect and allow it";
     case "calendar":
       return "Google didn’t grant calendar access — reconnect and allow it";
+    case "calendar_write":
+      return "Google didn’t grant permission to add events — reconnect and allow it";
     case "send":
       return "Google didn’t grant permission to send — reconnect and allow it";
     case "drive":

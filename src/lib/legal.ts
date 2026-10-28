@@ -106,6 +106,12 @@ export const GOOGLE_SCOPE_DISCLOSURES: readonly {
     askedWhen: "Connect Google Calendar on Events",
   },
   {
+    scope: GOOGLE_SCOPES.calendarWrite,
+    permission: "Add events to your calendar (calendar.events)",
+    use: "Puts the meetings you set up in Chat on your primary calendar, with the title, time and place you gave, and removes one when you press Undo. Nobody is invited and no email is sent. Orbit never changes or deletes an event it did not add.",
+    askedWhen: "Add to calendar on a meeting in Chat",
+  },
+  {
     scope: GOOGLE_SCOPES.drive,
     permission: "See and open only the Google Docs and Slides you pick (drive.file)",
     use: "Lets you pick Google Docs and Slides from the Google Picker to import. Orbit only ever sees files you explicitly select.",
