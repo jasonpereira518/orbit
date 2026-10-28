@@ -37,7 +37,6 @@ import type {
   CronHealth,
   ErrorEventSummary,
   OpsStatus,
-  OutreachQueueHealth,
   WebhookHealth,
 } from "@/lib/admin-system";
 
@@ -59,7 +58,6 @@ export type HealthLiveData = {
   cron: CronHealth | null;
   webhooks: WebhookHealth | null;
   errors: ErrorEventSummary | null;
-  outreach: OutreachQueueHealth | null;
   ops: OpsStatus | null;
 };
 
@@ -132,7 +130,7 @@ export function HealthLiveBody({
   bugsPanel: React.ReactNode;
   aiDataPanels: React.ReactNode;
 }) {
-  const { health, cron, webhooks, errors, outreach, ops } = useHealthLive();
+  const { health, cron, webhooks, errors, ops } = useHealthLive();
   const [tab, setTab] = useState("attention");
   const criticalOpen = ops?.openAlerts.filter((a) => a.severity === "critical").length ?? 0;
   const openAlerts = ops?.openAlerts.length ?? 0;
@@ -502,11 +500,6 @@ export function HealthLiveBody({
               : cron.lastRun.state === "ok"
                 ? "ok"
                 : "warn",
-          },
-          {
-            label: "Overdue sends",
-            value: outreach ? `${outreach.overdue}` : "—",
-            tone: outreach && outreach.overdue > 0 ? "warn" : "ok",
           },
           {
             label: "Webhooks (7d)",

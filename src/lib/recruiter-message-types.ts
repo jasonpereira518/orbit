@@ -6,7 +6,7 @@ import { RECRUITER_INTENTS, type RecruiterIntent } from "@/lib/recruiter-drafts"
  * These live outside `src/actions/recruiter-messages.ts` because a `"use server"` module
  * may only export async functions — a single exported constant there makes Next drop
  * every export in the file, so the actions stop resolving entirely. Same split as
- * `outreach-types.ts` next to `outreach-send.ts`.
+ * `outreach-types.ts` next to `actions/outreach.ts`.
  */
 
 /**

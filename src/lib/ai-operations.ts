@@ -118,6 +118,7 @@ export const AI_OPERATIONS = {
   "meeting.talking_points": { label: "Meeting: talking points", tier: "fast", thinking: "minimal" },
   "followup.draft": { label: "Follow-up drafts", tier: "user" },
   "outreach.draft": { label: "Outreach drafts", tier: "user" },
+  // No producer since Outreach v1's Apollo search was retired (2026-10-27); kept for usage history.
   "outreach.apollo": { label: "Outreach: prospect search", tier: "user" },
   "recruiter.scan": { label: "Recruiter scan", tier: "fast", thinking: "minimal", background: true },
   "recruiter.draft": { label: "Recruiter drafts", tier: "user" },

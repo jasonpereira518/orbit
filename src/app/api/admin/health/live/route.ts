@@ -5,7 +5,6 @@ import {
   getCronHealth,
   getErrorEventSummary,
   getOpsStatus,
-  getOutreachQueueHealth,
   getWebhookHealth,
 } from "@/lib/admin-system";
 
@@ -31,17 +30,16 @@ export async function GET() {
     return new NextResponse("Not found", { status: 404 });
   }
 
-  const [health, cron, webhooks, errors, outreach, ops] = await Promise.all([
+  const [health, cron, webhooks, errors, ops] = await Promise.all([
     getAdminHealth(),
     getCronHealth("imports.process-stalled").catch(() => null),
     getWebhookHealth().catch(() => null),
     getErrorEventSummary().catch(() => null),
-    getOutreachQueueHealth().catch(() => null),
     getOpsStatus().catch(() => null),
   ]);
 
   return NextResponse.json(
-    { health, cron, webhooks, errors, outreach, ops },
+    { health, cron, webhooks, errors, ops },
     { headers: { "Cache-Control": "no-store" } }
   );
 }

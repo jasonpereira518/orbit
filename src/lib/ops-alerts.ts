@@ -76,7 +76,6 @@ export type OpsSnapshot = {
   aiSecurityLastHour?: { events: number; accounts: number };
   wedgedImports: number;
   failedImportsLast24h: number;
-  outreach: { overdue: number; oldestOverdueDays: number | null };
   aiOutages: Array<{ provider: string | null; errorKind: string; accounts: number }>;
   errorEventsLastHour: number;
   perfSlowLastHour: number;
@@ -553,16 +552,6 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "info",
       title: "Many calendar syncs are disarmed",
       detail: `${s.calendarDisarmed} Google calendar connections are disarmed with an error — check for a Google-side change before blaming users.`,
-      href: "/admin/health",
-    });
-  }
-
-  if (s.outreach.overdue > 0 && (s.outreach.oldestOverdueDays ?? 0) >= 1) {
-    out.push({
-      id: "outreach.overdue",
-      severity: "warning",
-      title: "Scheduled outreach is not sending",
-      detail: `${s.outreach.overdue} message(s) overdue; the oldest by ${s.outreach.oldestOverdueDays?.toFixed(1)} day(s).`,
       href: "/admin/health",
     });
   }

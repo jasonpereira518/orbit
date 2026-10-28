@@ -52,6 +52,7 @@ import { resolveRecruiterPii } from "../src/lib/recruiters";
 import { needsOnboarding } from "../src/lib/onboarding";
 import { buildConstellationClusters, toNamedGraphClusters } from "../src/lib/constellation-clusters";
 import { seedDemoWorkspace } from "../src/lib/demo-data/seed";
+import { isPlaceholderAddress } from "../src/lib/outreach-quality";
 
 const FRESH = "smoke-demo-fresh";
 const REMOTE_USER = "smoke-demo-remote";
@@ -101,6 +102,30 @@ async function cleanup() {
     await db.delete(table).where(inArray(table.userId, users));
   }
   await db.delete(recruiters).where(inArray(recruiters.emailNormalized, DEMO_RECRUITER_EMAILS));
+}
+
+/**
+ * A persona's campaign people, as the new Outreach reads them: every one is a demo row (so the
+ * send path refuses it), every address is a placeholder, and anyone already emailed has one.
+ */
+async function checkDemoProspects(userId: string) {
+  const db = await getDb();
+  const people = await db
+    .select({ name: outreachProspects.fullName, email: outreachProspects.email, enrichment: outreachProspects.enrichment })
+    .from(outreachProspects)
+    .innerJoin(outreachCampaigns, eq(outreachCampaigns.id, outreachProspects.campaignId))
+    .where(eq(outreachCampaigns.userId, userId));
+  const sent = await db
+    .select({ name: outreachProspects.fullName, email: outreachProspects.email })
+    .from(outreachMessages)
+    .innerJoin(outreachProspects, eq(outreachProspects.id, outreachMessages.prospectId))
+    .innerJoin(outreachCampaigns, eq(outreachCampaigns.id, outreachProspects.campaignId))
+    .where(and(eq(outreachCampaigns.userId, userId), eq(outreachMessages.status, "sent")));
+  const demo = (e: unknown) => (e as { demo?: unknown; origin?: unknown } | null)?.demo === true;
+  check("campaign people are seeded", people.length > 0, String(people.length));
+  check("every campaign person is a demo row found by Find people", people.every((p) => demo(p.enrichment) && (p.enrichment as { origin?: unknown }).origin === "find"));
+  check("every campaign address is a placeholder", people.every((p) => !p.email || isPlaceholderAddress(p.email)), people.map((p) => p.email).join(","));
+  check("everyone already emailed has an address", sent.length > 0 && sent.every((p) => Boolean(p.email)), sent.filter((p) => !p.email).map((p) => p.name).join(","));
 }
 
 async function main() {
@@ -199,6 +224,7 @@ async function main() {
       .innerJoin(outreachProspects, eq(outreachProspects.id, outreachMessages.prospectId))
       .where(and(inArray(outreachProspects.campaignId, campaignIds), inArray(outreachMessages.status, ["scheduled", "queued"])));
     check("no seeded outreach message is waiting to send", sendable.length === 0, String(sendable.length));
+    await checkDemoProspects(FRESH);
     const queuedRecruiter = await db
       .select({ id: recruiterMessages.id })
       .from(recruiterMessages)
@@ -269,6 +295,7 @@ async function main() {
     const { GILLINGS_PEOPLE, GILLINGS_LISTS, GILLINGS_GOALS } = await import("../src/lib/demo-data/gillings");
     const { GILLINGS_REAL_PEOPLE } = await import("../src/lib/demo-data/gillings-real");
     const gSummary = await seedDemoWorkspace(GILLINGS_USER, { persona: "gillings" });
+    await checkDemoProspects(GILLINGS_USER);
     const gRows = await db
       .select({ fullName: contacts.fullName, email: contacts.email, linkedinUrl: contacts.linkedinUrl, company: contacts.company, school: contacts.school, industry: contacts.industry, photo: contacts.profileImageUrl })
       .from(contacts)

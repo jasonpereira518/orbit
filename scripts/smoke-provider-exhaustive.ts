@@ -244,21 +244,13 @@ const ALLOWLIST: Record<string, string> = {
     "also checks \"anthropic\" and \"openrouter\" explicitly (this commit added the " +
     "openrouter arm and its keys.openrouter column), defaulting to gemini.",
   "src/lib/admin-user-detail.ts:572": "the \"anthropic\" arm of the same ternary — see line 570.",
-  "src/actions/settings.ts:127": "the \"gemini\" arm of the four-way `hasPersonalKey` " +
+  "src/actions/settings.ts:120": "the \"gemini\" arm of the four-way `hasPersonalKey` " +
     "ternary that now also checks \"openai\" and \"anthropic\" explicitly, defaulting to " +
     "settings?.openrouterApiKeyEncrypted (this fix round's fix — it used to default to the " +
     "anthropic key for an openrouter row) — exhaustive over AiProvider.",
-  "src/actions/settings.ts:123": "the \"openai\" arm of the same ternary — see line 121.",
-  "src/actions/settings.ts:125": "the \"anthropic\" arm of the same ternary — see line 121; " +
+  "src/actions/settings.ts:122": "the \"openai\" arm of the same ternary — see line 120.",
+  "src/actions/settings.ts:124": "the \"anthropic\" arm of the same ternary — see line 120; " +
     "this is the comparison that was added, moving openrouter off the anthropic default.",
-  "src/lib/outreach-readiness-server.ts:82": "the \"gemini\" arm of hasAiKeyFor's " +
-    "personal-key ternary, which now has an explicit `provider === \"openrouter\"` arm " +
-    "reading openrouterApiKeyEncrypted before the `: null` default. It did NOT until the " +
-    "merge of main brought this checker alongside this file: an OpenRouter account's own " +
-    "key fell to null, so `hasAiKey` read false and outreach readiness told a user with a " +
-    "working key to go add one. Exhaustive over AiProvider now.",
-  "src/lib/outreach-readiness-server.ts:84": "the \"openai\" arm of the same ternary — see line 82.",
-  "src/lib/outreach-readiness-server.ts:86": "the \"anthropic\" arm of the same ternary — see line 82.",
   "src/lib/ai-settings-write.ts:125": "one of four INDEPENDENT `provider === X && encrypted` " +
     "ternaries, one per key column of nextKeyState — each keys off its own literal with no " +
     "shared fallthrough default, so no cascade needs an openrouter arm; openrouterApiKeyEncrypted " +

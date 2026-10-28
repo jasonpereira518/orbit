@@ -1,11 +1,10 @@
 /**
- * Pins the set-based rewrites of per-row write loops (outreach search/drafts/follow-ups,
- * recruiter drafts, the dashboard follow-up generator and outreach-suggestion rebuild, and
- * the chat thread read): same rows and same fields as the loops they replaced, nothing
- * written outside the caller's account.
+ * Pins the set-based rewrites of per-row write loops (recruiter drafts, the dashboard
+ * follow-up generator and outreach-suggestion rebuild, and the chat thread read): same rows
+ * and same fields as the loops they replaced, nothing written outside the caller's account.
  *
- * Runs the real server actions as demo mode's `demo-user` (like smoke-outreach-guards),
- * against a throwaway PGlite, with the model stubbed at `fetch`.
+ * Runs the real server actions as demo mode's `demo-user`, against a throwaway PGlite, with
+ * the model stubbed at `fetch`.
  *
  * Run: npx tsx scripts/smoke-batched-writes.ts
  */
@@ -19,9 +18,6 @@ import {
   chatMessages,
   chatThreads,
   contacts,
-  outreachCampaigns,
-  outreachMessages,
-  outreachProspects,
   recruiterMessages,
   recruiters,
   reminders,
@@ -30,20 +26,11 @@ import {
 } from "../src/db/schema";
 import { encrypt } from "../src/lib/crypto";
 import { ensureUserSettings } from "../src/lib/user-settings";
-import { setSurfaceComingSoon } from "../src/lib/surface-visibility";
-import {
-  generateDueFollowUps as generateOutreachFollowUps,
-  generateOutreachDrafts,
-  searchProspects,
-} from "../src/actions/outreach";
 import { generateRecruiterDrafts, listRecruiterDrafts } from "../src/actions/recruiter-messages";
 import { getChatThread } from "../src/actions/chat";
 import { generateDueFollowUps, refreshOutreachSuggestions } from "../src/lib/reminders";
 
 delete process.env.RESEND_API_KEY;
-delete process.env.TWILIO_ACCOUNT_SID;
-delete process.env.TWILIO_AUTH_TOKEN;
-delete process.env.APOLLO_API_KEY; // forces the demo prospect search
 delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 delete process.env.CLERK_SECRET_KEY;
 process.env.ORBIT_DEMO_DATA = "off";
@@ -74,7 +61,7 @@ async function outsideRequest<T>(work: Promise<T>): Promise<T | undefined> {
 
 // ---- model stub: every prompt the model is sent, and a reply that names who it is for ----
 const prompts: string[] = [];
-const NAMES = ["Ada Draft", "Bea Draft", "Cy Draft", "Fay Follow", "Gus Follow", "Rita Recruiter", "Sam Recruiter", "Fail Recruiter"];
+const NAMES = ["Rita Recruiter", "Sam Recruiter", "Fail Recruiter"];
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -93,7 +80,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   return realFetch(input, init);
 }) as typeof fetch;
 
-async function distinctCreatedAt(table: "outreach_prospects" | "recruiter_messages", where: SQL): Promise<number> {
+async function distinctCreatedAt(table: "recruiter_messages", where: SQL): Promise<number> {
   const db = await getDb();
   const rows = rowsOf<{ n: number }>(
     await db.execute(sql`SELECT count(DISTINCT created_at)::int AS n FROM ${sql.raw(table)} WHERE ${where}`)
@@ -104,7 +91,6 @@ async function distinctCreatedAt(table: "outreach_prospects" | "recruiter_messag
 async function cleanup() {
   const db = await getDb();
   const users = [USER, OTHER, REM_USER];
-  await db.delete(outreachCampaigns).where(inArray(outreachCampaigns.userId, users));
   await db.delete(recruiterMessages).where(inArray(recruiterMessages.userId, users));
   await db.delete(userRecruiterLinks).where(inArray(userRecruiterLinks.userId, users));
   await db.delete(recruiters).where(inArray(recruiters.createdByUserId, users));
@@ -113,168 +99,16 @@ async function cleanup() {
   await db.delete(chatThreads).where(inArray(chatThreads.userId, users));
   await db.delete(contacts).where(inArray(contacts.userId, users));
   await db.delete(userSettings).where(inArray(userSettings.userId, users));
-  // The suite shares one PGlite across smokes: put page.outreach back to its coming-soon
-  // default so a later script (smoke-surface-visibility) does not inherit the release below.
-  await setSurfaceComingSoon("smoke-outreach-admin", "page.outreach", true);
 }
 
 run(async () => {
   await cleanup();
   const db = await getDb();
   await ensureUserSettings(USER);
-  // page.outreach ships coming soon and its actions now refuse; this PGlite is throwaway (smoke/_env).
-  await setSurfaceComingSoon("smoke-outreach-admin", "page.outreach", false);
   await db
     .update(userSettings)
     .set({ aiProvider: "openai", aiModel: "gpt-4o-mini", openaiApiKeyEncrypted: encrypt("fake-openai") })
     .where(eq(userSettings.userId, USER));
-
-  // ------------------------------------------------------------------ outreach search
-  console.log("searchProspects: one multi-row upsert, re-runnable");
-  const [campaign] = await db
-    .insert(outreachCampaigns)
-    .values({
-      userId: USER,
-      name: "Smoke batched",
-      audienceQuery: "engineers at Acme",
-      audienceFilters: {},
-      status: "active",
-      defaultChannel: "email",
-      sequenceSteps: [{ delayDays: 3, intent: "Gentle nudge" }],
-    })
-    .returning();
-  await outsideRequest(searchProspects(campaign.id));
-  const firstSearch = await db.query.outreachProspects.findMany({ where: eq(outreachProspects.campaignId, campaign.id) });
-  check("the search stored prospects", firstSearch.length > 0, String(firstSearch.length));
-  check(
-    "one row per externalId",
-    new Set(firstSearch.map((p) => p.externalId)).size === firstSearch.length
-  );
-  // Compared in SQL: the per-row offset is a microsecond, below a JS Date's resolution.
-  check(
-    "each new row has its own created_at (search order survives the single statement)",
-    (await distinctCreatedAt("outreach_prospects", sql`campaign_id = ${campaign.id}`)) === firstSearch.length
-  );
-  await outsideRequest(searchProspects(campaign.id));
-  const secondSearch = await db.query.outreachProspects.findMany({ where: eq(outreachProspects.campaignId, campaign.id) });
-  check("a re-run upserts instead of duplicating", secondSearch.length === firstSearch.length, `${firstSearch.length} → ${secondSearch.length}`);
-  check(
-    "a re-run keeps every row's id and created_at",
-    firstSearch.every((p) => {
-      const again = secondSearch.find((q) => q.id === p.id);
-      return again && again.createdAt.getTime() === p.createdAt.getTime();
-    })
-  );
-  check(
-    "a re-run refreshes the updated columns",
-    secondSearch.every((p) => p.updatedAt.getTime() >= firstSearch.find((q) => q.id === p.id)!.updatedAt.getTime())
-  );
-
-  // ------------------------------------------------------------------ outreach drafts
-  console.log("\ngenerateOutreachDrafts: existing step-0 rows updated in place, missing ones inserted");
-  const [ada, bea, cy] = await db
-    .insert(outreachProspects)
-    .values(
-      ["Ada Draft", "Bea Draft", "Cy Draft"].map((fullName, i) => ({
-        campaignId: campaign.id,
-        externalId: `smoke-draft-${i}`,
-        fullName,
-        title: "Engineer",
-        company: "Acme",
-        email: `p${i}@example.org`,
-        status: "selected",
-      }))
-    )
-    .returning();
-  const parentId = "00000000-0000-4000-8000-000000000001";
-  const scheduledFor = new Date("2026-01-02T03:04:05.000Z");
-  const [adaExisting] = await db
-    .insert(outreachMessages)
-    .values({ prospectId: ada.id, channel: "email", subject: "old", body: "old body", status: "draft", stepIndex: 0, parentMessageId: parentId, scheduledFor })
-    .returning();
-  const [adaLinkedin] = await db
-    .insert(outreachMessages)
-    .values({ prospectId: ada.id, channel: "linkedin", body: "other channel", status: "draft", stepIndex: 0 })
-    .returning();
-  await outsideRequest(
-    generateOutreachDrafts({ campaignId: campaign.id, prospectIds: [ada.id, bea.id, cy.id], channel: "email", excludeLowSignal: false })
-  );
-  const drafted = await db.query.outreachMessages.findMany({
-    where: inArray(outreachMessages.prospectId, [ada.id, bea.id, cy.id]),
-  });
-  const emailStep0 = (id: string) => drafted.filter((m) => m.prospectId === id && m.channel === "email" && m.stepIndex === 0);
-  const adaRows = emailStep0(ada.id);
-  check("Ada still has exactly one step-0 email, the same row", adaRows.length === 1 && adaRows[0].id === adaExisting.id);
-  check(
-    "Ada's row got the new draft and status",
-    adaRows[0]?.subject === "Subject for Ada Draft" && adaRows[0]?.body === "Body for Ada Draft" && adaRows[0]?.status === "generated",
-    JSON.stringify(adaRows[0])
-  );
-  check(
-    "Ada's parent and schedule are left as they were",
-    adaRows[0]?.parentMessageId === parentId && adaRows[0]?.scheduledFor?.getTime() === scheduledFor.getTime()
-  );
-  check("Ada's updated_at moved", (adaRows[0]?.updatedAt.getTime() ?? 0) > adaExisting.updatedAt.getTime());
-  const other = drafted.find((m) => m.id === adaLinkedin.id);
-  check("a different channel's message is untouched", other?.body === "other channel" && other?.status === "draft");
-  for (const [p, name] of [[bea, "Bea Draft"], [cy, "Cy Draft"]] as const) {
-    const rows = emailStep0(p.id);
-    check(
-      `${name} got one new step-0 email with its own draft`,
-      rows.length === 1 &&
-        rows[0].body === `Body for ${name}` &&
-        rows[0].subject === `Subject for ${name}` &&
-        rows[0].status === "generated" &&
-        rows[0].parentMessageId === null &&
-        rows[0].scheduledFor === null,
-      JSON.stringify(rows)
-    );
-  }
-
-  // ------------------------------------------------------------------ outreach follow-ups
-  console.log("\noutreach generateDueFollowUps: set-based reads, one skip UPDATE");
-  const yesterday = new Date(Date.now() - 86_400_000);
-  const [dan, eve, fay, gus] = await db
-    .insert(outreachProspects)
-    .values([
-      { campaignId: campaign.id, externalId: "fu-dan", fullName: "Dan Interested", status: "interested" },
-      { campaignId: campaign.id, externalId: "fu-eve", fullName: "Eve Replied", status: "selected" },
-      { campaignId: campaign.id, externalId: "fu-fay", fullName: "Fay Follow", status: "selected", company: "Acme", title: "PM" },
-      { campaignId: campaign.id, externalId: "fu-gus", fullName: "Gus Follow", status: "selected", company: "Acme", title: "PM" },
-    ])
-    .returning();
-  await db.insert(outreachMessages).values({ prospectId: eve.id, channel: "email", body: "sent", status: "sent", stepIndex: 0, outcome: "replied" });
-  const [fayParent] = await db
-    .insert(outreachMessages)
-    .values({ prospectId: fay.id, channel: "email", body: "PARENT-BODY-FAY", status: "sent", stepIndex: 0 })
-    .returning();
-  const scheduled = await db
-    .insert(outreachMessages)
-    .values([
-      { prospectId: dan.id, channel: "email", body: "", status: "scheduled", stepIndex: 1, scheduledFor: yesterday },
-      { prospectId: eve.id, channel: "email", body: "", status: "scheduled", stepIndex: 1, scheduledFor: yesterday },
-      { prospectId: fay.id, channel: "email", body: "", status: "scheduled", stepIndex: 1, scheduledFor: yesterday, parentMessageId: fayParent.id },
-      { prospectId: gus.id, channel: "email", body: "", status: "scheduled", stepIndex: 1, scheduledFor: yesterday },
-      // Not due yet: must stay scheduled.
-      { prospectId: gus.id, channel: "email", body: "", status: "scheduled", stepIndex: 2, scheduledFor: new Date(Date.now() + 86_400_000) },
-    ])
-    .returning();
-  prompts.length = 0;
-  const followUps = await outsideRequest(generateOutreachFollowUps(campaign.id));
-  const after = await db.query.outreachMessages.findMany({ where: inArray(outreachMessages.id, scheduled.map((m) => m.id)) });
-  const byProspect = (id: string, step = 1) => after.find((m) => m.prospectId === id && m.stepIndex === step)!;
-  check("an interested prospect's follow-up is skipped", byProspect(dan.id).status === "skipped");
-  check("a prospect with a recorded outcome is skipped", byProspect(eve.id).status === "skipped");
-  check(
-    "the others are generated with their own drafts",
-    byProspect(fay.id).status === "generated" && byProspect(fay.id).body === "Body for Fay Follow" &&
-      byProspect(gus.id).status === "generated" && byProspect(gus.id).body === "Body for Gus Follow",
-    JSON.stringify([byProspect(fay.id), byProspect(gus.id)])
-  );
-  check("a message not yet due is left scheduled", byProspect(gus.id, 2).status === "scheduled");
-  check("the parent's body reached the model as previousBody", prompts.some((p) => p.includes("Fay Follow") && p.includes("PARENT-BODY-FAY")));
-  check("only the two generated follow-ups called the model", prompts.length === 2, String(prompts.length));
-  if (followUps) check("the action reports two generated", followUps.generated === 2, JSON.stringify(followUps));
 
   // ------------------------------------------------------------------ recruiter drafts
   console.log("\ngenerateRecruiterDrafts: one multi-row insert, rows matched by recruiter");

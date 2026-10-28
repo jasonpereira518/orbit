@@ -12,9 +12,9 @@
  *     `loadDashboardSuggestions`, `getDashboardData`) against the old read-everything-then-
  *     filter code: the generated-reminder/due-contact drop, suggestion dedupe, ghosts,
  *     another account's contacts, a non-canonical id, the caps and the totals past them.
- *   - Outreach prior notes (`priorNotesForContacts` via `generateOutreachDrafts`, and
- *     `priorNotesForContact` via `regenerateOutreachDraft`): the three newest of the caller's
- *     own interactions only, and the 500-character cut unchanged by trimming in SQL.
+ *   - Outreach prior notes (`priorNotesForContacts`, which campaign drafting reads): the three
+ *     newest of the caller's own interactions only, and the 500-character cut unchanged by
+ *     trimming in SQL.
  *   - The chat history list (`listChatThreads`): untitled threads left out, pages that
  *     neither skip nor repeat a thread across ties and sub-millisecond `updated_at`s.
  *   - A thread's sent-draft claims (`getChatThread().sent`): this thread's only, none lost
@@ -44,13 +44,8 @@ import {
 } from "../src/db/schema";
 import { encrypt } from "../src/lib/crypto";
 import { ensureUserSettings } from "../src/lib/user-settings";
-import { setSurfaceComingSoon } from "../src/lib/surface-visibility";
-import {
-  generateOutreachDrafts,
-  getOutreachPerformanceSummary,
-  listCampaigns,
-  regenerateOutreachDraft,
-} from "../src/actions/outreach";
+import { getOutreachPerformanceSummary, listCampaigns } from "../src/actions/outreach";
+import { priorNotesForContacts } from "../src/lib/outreach-messages";
 import { getChatThread, listChatThreads } from "../src/actions/chat";
 import { computeCampaignMetrics } from "../src/lib/outreach-metrics";
 import { campaignMetricAggregates, metricsFromAggregates } from "../src/lib/outreach-metrics-sql";
@@ -75,16 +70,6 @@ function check(label: string, ok: boolean, detail?: string) {
   else {
     failures++;
     console.error(`  FAIL ${label}${detail ? `\n       ${detail}` : ""}`);
-  }
-}
-
-/** `revalidatePath` throws outside a request, after the action's writes have landed. */
-async function outsideRequest<T>(work: Promise<T>): Promise<T | undefined> {
-  try {
-    return await work;
-  } catch (err) {
-    if (err instanceof Error && err.message.includes("static generation store")) return undefined;
-    throw err;
   }
 }
 
@@ -118,9 +103,6 @@ async function cleanup() {
   await db.delete(interactions).where(inArray(interactions.userId, users));
   await db.delete(contacts).where(inArray(contacts.userId, users));
   await db.delete(userSettings).where(inArray(userSettings.userId, users));
-  // The suite shares one PGlite across smokes: put page.outreach back to its coming-soon
-  // default so a later script (smoke-surface-visibility) does not inherit the release below.
-  await setSurfaceComingSoon("smoke-outreach-admin", "page.outreach", true);
 }
 
 /** The whole tree, as `listCampaigns` and the dashboard card used to read it. */
@@ -491,26 +473,11 @@ async function priorNotesSection() {
   // The old string: three newest by date, summary || raw, falsy dropped, joined, cut at 500.
   const expected = ["PN-4", null, long].filter(Boolean).join(" | ").slice(0, 500);
 
-  const [campaign] = await db
-    .insert(outreachCampaigns)
-    .values({ userId: USER, name: "Prior notes", audienceQuery: "people", defaultChannel: "email" })
-    .returning();
-  const [prospect] = await db
-    .insert(outreachProspects)
-    .values({ campaignId: campaign.id, externalId: "pn-1", fullName: "Nora Notes", contactId: who.id, email: "n@example.org", title: "PM", company: "Acme", status: "selected" })
-    .returning();
-  prompts.length = 0;
-  await outsideRequest(generateOutreachDrafts({ campaignId: campaign.id, prospectIds: [prospect.id], channel: "email", excludeLowSignal: false }));
-  const batchPrompt = prompts.find((p) => p.includes("Nora Notes")) ?? "";
-  check("batched: the prompt carries the same prior-notes string", batchPrompt.includes(`Prior context: ${expected}`), batchPrompt.slice(0, 400));
-  check("batched: another account's interaction never reaches it", !batchPrompt.includes("PN-FOREIGN"));
-  check("batched: only the three newest", !batchPrompt.includes("PN-oldest"));
-
-  prompts.length = 0;
-  await outsideRequest(regenerateOutreachDraft({ campaignId: campaign.id, prospectId: prospect.id, channel: "email" }));
-  const singlePrompt = prompts.find((p) => p.includes("Nora Notes")) ?? "";
-  check("single: the prompt carries the same prior-notes string", singlePrompt.includes(`Prior context: ${expected}`), singlePrompt.slice(0, 400));
-  check("single: another account's interaction never reaches it", !singlePrompt.includes("PN-FOREIGN"));
+  const notes = await priorNotesForContacts(USER, [who.id]);
+  const got = notes.get(who.id) ?? "";
+  check("the prior-notes string is the old one", got === expected, got.slice(0, 400));
+  check("another account's interaction never reaches it", !got.includes("PN-FOREIGN"));
+  check("only the three newest", !got.includes("PN-oldest"));
 }
 
 async function chatThreadListSection() {
@@ -635,8 +602,6 @@ run(async () => {
   await cleanup();
   const db = await getDb();
   await ensureUserSettings(USER);
-  // page.outreach ships coming soon and its actions now refuse; this PGlite is throwaway (smoke/_env).
-  await setSurfaceComingSoon("smoke-outreach-admin", "page.outreach", false);
   await db
     .update(userSettings)
     .set({ aiProvider: "openai", aiModel: "gpt-4o-mini", openaiApiKeyEncrypted: encrypt("fake-openai") })

@@ -48,7 +48,6 @@ const HEALTHY: OpsSnapshot = {
   resendRejectedLastHour: 0,
   wedgedImports: 0,
   failedImportsLast24h: 0,
-  outreach: { overdue: 0, oldestOverdueDays: null },
   aiOutages: [],
   errorEventsLastHour: 0,
   perfSlowLastHour: 0,
@@ -317,10 +316,6 @@ function main() {
   check("a wedged import → warning", find({ ...HEALTHY, wedgedImports: 1 }, "import.wedged")?.severity === "warning");
   check("three failed imports in 24h → import.failed_burst", Boolean(find({ ...HEALTHY, failedImportsLast24h: 3 }, "import.failed_burst")));
   check("two failed imports is not a burst", !find({ ...HEALTHY, failedImportsLast24h: 2 }, "import.failed_burst"));
-  check("overdue outreach a day old → warning",
-    find({ ...HEALTHY, outreach: { overdue: 2, oldestOverdueDays: 1.5 } }, "outreach.overdue")?.severity === "warning");
-  check("overdue outreach an hour old is not yet an alert",
-    !find({ ...HEALTHY, outreach: { overdue: 2, oldestOverdueDays: 0.05 } }, "outreach.overdue"));
   check("an AI error kind across two accounts → ai.provider_outage:gemini",
     Boolean(find({ ...HEALTHY, aiOutages: [{ provider: "gemini", errorKind: "timeout", accounts: 2 }] }, "ai.provider_outage:gemini")));
   check("the same across one account is that user's key, not an outage",

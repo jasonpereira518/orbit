@@ -79,15 +79,9 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
     const provider = settings.providers.find((p) => p.id === settings.aiProvider);
     pages.ai = aiPageStatus({ ready: settings.hasApiKey, providerLabel: provider?.label ?? null });
 
-    const outreach = [settings.outreach.apollo, settings.outreach.resend, settings.outreach.twilio];
-    const configured = outreach.filter(Boolean).length;
-    pages.outreach =
-      configured === 0
-        ? { state: "off", detail: "Not set up" }
-        : {
-            state: configured === outreach.length ? "on" : "partial",
-            detail: `${configured} of ${outreach.length} set up`,
-          };
+    pages.outreach = settings.outreach.apollo
+      ? { state: "on", detail: "Apollo key saved" }
+      : { state: "off", detail: "Not set up" };
   }
 
   pages.reminders = feed === "unknown" ? "unknown" : remindersPageStatus(feed, now);

@@ -36,6 +36,7 @@ const UNLABELED_OK: Record<string, string> = {
   "avatarSource.shared": "caught in claimAvatarSourceLookup, returned as AvatarSourceRateLimitError",
   global: "enrich-queue requeues the item; the error message is discarded",
   timelineBackfill: "linkedin-timeline-backfill sets `capped` and stops; the message is discarded",
+  "apollo.enrich": "caught in spendHostedApollo, rethrown as APOLLO_DAILY_LIMIT_MESSAGE",
 };
 
 let failures = 0;

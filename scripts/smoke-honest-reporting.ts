@@ -21,8 +21,7 @@
  * Pure: no network, no database. Run: npx tsx scripts/smoke-honest-reporting.ts
  */
 import { looksLikeCalendar, parseIcsEvents } from "../src/lib/calendar-import";
-import { isUnmailableAddress } from "../src/lib/outreach-types";
-import { canAutoSend, isDemoProspect } from "../src/lib/outreach-channels";
+import { isDemoProspect, isPlaceholderAddress } from "../src/lib/outreach-quality";
 import { formatAbsoluteDay, formatAbsoluteDayUtc, formatDueLabel } from "../src/lib/dates";
 
 let failures = 0;
@@ -102,40 +101,17 @@ function main() {
 
   console.log("\nfabricated prospects are structurally un-sendable");
 
-  const demo = {
-    externalId: "demo-stripe-1",
-    email: "alex.chen@demo.orbit.invalid",
-    phone: "+14155551001",
-    enrichment: { demo: true },
-  };
-  const real = { externalId: "apollo-abc", email: "dana@stripe.com", phone: "+14155550123" };
-
-  check("a demo row is recognised by its id", isDemoProspect({ externalId: "demo-x-1" }));
-  check("and by its enrichment flag", isDemoProspect({ enrichment: { demo: true } }));
-  check("a real prospect is not", !isDemoProspect(real));
-
-  check("email send is refused for a demo prospect", !canAutoSend("email", demo));
-  check("sms send is refused for a demo prospect", !canAutoSend("sms", demo));
-  check("a real prospect can still be sent to", canAutoSend("email", real));
-  check("linkedin auto-send stays unsupported", !canAutoSend("linkedin", real));
-
-  // The UI rows that call canAutoSend carry `email` but not `externalId`/`enrichment`,
-  // so the address check is what actually protects them.
+  check("a demo row is recognised by its enrichment flag", isDemoProspect({ demo: true }));
+  check("a real prospect is not", !isDemoProspect({ origin: "find" }) && !isDemoProspect(null));
+  check("RFC 2606 example.com is a placeholder", isPlaceholderAddress("a@foo.example.com"));
+  check("RFC 6761 .invalid is a placeholder", isPlaceholderAddress("a@demo.orbit.invalid"));
+  check("bare example.com is a placeholder", isPlaceholderAddress("a@example.com"));
+  check(".test and .localhost are placeholders",
+    isPlaceholderAddress("a@x.test") && isPlaceholderAddress("a@x.localhost"));
+  check("a real address is not a placeholder", !isPlaceholderAddress("dana@stripe.com"));
   check(
-    "an unmailable address alone is enough to refuse",
-    !canAutoSend("email", { email: "alex.chen@demo.orbit.invalid" })
-  );
-
-  check("RFC 2606 example.com is unmailable", isUnmailableAddress("a@foo.example.com"));
-  check("RFC 6761 .invalid is unmailable", isUnmailableAddress("a@demo.orbit.invalid"));
-  check("bare example.com is unmailable", isUnmailableAddress("a@example.com"));
-  check(".test and .localhost are unmailable",
-    isUnmailableAddress("a@x.test") && isUnmailableAddress("a@x.localhost"));
-  check("an address with no domain is unmailable", isUnmailableAddress("nonsense"));
-  check("a real address is mailable", !isUnmailableAddress("dana@stripe.com"));
-  check(
-    "a domain merely CONTAINING 'test' is still mailable",
-    !isUnmailableAddress("dana@testing-labs.com"),
+    "a domain merely CONTAINING 'test' is not a placeholder",
+    !isPlaceholderAddress("dana@testing-labs.com"),
     "the check is anchored to the TLD, not a substring"
   );
 

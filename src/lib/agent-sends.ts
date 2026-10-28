@@ -12,13 +12,6 @@
  *
  * This is why the MCP surface can allow an arbitrary recipient at all. The recipient is not
  * trusted because the agent supplied it; it is trusted because a person looked at it.
- *
- * ## Why sends here count against the outreach limit
- *
- * `countSendsToday` is the product's daily cap. If assistant sends did not count, connecting
- * Claude would be a documented way around a limit the rest of Orbit enforces. They do count,
- * and closing that hole also closed the pre-existing one where contact follow-up emails
- * skipped the cap (see `countSendsToday`).
  */
 import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
@@ -392,7 +385,7 @@ export async function markAgentSendAmbiguous(id: string): Promise<void> {
     .where(eq(agentSendRequests.id, id));
 }
 
-/** Agent sends that went out today, for the shared daily cap. */
+/** Agent sends that went out today. */
 export async function countAgentSendsToday(userId: string): Promise<number> {
   const db = await getDb();
   const start = new Date();

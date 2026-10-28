@@ -516,22 +516,28 @@ async function seedReminders(
 
 /* ----------------------------------------------------------------------------- outreach */
 
+/**
+ * A person in a demo campaign, as Find people would have added them. Seeded `selected` with
+ * `enrichment.demo`, so the send path refuses them whatever the address: and every address is
+ * on a reserved example domain, so nothing could deliver anyway. Someone already emailed has an
+ * address, or the People tab would ask for one.
+ */
 export type DemoProspect = {
   name: string;
   title: string;
   company: string;
+  /** Why Find people matched them: shown under the name. */
+  whyMatches: string;
   email?: string;
   location?: string;
   /** Link to an existing demo contact of the same name. */
   contact?: boolean;
-  status: string;
   messages?: Array<{
     subject: string;
     body: string;
-    status: string;
-    stepIndex?: number;
+    status: "draft" | "sent";
     sentDaysAgo?: number;
-    outcome?: string;
+    outcome?: "replied";
     repliedDaysAgo?: number;
     outcomeNotes?: string;
   }>;
@@ -549,13 +555,10 @@ function founderCampaigns(ago: (d: number) => Date): DemoCampaign[] {
         name: "AI lab partnerships",
         status: "active",
         audienceQuery: "Partnerships and developer-relations leads at AI labs",
-        audienceFilters: { titles: ["Partnerships", "Developer Relations"], industries: ["Artificial Intelligence"] },
         messageIntent: "Explore a developer-tools integration between Orbit and their platform",
         replyCta: "book_intro",
         tone: "friendly",
         defaultChannel: "email",
-        sequenceSteps: [{ delayDays: 0 }, { delayDays: 4, intent: "Short, friendly bump" }],
-        lastSearchSource: "demo",
         createdAt: ago(30),
         updatedAt: ago(2),
       },
@@ -564,15 +567,16 @@ function founderCampaigns(ago: (d: number) => Date): DemoCampaign[] {
           name: "David Kim",
           title: "Engineering Manager",
           company: "OpenAI",
+          whyMatches: "Runs the team behind OpenAI’s evaluation tooling",
+          email: "david.kim@example.com",
           contact: true,
-          status: "interested",
           messages: [
             {
               subject: "Evaluation infra — following up on Sarah's intro",
               body: "Hi David — Sarah suggested we talk about evaluation infrastructure. Orbit runs a retrieval eval harness over personal networks and I'd love your read on it. Would 20 minutes next week work?",
               status: "sent",
               sentDaysAgo: 26,
-              outcome: "positive_reply",
+              outcome: "replied",
               repliedDaysAgo: 24,
               outcomeNotes: "Happy to talk after their planning cycle. Suggested early next month.",
             },
@@ -582,15 +586,16 @@ function founderCampaigns(ago: (d: number) => Date): DemoCampaign[] {
           name: "Yuki Tanaka",
           title: "Research Scientist",
           company: "Anthropic",
+          whyMatches: "Writes about retrieval evaluation and works with outside partners",
+          email: "yuki.tanaka@example.com",
           contact: true,
-          status: "replied",
           messages: [
             {
               subject: "Retrieval evals for relationship data",
               body: "Hi Yuki — your papers shaped how Orbit evaluates retrieval. Would you be open to a short look at what we built?",
               status: "sent",
               sentDaysAgo: 25,
-              outcome: "neutral_reply",
+              outcome: "replied",
               repliedDaysAgo: 22,
               outcomeNotes: "Busy until the end of the quarter, but interested later.",
             },
@@ -600,24 +605,16 @@ function founderCampaigns(ago: (d: number) => Date): DemoCampaign[] {
           name: "Jordan Hale",
           title: "Head of Developer Relations",
           company: "Cohere",
+          whyMatches: "Leads developer relations and the integrations program at Cohere",
           email: "jordan.hale@example.com",
           location: "Toronto, Canada",
-          status: "contacted",
           messages: [
             {
               subject: "Orbit × Cohere — a developer-tools idea",
               body: "Hi Jordan — Orbit helps developers keep track of the people behind their integrations. I think there's a neat Cohere tie-in. Open to a quick intro call?",
               status: "sent",
-              sentDaysAgo: 6,
-            },
-            // A follow-up ready to send, counted as "follow-up due". Deliberately `generated`
-            // rather than `scheduled`: a scheduled row whose time has passed is exactly what
-            // the outreach sender and the ops sweep pick up, and demo data must never send.
-            {
-              subject: "Re: Orbit × Cohere — a developer-tools idea",
-              body: "Hi Jordan — just floating this back up. Happy to send a two-minute demo instead of a call if that's easier.",
-              status: "generated",
-              stepIndex: 1,
+              // Over a week with no answer: shows as due for its one follow-up.
+              sentDaysAgo: 9,
             },
           ],
         },
@@ -625,16 +622,15 @@ function founderCampaigns(ago: (d: number) => Date): DemoCampaign[] {
           name: "Lena Park",
           title: "Partnerships Manager",
           company: "Mistral AI",
+          whyMatches: "Manages ecosystem partnerships at Mistral AI",
           email: "lena.park@example.com",
           location: "Paris, France",
-          status: "contacted",
           messages: [
             {
               subject: "A partnership idea from Orbit",
               body: "Hi Lena — I'm building Orbit, a relationship CRM for developers. Would you be the right person to talk to about ecosystem partnerships?",
               status: "sent",
-              sentDaysAgo: 20,
-              outcome: "bounced",
+              sentDaysAgo: 3,
             },
           ],
         },
@@ -642,14 +638,14 @@ function founderCampaigns(ago: (d: number) => Date): DemoCampaign[] {
           name: "Omar Haddad",
           title: "Developer Advocate",
           company: "Hugging Face",
+          whyMatches: "Runs community programs for open-source maintainers",
           email: "omar.haddad@example.com",
           location: "New York, NY",
-          status: "selected",
           messages: [
             {
               subject: "Orbit + the Hugging Face community",
               body: "Hi Omar — your community work is the reason I started thinking about Orbit for open-source maintainers. Would you be up for a 15-minute chat about what maintainers actually need?",
-              status: "generated",
+              status: "draft",
             },
           ],
         },
@@ -657,8 +653,8 @@ function founderCampaigns(ago: (d: number) => Date): DemoCampaign[] {
           name: "Chloe Martin",
           title: "Ecosystem Lead",
           company: "Perplexity",
+          whyMatches: "Leads ecosystem and developer partnerships at Perplexity",
           location: "San Francisco, CA",
-          status: "suggested",
         },
       ],
     },
@@ -667,13 +663,10 @@ function founderCampaigns(ago: (d: number) => Date): DemoCampaign[] {
         name: "Triangle seed investors",
         status: "draft",
         audienceQuery: "Seed investors and angels in the Research Triangle who back developer tools",
-        audienceFilters: { titles: ["Partner", "Angel Investor", "Principal"], locations: ["Durham, NC", "Raleigh, NC", "Chapel Hill, NC"] },
         messageIntent: "Share the monthly update and ask to be considered for the pre-seed round",
         replyCta: "book_intro",
         tone: "professional",
         defaultChannel: "email",
-        sequenceSteps: [{ delayDays: 0 }],
-        lastSearchSource: "demo",
         createdAt: ago(5),
         updatedAt: ago(1),
       },
@@ -682,18 +675,19 @@ function founderCampaigns(ago: (d: number) => Date): DemoCampaign[] {
           name: "Grace Whitfield",
           title: "Angel Investor",
           company: "Independent",
+          whyMatches: "Angel investor in Triangle developer-tools startups",
+          email: "grace.whitfield@example.com",
           contact: true,
-          status: "selected",
           messages: [
             {
               subject: "Orbit — Q3 update",
               body: "Hi Grace — here's the short quarterly update you asked for: usage is up 3x since July, and we're opening a small pre-seed round. Would you like the details?",
-              status: "generated",
+              status: "draft",
             },
           ],
         },
-        { name: "Reid Calloway", title: "Partner", company: "Triangle Angel Partners", location: "Raleigh, NC", status: "suggested" },
-        { name: "Sam Ortiz", title: "Principal", company: "IDEA Fund Partners", location: "Durham, NC", status: "suggested" },
+        { name: "Reid Calloway", title: "Partner", company: "Triangle Angel Partners", whyMatches: "Partner at a Raleigh angel group that backs software startups", location: "Raleigh, NC" },
+        { name: "Sam Ortiz", title: "Principal", company: "IDEA Fund Partners", whyMatches: "Principal at a Durham seed fund investing in developer tools", location: "Durham, NC" },
       ],
     },
   ];
@@ -716,6 +710,7 @@ async function seedOutreach(
       .returning();
     for (const [i, p] of c.prospects.entries()) {
       const prospectId = randomUUID();
+      const slug = normalizePersonName(p.name).replace(/\s+/g, "-");
       await db.insert(outreachProspects).values({
         id: prospectId,
         campaignId: campaign.id,
@@ -726,7 +721,8 @@ async function seedOutreach(
         company: p.company,
         email: p.email ?? null,
         location: p.location ?? null,
-        status: p.status,
+        status: "selected",
+        enrichment: { origin: "find", whyMatches: p.whyMatches, url: `https://example.com/people/${slug}`, demo: true },
         createdAt: c.values.createdAt,
       });
       prospectCount += 1;
@@ -738,7 +734,7 @@ async function seedOutreach(
             subject: m.subject,
             body: m.body,
             status: m.status,
-            stepIndex: m.stepIndex ?? 0,
+            stepIndex: 0,
             sentAt: m.sentDaysAgo == null ? null : ago(m.sentDaysAgo),
             outcome: m.outcome ?? null,
             outcomeNotes: m.outcomeNotes ?? null,

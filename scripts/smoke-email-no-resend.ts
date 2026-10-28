@@ -1,7 +1,9 @@
 /**
- * After direct-email P1, no person-to-person path may reach Resend, and nothing but the
- * outbox's Gmail provider may call Gmail's send endpoint. Outreach campaigns are the one
- * allowed Resend user. Run: npx tsx scripts/smoke-email-no-resend.ts
+ * No person-to-person path may reach Resend, and nothing but the outbox's Gmail provider may
+ * call Gmail's send endpoint. Outreach campaigns were the last Resend user for person mail;
+ * they now send from the user's own mailbox through the outbox, so nothing is allowed and the
+ * old v1 sender (`outreach-send`, `sendOutreachMessage`) must not come back.
+ * Run: npx tsx scripts/smoke-email-no-resend.ts
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -20,24 +22,18 @@ function walk(dir: string): string[] {
 const files = walk("src");
 const read = (f: string) => readFileSync(f, "utf8");
 
-const OUTREACH_ALLOWED = new Set(["src/actions/outreach.ts", "src/lib/outreach-send.ts"]);
-/**
- * Read-only consumers: they import `getOutreachSendConfig`/`countSendsToday` to REPORT on
- * sending — which credential is configured, how much of today's quota is left — and never
- * reach the send call itself. The rule this file enforces is that nothing else can send,
- * so the send symbol is checked separately below and this exemption cannot hide one.
- */
-const OUTREACH_READ_ONLY = new Set(["src/lib/outreach-readiness-server.ts"]);
+/** Empty: no file may send person mail through Resend. */
+const OUTREACH_ALLOWED = new Set<string>();
+/** Empty: nothing reads the v1 send config any more. */
+const OUTREACH_READ_ONLY = new Set<string>();
 const resendUsers = files.filter(
   (f) =>
     /from "@\/lib\/outreach-send"/.test(read(f)) &&
     !OUTREACH_ALLOWED.has(f) &&
     !OUTREACH_READ_ONLY.has(f)
 );
-check("only Outreach campaigns import outreach-send", resendUsers.length === 0, resendUsers.join(", "));
-// Comments stripped first: both readiness modules discuss `sendOutreachMessage` at length
-// (what it throws, and when) without being able to call it, and a prose mention is not a
-// send path. What is left is code.
+check("nothing imports the v1 Resend sender (outreach-send)", resendUsers.length === 0, resendUsers.join(", "));
+// Comments stripped first: a prose mention of `sendOutreachMessage` is not a send path.
 const codeOf = (f: string) =>
   read(f)
     .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -45,7 +41,7 @@ const codeOf = (f: string) =>
 const resendSenders = files.filter(
   (f) => /\bsendOutreachMessage\b/.test(codeOf(f)) && !OUTREACH_ALLOWED.has(f)
 );
-check("and only they can reach the send call itself", resendSenders.length === 0, resendSenders.join(", "));
+check("and nothing can reach its send call", resendSenders.length === 0, resendSenders.join(", "));
 
 const senders = files.filter((f) => /gmail\.googleapis\.com/.test(read(f)) && /messages\/send/.test(read(f)));
 check("only the Gmail provider calls messages/send", senders.join() === "src/lib/email/providers/gmail.ts", senders.join(", "));

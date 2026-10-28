@@ -45,10 +45,7 @@ function channelRules(channel: OutreachChannel) {
   if (channel === "email") {
     return "Write a cold email under 120 words with a clear subject line and exactly one reply-seeking CTA (a question or soft ask).";
   }
-  if (channel === "linkedin") {
-    return `Write a short LinkedIn connection note or InMail under ${LINKEDIN_NOTE_MAX} characters with one clear reply ask. No subject line.`;
-  }
-  return "Write a conversational SMS under 160 characters with one clear reply ask. No subject line.";
+  return `Write a short LinkedIn connection note or InMail under ${LINKEDIN_NOTE_MAX} characters with one clear reply ask. No subject line.`;
 }
 
 function replyCtaGuidance(replyCta?: string | null) {

@@ -7,7 +7,6 @@ import { RATE_LIMITS } from "@/lib/rate-limit";
 import { aiErrorBreakdown } from "@/lib/admin-health";
 import {
   OUR_ERROR_KINDS,
-  getOutreachQueueHealth,
   getSystemIssues,
   recentWebhookOutcomes,
 } from "@/lib/admin-system";
@@ -62,7 +61,6 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     lastWorkHistoryRun,
     webhooks,
     issues,
-    outreach,
     aiGroups,
     errorsLastHour,
     failedImports,
@@ -125,7 +123,6 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         .limit(1),
       recentWebhookOutcomes(5, now),
       getSystemIssues(now),
-      getOutreachQueueHealth(now),
       aiErrorBreakdown(1, now),
       db
         .select({ source: errorEvents.source, n: sql<number>`count(*)::int` })
@@ -303,7 +300,6 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     aiSecurityLastHour: { events: aiSecurityRow?.events ?? 0, accounts: aiSecurityRow?.accounts ?? 0 },
     wedgedImports: issues.wedged,
     failedImportsLast24h: failedImports[0]?.n ?? 0,
-    outreach: { overdue: outreach.overdue, oldestOverdueDays: outreach.oldestOverdueDays },
     aiOutages: [...outages.values()],
     errorEventsLastHour: otherErrors,
     perfSlowLastHour: perfSlow,

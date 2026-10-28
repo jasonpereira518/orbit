@@ -1,11 +1,8 @@
-import { and, desc, eq, gt, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, isNull, sql } from "drizzle-orm";
 import { getDb, isPgvectorAvailable, rowsOf } from "@/db";
 import {
   cronRuns,
   errorEvents,
-  outreachCampaigns,
-  outreachMessages,
-  outreachProspects,
   suggestedReminders,
   webhookDeliveries,
   opsAlertState,
@@ -49,16 +46,6 @@ const WEDGED_IMPORT_MS = 10 * 60 * 1000;
 const WEDGED_SYNC_MS = 15 * 60 * 1000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-export type OutreachQueueHealth = {
-  overdue: number;
-  notYetDue: number;
-  oldestOverdue: Date | null;
-  /** Age of the oldest overdue message in days. Computed here because `now` is a
-   *  parameter of this function, whereas calling Date.now() during render is impure. */
-  oldestOverdueDays: number | null;
-  accounts: number;
-};
 
 export type CronHealth = {
   lastRun: {
@@ -108,41 +95,6 @@ export type BugSignatures = {
 
 /** `usage_events.error_kind` values that mean Orbit broke, not the user's key. */
 export const OUR_ERROR_KINDS = new Set(["timeout", "empty_response", "model_unavailable", "other"]);
-
-export async function getOutreachQueueHealth(now = new Date()): Promise<OutreachQueueHealth> {
-  const db = await getDb();
-
-  // outreach_messages has no user_id: it joins message → prospect → campaign.user_id.
-  // Only counts and a timestamp come back — prospect and message bodies are third-party
-  // prose and must never reach an admin surface. Counted in SQL: a backed-up queue is
-  // exactly when pulling one row per message into JS to count it would hurt most.
-  const isOverdue = lt(outreachMessages.scheduledFor, now);
-  const [row] = await db
-    .select({
-      overdue: sql<number>`(count(*) filter (where ${isOverdue}))::int`,
-      total: countInt,
-      oldest: sql<string | null>`min(${outreachMessages.scheduledFor}) filter (where ${isOverdue})`,
-      accounts: sql<number>`(count(distinct ${outreachCampaigns.userId}) filter (where ${isOverdue}))::int`,
-    })
-    .from(outreachMessages)
-    .innerJoin(outreachProspects, eq(outreachProspects.id, outreachMessages.prospectId))
-    .innerJoin(outreachCampaigns, eq(outreachCampaigns.id, outreachProspects.campaignId))
-    .where(eq(outreachMessages.status, "scheduled"));
-
-  const overdue = num(row?.overdue);
-  const oldest = toDate(row?.oldest);
-
-  return {
-    overdue,
-    // Everything not yet overdue, including a message with no send time at all.
-    notYetDue: num(row?.total) - overdue,
-    oldestOverdue: oldest,
-    oldestOverdueDays: oldest
-      ? Math.round((now.getTime() - oldest.getTime()) / DAY_MS)
-      : null,
-    accounts: num(row?.accounts),
-  };
-}
 
 /**
  * `job` scopes the read to one ledger entry. Without it the newest row of ANY job wins,

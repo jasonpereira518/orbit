@@ -94,7 +94,7 @@ export function withDemoIntegrationStatuses(real: IntegrationStatuses): Integrat
       google: on("Connected"),
       microsoft: on("Connected"),
       linkedin: on("Connections imported"),
-      outreach: lift(pages, "outreach", "3 of 3 set up"),
+      outreach: lift(pages, "outreach", "Apollo key saved"),
       webhooks: lift(pages, "webhooks", "1 live"),
       reminders: lift(pages, "reminders", "Feed on"),
       api: lift(pages, "api", "1 key"),

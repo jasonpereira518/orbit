@@ -153,14 +153,14 @@ export function OutreachLocked() {
   return (
     <LockedFeature
       title="Outreach"
-      description="Find the right people, draft messages that sound like you, and track what actually gets replies — without leaving Orbit."
+      description="Reach people you don’t know yet, from your own email or LinkedIn. Describe who you want to meet and Orbit finds them, drafts each note from what it found, and keeps track of who replied."
       highlights={[
-        "Search prospects by role, company, and seniority",
-        "Personalized email and SMS drafts from your own notes",
-        "Reply tracking and per-campaign quality scores",
-        "Sequenced follow-ups that stop when someone replies",
+        "Find people by describing who you want to reach",
+        "Drafts built from details Orbit can point to",
+        "Email goes from your own mailbox; LinkedIn notes you copy and send",
+        "Replies noticed in your mailbox, and one follow-up if there’s no answer",
       ]}
-      note="Sending email and SMS runs on Orbit's credits."
+      note="Nothing is sent until you press send."
     />
   );
 }

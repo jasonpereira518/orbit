@@ -66,10 +66,7 @@ export async function getSettings() {
     userHasApolloKey(userId, settings),
     getAiAccessStatus(userId),
   ]);
-  // Mirrors the two runtime resolvers so this card states what would actually be used:
-  // `sending` follows the env fallback in `getOutreachSendConfig`, `enrichment` follows
-  // the one in `getApolloApiKey`. They diverge on Lifetime, so they cannot share a flag.
-  const hostedSending = entitlements.canUseHostedSending;
+  // Mirrors the env fallback in `getApolloApiKey`, so this card states what would be used.
   const hostedEnrichment = entitlements.canUseHostedEnrichment;
 
   return {
@@ -132,29 +129,13 @@ export async function getSettings() {
       /** Clearing this key moves search to another provider, which drops and rebuilds its index. */
       clearResetsSearch: clearMovesEmbeddings(p.id, settings, ai.eligibility),
     })),
-    // Mirrors the plan gate in `getOutreachSendConfig` / `getApolloApiKey`: Orbit's shared
-    // keys only count as configured when the plan actually permits hosted sends, so the
-    // UI never reports a capability the send path will refuse.
+    // Mirrors the plan gate in `getApolloApiKey`: Orbit's shared key only counts as
+    // configured when the plan permits hosted enrichment, so the UI never reports a
+    // capability the Apollo path will refuse.
     outreach: {
       apollo:
         Boolean(settings?.apolloApiKeyEncrypted) ||
         (hostedEnrichment && Boolean(process.env.APOLLO_API_KEY)),
-      resend:
-        Boolean(settings?.resendApiKeyEncrypted) ||
-        (hostedSending && Boolean(process.env.RESEND_API_KEY)),
-      twilio:
-        (Boolean(settings?.twilioAccountSidEncrypted) ||
-          (hostedSending && Boolean(process.env.TWILIO_ACCOUNT_SID))) &&
-        (Boolean(settings?.twilioAuthTokenEncrypted) ||
-          (hostedSending && Boolean(process.env.TWILIO_AUTH_TOKEN))) &&
-        Boolean(
-          settings?.twilioFromNumber ||
-            (hostedSending ? process.env.TWILIO_FROM_NUMBER : null)
-        ),
-      twilioFromNumber:
-        settings?.twilioFromNumber ||
-        (hostedSending ? process.env.TWILIO_FROM_NUMBER : null) ||
-        null,
     },
     plan: {
       plan: entitlements.plan,
@@ -399,13 +380,7 @@ export async function clearDecisionKey() {
   return { ok: true as const };
 }
 
-export async function saveOutreachSettings(input: {
-  apolloApiKey?: string;
-  resendApiKey?: string;
-  twilioAccountSid?: string;
-  twilioAuthToken?: string;
-  twilioFromNumber?: string;
-}) {
+export async function saveOutreachSettings(input: { apolloApiKey?: string }) {
   const userId = await requireUserId();
   const db = await getDb();
   const existing = await db.query.userSettings.findFirst({
@@ -416,18 +391,6 @@ export async function saveOutreachSettings(input: {
     apolloApiKeyEncrypted: input.apolloApiKey?.trim()
       ? encrypt(input.apolloApiKey.trim())
       : (existing?.apolloApiKeyEncrypted ?? null),
-    resendApiKeyEncrypted: input.resendApiKey?.trim()
-      ? encrypt(input.resendApiKey.trim())
-      : (existing?.resendApiKeyEncrypted ?? null),
-    twilioAccountSidEncrypted: input.twilioAccountSid?.trim()
-      ? encrypt(input.twilioAccountSid.trim())
-      : (existing?.twilioAccountSidEncrypted ?? null),
-    twilioAuthTokenEncrypted: input.twilioAuthToken?.trim()
-      ? encrypt(input.twilioAuthToken.trim())
-      : (existing?.twilioAuthTokenEncrypted ?? null),
-    twilioFromNumber: input.twilioFromNumber?.trim()
-      ? input.twilioFromNumber.trim()
-      : (existing?.twilioFromNumber ?? null),
     updatedAt: new Date(),
   };
 

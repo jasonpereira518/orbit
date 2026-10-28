@@ -26,7 +26,6 @@ import {
   getCronHealth,
   getErrorEventSummary,
   getOpsStatus,
-  getOutreachQueueHealth,
   getWebhookHealth,
 } from "@/lib/admin-system";
 
@@ -53,12 +52,11 @@ export default async function AdminHealthPage() {
   // "what is broken about Orbit" — no person to name, no button to press, which is
   // precisely why none of it was visible before. Each degrades independently so this page
   // still renders if one instrumentation table is missing.
-  const [health, cron, webhooks, errors, outreach, bugs, ops, providers] = await Promise.all([
+  const [health, cron, webhooks, errors, bugs, ops, providers] = await Promise.all([
     getAdminHealth(),
     getCronHealth("imports.process-stalled").catch(() => null),
     getWebhookHealth().catch(() => null),
     getErrorEventSummary().catch(() => null),
-    getOutreachQueueHealth().catch(() => null),
     getBugSignatures().catch(() => null),
     getOpsStatus().catch(() => null),
     loadProviderStatuses().catch(() => null),
@@ -70,7 +68,7 @@ export default async function AdminHealthPage() {
     health.imports.length +
     health.missingKeyTotal;
 
-  const initialLive: HealthLiveData = { health, cron, webhooks, errors, outreach, ops };
+  const initialLive: HealthLiveData = { health, cron, webhooks, errors, ops };
 
   return (
     <>

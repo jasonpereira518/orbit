@@ -12,9 +12,6 @@ import { SettingsSection } from "@/components/settings/settings-section";
 
 type OutreachSettingsState = {
   apollo: boolean;
-  resend: boolean;
-  twilio: boolean;
-  twilioFromNumber: string | null;
 };
 
 export function OutreachSettings({
@@ -24,16 +21,12 @@ export function OutreachSettings({
 }) {
   const [state, setState] = useState(initial);
   const [apolloKey, setApolloKey] = useState("");
-  const [resendKey, setResendKey] = useState("");
-  const [twilioSid, setTwilioSid] = useState("");
-  const [twilioToken, setTwilioToken] = useState("");
-  const [twilioFrom, setTwilioFrom] = useState(initial.twilioFromNumber || "");
   const [pending, start] = useTransition();
 
   return (
     <SettingsSection
       title="Outreach"
-      description="Apollo powers people search. Resend and Twilio are optional for automated sending — use with caution and follow CAN-SPAM, carrier, and LinkedIn terms of service."
+      description="Apollo refreshes your contacts’ LinkedIn profiles. Campaign email sends from your own connected mailbox."
     >
 
       <div className="space-y-1.5">
@@ -41,57 +34,12 @@ export function OutreachSettings({
         <Input
           id="apollo-key"
           type="password"
-          placeholder={state.apollo ? "Saved — paste to replace" : "Required for live search"}
+          placeholder={state.apollo ? "Saved — paste to replace" : "Paste your Apollo key"}
           value={apolloKey}
           onChange={(e) => setApolloKey(e.target.value)}
         />
         <p className="text-xs text-muted-foreground">
-          Status: {state.apollo ? "configured" : "not set (demo prospects used)"}
-        </p>
-      </div>
-
-      <div className="space-y-1.5">
-        <Label htmlFor="resend-key">Resend API key (optional)</Label>
-        <Input
-          id="resend-key"
-          type="password"
-          placeholder={state.resend ? "Saved — paste to replace" : "For automated email send"}
-          value={resendKey}
-          onChange={(e) => setResendKey(e.target.value)}
-        />
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="space-y-1.5">
-          <Label htmlFor="twilio-sid">Twilio Account SID (optional)</Label>
-          <Input
-            id="twilio-sid"
-            type="password"
-            value={twilioSid}
-            onChange={(e) => setTwilioSid(e.target.value)}
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="twilio-token">Twilio Auth Token (optional)</Label>
-          <Input
-            id="twilio-token"
-            type="password"
-            value={twilioToken}
-            onChange={(e) => setTwilioToken(e.target.value)}
-          />
-        </div>
-      </div>
-
-      <div className="space-y-1.5">
-        <Label htmlFor="twilio-from">Twilio from number</Label>
-        <Input
-          id="twilio-from"
-          placeholder="+14155551234"
-          value={twilioFrom}
-          onChange={(e) => setTwilioFrom(e.target.value)}
-        />
-        <p className="text-xs text-muted-foreground">
-          SMS auto-send: {state.twilio ? "ready" : "not configured"}
+          Status: {state.apollo ? "configured" : "not set"}
         </p>
       </div>
 
@@ -101,26 +49,9 @@ export function OutreachSettings({
         onClick={() =>
           start(async () => {
             try {
-              await saveOutreachSettings({
-                apolloApiKey: apolloKey || undefined,
-                resendApiKey: resendKey || undefined,
-                twilioAccountSid: twilioSid || undefined,
-                twilioAuthToken: twilioToken || undefined,
-                twilioFromNumber: twilioFrom || undefined,
-              });
+              await saveOutreachSettings({ apolloApiKey: apolloKey || undefined });
               setApolloKey("");
-              setResendKey("");
-              setTwilioSid("");
-              setTwilioToken("");
-              setState({
-                apollo: state.apollo || Boolean(apolloKey),
-                resend: state.resend || Boolean(resendKey),
-                twilio:
-                  (state.twilio || Boolean(twilioSid)) &&
-                  (state.twilio || Boolean(twilioToken)) &&
-                  Boolean(twilioFrom),
-                twilioFromNumber: twilioFrom || state.twilioFromNumber,
-              });
+              setState({ apollo: state.apollo || Boolean(apolloKey) });
               toast.success("Outreach settings saved");
             } catch (err) {
               toast.error(friendlyError(err, TOAST_COPY.saveFailed));

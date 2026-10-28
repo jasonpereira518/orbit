@@ -927,7 +927,7 @@ async function main() {
     { prospectId: prospects[0].id, channel: "email", status: "sent", sentAt: nowIso },
     { prospectId: prospects[1].id, channel: "linkedin", status: "sent", sentAt: nowIso },
     // Drafted, never sent — must not be counted.
-    { prospectId: prospects[0].id, channel: "sms", status: "draft" },
+    { prospectId: prospects[1].id, channel: "email", status: "draft" },
   ]);
   const outreachOut = await outreachByChannel("30d");
   const added = (channel: string) =>
@@ -935,7 +935,7 @@ async function main() {
     (outreachBefore.find((r) => r.channel === channel)?.count ?? 0);
   check(
     "counts only sent messages, by channel",
-    added("email") === 1 && added("linkedin") === 1 && added("sms") === 0,
+    added("email") === 1 && added("linkedin") === 1,
     JSON.stringify({ before: outreachBefore, after: outreachOut })
   );
 

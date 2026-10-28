@@ -9,7 +9,7 @@
     "suggestedReminders": 2,
     "campaigns": 2,
     "prospects": 9,
-    "outreachMessages": 7,
+    "outreachMessages": 6,
     "recruiters": 3,
     "events": 4,
     "eventAttendees": 12,
@@ -4686,10 +4686,7 @@
       }
     ],
     "outreach": {
-      "apollo": false,
-      "resend": false,
-      "twilio": false,
-      "twilioFromNumber": null
+      "apollo": false
     },
     "plan": {
       "plan": "free",

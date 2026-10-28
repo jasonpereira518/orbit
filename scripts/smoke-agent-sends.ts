@@ -11,7 +11,7 @@
  *     be named as if it sends.
  *   - A pending draft can be claimed exactly once, so a double click cannot send twice.
  *   - An expired draft cannot be claimed at all.
- *   - A sent draft counts against the same daily cap as outreach.
+ *   - A sent draft is counted for the day.
  *
  * Run: npx tsx scripts/smoke-agent-sends.ts
  */
@@ -29,7 +29,6 @@ import {
   listPendingAgentSends,
   rejectAgentSend,
 } from "../src/lib/agent-sends";
-import { countSendsToday } from "../src/lib/outreach-send";
 import { approveAgentSend } from "../src/lib/agent-send-approve";
 import { encrypt } from "../src/lib/crypto";
 import { GOOGLE_SCOPES } from "../src/lib/google-scopes";
@@ -185,13 +184,8 @@ run(async () => {
   const sent = await getAgentSendRequest(USER, draftId);
   check("a finished draft reads as sent", sent?.status === "sent", sent?.status);
 
-  // --- Sent drafts count against the shared daily cap -----------------------------------------
+  // --- Sent drafts are counted for the day ----------------------------------------------------
   check("agent sends count today", (await countAgentSendsToday(USER)) === 1);
-  check(
-    "the outreach daily cap includes them",
-    (await countSendsToday(USER)) === 1,
-    "otherwise a connector is a way around the limit"
-  );
 
   // --- A failed send comes back, rather than vanishing ----------------------------------------
   const retryable = await createAgentSendRequest(USER, {

@@ -12,9 +12,8 @@ import { cn } from "@/lib/utils";
  *
  * Kept out of `src/components/ui/` on purpose: that set is a curated, multi-consumer
  * library, and this repo's consistent posture is not to abstract until there are three
- * call sites (`prospect-table.tsx` hand-writes its table; `plan-settings.tsx` hand-rolls
- * its progress bar; `network-depth-chart.tsx` hand-builds bars rather than adding a chart
- * dependency). Admin is one call site.
+ * call sites (`plan-settings.tsx` hand-rolls its progress bar; `network-depth-chart.tsx`
+ * hand-builds bars rather than adding a chart dependency). Admin is one call site.
  */
 
 /* ---------------------------------------------------------------- page header ------- */

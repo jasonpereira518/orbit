@@ -41,7 +41,7 @@ import { safeChatHref, safeHttpUrl } from "../src/lib/safe-links";
 import { untrustedPageBlock } from "../src/lib/conversation-starters";
 import { validateProposedActions } from "../src/lib/chat-proposed-actions";
 import { classifyRecipient, recipientNeedsConfirmation } from "../src/lib/agent-sends";
-import { assessOutreachQuality, findLinkOrAddress } from "../src/lib/outreach-quality";
+import { findLinkOrAddress } from "../src/lib/outreach-quality";
 import { composeDraftContext } from "../src/lib/follow-up-drafts";
 import { sanitizeIncomingExperiences } from "../src/lib/contact-profile";
 import { relationshipDigestSchema } from "../src/lib/relationship-engine/extract";
@@ -398,14 +398,10 @@ run(async () => {
   check("mismatch and unknown need a second confirmation", recipientNeedsConfirmation("mismatch") && recipientNeedsConfirmation("unknown"));
   check("trusted recipients do not", !recipientNeedsConfirmation("linked_contact") && !recipientNeedsConfirmation("known_contact"));
 
-  console.log("\n   AI-written outreach before a bulk send");
-  const gate = (body: string) =>
-    assessOutreachQuality([{ messageId: "m", prospectId: "p", prospectName: "Ada", channel: "email", subject: "Hi Ada", body }]);
-  const injected = gate("Hi Ada, loved your talk. Verify here: https://evil.example/login?u=ada");
-  check("a link in a draft is a warning the send must acknowledge", injected.warnings[0]?.code === "contains_link" && injected.blocking.length === 0);
-  check("…and names the link", injected.warnings[0]?.message.includes("evil.example") === true);
-  check("an address in a draft is flagged too", gate("Hi Ada, reply to ops@evil.example instead").warnings.some((w) => w.code === "contains_link"));
-  check("a plain draft carries no link warning", !gate("Hi Ada, loved your talk on engines — coffee next week?").warnings.some((w) => w.code === "contains_link"));
+  console.log("\n   AI-written outreach before a send");
+  check("a link in a draft is found", findLinkOrAddress("Hi Ada, loved your talk. Verify here: https://evil.example/login?u=ada")?.includes("evil.example") === true);
+  check("an address in a draft is found too", findLinkOrAddress("Hi Ada, reply to ops@evil.example instead") === "ops@evil.example");
+  check("a plain draft carries no link", findLinkOrAddress("Hi Ada, loved your talk on engines — coffee next week?") === null);
 
   console.log("\n   MCP over OAuth: the grant comes from the token's scopes");
   check("orbit:write → read and write", JSON.stringify(oauthGrantFor(["openid", "orbit:write"], true)) === JSON.stringify(["read", "write"]));

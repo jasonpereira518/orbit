@@ -1,46 +1,45 @@
 /**
- * Pins the guards that stop Orbit emailing people who do not exist (audit A7).
+ * Pins the guards that stop Outreach emailing people who do not exist (audit A7), on the
+ * paths that send today:
  *
- * Without an Apollo key, `searchPeople` invents sample prospects. They used to get the
- * model-guessed REAL company domain (alex.chen@capitalone.com), were stored pre-selected,
- * and nothing on the send paths looked at `enrichment.demo`. Runs the real server actions
- * as demo mode's `demo-user`, like smoke-follow-up-actions.
+ *   - while `page.outreach` is coming soon, every Outreach server action refuses, run as demo
+ *     mode's `demo-user` (like smoke-follow-up-actions) — new actions are covered by being
+ *     exported, not by being listed here;
+ *   - a demo prospect (`enrichment.demo`) never sends, even at a real-looking address;
+ *   - a placeholder address (example.com, .test, .invalid…) stays a draft.
  *
+ * The sends go to a fake mailbox; nothing leaves the machine.
  * Run: npx tsx scripts/smoke-outreach-guards.ts
  */
 import "./smoke/_env";
 import { run } from "./smoke/_env";
 
-import { eq, inArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { outreachCampaigns, outreachMessages, outreachProspects, userSettings } from "../src/db/schema";
-import { ensureUserSettings } from "../src/lib/user-settings";
+import * as schema from "../src/db/schema";
+import { encrypt } from "../src/lib/crypto";
+import { GOOGLE_SCOPES } from "../src/lib/google-scopes";
+import "../src/lib/email/origin-registrations";
+import { setProviderOverride } from "../src/lib/email/providers";
+import type { MailProvider } from "../src/lib/email/providers/types";
 import { isSurfaceHiddenError, setSurfaceComingSoon } from "../src/lib/surface-visibility";
-import {
-  DEMO_PROSPECT_SEND_MESSAGE,
-  PLACEHOLDER_ADDRESS_SEND_MESSAGE,
-  isPlaceholderAddress,
-  prospectSearchStatus,
-} from "../src/lib/outreach-quality";
-import { sendOutreachMessage, getOutreachSendConfig } from "../src/lib/outreach-send";
-import { bulkSendOutreach, markMessageAction, previewBulkSendQuality, searchProspects, sendOutreachMessageAction } from "../src/actions/outreach";
-import { ALREADY_SENT_MESSAGE } from "../src/lib/outreach-quality";
-import { isDeliveredMessage } from "../src/lib/outreach-metrics";
-import type { AudienceFilters } from "../src/db/schema";
+import { draftCampaignMessagesForUser, sendCampaignMessagesForUser, type Drafter } from "../src/lib/outreach-messages";
+import { addProspectsForUser } from "../src/lib/outreach-people";
+import { DEMO_PROSPECT_SEND_MESSAGE, isPlaceholderAddress } from "../src/lib/outreach-quality";
+import { purgeUserData } from "../src/lib/user-data";
+import * as peopleActions from "../src/actions/outreach-people";
+import * as messageActions from "../src/actions/outreach-messages";
+import { createCampaign, logMessageOutcome, updateCampaign } from "../src/actions/outreach";
 
-// FIRST, so no run of this script — including the failing one — can reach a real inbox:
-// with no key anywhere, a send that slips past a guard fails on "not configured".
-delete process.env.RESEND_API_KEY;
-delete process.env.TWILIO_ACCOUNT_SID;
-delete process.env.TWILIO_AUTH_TOKEN;
-delete process.env.APOLLO_API_KEY; // forces the demo prospect search
+// Demo mode: the actions run as `demo-user` with no Clerk.
 delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 delete process.env.CLERK_SECRET_KEY;
 process.env.ORBIT_DEMO_DATA = "off";
 (process.env as Record<string, string>).NODE_ENV = "development";
 
-const USER = "demo-user";
-const OTHER = "smoke-outreach-other-tenant";
+const USER = "smoke-outreach-guards-user";
+const ID = "00000000-0000-0000-0000-000000000000";
+const OPTS = { skipRevalidate: true, skipEmbedding: true, skipSummary: true, skipCloseness: true } as const;
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -51,214 +50,103 @@ function check(label: string, ok: boolean, detail?: string) {
   }
 }
 
-/** `revalidatePath` throws outside a request, after the action's writes have landed. */
-async function outsideRequest<T>(work: Promise<T>): Promise<T | undefined> {
-  try {
-    return await work;
-  } catch (err) {
-    if (err instanceof Error && err.message.includes("static generation store")) return undefined;
-    throw err;
-  }
-}
+/** Every address the fake mailbox was asked to deliver to. */
+const delivered: string[] = [];
+const fake: MailProvider = {
+  id: "gmail",
+  async identity() {
+    return { email: "me@x.org" };
+  },
+  async send(_user, message) {
+    delivered.push(...message.to);
+    return { providerMessageId: "pm", providerThreadId: "pt" };
+  },
+  async findSent() {
+    return "unknown";
+  },
+};
 
-async function cleanup() {
-  const db = await getDb();
-  // Prospects and messages cascade from the campaign.
-  await db.delete(outreachCampaigns).where(inArray(outreachCampaigns.userId, [USER, OTHER]));
-  await db.delete(userSettings).where(inArray(userSettings.userId, [USER, OTHER]));
-  // The suite shares one PGlite across smokes: put page.outreach back to its coming-soon
-  // default so a later script (smoke-surface-visibility) does not inherit the release below.
-  await setSurfaceComingSoon("smoke-outreach-admin", "page.outreach", true);
-}
+const drafter: Drafter = async (_user, inputs) =>
+  inputs.map((input) => ({ subject: "Hi", body: `Hello ${input.prospect.fullName}` }));
 
-async function seedCampaign(userId: string, name: string, filters: AudienceFilters) {
-  const db = await getDb();
-  const [campaign] = await db
-    .insert(outreachCampaigns)
-    .values({ userId, name, audienceQuery: "recruiters at Capital One", audienceFilters: filters, status: "active" })
-    .returning();
-  return campaign;
-}
-
-async function seedProspectWithMessage(
-  campaignId: string,
-  p: { externalId: string; fullName: string; email: string; status: string; enrichment: Record<string, unknown>; subject?: string; body?: string }
-) {
-  const db = await getDb();
-  const first = p.fullName.split(" ")[0];
-  const [prospect] = await db
-    .insert(outreachProspects)
-    .values({ campaignId, externalId: p.externalId, fullName: p.fullName, email: p.email, status: p.status, enrichment: p.enrichment })
-    .returning();
-  const [message] = await db
-    .insert(outreachMessages)
-    .values({
-      prospectId: prospect.id,
-      channel: "email",
-      subject: p.subject ?? `Quick question, ${first}`,
-      body: p.body ?? `Hi ${first}, I saw your work on the platform team and wanted to ask how you hire for it.`,
-      status: "generated",
-    })
-    .returning();
-  return { prospect, message };
+async function reset() {
+  await purgeUserData(USER, { keepSettings: false }).catch(() => {});
 }
 
 run(async () => {
-  await cleanup();
-  await ensureUserSettings(USER);
-  console.log("A coming-soon Outreach refuses its actions, even for an admin without the preview cookie");
-  const closed = await sendOutreachMessageAction("00000000-0000-0000-0000-000000000000").then(
-    () => null, (err: unknown) => err);
-  check("send refuses while page.outreach is coming soon", isSurfaceHiddenError(closed), String(closed));
-  // page.outreach ships coming soon and its actions now refuse; this PGlite is throwaway (smoke/_env).
-  await setSurfaceComingSoon("smoke-outreach-admin", "page.outreach", false);
+  await reset();
+  // The suite shares one PGlite: this is page.outreach's shipped state, set explicitly so an
+  // earlier smoke's release cannot leak in.
+  await setSurfaceComingSoon("smoke-outreach-admin", "page.outreach", true);
+
+  console.log("A coming-soon Outreach refuses every action, even for an admin without the preview cookie");
+  const actions: Array<[string, () => Promise<unknown>]> = [
+    ...Object.entries({ ...peopleActions, ...messageActions }).map(([name, fn]): [string, () => Promise<unknown>] => [
+      name,
+      () => (fn as (...args: unknown[]) => Promise<unknown>)(ID, [ID], ID),
+    ]),
+    ["createCampaign", () => createCampaign({ audienceQuery: "founders", messageIntent: "say hi", replyCta: "book_intro", defaultChannel: "email", tone: "friendly" })],
+    ["updateCampaign", () => updateCampaign(ID, { name: "x" })],
+    ["logMessageOutcome", () => logMessageOutcome({ messageId: ID, outcome: "replied" })],
+  ];
+  check("the people and messages modules export their actions", Object.keys(peopleActions).length >= 7 && Object.keys(messageActions).length >= 7, Object.keys({ ...peopleActions, ...messageActions }).join(","));
+  for (const [name, call] of actions) {
+    const thrown = await call().then(() => null, (err: unknown) => err);
+    check(`${name} refuses`, isSurfaceHiddenError(thrown), String(thrown));
+  }
+
+  console.log("\nSends: a demo prospect never sends, a placeholder address stays a draft");
   const db = await getDb();
+  setProviderOverride("gmail", fake);
+  try {
+    await db.insert(schema.gmailConnections).values({
+      userId: USER,
+      emailAddress: "me@x.org",
+      accessTokenEncrypted: encrypt("t"),
+      refreshTokenEncrypted: encrypt("r"),
+      tokenExpiresAt: new Date(Date.now() + 3_600_000),
+      scopes: GOOGLE_SCOPES.gmailSend,
+      status: "active",
+    });
+    const [campaign] = await db.insert(schema.outreachCampaigns).values({ userId: USER, name: "Guards" }).returning();
+    await addProspectsForUser(
+      USER,
+      campaign!.id,
+      [
+        { fullName: "Demo Person", company: "Acme", email: "demo@acme-co.io", origin: "manual" },
+        { fullName: "Placeholder Person", company: "Acme", origin: "manual" },
+      ]
+    );
+    const prospects = await db.query.outreachProspects.findMany({ where: eq(schema.outreachProspects.campaignId, campaign!.id) });
+    const pid = (name: string) => prospects.find((p) => p.fullName === name)!.id;
+    await db.update(schema.outreachProspects).set({ enrichment: { demo: true } }).where(eq(schema.outreachProspects.id, pid("Demo Person")));
+    // Written directly: the add path already drops a placeholder address, so this is the row a
+    // regression there (or an old row) would leave behind.
+    await db.update(schema.outreachProspects).set({ email: "someone@acme.example.com" }).where(eq(schema.outreachProspects.id, pid("Placeholder Person")));
+    check("isPlaceholderAddress: example.com, .test and .invalid are placeholders", isPlaceholderAddress("a@acme.example.com") && isPlaceholderAddress("a@b.test") && isPlaceholderAddress("a@demo.orbit.invalid"));
+    check("isPlaceholderAddress: a real domain is not", !isPlaceholderAddress("jordan@capitalone.com"));
 
-  console.log("Sample search results are never pre-selected, and never at a real domain");
-  const campaign = await seedCampaign(USER, "Smoke guards", {
-    organizationNames: ["Capital One"],
-    organizationDomains: ["capitalone.com"],
-  });
-  await outsideRequest(searchProspects(campaign.id));
-  const found = await db.query.outreachProspects.findMany({ where: eq(outreachProspects.campaignId, campaign.id) });
-  check("the sample search produced prospects", found.length > 0, String(found.length));
-  check("none is selected", found.every((p) => p.status !== "selected"), found.map((p) => p.status).join(","));
-  check("every one is marked demo", found.every((p) => (p.enrichment as { demo?: unknown } | null)?.demo === true));
-  check(
-    "every address is at a reserved example domain",
-    found.every((p) => !p.email || isPlaceholderAddress(p.email)),
-    found.map((p) => p.email).join(",")
-  );
-  check("prospectSearchStatus: a matching sample is suggested", prospectSearchStatus({ matchesOrg: true, isDemo: true }) === "suggested");
-  check("prospectSearchStatus: a matching real prospect is selected", prospectSearchStatus({ matchesOrg: true, isDemo: false }) === "selected");
-  check("prospectSearchStatus: a company mismatch is excluded", prospectSearchStatus({ matchesOrg: false, isDemo: false }) === "excluded");
-  check("isPlaceholderAddress: a real domain is not a placeholder", !isPlaceholderAddress("jordan@capitalone.com"));
-  check("isPlaceholderAddress: .test and example.org are", isPlaceholderAddress("a@b.test") && isPlaceholderAddress("a@example.org"));
+    await draftCampaignMessagesForUser(USER, campaign!.id, [pid("Demo Person"), pid("Placeholder Person")], { drafter });
+    const drafts = await db.query.outreachMessages.findMany({ where: eq(schema.outreachMessages.stepIndex, 0) });
+    const mid = (name: string) => drafts.find((m) => m.prospectId === pid(name))!.id;
+    const status = async (id: string) => (await db.query.outreachMessages.findFirst({ where: eq(schema.outreachMessages.id, id) }))?.status;
+    const sendsFor = async (id: string) =>
+      (await db.select({ id: schema.emailSends.id }).from(schema.emailSends).where(and(eq(schema.emailSends.userId, USER), eq(schema.emailSends.originRef, id)))).length;
 
-  console.log("\nA sample prospect cannot be emailed, one at a time or in bulk");
-  // The exact shape already in production: demo, selected, at a real company domain.
-  const legacy = await seedProspectWithMessage(campaign.id, {
-    externalId: "demo-legacy-1",
-    fullName: "Alex Chen",
-    email: "alex.chen@capitalone.com",
-    status: "selected",
-    enrichment: { demo: true },
-  });
-  const single = await sendOutreachMessageAction(legacy.message.id).catch((err: unknown) => ({
-    ok: false as const,
-    error: `threw: ${String(err)}`,
-  }));
-  check(
-    "the single send refuses with the sample-prospect copy",
-    single.ok === false && single.error === DEMO_PROSPECT_SEND_MESSAGE,
-    JSON.stringify(single)
-  );
-  const afterSingle = await db.query.outreachMessages.findFirst({ where: eq(outreachMessages.id, legacy.message.id) });
-  check("…and leaves the draft untouched (not sent, not failed)", afterSingle?.status === "generated", String(afterSingle?.status));
-  const bulk = await outsideRequest(
-    bulkSendOutreach({ campaignId: campaign.id, messageIds: [legacy.message.id], ignoreWarnings: true })
-  );
-  check(
-    "the bulk send is blocked with the same reason",
-    bulk?.status === "blocked" && bulk.reason.includes(DEMO_PROSPECT_SEND_MESSAGE),
-    JSON.stringify(bulk)
-  );
+    const demo = await sendCampaignMessagesForUser(USER, campaign!.id, [mid("Demo Person")], { spacingMs: 0, contactWrite: OPTS });
+    check("a demo prospect is refused with the sample-prospect copy", demo.sent === 0 && demo.failed[0]?.error === DEMO_PROSPECT_SEND_MESSAGE, JSON.stringify(demo));
+    check("…stays a draft, with nothing in the outbox", (await status(mid("Demo Person"))) === "draft" && (await sendsFor(mid("Demo Person"))) === 0);
 
-  console.log("\nA placeholder address is refused below the actions too");
-  const direct = await sendOutreachMessage({
-    userId: USER,
-    channel: "email",
-    toEmail: "someone@acme.example.com",
-    subject: "Hi",
-    body: "Hello",
-  }).then(
-    () => "sent",
-    (err: unknown) => (err instanceof Error ? err.message : String(err))
-  );
-  check("sendOutreachMessage refuses an example.com address", direct === PLACEHOLDER_ADDRESS_SEND_MESSAGE, direct);
+    const placeholder = await sendCampaignMessagesForUser(USER, campaign!.id, [mid("Placeholder Person")], { spacingMs: 0, contactWrite: OPTS });
+    check("a placeholder address is refused", placeholder.sent === 0 && placeholder.failed.length === 1, JSON.stringify(placeholder));
+    check("…stays a draft, with nothing in the outbox", (await status(mid("Placeholder Person"))) === "draft" && (await sendsFor(mid("Placeholder Person"))) === 0);
 
-  console.log("\nThe bulk-send preview only reads this campaign's messages");
-  await ensureUserSettings(OTHER);
-  const victimCampaign = await seedCampaign(OTHER, "Someone else's campaign", {});
-  // Empty subject and body: had the preview read this row, it would come back blocking.
-  const victim = await seedProspectWithMessage(victimCampaign.id, {
-    externalId: "victim-1",
-    fullName: "Victoria Private",
-    email: "victoria@private.example.com",
-    status: "selected",
-    enrichment: {},
-    subject: "",
-    body: "",
-  });
-  const leaked = await previewBulkSendQuality({ campaignId: campaign.id, messageIds: [victim.message.id] });
-  check("another tenant's message id yields nothing", leaked.issues.length === 0, JSON.stringify(leaked));
-  check("…and never names their prospect", !JSON.stringify(leaked).includes("Victoria"));
+    check("the mailbox was never asked to deliver anything", delivered.length === 0, delivered.join());
+  } finally {
+    setProviderOverride("gmail", null);
+    await reset();
+  }
 
-  const sibling = await seedCampaign(USER, "Sibling campaign", {});
-  const siblingMsg = await seedProspectWithMessage(sibling.id, {
-    externalId: "sibling-1",
-    fullName: "Sam Sibling",
-    email: "sam@sibling.example.com",
-    status: "selected",
-    enrichment: {},
-    subject: "",
-    body: "",
-  });
-  const scoped = await previewBulkSendQuality({ campaignId: campaign.id, messageIds: [siblingMsg.message.id] });
-  check("a message from another of your own campaigns is out of scope too", scoped.issues.length === 0, JSON.stringify(scoped));
-  // A sendable draft (passes quality) in the sibling campaign: if the bulk loop reached it,
-  // its send would be refused (placeholder address) and mark it "failed".
-  const sendable = await seedProspectWithMessage(sibling.id, {
-    externalId: "sibling-2",
-    fullName: "Sasha Sibling",
-    email: "sasha@sibling.example.org",
-    status: "selected",
-    enrichment: {},
-  });
-  await outsideRequest(
-    bulkSendOutreach({ campaignId: campaign.id, messageIds: [sendable.message.id], ignoreWarnings: true })
-  );
-  const sendableAfter = await db.query.outreachMessages.findFirst({ where: eq(outreachMessages.id, sendable.message.id) });
-  check("…and bulk send under this campaign never touches it", sendableAfter?.status === "generated", String(sendableAfter?.status));
-
-  console.log("\nA delivered message is never sent twice");
-  check("only a sent row counts as delivered: a copied row with a sentAt does not",
-    !isDeliveredMessage({ id: "x", status: "copied", outcome: null, sentAt: new Date() }) &&
-      isDeliveredMessage({ id: "x", status: "sent", outcome: null, sentAt: null }));
-  const delivered = await seedProspectWithMessage(campaign.id, {
-    externalId: "delivered-1",
-    fullName: "Dana Delivered",
-    email: "dana@delivered.example.org",
-    status: "contacted",
-    enrichment: {},
-  });
-  const sentAt = new Date("2026-01-01T00:00:00Z");
-  await db.update(outreachMessages).set({ status: "sent", sentAt }).where(eq(outreachMessages.id, delivered.message.id));
-  const resend = await sendOutreachMessageAction(delivered.message.id).catch((err: unknown) => ({
-    ok: false as const, error: `threw: ${String(err)}`,
-  }));
-  check("the single send refuses an already-sent message",
-    resend.ok === false && resend.error === ALREADY_SENT_MESSAGE, JSON.stringify(resend));
-  await outsideRequest(
-    bulkSendOutreach({ campaignId: campaign.id, messageIds: [delivered.message.id], ignoreWarnings: true }));
-  // The action ends in revalidatePath, which throws outside a request, so its return value
-  // is unreadable here; the row itself shows neither a resend nor a "failed" mark.
-  const afterBulk = await db.query.outreachMessages.findFirst({ where: eq(outreachMessages.id, delivered.message.id) });
-  check("bulk send skips it: neither sent nor failed",
-    afterBulk?.status === "sent" && afterBulk.sentAt?.getTime() === sentAt.getTime(),
-    `${afterBulk?.status} ${afterBulk?.sentAt?.toISOString()}`);
-  await outsideRequest(markMessageAction({ messageId: delivered.message.id, status: "copied" }));
-  const afterResend = await db.query.outreachMessages.findFirst({ where: eq(outreachMessages.id, delivered.message.id) });
-  check("…and copy never walks it back from sent",
-    afterResend?.status === "sent" && afterResend.sentAt?.getTime() === sentAt.getTime(),
-    `${afterResend?.status} ${afterResend?.sentAt?.toISOString()}`);
-
-  console.log("\nReplies go to the sender");
-  await db.update(userSettings).set({ email: "demo.sender@orbit.example.com" }).where(eq(userSettings.userId, USER));
-  const config = await getOutreachSendConfig(USER);
-  check("the send config carries the sender's email as replyTo", config.replyTo === "demo.sender@orbit.example.com", String(config.replyTo));
-
-  await cleanup();
   if (failures > 0) throw new Error(`${failures} check(s) failed`);
   console.log("\nAll outreach guard checks passed.");
 });

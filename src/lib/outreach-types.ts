@@ -1,4 +1,4 @@
-export type OutreachChannel = "email" | "linkedin" | "sms";
+export type OutreachChannel = "email" | "linkedin";
 
 export type OutreachMessageStatus =
   | "draft"
@@ -20,11 +20,6 @@ export type OutreachMessageOutcome =
   | "bounced"
   | "unsubscribed";
 
-export type SequenceStep = {
-  delayDays: number;
-  intent?: string;
-};
-
 export type AudienceFilters = {
   titles?: string[];
   locations?: string[];
@@ -36,8 +31,6 @@ export type AudienceFilters = {
   /** Employer domains, e.g. ["capitalone.com"] */
   organizationDomains?: string[];
 };
-
-export type OutreachSearchSource = "demo" | "apollo";
 
 export type NormalizedProspect = {
   externalId: string;
@@ -76,7 +69,7 @@ export type PipelineFilter =
   | "replied"
   | "failed";
 
-export const OUTREACH_CHANNELS: OutreachChannel[] = ["email", "linkedin", "sms"];
+export const OUTREACH_CHANNELS: OutreachChannel[] = ["email", "linkedin"];
 
 export const OUTREACH_TONES = [
   "professional",
@@ -130,29 +123,9 @@ export const OUTCOME_LABELS: Record<OutreachMessageOutcome, string> = {
 };
 
 export const BULK_SEND_LIMIT = 25;
-export const DAILY_SEND_LIMIT = 50;
 
 /** Contacts refreshed per server action call (sequential people/match + photo fetch). */
 export const LINKEDIN_REFRESH_BATCH_SIZE = 3;
-
-export const DEFAULT_SEQUENCE_STEPS: SequenceStep[] = [
-  { delayDays: 3, intent: "Polite follow-up referencing the first note" },
-  { delayDays: 7, intent: "Final short bump with a clear opt-out" },
-];
-
-/**
- * Addresses that must never be mailed, whatever the caller believes.
- *
- * `example.com` / `.example` / `.invalid` / `.test` / `.localhost` are reserved by RFC
- * 2606 and RFC 6761 precisely so they cannot resolve — every message to one is a
- * guaranteed hard bounce, and enough of those cost a shared sending domain its
- * reputation. Orbit's own demo prospects use them.
- */
-export function isUnmailableAddress(email: string) {
-  const domain = email.trim().toLowerCase().split("@")[1] ?? "";
-  if (!domain) return true;
-  return /(^|\.)(example\.(com|net|org)|example|invalid|test|localhost)$/.test(domain);
-}
 
 /**
  * Message statuses that mean Orbit (or the person) already reached out. `opened` is a delivered

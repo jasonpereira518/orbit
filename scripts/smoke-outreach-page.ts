@@ -181,6 +181,10 @@ async function main() {
 
     const layout = code(`${OUTREACH_DIR}/layout.tsx`);
     check("the locked copy no longer sells SMS or Apollo", !/\bSMS\b|Apollo/i.test(layout));
+    const outreachLocked = declaration(code("src/components/locked-feature.tsx"), "export function OutreachLocked");
+    check("OutreachLocked is found", outreachLocked.includes("title=\"Outreach\""));
+    check("OutreachLocked no longer sells SMS or Apollo", !/\bSMS\b|Apollo/i.test(outreachLocked));
+    check("OutreachLocked says it sends from your own email or LinkedIn", outreachLocked.includes("from your own email or LinkedIn"));
 
     const list = code(`${OUTREACH_DIR}/page.tsx`);
     check(
@@ -209,7 +213,6 @@ async function main() {
     const finder = read("src/components/outreach/find-candidates.tsx");
     const people = read("src/components/outreach/campaign-people.tsx");
     const note = read("src/components/outreach/warm-path-note.tsx");
-    const table = read("src/components/outreach/prospect-table.tsx");
     const find = read("src/components/find/find-people.tsx");
     const page = read(`${OUTREACH_DIR}/[id]/page.tsx`);
 
@@ -276,8 +279,6 @@ async function main() {
 
     console.log("  the warm-path note");
     check("lives in its own file", /export function WarmPathNote/.test(note));
-    check("which the prospect table imports", /import\s*\{\s*WarmPathNote\s*\}\s*from\s*["']@\/components\/outreach\/warm-path-note["']/.test(table));
-    check("and no longer defines", !/function WarmPathNote/.test(table));
     check("the people list shows it", people.includes("<WarmPathNote"));
     check("so does each found candidate", finder.includes("<WarmPathNote"));
 
@@ -341,7 +342,12 @@ async function main() {
     check("people is the default tab", /=== "messages" \? "messages" : "people"/.test(page));
     check("Messages renders the real tab, not a placeholder", page.includes("<CampaignMessages") && !page.includes("arrive here next"));
     check("the legacy editor and workspace are not rendered", !page.includes("<CampaignEditor") && !page.includes("<CampaignWorkspace"));
-    check("the legacy files are still there for Task 14", existsSync("src/components/outreach/campaign-editor.tsx") && existsSync("src/components/outreach/campaign-workspace.tsx"));
+    check(
+      "the v1 components are gone",
+      ["campaign-editor", "campaign-workspace", "prospect-table", "outreach-actions", "bulk-action-bar", "outreach-readiness-strip"].every(
+        (name) => !existsSync(`src/components/outreach/${name}.tsx`)
+      )
+    );
     check("people who were removed are not shown", /excluded/.test(page));
 
     console.log("  client rules");
@@ -363,7 +369,6 @@ async function main() {
         `${links.length} link(s)`
       );
     }
-    check("the moved note keeps its control-byte-free source too", !/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(raw("src/components/outreach/prospect-table.tsx")));
   }
 
   console.log("\nthe messages tab");
@@ -529,7 +534,6 @@ async function main() {
     check("the LinkedIn count is the string length, as the server counts it", /\.length/.test(editor) && !/Segmenter|Array\.from\(localBody|\[\.\.\.localBody/.test(editor));
     check("reports unsaved edits to the tab", editor.includes("onDirtyChange"));
     check("…and a Save or Rewrite still running counts as unsaved, so Send and Copy wait for it", /onDirtyChange\?\.\(messageId, dirty \|\| busy !== null\)/.test(editor) && /\[onDirtyChange, messageId, dirty, busy\]/.test(editor));
-    check("the legacy table still passes the status", read("src/components/outreach/prospect-table.tsx").includes("status={message.status}"));
 
     console.log("  the outcome buttons");
     check("offer Replied, Positive, Negative and Bounced", ["Replied", "Positive", "Negative", "Bounced"].every((l) => outcome.includes(`"${l}"`)));
