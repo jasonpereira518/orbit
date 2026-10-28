@@ -14,6 +14,7 @@ import {
   closenessPercentChipClass,
 } from "@/lib/closeness";
 import { companyBrandText } from "@/lib/company-brand";
+import type { NameGuess } from "@/lib/contact-name-guess";
 import { cn } from "@/lib/utils";
 
 export type ContactPreviewData = {
@@ -33,6 +34,8 @@ export type ContactPreviewData = {
   summary?: string | null;
   /** Extra line (e.g. related-person reason). */
   detail?: string | null;
+  /** An unsure name read from a handle (`openNameGuess`); the card says so. */
+  nameGuess?: NameGuess | null;
 };
 
 const OPEN_DELAY_MS = 200;
@@ -160,6 +163,17 @@ export function ContactAvatarPreview({
                 <p className="truncate text-sm font-medium leading-snug text-ink">
                   {displayName}
                 </p>
+                {contact.nameGuess ? (
+                  <p className="truncate text-2xs leading-snug text-muted-foreground">
+                    {contact.nameGuess.source === "none" ? (
+                      "Real name not known yet"
+                    ) : (
+                      <>
+                        Name guessed from <bdi>{contact.nameGuess.from || "an empty name"}</bdi>
+                      </>
+                    )}
+                  </p>
+                ) : null}
                 {contact.title?.trim() ? (
                   <p className="truncate text-xs leading-snug text-muted-foreground">
                     {contact.title.trim()}

@@ -158,6 +158,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   first_name text,
   last_name text,
   preferred_name text,
+  name_guess jsonb,
   company text,
   company_id uuid REFERENCES companies(id) ON DELETE SET NULL,
   title text,
@@ -2815,7 +2816,12 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // itself (`@/lib/chat-auto-apply`), each a done card with Undo. Off by default. Rescanned every
 // remote ref on Oct 19 2026: 182 (claude/chat-agent-p0-prefetch, this branch's base) was the
 // highest claimed anywhere.
-export const SCHEMA_VERSION = 183;
+//
+// 185 = contacts.name_guess: a name read from a handle ("jsmith42", "john.doe") and how sure
+// Orbit is of it (`@/lib/contact-name-guess`); weak ones get a "?" to confirm or change.
+// Rescanned every remote ref on Oct 28 2026: 184 (claude/events-v2-nudge,
+// claude/nifty-mendel-250e9b) was the highest claimed anywhere.
+export const SCHEMA_VERSION = 185;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -4212,6 +4218,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "radar_digest_unsub_token_hash", "text");
   await ensureColumn(client, "contacts", "bluesky_handle", "text");
   await ensureColumn(client, "contacts", "mastodon_acct", "text");
+  await ensureColumn(client, "contacts", "name_guess", "jsonb");
   await ensureColumn(client, "recommendations", "base_score", "integer");
   await ensureColumn(client, "recommendations", "ai_delta", "integer");
   await ensureColumn(client, "recommendations", "ai_angle", "text");
@@ -5049,6 +5056,8 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_digest_unsub_token_hash text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS bluesky_handle text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS mastodon_acct text`,
+  // Schema v185: a name read from a handle, and whether it is a weak guess (`@/lib/contact-name-guess`).
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS name_guess jsonb`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS base_score integer`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS ai_delta integer`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS ai_angle text`,

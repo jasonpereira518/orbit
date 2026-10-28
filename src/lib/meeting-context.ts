@@ -35,13 +35,8 @@ import type { AliasKey } from "@/lib/events/discovery/types";
 import { getEventForUser, listRosterForUser } from "@/lib/events/store";
 import { whoToTalkTo, type WhoToTalkToRow } from "@/lib/events/who-to-talk-to";
 
-/** A stored name that is really an address handle: "", "dmcraver" for dmcraver@…, "calvintwong25". */
-export function isHandle(name: string | null | undefined, email?: string | null): boolean {
-  const n = (name ?? "").trim();
-  if (!n) return true;
-  if (email && n.toLowerCase() === email.split("@")[0]?.toLowerCase()) return true;
-  return !/\s/.test(n) && /[\d._@]/.test(n);
-}
+import { isHandle } from "@/lib/contact-name-guess";
+export { isHandle };
 
 /** Capitalised words in an invite title that are not names. */
 const NOT_NAMES = new Set(

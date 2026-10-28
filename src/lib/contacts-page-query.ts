@@ -27,6 +27,7 @@ import {
   encodeContactsCursor,
 } from "@/lib/contacts-page-cursor";
 import { contactsListSelection } from "@/lib/contact-avatar-sql";
+import { openNameGuess } from "@/lib/contact-name-guess";
 import { schoolCondition, type RankedContact } from "@/lib/hybrid-search";
 import { listSchools } from "@/lib/events/target-companies";
 import {
@@ -197,6 +198,7 @@ export async function listContactsPage(
       firstName: row.firstName,
       lastName: row.lastName,
       preferredName: row.preferredName,
+      nameGuess: openNameGuess(row),
       title: row.title,
       company: row.company,
       school: row.school,

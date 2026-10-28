@@ -24,6 +24,7 @@ import {
 } from "@/lib/memory-chunks";
 import { interactionTypeLabel } from "@/lib/interaction-types";
 import { mergeFactList } from "@/lib/fact-lists";
+import type { NameGuess } from "@/lib/contact-name-guess";
 import {
   contactIdentities,
   contactTags,
@@ -103,6 +104,12 @@ export type ContactInput = {
   firstName?: string;
   lastName?: string;
   preferredName?: string;
+  /**
+   * Only from the name sweep and the "?" review (`@/lib/contact-name-guess`). A `fullName`
+   * change written without it settles any guess already there: a person or a better source
+   * has named them.
+   */
+  nameGuess?: NameGuess | null;
   company?: string;
   title?: string;
   location?: string;
@@ -1001,6 +1008,15 @@ export async function updateContactForUser(
       ...(input.preferredName !== undefined
         ? { preferredName: input.preferredName }
         : {}),
+      ...(input.nameGuess !== undefined
+        ? { nameGuess: input.nameGuess }
+        : input.fullName !== undefined
+          ? {
+              // Old values on the right of SET: only a name that actually changed settles it.
+              nameGuess: sql`CASE WHEN ${contacts.nameGuess} IS NOT NULL AND ${contacts.fullName} IS DISTINCT FROM ${input.fullName}
+                THEN ${contacts.nameGuess} || '{"weak": false}'::jsonb ELSE ${contacts.nameGuess} END`,
+            }
+          : {}),
       ...(companyPatch
         ? { company: companyPatch.company, companyId: companyPatch.companyId }
         : {}),

@@ -40,6 +40,9 @@ on:
     - cron: "23 * * * *"
     # The work-history sweep: offset from :07 and :23 so no two long hourly jobs overlap.
     - cron: "37 * * * *"
+    # The contact name sweep: its own minute, so it never shares a run (and the 8-minute
+    # job ceiling) with the work-history sweep.
+    - cron: "43 * * * *"
     # Radar's news sweep: public feeds into the global news tables. :53, clear of every
     # other hourly job above.
     - cron: "53 * * * *"
@@ -281,6 +284,19 @@ jobs:
           curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/work-history/sweep"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      # Real names for contacts saved under a handle ("jsmith42"), hourly. Imports kick a pass
+      # for their own user; this is the backstop for CSV imports and the backfill for older
+      # contacts. Model calls run on the person's own AI, so it has its own line too.
+      - name: Run the contact name sweep (hourly)
+        if: github.event.schedule == '43 * * * *' && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/contacts/name-sweep"
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}

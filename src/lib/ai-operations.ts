@@ -87,6 +87,9 @@ export const AI_OPERATIONS = {
   "search.embed": { label: "Search indexing", tier: "embed" },
   "search.embed.batch": { label: "Search indexing (bulk)", tier: "embed", background: true },
   "contact.brief": { label: "Contact briefs", tier: "user" },
+  // A real name for a contact saved under a handle ("jsmith42"), when the address book and
+  // the handle itself say nothing. A few words out; `@/lib/contact-name-sweep`.
+  "contact.name_guess": { label: "Contacts: reading names from handles", tier: "fast", thinking: "minimal", background: true },
   // The fast tier, like the other background extraction: nobody reads this answer directly,
   // it runs unattended on the person's own key, and the costly part of a searched answer is
   // the result pages it reads as input — which cost per token on the pricier model too. The
