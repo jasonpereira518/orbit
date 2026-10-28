@@ -672,7 +672,7 @@ export async function listContactTimelineInteractions(contactId: string) {
  * displays over (`sharedAvatarUrlSql`), so only server-side writers may set it.
  */
 function clientContactInput<T extends Partial<ContactInput>>(input: T): T {
-  const { profileImageSource: _serverOnly, ...rest } = input;
+  const { profileImageSource: _serverOnly, nameGuess: _sweepOnly, ...rest } = input;
   return rest as T;
 }
 
@@ -752,6 +752,30 @@ export async function updateContact(
   options?: ContactWriteOptions
 ) {
   return updateContactForUser(await requireUserId(), id, clientContactInput(input), options);
+}
+
+/**
+ * The "?" by a name Orbit read from a handle (`ContactName`): Confirm keeps the name, Change
+ * saves the one the person typed. Either way the guess is settled and the "?" goes.
+ */
+export async function reviewContactName(id: string, name?: { firstName: string; lastName: string }) {
+  const userId = await requireUserId();
+  if (name) {
+    const firstName = name.firstName.trim();
+    const lastName = name.lastName.trim();
+    await updateContactForUser(userId, id, {
+      fullName: [firstName, lastName].filter(Boolean).join(" "),
+      firstName,
+      lastName,
+    });
+  }
+  const db = await getDb();
+  await db
+    .update(contacts)
+    .set({ nameGuess: sql`${contacts.nameGuess} || '{"weak": false}'::jsonb` })
+    .where(and(eq(contacts.id, id), eq(contacts.userId, userId), sql`${contacts.nameGuess} IS NOT NULL`));
+  revalidatePath("/contacts");
+  revalidatePath(`/contacts/${id}`);
 }
 
 /** Valid range for a user-supplied closeness rating (matches the 1–5 scale used throughout, e.g. contact-form.tsx's "Strength" field). */
@@ -1843,6 +1867,7 @@ export async function listRelatedContacts(
       email: true,
       phone: true,
       aiSummary: true,
+      nameGuess: true,
     },
     // The browser-safe avatar URL, not the stored value: an inline photo is up to ~120 KB of
     // base64, and six of them rode inside every profile's payload (and every prefetch of it)

@@ -46,6 +46,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-ai-notice-copy": "pure",
   "smoke-interaction-edit": "pure",
   "smoke-inbox-search": "pure",
+  "smoke-contact-name-guess": "pure",
+  "smoke-contact-name-sweep": "pglite",
   "smoke-onboarding-steps": "pure",
   "smoke-onboarding-examples-cast": "pure",
   "smoke-onboarding-gate": "pure",

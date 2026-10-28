@@ -56,6 +56,8 @@ import {
 } from "@/lib/closeness";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { ExampleTag } from "@/components/onboarding/example-tag";
+import { ContactName } from "@/components/contacts/contact-name";
+import { openNameGuess } from "@/lib/contact-name-guess";
 import { isTourExampleSource } from "@/lib/onboarding-examples/marker";
 import { cn } from "@/lib/utils";
 import { LIST_INTENT_DELAY_MS, useIntentPrefetchHandlers } from "@/lib/intent-prefetch";
@@ -773,6 +775,7 @@ const ContactRow = memo(function ContactRow({
 
           <div className="min-w-0 flex-1">
             <p className="truncate font-medium text-ink">
+              <ContactName contactId={c.id} name={c.preferredName || c.fullName} guess={openNameGuess(c)}>
               <Link
                 href={href}
                 prefetch={false}
@@ -787,6 +790,7 @@ const ContactRow = memo(function ContactRow({
               >
                 <bdi>{c.preferredName || c.fullName}</bdi>
               </Link>
+              </ContactName>
               {isTourExampleSource(c.source) && (
                 <ExampleTag className="ml-1.5 align-[2px]" />
               )}

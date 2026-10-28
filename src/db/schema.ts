@@ -109,6 +109,7 @@ import type {
 } from "@/lib/capture/types";
 import type { CaptureParseHints } from "@/lib/ai";
 import type { MentionPick } from "@/lib/mentions/mention-picks";
+import type { NameGuess } from "@/lib/contact-name-guess";
 
 export const userSettings = pgTable("user_settings", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -678,6 +679,12 @@ export const contacts = pgTable(
     firstName: text("first_name"),
     lastName: text("last_name"),
     preferredName: text("preferred_name"),
+    /**
+     * Set when `fullName` was read from a handle ("jsmith42", "john.doe") rather than given.
+     * `weak` puts a "?" by the name to confirm or change it; null = never checked.
+     * See `@/lib/contact-name-guess`.
+     */
+    nameGuess: jsonb("name_guess").$type<NameGuess>(),
     company: text("company"),
     companyId: uuid("company_id").references(() => companies.id, {
       onDelete: "set null",

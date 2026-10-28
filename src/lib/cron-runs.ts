@@ -19,6 +19,7 @@ export type CronJobName =
   | "billing.reconcile"
   | "cloud-notes.run"
   | "connectors.outbox"
+  | "contacts.name-sweep"
   | "credits.notices"
   | "email.drain"
   | "imports.process-stalled"
