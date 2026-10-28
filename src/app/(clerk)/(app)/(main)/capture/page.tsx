@@ -15,7 +15,7 @@ import { RenderStamp } from "@/components/layout/render-stamp";
 import { findEventById } from "@/lib/calendar-events";
 import { userTimeZone } from "@/lib/meeting-context";
 import { ymdInZone } from "@/lib/reminder-due-bucket";
-import { CLOUD_NOTES_SURFACE_KEY } from "@/lib/surfaces";
+import { CHAT_IMPORTS_SURFACE_KEY, CLOUD_NOTES_SURFACE_KEY } from "@/lib/surfaces";
 import { isSurfaceLive } from "@/lib/surface-visibility";
 
 export const metadata = { title: "Capture" };
@@ -63,6 +63,10 @@ export default async function CapturePage({
     .then((userId) => isSurfaceLive(userId, CLOUD_NOTES_SURFACE_KEY))
     .then((live) => (live ? getCloudNotesState() : null))
     .catch(() => null);
+  // Whether a dropped chat export has a card to go to.
+  const chatImportsPromise = userIdPromise
+    .then((userId) => isSurfaceLive(userId, CHAT_IMPORTS_SURFACE_KEY))
+    .catch(() => false);
 
   let contactId: string | null = null;
   let contactName: string | null = null;
@@ -100,6 +104,7 @@ export default async function CapturePage({
   const jobs = await jobsPromise;
   const ignoredCount = await ignoredPromise;
   const cloudNotes = await cloudNotesPromise;
+  const chatImports = await chatImportsPromise;
   // An unfinished meeting is the one thing on this page that can be lost by ignoring it,
   // so it opens on the Meeting tab unless the link asked for something specific.
   const defaultMode: CaptureMode =
@@ -142,6 +147,7 @@ export default async function CapturePage({
         canUseSync={canUseSync}
         cloudNotes={cloudNotes}
         openCloudReview={params.review === "1"}
+        chatImports={chatImports}
         drive={{
           apiKey: process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY ?? null,
           appId: process.env.NEXT_PUBLIC_GOOGLE_APP_ID ?? null,

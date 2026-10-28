@@ -370,7 +370,7 @@ async function classifyFile(entry: DroppedFile): Promise<Detected> {
       ...base,
       target: "unknown",
       confidence: "guess",
-      reason: "not something Orbit reads",
+      reason: NOT_READ,
     };
   }
   return { ...base, ...best };
@@ -406,6 +406,9 @@ function isLinkedInYouMember(name: string): boolean {
 
 /** Why a non-CSV in a LinkedIn export folder is set aside — also how the hub counts them. */
 export const LINKEDIN_LEFT_OUT = "not needed from a LinkedIn export";
+
+/** Why a file matched no importer at all — what `/capture`'s drop retries as a note or a recording. */
+export const NOT_READ = "not something Orbit reads";
 
 /** Why a private export member (receipts, ID verification…) is never read or uploaded. */
 export const LINKEDIN_PRIVATE = "private — stays on your device";
