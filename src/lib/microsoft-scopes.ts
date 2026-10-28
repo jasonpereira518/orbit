@@ -26,6 +26,8 @@ export const MICROSOFT_SCOPES = {
   userRead: `${GRAPH_PREFIX}User.Read`,
   contacts: `${GRAPH_PREFIX}Contacts.Read`,
   calendar: `${GRAPH_PREFIX}Calendars.Read`,
+  /** Adding the meetings chat sets up to the person's own calendar, only when they ask for it. */
+  calendarWrite: `${GRAPH_PREFIX}Calendars.ReadWrite`,
   mail: `${GRAPH_PREFIX}Mail.Read`,
   /**
    * Send mail as the user — the only write permission Orbit asks Microsoft for, and only when
@@ -39,7 +41,7 @@ export const MICROSOFT_SCOPES = {
 
 export type MicrosoftScope = (typeof MICROSOFT_SCOPES)[keyof typeof MICROSOFT_SCOPES];
 
-export const MICROSOFT_PURPOSES = ["contacts", "calendar", "recruiter_scan", "send", "files"] as const;
+export const MICROSOFT_PURPOSES = ["contacts", "calendar", "calendar_write", "recruiter_scan", "send", "files"] as const;
 export type MicrosoftPurpose = (typeof MICROSOFT_PURPOSES)[number];
 
 const IDENTITY_SCOPES: readonly MicrosoftScope[] = [
@@ -53,6 +55,7 @@ const IDENTITY_SCOPES: readonly MicrosoftScope[] = [
 const PURPOSE_SCOPE: Record<MicrosoftPurpose, MicrosoftScope> = {
   contacts: MICROSOFT_SCOPES.contacts,
   calendar: MICROSOFT_SCOPES.calendar,
+  calendar_write: MICROSOFT_SCOPES.calendarWrite,
   recruiter_scan: MICROSOFT_SCOPES.mail,
   send: MICROSOFT_SCOPES.mailSend,
   files: MICROSOFT_SCOPES.files,

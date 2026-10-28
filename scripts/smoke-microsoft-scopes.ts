@@ -43,7 +43,14 @@ const identity = [
   MICROSOFT_SCOPES.offlineAccess,
   MICROSOFT_SCOPES.userRead,
 ];
-const featureScopes: string[] = [MICROSOFT_SCOPES.contacts, MICROSOFT_SCOPES.calendar, MICROSOFT_SCOPES.mail, MICROSOFT_SCOPES.mailSend, MICROSOFT_SCOPES.files];
+const featureScopes: string[] = [
+  MICROSOFT_SCOPES.contacts,
+  MICROSOFT_SCOPES.calendar,
+  MICROSOFT_SCOPES.calendarWrite,
+  MICROSOFT_SCOPES.mail,
+  MICROSOFT_SCOPES.mailSend,
+  MICROSOFT_SCOPES.files,
+];
 
 console.log("Scopes per purpose");
 for (const purpose of MICROSOFT_PURPOSES) {
@@ -56,12 +63,17 @@ check("calendar never asks to read mail or contacts", !microsoftScopesFor(["cale
 check("the recruiter scan asks for Mail.Read only", requiredScopeFor("recruiter_scan") === MICROSOFT_SCOPES.mail && !microsoftScopesFor(["recruiter_scan"]).includes(MICROSOFT_SCOPES.calendar));
 check("Graph scopes are requested as full URIs", requiredScopeFor("calendar") === "https://graph.microsoft.com/Calendars.Read" && MICROSOFT_SCOPES.userRead === "https://graph.microsoft.com/User.Read");
 check("a refresh token is still requested (offline_access)", microsoftScopesFor(["contacts"]).includes("offline_access"));
+// Two write scopes, each behind its own purpose: Mail.Send for sending, and Calendars.ReadWrite
+// (Graph has no write-only calendar permission) for adding a chat meeting to the calendar.
 check(
-  "the only write scope is Mail.Send, and only the send purpose asks for it",
-  Object.values(MICROSOFT_SCOPES).filter((s) => /write|send/i.test(s)).join() === MICROSOFT_SCOPES.mailSend &&
-    MICROSOFT_PURPOSES.filter((p) => requiredScopeFor(p) === MICROSOFT_SCOPES.mailSend).join() === "send"
+  "the only write scopes are Mail.Send and Calendars.ReadWrite, each asked for by one purpose",
+  Object.values(MICROSOFT_SCOPES).filter((s) => /write|send/i.test(s)).sort().join() ===
+    [MICROSOFT_SCOPES.calendarWrite, MICROSOFT_SCOPES.mailSend].sort().join() &&
+    MICROSOFT_PURPOSES.filter((p) => requiredScopeFor(p) === MICROSOFT_SCOPES.mailSend).join() === "send" &&
+    MICROSOFT_PURPOSES.filter((p) => requiredScopeFor(p) === MICROSOFT_SCOPES.calendarWrite).join() === "calendar_write"
 );
-check("never Mail.ReadWrite", !Object.values(MICROSOFT_SCOPES).some((s) => /readwrite/i.test(s)));
+check("never Mail.ReadWrite", !Object.values(MICROSOFT_SCOPES).some((s) => /mail\.readwrite/i.test(s)));
+check("Connect never asks to write the calendar", !microsoftScopesFor(MICROSOFT_CONNECT_PURPOSES).includes(MICROSOFT_SCOPES.calendarWrite));
 check("send asks for Mail.Send and nothing that reads", requiredScopeFor("send") === MICROSOFT_SCOPES.mailSend && !microsoftScopesFor(["send"]).includes(MICROSOFT_SCOPES.mail));
 
 console.log("Requests carry what was already enabled — and only that");
