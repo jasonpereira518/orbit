@@ -181,6 +181,11 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
         ? { state: "on", detail: plural(keys.length, "key") }
         : { state: "off", detail: "No keys" };
 
+  // File imports have no connection to report; Drive rides the Google grant.
+  connectors.contacts_file = { state: "none", detail: "Upload a file any time" };
+  connectors.chat_exports = { state: "none", detail: "Upload an export any time" };
+  connectors.google_drive = connectors.google;
+
   // The registry and this action must answer for the same connectors. The smoke test checks
   // the list against the registry; this checks the implementation against the list.
   for (const id of CONNECTOR_STATUS_LOOKUP_IDS) {
