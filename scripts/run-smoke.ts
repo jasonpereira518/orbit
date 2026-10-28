@@ -384,6 +384,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-photos": "pglite",
   "smoke-clear-api-key": "pglite",
   "smoke-connector-registry": "pglite", // imports entitlements + rate-limit, which reach @/db
+  "smoke-integration-catalog": "pure",
   "smoke-integration-statuses": "pglite", // drives getIntegrationStatuses against real rows
   "smoke-connector-claim": "pglite",
   "smoke-connector-outbox": "pglite",

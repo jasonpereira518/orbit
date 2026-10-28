@@ -130,6 +130,10 @@ run(async () => {
     eventbrite: "Connected",
     apollo: "Key saved",
     zapier: "1 key",
+    contacts_file: "Upload a file any time",
+    chat_exports: "Upload an export any time",
+    // Drive rides the Google grant seeded above.
+    google_drive: "Connected",
   };
   for (const id of CONNECTOR_STATUS_LOOKUP_IDS) {
     const status = statuses.connectors[id];
