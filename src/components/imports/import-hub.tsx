@@ -59,8 +59,7 @@ import {
 } from "@/lib/imports/google-picker";
 import type { PickedDriveFile } from "@/lib/imports/drive-triage";
 import { checkDriveReadiness } from "@/actions/drive";
-import { addContactsFromLinkedInUrls } from "@/actions/linkedin-drop";
-import { extractLinkedInProfileRefs } from "@/lib/linkedin-paste";
+import { addLinkedInProfilesFromText } from "@/components/capture/capture-import-strip";
 import { startGmailOAuth } from "@/actions/gmail";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
@@ -506,58 +505,9 @@ export function ImportHub({
     [chatImports, setOpen],
   );
 
-  /**
-   * A LinkedIn profile link dragged in from another tab (or pasted onto the page) adds that
-   * person straight away — the drop is the whole instruction, so there is no review step.
-   * Pasted text that holds no profile link is ignored rather than scolded: people paste onto
-   * pages by accident, but nobody drags a link here by accident.
-   */
+  /** A LinkedIn profile link dragged or pasted onto the page adds that person straight away. */
   const handleLinkText = useCallback(
-    async (text: string, how: "drop" | "paste") => {
-      if (!extractLinkedInProfileRefs(text).length) {
-        if (how === "drop") toast.error(IMPORT_COPY.linkNotProfile);
-        return;
-      }
-      const id = toast.loading(IMPORT_COPY.linkAdding);
-      try {
-        const result = await addContactsFromLinkedInUrls(text);
-        const view = (contactId: string) => ({
-          label: "View",
-          onClick: () => router.push(`/contacts/${contactId}`),
-        });
-        const { added, existing } = result;
-        const guessed = result.degraded ? IMPORT_COPY.linkNameGuessed : undefined;
-
-        if (added.length === 1) {
-          toast.success(`Added ${added[0]!.name} to your contacts`, {
-            id,
-            description: guessed,
-            action: view(added[0]!.contactId),
-          });
-        } else if (added.length > 1) {
-          toast.success(`Added ${added.length} people to your contacts`, {
-            id,
-            description: guessed,
-            action: { label: "View", onClick: () => router.push("/contacts") },
-          });
-        } else if (existing.length === 1) {
-          toast.message(`${existing[0]!.name} is already in your contacts`, {
-            id,
-            action: view(existing[0]!.contactId),
-          });
-        } else if (existing.length > 1) {
-          toast.message(`All ${existing.length} are already in your contacts`, { id });
-        }
-
-        if (result.limitMessage) {
-          if (added.length || existing.length) toast.error(result.limitMessage);
-          else toast.error(result.limitMessage, { id });
-        }
-        if (added.length) router.refresh();
-      } catch (err) {
-        toast.error(friendlyError(err, IMPORT_COPY.linkAddFailed), { id });
-      }
-    },
+    (text: string, how: "drop" | "paste") => addLinkedInProfilesFromText(text, how, router),
     [router],
   );
 

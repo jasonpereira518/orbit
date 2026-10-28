@@ -256,6 +256,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-icon-button-names": "pure",
   "smoke-chat-handoff": "pure",
   "smoke-import-detect": "pure",
+  "smoke-capture-route-drop": "pure",
   "smoke-linkedin-you": "pure",
   "smoke-linkedin-export-card": "pure",
   "smoke-focus-fit": "pure",

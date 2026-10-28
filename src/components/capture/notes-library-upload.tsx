@@ -27,7 +27,9 @@ import {
   type DroppedFile,
 } from "@/lib/capture/file-drop";
 import { NotesSorterDialog } from "@/components/capture/notes-sorter-dialog";
-import { DriveCaptureButton, type DriveCaptureConfig } from "@/components/capture/drive-capture-button";
+import { DriveCaptureButton, DriveDocsButton, type DriveCaptureConfig } from "@/components/capture/drive-capture-button";
+import { DriveImportCard } from "@/components/imports/drive-import-card";
+import type { PickedDriveFile } from "@/lib/imports/drive-triage";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { FanoutEntry } from "@/lib/capture/fanout";
@@ -69,6 +71,7 @@ export function NotesLibraryUpload({
   const [reading, setReading] = useState(false);
   const [incoming, setIncoming] = useState<DroppedFile[]>([]);
   const [sorterOpen, setSorterOpen] = useState(false);
+  const [drivePicks, setDrivePicks] = useState<PickedDriveFile[] | null>(null);
 
   const fanout = useCaptureFanout({ onSettled: onQueued });
   const busy = fanout.running || !hasApiKey;
@@ -188,6 +191,7 @@ export function NotesLibraryUpload({
             Choose a folder
           </Button>
           <DriveCaptureButton drive={drive} canUseSync={canUseSync} disabled={busy || reading} onQueued={onQueued} />
+          <DriveDocsButton drive={drive} canUseSync={canUseSync} disabled={reading} onPicked={setDrivePicks} />
         </div>
 
         {reading && (
@@ -202,6 +206,8 @@ export function NotesLibraryUpload({
           </p>
         )}
       </div>
+
+      {drivePicks && <DriveImportCard files={drivePicks} onDone={() => setDrivePicks(null)} />}
 
       {/* Mounted only while open, so closing unmounts it — which is what lets the dialog
           revoke forty object URLs in an unmount cleanup rather than resetting its own state
