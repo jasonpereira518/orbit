@@ -24,7 +24,7 @@ import {
   type ReminderActionKind,
   type ReminderOrigin,
 } from "@/db/schema";
-import { dueDayOf, ymdInZone } from "@/lib/reminder-due-bucket";
+import { dueDayOf, isDateOnlyDue, ymdInZone } from "@/lib/reminder-due-bucket";
 import {
   REMINDERS_PAGE_SIZE,
   type ReminderRailCounts,
@@ -252,6 +252,10 @@ export async function queryRemindersPage(
     description: r.description,
     dueDate: r.dueDate ? r.dueDate.toISOString() : null,
     dueDay: dueDayOf(r.dueDate, filters.tz),
+    dueTime:
+      r.actionKind === "meet" && r.dueDate && !isDateOnlyDue(r.dueDate)
+        ? r.dueDate.toLocaleTimeString("en-US", { timeZone: filters.tz, hour: "numeric", minute: "2-digit" })
+        : null,
     status: r.status,
     reminderType: r.reminderType,
     actionKind: (r.actionKind || "task") as ReminderActionKind,

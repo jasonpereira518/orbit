@@ -15,7 +15,7 @@ import { getContactBrief } from "@/lib/contact-brief";
 import { normalizeSenderBio } from "@/lib/sender-profile";
 import { EMPTY_PREFETCH, loadChatPrefetch } from "@/lib/chat-prefetch";
 import { userTimeZone } from "@/lib/meeting-context";
-import { resolveTimeZone } from "@/lib/reminder-due-bucket";
+import { isValidTimeZone, resolveTimeZone, ymdInZone } from "@/lib/reminder-due-bucket";
 import {
   loadAttachedPeople,
   renderAttachedPeople,
@@ -143,6 +143,8 @@ type BudgetedContact = ReturnType<typeof budgetContactsContext>[number];
 
 export type ChatContext = {
   q: string;
+  /** The user's IANA zone: what "today" and any time a change names are read in. */
+  timeZone: string;
   thread: { id: string; title: string | null } | null;
   priorTurns: ChatTurn[];
   retrieved: RankedContact[];
@@ -719,6 +721,25 @@ export function renderFocusProfile(profile: Awaited<ReturnType<typeof getContact
   return `${rendered.slice(0, FOCUS_PROFILE_MAX_CHARS)}\n(profile truncated at ${FOCUS_PROFILE_MAX_CHARS} characters)`;
 }
 
+/** "Wednesday 2026-10-28 14:05" on the user's wall clock. */
+function nowInZone(now: Date, tz: string): string {
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      hourCycle: "h23",
+      weekday: "long",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    })
+      .formatToParts(now)
+      .map((x) => [x.type, x.value])
+  );
+  return `${p.weekday} ${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
+}
+
 export async function prepareChatContext(
   userId: string,
   question: string,
@@ -744,6 +765,8 @@ export async function prepareChatContext(
      * opened here, once, beside the other first reads.
      */
     access?: AiAccess;
+    /** The browser's zone, sent with the question. Checked; the stored one stands in without it. */
+    timeZone?: string | null;
   }
 ): Promise<ChatContext> {
   const db = await getDb();
@@ -798,9 +821,11 @@ export async function prepareChatContext(
   const deciderP = accessP.then((access) => openDecider(userId, access));
   // The user's zone for "today" and for meeting times, from the row the access already read —
   // the prefetch and the calendar run on every question, and must not each re-read it.
-  const tzP: Promise<string> = accessP
-    .then((access) => (access?.settings ? resolveTimeZone(access.settings.radarDigestTz) : userTimeZone(userId)))
-    .catch(() => "UTC");
+  const tzP: Promise<string> = isValidTimeZone(options.timeZone)
+    ? Promise.resolve(options.timeZone)
+    : accessP
+        .then((access) => (access?.settings ? resolveTimeZone(access.settings.radarDigestTz) : userTimeZone(userId)))
+        .catch(() => "UTC");
   let settleParsed: (parsed: ParsedQuery | null) => void = () => {};
   const parsedP = new Promise<ParsedQuery | null>((resolve) => {
     settleParsed = resolve;
@@ -1148,10 +1173,11 @@ export async function prepareChatContext(
   }
 
   const userContext = thread?.contextNote?.trim() || null;
+  const timeZone = await tzP;
   const scopedQuestion = [
     // Trusted, computed here: the date (relative dates and proposed due dates were guesses
     // without it), who the user is, and how big the network is beyond the ranked page.
-    `[Today is ${isoDay(new Date())}.]`,
+    `[Today is ${ymdInZone(new Date(), timeZone)}. Now: ${nowInZone(new Date(), timeZone)} in the user's time zone, ${timeZone}.]`,
     retrieval.aboutUser ? `[${retrieval.aboutUser}]` : null,
     networkSize
       ? `[The user has ${networkSize} contacts in total; the Contacts list below is only the ${retrieved.length} most relevant to this question.]`
@@ -1215,6 +1241,7 @@ export async function prepareChatContext(
 
   return {
     q,
+    timeZone,
     thread: thread ?? null,
     priorTurns,
     route: await routeP,

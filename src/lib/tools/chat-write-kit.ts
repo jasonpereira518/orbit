@@ -77,6 +77,11 @@ export type ChatWrite = {
   preview(input: Record<string, unknown>, scope: ProposalScope): string;
   /** The contact the card shows, when there is one. */
   contactOf?(input: Record<string, unknown>): string | null;
+  /**
+   * The input as it is stored, once the card's sentence is written: a wall-clock time the
+   * model gave in the user's zone becomes the instant it names, so the commit needs no zone.
+   */
+  normalize?(input: Record<string, unknown>, ctx: { timeZone: string }): Record<string, unknown>;
   commit(userId: string, input: Record<string, unknown>, ref: { messageId: string; actionId: string }): Promise<CommitOutcome>;
 };
 
