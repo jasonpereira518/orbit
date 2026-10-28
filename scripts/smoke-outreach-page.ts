@@ -27,6 +27,7 @@ import {
 } from "../src/lib/outreach-metrics";
 import { asLinkedInProfile, campaignHeaderLabels } from "../src/lib/outreach-channels";
 import { withoutOwnContact, type WarmPath } from "../src/lib/warm-paths";
+import { checkRecipient } from "../src/lib/chat-send";
 import {
   copyBlockedReason,
   linkedInOpenUrl,
@@ -40,7 +41,6 @@ import {
 import {
   CONTACTED_STATUSES,
   audienceSubtitle,
-  EMAIL_SHAPE,
   EMAILED_STATUSES,
   LINKEDIN_CONTACTED_STATUSES,
   OUTREACH_REPLY_CTAS,
@@ -141,6 +141,7 @@ async function main() {
     const actions = code("src/actions/outreach.ts");
     const body = declaration(actions, "export async function createCampaign");
     check("is found", body.length > 0);
+    check("updateCampaign, which nothing called, is gone", !actions.includes("updateCampaign") && !actions.includes("pickCampaignFields"));
     check("takes no model call", !body.includes("parseAudienceToFilters"));
     check("is wrapped, so a refusal reaches the form as data", body.includes("asActionResult"));
     const guard = body.indexOf("requireOutreachUser()");
@@ -306,8 +307,14 @@ async function main() {
     check("the readiness cell reads the pipeline bucket", people.includes("prospectPipelineBucket("));
     check("the network badge is there", people.includes("Already in your network") && people.includes("isInNetwork("));
     check("Research is off without AI", /canUseAi/.test(people) && people.includes("Researching…"));
-    check("the manual form checks the email with the server’s shape", people.includes("EMAIL_SHAPE.test(") && people.includes("That address doesn’t look right"));
-    check("…and that shape is the server’s own, not a copy", /EMAIL_SHAPE/.test(code("src/lib/outreach-people.ts")) && !/const EMAIL_RE/.test(code("src/lib/outreach-people.ts")));
+    check("the manual form checks the email with the outbox’s own rule", people.includes("checkRecipient(") && people.includes("That address doesn’t look right"));
+    check("…and so does the server, not a copy of it", /checkRecipient\(/.test(code("src/lib/outreach-people.ts")) && !/EMAIL_SHAPE|const EMAIL_RE/.test(code("src/lib/outreach-people.ts")));
+    check("…and the send, before it makes a contact", (() => {
+      const send = declaration(code("src/lib/outreach-messages.ts"), "export async function sendCampaignMessagesForUser");
+      const at = send.indexOf("checkRecipient(");
+      return at > 0 && at < send.indexOf("ensureProspectContactForUser(");
+    })());
+    check("the form says when the server refused an address", people.includes("badEmail"));
     check("the manual form adds with origin manual", /origin:\s*"manual"/.test(people));
     check("a person put back reads as on the list", people.includes("is on the list"));
 
@@ -323,7 +330,11 @@ async function main() {
     check("a LinkedIn draft does not", !hasBeenContactedOnLinkedin([{ status: "generated", channel: "linkedin" }]));
     check("a copied LinkedIn note does", hasBeenContactedOnLinkedin([{ status: "copied", channel: "linkedin" }]));
     check("a sent email does not lock the LinkedIn link", !hasBeenContactedOnLinkedin([{ status: "sent", channel: "email" }]));
-    check("the email shape takes an address and refuses a name or a stray symbol", EMAIL_SHAPE.test("jane@zs.com") && !EMAIL_SHAPE.test("jane") && !EMAIL_SHAPE.test("Jane <jane@zs.com>") && !EMAIL_SHAPE.test("a b@zs.com") && !EMAIL_SHAPE.test("jane@"));
+    check(
+      "the address rule takes an address and refuses a name, a stray symbol, a dotless domain or a placeholder",
+      checkRecipient("jane@zs.com").ok &&
+        ["jane", "Jane <jane@zs.com>", "a b@zs.com", "jane@", "jane@company", "o'brien@x.com", "a@acme.example.com"].every((e) => !checkRecipient(e).ok)
+    );
     check("a copied note has been contacted", hasBeenContacted([{ status: "copied" }]));
     check("a draft has not", !hasBeenContacted([{ status: "draft" }, { status: "generated" }]));
     check("emailSource contact is in the network", isInNetwork({ contactId: null, enrichment: { emailSource: "contact" }, messages: [{ status: "sent" }] }));
@@ -801,6 +812,17 @@ async function main() {
     check("an empty name never matches", audienceSubtitle("", AUDIENCE) === AUDIENCE);
     check("no audience shows nothing", audienceSubtitle("Q4 push", "  ") === null && audienceSubtitle("Q4 push", null) === null);
     check("the page asks the helper", /audienceSubtitle\(campaign\.name,\s*campaign\.audienceQuery\)/.test(page));
+
+    console.log("  final review");
+    const pending = code("src/components/email/pending-sends.tsx");
+    check("the contact page offers no Retry or Edit for a campaign send", /retryable\s*=[^;]*s\.origin !== "outreach"/.test(pending));
+    check("a send stops handing over at 35s", /SEND_BUDGET_MS = 35_000/.test(code("src/lib/outreach-messages.ts")));
+    const sentView = declaration(code("src/components/outreach/campaign-messages.tsx"), "function SentView(");
+    check("the Sent view offers It went out for an unsure message", sentView.includes("It went out") && sentView.includes("markWentOut("));
+    check("…through a guarded, wrapped action", (() => {
+      const action = declaration(code("src/actions/outreach-messages.ts"), "export async function markWentOut");
+      return action.includes("asActionResult") && action.indexOf("requireOutreachUser()") > 0 && action.includes("markMessageWentOutForUser(");
+    })());
 
     console.log("  a locked, empty address is text, not a box");
     const field = declaration(people, "function SavedField(");

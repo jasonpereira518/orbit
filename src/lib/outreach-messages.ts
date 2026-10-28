@@ -1,7 +1,9 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb, rowsOf, runAtomicBatch } from "@/db";
-import { interactions, outreachCampaigns, outreachMessages, outreachProspects } from "@/db/schema";
+import { emailSends, interactions, outreachCampaigns, outreachMessages, outreachProspects } from "@/db/schema";
+import { checkRecipient } from "@/lib/chat-send";
 import { logInteractionForUser, type ContactWriteOptions } from "@/lib/contact-writes";
+import { repliedSince } from "@/lib/email/inbox-threads";
 import "@/lib/email/origin-registrations";
 import { ENQUEUE_COPY, chargeEmailBurst, dispatchEmailSend, enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
 import { replySubject, resolveReplyTarget } from "@/lib/email/reply-targets";
@@ -15,7 +17,8 @@ import {
 } from "@/lib/outreach-drafts";
 import { followUpDue } from "@/lib/outreach-followups";
 import { ensureProspectContactForUser } from "@/lib/outreach-people";
-import { DEMO_PROSPECT_SEND_MESSAGE, isDemoProspect, isPlaceholderAddress } from "@/lib/outreach-quality";
+import { DEMO_PROSPECT_SEND_MESSAGE, isDemoProspect } from "@/lib/outreach-quality";
+import type { ReplyLookup } from "@/lib/outreach-replies";
 import {
   BULK_SEND_LIMIT,
   LINKEDIN_NOTE_MAX,
@@ -46,6 +49,7 @@ const ALREADY_SENT = "This message was already sent, so it can’t be edited";
 const NOT_LINKEDIN = "This campaign isn’t set up for LinkedIn";
 const FOLLOW_UP_NOT_DUE = "A follow-up isn’t due for this person yet";
 const FOLLOW_UP_EXISTS = "A follow-up is already written for this person";
+const LINKEDIN_REPLIED = "They already replied — no follow-up needed";
 /**
  * A LinkedIn profile link the browser may be sent to. Prospects added through `/outreach` only
  * ever hold an https one, but the older search path stores whatever its provider returned, and
@@ -423,7 +427,7 @@ const SEND_SPACING_MS = 1200;
  * `maxDuration`, and a killed function never runs the `finally` that puts unsent claims back:
  * a message stranded in `queued` can't be claimed, edited or removed again.
  */
-const SEND_BUDGET_MS = 40_000;
+const SEND_BUDGET_MS = 35_000;
 /** Refusals that no later message in the batch could get past either. */
 const STOPS_BATCH: EnqueueRefusal[] = ["cap_reached", "not_connected", "no_send_scope", "needs_reauth"];
 
@@ -433,9 +437,12 @@ const STOPS_BATCH: EnqueueRefusal[] = ["cap_reached", "not_connected", "no_send_
  * Returns how many it released.
  *
  * A message is stranded when it was claimed, the function died before the `finally` below could
- * put it back, and no `email_sends` row was ever made for it (an outbox row means the hook
- * settles it, however slowly). Five minutes is safe because the page runs under a 60s
- * `maxDuration`, so no live send still holds a claim that old.
+ * put it back, and no `email_sends` row that can still settle was ever made for it (one the hook
+ * will settle, however slowly). Only the rows the outbox's idempotency index holds count: active
+ * ones and a may-have-sent failure. A canceled row (Cancel on the contact page runs no hook) or
+ * an old definite failure under a re-claimed message never settles it, so neither holds it.
+ * Five minutes is safe because the page runs under a 60s `maxDuration`, so no live send still
+ * holds a claim that old.
  */
 export async function releaseStrandedMessagesForUser(userId: string, campaignId: string): Promise<number> {
   if (!isUuid(campaignId)) return 0;
@@ -454,6 +461,7 @@ export async function releaseStrandedMessagesForUser(userId: string, campaignId:
          AND NOT EXISTS (
            SELECT 1 FROM email_sends s
             WHERE s.user_id = ${userId} AND s.origin = 'outreach' AND s.origin_ref = m.id::text
+              AND (s.status IN ('queued', 'sending', 'sent') OR s.failure_kind = 'ambiguous')
          )
       RETURNING m.id
     `)
@@ -478,7 +486,7 @@ export type SendCampaignResult = {
  * the same step for one person, whether it's already out or in the same batch. Anything
  * claimed that this call doesn't hand to the outbox goes back to `draft` before it returns,
  * error or not (and a message a killed send stranded in `queued` is released first, see
- * `releaseStrandedMessagesForUser`). After `budgetMs` (40s) it stops handing messages over, well inside the
+ * `releaseStrandedMessagesForUser`). After `budgetMs` (35s) it stops handing messages over, well inside the
  * page's 60s limit, and counts the rest as `notSent`. Ids that aren't this campaign's
  * emails are ignored.
  *
@@ -487,13 +495,26 @@ export type SendCampaignResult = {
  *
  * A follow-up (`step_index` 1) goes out as a reply to its first message, in the same thread when
  * the first was sent from the mailbox this send will use. The claim refuses one whose first
- * message has since got an outcome (a reply, a bounce).
+ * message has since got an outcome (a reply, a bounce), and just before it is handed over the
+ * mailbox is asked once more (`replyLookup`, `repliedSince` by default): a reply the checker
+ * hasn't seen yet marks the first message `replied` and the follow-up goes back to a draft. A
+ * lookup that can't answer (null) lets it go.
+ *
+ * One address is one person: the claim also refuses a message whose address another person on
+ * the campaign has already been sent (or may have been sent) at that step, and keeps one per
+ * address out of a batch. An address the outbox would refuse is caught before a contact is made.
  */
 export async function sendCampaignMessagesForUser(
   userId: string,
   campaignId: string,
   messageIds: string[],
-  opts: { fromName?: string | null; spacingMs?: number; budgetMs?: number; contactWrite?: ContactWriteOptions } = {}
+  opts: {
+    fromName?: string | null;
+    spacingMs?: number;
+    budgetMs?: number;
+    contactWrite?: ContactWriteOptions;
+    replyLookup?: ReplyLookup;
+  } = {}
 ): Promise<SendCampaignResult> {
   const start = Date.now();
   const list = Array.isArray(messageIds) ? messageIds : [];
@@ -513,8 +534,9 @@ export async function sendCampaignMessagesForUser(
 
   // The claim, and with it the double-send guard: one statement. The outer status check is
   // re-evaluated against a row a concurrent claim just changed, so only one claim gets it.
-  // DISTINCT ON keeps one message per person and step out of this batch, and NOT EXISTS
-  // refuses one whose person already has another at that step that went out or may have.
+  // DISTINCT ON keeps one message per address (per person when there is none) and step out of
+  // this batch; the NOT EXISTS clauses refuse one whose person, or another person on the campaign
+  // with the same address, already has one at that step that went out or may have.
   // ponytail: two concurrent calls each holding a DIFFERENT message for one person and step
   // can both pass NOT EXISTS (neither sees the other's uncommitted claim); drafting already
   // keeps one step-0 message per person, so this is the belt, not the braces.
@@ -525,7 +547,7 @@ export async function sendCampaignMessagesForUser(
          SET status = 'queued', error_message = NULL, updated_at = now()
        WHERE m.status IN ('draft', 'generated', 'failed')
          AND m.id IN (
-           SELECT DISTINCT ON (c.prospect_id, c.step_index) c.id
+           SELECT DISTINCT ON (coalesce(nullif(lower(btrim(p.email)), ''), p.id::text), c.step_index) c.id
              FROM outreach_messages c
              JOIN outreach_prospects p ON p.id = c.prospect_id
              JOIN outreach_campaigns k ON k.id = p.campaign_id
@@ -535,7 +557,7 @@ export async function sendCampaignMessagesForUser(
               AND p.campaign_id = ${campaign.id}::uuid
               AND p.status <> 'excluded'
               AND k.user_id = ${userId}
-            ORDER BY c.prospect_id, c.step_index, c.created_at, c.id
+            ORDER BY coalesce(nullif(lower(btrim(p.email)), ''), p.id::text), c.step_index, c.created_at, c.id
          )
          AND NOT EXISTS (
            SELECT 1 FROM outreach_messages o
@@ -548,6 +570,16 @@ export async function sendCampaignMessagesForUser(
            SELECT 1 FROM outreach_messages pm
             WHERE pm.id = m.parent_message_id
               AND pm.outcome IS NOT NULL
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM outreach_prospects mp
+             JOIN outreach_prospects op ON op.campaign_id = mp.campaign_id AND op.id <> mp.id
+             JOIN outreach_messages o ON o.prospect_id = op.id
+            WHERE mp.id = m.prospect_id
+              AND btrim(coalesce(mp.email, '')) <> ''
+              AND lower(btrim(op.email)) = lower(btrim(mp.email))
+              AND o.step_index = m.step_index
+              AND o.status IN ('queued', 'sent', 'unsure')
          )
       RETURNING m.id
     `)
@@ -576,24 +608,36 @@ export async function sendCampaignMessagesForUser(
     );
 
     // A follow-up goes out as a reply under its first message, so that one is read up front: its
-    // subject and the outbox row it was sent as. Scoped to the user's own campaigns like the rest.
+    // subject, when it went out, and the outbox row it was sent as (and so from which mailbox).
+    // Scoped to the user's own campaigns and outbox rows like the rest.
     const parentIds = [...new Set(rows.flatMap((r) => (r.message.stepIndex === 1 && r.message.parentMessageId ? [r.message.parentMessageId] : [])))];
     const parents = new Map(
       (parentIds.length
         ? await db
-            .select({ id: outreachMessages.id, subject: outreachMessages.subject, deliveryId: outreachMessages.deliveryId })
+            .select({
+              id: outreachMessages.id,
+              subject: outreachMessages.subject,
+              deliveryId: outreachMessages.deliveryId,
+              sentAt: outreachMessages.sentAt,
+              provider: emailSends.provider,
+            })
             .from(outreachMessages)
             .innerJoin(outreachProspects, eq(outreachProspects.id, outreachMessages.prospectId))
             .innerJoin(outreachCampaigns, eq(outreachCampaigns.id, outreachProspects.campaignId))
+            .leftJoin(emailSends, and(sql`${emailSends.id}::text = ${outreachMessages.deliveryId}`, eq(emailSends.userId, userId)))
             .where(and(inArray(outreachMessages.id, parentIds), eq(outreachCampaigns.userId, userId)))
         : []
       ).map((p) => [p.id, p] as const)
     );
+    const replyLookup = opts.replyLookup ?? repliedSince;
 
     for (const [index, { message, prospect }] of rows.entries()) {
       const fail = (error: string) => result.failed.push({ messageId: message.id, name: prospect.fullName, error });
-      if (index >= capability.remainingToday) {
+      // Counted on what actually went to the outbox: a skipped demo or address-less row uses none
+      // of today's allowance. What the cap or a dead mailbox stops is put back, and said.
+      if (handedOff >= capability.remainingToday) {
         fail(ENQUEUE_COPY.cap_reached);
+        result.notSent = rows.length - index - 1;
         break;
       }
       if (Date.now() - start >= budgetMs) {
@@ -605,19 +649,45 @@ export async function sendCampaignMessagesForUser(
         continue;
       }
       const email = prospect.email?.trim().toLowerCase();
-      if (!email || isPlaceholderAddress(email)) {
+      if (!email) {
         fail(`Add an email address for ${prospect.fullName} first`);
         continue;
       }
-      if (handedOff && spacingMs > 0) await new Promise((resolve) => setTimeout(resolve, spacingMs));
+      // The outbox's own rule, here so a refused address never makes a contact first.
+      if (!checkRecipient(email).ok) {
+        fail(`The email address for ${prospect.fullName} doesn’t look right`);
+        continue;
+      }
 
-      const contactId = await ensureProspectContactForUser(userId, prospect.id, opts.contactWrite);
       // A follow-up (step 1) replies to its first message: "Re:" its subject, with the reply
       // headers and the provider thread when the first send is on record (`resolveReplyTarget`
       // re-reads it by owner and only trusts a thread from this exact mailbox). Without one it
       // is a fresh message with the same "Re:" subject. A step-1 message with no first message
       // on file (a legacy sequence row) is sent as written.
       const parent = message.stepIndex === 1 && message.parentMessageId ? parents.get(message.parentMessageId) : undefined;
+      // One last look for a reply the checker hasn't seen, in the mailbox the first went from
+      // (the connected one when the outbox has no record of it). A demo mailbox has nothing to read.
+      const parentProvider = parent?.provider ?? capability.provider;
+      if (parent?.sentAt && (parentProvider === "gmail" || parentProvider === "outlook")) {
+        const repliedAt = await replyLookup(userId, parentProvider, email, parent.sentAt);
+        if (repliedAt) {
+          await db.execute(sql`
+            UPDATE outreach_messages pm
+               SET outcome = 'replied', replied_at = ${repliedAt.toISOString()}::timestamptz, updated_at = now()
+              FROM outreach_prospects p
+              JOIN outreach_campaigns k ON k.id = p.campaign_id
+             WHERE p.id = pm.prospect_id
+               AND k.user_id = ${userId}
+               AND pm.id = ${parent.id}::uuid
+               AND pm.outcome IS NULL
+          `);
+          fail("They replied — no follow-up needed");
+          continue;
+        }
+      }
+      if (handedOff && spacingMs > 0) await new Promise((resolve) => setTimeout(resolve, spacingMs));
+
+      const contactId = await ensureProspectContactForUser(userId, prospect.id, opts.contactWrite);
       const target = parent?.deliveryId ? await resolveReplyTarget(userId, `orbit:${parent.deliveryId}`) : null;
       // A provider thread id only means something in the mailbox that made it: the same provider
       // and the same address, as in compose. If the first went out from another one (the user
@@ -645,7 +715,10 @@ export async function sendCampaignMessagesForUser(
       });
       if (!queued.ok) {
         fail(queued.message);
-        if (STOPS_BATCH.includes(queued.reason)) break;
+        if (STOPS_BATCH.includes(queued.reason)) {
+          result.notSent = rows.length - index - 1;
+          break;
+        }
         await db
           .update(outreachMessages)
           .set({ status: "failed", errorMessage: queued.message, updatedAt: new Date() })
@@ -672,7 +745,60 @@ export async function sendCampaignMessagesForUser(
   return result;
 }
 
+/**
+ * The user checked their Sent folder and a may-have-sent (`unsure`) email did go out: it becomes
+ * `sent`, tied to its outbox row, so outcomes, reply checks and a follow-up apply to it. Only from
+ * `unsure`, in one conditional UPDATE scoped through the campaign; nothing is sent. Returns its
+ * campaign (to revalidate).
+ */
+export async function markMessageWentOutForUser(userId: string, messageId: string): Promise<string> {
+  const { message, campaign } = await requireMessageForUser(userId, messageId);
+  const db = await getDb();
+  // The send time and id come from the outbox row the message was handed over as.
+  const updated = rowsOf(
+    await db.execute(sql`
+      UPDATE outreach_messages m
+         SET status = 'sent',
+             sent_at = coalesce(m.sent_at, (
+               SELECT s.send_at FROM email_sends s
+                WHERE s.user_id = ${userId} AND s.origin = 'outreach' AND s.origin_ref = m.id::text
+                ORDER BY s.created_at DESC LIMIT 1
+             ), now()),
+             delivery_id = coalesce(m.delivery_id, (
+               SELECT s.id::text FROM email_sends s
+                WHERE s.user_id = ${userId} AND s.origin = 'outreach' AND s.origin_ref = m.id::text
+                ORDER BY s.created_at DESC LIMIT 1
+             )),
+             error_message = NULL,
+             updated_at = now()
+        FROM outreach_prospects p
+        JOIN outreach_campaigns k ON k.id = p.campaign_id
+       WHERE p.id = m.prospect_id
+         AND k.user_id = ${userId}
+         AND m.id = ${message.id}::uuid
+         AND m.status = 'unsure'
+      RETURNING m.id
+    `)
+  );
+  if (!updated.length) throw new UserFacingError("Only a message that may have sent can be marked as gone out");
+  return campaign.id;
+}
+
 /* ------------------------------------------------------------------ LinkedIn ----- */
+
+/** A follow-up whose first message already has an outcome (a reply, a bounce) mustn't go out. */
+async function refuseAnsweredFollowUp(userId: string, message: typeof outreachMessages.$inferSelect) {
+  if (message.stepIndex !== 1 || !message.parentMessageId) return;
+  const db = await getDb();
+  const [parent] = await db
+    .select({ outcome: outreachMessages.outcome })
+    .from(outreachMessages)
+    .innerJoin(outreachProspects, eq(outreachProspects.id, outreachMessages.prospectId))
+    .innerJoin(outreachCampaigns, eq(outreachCampaigns.id, outreachProspects.campaignId))
+    .where(and(eq(outreachMessages.id, message.parentMessageId), eq(outreachCampaigns.userId, userId)))
+    .limit(1);
+  if (parent?.outcome) throw new UserFacingError(LINKEDIN_REPLIED);
+}
 
 /**
  * The note and the profile link for a LinkedIn message, ready for the user to paste and send
@@ -693,6 +819,7 @@ export async function copyLinkedInMessageForUser(
   if (message.body.length > LINKEDIN_NOTE_MAX) {
     throw new UserFacingError(`LinkedIn notes are limited to ${LINKEDIN_NOTE_MAX} characters — shorten this one`);
   }
+  await refuseAnsweredFollowUp(userId, message);
   if (REWRITABLE.includes(message.status)) {
     const db = await getDb();
     await db
@@ -720,6 +847,7 @@ export async function confirmLinkedInSentForUser(
 ): Promise<void> {
   const { message, prospect, campaign } = await requireMessageForUser(userId, messageId);
   if (campaign.defaultChannel !== "linkedin") throw new UserFacingError(NOT_LINKEDIN);
+  await refuseAnsweredFollowUp(userId, message);
 
   const db = await getDb();
   const externalId = `outreach:${message.id}`;

@@ -27,7 +27,8 @@ import {
   prospectPipelineBucket,
   type MessageMetricRow,
 } from "@/lib/outreach-metrics";
-import { EMAIL_SHAPE, type OutreachChannel, type PipelineFilter, type ProspectEnrichment } from "@/lib/outreach-types";
+import { checkRecipient } from "@/lib/chat-send";
+import { type OutreachChannel, type PipelineFilter, type ProspectEnrichment } from "@/lib/outreach-types";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import type { WarmPath } from "@/lib/warm-paths";
 import type { PersonDossier } from "@/lib/web-research";
@@ -492,11 +493,14 @@ function AddSomeone({ campaignId, channel }: { campaignId: string; channel: Outr
       setError(`That isn’t a LinkedIn profile link. ${LINKEDIN_HINT}`);
       return;
     }
-    // The server drops an address it doesn’t like without a word, so it is checked here, where
-    // it can be said.
-    if (email.trim() && !EMAIL_SHAPE.test(email.trim().toLowerCase())) {
+    // The outbox’s own rule (placeholder domains included), checked here so it can be said
+    // before the round trip; the server checks the same and says so in `badEmail`.
+    const badAddress = () => {
       setEmailError("That address doesn’t look right");
       requestAnimationFrame(() => focusFirstInvalid(formRef.current));
+    };
+    if (email.trim() && !checkRecipient(email).ok) {
+      badAddress();
       return;
     }
     setBusy(true);
@@ -514,6 +518,8 @@ function AddSomeone({ campaignId, channel }: { campaignId: string; channel: Outr
       ]);
       if (!res.ok) {
         setError(res.error);
+      } else if (res.value.badEmail) {
+        badAddress();
       } else if (res.value.added) {
         setDone(`Added ${name.trim()}`);
         setName("");

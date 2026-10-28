@@ -50,7 +50,8 @@ export function PendingSends({
       {sends.map((s) => {
         const failed = s.status === "failed";
         const maybeSent = failed && s.failureKind === "ambiguous";
-        const retryable = failed && !maybeSent && s.origin !== "agent" && s.origin !== "recruiter";
+        // A campaign send is retried, or edited, from its campaign, never as a loose email here.
+        const retryable = failed && !maybeSent && s.origin !== "agent" && s.origin !== "recruiter" && s.origin !== "outreach";
         const status = maybeSent
           ? "May have sent — check your Sent folder"
           : failed

@@ -9,6 +9,7 @@ import {
   draftCampaignMessagesForUser,
   draftFollowUpForUser,
   editDraftForUser,
+  markMessageWentOutForUser,
   requireMessageForUser,
   sendCampaignMessagesForUser,
 } from "@/lib/outreach-messages";
@@ -77,6 +78,14 @@ export async function confirmLinkedInSent(messageId: string) {
     const { campaign } = await requireMessageForUser(userId, messageId);
     await confirmLinkedInSentForUser(userId, messageId);
     revalidateCampaign(campaign.id);
+  });
+}
+
+/** The user found a may-have-sent email in their Sent folder: it went out. Sends nothing. */
+export async function markWentOut(messageId: string) {
+  return asActionResult(async () => {
+    const userId = await requireOutreachUser();
+    revalidateCampaign(await markMessageWentOutForUser(userId, messageId));
   });
 }
 

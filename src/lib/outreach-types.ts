@@ -135,9 +135,6 @@ export const CONTACTED_STATUSES: readonly string[] = ["queued", "sent", "copied"
 /** Email messages that tie a thread to the address it went to, or may have. The address then stays. */
 export const EMAILED_STATUSES: readonly string[] = ["queued", "sent", "unsure"];
 
-/** What an address must look like to be stored. The Add someone form checks the same shape before it submits. */
-export const EMAIL_SHAPE = /^[^\s@"<>():]+@[^\s@"<>():]+$/;
-
 /** LinkedIn messages that mean the note went out, or was copied to send. The link then stays. */
 export const LINKEDIN_CONTACTED_STATUSES: readonly string[] = ["copied", "sent", "opened"];
 

@@ -22,6 +22,7 @@ import {
   setProspectLinkedinUrlForUser,
   skipCandidateForUser,
 } from "../src/lib/outreach-people";
+import { checkRecipient } from "../src/lib/chat-send";
 import { MAX_CAMPAIGN_CHOICES, MAX_CAMPAIGN_PEOPLE } from "../src/lib/outreach-types";
 import { purgeUserData } from "../src/lib/user-data";
 import { researchPerson, type PersonResearcher } from "../src/lib/web-research";
@@ -255,6 +256,47 @@ async function main() {
     await addMessage(dee!.id, "sent", "linkedin");
     await setProspectEmailForUser(USER, dee!.id, "dee@zs.com");
     check("a LinkedIn send doesn't lock the email", (await prospectNamed(campId, "Dee Pak"))?.email === "dee@zs.com");
+
+    console.log("addresses the outbox would refuse");
+    const refusedShapes = ["jane@company", "o'brien@x.com", "pla@acme.example.com"];
+    check("the outbox refuses a dotless domain, an apostrophe and a placeholder", refusedShapes.every((e) => !checkRecipient(e).ok));
+    const shapes = await addProspectsForUser(USER, campId, [
+      { fullName: "Jan Dotless", company: "ZS", email: "jane@company", origin: "manual" },
+      { fullName: "Pat Obrien", company: "ZS", email: "o'brien@x.com", origin: "manual" },
+      { fullName: "Pla Ceholder", company: "ZS", email: "pla@acme.example.com", origin: "manual" },
+    ]);
+    check(
+      "an address the outbox would refuse is refused at add, and counted",
+      shapes.added === 0 && shapes.badEmail === 3 && !(await prospectNamed(campId, "Jan Dotless")) && !(await prospectNamed(campId, "Pat Obrien")),
+      JSON.stringify(shapes)
+    );
+    check("normalize drops it the same way", refusedShapes.every((email) => normalizeNewProspect({ fullName: "Ana Ruiz", company: "ZS", email })?.email === null));
+    check(
+      "setting one is refused too",
+      (await rejects(() => setProspectEmailForUser(USER, dee!.id, "jane@company"), "doesn’t look right")) &&
+        (await rejects(() => setProspectEmailForUser(USER, dee!.id, "o'brien@x.com"), "doesn’t look right")) &&
+        (await prospectNamed(campId, "Dee Pak"))?.email === "dee@zs.com"
+    );
+
+    console.log("one address per campaign");
+    const twin = await addProspectsForUser(USER, campId, [
+      { fullName: "Hal Stripe", company: "Stripe", email: "hal@stripe.com", origin: "manual" },
+      { fullName: "Hal Stripe", company: "Stripe, Inc.", email: "HAL@stripe.com", origin: "manual" },
+    ]);
+    check("a second person with the same address in one call is already there", twin.added === 1 && twin.alreadyThere === 1, JSON.stringify(twin));
+    const later = await addProspectsForUser(USER, campId, [{ fullName: "H. Stripe", company: "Stripe Inc", email: "hal@stripe.com", origin: "manual" }]);
+    check("…and in a later call", later.added === 0 && later.alreadyThere === 1 && !(await prospectNamed(campId, "H. Stripe")), JSON.stringify(later));
+    await addProspectsForUser(USER, campId, [{ fullName: "Ivy Other", company: "Stripe", origin: "manual" }]);
+    const ivy = await prospectNamed(campId, "Ivy Other");
+    check(
+      "setting an address someone on the campaign has is refused",
+      (await rejects(() => setProspectEmailForUser(USER, ivy!.id, "Hal@Stripe.com"), "Someone on this campaign already has that address")) &&
+        (await prospectNamed(campId, "Ivy Other"))?.email === null
+    );
+    const hal = await prospectNamed(campId, "Hal Stripe");
+    check("a person can keep their own address", (await setProspectEmailForUser(USER, hal!.id, "hal@stripe.com")) === campId);
+    const [twinCamp] = await db.insert(schema.outreachCampaigns).values({ userId: USER, name: "Second" }).returning();
+    check("another campaign can have the same address", (await addProspectsForUser(USER, twinCamp!.id, [{ fullName: "Hal Stripe", company: "Stripe", email: "hal@stripe.com" }])).added === 1);
 
     console.log("linkedin link");
     const FAY_LI = "https://www.linkedin.com/in/fay-oh";

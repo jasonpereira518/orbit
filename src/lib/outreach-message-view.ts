@@ -76,6 +76,8 @@ export type SentItem = {
   sentAt: Date | string | null;
   /** The error text of a may-have-sent message. */
   problem: string | null;
+  /** The may-have-sent (`unsure`) message the user can say went out, else null. */
+  unsureId: string | null;
 };
 
 export type MessageGroups = {
@@ -118,6 +120,7 @@ function sentItem(person: ViewPerson, bucket: PipelineFilter): SentItem {
     outcomeTarget: carrier ?? latestSent,
     sentAt: latestSent?.sentAt ?? null,
     problem: current.status === "unsure" ? current.errorMessage : null,
+    unsureId: current.status === "unsure" ? current.id : null,
   };
 }
 

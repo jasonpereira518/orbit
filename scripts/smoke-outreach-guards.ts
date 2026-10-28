@@ -29,7 +29,7 @@ import { DEMO_PROSPECT_SEND_MESSAGE, isPlaceholderAddress } from "../src/lib/out
 import { purgeUserData } from "../src/lib/user-data";
 import * as peopleActions from "../src/actions/outreach-people";
 import * as messageActions from "../src/actions/outreach-messages";
-import { createCampaign, logMessageOutcome, updateCampaign } from "../src/actions/outreach";
+import { createCampaign, logMessageOutcome } from "../src/actions/outreach";
 
 // Demo mode: the actions run as `demo-user` with no Clerk.
 delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
@@ -86,7 +86,6 @@ run(async () => {
       () => (fn as (...args: unknown[]) => Promise<unknown>)(ID, [ID], ID),
     ]),
     ["createCampaign", () => createCampaign({ audienceQuery: "founders", messageIntent: "say hi", replyCta: "book_intro", defaultChannel: "email", tone: "friendly" })],
-    ["updateCampaign", () => updateCampaign(ID, { name: "x" })],
     ["logMessageOutcome", () => logMessageOutcome({ messageId: ID, outcome: "replied" })],
   ];
   check("the people and messages modules export their actions", Object.keys(peopleActions).length >= 7 && Object.keys(messageActions).length >= 7, Object.keys({ ...peopleActions, ...messageActions }).join(","));

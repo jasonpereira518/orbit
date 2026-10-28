@@ -147,7 +147,9 @@ export type ReplyLookup = typeof repliedSince;
  * those who wrote back `replied`. Metadata only — sender and date, never a subject or body.
  *
  * Checks the campaign's email messages that are `sent`, have no outcome, and went out within
- * 60 days; oldest send first, 25 per pass (everyone else waits for the next one). A message
+ * 60 days, one per person: the latest they were sent, so a reply is marked once, on it. 25 per
+ * pass, least recently looked up first: each looked-up row is stamped `last_action_at`, so
+ * people who never answer don't hold the pass and everyone is reached in turn. A message
  * is looked up through the user's own `email_sends` row (joined as text: `delivery_id` is
  * `text` and a v1 row may hold something that isn't a uuid), so a demo send, a v1 send with
  * no outbox row, and a prospect with no email are skipped and don't count as checked.
@@ -207,10 +209,19 @@ export async function checkCampaignRepliesForUser(
         isNull(outreachMessages.outcome),
         gte(outreachMessages.sentAt, new Date(now.getTime() - REPLY_CHECK_WINDOW_DAYS * DAY_MS)),
         inArray(emailSends.provider, ["gmail", "outlook"]),
-        sql`btrim(coalesce(${outreachProspects.email}, '')) <> ''`
+        sql`btrim(coalesce(${outreachProspects.email}, '')) <> ''`,
+        // Only the latest sent email to this person.
+        sql`NOT EXISTS (
+          SELECT 1 FROM outreach_messages l
+           WHERE l.prospect_id = ${outreachMessages.prospectId}
+             AND l.channel = 'email'
+             AND l.status = 'sent'
+             AND l.id <> ${outreachMessages.id}
+             AND (l.sent_at > ${outreachMessages.sentAt} OR (l.sent_at = ${outreachMessages.sentAt} AND l.step_index > ${outreachMessages.stepIndex}))
+        )`
       )
     )
-    .orderBy(asc(outreachMessages.sentAt), asc(outreachMessages.id))
+    .orderBy(sql`coalesce(${outreachMessages.lastActionAt}, ${outreachMessages.sentAt})`, asc(outreachMessages.id))
     .limit(REPLY_CHECKS_PER_PASS);
 
   const deadline = Date.now() + (opts.budgetMs ?? LOOKUP_BUDGET_MS);
@@ -222,6 +233,16 @@ export async function checkCampaignRepliesForUser(
     // sentAt and email are non-null: the WHERE above requires both.
     // ponytail: an auto-reply counts as a reply; telling them apart means reading bodies, which needs a privacy change
     const found = await Promise.all(batch.map((r) => lookup(userId, r.provider, r.email!.trim(), r.sentAt!)));
+    // Looked up: to the back of the queue for the next pass.
+    await db.execute(sql`
+      UPDATE outreach_messages m
+         SET last_action_at = now()
+        FROM outreach_prospects p
+        JOIN outreach_campaigns k ON k.id = p.campaign_id
+       WHERE p.id = m.prospect_id
+         AND k.user_id = ${userId}
+         AND m.id IN (${sql.join(batch.map((r) => sql`${r.id}::uuid`), sql`, `)})
+    `);
     for (const [j, at] of found.entries()) {
       if (!at) continue;
       replied += rowsOf(

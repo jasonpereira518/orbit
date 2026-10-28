@@ -9,6 +9,7 @@ import {
   copyLinkedIn,
   draftFollowUp,
   draftMessages,
+  markWentOut,
   sendMessages,
 } from "@/actions/outreach-messages";
 import { MessageEditorRow } from "@/components/outreach/message-editor-row";
@@ -741,6 +742,7 @@ function SentView({
   const [checking, setChecking] = useState(awaitingReply);
   const [checkNote, setCheckNote] = useState("");
   const [followUpBusy, setFollowUpBusy] = useState<string | null>(null);
+  const [wentOutBusy, setWentOutBusy] = useState<string | null>(null);
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
 
   // Once, as the Sent view opens. The server throttles to one pass per ten minutes, and a
@@ -790,6 +792,21 @@ function SentView({
       setRowErrors((prev) => ({ ...prev, [personId]: friendlyError(err, TOAST_COPY.draftFollowUpFailed) }));
     } finally {
       setFollowUpBusy(null);
+    }
+  }
+
+  // Only the user can say: they checked their Sent folder. Nothing is sent again either way.
+  async function wentOut(personId: string, messageId: string) {
+    if (wentOutBusy) return;
+    setWentOutBusy(personId);
+    setRowErrors((prev) => ({ ...prev, [personId]: "" }));
+    try {
+      const res = await markWentOut(messageId);
+      if (!res.ok) setRowErrors((prev) => ({ ...prev, [personId]: res.error }));
+    } catch (err) {
+      setRowErrors((prev) => ({ ...prev, [personId]: friendlyError(err, "Couldn’t save that — try again?") }));
+    } finally {
+      setWentOutBusy(null);
     }
   }
 
@@ -852,6 +869,19 @@ function SentView({
                 <p className="mt-2 text-sm text-muted-foreground">
                   {item.problem || "It may or may not have gone out — check your Sent folder before writing to them again."}
                 </p>
+              )}
+              {item.unsureId && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-2"
+                  onClick={() => wentOut(item.person.id, item.unsureId!)}
+                  disabled={wentOutBusy !== null}
+                >
+                  {wentOutBusy === item.person.id && <Loader2 className="animate-spin" aria-hidden />}
+                  It went out
+                  <span className="sr-only"> to {item.person.fullName}</span>
+                </Button>
               )}
               {(item.followUpOf || item.outcomeTarget) && (
                 <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border/50 pt-3">

@@ -24,12 +24,15 @@ import {
   draftCampaignMessagesForUser,
   draftFollowUpForUser,
   editDraftForUser,
+  markMessageWentOutForUser,
   releaseStrandedMessagesForUser,
   sendCampaignMessagesForUser,
   type Drafter,
 } from "../src/lib/outreach-messages";
 import type { DraftInput } from "../src/lib/outreach-drafts";
+import { checkRecipient } from "../src/lib/chat-send";
 import { addProspectsForUser } from "../src/lib/outreach-people";
+import type { ReplyLookup } from "../src/lib/outreach-replies";
 import { DEMO_PROSPECT_SEND_MESSAGE } from "../src/lib/outreach-quality";
 import { BULK_SEND_LIMIT, LINKEDIN_NOTE_MAX } from "../src/lib/outreach-types";
 import { purgeUserData } from "../src/lib/user-data";
@@ -237,6 +240,27 @@ async function main() {
     check("stops the batch on cap or connection", cut.sent === 1 && cut.failed.length === 1 && (await msg(m3!)).status === "sent" && (await msg(m4!)).status === "draft", JSON.stringify(cut));
     await clearDailyCap();
 
+    console.log("cap");
+    const cNames = ["C1 Person", "C2 Person", "C3 Person", "C4 Person"];
+    await addProspectsForUser(USER, camp, cNames.map((fullName, i) => ({ fullName, company: "Acme", email: `c${i + 1}@acme-co.io`, origin: "manual" as const })));
+    const cPeople = (await db.query.outreachProspects.findMany({ where: eq(schema.outreachProspects.campaignId, camp) })).filter((p) => cNames.includes(p.fullName));
+    await draftCampaignMessagesForUser(USER, camp, cNames.map((n) => cPeople.find((p) => p.fullName === n)!.id), { drafter });
+    const cMid = async (n: string) =>
+      (await db.query.outreachMessages.findFirst({ where: eq(schema.outreachMessages.prospectId, cPeople.find((p) => p.fullName === n)!.id) }))!.id;
+    const [c1, c2, c3, c4] = await Promise.all(cNames.map(cMid));
+    await fillDailyCapLeaving(1);
+    const skippedFirst = await send([mNoEmail!, c1!]);
+    check("the cap counts what was handed off, not what was skipped", skippedFirst.sent === 1 && (await msg(c1!)).status === "sent", JSON.stringify(skippedFirst));
+    await clearDailyCap();
+    await fillDailyCapLeaving(1);
+    const capRest = await send([c2!, c3!, c4!]);
+    check(
+      "…and the rest the cap stopped count as not sent",
+      capRest.sent === 1 && capRest.failed.length === 1 && capRest.notSent === 1 && (await msg(c4!)).status === "draft",
+      JSON.stringify(capRest)
+    );
+    await clearDailyCap();
+
     fail = "permanent";
     const refused = await send([m5!]);
     const m5Row = await msg(m5!);
@@ -259,9 +283,72 @@ async function main() {
     );
     fail = null;
 
+    console.log("it went out");
+    check("another user can't say it went out", (await rejects(() => markMessageWentOutForUser(OTHER, m6!), "Message not found")) && (await msg(m6!)).status === "unsure");
+    check("only a may-have-sent message can be", (await rejects(() => markMessageWentOutForUser(USER, mNoEmail!))) && (await msg(mNoEmail!)).status === "draft");
+    const wentOut = await markMessageWentOutForUser(USER, m6!);
+    const m6Row = await msg(m6!);
+    check(
+      "It went out moves an unsure message to sent, tied to its outbox row",
+      wentOut === camp && m6Row.status === "sent" && m6Row.sentAt != null && m6Row.deliveryId === outboxRow!.id && m6Row.errorMessage === null,
+      JSON.stringify({ wentOut, status: m6Row.status, deliveryId: m6Row.deliveryId })
+    );
+    check("…once", await rejects(() => markMessageWentOutForUser(USER, m6!)));
+    check("…and it still never sends again", (await send([m6!])).sent === 0 && (await sendsFor(m6!)) === 1 && delivered.length === before + 1);
+
     const demo = await send([mDemo!]);
     check("demo prospect never sends", demo.sent === 0 && (await sendsFor(mDemo!)) === 0 && demo.failed[0]?.error === DEMO_PROSPECT_SEND_MESSAGE && (await msg(mDemo!)).status === "draft");
     check("…and makes no contact", (await contactsNamed("Demo Person")) === 0);
+
+    console.log("addresses the outbox would refuse");
+    await addProspectsForUser(USER, camp, [
+      { fullName: "Bad Shape", company: "Acme", origin: "manual" },
+      { fullName: "Apos Trophe", company: "Acme", origin: "manual" },
+    ]);
+    const shapeIds = (await db.query.outreachProspects.findMany({ where: eq(schema.outreachProspects.campaignId, camp) })).filter((p) => p.fullName === "Bad Shape" || p.fullName === "Apos Trophe");
+    // Written directly: the add path refuses both, so this is what an older row would hold.
+    for (const p of shapeIds) {
+      await db.update(schema.outreachProspects).set({ email: p.fullName === "Bad Shape" ? "jane@company" : "o'brien@x.com" }).where(eq(schema.outreachProspects.id, p.id));
+    }
+    await draftCampaignMessagesForUser(USER, camp, shapeIds.map((p) => p.id), { drafter });
+    const shapeMsgs = (await db.query.outreachMessages.findMany({ where: eq(schema.outreachMessages.stepIndex, 0) })).filter((m) => shapeIds.some((p) => p.id === m.prospectId));
+    const deliveredShapes = delivered.length;
+    const shaped = await send(shapeMsgs.map((m) => m.id));
+    check(
+      "an address the outbox would refuse is refused before the send",
+      shapeMsgs.length === 2 && shaped.sent === 0 && shaped.failed.length === 2 && delivered.length === deliveredShapes,
+      JSON.stringify(shaped)
+    );
+    check(
+      "…makes no contact and no outbox row, and stays a draft",
+      (await contactsNamed("Bad Shape")) === 0 &&
+        (await contactsNamed("Apos Trophe")) === 0 &&
+        (await Promise.all(shapeMsgs.map(async (m) => (await sendsFor(m.id)) === 0 && (await msg(m.id)).status === "draft"))).every(Boolean)
+    );
+    check("…exactly as the outbox would have", !checkRecipient("jane@company").ok && !checkRecipient("o'brien@x.com").ok);
+
+    console.log("one address, two people");
+    await addProspectsForUser(USER, camp, [
+      { fullName: "Same One", company: "Stripe", email: "same@acme-co.io", origin: "manual" },
+      { fullName: "Same Two", company: "Stripe, Inc.", origin: "manual" },
+      { fullName: "Same Three", company: "Stripe Inc", origin: "manual" },
+    ]);
+    const sameIds = (await db.query.outreachProspects.findMany({ where: eq(schema.outreachProspects.campaignId, camp) })).filter((p) => p.fullName.startsWith("Same "));
+    // Written directly: the add path refuses a second person with one address.
+    for (const p of sameIds) await db.update(schema.outreachProspects).set({ email: p.fullName === "Same Two" ? "SAME@acme-co.io" : "same@acme-co.io" }).where(eq(schema.outreachProspects.id, p.id));
+    await draftCampaignMessagesForUser(USER, camp, sameIds.map((p) => p.id), { drafter });
+    const sameMsg = async (name: string) =>
+      (await db.query.outreachMessages.findFirst({ where: eq(schema.outreachMessages.prospectId, sameIds.find((p) => p.fullName === name)!.id) }))!.id;
+    const [same1, same2, same3] = await Promise.all(["Same One", "Same Two", "Same Three"].map(sameMsg));
+    const sameBatch = await send([same1!, same2!]);
+    const sameSends = (await sendsFor(same1!)) + (await sendsFor(same2!));
+    check("two people with one address in one batch send one email", sameBatch.sent === 1 && sameSends === 1 && delivered.filter((to) => to === "same@acme-co.io").length === 1, JSON.stringify(sameBatch));
+    const sameLater = await send([same3!]);
+    check(
+      "…and a third can't follow it out",
+      sameLater.sent === 0 && (await sendsFor(same3!)) === 0 && (await msg(same3!)).status === "draft" && delivered.filter((to) => to === "same@acme-co.io").length === 1,
+      JSON.stringify(sameLater)
+    );
 
     console.log("never stranded");
     await addProspectsForUser(USER, camp, [
@@ -503,7 +590,42 @@ async function main() {
     );
     check("…and makes no outbox row or delivery", (await sendsFor(guarded.messageId)) === 0 && delivered.length === delivered0);
     await db.update(schema.outreachMessages).set({ outcome: null }).where(eq(schema.outreachMessages.id, guardFirst));
-    check("…which was the only thing stopping it", (await send([guarded.messageId])).sent === 1 && (await followUpsOf(guardProspect)).length === 1);
+    let quietLookups = 0;
+    const quiet: ReplyLookup = async () => {
+      quietLookups += 1;
+      return null;
+    };
+    await resetBucket();
+    const unblocked = await sendCampaignMessagesForUser(USER, camp, [guarded.messageId], { spacingMs: 0, contactWrite: OPTS, replyLookup: quiet });
+    check("…which was the only thing stopping it", unblocked.sent === 1 && (await followUpsOf(guardProspect)).length === 1);
+    check("…and a lookup that finds nothing lets it go", quietLookups === 1);
+
+    // A reply the checker hasn't seen yet: the send asks the mailbox once more and stops.
+    const lateFirst = bMsgs[1]!;
+    const lateEmail = (await db.query.outreachProspects.findFirst({ where: eq(schema.outreachProspects.id, (await msg(lateFirst)).prospectId) }))!.email;
+    await backdate(lateFirst, 8);
+    const late = await draftFollowUpForUser(USER, lateFirst, { drafter: followDrafter });
+    const lookups: string[] = [];
+    const lateReplyAt = new Date(Date.now() - 3_600_000);
+    const replied: ReplyLookup = async (_u, provider, addr) => {
+      lookups.push(`${provider}:${addr}`);
+      return lateReplyAt;
+    };
+    await resetBucket();
+    const deliveredLate = delivered.length;
+    const stopped = await sendCampaignMessagesForUser(USER, camp, [late.messageId], { spacingMs: 0, contactWrite: OPTS, replyLookup: replied });
+    check(
+      "a follow-up after an unnoticed reply isn't sent",
+      stopped.sent === 0 &&
+        stopped.failed[0]?.error === "They replied — no follow-up needed" &&
+        (await sendsFor(late.messageId)) === 0 &&
+        delivered.length === deliveredLate &&
+        (await msg(late.messageId)).status === "draft",
+      JSON.stringify(stopped)
+    );
+    const lateParent = await msg(lateFirst);
+    check("…the first message is marked replied, with when", lateParent.outcome === "replied" && lateParent.repliedAt?.getTime() === lateReplyAt.getTime(), JSON.stringify(lateParent.outcome));
+    check("…asked once, of the mailbox that sent the first", lookups.join() === `gmail:${lateEmail}`, lookups.join());
 
     // The first went out from another mailbox than the one connected now: reply by headers, no thread, no forced mailbox.
     await addProspectsForUser(USER, camp, [{ fullName: "F3 Person", company: "Acme", email: "f3@acme-co.io", origin: "manual" }]);
@@ -582,14 +704,25 @@ async function main() {
     await confirmLinkedInSentForUser(USER, liFollow.messageId, OPTS);
     check("…and confirmed by it", (await msg(liFollow.messageId)).status === "sent");
 
+    const REPLIED_COPY = "They already replied — no follow-up needed";
+    await backdate(mTwice!, 8);
+    const liNoCopy = await draftFollowUpForUser(USER, mTwice!, { drafter: followDrafter });
+    await db.update(schema.outreachMessages).set({ outcome: "replied" }).where(eq(schema.outreachMessages.id, mTwice!));
+    check("a LinkedIn follow-up can't be copied once they replied", (await rejects(() => copyLinkedInMessageForUser(USER, liNoCopy.messageId), REPLIED_COPY)) && (await msg(liNoCopy.messageId)).status === "draft");
+    await backdate(mRace!, 8);
+    const liNoConfirm = await draftFollowUpForUser(USER, mRace!, { drafter: followDrafter });
+    await copyLinkedInMessageForUser(USER, liNoConfirm.messageId);
+    await db.update(schema.outreachMessages).set({ outcome: "positive_reply" }).where(eq(schema.outreachMessages.id, mRace!));
+    check("…nor confirmed as sent", (await rejects(() => confirmLinkedInSentForUser(USER, liNoConfirm.messageId, OPTS), REPLIED_COPY)) && (await msg(liNoConfirm.messageId)).status === "copied");
+
     console.log("stranded");
-    const sNames = ["S1 Person", "S2 Person", "S3 Person", "S4 Person", "S5 Person"];
+    const sNames = ["S1 Person", "S2 Person", "S3 Person", "S4 Person", "S5 Person", "S6 Person", "S7 Person", "S8 Person"];
     await addProspectsForUser(USER, camp, sNames.map((fullName, i) => ({ fullName, company: "Acme", email: `s${i + 1}@acme-co.io`, origin: "manual" as const })));
     const sProspects = await db.query.outreachProspects.findMany({ where: eq(schema.outreachProspects.campaignId, camp) });
     await draftCampaignMessagesForUser(USER, camp, sNames.map((n) => sProspects.find((p) => p.fullName === n)!.id), { drafter });
     const sMid = async (name: string) =>
       (await db.query.outreachMessages.findFirst({ where: eq(schema.outreachMessages.prospectId, sProspects.find((p) => p.fullName === name)!.id) }))!.id;
-    const [s1, s2, s3, s4, s5] = await Promise.all(sNames.map(sMid));
+    const [s1, s2, s3, s4, s5, s6, s7, s8] = await Promise.all(sNames.map(sMid));
     const strand = (id: string, minutesOld: number) =>
       db.execute(sql`UPDATE outreach_messages SET status = 'queued', updated_at = now() - make_interval(mins => ${minutesOld}::int) WHERE id = ${id}::uuid`);
     for (const [id, age] of [[s1, 6], [s2, 6], [s3, 6], [s4, 1]] as const) await strand(id!, age);
@@ -603,6 +736,20 @@ async function main() {
     check("…and a second pass releases nothing", (await releaseStrandedMessagesForUser(USER, camp)) === 0);
     await strand(s5!, 6);
     check("sending releases a stranded message first, then sends it", (await send([s5!])).sent === 1 && (await msg(s5!)).status === "sent");
+
+    // Only an outbox row that can still settle holds a message: not one canceled on the contact
+    // page, nor an old definite failure under a re-claimed message. A may-have-sent one still does.
+    const settledRow = (id: string, status: string, kind: string | null) =>
+      db.execute(sql`INSERT INTO email_sends (user_id, provider, from_email, to_emails, subject, body_text, origin, origin_ref, status, failure_kind, send_at, rfc_message_id)
+        VALUES (${USER}, 'gmail', 'me@x.org', '["s@acme-co.io"]'::jsonb, 'stranded-fixture', 'b', 'outreach', ${id}, ${status}, ${kind}, now(), ${`<stranded-${id}@orbit.mail>`})`);
+    await settledRow(s6!, "canceled", null);
+    await settledRow(s7!, "failed", "permanent");
+    await settledRow(s8!, "failed", "ambiguous");
+    for (const id of [s6!, s7!, s8!]) await strand(id, 6);
+    const freed = await releaseStrandedMessagesForUser(USER, camp);
+    check("a canceled outbox row doesn't hold a queued message", (await msg(s6!)).status === "draft");
+    check("…nor an old definite failure", (await msg(s7!)).status === "draft");
+    check("…but a may-have-sent one does", (await msg(s8!)).status === "queued" && freed === 2, String(freed));
   } finally {
     setProviderOverride("gmail", null);
     await resetBucket();

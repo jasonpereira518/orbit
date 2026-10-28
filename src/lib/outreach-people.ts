@@ -1,15 +1,14 @@
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb } from "@/db";
+import { checkRecipient } from "@/lib/chat-send";
 import { contacts, outreachCampaigns, outreachMessages, outreachProspects } from "@/db/schema";
 import { findConfidentDuplicate, resolveOrCreateContact } from "@/lib/contact-resolve";
 import { updateContactForUser, type ContactWriteOptions } from "@/lib/contact-writes";
 import { linkedinSlug } from "@/lib/duplicates";
 import { UserFacingError } from "@/lib/errors";
 import { isUuid } from "@/lib/ids";
-import { isPlaceholderAddress } from "@/lib/outreach-quality";
 import {
   CONTACTED_STATUSES,
-  EMAIL_SHAPE,
   EMAILED_STATUSES,
   LINKEDIN_CONTACTED_STATUSES,
   MAX_CAMPAIGN_CHOICES,
@@ -34,6 +33,7 @@ const BRIEF_KEY_RE = /^[0-9a-f]{64}$/;
 const CAMPAIGN_GONE = "That campaign isn’t yours or no longer exists";
 const PERSON_GONE = "That person isn’t on your list or was removed";
 const ALREADY_CONTACTED = "They’ve already been contacted, so they stay on the list";
+const EMAIL_TAKEN = "Someone on this campaign already has that address";
 
 /* ------------------------------------------------------------------ keys + shape ----- */
 
@@ -68,9 +68,15 @@ function squash(value: unknown): string {
   return typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
 }
 
+/** Lowercased, or null for anything the outbox would refuse to send to (`checkRecipient`). */
 function cleanEmail(value: unknown): string | null {
-  const email = typeof value === "string" ? value.trim().toLowerCase() : "";
-  return email.length <= 254 && EMAIL_SHAPE.test(email) && !isPlaceholderAddress(email) ? email : null;
+  const check = checkRecipient(typeof value === "string" ? value : null);
+  return check.ok ? check.email.toLowerCase() : null;
+}
+
+/** A non-blank address was given but isn't one the outbox would send to. */
+function isBadEmail(value: unknown): boolean {
+  return typeof value === "string" && value.trim() !== "" && !cleanEmail(value);
 }
 
 function cleanLinkedin(value: unknown): string | null {
@@ -163,9 +169,13 @@ async function hasMessage(prospectId: string, statuses: readonly string[], chann
   return Boolean(row);
 }
 
-type CampaignRow = { id: string; externalId: string; fullName: string; company: string | null; status: string };
+type CampaignRow = { id: string; externalId: string; fullName: string; company: string | null; status: string; email: string | null };
 
-/** Everyone already on the campaign, findable by external id or by name+company. */
+/**
+ * Everyone already on the campaign, findable by external id or by name+company, and the
+ * addresses the people still on it hold: one address is one person per campaign, so "Stripe"
+ * and "Stripe, Inc." can't both be emailed at it.
+ */
 async function campaignIndex(campaignId: string) {
   const db = await getDb();
   const rows: CampaignRow[] = await db
@@ -175,15 +185,18 @@ async function campaignIndex(campaignId: string) {
       fullName: outreachProspects.fullName,
       company: outreachProspects.company,
       status: outreachProspects.status,
+      email: outreachProspects.email,
     })
     .from(outreachProspects)
     .where(eq(outreachProspects.campaignId, campaignId));
   const byKey = new Map<string, CampaignRow>();
+  const emails = new Set<string>();
   for (const row of rows) {
     byKey.set(row.externalId, row);
     byKey.set(prospectNameKey(row), row);
+    if (row.email && row.status !== "excluded") emails.add(row.email.trim().toLowerCase());
   }
-  return { rows, find: (p: NewProspect) => byKey.get(prospectExternalId(p)) ?? byKey.get(prospectNameKey(p)) };
+  return { rows, emails, find: (p: NewProspect) => byKey.get(prospectExternalId(p)) ?? byKey.get(prospectNameKey(p)) };
 }
 
 function enrichmentOf(p: NewProspect, emailSource: ProspectEnrichment["emailSource"]): ProspectEnrichment {
@@ -210,28 +223,34 @@ export async function listCampaignChoicesForUser(userId: string): Promise<Campai
 
 /**
  * Add up to ten people to a campaign as `selected`. Someone already there (same LinkedIn
- * profile, or the same name at the same company) is counted, not doubled; an excluded one is
- * put back. A person Orbit already knows is linked to that contact and borrows its email.
+ * profile, the same name at the same company, or the same address as someone still on it) is
+ * counted, not doubled; an excluded one is put back. A person Orbit already knows is linked to
+ * that contact and borrows its email, unless someone on the campaign already has it.
+ *
+ * A person given an address the outbox would refuse (`checkRecipient`: no dotted domain, an
+ * apostrophe, a placeholder…) is not added and is counted in `badEmail`, so the form can say so.
  */
 export async function addProspectsForUser(
   userId: string,
   campaignId: string,
   people: unknown[]
-): Promise<{ added: number; alreadyThere: number; invalid: number }> {
+): Promise<{ added: number; alreadyThere: number; invalid: number; badEmail: number }> {
   if (!Array.isArray(people) || people.length > MAX_PER_CALL) {
     throw new UserFacingError(`Add up to ${MAX_PER_CALL} people at a time`);
   }
   await requireOwnCampaign(userId, campaignId);
 
   let invalid = 0;
+  let badEmail = 0;
   const incoming: NewProspect[] = [];
   for (const raw of people) {
     const p = normalizeNewProspect(raw);
-    if (p) incoming.push(p);
-    else invalid += 1;
+    if (!p) invalid += 1;
+    else if (isBadEmail((raw as Record<string, unknown>).email)) badEmail += 1;
+    else incoming.push(p);
   }
 
-  const { rows, find } = await campaignIndex(campaignId);
+  const { rows, emails, find } = await campaignIndex(campaignId);
   const fresh: NewProspect[] = [];
   const revive = new Set<string>();
   const seen = new Set<string>();
@@ -239,11 +258,12 @@ export async function addProspectsForUser(
   for (const p of incoming) {
     const keys = [prospectExternalId(p), prospectNameKey(p)];
     const row = find(p);
-    if (row || keys.some((k) => seen.has(k))) {
+    if (row || keys.some((k) => seen.has(k)) || (p.email && emails.has(p.email))) {
       alreadyThere += 1;
       if (row?.status === "excluded") revive.add(row.id);
     } else {
       keys.forEach((k) => seen.add(k));
+      if (p.email) emails.add(p.email);
       fresh.push(p);
     }
   }
@@ -266,7 +286,7 @@ export async function addProspectsForUser(
         )
       );
   }
-  if (!fresh.length) return { added: 0, alreadyThere, invalid };
+  if (!fresh.length) return { added: 0, alreadyThere, invalid, badEmail };
 
   const duplicates = await Promise.all(
     fresh.map((p) =>
@@ -286,7 +306,9 @@ export async function addProspectsForUser(
     .values(
       fresh.map((p, i) => {
         const contact = duplicates[i]?.contact;
-        const contactEmail = p.email ? null : cleanEmail(contact?.email);
+        const borrowed = p.email ? null : cleanEmail(contact?.email);
+        const contactEmail = borrowed && !emails.has(borrowed) ? borrowed : null;
+        if (contactEmail) emails.add(contactEmail);
         return {
           campaignId,
           externalId: prospectExternalId(p),
@@ -307,7 +329,7 @@ export async function addProspectsForUser(
     // Bare `.returning()`: an explicit field selector defeats the overload on the driver union.
     .returning();
 
-  return { added: inserted.length, alreadyThere: alreadyThere + fresh.length - inserted.length, invalid };
+  return { added: inserted.length, alreadyThere: alreadyThere + fresh.length - inserted.length, invalid, badEmail };
 }
 
 /** Remember a candidate the user passed on as `excluded`, so "Find more" won't offer them again. */
@@ -373,6 +395,23 @@ export async function setProspectEmailForUser(userId: string, prospectId: string
     throw new UserFacingError("They’ve already been emailed, so the address stays");
   }
   const db = await getDb();
+  if (wanted) {
+    const [taken] = await db
+      .select({ id: outreachProspects.id })
+      .from(outreachProspects)
+      .innerJoin(outreachCampaigns, eq(outreachCampaigns.id, outreachProspects.campaignId))
+      .where(
+        and(
+          eq(outreachProspects.campaignId, prospect.campaignId),
+          eq(outreachCampaigns.userId, userId),
+          ne(outreachProspects.id, prospect.id),
+          ne(outreachProspects.status, "excluded"),
+          sql`lower(btrim(${outreachProspects.email})) = ${wanted}`
+        )
+      )
+      .limit(1);
+    if (taken) throw new UserFacingError(EMAIL_TAKEN);
+  }
   await db
     .update(outreachProspects)
     .set({

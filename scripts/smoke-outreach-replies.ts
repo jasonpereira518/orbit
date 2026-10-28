@@ -377,6 +377,35 @@ async function main() {
       seenAddrs()[0] === "big0@x.org" && seenAddrs()[REPLY_CHECKS_PER_PASS - 1] === `big${REPLY_CHECKS_PER_PASS - 1}@x.org` && !seenAddrs().includes(`big${REPLY_CHECKS_PER_PASS}@x.org`),
       seenAddrs().join()
     );
+    // Non-repliers don't hold the pass: whoever was looked up waits behind whoever wasn't.
+    const [wideC] = await db.insert(schema.outreachCampaigns).values({ userId: USER, name: "Wide" }).returning();
+    for (let i = 0; i < 30; i++) {
+      await sentPerson({ campaignId: wideC!.id, name: `Wide ${String(i).padStart(2, "0")}`, email: `wide${i}@x.org`, sentAt: daysAgo(40 - i) });
+    }
+    seen.length = 0;
+    const wide1 = await checkCampaignRepliesForUser(USER, wideC!.id, { lookup, skipThrottle: true, now: NOW });
+    const wide2 = await checkCampaignRepliesForUser(USER, wideC!.id, { lookup, skipThrottle: true, now: NOW });
+    check(
+      "two passes over 30 quiet people look up all 30",
+      wide1.checked === REPLY_CHECKS_PER_PASS && new Set(seenAddrs()).size === 30,
+      JSON.stringify([wide1, wide2, new Set(seenAddrs()).size])
+    );
+
+    // A follow-up went out too: a reply marks the latest message, once.
+    const [twoC] = await db.insert(schema.outreachCampaigns).values({ userId: USER, name: "Two steps" }).returning();
+    const twoStep = await sentPerson({ campaignId: twoC!.id, name: "Two Step", email: "bo@iqvia.com", sentAt: daysAgo(10) });
+    const [stepTwo] = await db
+      .insert(schema.outreachMessages)
+      .values({ prospectId: twoStep.prospectId, channel: "email", subject: "Re: Hi", body: "Bump", stepIndex: 1, parentMessageId: twoStep.messageId })
+      .returning();
+    await markSent(stepTwo!.id, await outboxRow(USER, "gmail", "bo@iqvia.com"), daysAgo(3));
+    const twoPass = await checkCampaignRepliesForUser(USER, twoC!.id, { lookup, skipThrottle: true, now: NOW });
+    check(
+      "a reply is counted once, on the latest message sent",
+      twoPass.replied === 1 && (await msg(stepTwo!.id)).outcome === "replied" && (await msg(twoStep.messageId)).outcome === null,
+      JSON.stringify([twoPass, (await msg(twoStep.messageId)).outcome])
+    );
+
     // Demo rows must not eat the 25 slots.
     const [skewC] = await db.insert(schema.outreachCampaigns).values({ userId: USER, name: "Skew" }).returning();
     for (let i = 0; i < REPLY_CHECKS_PER_PASS; i++) {
