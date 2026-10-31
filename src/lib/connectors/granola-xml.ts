@@ -121,3 +121,35 @@ export function noteText(meeting: GranolaMeeting, attendees: GranolaParticipant[
     .filter(Boolean)
     .join("\n\n");
 }
+
+export type GranolaFolder = { id: string; title: string; noteCount: number | null };
+
+/**
+ * `list_meeting_folders` answers in JSON, unlike the meeting tools: `{ count, folders: [...] }`,
+ * plus `next_offset` when truncated. Anything unreadable is an empty list, not a throw — the
+ * folder picker degrades to "All notes", which is also what Free Granola (no folder tools) gets.
+ */
+export function parseFolders(text: string): { folders: GranolaFolder[]; nextOffset: number | null } {
+  try {
+    const data = JSON.parse(text) as { folders?: unknown[]; next_offset?: unknown };
+    const folders = (data.folders ?? []).flatMap((f) => {
+      const o = (f ?? {}) as Record<string, unknown>;
+      if (typeof o.id !== "string" || !o.id) return [];
+      return [{
+        id: o.id,
+        title: typeof o.title === "string" && o.title.trim() ? o.title.trim() : "Untitled folder",
+        noteCount: typeof o.note_count === "number" ? o.note_count : null,
+      }];
+    });
+    return { folders, nextOffset: typeof data.next_offset === "number" ? data.next_offset : null };
+  } catch {
+    return { folders: [], nextOffset: null };
+  }
+}
+
+/** Notes listed once per chosen folder, merged: one entry per note id. */
+export function mergeMeetingLists(lists: GranolaMeeting[][]): GranolaMeeting[] {
+  const byId = new Map<string, GranolaMeeting>();
+  for (const list of lists) for (const m of list) if (!byId.has(m.id)) byId.set(m.id, m);
+  return [...byId.values()];
+}

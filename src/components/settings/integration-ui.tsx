@@ -14,7 +14,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { IntegrationTabId } from "@/components/settings/sections";
-import { GoogleMark, LinkedInMark, MicrosoftMark } from "@/components/settings/provider-marks";
+import { GoogleMark, GranolaMark, LinkedInMark, MicrosoftMark } from "@/components/settings/provider-marks";
 import type { PageStatus } from "@/lib/integration-status";
 import { cn } from "@/lib/utils";
 
@@ -35,6 +35,7 @@ const MARKS: Partial<Record<IntegrationTabId, (props: { className?: string }) =>
   google: GoogleMark,
   microsoft: MicrosoftMark,
   linkedin: LinkedInMark,
+  granola: GranolaMark,
 };
 
 /** Decorative: every use sits beside the page's name. Accounts get their provider's mark. */

@@ -5,8 +5,10 @@
 import {
   connectedUserEmail,
   externalParticipants,
+  mergeMeetingLists,
   nextCursor,
   noteText,
+  parseFolders,
   parseMeetings,
   parseParticipants,
 } from "../src/lib/connectors/granola-xml";
@@ -87,5 +89,28 @@ const text = noteText(listed[0], externalParticipants(listed[0], ["me@example.co
 t.check("attendee display names are in the parsed text, so the unattended rule finds them", text.includes("Afox1 <afox1@example.com>"));
 t.check("the user is not written into the text", !text.toLowerCase().includes("me@example.com"));
 t.check("an empty note section is left out", !noteText(listed[0], []).includes("My notes"));
+
+// Folders (JSON, unlike the meeting tools).
+const page = parseFolders(
+  JSON.stringify({
+    count: 3,
+    folders: [
+      { id: "f-1", title: "Networking", note_count: 12, parent_folder_id: null },
+      { id: "f-2", title: "  ", note_count: 0 },
+      { title: "no id" },
+    ],
+    next_offset: 100,
+  }),
+);
+t.check("folders with an id are read", page.folders.length === 2, JSON.stringify(page.folders));
+t.check("title and count read", page.folders[0].title === "Networking" && page.folders[0].noteCount === 12);
+t.check("a blank title gets a name", page.folders[1].title === "Untitled folder");
+t.check("next page offset read", page.nextOffset === 100);
+t.check("the empty answer seen live reads empty", parseFolders('{"count":0,"folders":[]}').folders.length === 0);
+t.check("unreadable text is an empty list, not a throw", parseFolders("<error>nope</error>").folders.length === 0);
+
+// A note in two chosen folders is synced once.
+const merged = mergeMeetingLists([listed, [listed[1], full]]);
+t.check("notes merged across folders by id", merged.length === 2 && merged.map((m) => m.id).join(",") === "m-1,m-2");
 
 t.done("granola smoke tests");

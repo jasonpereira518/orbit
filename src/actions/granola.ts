@@ -2,9 +2,24 @@
 
 import { randomUUID } from "crypto";
 import { cookies, headers } from "next/headers";
+import { after } from "next/server";
 import { requireSyncUser } from "@/lib/plan-guards";
-import { deleteConnectorConnection, getConnectorConnection } from "@/lib/connectors/connections";
-import { startGranolaAuthorization } from "@/lib/connectors/granola";
+import {
+  armConnectorSync,
+  deleteConnectorConnection,
+  getConnectorConnection,
+  loadConnectorConnection,
+} from "@/lib/connectors/connections";
+import {
+  granolaActivity,
+  listGranolaFolders,
+  startGranolaAuthorization,
+  type GranolaActivity,
+} from "@/lib/connectors/granola";
+import type { GranolaFolder } from "@/lib/connectors/granola-xml";
+import { kickSyncPass } from "@/lib/sync-kick";
+import { reportError } from "@/lib/report-error";
+import { UserFacingError } from "@/lib/errors";
 
 const FLOW_COOKIE = "orbit_granola_oauth";
 
@@ -43,9 +58,62 @@ export async function consumeGranolaFlow(state: string | null): Promise<GranolaF
   return flow;
 }
 
-export async function getGranolaConnection() {
+export type GranolaPanel = {
+  connection: Awaited<ReturnType<typeof getConnectorConnection>>;
+  /** The folders being synced; empty means every note. */
+  folderIds: string[];
+  activity: GranolaActivity;
+};
+
+/** Everything the settings page shows, except the folder list (a live Granola call). */
+export async function getGranolaPanel(): Promise<GranolaPanel> {
   const userId = await requireSyncUser();
-  return getConnectorConnection(userId, "granola");
+  const connection = await getConnectorConnection(userId, "granola");
+  if (!connection) return { connection, folderIds: [], activity: { notes: 0, people: 0, recent: [] } };
+  const [full, activity] = await Promise.all([loadConnectorConnection(connection.id), granolaActivity(userId)]);
+  return { connection, folderIds: full?.cursor?.folderIds ?? [], activity };
+}
+
+/**
+ * The user's Granola folders, or null when Granola won't list them — Free plans have no folder
+ * tools, and an outage shouldn't break the page; the picker then offers "All notes" only.
+ */
+export async function getGranolaFolders(): Promise<GranolaFolder[] | null> {
+  const userId = await requireSyncUser();
+  const connection = await getConnectorConnection(userId, "granola");
+  if (!connection || connection.status !== "active") return null;
+  try {
+    return await listGranolaFolders(connection.id);
+  } catch (err) {
+    reportError(err, { where: "action.granola.folders", userId, level: "warning" });
+    return null;
+  }
+}
+
+const MAX_FOLDERS = 50;
+
+/**
+ * Sync only these folders (empty: every note). The look-back restarts at 30 days so notes in a
+ * newly chosen folder aren't skipped for predating the watermark; notes already logged are
+ * skipped by the sync itself, so nothing is logged twice.
+ */
+export async function setGranolaFolders(folderIds: string[]): Promise<void> {
+  const userId = await requireSyncUser();
+  if (!Array.isArray(folderIds) || folderIds.length > MAX_FOLDERS) {
+    throw new UserFacingError(`Pick up to ${MAX_FOLDERS} folders`);
+  }
+  const ids = [...new Set(folderIds.filter((id) => typeof id === "string" && /^[\w-]{1,100}$/.test(id)))];
+  const connection = await getConnectorConnection(userId, "granola");
+  if (!connection) throw new UserFacingError("Connect Granola first");
+  const full = await loadConnectorConnection(connection.id);
+  await armConnectorSync(userId, "granola", { clientId: full?.cursor?.clientId ?? null, folderIds: ids });
+  after(() => kickSyncPass());
+}
+
+export async function syncGranolaNow(): Promise<void> {
+  const userId = await requireSyncUser();
+  await armConnectorSync(userId, "granola");
+  after(() => kickSyncPass());
 }
 
 export async function disconnectGranola(): Promise<void> {

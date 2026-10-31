@@ -12,7 +12,7 @@
  * preview deployments connect the same way production does. The issued `client_id` is kept on
  * the connection's cursor, because a refresh is refused without the client that obtained it.
  */
-import { and, eq, like } from "drizzle-orm";
+import { and, desc, eq, like, sql } from "drizzle-orm";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import {
@@ -26,7 +26,7 @@ import {
 import { InvalidClientError, InvalidGrantError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import type { OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { getDb } from "@/db";
-import { interactions, type ConnectorSyncCursor } from "@/db/schema";
+import { contacts, interactions, noteBatches, type ConnectorSyncCursor } from "@/db/schema";
 import {
   loadConnectorConnection,
   markConnectorNeedsReauth,
@@ -36,9 +36,12 @@ import {
 import {
   connectedUserEmail,
   externalParticipants,
+  mergeMeetingLists,
   nextCursor,
   noteText,
+  parseFolders,
   parseMeetings,
+  type GranolaFolder,
   type GranolaMeeting,
 } from "@/lib/connectors/granola-xml";
 import { NO_PEOPLE_OR_DATES_MESSAGE, runCaptureParse } from "@/lib/capture-parse";
@@ -190,24 +193,54 @@ async function freshAccessToken(conn: NonNullable<Awaited<ReturnType<typeof load
   }
 }
 
-/** Every note changed since `since`, oldest change first. */
-async function listChangedMeetings(call: CallTool, since: string): Promise<{ meetings: GranolaMeeting[]; email: string | null }> {
-  const meetings: GranolaMeeting[] = [];
+/**
+ * Every note changed since `since`, oldest change first — in the chosen folders when there
+ * are any (one listing per folder, merged), otherwise every note the user took part in.
+ */
+async function listChangedMeetings(
+  call: CallTool,
+  since: string,
+  folderIds: string[],
+): Promise<{ meetings: GranolaMeeting[]; email: string | null }> {
   let email: string | null = null;
-  let cursor: string | null = null;
-  do {
-    const xml = await call("list_meetings", {
-      updated_after: since,
-      involvement: { captured_by_me: true, listed_as_participant: true },
-      ...(cursor ? { cursor } : {}),
-    });
-    email ??= connectedUserEmail(xml);
-    meetings.push(...parseMeetings(xml));
-    cursor = nextCursor(xml);
-  } while (cursor);
+  const listOne = async (folderId: string | null) => {
+    const meetings: GranolaMeeting[] = [];
+    let cursor: string | null = null;
+    do {
+      const xml = await call("list_meetings", {
+        updated_after: since,
+        ...(folderId ? { folder_id: folderId } : { involvement: { captured_by_me: true, listed_as_participant: true } }),
+        ...(cursor ? { cursor } : {}),
+      });
+      email ??= connectedUserEmail(xml);
+      meetings.push(...parseMeetings(xml));
+      cursor = nextCursor(xml);
+    } while (cursor);
+    return meetings;
+  };
+  const lists: GranolaMeeting[][] = [];
+  for (const folderId of folderIds.length ? folderIds : [null]) lists.push(await listOne(folderId));
+  const meetings = mergeMeetingLists(lists);
   const changed = (m: GranolaMeeting) => m.updatedAt ?? m.meetingAt;
   meetings.sort((a, b) => Date.parse(changed(a)) - Date.parse(changed(b)));
   return { meetings, email };
+}
+
+/** The user's Granola folders, for the picker. Empty on Free Granola, which has no folder tools. */
+export async function listGranolaFolders(connectionId: string): Promise<GranolaFolder[]> {
+  const conn = await loadConnectorConnection(connectionId);
+  if (!conn) return [];
+  const token = await freshAccessToken(conn);
+  return withGranola(token, async (call) => {
+    const folders: GranolaFolder[] = [];
+    let offset: number | null = 0;
+    while (offset !== null) {
+      const page = parseFolders(await call("list_meeting_folders", { limit: 100, offset }));
+      folders.push(...page.folders);
+      offset = page.nextOffset;
+    }
+    return folders;
+  });
 }
 
 async function alreadyIngested(userId: string, noteId: string): Promise<boolean> {
@@ -298,7 +331,7 @@ export async function syncGranola(connectionId: string): Promise<void> {
     let touched = 0;
     let more = false;
     await withGranola(token, async (call) => {
-      const { meetings, email } = await listChangedMeetings(call, cursor.syncedThrough!);
+      const { meetings, email } = await listChangedMeetings(call, cursor.syncedThrough!, cursor.folderIds ?? []);
       const ownEmails = [email, conn.accountRef].filter((e): e is string => Boolean(e));
       for (const listed of meetings) {
         if (Date.now() - started > PASS_BUDGET_MS) {
@@ -326,4 +359,56 @@ export async function syncGranola(connectionId: string): Promise<void> {
     // pass re-lists from the old one, and `alreadyIngested` skips what did land.
     throw err;
   }
+}
+
+export type GranolaActivity = {
+  notes: number;
+  people: number;
+  recent: Array<{ noteId: string; title: string; at: Date; people: Array<{ id: string; name: string }> }>;
+};
+
+const RECENT_NOTES = 5;
+
+/** What Granola has done so far: totals, and the latest notes with the people each updated. */
+export async function granolaActivity(userId: string): Promise<GranolaActivity> {
+  const db = await getDb();
+  const mine = and(eq(interactions.userId, userId), eq(interactions.source, "granola"));
+  const [totals] = await db
+    .select({
+      notes: sql<number>`count(distinct split_part(${interactions.externalId}, ':', 2))`.mapWith(Number),
+      people: sql<number>`count(distinct ${interactions.contactId})`.mapWith(Number),
+    })
+    .from(interactions)
+    .where(mine);
+  // A note logs one row per person, so a few notes' worth of rows covers the recent five.
+  const rows = await db
+    .select({
+      externalId: interactions.externalId,
+      at: interactions.interactionDate,
+      contactId: contacts.id,
+      name: contacts.fullName,
+      sourceText: noteBatches.sourceText,
+    })
+    .from(interactions)
+    .innerJoin(contacts, eq(contacts.id, interactions.contactId))
+    .leftJoin(noteBatches, eq(noteBatches.id, interactions.noteBatchId))
+    .where(mine)
+    .orderBy(desc(interactions.interactionDate))
+    .limit(RECENT_NOTES * 10);
+
+  const recent: GranolaActivity["recent"] = [];
+  for (const row of rows) {
+    const noteId = row.externalId?.split(":")[1];
+    if (!noteId) continue;
+    let note = recent.find((n) => n.noteId === noteId);
+    if (!note) {
+      if (recent.length === RECENT_NOTES) continue;
+      // `noteText` opens with "Meeting: <title>".
+      const title = row.sourceText?.match(/^Meeting: (.*)$/m)?.[1]?.trim() || "Granola note";
+      note = { noteId, title, at: row.at, people: [] };
+      recent.push(note);
+    }
+    if (!note.people.some((p) => p.id === row.contactId)) note.people.push({ id: row.contactId, name: row.name });
+  }
+  return { notes: totals?.notes ?? 0, people: totals?.people ?? 0, recent };
 }

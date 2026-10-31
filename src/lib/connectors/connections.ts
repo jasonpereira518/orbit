@@ -359,6 +359,7 @@ export type ConnectorConnectionSummary = {
   capabilities: string[];
   lastSyncedAt: Date | null;
   syncError: string | null;
+  syncStatus: string | null;
 };
 
 /** Never returns a secret: this feeds the settings UI. */
@@ -376,6 +377,7 @@ export async function listConnectorConnections(
       capabilities: connectorConnections.capabilities,
       lastSyncedAt: connectorConnections.lastSyncedAt,
       syncError: connectorConnections.syncError,
+      syncStatus: connectorConnections.syncStatus,
     })
     .from(connectorConnections)
     .where(eq(connectorConnections.userId, userId));
@@ -468,4 +470,27 @@ export async function storeConnectorTokens(
       updatedAt: new Date(),
     })
     .where(eq(connectorConnections.id, id));
+}
+
+/**
+ * Due on the next pass — "sync now", or a setting that changed what to sync. A `cursor` given
+ * replaces the stored one (a new folder choice restarts the look-back). A connection that
+ * needs reauth is left alone: a sync could only fail.
+ */
+export async function armConnectorSync(
+  userId: string,
+  connectorId: string,
+  cursor?: ConnectorSyncCursor
+): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(connectorConnections)
+    .set({ nextSyncAt: new Date(), updatedAt: new Date(), ...(cursor ? { syncCursor: cursor } : {}) })
+    .where(
+      and(
+        eq(connectorConnections.userId, userId),
+        eq(connectorConnections.connectorId, connectorId),
+        eq(connectorConnections.status, "active")
+      )
+    );
 }

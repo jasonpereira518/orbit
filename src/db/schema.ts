@@ -3229,6 +3229,8 @@ export type ConnectorSyncCursor = {
    * not a secret — but a refresh is refused without the client that obtained the token.
    */
   clientId?: string | null;
+  /** Granola: sync only notes in these folders. Absent or empty means every note. */
+  folderIds?: string[] | null;
 };
 
 export type ProviderSyncCursor = {
