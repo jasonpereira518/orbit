@@ -28,6 +28,7 @@ import { CaptureSummary, choicesFromSuggestions, suggestionsFromChoices } from "
 import type { OpportunityReviewItem } from "@/lib/capture/types";
 import { CAPTURE_MODES, CaptureTabs, capturePanelId, captureTabId, type CaptureMode } from "@/components/capture/capture-tabs";
 import { NotesLibraryUpload } from "@/components/capture/notes-library-upload";
+import { CaptureImportStrip } from "@/components/capture/capture-import-strip";
 import type { DriveCaptureConfig } from "@/components/capture/drive-capture-button";
 import { CaptureQueuePanel } from "@/components/capture/capture-queue-panel";
 import { discardCaptureBatch, getActiveCaptureJobs, mergeCaptureBatch } from "@/actions/capture-jobs";
@@ -90,6 +91,7 @@ export function CaptureFlow({
   initialMeeting = null,
   cloudNotes = null,
   openCloudReview = false,
+  chatImports = false,
   onSaved,
 }: {
   initialJob: CaptureJobView | null;
@@ -123,6 +125,8 @@ export function CaptureFlow({
   cloudNotes?: CloudNotesState | null;
   /** Open the "these look like meeting notes" dialog on arrival (the toast's and the bell's Review). */
   openCloudReview?: boolean;
+  /** `feature.chat-imports` is live: a dropped chat export is handed to the chat card. */
+  chatImports?: boolean;
   /**
    * Embedded in onboarding: notes only (no mode tabs, no ignored-people list), and a save
    * hands back to the caller instead of showing the saved screen. The store is cleared
@@ -530,6 +534,20 @@ export function CaptureFlow({
   return (
     <div className="space-y-6">
       {phase === "input" && quota && !initialContactId && <ContactQuotaNotice used={quota.used} limit={quota.limit} />}
+
+      {/* Mounted through review too, so an import already running keeps its queue card. */}
+      {!onSaved && (
+        <CaptureImportStrip
+          disabled={inputLocked}
+          hasApiKey={hasApiKey}
+          chatImports={chatImports}
+          onAudio={(files) => {
+            setMode("voice");
+            voice.handleFilesSelected(files);
+          }}
+          onNotesQueued={refreshQueue}
+        />
+      )}
 
       {phase === "input" && !onSaved && (
         <div className="space-y-2">

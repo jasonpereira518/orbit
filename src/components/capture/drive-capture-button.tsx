@@ -11,6 +11,9 @@
  * reads each into a job you review, via `queueDriveCapture`.
  *
  * Docs go a few at a time, like the notes fan-out, so each parse gets its own request.
+ *
+ * `DriveDocsButton` is /imports' own route, moved here beside it: the same Picker, but the
+ * pick lands in `DriveImportCard`, which saves the docs as an import without a review.
  */
 import { useRef, useState } from "react";
 import { HardDrive, Loader2 } from "lucide-react";
@@ -42,23 +45,11 @@ function newBatchId() {
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-/** Null when Drive is not configured or the plan has no sync — the button simply isn't there. */
-export function DriveCaptureButton({
-  drive,
-  canUseSync,
-  disabled = false,
-  onQueued,
-  size = "sm",
-}: {
-  drive: DriveCaptureConfig | null | undefined;
-  canUseSync: boolean;
-  disabled?: boolean;
-  /** The jobs this pick created, once every doc has settled. */
-  onQueued: (jobIds: string[]) => void;
-  size?: "sm" | "default";
-}) {
-  const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+/**
+ * Readiness is asked on hover/focus (`warm`) so the press can open Google's token window at
+ * once. Null when Drive is not configured or the plan has no sync.
+ */
+function useDrivePicker(drive: DriveCaptureConfig | null | undefined, canUseSync: boolean) {
   const readinessRef = useRef<{ at: number; promise: Promise<Readiness> } | null>(null);
 
   if (!drive?.apiKey || !drive.appId || !drive.clientId || !canUseSync) return null;
@@ -94,6 +85,30 @@ export function DriveCaptureButton({
     if (!accessToken) return []; // closed Google's window: a cancel
     return openDrivePicker({ accessToken, apiKey: config.apiKey, appId: config.appId });
   }
+
+  return { warm, pick };
+}
+
+/** Null when Drive is not configured or the plan has no sync — the button simply isn't there. */
+export function DriveCaptureButton({
+  drive,
+  canUseSync,
+  disabled = false,
+  onQueued,
+  size = "sm",
+}: {
+  drive: DriveCaptureConfig | null | undefined;
+  canUseSync: boolean;
+  disabled?: boolean;
+  /** The jobs this pick created, once every doc has settled. */
+  onQueued: (jobIds: string[]) => void;
+  size?: "sm" | "default";
+}) {
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const picker = useDrivePicker(drive, canUseSync);
+  if (!picker) return null;
+  const { warm, pick } = picker;
 
   async function run() {
     if (busy) return;
@@ -165,6 +180,52 @@ export function DriveCaptureButton({
     >
       {busy ? <Loader2 className="size-4 animate-spin" /> : <HardDrive className="size-4" />}
       {progress ? `Reading ${progress.done}/${progress.total}…` : "From Google Drive"}
+    </Button>
+  );
+}
+
+/** Save Docs and Slides from Drive as an import, without a review — the pick goes to `onPicked`. */
+export function DriveDocsButton({
+  drive,
+  canUseSync,
+  disabled = false,
+  onPicked,
+}: {
+  drive: DriveCaptureConfig | null | undefined;
+  canUseSync: boolean;
+  disabled?: boolean;
+  onPicked: (files: PickedDriveFile[]) => void;
+}) {
+  // Covers the whole click→token→Picker round trip, so a slow one can't be pressed twice.
+  const [busy, setBusy] = useState(false);
+  const picker = useDrivePicker(drive, canUseSync);
+  if (!picker) return null;
+
+  async function run() {
+    if (busy || !picker) return;
+    setBusy(true);
+    try {
+      const picked = await picker.pick();
+      if (picked.length) onPicked(picked);
+    } catch (err) {
+      toast.error(friendlyError(err, IMPORT_COPY.driveUnavailable));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      disabled={disabled || busy}
+      onPointerEnter={picker.warm}
+      onFocus={picker.warm}
+      onClick={() => void run()}
+    >
+      {busy ? <Loader2 className="size-4 animate-spin" /> : <HardDrive className="size-4" />}
+      Save Docs from Drive
     </Button>
   );
 }
