@@ -59,6 +59,8 @@ export type ReminderRow = {
   dueDate: string | null;
   /** The viewer's calendar day for `dueDate` (see `reminder-due-bucket.ts`). */
   dueDay: string | null;
+  /** "3:00 PM" in the viewer's zone, for a meeting (`meet`) set at a time; null otherwise. */
+  dueTime?: string | null;
   status: string;
   reminderType: string;
   actionKind: ReminderActionKind;

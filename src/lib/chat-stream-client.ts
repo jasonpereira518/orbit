@@ -93,7 +93,8 @@ export async function streamChat(
     res = await fetch("/api/chat", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
+      // The browser's zone, so "Friday at 3" means 3 where the person is.
+      body: JSON.stringify({ ...body, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
       signal,
     });
   } catch (err) {
