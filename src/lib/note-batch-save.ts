@@ -144,6 +144,13 @@ export type SaveNoteBatchInput = {
    * (the Drive importer) leaves it off, since a reminder nobody reviewed is not one they set.
    */
   trackFollowUps?: boolean;
+  /** `interactions.source` for the logged interactions. Defaults to `"capture"`. */
+  interactionSource?: string;
+  /**
+   * A connector's own stable id for the note (e.g. `granola:<noteId>`), used in place of the
+   * text hash so an edited note resolves to the same interaction instead of logging a second.
+   */
+  externalIdBase?: string;
 };
 
 const MEETING_REMINDER_PREFIX: Record<MeetingExtraReminderInput["kind"], string> = {
@@ -360,9 +367,11 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
           topics: parsed.topics,
           actionItems: parsed.action_items,
           interactionType: p.interactionType || "meeting_note",
-          source: "capture",
+          source: input.interactionSource ?? "capture",
           interactionDate,
-          externalId: noteInteractionExternalId(p.sourceHash ?? input.sourceHash, contactId),
+          externalId: input.externalIdBase
+            ? `${input.externalIdBase}:${contactId}`
+            : noteInteractionExternalId(p.sourceHash ?? input.sourceHash, contactId),
           noteBatchId: batchId,
         },
         WRITE_OPTS

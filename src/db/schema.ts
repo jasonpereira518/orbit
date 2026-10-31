@@ -3224,6 +3224,11 @@ export type ConnectorSyncCursor = {
   ctag?: string | null;
   /** High-water mark for `updated_since`-style APIs. */
   syncedThrough?: string | null;
+  /**
+   * The OAuth client id a dynamically registered client was issued (Granola's MCP). Public,
+   * not a secret — but a refresh is refused without the client that obtained the token.
+   */
+  clientId?: string | null;
 };
 
 export type ProviderSyncCursor = {

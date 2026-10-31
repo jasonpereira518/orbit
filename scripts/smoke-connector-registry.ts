@@ -87,14 +87,14 @@ check(
   syncable.length === CONNECTORS.filter(isSyncable).length && syncable.every((c) => CONNECTORS.includes(c)),
   `${syncable.length} of ${CONNECTORS.length}`
 );
-// P0 ships the dispatch and none of the connectors it dispatches to. When this check starts
-// failing, the first real connector has landed — and `ConnectorManifest.sync`'s contract (who
+// The syncable set, pinned. Granola was the first connector with a `sync`; when this check
+// starts failing, another one has landed — and `ConnectorManifest.sync`'s contract (who
 // records the outcome, and the `nextSyncAt: null` rule for its connect route) is what its
 // author has to have read. `scripts/smoke-connector-sync-pass.ts` covers the dispatch itself
-// with a stub manifest, which is why the empty set here is not a coverage hole.
+// with a stub manifest.
 check(
-  "P0 ships no sync functions (see ConnectorManifest.sync before adding the first)",
-  syncable.length === 0,
+  "the syncable connectors are exactly granola (see ConnectorManifest.sync before adding another)",
+  syncable.map((c) => c.id).join(",") === "granola",
   syncable.map((c) => c.id).join(",")
 );
 

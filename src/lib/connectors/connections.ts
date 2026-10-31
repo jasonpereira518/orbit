@@ -263,6 +263,8 @@ export type UpsertConnectorConnectionInput = {
   scopes?: string | null;
   capabilities?: string[];
   nextSyncAt?: Date | null;
+  /** Replaces the stored cursor when given; left alone otherwise. */
+  syncCursor?: ConnectorSyncCursor;
 };
 
 /**
@@ -295,6 +297,7 @@ export async function upsertConnectorConnection(
     syncFailures: 0,
     nextSyncAt: input.nextSyncAt ?? new Date(),
     updatedAt: new Date(),
+    ...(input.syncCursor ? { syncCursor: input.syncCursor } : {}),
   };
   const [row] = await db
     .insert(connectorConnections)
@@ -337,6 +340,7 @@ export async function upsertConnectorConnection(
         syncFailures: values.syncFailures,
         nextSyncAt: sql`excluded.next_sync_at`,
         updatedAt: sql`excluded.updated_at`,
+        ...(input.syncCursor ? { syncCursor: sql`excluded.sync_cursor` } : {}),
       },
     })
     // Bare `.returning()`, not `.returning({ ... })` — an explicit field selector defeats
@@ -421,4 +425,47 @@ export async function deleteConnectorConnection(
         eq(connectorConnections.connectorId, connectorId)
       )
     );
+}
+
+/**
+ * One connection with its secrets decrypted, for a `sync` handed only the id. The claim that
+ * started the run already holds the lease; this is a plain read, not a second claim.
+ */
+export async function loadConnectorConnection(
+  id: string
+): Promise<(ClaimedConnectorConnection & { tokenExpiresAt: Date | null }) | null> {
+  const db = await getDb();
+  const [row] = await db.select().from(connectorConnections).where(eq(connectorConnections.id, id));
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.userId,
+    connectorId: row.connectorId,
+    authKind: row.authKind,
+    accountRef: row.accountRef,
+    accessToken: decryptOrNull(row.authKind === "oauth2" ? row.accessTokenEncrypted : row.apiKeyEncrypted),
+    refreshToken: decryptOrNull(row.refreshTokenEncrypted),
+    scopes: row.scopes,
+    capabilities: parseJson<string[]>(row.capabilities) ?? [],
+    cursor: parseJson<ConnectorSyncCursor>(row.syncCursor),
+    syncFailures: row.syncFailures,
+    tokenExpiresAt: row.tokenExpiresAt,
+  };
+}
+
+/** Store a refreshed OAuth grant. A refresh that returns no new refresh token keeps the old one. */
+export async function storeConnectorTokens(
+  id: string,
+  tokens: { accessToken: string; refreshToken?: string | null; tokenExpiresAt: Date | null }
+): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(connectorConnections)
+    .set({
+      accessTokenEncrypted: encrypt(tokens.accessToken),
+      ...(tokens.refreshToken ? { refreshTokenEncrypted: encrypt(tokens.refreshToken) } : {}),
+      tokenExpiresAt: tokens.tokenExpiresAt,
+      updatedAt: new Date(),
+    })
+    .where(eq(connectorConnections.id, id));
 }
