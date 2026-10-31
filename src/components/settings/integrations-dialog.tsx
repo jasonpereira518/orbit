@@ -18,6 +18,7 @@ import { SpeechUsageCard, type SpeechAllowances } from "@/components/settings/sp
 import { ApiSettings } from "@/components/settings/api-settings";
 import { AssistantsSettings } from "@/components/settings/assistants-settings";
 import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
+import { GranolaSettings } from "@/components/settings/granola-settings";
 import { IntegrationIcon, StatusDot, statusText } from "@/components/settings/integration-ui";
 import { IntegrationsOverview } from "@/components/settings/integrations-overview";
 import { OutreachSettings } from "@/components/settings/outreach-settings";
@@ -660,6 +661,8 @@ function Panel({
           <LinkedInMessagesImport />
         </div>
       );
+    case "granola":
+      return <GranolaSettings />;
     case "ai":
       return (
         <div className="space-y-5">

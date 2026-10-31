@@ -4753,6 +4753,10 @@
       "assistants": {
         "state": "none",
         "detail": "Works on every plan"
+      },
+      "granola": {
+        "state": "off",
+        "detail": "Not connected"
       }
     },
     "accounts": {
@@ -4807,6 +4811,10 @@
       "zapier": {
         "state": "on",
         "detail": "1 key"
+      },
+      "granola": {
+        "state": "off",
+        "detail": "Not connected"
       }
     }
   },

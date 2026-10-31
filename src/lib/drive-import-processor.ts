@@ -216,7 +216,7 @@ export function nameGroundedInDoc(name: string | null | undefined, docText: stri
  *     created and the duplicate machinery flags the pair for a human.
  *   - Tags are bounded and cleaned to one short line each.
  */
-function acceptUnattended(
+export function acceptUnattended(
   items: Awaited<ReturnType<typeof runCaptureParse>>["items"],
   keep: string[],
   at: string,

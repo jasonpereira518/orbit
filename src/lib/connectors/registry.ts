@@ -351,6 +351,21 @@ const CONNECTOR_MANIFESTS = [
     ],
   },
   {
+    id: "granola",
+    label: "Granola",
+    family: "knowledge",
+    auth: "oauth2",
+    availability: "available",
+    entitlement: "sync",
+    rateBucket: "providerSync",
+    purgeCategory: "connections",
+    aliases: ["meeting notes"],
+    capabilities: [read("syncEvents", "Log your Granola meetings and refresh AI notes")],
+    // Lazy, so this file stays free of the database driver — no client component imports
+    // the registry today; if one ever does, move this lookup into the scheduler.
+    sync: async (id: string) => (await import("@/lib/connectors/granola")).syncGranola(id),
+  },
+  {
     id: "notion",
     label: "Notion",
     family: "knowledge",
