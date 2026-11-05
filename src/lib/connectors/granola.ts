@@ -361,13 +361,19 @@ export async function syncGranola(connectionId: string): Promise<void> {
   }
 }
 
+export type GranolaActivityPerson = { id: string; name: string; firstName: string | null; photo: string | null };
+
 export type GranolaActivity = {
   notes: number;
   people: number;
-  recent: Array<{ noteId: string; title: string; at: Date; people: Array<{ id: string; name: string }> }>;
+  recent: Array<{ noteId: string; title: string; at: Date; url: string; people: GranolaActivityPerson[] }>;
 };
 
-const RECENT_NOTES = 5;
+/**
+ * Notes the page can list. It shows five and expands to the rest, so one read serves both.
+ * ponytail: a fixed cap, not paging — plenty for a settings page; page it if anyone outgrows it.
+ */
+const RECENT_NOTES = 50;
 
 /** What Granola has done so far: totals, and the latest notes with the people each updated. */
 export async function granolaActivity(userId: string): Promise<GranolaActivity> {
@@ -387,6 +393,8 @@ export async function granolaActivity(userId: string): Promise<GranolaActivity> 
       at: interactions.interactionDate,
       contactId: contacts.id,
       name: contacts.fullName,
+      firstName: contacts.firstName,
+      photo: contacts.profileImageUrl,
       sourceText: noteBatches.sourceText,
     })
     .from(interactions)
@@ -405,10 +413,12 @@ export async function granolaActivity(userId: string): Promise<GranolaActivity> 
       if (recent.length === RECENT_NOTES) continue;
       // `noteText` opens with "Meeting: <title>".
       const title = row.sourceText?.match(/^Meeting: (.*)$/m)?.[1]?.trim() || "Granola note";
-      note = { noteId, title, at: row.at, people: [] };
+      note = { noteId, title, at: row.at, url: `https://notes.granola.ai/d/${encodeURIComponent(noteId)}`, people: [] };
       recent.push(note);
     }
-    if (!note.people.some((p) => p.id === row.contactId)) note.people.push({ id: row.contactId, name: row.name });
+    if (!note.people.some((p) => p.id === row.contactId)) {
+      note.people.push({ id: row.contactId, name: row.name, firstName: row.firstName, photo: row.photo });
+    }
   }
   return { notes: totals?.notes ?? 0, people: totals?.people ?? 0, recent };
 }

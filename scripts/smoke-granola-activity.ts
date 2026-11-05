@@ -18,8 +18,8 @@ const OTHER = `smoke-granola-other-${randomUUID()}`;
 
 async function main() {
   const db = await getDb();
-  const person = (userId: string, fullName: string) =>
-    db.insert(contacts).values({ userId, fullName }).returning().then((r) => r[0]!.id);
+  const person = (userId: string, fullName: string, profileImageUrl: string | null = null) =>
+    db.insert(contacts).values({ userId, fullName, profileImageUrl }).returning().then((r) => r[0]!.id);
   const batch = (userId: string, title: string) =>
     db
       .insert(noteBatches)
@@ -35,7 +35,7 @@ async function main() {
   const log = (userId: string, contactId: string, externalId: string, at: string, source = "granola", noteBatchId?: string) =>
     db.insert(interactions).values({ userId, contactId, externalId, source, interactionDate: new Date(at), noteBatchId });
 
-  const ana = await person(USER, "Ana Fox");
+  const ana = await person(USER, "Ana Fox", "https://example.com/ana.jpg");
   const pat = await person(USER, "Pat Kim");
   const sam = await person(USER, "Sam Lee");
   const older = await batch(USER, "Older chat");
@@ -57,6 +57,11 @@ async function main() {
     "a note lists each person it updated once",
     a.recent[0]?.people.map((p) => p.name).sort().join(",") === "Ana Fox,Pat Kim",
     JSON.stringify(a.recent[0]?.people),
+  );
+  t.check("each note links to itself in Granola", a.recent[0]?.url === "https://notes.granola.ai/d/n2", a.recent[0]?.url);
+  t.check(
+    "people carry their photo for the avatar stack",
+    a.recent[0]?.people.find((p) => p.name === "Ana Fox")?.photo === "https://example.com/ana.jpg",
   );
   t.check("captures and other accounts are left out", !a.recent.some((n) => n.noteId === "abc" || n.noteId === "n9"));
   t.check("an account with nothing synced reads empty", (await granolaActivity(`nobody-${randomUUID()}`)).notes === 0);
