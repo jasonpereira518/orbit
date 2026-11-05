@@ -79,6 +79,11 @@ CREATE TABLE IF NOT EXISTS user_settings (
   signup_landing_path text,
   signup_attributed_at timestamptz,
   signup_attribution_source text,
+  last_touch_source text,
+  last_touch_medium text,
+  last_touch_campaign text,
+  last_touch_landing_path text,
+  last_touch_at timestamptz,
   signup_session_id text,
   account_kind text,
   ai_key_added_at timestamptz,
@@ -813,9 +818,13 @@ CREATE TABLE IF NOT EXISTS outreach_messages (
   last_action_at timestamptz,
   error_message text,
   delivery_id text,
+  delivered_at timestamptz,
+  opened_at timestamptz,
+  clicked_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS outreach_messages_delivery_idx ON outreach_messages(delivery_id) WHERE delivery_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS outreach_messages_prospect_idx ON outreach_messages(prospect_id);
 CREATE INDEX IF NOT EXISTS outreach_messages_status_idx ON outreach_messages(status);
 CREATE INDEX IF NOT EXISTS outreach_messages_outcome_idx ON outreach_messages(outcome);
@@ -2045,6 +2054,9 @@ CREATE TABLE IF NOT EXISTS page_views (
   dwell_ms integer,
   load_ms integer,
   nav_type text,
+  lcp_ms integer,
+  inp_ms integer,
+  cls_milli integer,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS page_views_created_idx ON page_views(created_at);
@@ -2826,7 +2838,14 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 186 = meeting_sessions.user_notes: the notes box from a recorded meeting, stored with it
 // instead of only in the browser, so /meetings can show and edit them. Rescanned every remote
 // ref and worktree on Nov 5 2026: 185 (main) was the highest claimed anywhere.
-export const SCHEMA_VERSION = 186;
+//
+// 187 = standard tracking: page_views.lcp_ms / inp_ms / cls_milli (web vitals on a document's
+// first view), user_settings.last_touch_source / _medium / _campaign / _landing_path / _at (the
+// last channel-bearing landing before signup), and outreach_messages.delivered_at / opened_at /
+// clicked_at with outreach_messages_delivery_idx (Resend engagement, matched on delivery_id).
+// Rescanned every local and remote ref and every worktree's working file on Nov 5 2026: 186
+// (main) was the highest claimed anywhere.
+export const SCHEMA_VERSION = 187;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -4225,6 +4244,18 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "contacts", "mastodon_acct", "text");
   await ensureColumn(client, "contacts", "name_guess", "jsonb");
   await ensureColumn(client, "meeting_sessions", "user_notes", "text");
+  // v187: standard tracking — web vitals, last-touch attribution, Resend engagement.
+  await ensureColumn(client, "page_views", "lcp_ms", "integer");
+  await ensureColumn(client, "page_views", "inp_ms", "integer");
+  await ensureColumn(client, "page_views", "cls_milli", "integer");
+  await ensureColumn(client, "user_settings", "last_touch_source", "text");
+  await ensureColumn(client, "user_settings", "last_touch_medium", "text");
+  await ensureColumn(client, "user_settings", "last_touch_campaign", "text");
+  await ensureColumn(client, "user_settings", "last_touch_landing_path", "text");
+  await ensureColumn(client, "user_settings", "last_touch_at", "timestamptz");
+  await ensureColumn(client, "outreach_messages", "delivered_at", "timestamptz");
+  await ensureColumn(client, "outreach_messages", "opened_at", "timestamptz");
+  await ensureColumn(client, "outreach_messages", "clicked_at", "timestamptz");
   await ensureColumn(client, "recommendations", "base_score", "integer");
   await ensureColumn(client, "recommendations", "ai_delta", "integer");
   await ensureColumn(client, "recommendations", "ai_angle", "text");
@@ -5066,6 +5097,19 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS name_guess jsonb`,
   // Schema v186: what the person typed during a recorded meeting, kept with it (/meetings).
   `ALTER TABLE meeting_sessions ADD COLUMN IF NOT EXISTS user_notes text`,
+  // Schema v187: web vitals on the first view, last-touch attribution, Resend engagement.
+  `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS lcp_ms integer`,
+  `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS inp_ms integer`,
+  `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS cls_milli integer`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_touch_source text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_touch_medium text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_touch_campaign text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_touch_landing_path text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_touch_at timestamptz`,
+  `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS delivered_at timestamptz`,
+  `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS opened_at timestamptz`,
+  `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS clicked_at timestamptz`,
+  `CREATE INDEX IF NOT EXISTS outreach_messages_delivery_idx ON outreach_messages(delivery_id) WHERE delivery_id IS NOT NULL`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS base_score integer`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS ai_delta integer`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS ai_angle text`,

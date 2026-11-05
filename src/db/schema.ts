@@ -308,6 +308,19 @@ export const userSettings = pgTable("user_settings", {
    */
   signupAttributionSource: text("signup_attribution_source").$type<"cookie" | "direct" | "waitlist">(),
   /**
+   * LAST touch before signup, beside the first touch above: the most recent landing that
+   * carried a channel (the `orbit_attr_last` cookie, overwritten by `src/proxy.ts` on every
+   * such landing). Written once, in the same UPDATE as `signup_*`, so it means "what brought
+   * them back the time they signed up", never a later visit. `source` is the UTM source, else
+   * the referrer host (the precedence `channelOf` uses); `at` is when that landing happened.
+   * All null when the account had no last-touch cookie at signup.
+   */
+  lastTouchSource: text("last_touch_source"),
+  lastTouchMedium: text("last_touch_medium"),
+  lastTouchCampaign: text("last_touch_campaign"),
+  lastTouchLandingPath: text("last_touch_landing_path"),
+  lastTouchAt: timestamp("last_touch_at", { withTimezone: true }),
+  /**
    * The per-tab analytics session id (the beacon's `pv_sid`) of the first signed-in render. It
    * lets an operator say "this account's first session came in on /pricing from Reddit"
    * without storing a visitor identity: it is the same random per-tab uuid page_views already
@@ -2884,11 +2897,22 @@ export const outreachMessages = pgTable(
     sentAt: timestamp("sent_at", { withTimezone: true }),
     lastActionAt: timestamp("last_action_at", { withTimezone: true }),
     errorMessage: text("error_message"),
+    /** Resend's email id for an email send (Twilio's SID for SMS). The Resend webhook matches on it. */
     deliveryId: text("delivery_id"),
+    /**
+     * Resend engagement for an email sent on Orbit's Resend account, from the webhook
+     * (`email.delivered` / `email.opened` / `email.clicked`). First timestamp wins; NULL means
+     * not (yet) seen, or the account's own Resend key sent it (its webhooks never reach Orbit).
+     */
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    openedAt: timestamp("opened_at", { withTimezone: true }),
+    clickedAt: timestamp("clicked_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
+    // Partial (delivery_id IS NOT NULL) in the DDL: the Resend webhook's lookup.
+    index("outreach_messages_delivery_idx").on(t.deliveryId),
     index("outreach_messages_prospect_idx").on(t.prospectId),
     index("outreach_messages_status_idx").on(t.status),
     index("outreach_messages_outcome_idx").on(t.outcome),
@@ -6079,6 +6103,15 @@ export const pageViews = pgTable(
      * router's transition start). The two are different populations and are never mixed.
      */
     navType: text("nav_type").$type<"hard" | "soft">(),
+    /**
+     * Core Web Vitals for a document's FIRST view only (a client-side navigation has no LCP),
+     * from `useReportWebVitals` via the `vitals` beacon. Each is the largest value reported
+     * (they only grow over a page's life), NULL when never reported. CLS is stored ×1000 as
+     * an integer (`cls_milli` 100 = CLS 0.1).
+     */
+    lcpMs: integer("lcp_ms"),
+    inpMs: integer("inp_ms"),
+    clsMilli: integer("cls_milli"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [

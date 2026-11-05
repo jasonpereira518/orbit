@@ -13,6 +13,7 @@ export default function GroupError({
     <ErrorFallback
       error={error}
       retry={unstable_retry}
+      where="boundary.marketing"
       home={{ href: "/", label: "Back to the homepage" }}
     />
   );

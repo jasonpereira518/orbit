@@ -136,10 +136,28 @@ Format per event: **fires when** / **must not fire when** / **read by**. Propert
 - Added: v181.
 
 ## mcp_disconnected
-- Fires when: an OAuth grant or key is revoked.
-- Must not fire when: an expiry.
+- Fires when: `revokeApiKey` revokes a live `mcp_url` key (the twin of `createApiKey`'s `mcp_connected`). `client` is `other`, as at creation. One per key (deterministic id over the key id). Wired in v187.
+- Must not fire when: an expiry, a second revoke of the same key, or revoking a plain `api` key. OAuth grants are revoked in Clerk's account portal, which sends Orbit nothing, so an OAuth disconnect is not recorded.
 - Read by: MCP retention.
 - Added: v181.
+
+## search_performed
+- Fires when: a server path answers a typed search: the first page of `/contacts?q=` (`listContactsPage` without a cursor, surface `contacts_page`), the command palette's people search (`searchContactsForPicker` with surface `command_palette`), and `GET /api/v1/contacts?q=` (surface `api`, event surface `api`). `query_length` is the trimmed length capped at 64; `result_count` is the matched total (contacts page) or rows returned, capped at 1000. Never the query text. Sampled: the id is deterministic per (user, surface, 10-second bucket), so a typing burst is one event (the burst's first query wins), and an in-memory map skips repeat inserts per instance.
+- Must not fire when: an empty query, "load more" on the contacts list, the other pickers that share `searchContactsForPicker` (mentions, merge, reminders), chat's internal lookups, or the MCP search tool (that is `mcp_tool_called`).
+- Read by: Search adoption by surface; zero-result rate.
+- Added: v187.
+
+## notification_shown
+- Fires when: `showDesktopNotification` delivers a desktop notification (service worker or page Notification). `kind` is `due` (the due-items watcher), `meeting` (the meeting nudge) or `test` (Settings' test and welcome notifications). Client event, through the `event` beacon kind.
+- Must not fire when: the preference is off, permission is not granted, or the id was already notified.
+- Read by: Desktop notification reach.
+- Added: v187.
+
+## notification_clicked
+- Fires when: a desktop notification is clicked: the page Notification's `onclick` (`browser-notifications.ts`) or the service worker's `notificationclick` (`public/orbit-sw.js`, which posts the same allow-listed beacon). Carries `kind` only.
+- Must not fire when: a notification is dismissed or expires.
+- Read by: Notification click-through (clicked ÷ shown, by kind).
+- Added: v187.
 
 ## extension_installed
 - Fires when: the first authenticated extension request after install carries `X-Orbit-Install: 1` (the extension sends it on the first `/me` and clears the marker once answered), with a valid `X-Orbit-Extension-Version`. One per account (deterministic id), so a reinstall or a second browser does not count twice.
@@ -172,8 +190,8 @@ Format per event: **fires when** / **must not fire when** / **read by**. Propert
 - Added: v181.
 
 ## error_shown
-- Fires when: the client renders a server failure to the person (toast or error state).
-- Must not fire when: an error nobody saw.
+- Fires when: an error boundary renders its error screen: `ErrorFallback` in `src/app/error.tsx` and every route group's `error.tsx`, and `src/app/global-error.tsx`. Client event, through the `event` beacon kind. `where` is a fixed name per boundary (`boundary.root`, `boundary.global`, `boundary.app`, `boundary.admin`, `boundary.auth`, `boundary.checkout`, `boundary.marketing`, `boundary.site`); `error_kind` is `chunk_load` (a code chunk failed to load), `network` (offline), `server` (a Server Component failure, which carries a digest), `render` (anything else) or `unknown` (a non-Error throw). Never the message, digest or stack. Once per error instance (a WeakSet), so re-renders and StrictMode do not double it. Wired in v187.
+- Must not fire when: an error nobody saw, or a toast (toasts are not wired).
 - Read by: Failures that touched users.
 - Added: v181.
 

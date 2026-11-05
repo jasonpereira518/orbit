@@ -76,7 +76,7 @@ const PROCESSORS = [
   { name: "Luma", badge: "Optional", body: "Guest lists of events you host (with your Luma API key), your personal Luma calendar link if you paste it, and the guest list you have open on an event page when you save it from the browser extension." },
   { name: "Partiful", badge: "Optional", body: "Your personal Partiful calendar link, if you paste it, to list events you are going to, and the guest list you have open on an event page when you save it from the browser extension." },
   { name: "Apollo", badge: "Optional", body: "People search and contact enrichment, with your own Apollo key. Orbit does not run it on an Apollo account of its own." },
-  { name: "Resend", badge: "Optional", body: "Email Orbit sends on its own behalf: the waitlist confirmation and outreach campaigns you send from Orbit. Email you write to a person goes from your own Gmail or Outlook instead." },
+  { name: "Resend", badge: "Optional", body: "Email Orbit sends on its own behalf: the waitlist confirmation and outreach campaigns you send from Orbit. Email you write to a person goes from your own Gmail or Outlook instead. Resend reports back when a message bounces or is marked as spam and, for outreach sent through Orbit's Resend account, when it was delivered, first opened and first clicked. See Cookies, storage & analytics." },
   { name: "Twilio", badge: "Optional", body: "SMS outreach you send, through the Twilio account you connect." },
 ] as const;
 
@@ -205,9 +205,9 @@ export default function PrivacyPage() {
               Integrations → AI provider.
             </li>
             <li>
-              <strong>Page views</strong> — which pages are opened, when and for how long; device type;
-              the referring site and campaign tags; and approximate location looked up from the IP
-              address. Linked to your account while you are signed in. See{" "}
+              <strong>Page views</strong> — which pages are opened, when and for how long; how quickly
+              each loaded; device type; the referring site and campaign tags; and approximate location
+              looked up from the IP address. Linked to your account while you are signed in. See{" "}
               <a href="#cookies">cookies, storage, and analytics</a>.
             </li>
           </ul>
@@ -438,12 +438,16 @@ export default function PrivacyPage() {
         </DocSection>
         <DocSection id="cookies" index={9} title="Cookies, local storage, and analytics">
           <p>
-            Orbit uses Clerk session cookies to keep you signed in. On your very
-            first visit it also sets one first-party cookie,{" "}
-            <code>orbit_attr</code>, recording where you arrived from — the
-            referring site and any campaign tags in the link — so we can tell
-            which channels bring people here. It holds no personal information,
-            is never shared, and expires after 90 days. The app also stores
+            Orbit uses Clerk session cookies to keep you signed in. When you
+            first arrive from another site or a link with campaign tags, it also
+            sets a first-party cookie, <code>orbit_attr</code>, recording where
+            you came from — the referring site and the campaign tags — so we can
+            tell which channels bring people here. A second one,{" "}
+            <code>orbit_attr_last</code>, records the same for the most recent
+            such arrival and is replaced each time you arrive that way again; a
+            visit you type in yourself changes neither. What they hold when you
+            create an account is saved with it, once. They hold no personal
+            information, are never shared, and expire after 90 days. The app also stores
             preferences on your device in <code>localStorage</code> —
             theme flash helpers, saved graph layout positions, and per-device
             notification opt-in. Delivered notification history and account
@@ -452,7 +456,11 @@ export default function PrivacyPage() {
           <p>
             Orbit counts its own traffic, and does it{" "}
             <strong>without cookies</strong>. Each page view records which page
-            was opened, when, and for how long; whether it was on a desktop,
+            was opened, when, and for how long; how long it took to load, and for
+            the first page of a visit the browser&apos;s standard performance
+            timings (how long the main content took to appear, how quickly the
+            page responded to a tap or click, and how much the layout shifted);
+            whether it was on a desktop,
             phone, or tablet; the site that linked there and any campaign tags;
             and an approximate location — city, region, and country — looked up
             from the IP address. The IP address itself is not kept: Orbit&apos;s
@@ -492,7 +500,13 @@ export default function PrivacyPage() {
             <strong>product event</strong> for them: using a connected assistant or the browser
             extension, hitting a plan limit, seeing a failure, answering a question. An event is a
             name, the time, your account, and counts or categories from a fixed list. It never
-            contains anything you wrote, named, said or received. Occasionally a one-tap question
+            contains anything you wrote, named, said or received. When a page fails and shows an
+            error screen, the event says which part of the site it was and a broad type of failure
+            (for example, a page that could not load) — never the error message. A search in
+            Contacts, the command menu or the API records how long the search was (up to a cap)
+            and how many results came back, never what you searched for, and at most once every
+            ten seconds. A desktop notification records its type — a due follow-up, a meeting, a
+            test — when it is shown and when it is clicked, never its text. Occasionally a one-tap question
             appears at a natural moment, such as after your first capture or when you cancel; your
             answer is one choice from a short list, and you can dismiss it. The random per-tab id
             described above is also saved once with your waitlist entry when you join, and with
@@ -512,6 +526,16 @@ export default function PrivacyPage() {
             query parameter except campaign tags is removed, and views of the
             operator console are not sent at all. There are no advertising
             pixels and no cross-site tracking.
+          </p>
+          <p>
+            For email Orbit sends through its email provider, Resend, Resend reports back when a
+            message bounces or is marked as spam, which takes that address off Orbit&apos;s waitlist
+            mailings. For outreach campaigns sent through Orbit&apos;s own Resend account, Orbit
+            also stores when each message was delivered, first opened and first clicked, with the
+            message. Resend detects opens with an invisible image in the message and clicks by
+            passing links through its own address; mail clients that block images make an open
+            invisible. Outreach sent with your own Resend key reports to your Resend account, not
+            to Orbit.
           </p>
         </DocSection>
 

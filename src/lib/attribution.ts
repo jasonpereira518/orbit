@@ -39,7 +39,12 @@ export type AttributionSource = "cookie" | "direct" | "waitlist";
 export async function recordFirstTouch(
   userId: string,
   attribution: Attribution,
-  source: AttributionSource = "cookie"
+  source: AttributionSource = "cookie",
+  /**
+   * The last channel-bearing landing before signup (the `orbit_attr_last` cookie), written in
+   * this same write-once UPDATE so it can never be a visit from after the account existed.
+   */
+  lastTouch: { attribution: Attribution; at: Date } | null = null
 ): Promise<boolean> {
   try {
     const db = await getDb();
@@ -53,6 +58,16 @@ export async function recordFirstTouch(
         signupLandingPath: attribution.landingPath,
         signupAttributedAt: new Date(),
         signupAttributionSource: source,
+        ...(lastTouch
+          ? {
+              // Same precedence as `channelOf`: the UTM source, else the referrer host.
+              lastTouchSource: lastTouch.attribution.utmSource ?? lastTouch.attribution.referrer,
+              lastTouchMedium: lastTouch.attribution.utmMedium,
+              lastTouchCampaign: lastTouch.attribution.utmCampaign,
+              lastTouchLandingPath: lastTouch.attribution.landingPath,
+              lastTouchAt: lastTouch.at,
+            }
+          : {}),
       })
       .where(
         and(

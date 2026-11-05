@@ -19,7 +19,7 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // retention of operational logs, the waitlist entry's lifetime and the tab id saved with it, and
 // naming Vercel BotID and the Slack feedback excerpt, all of which were true and unsaid.
 export const TERMS_VERSION = "2026-10-19";
-export const LEGAL_LAST_UPDATED = "October 19, 2026";
+export const LEGAL_LAST_UPDATED = "November 5, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.
