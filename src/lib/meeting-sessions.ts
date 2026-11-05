@@ -930,16 +930,27 @@ export async function getNoteBatchForUser(userId: string, batchId: string) {
   return row ?? null;
 }
 
-/** Who "I" is on a recording — so the user is never offered as a contact from their own call. */
-export async function loadMeetingSelf(
-  userId: string,
-): Promise<{ firstName: string | null; lastName: string | null }> {
+/**
+ * Who "I" is — on a recording, and in any note the user writes — so the user is never
+ * offered as a contact from their own capture.
+ */
+export async function loadMeetingSelf(userId: string): Promise<{
+  firstName: string | null;
+  lastName: string | null;
+  email: string | null;
+  linkedinUrl: string | null;
+}> {
   const db = await getDb();
   const row = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
-    columns: { firstName: true, lastName: true },
+    columns: { firstName: true, lastName: true, email: true, socialLinks: true },
   });
-  return { firstName: row?.firstName ?? null, lastName: row?.lastName ?? null };
+  return {
+    firstName: row?.firstName ?? null,
+    lastName: row?.lastName ?? null,
+    email: row?.email ?? null,
+    linkedinUrl: row?.socialLinks?.linkedin ?? null,
+  };
 }
 
 // ── Input hygiene ─────────────────────────────────────────────────────────────────────

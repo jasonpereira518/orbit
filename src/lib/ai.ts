@@ -327,6 +327,8 @@ export type CaptureParseHints = {
   interactionType?: string | null;
   /** The user's active goals, so the model can score each person's `relevance`. */
   goals?: string[];
+  /** Who wrote the notes. Named to the model so it never returns the user as a person. */
+  self?: { name?: string | null; email?: string | null } | null;
 };
 
 const TWO_PASS_CHAR_THRESHOLD = 2500;
@@ -1341,7 +1343,8 @@ const PERSON_FIELD_RULES = `- relationship_score_suggestion: ${closenessLegend()
 - shared_interests: what the USER and this person have in common, stated or clearly implied. topics: subjects discussed. tags: 1-4 short lowercase labels useful for filtering a contact list later ("recruiter", "founder", "ml", "nyc"), never phrases.
 - connections: other people this person is linked to in the notes — a colleague, cofounder, manager, someone they offered to introduce, someone you both know. name = that person's name as written; relation = the link in a few words ("her cofounder", "offered to intro me"); source_excerpt = the sentence, VERBATIM. [] when none.
 - promises: everything either side said they would do. direction "you_owe" = the user promised it; "they_owe" = this person promised it. text = a verb phrase with no subject ("send the Q3 deck", "intro me to their VP of Eng"); due_phrase = the deadline in the notes' own words, or null; source_excerpt = the sentence, VERBATIM. Only explicit promises — inferences belong in implied_next_steps.
-- location: where they are based, when stated.
+- location: where they are based, when stated. When it is not, but the notes place the meeting in a city, use that city and list "location" in low_confidence_fields.
+- company and role, when not stated outright: infer company from a work email domain or a signature (jane@stripe.com → "Stripe"; never from gmail/outlook/icloud-style addresses) and role from what they plainly do ("runs growth at Ramp" → "Head of Growth"). List every inferred field in low_confidence_fields. Never guess beyond what the text supports.
 - follow_up_recommendation: one short line on the best reason to reach out next, grounded in the notes, or null. follow_up_days: days until that makes sense, or null. suggested_next_message: a 1-2 sentence message the user could send, in first person, referencing something specific from the notes, or null.
 - opportunities: CONCRETE possibilities the notes describe — a named internship, a referral offered, an intro promised, a company worth chasing, an investor who might be interested. NOT interests, NOT topics, NOT "seems friendly". label = 3-10 words in the notes' own vocabulary, never a full sentence and never the date. due_phrase = the deadline in the notes' own words when one is stated ("applications close Oct 15"), else null — never rewrite it into a calendar date. source_excerpt = the sentence it came from, copied VERBATIM from the notes. An opportunity with no verbatim sentence is dropped, so copy exactly.
 - implied_next_steps: what this discussion CALLS FOR that nobody said out loud — e.g. "she mentioned her team is hiring two backend engineers" implies offering a referral. At most two per person. An empty array is a correct and very common answer; do not invent one to fill the field. rationale = one short clause naming what in the notes implies it. source_excerpt = the sentence it was inferred from, VERBATIM. confidence below 0.6 when you are guessing at intent rather than reading it.
@@ -1349,8 +1352,17 @@ const PERSON_FIELD_RULES = `- relationship_score_suggestion: ${closenessLegend()
 - REFERRALS matter most, so never bury one. If the person offers to refer you, pass your resume or name along, put in a good word, vouch for you, or to find / introduce / reach the hiring manager or a recruiter, emit an opportunity with kind "referral" and keep the offer's own words in the label. When the referral is for a specific internship or role, still use "referral" and name the role in the label ("referral for the summer infra internship").
 - Be thorough: read every line about this person and put each fact in the most specific field that fits. Everything must still be supported by the notes — when a field has nothing, use null or [].`;
 
+function selfPreamble(self: CaptureParseHints["self"]): string {
+  const name = self?.name?.trim();
+  const email = self?.email?.trim();
+  if (!name && !email) return "";
+  const who = name && email ? `${name} <${email}>` : name || email;
+  return `\n\nThese notes were written by the user, ${who}. "I", "me" and "my" refer to them. Never output the user as a person or a mention.`;
+}
+
 function hintsPreamble(hints?: CaptureParseHints | null) {
   if (!hints) return "";
+  const self = selfPreamble(hints.self);
   const lines: string[] = [];
   if (hints.eventDate?.trim()) {
     lines.push(`Known event/interaction date (ISO): ${hints.eventDate.trim()}`);
@@ -1382,8 +1394,8 @@ function hintsPreamble(hints?: CaptureParseHints | null) {
   if (goals.length) {
     lines.push(`The user's current goals (score each person's relevance against these):\n- ${goals.join("\n- ")}`);
   }
-  if (!lines.length) return "";
-  return `\n\nStructured hints from calendar/email/LinkedIn (use when consistent with the notes):\n${lines.join("\n")}`;
+  if (!lines.length) return self;
+  return `${self}\n\nStructured hints from calendar/email/LinkedIn (use when consistent with the notes):\n${lines.join("\n")}`;
 }
 
 function normalizeSharedNotes(
@@ -1458,6 +1470,7 @@ Rules:
 - people[] is for PARTICIPANTS: people the user actually talked with, met, or messaged in these notes. Set presence "participant".
 - Anyone only referred to — a cofounder, a boss, "she'll intro me to Raj", a speaker they watched — is a MENTION. Put them in mentions[] with the sentence fragment as context and near_person = the participant whose section mentioned them. Do NOT create a people[] entry for them unless the notes give real profile detail (role, company, contact info); if you do, set presence "mentioned".
 - Skip vague groups ("a few engineers") with no identifiable person.
+- people[] and mentions[] are individual humans only. A company, team, school, product, event, community or group is never a person: put it in the right person's company/school/connections field, or leave it out.
 - Extract only information supported by the notes. Use null when unknown. Do not invent people or facts.
 - Include every key on every person object. Use null (or [] for arrays) when unknown — never omit keys.
 - source_excerpt must be the person-specific slice of the original notes (not the whole dump, and not the shared group text alone).
@@ -1547,6 +1560,7 @@ Return strict JSON:
 }
 Rules:
 - One object per identifiable person. Skip vague groups with no name.
+- people[] and mentions[] are individual humans only. A company, team, school, product, event, community or group is never a person: put it in the right person's company/school/connections field, or leave it out.
 - Do not invent people. Prefer seed attendees when they clearly belong to this event.
 - shared_notes hold ONLY multi-person context (not person-only facts). person_names must match people[].name (or [] for everyone).
 - interaction_date: YYYY-MM-DD when known from notes/hints; else null.
