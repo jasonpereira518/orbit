@@ -143,7 +143,10 @@ export function NoteBatchResultView({
   reminderStatus,
   reminderDetails,
   contactNames,
+  embedded = false,
 }: {
+  /** Inside a meeting's page: that page already shows the summary and its own way back. */
+  embedded?: boolean;
   batchId: string;
   status: "saved" | "undone";
   anchorIso: string;
@@ -266,7 +269,7 @@ export function NoteBatchResultView({
         )}
       </div>
 
-      {result.meeting && (
+      {result.meeting && !embedded && (
         <MeetingSummaryCard meeting={result.meeting} sessionId={result.meeting.sessionId} />
       )}
 
@@ -477,12 +480,12 @@ export function NoteBatchResultView({
         />
       )}
 
-      <div className="flex gap-2">
-        <Link href={result.meeting ? "/capture?mode=meeting" : "/capture"}>
+      {!embedded && <div className="flex gap-2">
+        <Link href={result.meeting ? "/meetings" : "/capture"}>
           <Button variant="outline" size="sm">{result.meeting ? "Record another meeting" : "Paste more notes"}</Button>
         </Link>
         <Link href="/reminders"><Button variant="ghost" size="sm">Open reminders</Button></Link>
-      </div>
+      </div>}
     </div>
   );
 }

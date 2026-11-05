@@ -1941,6 +1941,7 @@ CREATE TABLE IF NOT EXISTS meeting_sessions (
   note_batch_id uuid,
   calendar_event_key text,
   calendar_series_id text,
+  user_notes text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -2821,7 +2822,11 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // Orbit is of it (`@/lib/contact-name-guess`); weak ones get a "?" to confirm or change.
 // Rescanned every remote ref on Oct 28 2026: 184 (claude/events-v2-nudge,
 // claude/nifty-mendel-250e9b) was the highest claimed anywhere.
-export const SCHEMA_VERSION = 185;
+//
+// 186 = meeting_sessions.user_notes: the notes box from a recorded meeting, stored with it
+// instead of only in the browser, so /meetings can show and edit them. Rescanned every remote
+// ref and worktree on Nov 5 2026: 185 (main) was the highest claimed anywhere.
+export const SCHEMA_VERSION = 186;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -4219,6 +4224,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "contacts", "bluesky_handle", "text");
   await ensureColumn(client, "contacts", "mastodon_acct", "text");
   await ensureColumn(client, "contacts", "name_guess", "jsonb");
+  await ensureColumn(client, "meeting_sessions", "user_notes", "text");
   await ensureColumn(client, "recommendations", "base_score", "integer");
   await ensureColumn(client, "recommendations", "ai_delta", "integer");
   await ensureColumn(client, "recommendations", "ai_angle", "text");
@@ -5058,6 +5064,8 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS mastodon_acct text`,
   // Schema v185: a name read from a handle, and whether it is a weak guess (`@/lib/contact-name-guess`).
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS name_guess jsonb`,
+  // Schema v186: what the person typed during a recorded meeting, kept with it (/meetings).
+  `ALTER TABLE meeting_sessions ADD COLUMN IF NOT EXISTS user_notes text`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS base_score integer`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS ai_delta integer`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS ai_angle text`,

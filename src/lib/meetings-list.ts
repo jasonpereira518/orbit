@@ -6,6 +6,9 @@
  * `scripts/smoke-meetings-list.ts` can drive it against PGlite with no auth. Every query is
  * scoped to the user it is handed.
  *
+ * Granola-synced notes are listed alongside, from the batches the sync saved (see
+ * `listGranola`).
+ *
  * Only finished meetings are listed (`analyzed` or `saved`). One still recording, or ended
  * but not yet summarized, is the resume banner's business, not history's.
  *
@@ -15,14 +18,20 @@
  */
 import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { getDb } from "@/db";
-import { meetingSessions, meetingTranscriptSegments, type MeetingSessionStatus } from "@/db/schema";
+import { interactions, meetingSessions, meetingTranscriptSegments, noteBatches, type MeetingSessionStatus } from "@/db/schema";
 
 export const MEETINGS_PAGE = 20;
 const LISTED: MeetingSessionStatus[] = ["analyzed", "saved"];
 const MAX_QUERY_CHARS = 100;
 
+/** Recorded in Orbit, or synced from Granola. */
+export type MeetingSource = "orbit" | "granola";
+export type MeetingSourceFilter = MeetingSource | "all";
+
 export type MeetingListItem = {
+  /** A meeting session's id, or for Granola the note batch's. */
   id: string;
+  source: MeetingSource;
   title: string | null;
   /** ISO. */
   startedAt: string;
@@ -71,13 +80,40 @@ export function excerptAround(text: string, needle: string, radius = 90): string
 
 export async function listMeetingsFor(
   userId: string,
-  opts: { q?: string | null; cursor?: string | null; limit?: number } = {}
+  opts: { q?: string | null; cursor?: string | null; limit?: number; source?: MeetingSourceFilter } = {}
 ): Promise<MeetingsPage> {
   const limit = Math.min(Math.max(opts.limit ?? MEETINGS_PAGE, 1), 50);
   const q = (opts.q ?? "").trim().slice(0, MAX_QUERY_CHARS);
   const after = decodeCursor(opts.cursor);
-  const db = await getDb();
+  const source = opts.source ?? "all";
 
+  // One keyset over two tables: each side returns its own `limit + 1` older than the cursor,
+  // and the merge keeps the newest `limit`. Anything past the cut on either side is older
+  // than it, so the next page's cursor (the last row kept) loses nothing and repeats nothing.
+  const [orbit, granola] = await Promise.all([
+    source === "granola" ? [] : listRecorded(userId, q, after, limit),
+    source === "orbit" ? [] : listGranola(userId, q, after, limit),
+  ]);
+  const merged = [...orbit, ...granola].sort(
+    (a, b) => b.atMs - a.atMs || (a.atText < b.atText ? 1 : a.atText > b.atText ? -1 : 0) || (a.item.id < b.item.id ? 1 : -1)
+  );
+  const page = merged.slice(0, limit);
+  const last = page[page.length - 1];
+  return {
+    items: page.map((r) => r.item),
+    nextCursor: merged.length > limit && last ? `${last.atText}|${last.item.id}` : null,
+  };
+}
+
+type Ranked = { atMs: number; atText: string; item: MeetingListItem };
+
+async function listRecorded(
+  userId: string,
+  q: string,
+  after: { at: string; id: string } | null,
+  limit: number
+): Promise<Ranked[]> {
+  const db = await getDb();
   const conditions: (SQL | undefined)[] = [
     eq(meetingSessions.userId, userId),
     inArray(meetingSessions.status, LISTED),
@@ -91,6 +127,7 @@ export async function listMeetingsFor(
       ${meetingSessions.title} ILIKE ${pattern}
       OR ${meetingSessions.digest}->>'summary' ILIKE ${pattern}
       OR ${meetingSessions.attendees}::text ILIKE ${pattern}
+      OR ${meetingSessions.userNotes} ILIKE ${pattern}
       OR EXISTS (
         SELECT 1 FROM ${meetingTranscriptSegments}
         WHERE ${meetingTranscriptSegments.sessionId} = ${meetingSessions.id}
@@ -118,11 +155,9 @@ export async function listMeetingsFor(
     .orderBy(desc(meetingSessions.startedAt), desc(meetingSessions.id))
     .limit(limit + 1);
 
-  const page = rows.slice(0, limit);
-
   // With a search, show WHY each row matched: the first transcript line that did.
   const matches = new Map<string, { startMs: number; excerpt: string }>();
-  if (q && page.length) {
+  if (q && rows.length) {
     const hits = await db
       .selectDistinctOn([meetingTranscriptSegments.sessionId], {
         sessionId: meetingTranscriptSegments.sessionId,
@@ -135,7 +170,7 @@ export async function listMeetingsFor(
           eq(meetingTranscriptSegments.userId, userId),
           inArray(
             meetingTranscriptSegments.sessionId,
-            page.map((r) => r.id)
+            rows.map((r) => r.id)
           ),
           sql`${meetingTranscriptSegments.text} ILIKE ${likePattern(q)}`
         )
@@ -144,20 +179,131 @@ export async function listMeetingsFor(
     for (const h of hits) matches.set(h.sessionId, { startMs: h.startMs, excerpt: excerptAround(h.text, q) });
   }
 
-  const items: MeetingListItem[] = page.map((r) => ({
-    id: r.id,
-    title: r.title?.trim() || r.digestTitle?.trim() || null,
-    startedAt: r.startedAt.toISOString(),
-    durationMs: r.durationMs,
-    status: r.status as "analyzed" | "saved",
-    attendees: (r.attendees ?? []).map((a) => a.name).filter(Boolean),
-    summary: r.summary,
-    noteBatchId: r.noteBatchId,
-    match: matches.get(r.id) ?? null,
+  return rows.map((r) => ({
+    atMs: r.startedAt.getTime(),
+    atText: r.startedAtText,
+    item: {
+      id: r.id,
+      source: "orbit",
+      title: r.title?.trim() || r.digestTitle?.trim() || null,
+      startedAt: r.startedAt.toISOString(),
+      durationMs: r.durationMs,
+      status: r.status as "analyzed" | "saved",
+      attendees: (r.attendees ?? []).map((a) => a.name).filter(Boolean),
+      summary: r.summary,
+      noteBatchId: r.noteBatchId,
+      match: matches.get(r.id) ?? null,
+    },
   }));
+}
 
-  const last = page[page.length - 1];
-  return { items, nextCursor: rows.length > limit && last ? `${last.startedAtText}|${last.id}` : null };
+/**
+ * Granola notes, one row per saved batch the sync wrote (`ingestNote`). A note that named
+ * nobody is never saved, so it is not here either. The date is the meeting's (every
+ * interaction of a batch carries it); grouped rather than a correlated subquery, which
+ * drizzle renders unqualified in a projection.
+ */
+async function listGranola(
+  userId: string,
+  q: string,
+  after: { at: string; id: string } | null,
+  limit: number
+): Promise<Ranked[]> {
+  const db = await getDb();
+  const at = sql`min(${interactions.interactionDate})`;
+  const rows = await db
+    .select({
+      id: noteBatches.id,
+      atMs: sql<number>`(extract(epoch from min(${interactions.interactionDate})) * 1000)::float8`.mapWith(Number),
+      atText: sql<string>`min(${interactions.interactionDate})::text`,
+      sourceText: noteBatches.sourceText,
+      result: noteBatches.result,
+    })
+    .from(interactions)
+    .innerJoin(noteBatches, eq(noteBatches.id, interactions.noteBatchId))
+    .where(
+      and(
+        eq(interactions.userId, userId),
+        eq(interactions.source, "granola"),
+        eq(noteBatches.userId, userId),
+        eq(noteBatches.status, "saved"),
+        q ? sql`${noteBatches.sourceText} ILIKE ${likePattern(q)}` : undefined
+      )
+    )
+    .groupBy(noteBatches.id)
+    .having(after ? sql`(${at}, ${noteBatches.id}) < (${after.at}::timestamptz, ${after.id}::uuid)` : undefined)
+    .orderBy(desc(at), desc(noteBatches.id))
+    .limit(limit + 1);
+
+  return rows.map((r) => {
+    const note = parseGranolaNote(r.sourceText);
+    return {
+      atMs: r.atMs,
+      atText: r.atText,
+      item: {
+        id: r.id,
+        source: "granola",
+        title: note.title,
+        startedAt: new Date(r.atMs).toISOString(),
+        durationMs: 0,
+        status: "saved",
+        attendees: r.result.participants.map((p) => p.name).filter(Boolean),
+        summary: note.body.replace(/\s+/g, " ").trim().slice(0, 400) || null,
+        noteBatchId: r.id,
+        match: q ? { startMs: 0, excerpt: excerptAround(r.sourceText, q) } : null,
+      },
+    };
+  });
+}
+
+export type GranolaNote = { title: string | null; attendees: string | null; body: string; myNotes: string | null };
+
+/**
+ * The text `noteText` (connectors/granola-xml.ts) wrote: "Meeting:", "When:" and
+ * "Attendees:" lines, Granola's summary, then "My notes:" — each separated by a blank line.
+ */
+export function parseGranolaNote(text: string): GranolaNote {
+  let rest = text;
+  const header = (label: string): string | null => {
+    const m = rest.match(new RegExp(`^${label}: (.*)(?:\\n\\n|$)`));
+    if (!m) return null;
+    rest = rest.slice(m[0].length);
+    return m[1].trim() || null;
+  };
+  const title = header("Meeting");
+  header("When");
+  const attendees = header("Attendees");
+  const at = rest.lastIndexOf("My notes:\n");
+  const myNotes = at >= 0 ? rest.slice(at + "My notes:\n".length).trim() || null : null;
+  const body = (at >= 0 ? rest.slice(0, at) : rest).trim();
+  return { title, attendees, body, myNotes };
+}
+
+/** One Granola meeting for `/meetings/g/[id]`: null unless it is this user's saved Granola batch. */
+export async function getGranolaMeeting(userId: string, batchId: string) {
+  if (!/^[0-9a-f-]{36}$/i.test(batchId)) return null;
+  const db = await getDb();
+  const [row] = await db
+    .select({
+      id: noteBatches.id,
+      atMs: sql<number>`(extract(epoch from min(${interactions.interactionDate})) * 1000)::float8`.mapWith(Number),
+      sourceText: noteBatches.sourceText,
+      result: noteBatches.result,
+    })
+    .from(interactions)
+    .innerJoin(noteBatches, eq(noteBatches.id, interactions.noteBatchId))
+    .where(
+      and(
+        eq(noteBatches.id, batchId),
+        eq(noteBatches.userId, userId),
+        eq(noteBatches.status, "saved"),
+        eq(interactions.userId, userId),
+        eq(interactions.source, "granola")
+      )
+    )
+    .groupBy(noteBatches.id);
+  if (!row) return null;
+  return { id: row.id, at: new Date(row.atMs), note: parseGranolaNote(row.sourceText), result: row.result };
 }
 
 // ── Chat: passages across meetings ────────────────────────────────────────────────────
