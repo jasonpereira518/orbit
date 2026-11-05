@@ -1,4 +1,5 @@
-import { Activity } from "lucide-react";
+import Link from "next/link";
+import { Activity, AlertTriangle, MessageSquareText } from "lucide-react";
 import {
   AdminPageHeader,
   AdminPanel,
@@ -18,6 +19,9 @@ import { longLabel, resolveGrowthWindow } from "@/lib/growth-range";
 import {
   aiFirstCliff,
   cohortActivation,
+  failuresTouchingUsers,
+  feedbackCounts,
+  newestBugs,
   pathBreakdown,
   waveTable,
   week2Return,
@@ -51,13 +55,16 @@ export default async function AdminActivationPage({
   const first = await firstSignupAt().catch(() => null);
   const { range, grain, buckets, spanDays } = resolveGrowthWindow(params, first);
 
-  const [activation, week2, trend, waves, paths, cliff] = await Promise.all([
+  const [activation, week2, trend, waves, paths, cliff, failures, feedback, bugs] = await Promise.all([
     cohortActivation(now, 14, 7),
     week2Return(now, 28, 14),
     activationTrend(grain, buckets),
     waveTable(now),
     pathBreakdown(now, 28),
     aiFirstCliff(now),
+    failuresTouchingUsers(now, 7),
+    feedbackCounts(now, 7),
+    newestBugs(3),
   ]);
 
   return (
@@ -78,7 +85,7 @@ export default async function AdminActivationPage({
           first={first}
         />
 
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-3">
           <MetricTile
             label="Activated"
             value={formatRate(activation.activated, activation.size)}
@@ -90,6 +97,13 @@ export default async function AdminActivationPage({
             value={formatRate(week2.activated, week2.size)}
             hint="accounts that have reached two weeks"
             icon={Activity}
+          />
+          <MetricTile
+            label="Saw a failure"
+            value={failures.accounts}
+            hint={failures.flows.length ? failures.flows.map((f) => `${f.flow} ${f.accounts}`).join(" · ") : "this week"}
+            icon={AlertTriangle}
+            tone={failures.accounts > 0 ? "accent" : "muted"}
           />
         </div>
 
@@ -218,6 +232,64 @@ export default async function AdminActivationPage({
               accounts a day to a month old that have neither added their own AI key nor had a single AI call
               succeed. If this is large, the key step is where people are leaving.
             </p>
+          </AdminPanel>
+        </div>
+
+        <div className="grid gap-6 lg:grid-cols-2">
+          <AdminPanel
+            title="Feedback this week"
+            action={
+              <Link href="/admin/feedback" className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground">
+                Open feedback
+              </Link>
+            }
+          >
+            <MetricTile
+              label="This week"
+              value={feedback.byCategory.reduce((n, c) => n + c.count, 0)}
+              hint={`${feedback.byCategory.map((c) => `${c.category} ${c.count}`).join(" · ") || "nothing yet"} · ${feedback.unresolved} unresolved`}
+              icon={MessageSquareText}
+            />
+            {bugs.length > 0 && (
+              <ul className="mt-3 space-y-1 text-sm">
+                {bugs.map((b) => (
+                  <li key={b.id}>
+                    <Link href={`/admin/feedback/${b.id}`} className="underline underline-offset-2 hover:text-primary">
+                      Bug{b.area ? ` · ${b.area}` : ""}
+                    </Link>{" "}
+                    <span className="text-xs text-muted-foreground">
+                      <RelativeTime date={b.createdAt} />
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </AdminPanel>
+
+          <AdminPanel title="Failures people saw · 7 days">
+            {failures.flows.length === 0 ? (
+              <EmptyState>None. Nobody hit a failed capture, import, email send or AI call this week.</EmptyState>
+            ) : (
+              <AdminTable
+                label="Failures by flow"
+                minWidth="sm"
+                head={
+                  <>
+                    <Th>Flow</Th>
+                    <Th numeric>Accounts</Th>
+                    <Th numeric>Failures</Th>
+                  </>
+                }
+              >
+                {failures.flows.map((f) => (
+                  <tr key={f.flow} className="border-b border-border/40 last:border-b-0">
+                    <Td>{f.flow}</Td>
+                    <Td numeric>{f.accounts}</Td>
+                    <Td numeric>{f.failures}</Td>
+                  </tr>
+                ))}
+              </AdminTable>
+            )}
           </AdminPanel>
         </div>
 

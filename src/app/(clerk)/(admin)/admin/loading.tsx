@@ -8,7 +8,7 @@ export default function AdminOverviewLoading() {
       blocks={[
         { panel: true, title: "Needs attention", height: "h-10" },
         { panel: true, title: "Signed up recently", height: "h-44" },
-        { tiles: 4 },
+        { tiles: 6 },
       ]}
     />
   );

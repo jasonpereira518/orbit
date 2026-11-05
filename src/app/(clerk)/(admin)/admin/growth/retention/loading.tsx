@@ -14,6 +14,7 @@ export default function AdminRetentionLoading() {
         { panel: true, title: "Accounts over time", height: "h-80" },
         { tiles: 4 },
         { panel: true, title: "Did something", height: "h-80" },
+        { panel: true, title: "Still using it consistently", height: "h-64" },
         { panel: true, title: "Retention by signup month", height: "h-72" },
       ]}
     />

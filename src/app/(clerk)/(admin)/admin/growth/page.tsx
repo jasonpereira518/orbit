@@ -369,19 +369,36 @@ export default async function AdminAcquisitionPage({
           </AdminPanel>
 
           <div className="grid gap-6 lg:grid-cols-2">
-            <AdminPanel title="Countries">
+            <AdminPanel title="Geography">
               {!geo || geo.countries.every((c) => c.country == null) ? (
                 <EmptyState>
                   No geography recorded. Vercel&apos;s IP headers do not exist locally, so
                   this stays empty outside a deployment.
                 </EmptyState>
               ) : (
-                <MiniBars
-                  rows={geo.countries.map((c) => ({
-                    label: c.country ?? "Unknown",
-                    count: c.views,
-                  }))}
-                />
+                <>
+                  <SubHeading>Countries · views</SubHeading>
+                  <MiniBars
+                    rows={geo.countries.map((c) => ({
+                      label: c.country ?? "Unknown",
+                      count: c.views,
+                    }))}
+                  />
+                  <div className="mt-4">
+                    <SubHeading>Cities · views</SubHeading>
+                    {geo.cities.length === 0 ? (
+                      <EmptyState>No city-level data yet.</EmptyState>
+                    ) : (
+                      <MiniBars
+                        rows={geo.cities.map((c) => ({
+                          // Region included: two Springfields in one country were identical rows.
+                          label: [c.city, c.region, c.country].filter(Boolean).join(", ") || "Unknown",
+                          count: c.views,
+                        }))}
+                      />
+                    )}
+                  </div>
+                </>
               )}
             </AdminPanel>
 

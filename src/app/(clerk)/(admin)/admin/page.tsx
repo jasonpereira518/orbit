@@ -7,7 +7,9 @@ import {
 } from "@/components/admin/overview-live";
 import { getInterestListSummary } from "@/lib/admin-interest-list";
 import { buildPlanBreakdown, getOverviewLive } from "@/lib/admin-metrics";
+import { formatCostMicros } from "@/lib/ai-pricing";
 import { currentMrrCents } from "@/lib/billing-events";
+import { byokAiUsage, managedAiUsage } from "@/lib/credits/admin-credits";
 import { formatCents } from "@/lib/format-money";
 
 export const metadata = { title: "Admin · Overview" };
@@ -16,7 +18,7 @@ export const metadata = { title: "Admin · Overview" };
  * Triage, not summary.
  *
  * This screen answers "is anything on fire?" in about two seconds: who needs attention, who
- * just arrived, and four numbers that each link to the section that owns them. Everything
+ * just arrived, and six numbers that each link to the section that owns them. Everything
  * deeper — the activation funnel, money detail, the waitlist — lives in its own section.
  *
  * Absolute integers only: no percentages, no rates, no trend sparklines. One new
@@ -24,11 +26,15 @@ export const metadata = { title: "Admin · Overview" };
  * shape.
  */
 export default async function AdminOverviewPage() {
-  const [{ triage, ...initialLive }, mrrCents, waitlist] = await Promise.all([
+  const now = new Date();
+  const [{ triage, ...initialLive }, mrrCents, waitlist, byok, managed] = await Promise.all([
     getOverviewLive(),
     // Each KPI degrades on its own: a broken read prints "—", never 500s triage.
     currentMrrCents().catch(() => null),
     getInterestListSummary().catch(() => null),
+    // AI spend split by whose key paid: BYOK is the user's bill, managed is Orbit's.
+    byokAiUsage(30, now).catch(() => null),
+    managedAiUsage(30, now).catch(() => null),
   ]);
 
   const totalUsers = triage.rows.length;
@@ -63,6 +69,8 @@ export default async function AdminOverviewPage() {
         <LiveKpiTiles
           mrr={mrrCents == null ? "—" : formatCents(mrrCents)}
           waiting={waitlist?.active ?? null}
+          aiByok={formatCostMicros(byok?.costMicros) ?? "—"}
+          aiManaged={formatCostMicros(managed?.costMicros) ?? "—"}
         />
       </div>
     </OverviewLiveProvider>

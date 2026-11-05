@@ -27,6 +27,7 @@ import { getDb } from "../src/db";
 import {
   aiOperationCosts,
   aiWeeklyUsage,
+  consistentUsersTrend,
   depthTrend,
   growthSnapshot,
   retentionCurves,
@@ -256,11 +257,13 @@ async function main() {
     Boolean(young) && !young!.weeks.some((w) => w.week === 0)
   );
 
-  // --- 5. AI cost: its own seed, its own baseline -------------------------------------
+  // --- 5. Consistency and AI cost: their own seed, their own baseline ----------------
+  console.log("\nConsistent use");
+  const cBefore = await consistentUsersTrend(BUCKETS);
   const aiBefore = await aiWeeklyUsage(BUCKETS);
   const opsBefore = await aiOperationCosts(30);
 
-  // k owns the AI calls below.
+  // k writes once a week, four weeks running: consistent by both definitions.
   await user("k", ago(40 * DAY));
   for (const d of [0, 7, 14, 21]) await contact("k", ago(d * DAY + 1 * HOUR));
   // AI: two managed-key calls, one BYOK call, one failed unpriced call.
@@ -271,6 +274,14 @@ async function main() {
   await db.execute(ev("orbit", 2500, 1));
   await db.execute(ev("user", 700, 1));
   await db.execute(ev("user", null, 0));
+
+  const cAfter = await consistentUsersTrend(BUCKETS);
+  check(
+    "all-four ≤ three-of-four at every week",
+    cAfter.every((p) => p.allFour <= p.threeOfFour)
+  );
+  check("k counts as active in all four weeks", last(cAfter).allFour - last(cBefore).allFour === 1, `delta ${last(cAfter).allFour - last(cBefore).allFour}`);
+  check("and in three-of-four", last(cAfter).threeOfFour - last(cBefore).threeOfFour === 1);
 
   console.log("\nAI usage and cost");
   const aiAfter = await aiWeeklyUsage(BUCKETS);

@@ -1,11 +1,13 @@
 import {
   AdminPageHeader,
   AdminPanel,
+  EmptyState,
   MetricTile,
 } from "@/components/admin/primitives";
 import { GrowthTabs } from "@/components/admin/admin-tabs";
 import { TimeSeriesChart, type ChartSeries } from "@/components/admin/growth-charts";
 import {
+  consistentUsersTrend,
   firstSignupAt,
   growthSnapshot,
   retentionCurves,
@@ -63,7 +65,10 @@ export default async function AdminRetentionPage({
   const { range, grain, buckets, spanDays } = resolveGrowthWindow(params, first);
 
   const now = new Date();
-  const [snapshot, totals, rolling, curves, pools, churn, wan] = await Promise.all([
+  // Consistency is weekly by definition (3 of the last 4 weeks), so it spans the range in weeks
+  // whatever the grain.
+  const consistencyWeeks = grain === "week" ? buckets : Math.max(4, Math.ceil(spanDays / 7));
+  const [snapshot, totals, rolling, curves, pools, churn, wan, consistency] = await Promise.all([
     growthSnapshot(spanDays),
     userTotalsTrend(grain, buckets),
     rollingActiveTrend(grain, buckets),
@@ -71,6 +76,7 @@ export default async function AdminRetentionPage({
     retentionPools(now),
     churnSummary(now),
     weeklyActiveNetworkers(now),
+    consistentUsersTrend(consistencyWeeks).catch(() => null),
   ]);
   const showChurnRate = churn.subscribersNow >= MIN_SUBSCRIBERS_FOR_CHURN_RATE;
 
@@ -245,6 +251,51 @@ export default async function AdminRetentionPage({
           <p className="mt-3 text-xs text-muted-foreground">
             Accounts that wrote anything — a contact, note, chat, import or AI call — in
             the trailing 1, 7 and 30 days at the end of each {per}.
+          </p>
+        </AdminPanel>
+
+        <AdminPanel title="Still using it consistently" action={<span className="text-xs text-muted-foreground">by week</span>}>
+          {!consistency ? (
+            <EmptyState>Activity history is unavailable.</EmptyState>
+          ) : (
+            <TimeSeriesChart
+              labels={consistency.map((p) => shortLabel(p.bucketStart, "week"))}
+              titles={consistency.map((p) => longLabel(p.bucketStart, "week"))}
+              bucketHeading="Week"
+              partialLast
+              ariaLabel="Accounts active each week, and in three or four of the last four weeks."
+              emptyLabel="Nobody has written anything in this window."
+              plots={[
+                {
+                  mark: "line",
+                  height: 200,
+                  series: [
+                    {
+                      key: "active",
+                      label: "Active that week",
+                      color: "var(--series-3)",
+                      values: consistency.map((p) => p.active),
+                    },
+                    {
+                      key: "three",
+                      label: "3+ of last 4 weeks",
+                      color: "var(--series-2)",
+                      values: consistency.map((p) => p.threeOfFour),
+                    },
+                    {
+                      key: "four",
+                      label: "All 4 weeks",
+                      color: "var(--series-1)",
+                      values: consistency.map((p) => p.allFour),
+                    },
+                  ],
+                },
+              ]}
+            />
+          )}
+          <p className="mt-3 text-xs text-muted-foreground">
+            Consistent means writing something in at least three of the four weeks ending
+            with that one, so a single quiet week does not count as leaving.
           </p>
         </AdminPanel>
 

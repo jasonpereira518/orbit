@@ -94,6 +94,13 @@ export type DepthPoint = {
   imports: number;
 };
 
+export type ConsistencyPoint = {
+  bucketStart: Date;
+  active: number;
+  threeOfFour: number;
+  allFour: number;
+};
+
 export type AiWeekPoint = {
   bucketStart: Date;
   calls: number;
@@ -545,6 +552,46 @@ export async function depthTrend(
     notes: num(r.notes),
     chats: num(r.chats),
     imports: num(r.imports),
+  }));
+}
+
+/**
+ * Who keeps using Orbit week after week, not just who showed up once.
+ *
+ * For each week: accounts that wrote something that week, accounts that wrote in at least
+ * three of the four weeks ending with it, and accounts that wrote in all four. The last two
+ * are nested inside the first only loosely — someone active in weeks 1–3 but quiet this
+ * week still counts as consistent, which is the point: one quiet week is not churn.
+ */
+export async function consistentUsersTrend(buckets = 12): Promise<ConsistencyPoint[]> {
+  const db = await getDb();
+  const result = await db.execute(sql`
+    WITH spine AS (${series("week", buckets)}),
+    wk AS (
+      SELECT DISTINCT user_id, ${bucketOf('week', sql`created_at`)} AS week
+      FROM (${writesSince(sql`${SPINE_START} - interval '21 days'`)}) w
+    )
+    SELECT spine.bucket_start,
+           count(u.user_id) FILTER (WHERE u.this_week)::int AS active,
+           count(u.user_id) FILTER (WHERE u.weeks >= 3)::int AS three_of_four,
+           count(u.user_id) FILTER (WHERE u.weeks = 4)::int AS all_four
+    FROM spine
+    LEFT JOIN LATERAL (
+      SELECT wk.user_id,
+             count(*) AS weeks,
+             bool_or(wk.week = spine.bucket_start) AS this_week
+      FROM wk
+      WHERE wk.week BETWEEN spine.bucket_start - interval '3 weeks' AND spine.bucket_start
+      GROUP BY wk.user_id
+    ) u ON true
+    GROUP BY spine.bucket_start
+    ORDER BY spine.bucket_start
+  `);
+  return rowsOf<Record<string, string | number>>(result).map((r) => ({
+    bucketStart: toDate(r.bucket_start as string),
+    active: num(r.active),
+    threeOfFour: num(r.three_of_four),
+    allFour: num(r.all_four),
   }));
 }
 

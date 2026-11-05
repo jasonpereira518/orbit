@@ -50,7 +50,7 @@ import {
 } from "../src/lib/billing-events";
 import { decideStripeEvent } from "../src/lib/billing-stripe";
 import { PRICE_LOOKUP_KEYS } from "../src/lib/stripe-config";
-import { managedAiCostMicros, managedAiUsage, deepgramCostMicros, loadCreditsMoney } from "../src/lib/credits/admin-credits";
+import { byokAiUsage, managedAiCostMicros, managedAiUsage, deepgramCostMicros, loadCreditsMoney } from "../src/lib/credits/admin-credits";
 import { loadManagedAiOpsFacts } from "../src/lib/managed-ai-ops";
 import { monthStart } from "../src/lib/infra-costs";
 import {
@@ -166,6 +166,7 @@ run(async () => {
   const managedAll0 = await managedAiCostMicros(30, now, { includeInternal: true });
   const dg0 = await deepgramCostMicros(30, now);
   const managedUsage0 = await managedAiUsage(30, now);
+  const byok0 = await byokAiUsage(30, now);
   const credits0 = await loadCreditsMoney(new Set(), 30, now);
   const ops0 = await loadManagedAiOpsFacts(now);
   const runway0 = await loadRunwayMetrics(now);
@@ -374,6 +375,11 @@ run(async () => {
   const dMan = (await managedAiCostMicros(30, now)) - managed0;
   check("managedAiCostMicros: priced + stand-in, Orbit's keys, no Deepgram, no user keys, no admin", dMan === customerManaged, dMan);
   check("…and managedAiUsage (the one reader) agrees, with its call count", (await managedAiUsage(30, now)).costMicros - managedUsage0.costMicros === customerManaged);
+  // BYOK is the mirror image: users' keys only, same window and internal rule.
+  const dByok = (await byokAiUsage(30, now)).costMicros - byok0.costMicros;
+  check("byokAiUsage: only the user-key call, no Orbit keys, no Deepgram", dByok === 9_000_000, dByok);
+  const allCustomerPriced = 2_000_000 + UNPRICED_CALL_MICROS.embedding + 9_000_000 + 50_000_000 + 4_000_000;
+  check("byok + managed together are all customer AI usage (internal and Deepgram out), nothing twice", dByok + dMan === allCustomerPriced, dByok + dMan);
   const credits = await loadCreditsMoney(new Set(), 30, now);
   check("…and so does the credits section", credits.managedAi.costMicros - credits0.managedAi.costMicros === customerManaged);
   const allManaged = customerManaged + 3_000_000;

@@ -222,9 +222,14 @@ function notInternal(column: AnyColumn) {
  * `includeInternal` keeps the operator's own accounts for the one caller that wants real
  * spend rather than customer cost (the Runway burn).
  */
-function managedWindow(since: Date, until: Date | undefined, includeInternal: boolean) {
+function managedWindow(
+  since: Date,
+  until: Date | undefined,
+  includeInternal: boolean,
+  keyOwner: "orbit" | "user" = "orbit"
+) {
   return and(
-    eq(usageEvents.keyOwner, "orbit"),
+    eq(usageEvents.keyOwner, keyOwner),
     sql`${usageEvents.provider} <> 'deepgram'`,
     gte(usageEvents.createdAt, since),
     until ? lt(usageEvents.createdAt, until) : undefined,
@@ -270,6 +275,31 @@ export async function managedAiUsage(
     })
     .from(usageEvents)
     .where(managedWindow(new Date(now.getTime() - days * 86_400_000), undefined, opts.includeInternal ?? false));
+  return { costMicros: num(row?.micros), calls: num(row?.calls), accounts: num(row?.accounts) };
+}
+
+/**
+ * The mirror image of `managedAiUsage`: the same rows, window, cost expression and internal
+ * rule, on users' own keys (`key_owner = 'user'`). The user pays their provider, so this is
+ * NOT Orbit's cost — it is shown for scale only. Together the two cover every non-Deepgram
+ * `usage_events` row in the window, with nothing counted twice.
+ */
+export async function byokAiUsage(
+  days = 30,
+  now = new Date(),
+  opts: { includeInternal?: boolean } = {}
+): Promise<{ costMicros: number; calls: number; accounts: number }> {
+  const db = await getDb();
+  const [row] = await db
+    .select({
+      micros: sql<string>`coalesce(sum(${managedCostSql()}), 0)::bigint`,
+      calls: sql<string>`count(*)`,
+      accounts: sql<string>`count(DISTINCT ${usageEvents.userId})`,
+    })
+    .from(usageEvents)
+    .where(
+      managedWindow(new Date(now.getTime() - days * 86_400_000), undefined, opts.includeInternal ?? false, "user")
+    );
   return { costMicros: num(row?.micros), calls: num(row?.calls), accounts: num(row?.accounts) };
 }
 
