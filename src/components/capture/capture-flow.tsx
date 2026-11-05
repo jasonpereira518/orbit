@@ -679,6 +679,11 @@ export function CaptureFlow({
         {phase === "review" && job && reviewIndex >= 0 && (
           <motion.div key="review" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: DUR.base }} className="space-y-4">
             {meetingHeader}
+            {job.result?.skippedNonPeople?.length ? (
+              <p className="text-xs text-muted-foreground">
+                Skipped {job.result.skippedNonPeople.join(", ")}: {job.result.skippedNonPeople.length === 1 ? "reads" : "read"} as a company or group, not a person.
+              </p>
+            ) : null}
             <PersonDeck
               items={items}
               decisions={job.decisions}
