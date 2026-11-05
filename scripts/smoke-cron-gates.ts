@@ -44,6 +44,7 @@ import { checker } from "./smoke/check";
 
 import { POST as opsSweep } from "../src/app/api/ops/sweep/route";
 import { POST as billingReconcile } from "../src/app/api/ops/billing-reconcile/route";
+import { POST as metricsRollup } from "../src/app/api/ops/rollup/route";
 import { POST as weeklyDigest } from "../src/app/api/ops/weekly-digest/route";
 import { POST as jobsFeedSweep } from "../src/app/api/jobs/feed/sweep/route";
 import { POST as relationshipsRun } from "../src/app/api/relationships/run/route";
@@ -133,6 +134,7 @@ const DYNAMIC: Record<string, Handler> = {
   "sync/run": syncRun,
   "ops/speech-usage": speechUsage,
   "ops/billing-reconcile": billingReconcile,
+  "ops/rollup": metricsRollup,
   "ops/weekly-digest": weeklyDigest,
   "avatars/encode": avatarsEncode,
 };

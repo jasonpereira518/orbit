@@ -438,6 +438,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-site-access": "pglite",
   "smoke-invite-ledger": "pglite",
   "smoke-attribution-chain": "pglite",
+  "smoke-metrics-rollup": "pglite", // metrics_daily: idempotent, agrees with direct counts
   "smoke-tracking-events": "pglite", // v187: vitals, client event kind, last touch, Resend engagement, search sampling
   "smoke-account-kind": "pglite",
   "smoke-constellation-payload-leak": "pglite",

@@ -2065,6 +2065,14 @@ CREATE INDEX IF NOT EXISTS page_views_session_idx ON page_views(session_id, crea
 CREATE INDEX IF NOT EXISTS page_views_visitor_idx ON page_views(visitor_hash, created_at);
 CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country, created_at);
 CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_internal, created_at);
+CREATE TABLE IF NOT EXISTS metrics_daily (
+  day date NOT NULL,
+  metric text NOT NULL,
+  dim text NOT NULL DEFAULT '',
+  value bigint NOT NULL,
+  computed_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (day, metric, dim)
+);
 `;
 
 // NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
@@ -2842,7 +2850,11 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 187 = standard tracking: page_views.lcp_ms / inp_ms / cls_milli (web vitals on a document's
 // first view), user_settings.last_touch_source / _medium / _campaign / _landing_path / _at (the
 // last channel-bearing landing before signup), and outreach_messages.delivered_at / opened_at /
-// clicked_at with outreach_messages_delivery_idx (Resend engagement, matched on delivery_id).
+// clicked_at with outreach_messages_delivery_idx (Resend engagement, matched on delivery_id);
+// metrics_daily (new table: the daily rollup `src/lib/metrics-rollup.ts` writes, kept forever);
+// and indexes reminders_user_created_idx, capture_jobs_user_created_idx (the activity union),
+// product_events_created_idx, gate_events_created_idx (the retention prune), in
+// ADMIN_V2_STATEMENTS. Extended in place before merge: 187 never left this branch.
 // Rescanned every local and remote ref and every worktree's working file on Nov 5 2026: 186
 // (main) was the highest claimed anywhere.
 export const SCHEMA_VERSION = 187;
@@ -4304,6 +4316,13 @@ const ADMIN_V2_STATEMENTS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS reminders_user_item_hash_uidx ON reminders(user_id, item_hash)`,
   `CREATE INDEX IF NOT EXISTS reminders_note_batch_idx ON reminders(note_batch_id)`,
   `CREATE INDEX IF NOT EXISTS interactions_note_batch_idx ON interactions(note_batch_id)`,
+  // v187: the rest of the activity union's `(user_id, created_at)` scans
+  // (`intentionalActionsSince`; interactions and chat_messages have theirs above), and the
+  // `created_at` the retention prune deletes by (`analytics-retention.ts`).
+  `CREATE INDEX IF NOT EXISTS reminders_user_created_idx ON reminders(user_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS capture_jobs_user_created_idx ON capture_jobs(user_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS product_events_created_idx ON product_events(created_at)`,
+  `CREATE INDEX IF NOT EXISTS gate_events_created_idx ON gate_events(created_at)`,
 ];
 
 /**
@@ -5110,6 +5129,7 @@ const alters = [
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS opened_at timestamptz`,
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS clicked_at timestamptz`,
   `CREATE INDEX IF NOT EXISTS outreach_messages_delivery_idx ON outreach_messages(delivery_id) WHERE delivery_id IS NOT NULL`,
+  `CREATE TABLE IF NOT EXISTS metrics_daily (day date NOT NULL, metric text NOT NULL, dim text NOT NULL DEFAULT '', value bigint NOT NULL, computed_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (day, metric, dim))`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS base_score integer`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS ai_delta integer`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS ai_angle text`,

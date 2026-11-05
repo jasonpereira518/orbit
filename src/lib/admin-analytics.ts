@@ -34,6 +34,8 @@ const internalRow = () => sql`(pv.is_internal OR ${internalAccountSql(sql`pv.use
 
 /** The one place the bot and internal predicates are written. Carries its own WHERE. */
 const pv = () => sql`page_views pv WHERE pv.is_bot = false AND NOT ${internalRow()}`;
+/** `pv()` for the daily rollup (`metrics-rollup.ts`), so it counts views by this same rule. */
+export const humanPageViewsSql = pv;
 
 /** Bots only: for `accountTraffic`, which reports on one named account whoever it is. */
 const PV_ANY_ACCOUNT = sql`page_views pv WHERE pv.is_bot = false`;
@@ -44,6 +46,8 @@ const PV_ANY_ACCOUNT = sql`page_views pv WHERE pv.is_bot = false`;
  * one visitor's single hash was split across two "days" and counted twice.
  */
 const VISITOR_DAY = sql`(pv.visitor_hash, date_trunc('day', pv.created_at AT TIME ZONE 'UTC'))`;
+/** `VISITOR_DAY`, for the daily rollup (`metrics-rollup.ts`). */
+export const visitorDaySql = VISITOR_DAY;
 
 /** Ranges the page offers. A closed set — never interpolated from a query string. */
 export type Range = "7d" | "30d" | "90d";

@@ -10,6 +10,8 @@ import {
   index,
   uniqueIndex,
   primaryKey,
+  date,
+  bigint,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
 import type {
@@ -1198,6 +1200,8 @@ export const interactions = pgTable(
       .where(sql`interaction_type = 'linkedin_message'`),
     // Soft unique for import dedupe; NULLs allowed (manual notes have no externalId).
     uniqueIndex("interactions_user_external_uidx").on(t.userId, t.externalId),
+    // ADMIN_V2_STATEMENTS: the activity union's per-account time scan.
+    index("interactions_user_created_idx").on(t.userId, t.createdAt),
   ]
 );
 
@@ -1300,6 +1304,8 @@ export const reminders = pgTable(
     uniqueIndex("reminders_user_item_hash_uidx").on(t.userId, t.itemHash),
     // Created by SCALE_DDL; declared here so the two never disagree again.
     index("reminders_user_contact_idx").on(t.userId, t.contactId),
+    // ADMIN_V2_STATEMENTS (v187): the activity union's per-account time scan.
+    index("reminders_user_created_idx").on(t.userId, t.createdAt),
   ]
 );
 
@@ -3718,6 +3724,8 @@ export const chatMessages = pgTable(
     uniqueIndex("chat_messages_slot_version_role_uidx")
       .on(t.slot, t.version, t.role)
       .where(sql`slot is not null`),
+    // ADMIN_V2_STATEMENTS: the activity union's per-account time scan.
+    index("chat_messages_user_created_idx").on(t.userId, t.createdAt),
   ]
 );
 
@@ -4146,6 +4154,8 @@ export const captureJobs = pgTable(
     index("capture_jobs_stall_idx").on(t.status, t.updatedAt),
     index("capture_jobs_user_batch_idx").on(t.userId, t.batchGroupId),
     index("capture_jobs_source_file_hashes_idx").using("gin", t.sourceFileHashes),
+    // ADMIN_V2_STATEMENTS (v187): the activity union's per-account time scan.
+    index("capture_jobs_user_created_idx").on(t.userId, t.createdAt),
   ]
 );
 
@@ -4987,6 +4997,8 @@ export const gateEvents = pgTable(
   (t) => [
     index("gate_events_feature_created_idx").on(t.feature, t.createdAt),
     index("gate_events_user_created_idx").on(t.userId, t.createdAt),
+    // ADMIN_V2_STATEMENTS (v187): the retention prune deletes by created_at.
+    index("gate_events_created_idx").on(t.createdAt),
   ]
 );
 
@@ -6350,6 +6362,26 @@ export type NewContactMerge = typeof contactMerges.$inferInsert;
 export type DuplicateSuggestion = typeof duplicateSuggestions.$inferSelect;
 export type NewDuplicateSuggestion = typeof duplicateSuggestions.$inferInsert;
 export type PageView = typeof pageViews.$inferSelect;
+
+/**
+ * One number per (UTC day, metric, dimension), written by the daily rollup
+ * (`src/lib/metrics-rollup.ts`) so trend charts read a few hundred rows instead of re-scanning
+ * every event table. `dim` is '' for an undimensioned metric (never NULL, so it can sit in the
+ * primary key). Recomputed and upserted for the last three days on every run, so it is
+ * idempotent and late writes settle. KEPT FOREVER: a few dozen rows a day, no user ids, nothing
+ * to purge.
+ */
+export const metricsDaily = pgTable(
+  "metrics_daily",
+  {
+    day: date("day", { mode: "string" }).notNull(),
+    metric: text("metric").notNull(),
+    dim: text("dim").notNull().default(""),
+    value: bigint("value", { mode: "number" }).notNull(),
+    computedAt: timestamp("computed_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.day, t.metric, t.dim] })]
+);
 export type NewPageView = typeof pageViews.$inferInsert;
 
 /* ------------------------------------------------------------------------------------
@@ -6524,6 +6556,8 @@ export const productEvents = pgTable(
     index("product_events_name_occurred_idx").on(t.name, t.occurredAt),
     index("product_events_user_occurred_idx").on(t.userId, t.occurredAt),
     index("product_events_session_idx").on(t.sessionId),
+    // ADMIN_V2_STATEMENTS (v187): the retention prune deletes by created_at.
+    index("product_events_created_idx").on(t.createdAt),
   ]
 );
 

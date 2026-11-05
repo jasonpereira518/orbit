@@ -24,6 +24,7 @@ export type CronJobName =
   | "email.drain"
   | "imports.process-stalled"
   | "jobs.feed-sweep"
+  | "metrics.rollup"
   | "ops.sweep"
   | "product.digest"
   | "radar.digest"
