@@ -80,11 +80,10 @@ Your network is probably your most valuable asset, and you have no system for ke
 | **Price** | $0 forever | $8.99/month or $89.99/year | $19.99/month or $199.99/year |
 | **Contacts** | Up to 500 | Unlimited | Unlimited |
 | **AI** | Included: 50 credits a month, plus 25 to start | Included: 300 credits a month | Included: 650 credits a month |
-| **Capture, Chat, Constellation, Knowledge, reminders, LinkedIn import, export** | ✓ | ✓ | ✓ |
+| **Capture, Chat, Constellation, Knowledge, reminders, export, and imports from LinkedIn, Google Drive, and Granola** | ✓ | ✓ | ✓ |
 | **Claude and ChatGPT connector** | ✓ | ✓ | ✓ |
 | **Google and Microsoft accounts** | One of the two | Both | Both |
 | **Recruiter tracking, calendar subscriptions** | | ✓ | ✓ |
-| **Google Drive and Granola notes** | | ✓ | ✓ |
 | **Voice notes** | 90 minutes a month | 8 hours a month | 15 hours a month |
 | **Meeting recording and transcription** | | 8 hours a month | 15 hours a month |
 | **REST API and webhooks** | | | ✓ |

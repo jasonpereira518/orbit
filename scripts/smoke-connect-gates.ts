@@ -59,6 +59,26 @@ function main() {
     check(`${fn} has no paid-plan gate`, !calls.has("requireSyncUser"));
   }
 
+  console.log("\nGoogle Drive and Granola are on every plan");
+  const DRIVE = fileURLToPath(new URL("../src/actions/drive.ts", import.meta.url));
+  const CAPTURE_DRIVE = fileURLToPath(new URL("../src/actions/capture-drive.ts", import.meta.url));
+  const GRANOLA = fileURLToPath(new URL("../src/actions/granola.ts", import.meta.url));
+  for (const [file, fn] of [
+    [DRIVE, "checkDriveReadiness"],
+    [DRIVE, "startDriveImport"],
+    [CAPTURE_DRIVE, "queueDriveCapture"],
+    [GRANOLA, "startGranolaConnect"],
+    [GRANOLA, "getGranolaPanel"],
+    [GRANOLA, "getGranolaFolders"],
+    [GRANOLA, "setGranolaFolders"],
+    [GRANOLA, "syncGranolaNow"],
+    [GRANOLA, "disconnectGranola"],
+  ] as const) {
+    const calls = callsIn(file, fn);
+    check(`${fn} asks only for a signed-in user`, calls.has("requireUserId"));
+    check(`${fn} has no paid-plan gate`, !calls.has("requireSyncUser"));
+  }
+
   console.log("\nthe inbox scan stays paid");
   for (const [file, fn] of [
     [GMAIL, "startGmailRecruiterScan"],

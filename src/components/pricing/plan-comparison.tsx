@@ -58,6 +58,7 @@ const ROWS: Array<{ label: string; cells: [Cell, Cell, Cell] }> = [
   { label: "Chat with your network", cells: [true, true, true] },
   { label: "Constellation map", cells: [true, true, true] },
   { label: "LinkedIn import", cells: [true, true, true] },
+  { label: "Google Drive and Granola imports", cells: [true, true, true] },
   { label: "Reminders and follow-up feed", cells: [true, true, true] },
   { label: "Knowledge base", cells: [true, true, true] },
   { label: "Export your data", cells: [true, true, true] },

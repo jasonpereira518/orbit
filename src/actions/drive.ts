@@ -5,7 +5,6 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { gmailConnections } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
-import { requireSyncUser } from "@/lib/plan-guards";
 import { getValidAccessToken } from "@/lib/gmail";
 import { asActionResult, friendlyError, ReauthRequiredError, type ActionResult } from "@/lib/errors";
 import { runDriveImportJob, stageDriveImport } from "@/lib/drive-import-processor";
@@ -30,7 +29,7 @@ export async function checkDriveReadiness(): Promise<
   | { ok: true }
   | { ok: false; reason: "needs_consent" | "not_connected" | "needs_reconnect" | "error"; error?: string }
 > {
-  const userId = await requireSyncUser();
+  const userId = await requireUserId();
   if (await isDemoWorkspace(userId)) return { ok: true };
   const db = await getDb();
   const conn = await db.query.gmailConnections.findFirst({
@@ -65,9 +64,9 @@ export async function checkDriveReadiness(): Promise<
 export async function startDriveImport(
   files: PickedDriveFile[],
 ): Promise<ActionResult<{ importId: string; totalRows: number }>> {
-  // Outside the wrap: a denied entitlement throws `PaywallError`, not `UserFacingError`, so
-  // `asActionResult` would just rethrow it anyway — no point wrapping it.
-  const userId = await requireSyncUser();
+  // Outside the wrap: a signed-out caller throws, as every action's auth check does. Drive
+  // import is on every plan, so there is no plan gate here.
+  const userId = await requireUserId();
   return asActionResult(async () => {
     if (await isDemoWorkspace(userId)) return recordDemoDriveImport(userId, files);
     const staged = await stageDriveImport(userId, files);
@@ -79,10 +78,7 @@ export async function startDriveImport(
 /**
  * Drop a flagged commitment from an import's "Worth a look" list.
  *
- * `requireUserId`, not `requireSyncUser`: this only touches an import the caller already
- * owns (`removeDriveFlag` re-checks that), so it doesn't need the paid `sync` entitlement
- * re-verified — dismissing a flag on a past import shouldn't lock out someone who has since
- * moved off the plan that let them run it.
+ * Only touches an import the caller already owns (`removeDriveFlag` re-checks that).
  */
 export async function dismissDriveFlag(importId: string, flagId: string): Promise<void> {
   const userId = await requireUserId();

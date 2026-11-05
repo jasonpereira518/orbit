@@ -86,7 +86,6 @@ export function CaptureFlow({
   quota,
   userId = null,
   history = null,
-  canUseSync = false,
   drive = null,
   initialMeeting = null,
   cloudNotes = null,
@@ -117,8 +116,6 @@ export function CaptureFlow({
   userId?: string | null;
   /** The capture history feed, shown under the input UI only. */
   history?: React.ReactNode;
-  /** Drive import is part of sync; with no plan for it the Drive button is not shown. */
-  canUseSync?: boolean;
   /** Google Picker config, from the server's env. Any gap hides the Drive button. */
   drive?: DriveCaptureConfig | null;
   /** The Drive & OneDrive tab's state; null while the cloud-notes surface is not live for this viewer. */
@@ -588,7 +585,6 @@ export function CaptureFlow({
                 acceptsHandoff={!initialContactId}
                 onQueued={refreshQueue}
                 drive={drive}
-                canUseSync={canUseSync}
                 onExtract={() => void startExtraction({ text: messy.notes, hints: messy.hints, jobId: messy.jobId, sourceKind: "messy", mentionPicks: messy.mentionPicks })}
               />
             )}
@@ -641,7 +637,6 @@ export function CaptureFlow({
                 tabId={captureTabId("library")}
                 onQueued={refreshQueue}
                 drive={drive}
-                canUseSync={canUseSync}
               />
             )}
             {mode === "cloud" && cloudNotes && (

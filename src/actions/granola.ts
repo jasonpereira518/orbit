@@ -3,7 +3,7 @@
 import { randomUUID } from "crypto";
 import { cookies, headers } from "next/headers";
 import { after } from "next/server";
-import { requireSyncUser } from "@/lib/plan-guards";
+import { requireUserId } from "@/lib/auth";
 import {
   armConnectorSync,
   deleteConnectorConnection,
@@ -35,7 +35,7 @@ async function callbackUrl(): Promise<string> {
 type GranolaFlow = { state: string; userId: string; codeVerifier: string; clientId: string; redirectUri: string };
 
 export async function startGranolaConnect(): Promise<{ url: string }> {
-  const userId = await requireSyncUser();
+  const userId = await requireUserId();
   const redirectUri = await callbackUrl();
   const state = randomUUID();
   const { url, codeVerifier, clientId } = await startGranolaAuthorization(redirectUri, state);
@@ -67,7 +67,7 @@ export type GranolaPanel = {
 
 /** Everything the settings page shows, except the folder list (a live Granola call). */
 export async function getGranolaPanel(): Promise<GranolaPanel> {
-  const userId = await requireSyncUser();
+  const userId = await requireUserId();
   const connection = await getConnectorConnection(userId, "granola");
   if (!connection) return { connection, folderIds: [], activity: { notes: 0, people: 0, recent: [] } };
   const [full, activity] = await Promise.all([loadConnectorConnection(connection.id), granolaActivity(userId)]);
@@ -79,7 +79,7 @@ export async function getGranolaPanel(): Promise<GranolaPanel> {
  * tools, and an outage shouldn't break the page; the picker then offers "All notes" only.
  */
 export async function getGranolaFolders(): Promise<GranolaFolder[] | null> {
-  const userId = await requireSyncUser();
+  const userId = await requireUserId();
   const connection = await getConnectorConnection(userId, "granola");
   if (!connection || connection.status !== "active") return null;
   try {
@@ -98,7 +98,7 @@ const MAX_FOLDERS = 50;
  * skipped by the sync itself, so nothing is logged twice.
  */
 export async function setGranolaFolders(folderIds: string[]): Promise<void> {
-  const userId = await requireSyncUser();
+  const userId = await requireUserId();
   if (!Array.isArray(folderIds) || folderIds.length > MAX_FOLDERS) {
     throw new UserFacingError(`Pick up to ${MAX_FOLDERS} folders`);
   }
@@ -111,12 +111,12 @@ export async function setGranolaFolders(folderIds: string[]): Promise<void> {
 }
 
 export async function syncGranolaNow(): Promise<void> {
-  const userId = await requireSyncUser();
+  const userId = await requireUserId();
   await armConnectorSync(userId, "granola");
   after(() => kickSyncPass());
 }
 
 export async function disconnectGranola(): Promise<void> {
-  const userId = await requireSyncUser();
+  const userId = await requireUserId();
   await deleteConnectorConnection(userId, "granola");
 }

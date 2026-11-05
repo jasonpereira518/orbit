@@ -356,7 +356,7 @@ const CONNECTOR_MANIFESTS = [
     family: "knowledge",
     auth: "oauth2",
     availability: "available",
-    entitlement: "sync",
+    entitlement: null,
     rateBucket: "providerSync",
     purgeCategory: "connections",
     aliases: ["meeting notes"],

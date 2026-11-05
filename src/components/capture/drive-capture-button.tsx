@@ -42,16 +42,14 @@ function newBatchId() {
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-/** Null when Drive is not configured or the plan has no sync — the button simply isn't there. */
+/** Null when Drive is not configured — the button simply isn't there. Drive is on every plan. */
 export function DriveCaptureButton({
   drive,
-  canUseSync,
   disabled = false,
   onQueued,
   size = "sm",
 }: {
   drive: DriveCaptureConfig | null | undefined;
-  canUseSync: boolean;
   disabled?: boolean;
   /** The jobs this pick created, once every doc has settled. */
   onQueued: (jobIds: string[]) => void;
@@ -61,7 +59,7 @@ export function DriveCaptureButton({
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const readinessRef = useRef<{ at: number; promise: Promise<Readiness> } | null>(null);
 
-  if (!drive?.apiKey || !drive.appId || !drive.clientId || !canUseSync) return null;
+  if (!drive?.apiKey || !drive.appId || !drive.clientId) return null;
   const config = { apiKey: drive.apiKey, appId: drive.appId, clientId: drive.clientId };
 
   function warm() {

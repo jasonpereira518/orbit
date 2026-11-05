@@ -53,7 +53,6 @@ export function NotesLibraryUpload({
   tabId,
   onQueued,
   drive = null,
-  canUseSync = false,
 }: {
   hasApiKey: boolean;
   panelId: string;
@@ -61,7 +60,6 @@ export function NotesLibraryUpload({
   /** The jobs this drop created, once every bin has settled. */
   onQueued: (jobIds: string[]) => void;
   drive?: DriveCaptureConfig | null;
-  canUseSync?: boolean;
 }) {
   const filePickerRef = useRef<HTMLInputElement>(null);
   const folderPickerRef = useRef<HTMLInputElement>(null);
@@ -187,7 +185,7 @@ export function NotesLibraryUpload({
             <FolderOpen className="size-4" />
             Choose a folder
           </Button>
-          <DriveCaptureButton drive={drive} canUseSync={canUseSync} disabled={busy || reading} onQueued={onQueued} />
+          <DriveCaptureButton drive={drive} disabled={busy || reading} onQueued={onQueued} />
         </div>
 
         {reading && (
