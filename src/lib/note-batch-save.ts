@@ -69,6 +69,9 @@ export type NoteBatchParticipantInput = {
   followUpDays?: number | null;
   interactionDate?: string | null;
   interactionType?: string | null;
+  /** This person's own `externalIdBase` / `interactionSource`, over the batch's (a Granola card). */
+  externalIdBase?: string;
+  interactionSource?: string;
   /**
    * Typed opportunities this person's card kept. Already validated and already filtered by
    * whatever the review UI left ticked — this module stores, it does not re-decide.
@@ -367,10 +370,10 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
           topics: parsed.topics,
           actionItems: parsed.action_items,
           interactionType: p.interactionType || "meeting_note",
-          source: input.interactionSource ?? "capture",
+          source: p.interactionSource ?? input.interactionSource ?? "capture",
           interactionDate,
-          externalId: input.externalIdBase
-            ? `${input.externalIdBase}:${contactId}`
+          externalId: (p.externalIdBase ?? input.externalIdBase)
+            ? `${p.externalIdBase ?? input.externalIdBase}:${contactId}`
             : noteInteractionExternalId(p.sourceHash ?? input.sourceHash, contactId),
           noteBatchId: batchId,
         },

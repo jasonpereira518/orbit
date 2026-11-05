@@ -327,6 +327,12 @@ export type CaptureParseHints = {
   interactionType?: string | null;
   /** The user's active goals, so the model can score each person's `relevance`. */
   goals?: string[];
+  /**
+   * A note picked from Granola: which one, and when it happened. Never read by the parse —
+   * `hintsPreamble` names its fields — but carried on the job so its saves log the meeting
+   * as Granola's, at the real time (`granolaSaveFields`).
+   */
+  granola?: { noteId: string; meetingAt: string };
 };
 
 const TWO_PASS_CHAR_THRESHOLD = 2500;

@@ -44,6 +44,7 @@ import { resolveAvatarNow } from "@/lib/avatar-backfill";
 import { downloadAndPersistAvatar } from "@/lib/contact-avatar";
 import { resolveLinkedInPhotoCached } from "@/lib/shared-avatars";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
+import { saveConfidentGranolaPeople } from "@/lib/connectors/granola-save";
 import { buildDuplicateIndex, findDuplicateCandidatesIndexed, DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { kickWorkHistoryResearch, linkedInCaptureContactIds } from "@/lib/work-history-research";
@@ -191,6 +192,34 @@ async function runExtraction(id: string, deps: CaptureRunnerDeps): Promise<Captu
     ]);
     if (!(await heartbeatCaptureJob(id, token))) throw new ClaimLostError();
     const { sourceText, sourceHash, ...rest } = parsed;
+    const granola = row.inputHints?.granola;
+    if (granola) {
+      // A note picked from Granola: people already in Orbit are saved now, and only the new
+      // ones (plus any dated commitments) wait for review. See `saveConfidentGranolaPeople`.
+      const split = await saveConfidentGranolaPeople(row.userId, { result: parsed, text: sourceText, granola, now: deps.now ?? new Date() });
+      const result: CaptureJobResult = {
+        ...rest,
+        // Each card carries its note, so a combined review that folds this job into another
+        // still saves it as Granola's (see `granola` on `BulkNotePersonPreview`).
+        items: split.remaining.map((item) => ({ ...item, granola })),
+        ...(split.saved && !split.needsReview ? { saved: savedSummaryOf(split.saved, {}) } : {}),
+      };
+      await settleCaptureJob(id, token, {
+        ...(split.needsReview || !split.saved
+          ? { status: "ready" as const }
+          : { status: "saved" as const, noteBatchId: split.saved.batchId }),
+        result,
+        sourceText,
+        sourceHash,
+        error: null,
+      });
+      for (const contactId of deps.enrich === false ? [] : (split.saved?.contactIds ?? [])) {
+        await generateAndStoreContactBrief(row.userId, contactId).catch(
+          reportAndContinue({ where: "job.capture.granola.brief", userId: row.userId, extra: { jobId: id } }, null)
+        );
+      }
+      return getCaptureJobById(id);
+    }
     const result: CaptureJobResult = rest;
     await settleCaptureJob(id, token, { status: "ready", result, sourceText, sourceHash, error: null });
   } catch (err) {
@@ -479,6 +508,15 @@ export async function saveInputFromParse(ctx: ParseSaveContext): Promise<SaveNot
       cadencePhrase: item.cadence?.phrase ?? null,
       interactionDate: item.interactionDate,
       interactionType: item.interactionType,
+      // A Granola card: logged as Granola's, at the meeting's real time (a day-only date is
+      // stored at noon), under the id the sync checks so it never logs the meeting twice.
+      ...(item.granola
+        ? {
+            interactionDate: item.granola.meetingAt,
+            externalIdBase: `granola:${item.granola.noteId}`,
+            interactionSource: "granola",
+          }
+        : {}),
       // Opportunities belong to the card that produced them, so rejecting a person drops
       // theirs with them — `accepted` is already the filter. A per-opportunity untick from
       // the summary narrows it further.
@@ -588,6 +626,10 @@ function savedSummary(row: CaptureJobRow, out: SaveNoteBatchOutput): CaptureSave
     const card = accepted[i];
     if (card) contactIdByKey[card.item.key] = p.contactId;
   });
+  return savedSummaryOf(out, contactIdByKey);
+}
+
+function savedSummaryOf(out: SaveNoteBatchOutput, contactIdByKey: Record<string, string>): CaptureSavedSummary {
   return {
     batchId: out.batchId,
     created: out.created,
