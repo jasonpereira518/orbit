@@ -209,6 +209,18 @@ export async function updateMeetingDetails(
   return row;
 }
 
+/** The meeting's notes box. Empty text clears it. False when there is no such meeting of theirs. */
+export async function setMeetingUserNotes(userId: string, sessionId: string, notes: string): Promise<boolean> {
+  if (!/^[0-9a-f-]{36}$/i.test(sessionId)) return false;
+  const db = await getDb();
+  const rows = await db
+    .update(meetingSessions)
+    .set({ userNotes: notes || null, updatedAt: new Date() })
+    .where(and(eq(meetingSessions.id, sessionId), eq(meetingSessions.userId, userId)))
+    .returning();
+  return rows.length > 0;
+}
+
 /** A provider event or series id from the client: shape-checked, since it is only ever compared. */
 function calendarIdOrNull(v: unknown): string | null {
   return typeof v === "string" && /^[\w@.-]{1,256}$/.test(v) ? v : null;

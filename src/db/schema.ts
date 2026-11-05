@@ -1376,7 +1376,7 @@ export type NoteBatchResult = {
    */
   opportunities?: { id: string; contactId: string; kind: string; label: string; dueIso: string | null }[];
   skipped: { relative: number; unverifiable: number; past: number; duplicate: number };
-  /** Present only when the batch came from a recorded meeting (`/capture?mode=meeting`). */
+  /** Present only when the batch came from a recorded meeting (`/meetings`). */
   meeting?: NoteBatchMeeting;
 };
 
@@ -1604,7 +1604,7 @@ export type MeetingSessionStatus = "recording" | "ended" | "analyzed" | "saved" 
 export type MeetingSegmentEngine = "deepgram" | "whisper" | "gemini" | "silent";
 
 /**
- * One recorded call on `/capture?mode=meeting`. Holds the text of the meeting while it is
+ * One recorded call on `/meetings`. Holds the text of the meeting while it is
  * still happening, so a crashed or closed tab can pick up where it left off — audio is
  * never stored, only what it was transcribed to. `digest` is the analysis
  * (`src/lib/meeting-digest.ts`), written once the call ends.
@@ -1655,6 +1655,8 @@ export const meetingSessions = pgTable(
     calendarEventKey: text("calendar_event_key"),
     /** That event's recurring series, so the next occurrence can open with "last time". */
     calendarSeriesId: text("calendar_series_id"),
+    /** The notes box from the call (`SideNotes`), saved as typed; edited later on /meetings. */
+    userNotes: text("user_notes"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

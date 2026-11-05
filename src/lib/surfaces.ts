@@ -98,7 +98,7 @@ const PAGES: Surface[] = [
     key: "page.meetings",
     kind: "page",
     label: "Meetings",
-    description: "Past recorded meetings, searchable.",
+    description: "Record a meeting, review its people, and browse past meetings (recorded and Granola).",
     href: "/meetings",
   },
   {

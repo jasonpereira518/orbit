@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 
 export type CaptureMode = "messy" | "voice" | "meeting" | "library" | "cloud";
 
+/** `"meeting"` is the recorder on /meetings, which hosts the same flow with no tabs. */
 export const CAPTURE_MODES: ReadonlyArray<{ id: CaptureMode; label: string; blurb: string }> = [
   {
     id: "messy",
@@ -18,12 +19,6 @@ export const CAPTURE_MODES: ReadonlyArray<{ id: CaptureMode; label: string; blur
     label: "Voice",
     blurb:
       "Just finished a conversation? Say who you met and what you agreed — Orbit transcribes it, then pulls out the people.",
-  },
-  {
-    id: "meeting",
-    label: "Meeting",
-    blurb:
-      "On a call? Orbit listens along, then summarizes it and pulls out the people, next steps, blockers and open questions.",
   },
   {
     id: "library",
@@ -51,8 +46,8 @@ export function capturePanelId(mode: CaptureMode) {
  * The ways in, as a pill tab bar. The same `layoutId` pill every segmented control in the
  * app uses, plus the tab/tabpanel wiring the old bar lacked.
  *
- * Five tabs is tight on a narrow phone: the bar is `inline-flex w-full` with `flex-1`
- * children, so the labels shrink rather than wrap. Verify at 360px before adding a sixth.
+ * Four tabs is tight on a narrow phone: the bar is `inline-flex w-full` with `flex-1`
+ * children, so the labels shrink rather than wrap. Verify at 360px before adding a fifth.
  */
 export function CaptureTabs({
   mode,
@@ -62,7 +57,7 @@ export function CaptureTabs({
 }: {
   mode: CaptureMode;
   onChange: (mode: CaptureMode) => void;
-  /** A job is in flight or a meeting is recording — switching would lose it. */
+  /** A job is in flight — switching would lose it. */
   disabled?: boolean;
   /** The Drive & OneDrive tab — only while the cloud-notes surface is live for this viewer. */
   showCloud?: boolean;

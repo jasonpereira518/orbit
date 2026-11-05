@@ -119,6 +119,7 @@ export const APP_NAV_CORE: AppNavItem[] = [
   RADAR,
   CONTACTS,
   CAPTURE,
+  MEETINGS,
   REMINDERS,
   CHAT,
   IMPORTS,
@@ -133,7 +134,7 @@ export const APP_NAV_CORE: AppNavItem[] = [
  * coming soon below the divider (see `AppSidebar`). Kept as a separate list as the code's
  * default order.
  */
-export const APP_NAV_EXTRAS: AppNavItem[] = [MEETINGS, FIND, EVENTS, OUTREACH, KNOWLEDGE];
+export const APP_NAV_EXTRAS: AppNavItem[] = [FIND, EVENTS, OUTREACH, KNOWLEDGE];
 
 export const APP_NAV_SETTINGS: AppNavItem = {
   href: "/settings",

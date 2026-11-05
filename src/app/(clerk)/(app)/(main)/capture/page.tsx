@@ -1,5 +1,6 @@
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { Suspense } from "react";
+import { redirect } from "next/navigation";
 import { getContactLabel } from "@/actions/contacts";
 import { getActiveCaptureJob, getActiveCaptureJobs } from "@/actions/capture-jobs";
 import { getCloudNotesState } from "@/actions/cloud-notes";
@@ -9,8 +10,7 @@ import { CaptureFlowLazy } from "@/components/capture/capture-flow-lazy";
 import { CaptureHistory, CaptureHistorySkeleton } from "@/components/capture/capture-history";
 import type { CaptureMode } from "@/components/capture/capture-tabs";
 import { requireUserId } from "@/lib/auth";
-import { FEATURE_DENIAL, getEntitlements } from "@/lib/entitlements";
-import { getResumableMeeting } from "@/lib/meeting-sessions";
+import { getEntitlements } from "@/lib/entitlements";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { findEventById } from "@/lib/calendar-events";
 import { userTimeZone } from "@/lib/meeting-context";
@@ -20,9 +20,9 @@ import { isSurfaceLive } from "@/lib/surface-visibility";
 
 export const metadata = { title: "Capture" };
 
-// Page-level, because it governs the server actions called from this page: summarizing an
-// hour-long meeting is a map-reduce over several model calls. The (main) layout is 60, so
-// this page needs its own.
+// Page-level, because it governs the server actions called from this page: a long paste or
+// a stack of files is several model calls. The (main) layout is 60, so this page needs its
+// own. (/meetings carries the same for summarizing a recording.)
 export const maxDuration = 300;
 
 export default async function CapturePage({
@@ -34,11 +34,13 @@ export default async function CapturePage({
   if (gate) return gate;
 
   const params = await searchParams;
+  // Recording moved to /meetings; old links (the nudge, bookmarks, notifications) follow it.
+  if (params.mode === "meeting") redirect("/meetings");
   const requestedContactId = params.contactId || null;
   // `structured` was the form tab Drive & OneDrive replaced; old links land on the notes box,
   // which takes the same contact.
   const modeParam: CaptureMode | null =
-    params.mode === "messy" || params.mode === "voice" || params.mode === "meeting" || params.mode === "cloud"
+    params.mode === "messy" || params.mode === "voice" || params.mode === "cloud"
       ? params.mode
       : params.mode === "structured"
         ? "messy"
@@ -47,10 +49,6 @@ export default async function CapturePage({
   const userIdPromise = requireUserId();
   const settingsPromise = getSettings();
   const planPromise = getPlanOverview();
-  const resumablePromise = requireUserId()
-    .then((userId) => getResumableMeeting(userId))
-    // The banner is a convenience; a failure to read it must never take capture down.
-    .catch(() => null);
   // Same for the job and the ignored count: the page must render without either.
   const jobPromise = getActiveCaptureJob().catch(() => null);
   // Every job still reachable, so a multi-file drop can render its queue. `.catch` because a
@@ -94,16 +92,12 @@ export default async function CapturePage({
       }
     : null;
   const { usage } = await planPromise;
-  const { canUseMeetings, canUseSync } = await getEntitlements(userId);
-  const resumableMeeting = await resumablePromise;
+  const { canUseSync } = await getEntitlements(userId);
   const job = await jobPromise;
   const jobs = await jobsPromise;
   const ignoredCount = await ignoredPromise;
   const cloudNotes = await cloudNotesPromise;
-  // An unfinished meeting is the one thing on this page that can be lost by ignoring it,
-  // so it opens on the Meeting tab unless the link asked for something specific.
-  const defaultMode: CaptureMode =
-    modeParam || (resumableMeeting && !contactId && !initialMeeting ? "meeting" : "messy");
+  const defaultMode: CaptureMode = modeParam || "messy";
   // The gate's own answer for the engine chain in `transcribeAudioWithAI` (Whisper or
   // Gemini — or Orbit's on Lifetime). Anthropic has no speech-to-text, so an Anthropic-only
   // BYOK account can summarize but not transcribe.
@@ -117,7 +111,7 @@ export default async function CapturePage({
         <p className="mt-1 text-muted-foreground">
           {contactName
             ? `Log an interaction with ${contactName} — or paste notes that mention others too.`
-            : "Notes, a voice memo, a meeting, or docs from your drive. Orbit pulls out each person; you review them one card at a time."}
+            : "Notes, a voice memo, or docs from your drive. Orbit pulls out each person; you review them one card at a time."}
         </p>
       </div>
       <CaptureFlowLazy
@@ -133,9 +127,6 @@ export default async function CapturePage({
         hasApiKey={settings.hasApiKey}
         aiReason={settings.ai.reason}
         canTranscribe={canTranscribe}
-        canUseMeetings={canUseMeetings}
-        meetingsDeniedMessage={FEATURE_DENIAL.meetings}
-        resumableMeeting={resumableMeeting}
         ignoredCount={ignoredCount}
         quota={{ used: usage.used, limit: usage.limit }}
         userId={userId}
