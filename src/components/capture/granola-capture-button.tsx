@@ -174,7 +174,7 @@ function GranolaPickerDialog({ onClose, onQueued }: { onClose: () => void; onQue
 
     if (jobIds.length) {
       toast.success(jobIds.length === 1 ? "Reading 1 Granola note" : `Reading ${jobIds.length} Granola notes`, {
-        description: "People already in Orbit are updated right away; anyone new waits for you to review.",
+        description: "People already in Orbit are updated right away; anyone new waits for you to review",
       });
       onQueued(jobIds);
     } else if (duplicates) {
