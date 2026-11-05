@@ -505,10 +505,11 @@ caffeinate -dimsu node scripts/bench/meeting-recorder.mjs \
 node scripts/bench/meeting-recorder.mjs --ab after=http://localhost:3102 --soak-ms 600000 --heap-diff
 ```
 
-- Chrome runs **headful** (a window appears) and auto-selects the "Orbit Bench Call" tab, so
-  `getDisplayMedia` is the real thing. Deepgram and chunk uploads are faked in the page;
+- Chrome runs **new-headless** by default (always visible, so rAF runs) and auto-selects the
+  "Orbit Bench Call" tab, so `getDisplayMedia` is the real thing. `--headful` opens a window,
+  but an occluded window reports hidden and skews A. Deepgram and chunk uploads are faked in the page;
   nothing leaves the machine.
-- Scenarios: idle baseline (call playing) → A recording, /capture visible → B recording,
+- Scenarios: idle baseline (call playing) → A recording, /meetings visible → B recording,
   Orbit in a background tab → C paused with the share kept → resume check.
 - `--profile` CPU-profiles the recorder tab during B; `--heap-diff` diffs heap snapshots by
   constructor over a soak. Both are diagnostics, not measurements.

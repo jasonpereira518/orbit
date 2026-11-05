@@ -6254,7 +6254,7 @@ export type EmailAttachmentRef = { blobKey: string; filename: string; contentTyp
 
 /**
  * One person-to-person email, from enqueue to delivery. The single path every 1:1 send in
- * Orbit takes (spec: docs/superpowers/specs/2026-09-29-direct-email-design.md). Claim/lease
+ * Orbit takes (spec: docs/archive/superpowers/specs/2026-09-29-direct-email-design.md). Claim/lease
  * columns follow `connector_outbox`: `claimed_by` + `lease_until` are evaluated on the
  * DATABASE clock, and every post-send write is guarded on `claimed_by`.
  */

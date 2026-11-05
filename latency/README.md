@@ -2,7 +2,7 @@
 
 Repeatable, comparable latency numbers for every page, interaction, route and AI path in
 Orbit, at four data tiers and two device profiles. Results go to `latency/results/<label>/`
-and `LATENCY_BASELINE.md` is written from them. Nothing here touches production or a real
+and [`LATENCY_BASELINE.md`](../docs/audits/LATENCY_BASELINE.md) is written from them. Nothing here touches production or a real
 provider: the database is a throwaway PGlite per tier, the AI providers are a local mock
 with fixed delays, and third parties that have no base-URL override are simply not
 configured (the code's own "not configured" branches run, as on a fresh account).
@@ -24,6 +24,11 @@ node latency/report.mjs latency/results/baseline latency/results/after   # befor
 | `ai.ts` | chat: headers flushed, first token, complete, statements, stage timeline; capture: paste → reviewed; model-call count per action from the mock's log | in-process + `mock-providers.mjs`, per tier |
 | `import.ts` | 20,000-row LinkedIn CSV: stage time (= time to first visible progress), engine throughput rows/s for creates and for merges, statements | in-process, per tier |
 | `constellation.mjs` | `/graph` open time, idle/pan/zoom fps, heap, at 500 / 5,000 / 50,000 | static production build (`ORBIT_BENCH=1`), both profiles |
+| `renders.mjs` | requests to Orbit's own origin (RSC renders, Server Action POSTs) per interaction — contacts search, log interaction — and time until the page settles | `next dev` demo mode |
+| `poll-queue.mjs` | what holds the tab's Server Action queue while a /capture extraction runs: action POSTs, busy ms, plain-fetch status polls | `next dev` demo mode + `mock-providers.mjs` |
+| `avatar-requests.mjs` | `/api/avatars/*` responses per /contacts visit that reached the server vs. came from cache, cold then repeat | `next dev` demo mode |
+| `explain.ts` | `EXPLAIN (ANALYZE)` of the hot statements; plan shape is representative, absolute time is not | PGlite tier via `ORBIT_PGLITE_DIR` |
+| `tier-50k.sh` | the 50,000 tier end to end (seed, ops, ai, import, pages, api), skipping the O(n²) duplicates count, `/contacts` and the sidebar tour | wraps the scripts above |
 | `scripts/dev/bundle-report.mjs`, `scripts/dev/cold-start-report.mjs` (existing) | first-load JS per route; server module evaluation per route | production build |
 
 `mock-providers.mjs` answers Gemini, OpenAI and Anthropic (JSON, streaming, embeddings,
@@ -39,13 +44,13 @@ in `mock-ai.log`, so "how many model calls did one chat turn make" is a `grep`.
   from `next dev`. Treat them as upper bounds for server time and for JS (dev React,
   unminified). The production JS size is the bundle report; the production server time is
   `server-ops` depth × real RTT. For real production-build vitals run `pages.mjs` against a
-  **staging** deployment with a signed-in Playwright `storageState` (see `LATENCY_BASELINE.md`
+  **staging** deployment with a signed-in Playwright `storageState` (see [`LATENCY_BASELINE.md`](../docs/audits/LATENCY_BASELINE.md)
   → "Staging and production readings").
 - **pgvector / HNSW.** PGlite has no pgvector, so the semantic arm runs the JS cosine fallback.
   Statement counts and depth are the same as production; the vector scan's own time is not.
-  `EXPLAIN (ANALYZE, BUFFERS)` commands for Neon staging are in `LATENCY_BASELINE.md`.
+  `EXPLAIN (ANALYZE, BUFFERS)` commands for Neon staging are in [`LATENCY_BASELINE.md`](../docs/audits/LATENCY_BASELINE.md).
 - **Real cold starts, region RTT, Clerk, Deepgram, Google, Apollo.** Commands and dashboard
-  views to read these are in `LATENCY_BASELINE.md`; fields are left blank there.
+  views to read these are in [`LATENCY_BASELINE.md`](../docs/audits/LATENCY_BASELINE.md); fields are left blank there.
 
 ## Conventions
 

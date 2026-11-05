@@ -78,7 +78,7 @@ const EXPECTED_MCP_TOOLS = [
   // an agenda or an address; and the free gaps, which carry no one else's words at all.
   "upcoming_meetings",
   "free_time",
-  // Phase 4 (docs/superpowers/plans/2026-10-19-chat-agent.md): the feature reads, each with an
+  // Phase 4 (docs/archive/superpowers/plans/2026-10-19-chat-agent.md): the feature reads, each with an
   // MCP field allowlist (a capture's title and excerpt stay home), offered only once the page
   // behind them is released to the user …
   "query_contacts",

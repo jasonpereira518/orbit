@@ -1,7 +1,7 @@
 /**
  * Rewrite chat proposals stored in the legacy shape (`args.kind` other than "tool") into the
  * catalog shape every proposal now has, so `commitProposedAction` and the cards need only one
- * path. Task 4.4 of docs/superpowers/plans/2026-10-19-chat-agent.md (on claude/chat-agent-design).
+ * path. Task 4.4 of docs/archive/superpowers/plans/2026-10-19-chat-agent.md (on claude/chat-agent-design).
  *
  * RUN THIS BEFORE DEPLOYING the release that drops the legacy commit path. Until it has run, a
  * legacy card that is still waiting for a click is refused when clicked ("That change can’t be

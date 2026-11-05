@@ -15,7 +15,7 @@ import type { SpeechKind } from "@/lib/speech-limits";
 
 /**
  * Deepgram's pay-as-you-go list prices for Nova-3 (deepgram.com/pricing, Oct 2026 — see
- * COST_AUDIT.md for the confirmation status). Per minute of audio.
+ * the Oct 17 cost audit for the confirmation status). Per minute of audio.
  */
 export const DEEPGRAM_LIST_PER_MINUTE = {
   streaming: 0.0077,

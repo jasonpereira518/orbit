@@ -1,7 +1,7 @@
 /**
  * Guards the toast voice, so it cannot drift back one call site at a time.
  *
- * The friendlier-toasts pass (docs/superpowers/specs/2026-09-10-friendlier-toasts-design.md)
+ * The friendlier-toasts pass (docs/archive/superpowers/specs/2026-09-10-friendlier-toasts-design.md)
  * rewrote ~300 toast messages. Before it, one save failure was worded four ways, "Could
  * not X" competed with "X failed" and "Couldn't X", terminal periods split along a
  * directory line, and apostrophes were a mix of straight and curly. None of that is

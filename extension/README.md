@@ -77,7 +77,8 @@ follow-up, not a launch risk.
 | --- | --- |
 | `VITE_ORBIT_APP_URL` | The Orbit deployment to talk to. Also becomes the extension's only site host permission. |
 | `VITE_CLERK_PUBLISHABLE_KEY` | Clerk key for that same deployment — the extension shares the web app's session via `syncHost`. |
-| `VITE_ORBIT_DEV_SECRET` | Local dev only. Sent as `x-orbit-dev-secret` so the popup can talk to a dev server that has no Clerk session. Must match `EXTENSION_DEV_SECRET` in the app. |
+| `VITE_CLERK_FRONTEND_API` | Clerk frontend API origin (`https://clerk.<domain>`). Required for production builds — it becomes a host permission, and without it sign-in never completes. Dev instances are covered by a wildcard. See `.env.example` / `.env.production`. |
+| `VITE_ORBIT_DEV_SECRET` | Local dev only. Sent as `x-orbit-dev-secret` so the panel can talk to a dev server that has no Clerk session. Must match `EXTENSION_DEV_SECRET` in the app. |
 | `VITE_EXTENSION_KEY` | Base64 public key that pins the extension ID (see below). |
 
 The app side needs `EXTENSION_ORIGIN=chrome-extension://<id>` so Clerk will
@@ -98,11 +99,15 @@ openssl rsa -in key.pem -pubout -outform DER | base64 | tr -d '\n'
 ## Architecture
 
 ```
-popup (React + Clerk) ──fetch──► <app>/api/extension/*
+side panel (React + Clerk) ──fetch──► <app>/api/extension/*
   └─ chrome.scripting.executeScript
        └─ inject/extract.js (IIFE, no deps)
             └─ site adapter → PageContext
 ```
+
+There is no popup: the toolbar action opens a side panel (`sidePanel`
+permission, `openPanelOnActionClick` in `src/background/index.ts`), which stays
+open while the user browses.
 
 **Two phases per open.** Identity first: canonical URL → `/resolve` → a slug
 lookup, no AI, no parsing. That alone powers the known-contact state, which is
@@ -113,6 +118,11 @@ round trip.
 **The URL is more durable than any DOM node.** If every selector in the LinkedIn
 adapter breaks, `/in/<slug>` still resolves a known contact and the panel
 degrades to "we know who this is, we just can't show their headline."
+
+Other adapters in `src/inject/adapters/`: `gmail` (identity only, never message
+bodies), `x` (handle plus the first visible posts), `event-roster` (Luma and
+Partiful guest lists), and `generic` (fallback that picks up linked LinkedIn/X
+profiles on any page).
 
 ### Permissions
 
@@ -141,7 +151,8 @@ cached locally either.
 Two files mirror app logic and will fail silently if they drift:
 
 - `src/inject/dom/url.ts` — `linkedinSlug` and `xHandle` must stay
-  byte-identical to `src/lib/duplicates.ts`. If they diverge, the extension
+  byte-identical to `linkedinSlug` and `normalizeXHandle` in
+  `src/lib/duplicates.ts`. If they diverge, the extension
   reports "new to your orbit" for someone the user has known for years.
 - `src/styles/tokens.css` — generated from the app's `theme.css`.
   `npm run tokens:sync` regenerates; `npm run check:tokens` runs on every build
@@ -155,8 +166,11 @@ nothing from the Next app reaches the bundle.
 
 | Command | Does |
 | --- | --- |
-| `npm run dev` | Vite dev server with popup HMR |
-| `npm run build` | Token drift check, then the injected IIFE, then the popup |
+| `npm run dev` | Vite dev server with side-panel HMR |
+| `npm run build` | Token drift check, then the injected IIFE, then the panel |
+| `npm run check:tokens` | Fail if `tokens.css` has drifted from the app's `theme.css` |
+| `npm run build:inject` | Build only the injected extractor (self-contained IIFE into `public/inject/`) |
+| `npm run preview:design` | Design harness: the panel's real components on a plain page at `localhost:5174` (no `@crxjs`, no Clerk) |
 | `npm run typecheck` / `npm run lint` | The usual |
 | `npm run tokens:sync` | Regenerate `tokens.css` from the app |
 | `npm run zip` | Build and package `release/orbit-<version>.zip` |

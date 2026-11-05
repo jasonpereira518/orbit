@@ -1,6 +1,6 @@
 /**
  * What iCloud's CalDAV server actually supports — the spike behind Task 1 of
- * `docs/superpowers/plans/2026-09-22-calendar-connections.md`.
+ * `docs/archive/superpowers/plans/2026-09-22-calendar-connections.md`.
  *
  * Two assumptions in `src/lib/caldav/client.ts` are unverified against Apple, and one of them
  * is load-bearing for the whole fallback path:
@@ -21,7 +21,7 @@
  *   APPLE_ID='you@icloud.com' APPLE_APP_PASSWORD='xxxx-xxxx-xxxx-xxxx' \
  *     npx tsx scripts/dev/icloud-caldav-probe.ts
  *
- * Writes `docs/superpowers/specs/2026-09-22-icloud-caldav-findings.md`, redacted: calendar names,
+ * Writes `docs/archive/superpowers/specs/2026-09-22-icloud-caldav-findings.md`, redacted: calendar names,
  * event summaries, attendee addresses and URL path segments are replaced before anything is
  * written, so the file is safe to commit and to paste into a conversation. Revoke the
  * app-specific password afterwards if you like — nothing here stores it.
@@ -37,7 +37,7 @@ import {
 const APPLE_ID = process.env.APPLE_ID;
 const APP_PASSWORD = process.env.APPLE_APP_PASSWORD;
 
-const OUT = "docs/superpowers/specs/2026-09-22-icloud-caldav-findings.md";
+const OUT = "docs/archive/superpowers/specs/2026-09-22-icloud-caldav-findings.md";
 const ROOT = "https://caldav.icloud.com";
 
 if (!APPLE_ID || !APP_PASSWORD) {

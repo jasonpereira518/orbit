@@ -37,7 +37,7 @@ import { eventId } from "@/lib/product-event-ids";
 /**
  * The person-to-person email outbox. Every 1:1 send in Orbit — Compose, follow-ups, Chat,
  * approved assistant drafts, recruiter replies — enters through `enqueueEmail` and leaves
- * through `dispatchEmailSend`. Spec: docs/superpowers/specs/2026-09-29-direct-email-design.md.
+ * through `dispatchEmailSend`. Spec: docs/archive/superpowers/specs/2026-09-29-direct-email-design.md.
  *
  * Claim and settle follow `src/lib/connectors/outbox.ts`:
  *   1. A claim is one UPDATE that takes a `queued` row, or a `sending` row whose lease has

@@ -6,7 +6,7 @@
  * columns with it, the scorer can stay free of the database, and the page's client
  * components can render labels without pulling `@/db` into a browser bundle.
  *
- * Spec: docs/superpowers/specs/2026-09-27-radar-recommendation-engine-design.md
+ * Spec: docs/archive/superpowers/specs/2026-09-27-radar-recommendation-engine-design.md
  */
 
 /**

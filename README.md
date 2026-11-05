@@ -53,11 +53,13 @@ Your network is probably your most valuable asset, and you have no system for ke
 ## What you can do
 
 - **Capture from whatever you have.** Notes about one person or a whole conference, voice memos, business card photos, a folder of meeting notes, or a live meeting transcribed into people, decisions, and action items. You review each person in one card before anything is saved.
-- **Know everyone's story.** Searchable profiles with how close you are, every interaction, follow-ups, and a short brief to read before you meet.
+- **Record your meetings.** Record a meeting in Orbit, review the people it found, and browse every past meeting, including the ones you took in Granola.
+- **Know everyone's story.** Searchable profiles with how close you are, whether the relationship is still two-way, every interaction, follow-ups, and a short brief to read before you meet.
+- **Keep recruiters straight.** Track which recruiters you're talking to, at which companies, and where each conversation stands.
 - **Never miss a follow-up.** A home screen that shows who's due, who's going cold, and what to say. Reminders repeat, snooze, and appear in your Google, Apple, or Outlook calendar.
 - **Ask your network.** *"Who do I know at Stripe?"* *"Who should I talk to about raising a seed round?"* Answers come from your own contacts and notes.
 - **See the shape of your network.** An interactive star chart clustered by company and school, with your closest ties shining brightest.
-- **Bring your people with you.** Import LinkedIn connections and messages, address books, Google and Outlook contacts, your calendar, and notes from Google Drive. Every import can be undone.
+- **Bring your people with you.** Import LinkedIn connections and messages, address books, Google and Outlook contacts, your calendar, and notes from Google Drive and Granola. Every import can be undone.
 
 ### Works where you already are
 
@@ -67,7 +69,7 @@ Your network is probably your most valuable asset, and you have no system for ke
 
 1. **Built for messy input.** Other CRMs need clean data entry. Orbit starts from the notes you actually take.
 2. **It tells you what to do next.** Orbit gives you a daily to-do list for your relationships, not just a database.
-3. **Your AI, your choice.** Every plan includes AI, and you can bring your own Gemini, OpenAI, or Anthropic key on any plan.
+3. **Your AI, your choice.** Every plan includes AI, and you can bring your own Gemini, OpenAI, Anthropic, or OpenRouter key on any plan.
 4. **You stay in control.** Orbit never sends anything without your approval, including messages an assistant drafts for you.
 5. **Personal, not corporate.** It's designed to feel like your own sky, not like enterprise software.
 
@@ -82,8 +84,9 @@ Your network is probably your most valuable asset, and you have no system for ke
 | **Claude and ChatGPT connector** | ✓ | ✓ | ✓ |
 | **Google and Microsoft accounts** | One of the two | Both | Both |
 | **Recruiter tracking, calendar subscriptions** | | ✓ | ✓ |
-| **Voice notes** | 1 hour a month | 5 hours a month | 10 hours a month |
-| **Meeting transcription** | | 5 hours a month | 10 hours a month |
+| **Google Drive and Granola notes** | | ✓ | ✓ |
+| **Voice notes** | 90 minutes a month | 8 hours a month | 15 hours a month |
+| **Meeting recording and transcription** | | 8 hours a month | 15 hours a month |
 | **REST API and webhooks** | | | ✓ |
 
 Every plan includes AI, and your own AI key is optional on any plan. $5 packs of 250 credits are there if you ever need more, and nothing is charged automatically. A year paid up front is two months free. Hitting a limit only stops you adding new contacts. Orbit never hides or deletes your data.
@@ -101,6 +104,8 @@ Every plan includes AI, and your own AI key is optional on any plan. $5 packs of
 - **The Chrome extension.** A side panel on LinkedIn, Gmail, and anywhere else a person shows up, telling you whether you already know them, what you know, and what to say.
 - **Events.** Remember the conferences and meetups you went to and the people you met there.
 - **Radar.** Every night, Orbit looks over your network and tells you who is worth a message this week, and why.
+- **Find people.** Research anyone outside your network before you reach out or meet them.
+- **Outreach.** Find prospects, run small email campaigns from Orbit, and see who replied.
 
 ---
 
