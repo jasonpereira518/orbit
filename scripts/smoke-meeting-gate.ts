@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { meetingSessions, speechUsage, userSettings } from "../src/db/schema";
-import { entitlementsForPlan, FEATURE_DENIAL, isPaywallError, requireEntitlement } from "../src/lib/entitlements";
+import { entitlementsForPlan, featureDenial, isPaywallError, requireEntitlement } from "../src/lib/entitlements";
 import { createMeetingSession } from "../src/actions/meetings";
 import { monthWindow } from "../src/lib/speech-limits";
 
@@ -148,7 +148,7 @@ async function main() {
   check("Pro can meet", entitlementsForPlan("orbit", "subscription").canUseMeetings === true);
   check("Lifetime can meet", entitlementsForPlan("lifetime", "lifetime").canUseMeetings === true);
   check("Max can meet", entitlementsForPlan("max", "subscription").canUseMeetings === true);
-  check("the denial names both plans on sale", /Pro/.test(FEATURE_DENIAL.meetings) && /Max/.test(FEATURE_DENIAL.meetings) && !/Lifetime/.test(FEATURE_DENIAL.meetings));
+  check("the denial names both plans on sale", /Pro/.test(featureDenial("meetings")) && /Max/.test(featureDenial("meetings")) && !/Lifetime/.test(featureDenial("meetings")));
 
   // `requireMeetingsUser()` (src/lib/plan-guards.ts) is `requireUserId()` then
   // `requireEntitlement(userId, "meetings")`. This exercises that second half against the

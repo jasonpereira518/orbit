@@ -49,7 +49,7 @@ export function MeetingCaptureTab({
   canTranscribe: boolean;
   /** Meeting recording is on Orbit Pro, Max and Lifetime. False renders an upgrade prompt instead of the recorder. */
   canUseMeetings: boolean;
-  /** `FEATURE_DENIAL.meetings`, read on the server and threaded down — this is a client
+  /** `featureDenial("meetings", effective config)`, read on the server and threaded down — this is a client
    * component and cannot import `@/lib/entitlements` (it reaches the database). */
   meetingsDeniedMessage: string;
   panelId: string;

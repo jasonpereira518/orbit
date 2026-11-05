@@ -557,6 +557,8 @@ export const KNOWN_GATES = [
   "backgroundFloor",
   "speechShortform",
   "speechMeeting",
+  // A page an operator limited to some tiers (`setSurfaceTiers`).
+  "page",
 ] as const;
 
 /* ------------------------------------------------------------ lifetime sales ------- */

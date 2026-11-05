@@ -35,6 +35,7 @@ import {
 } from "@/db/schema";
 import { PaywallError, getEntitlements, type Entitlements } from "@/lib/entitlements";
 import { recordGateHit, recordGateHitThrottled } from "@/lib/gate-events";
+import { requirePlanForSurface, surfaceTierLock } from "@/lib/surface-visibility";
 import {
   companyFieldsForWrite,
   companyFieldsForWriteCached,
@@ -416,6 +417,9 @@ export async function contactHeadroomForUser(
   // Optional: a caller already holding the account's entitlements skips re-reading them.
   entitlements?: Entitlements
 ) {
+  // A Contacts page an operator limited to other plans adds no contacts from anywhere —
+  // imports, sync, capture, the API — the same "lock new use, keep the data" the cap is.
+  if (await surfaceTierLock(userId, "page.contacts")) return 0;
   const { contactLimit } = entitlements ?? (await getEntitlements(userId));
   if (contactLimit === null) return null;
 
@@ -454,6 +458,9 @@ export async function createContactForUser(
   // Before the headroom check: an invalid contact should not consume the plan
   // allowance or record a paywall gate-hit on its way to being rejected.
   const input = parseContactInput(rawInput);
+  // THE shared create path (actions, MCP, REST, extension, chat, capture), so a Contacts tier
+  // lock is enforced once here rather than in every caller. Throws the page's upgrade refusal.
+  await requirePlanForSurface(userId, "page.contacts");
 
   // Resolved once for both the headroom check and the paywall below; each used to read it.
   const entitlements = options?.entitlements ?? (await getEntitlements(userId));

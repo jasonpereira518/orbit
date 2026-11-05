@@ -31,6 +31,7 @@ import "./smoke/_env";
 
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
+import { getEffectivePlanConfig } from "../src/lib/plans/plan-rules";
 import { contacts } from "../src/db/schema";
 import { getDashboardData } from "../src/lib/reminders";
 import { loadGraphData } from "../src/lib/graph-data";
@@ -275,6 +276,9 @@ async function main() {
     radarRunQueries.every((q) => !selectsBare(q, "notes")),
     radarRunQueries.find((q) => selectsBare(q, "notes"))?.slice(0, 200)
   );
+  // The app_surface_flags read (page flags + runtime plan rules) is memoized per instance for
+  // 15s and the app shell has always made it by the time a page loads; warm it, as a request has.
+  await getEffectivePlanConfig();
   startQueryCount();
   const radarPage = await loadRadarPage(USER);
   const radarPageCount = stopQueryCount();

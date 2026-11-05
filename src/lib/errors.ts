@@ -366,7 +366,7 @@ export type ActionResult<T> = { ok: true; value: T } | { ok: false; error: strin
  *
  * A thrown message is replaced by a digest in production; a returned value is not. So a
  * `UserFacingError` becomes `{ ok: false, error }`, and so does a `PaywallError`: it is
- * already written for the person who hit it (`FEATURE_DENIAL`), so it earns the same rescue
+ * already written for the person who hit it (`featureDenial`), so it earns the same rescue
  * rather than being reduced to a digest and read as "try again?". Anything else is rethrown
  * untouched, so a genuine fault still surfaces as an error and still gets the caller's
  * friendly fallback — this only rescues the messages that were written to be read.
@@ -444,7 +444,7 @@ export function friendlyError(err: unknown, fallback: string): string {
     return typeof digest === "string" ? withReference(fallback, digest) : fallback;
   }
 
-  // A plan denial is already written for the person who hit it (`FEATURE_DENIAL`), and it is
+  // A plan denial is already written for the person who hit it (`featureDenial`), and it is
   // the one server-thrown message worth showing verbatim. Matched by name, not `instanceof`:
   // a second module instance would break the class check, and this file imports nothing.
   if (err instanceof Error && err.name === "PaywallError" && err.message) return err.message;

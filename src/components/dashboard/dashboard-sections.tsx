@@ -1,4 +1,5 @@
 import { tourAnchor } from "@/lib/tour/tour-anchors";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { Suspense } from "react";
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
@@ -139,7 +140,7 @@ export async function SetupChecklistSection() {
   ]);
 
   const items: SetupChecklistItem[] = [];
-  const aiDenial = aiDenialFromSettings(userId, settings);
+  const aiDenial = aiDenialFromSettings(userId, settings, await getEffectivePlanConfig());
   if (aiDenial) {
     items.push({
       id: "ai-key",

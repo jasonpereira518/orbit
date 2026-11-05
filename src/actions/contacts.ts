@@ -1,5 +1,6 @@
 "use server";
 
+import { requirePageUser } from "@/lib/plan-guards";
 import { relatedSqlLower } from "@/lib/related-contacts-sql";
 import { and, asc, desc, eq, gte, inArray, sql, type SQL } from "drizzle-orm";
 import { listSchools } from "@/lib/events/target-companies";
@@ -712,7 +713,7 @@ export async function createContactDetailed(
   input: ContactInput,
   options?: ContactWriteOptions
 ) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.contacts");
   const { contactId, outcome, reason } = await resolveOrCreateContact(
     userId,
     clientContactInput(input),
@@ -739,7 +740,7 @@ export async function createContactsBulk(
   options?: ContactWriteOptions
 ) {
   return createContactsBulkForUser(
-    await requireUserId(),
+    await requirePageUser("page.contacts"),
     inputs.map(clientContactInput),
     companyResolve,
     options
@@ -751,7 +752,7 @@ export async function updateContact(
   input: Partial<ContactInput>,
   options?: ContactWriteOptions
 ) {
-  return updateContactForUser(await requireUserId(), id, clientContactInput(input), options);
+  return updateContactForUser(await requirePageUser("page.contacts"), id, clientContactInput(input), options);
 }
 
 /**
@@ -759,7 +760,7 @@ export async function updateContact(
  * saves the one the person typed. Either way the guess is settled and the "?" goes.
  */
 export async function reviewContactName(id: string, name?: { firstName: string; lastName: string }) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.contacts");
   if (name) {
     const firstName = name.firstName.trim();
     const lastName = name.lastName.trim();
@@ -808,7 +809,7 @@ const MAX_STATED_CLOSENESS = 5;
 export async function rateContacts(
   ratings: Array<{ contactId: string; closeness: number }>
 ): Promise<{ updated: number; failedContactIds: string[] }> {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.contacts");
   let updated = 0;
   const failedContactIds: string[] = [];
 
@@ -888,7 +889,7 @@ export async function setConstellationPin(
 }
 
 export async function logInteraction(input: LogInteractionInput) {
-  return logInteractionForUser(await requireUserId(), input);
+  return logInteractionForUser(await requirePageUser("page.contacts"), input);
 }
 
 export async function updateInteraction(
@@ -902,7 +903,7 @@ export async function updateInteraction(
     parseDateFromNotes?: boolean;
   }
 ) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.contacts");
   const db = await getDb();
   const { parseInteractionDateFromNotes } = await import(
     "@/lib/interaction-date"
@@ -980,7 +981,7 @@ export async function reorderSameDayInteractions(
   dayIso: string,
   orderedIds: string[]
 ) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.contacts");
   const db = await getDb();
 
   // Only the id and date are read — the day filter and the allow-list. Unprojected, this
@@ -1026,7 +1027,7 @@ export async function reorderSameDayInteractions(
 }
 
 export async function regenerateContactSummary(contactId: string) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.contacts");
   const out = await generateAndStoreContactBrief(userId, contactId, {
     force: true,
   });
@@ -1286,7 +1287,7 @@ export async function lookupLinkedInProfile(input: {
   fullName?: string;
   email?: string;
 }): Promise<LinkedInProfileEnrichment | null> {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.contacts");
   const raw = input.linkedinUrl.trim();
   if (!isLinkedInProfileUrl(raw)) {
     throw new Error("Enter a LinkedIn profile URL (linkedin.com/in/…)");
@@ -1308,7 +1309,7 @@ export async function lookupLinkedInProfile(input: {
  * Updates role, company, location, school, and profile picture when found.
  */
 export async function refreshContactsFromLinkedIn(contactIds: string[]) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.contacts");
   if (contactIds.length === 0) {
     return { refreshed: 0, unmatched: 0, failed: 0, avatarOnly: false, rateLimited: false };
   }
@@ -1494,7 +1495,7 @@ export async function draftContactFollowUp(
     reuse?: boolean;
   }
 ) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.contacts");
   const goals = await listActiveGoalTexts();
   const writingInstructions = await loadWritingInstructions(userId);
   return draftFollowUpResult(userId, contactId, goals, { ...options, writingInstructions });
@@ -1561,7 +1562,7 @@ export async function sendContactFollowUpEmail(
   body: string,
   subject?: string
 ): Promise<FollowUpSendResult> {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.contacts");
   const db = await getDb();
   const contact = await db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
@@ -2033,7 +2034,7 @@ export type InteractionDetail = Awaited<ReturnType<typeof getInteractionDetail>>
  * state instead of coming back as fresh open ones.
  */
 export async function resummarizeInteraction(interactionId: string) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.contacts");
   const db = await getDb();
 
   const existing = await db.query.interactions.findFirst({

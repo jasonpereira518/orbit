@@ -34,6 +34,7 @@ import {
   setConstellationConfig,
   type ConstellationConfig,
 } from "@/lib/constellation-config";
+import { resetPlanRule, setFeaturePlans, setPlanLimit } from "@/lib/plans/plan-rules";
 import { setStealth } from "@/lib/site-access";
 import {
   setManagedAiPaused,
@@ -391,6 +392,56 @@ export async function setSurfaceTiersAction(input: {
 
   revalidatePath("/", "layout");
   revalidatePath("/admin/product", "layout");
+  return { ok: true };
+}
+
+/**
+ * Plan rules change what every account may do, and what the pricing and upgrade pages should
+ * say, so the whole app layout is dropped along with those two pages.
+ */
+function revalidatePlanRules() {
+  revalidatePath("/", "layout");
+  revalidatePath("/admin/product", "layout");
+  revalidatePath("/pricing");
+  revalidatePath("/upgrade");
+}
+
+/**
+ * Give a plan feature to exactly these plans (`setFeaturePlans`). Widening and narrowing are
+ * both allowed; an empty list means nobody. Taking a feature off a plan keeps every account's
+ * data and locks new use, exactly as a downgrade does. `reason` comes from the confirm dialog
+ * the console shows when paying accounts lose the feature, and is kept in the audit row.
+ */
+export async function setFeaturePlansAction(input: {
+  feature: string;
+  plans: string[];
+  reason?: string;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  await setFeaturePlans(adminUserId, input.feature, input.plans, { reason: input.reason });
+  revalidatePlanRules();
+  return { ok: true };
+}
+
+/** Set one numeric limit for one plan (`setPlanLimit`). `value: null` is unlimited where allowed. */
+export async function setPlanLimitAction(input: {
+  plan: string;
+  field: string;
+  value: number | null;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  await setPlanLimit(adminUserId, input.plan, input.field, input.value);
+  revalidatePlanRules();
+  return { ok: true };
+}
+
+/** Drop a feature or limit override so the code default applies again (`resetPlanRule`). */
+export async function resetPlanRuleAction(
+  input: { kind: "feature"; feature: string } | { kind: "limit"; plan: string; field: string }
+): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  await resetPlanRule(adminUserId, input);
+  revalidatePlanRules();
   return { ok: true };
 }
 

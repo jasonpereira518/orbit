@@ -55,6 +55,13 @@ const GATE_LABELS: Record<string, string> = {
   meetings: "Meeting transcription",
   creditPacks: "Credit packs",
   extraConnections: "Second Google / Microsoft account",
+  radar: "Radar",
+  events: "Events",
+  findPeople: "Find people",
+  compose: "Compose email",
+  cloudNotes: "Cloud notes",
+  // A page an operator limited to some tiers (/admin/product).
+  page: "Page limited to other plans",
   // Pricing-v2 walls, recorded since the analytics rollout (`recordGateRefusal`).
   managedCredits: "Out of AI credits",
   backgroundFloor: "Credits reserved for what you ask for",

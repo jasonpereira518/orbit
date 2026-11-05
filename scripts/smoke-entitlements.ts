@@ -12,7 +12,8 @@ import { getDb } from "../src/db";
 import { contacts, gateEvents, userSettings } from "../src/db/schema";
 import {
   entitlementsForPlan,
-  FEATURE_DENIAL,
+  FEATURE_KEYS,
+  featureDenial,
   FREE_CONTACT_LIMIT,
   getEntitlements,
   isPaywallError,
@@ -125,7 +126,10 @@ function matrix() {
   check("the contact cap unlocks on Pro", unlockPlanFor("contacts") === "orbit");
   check("packs and hosted AI unlock on Free, which already has them", unlockPlanFor("creditPacks") === "free" && unlockPlanFor("hostedAi") === "free");
   check("the packs denial offers no pack and points at a key",
-    !/Orbit Pro|Orbit Max/.test(FEATURE_DENIAL.creditPacks) && /AI key/.test(FEATURE_DENIAL.creditPacks), FEATURE_DENIAL.creditPacks);
+    !/Orbit Pro|Orbit Max/.test(featureDenial("creditPacks")) && /AI key/.test(featureDenial("creditPacks")), featureDenial("creditPacks"));
+  const FEATURE_DENIAL = Object.fromEntries(
+    FEATURE_KEYS.filter((f) => f !== "hostedAi").map((f) => [f, featureDenial(f as Exclude<typeof f, "hostedAi">)])
+  ) as Record<Exclude<(typeof FEATURE_KEYS)[number], "hostedAi">, string>;
   check("hostedAi has no denial: every plan has it", !("hostedAi" in FEATURE_DENIAL));
   check("a feature every plan has reads \"every plan\", not Pro and Max", /every plan/.test(FEATURE_DENIAL.extension), FEATURE_DENIAL.extension);
   check("no denial names Lifetime", Object.values(FEATURE_DENIAL).every((m) => !/Lifetime/.test(m)));

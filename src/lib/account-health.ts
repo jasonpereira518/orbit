@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { getCreditBalance } from "@/lib/credits/ledger";
-import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
+import type { Plan } from "@/lib/plans/plan-config";
 import { getDb, rowsOf } from "@/db";
 import { notTourExample } from "@/lib/onboarding-examples/sql";
 import { tourRailVisible } from "@/lib/tour/tour-state";
@@ -202,7 +203,7 @@ export async function loadAccountHealthInput(
   // so resolving from the row in hand is the same answer without a second read of it.
   const settings = context?.settings ?? (await ensureUserSettings(userId));
   if (!settings) return null;
-  const entitlements = context?.entitlements ?? entitlementsFromSettings(userId, settings);
+  const entitlements = context?.entitlements ?? entitlementsFromSettings(userId, settings, await getEffectivePlanConfig());
 
   const provider = resolveAiProvider(settings.aiProvider);
   const stalledBefore = new Date(now.getTime() - STALLED_IMPORT_MS);
@@ -440,7 +441,7 @@ async function creditFacts(
   settings: Parameters<typeof getCreditBalance>[2],
   now: Date
 ): Promise<HealthInput["credits"]> {
-  if (!PLAN_CONFIG[plan].features.hostedAi) return null;
+  if (!(await getEffectivePlanConfig())[plan].features.hostedAi) return null;
   // Running on the account's own key (the default whenever one is saved, unless it chose
   // included AI first): credits are not what its AI runs on, so no credit notices.
   const row = settings as {

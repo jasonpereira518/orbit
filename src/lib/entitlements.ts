@@ -11,8 +11,10 @@ import {
   unlockPlanFor,
   type FeatureKey,
   type Plan,
+  type PlanConfig,
   type PlanSource,
 } from "@/lib/plans/plan-config";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 
 // Re-exported so server code keeps importing plan identity from this module, while
 // client components can reach `plans/plan-config` directly without pulling in the database.
@@ -88,6 +90,11 @@ export type Entitlements = {
   canBuyCreditPacks: boolean;
   /** A second Google or Microsoft account. Free keeps its first connection. */
   canUseExtraConnections: boolean;
+  /**
+   * Every feature flag, by key — what `requireEntitlement` reads. The `canUse*` fields above
+   * are the same flags under the names existing call sites use.
+   */
+  features: Record<FeatureKey, boolean>;
 };
 
 
@@ -159,14 +166,23 @@ export function resolvePlan(
   return { plan: "free", source: "free" };
 }
 
-/** Every flag and limit comes from `PLAN_CONFIG`; this only reshapes it for the gates. */
-export function entitlementsForPlan(plan: Plan, source: PlanSource): Entitlements {
-  const config = PLAN_CONFIG[plan];
-  const f = config.features;
+/**
+ * Every flag and limit comes from the plan table; this only reshapes it for the gates.
+ *
+ * `config` is the table to read. Server gates pass the EFFECTIVE table (`getEffectivePlanConfig`,
+ * code defaults plus the operator's overrides); the default is the code table, for pure callers.
+ */
+export function entitlementsForPlan(
+  plan: Plan,
+  source: PlanSource,
+  config: Record<Plan, PlanConfig> = PLAN_CONFIG
+): Entitlements {
+  const planConfig = config[plan];
+  const f = planConfig.features;
   return {
     plan,
     source,
-    contactLimit: config.contactLimit,
+    contactLimit: planConfig.contactLimit,
     canUseOutreach: f.outreach,
     canUseHostedSending: f.hostedSending,
     canUseHostedEnrichment: f.hostedEnrichment,
@@ -179,12 +195,17 @@ export function entitlementsForPlan(plan: Plan, source: PlanSource): Entitlement
     canUseHostedAi: f.hostedAi,
     canBuyCreditPacks: f.creditPacks,
     canUseExtraConnections: f.extraConnections,
+    features: { ...f },
   };
 }
 
-/** Every flag on and no contact cap, under whatever plan the account actually holds. */
+/**
+ * Every flag on and no contact cap, under whatever plan the account actually holds. Read from
+ * the CODE table on purpose: demo accounts stay exempt from operator plan rules, as they are
+ * from page tier rules.
+ */
 function unrestrictedEntitlements(plan: Plan, source: PlanSource): Entitlements {
-  return { ...entitlementsForPlan("max", source), plan };
+  return { ...entitlementsForPlan("max", source, PLAN_CONFIG), plan };
 }
 
 /**
@@ -198,7 +219,7 @@ function unrestrictedEntitlements(plan: Plan, source: PlanSource): Entitlements 
  */
 export const getEntitlements = cache(
   async (userId: string): Promise<Entitlements> =>
-    entitlementsFromSettings(userId, await ensureUserSettings(userId))
+    entitlementsFromSettings(userId, await ensureUserSettings(userId), await getEffectivePlanConfig())
 );
 
 /**
@@ -209,7 +230,12 @@ export const getEntitlements = cache(
  * then calls `getEntitlements` reads it again. Resolving from the row in hand is the same
  * computation on the same data, one round trip cheaper.
  */
-export function entitlementsFromSettings(userId: string, row: BillingColumns): Entitlements {
+export function entitlementsFromSettings(
+  userId: string,
+  row: BillingColumns,
+  /** The effective plan table (`getEffectivePlanConfig()`) — required so no gate reads the code defaults by accident. */
+  config: Record<Plan, PlanConfig>
+): Entitlements {
   const { plan, source } = resolvePlan(row);
   // Demo accounts get every feature whatever their plan. `plan` and `source` stay as
   // resolved, deliberately: the showcase runs the upgrade (Ctrl+Shift+U → celebration)
@@ -218,12 +244,12 @@ export function entitlementsFromSettings(userId: string, row: BillingColumns): E
   if (isDemoAccount(userId)) return unrestrictedEntitlements(plan, source);
   // One plan at a time: a Lifetime holder resolves to Lifetime and gets Lifetime's flags,
   // even while a subscription is still winding down to its period end.
-  return entitlementsForPlan(plan, source);
+  return entitlementsForPlan(plan, source, config);
 }
 
 /** "on every plan", "on Orbit Pro and Orbit Max" or "on Orbit Max" — never Lifetime, which is not sold. */
-function availableOn(feature: FeatureKey) {
-  const from = unlockPlanFor(feature);
+function availableOn(feature: FeatureKey, config: Record<Plan, PlanConfig>) {
+  const from = unlockPlanFor(feature, config);
   return from === "free" ? "every plan" : from === "orbit" ? "Orbit Pro and Orbit Max" : "Orbit Max";
 }
 
@@ -233,34 +259,47 @@ function availableOn(feature: FeatureKey) {
  */
 export type DeniableFeature = Exclude<FeatureKey, "hostedAi">;
 
-export const FEATURE_DENIAL: Record<DeniableFeature, string> = {
-  outreach: `Outreach is available on ${availableOn("outreach")}.`,
-  hostedSending: `Sending email and SMS on Orbit's credits is available on ${availableOn("hostedSending")}.`,
-  // Not sold on any plan, so no plan name: the only way in is the user's own key.
-  hostedEnrichment: "Orbit doesn’t include contact enrichment — add your own Apollo key in Settings to use it",
-  recruiters: `Recruiter tracking is available on ${availableOn("recruiters")}.`,
-  api: `The Orbit API and webhooks are available on ${availableOn("api")}. Claude and ChatGPT connect on any plan, with no key.`,
-  sync: `Calendar subscriptions and event sources are available on ${availableOn("sync")}.`,
-  extension: `The Orbit extension is available on ${availableOn("extension")}.`,
-  meetings: `Meeting transcription is available on ${availableOn("meetings")}.`,
-  // Only Lifetime is ever refused a pack (Free, Pro and Max can all buy one), and it is not sold.
-  creditPacks: "Credit packs aren’t available on your plan — add your own AI key in Settings to keep going",
-  extraConnections: EXTRA_CONNECTION_DENIAL,
-};
-
-const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {
-  outreach: "canUseOutreach",
-  hostedSending: "canUseHostedSending",
-  hostedEnrichment: "canUseHostedEnrichment",
-  recruiters: "canUseRecruiters",
-  sync: "canUseSync",
-  extension: "canUseExtension",
-  api: "canUseApi",
-  meetings: "canUseMeetings",
-  hostedAi: "canUseHostedAi",
-  creditPacks: "canBuyCreditPacks",
-  extraConnections: "canUseExtraConnections",
-};
+/**
+ * The refusal for `feature`, naming the plans that have it under `config` — pass the effective
+ * table (`getEffectivePlanConfig()`) so the copy follows an operator's change.
+ */
+export function featureDenial(feature: DeniableFeature, config: Record<Plan, PlanConfig> = PLAN_CONFIG): string {
+  const on = availableOn(feature, config);
+  switch (feature) {
+    case "outreach":
+      return `Outreach is available on ${on}.`;
+    case "hostedSending":
+      return `Sending email and SMS on Orbit's credits is available on ${on}.`;
+    case "hostedEnrichment":
+      // Not sold on any plan, so no plan name: the only way in is the user's own key.
+      return "Orbit doesn’t include contact enrichment — add your own Apollo key in Settings to use it";
+    case "recruiters":
+      return `Recruiter tracking is available on ${on}.`;
+    case "api":
+      return `The Orbit API and webhooks are available on ${on}. Claude and ChatGPT connect on any plan, with no key.`;
+    case "sync":
+      return `Calendar subscriptions and event sources are available on ${on}.`;
+    case "extension":
+      return `The Orbit extension is available on ${on}.`;
+    case "meetings":
+      return `Meeting transcription is available on ${on}.`;
+    case "creditPacks":
+      // Only Lifetime is ever refused a pack (Free, Pro and Max can all buy one), and it is not sold.
+      return "Credit packs aren’t available on your plan — add your own AI key in Settings to keep going";
+    case "extraConnections":
+      return EXTRA_CONNECTION_DENIAL;
+    case "radar":
+      return `Radar is available on ${on}.`;
+    case "events":
+      return `Events are available on ${on}.`;
+    case "findPeople":
+      return `Find people is available on ${on}.`;
+    case "compose":
+      return `Composing email from Orbit is available on ${on}.`;
+    case "cloudNotes":
+      return `Cloud notes from Google Drive and OneDrive are available on ${on}.`;
+  }
+}
 
 /**
  * Throws `PaywallError` unless the user's plan covers `feature`.
@@ -282,14 +321,14 @@ export async function requireEntitlement(
   where: { surface?: string; route?: string } = {}
 ) {
   const ent = await getEntitlements(userId);
-  if (ent[FEATURE_FLAG[feature]] !== true) {
+  if (ent.features[feature] !== true) {
     await recordGateHit({
       userId,
       feature,
       plan: ent.plan,
       context: { surface: where.surface ?? "web", ...(where.route ? { route: where.route } : {}) },
     });
-    throw new PaywallError(feature, ent.plan, FEATURE_DENIAL[feature]);
+    throw new PaywallError(feature, ent.plan, featureDenial(feature, await getEffectivePlanConfig()));
   }
   return ent;
 }

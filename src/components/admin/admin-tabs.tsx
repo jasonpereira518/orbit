@@ -50,6 +50,7 @@ export const ACCESS_TABS: SectionTab[] = [
 
 export const PRODUCT_TABS: SectionTab[] = [
   { href: "/admin/product", label: "Pages" },
+  { href: "/admin/product/plans", label: "Plans" },
   { href: "/admin/product/dashboard", label: "Dashboard" },
   { href: "/admin/product/settings", label: "Settings" },
   { href: "/admin/product/constellation", label: "Constellation" },

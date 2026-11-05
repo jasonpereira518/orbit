@@ -1,5 +1,6 @@
 "use server";
 
+import { requirePageUser } from "@/lib/plan-guards";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
@@ -74,7 +75,7 @@ export async function ingestCaptureMedia(input: {
   files?: CaptureMediaFile[];
 }) {
   try {
-    const userId = await requireUserId();
+    const userId = await requirePageUser("page.capture");
     await consumeBucket("capture", userId, RATE_LIMITS.capture);
     const hasText = Boolean(input.text?.trim());
     const hasFiles = Boolean(input.files?.length);
@@ -161,7 +162,7 @@ export async function parseBulkCaptureNotes(
   opts: BulkParseOptions = {}
 ) {
   try {
-    const userId = await requireUserId();
+    const userId = await requirePageUser("page.capture");
     await consumeBucket("capture", userId, RATE_LIMITS.capture);
     if (!notes.trim()) {
       return { ok: false as const, error: "Notes are required" };
@@ -201,7 +202,7 @@ export async function confirmBulkCapture(
     meeting?: { sessionId: string; extraReminders: MeetingExtraReminderInput[] } | null;
   }
 ) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.capture");
   await consumeBucket("capture", userId, RATE_LIMITS.capture);
   // The hash is recomputed server-side: the client echoes sourceText, and a forged hash
   // could collide with (or evade) another note's dedupe keys.
