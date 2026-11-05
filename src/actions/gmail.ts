@@ -254,7 +254,7 @@ export async function disconnectGmail(opts: { alsoDelete?: boolean } = {}) {
   await deleteEventConnection(userId, "gmail");
   revalidatePath("/recruiters");
   revalidatePath("/settings");
-  revalidatePath("/imports");
+  revalidatePath("/capture");
   revalidatePath("/events");
 }
 

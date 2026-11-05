@@ -91,6 +91,7 @@ export function CaptureFlow({
   initialMeeting = null,
   cloudNotes = null,
   openCloudReview = false,
+  showImports = false,
   onSaved,
   variant = "capture",
 }: {
@@ -125,6 +126,8 @@ export function CaptureFlow({
   cloudNotes?: CloudNotesState | null;
   /** Open the "these look like meeting notes" dialog on arrival (the toast's and the bell's Review). */
   openCloudReview?: boolean;
+  /** Show the Imports tab (the `page.imports` surface is live). Choosing it navigates to `/capture?mode=imports`. */
+  showImports?: boolean;
   /**
    * Embedded in onboarding: notes only (no mode tabs, no ignored-people list), and a save
    * hands back to the caller instead of showing the saved screen. The store is cleared
@@ -542,7 +545,13 @@ export function CaptureFlow({
 
       {phase === "input" && !onSaved && !meetingsHost && (
         <div className="space-y-2">
-          <CaptureTabs mode={mode} onChange={setMode} disabled={inputLocked} showCloud={Boolean(cloudNotes)} />
+          <CaptureTabs
+            mode={mode}
+            onChange={(next) => (next === "imports" ? router.push("/capture?mode=imports") : setMode(next))}
+            disabled={inputLocked}
+            showCloud={Boolean(cloudNotes)}
+            showImports={showImports}
+          />
           {blurb && <p className="text-sm text-muted-foreground">{blurb}</p>}
         </div>
       )}

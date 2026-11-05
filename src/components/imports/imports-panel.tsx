@@ -1,6 +1,4 @@
-import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { after } from "next/server";
-import Link from "next/link";
 import { getLatestFinishedImport, listImports } from "@/actions/imports";
 import {
   listCalendarSubscriptions,
@@ -13,22 +11,17 @@ import { LinkedInExportCard } from "@/components/linkedin/linkedin-export-card";
 import { linkedinCardState } from "@/lib/linkedin-export-card";
 import { hasLinkedInImport } from "@/lib/linkedin-reminder";
 import { ensureUserSettings } from "@/lib/user-settings";
-import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
 import { CHAT_IMPORTS_SURFACE_KEY } from "@/lib/surfaces";
 import { isSurfaceLive } from "@/lib/surface-visibility";
 import type { ProviderCalendarInput } from "@/lib/imports/calendar-sources";
-import { RenderStamp } from "@/components/layout/render-stamp";
 
-export const metadata = { title: "Imports" };
-
-/** Large connections imports process in the background via after(); allow it room to run. */
-export const maxDuration = 300;
-
-export default async function ImportsPage() {
-  const gate = await pageVisibilityGate("page.imports");
-  if (gate) return gate;
-
+/**
+ * The import hub, as the Imports tab on /capture (`?mode=imports`). Rendered only when that
+ * tab is selected, so an ordinary capture visit pays for none of these reads. The host page
+ * sets `maxDuration = 300`: large connections imports keep running in `after()`.
+ */
+export async function ImportsPanel({ userId }: { userId: string }) {
   // Keep the history paint fast; refresh subscriptions after the response.
   after(() => {
     void syncStaleCalendarSubscriptions().catch(() => {});
@@ -37,7 +30,6 @@ export default async function ImportsPage() {
   // Both connection statuses are fetched here rather than in a mount effect inside the cards,
   // so the calendar section knows on first paint whether anything is syncing — and so the
   // contacts cards stop flashing "Not connected" before their own fetch resolves.
-  const userId = await requireUserId();
   const [history, latestFinish, calendarSubscriptions, entitlements, gmail, outlook, chatImports, settings, linkedinImported] =
     await Promise.all([
       listImports(),
@@ -78,25 +70,7 @@ export default async function ImportsPage() {
     : null;
 
   return (
-    <div className="mx-auto max-w-3xl space-y-8">
-      <RenderStamp />
-      <div>
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
-          Imports
-        </h1>
-        <p className="mt-1 text-muted-foreground">
-          Drop your exports here and Orbit sorts out the rest. Once
-          they&rsquo;re in, browse everything in{" "}
-          <Link
-            href="/knowledge"
-            className="underline-offset-2 hover:underline"
-          >
-            Knowledge
-          </Link>
-          .
-        </p>
-      </div>
-
+    <div className="space-y-8">
       {linkedinCardState({
         imported: linkedinImported,
         requestedAt: settings.linkedinExportRequestedAt ?? null,
