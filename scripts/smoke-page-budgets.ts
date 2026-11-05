@@ -816,7 +816,7 @@ async function main() {
       // pinning it means the number is in CI output rather than in someone's memory, and a
       // FOURTH surface joining them has to change this file to do it.
       //
-      // Phase B of docs/superpowers/plans/2026-09-10-production-readiness.md is what fixes
+      // Phase B of docs/archive/superpowers/plans/2026-09-10-production-readiness.md is what fixes
       // the dashboard: aggregates into SQL, lists bounded with ORDER BY … LIMIT, and the
       // whole-graph pieces materialised. When it lands this entry gets a real `bound` and
       // `maxDuration` in (app)/(main)/layout.tsx goes back to 60.

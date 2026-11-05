@@ -10,13 +10,15 @@ How Orbit is tested, how to run each layer, and what CI gates a merge on. The sh
 | Unit (pure logic, validators, transforms) | `scripts/smoke-*.ts`, `pure` tier | nothing — no database, no network | `npm test` |
 | Integration (lib write paths, route handlers, server-side gates) | `scripts/smoke-*.ts`, `pglite` tier | a throwaway PGlite database per run, full DDL bootstrapped fresh | `npm test` |
 | Contract (third-party APIs) | `scripts/smoke-contract-*.ts` and others | the real client code, with HTTP mocked | `npm test` |
+| Slow (wall-clock budgets, long runs) | `scripts/smoke-*.ts`, `manual` tier | as above | `npm run test:smoke` |
 | Known bugs | `scripts/smoke-bug-*.ts`, `bug` tier | as above | `npm run test:bugs` |
 | End-to-end (critical journeys) | `e2e/*.spec.ts` | `next dev` in demo mode, throwaway PGlite, a local Gemini stub | `npm run test:e2e` |
 | Post-deploy | `scripts/post-deploy-smoke.ts` | the live production domain, anonymously | `BASE_URL=… npx tsx scripts/post-deploy-smoke.ts` |
 
 Every smoke script is an executable spec: prose output, its own exit code. `scripts/run-smoke.ts`
 runs them as a suite, and its manifest assigns every script a tier — `npm run test:check` fails
-when a script on disk has none, so nothing is silently skipped.
+when a script on disk has none, so nothing is silently skipped. `npm test` runs it with `--ci`,
+which skips the `manual` and `bug` tiers; `npm run test:smoke` runs every tier but `bug`.
 
 ### Hermetic by construction
 
@@ -170,7 +172,7 @@ Known flakiness risks, none observed failing on CI in the last 60 runs:
 
 | Job | What | Gate |
 |---|---|---|
-| `check` | typecheck, lint, `next build` | yes |
+| `check` | typecheck, lint, `next build`, the bundle budget (`node scripts/check-bundle-budget.mjs`) | yes |
 | `smoke` ×3 | the smoke suite, sharded | yes |
 | `coverage-shard` ×3, `coverage` | the suite again under c8, merged into the run summary (`main` and on demand only) | report only |
 | `known-bugs` | `npm run test:bugs` | yes (red = a bug was fixed, promote its test) |
@@ -210,5 +212,5 @@ above a real gate:
 - gitleaks over the full history reports 33 matches, most of them identifiers that look like keys
   (`linkedinSlug`, a placeholder in a test). Two kinds need a human look: a `sk_test_…`-shaped
   string in `scripts/smoke-demo-signin-message.ts` (and the plan doc it was copied from) and
-  `curl -u` credentials in `docs/superpowers/plans/2026-09-22-calendar-connections.md`. If
+  `curl -u` credentials in `docs/archive/superpowers/plans/2026-09-22-calendar-connections.md`. If
   either is a real credential, rotate it; then add the false positives to a `.gitleaksignore`.

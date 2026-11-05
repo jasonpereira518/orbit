@@ -289,7 +289,7 @@
         "value": 0.01,
         "unit": "USD of provider list price per credit",
         "status": "CODE",
-        "url": "docs/pricing-v2/legal-proposal.md; src/lib/credits/"
+        "url": "src/lib/credits/"
       },
       "anthropicHaiku55": {
         "value": {

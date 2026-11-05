@@ -28,7 +28,7 @@ import {
 import { asActionResult, ReauthRequiredError, UserFacingError, type ActionResult } from "@/lib/errors";
 import { getValidAccessToken } from "@/lib/gmail";
 import { DRIVE_MIME, type PickedDriveFile } from "@/lib/imports/drive-triage";
-import { requireSyncUser } from "@/lib/plan-guards";
+import { requireUserId } from "@/lib/auth";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 
 export type DriveCaptureOutcome = CaptureFromTextOutcome;
@@ -42,9 +42,9 @@ export async function queueDriveCapture(input: {
   /** Capture it again even though the same text was captured before. */
   force?: boolean;
 }): Promise<ActionResult<DriveCaptureOutcome>> {
-  // Outside the wrap for the reason `startDriveImport` gives: a plan denial is a
-  // `PaywallError`, which `asActionResult` returns as data anyway.
-  const userId = await requireSyncUser();
+  // Outside the wrap, like `startDriveImport`: only a signed-out caller throws here. Drive
+  // capture is on every plan.
+  const userId = await requireUserId();
   return asActionResult(async () => {
     const { file } = input;
     // Browser-supplied: the id goes into a Google URL and the name onto the job.

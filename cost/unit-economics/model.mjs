@@ -25,8 +25,9 @@ const R = inputs.rates;
 const v = (x) => (x && typeof x === "object" && "value" in x ? x.value : x);
 
 const SCENARIO = {
-  // Included AI is coded ON but paused in production until an admin resumes it. Default off
-  // (today's spend); `--managed-ai on` shows what resuming it costs.
+  // Included AI is on by default in the app; an admin can pause it at runtime
+  // (site_settings.managed_ai_paused). The model defaults to off (BYOK-only spend);
+  // `--managed-ai on` counts included credits as Orbit's cost.
   managedAi: flag("managed-ai", "off") === "on",
   mip: Number(flag("mip", v(R.deepgram.mipOptOutMultiplier))),
 };
@@ -70,7 +71,7 @@ function userMonthlyCost(planId, profileId) {
   const interactions = plan.contactLimit == null ? p.interactions : Math.min(p.interactions, plan.contactLimit * 2);
 
   // Speech: clamped at the plan cap, plus what a modified client can stream past it (the
-  // server cannot close an open socket; see COST_AUDIT.md U1). The leak lands on meetings
+  // server cannot close an open socket; see the Oct 17 cost audit, U1). The leak lands on meetings
   // where the plan has them, and on dictation (the chat mic) on Free, which has no meetings.
   const leak = p.leakMeetingMin;
   const meetingMin = plan.meetingMin * p.meetingShare + (plan.meetingMin > 0 ? leak : 0);

@@ -70,7 +70,7 @@ somewhere strange, saying what it is doing.
 
 ## The tools Orbit's chat brought with it
 
-_Added Oct 20 2026, with the chat revamp (`docs/superpowers/plans/2026-10-19-chat-agent.md`)._
+_Added Oct 20 2026, with the chat revamp._
 
 Orbit's own chat gained read tools for every feature — exact counts over contacts and
 interactions, events and their rosters, opportunities, radar, outreach campaigns, recruiters,

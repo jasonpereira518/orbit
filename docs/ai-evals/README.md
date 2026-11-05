@@ -64,6 +64,17 @@ npx tsx scripts/eval-ai-report.ts docs/ai-evals/2026-09-21-gemini-research-basel
 
 Its plumbing is also checked without a key by `scripts/smoke-eval-research-task.ts`.
 
+## The relationship task
+
+`relationship` scores the relationship engine's per-contact pass over message history
+(LinkedIn and WhatsApp threads in `scripts/eval-fixtures/ai-relationship-eval.json`): window,
+prompt, model, validation, then the rules that decide what becomes a reminder and what stays
+an open thread (`src/lib/relationship-engine/`). No database. It gates on `factRecall`,
+`commitmentRecall`, `commitmentPrecision`, `planAccuracy` (each may drop 5 points),
+`dateAccuracy` and `silentOnTrivial` (may not drop: a trivial thread must be skipped before
+any model call), and `inventedItems` (never rises: an excerpt not verbatim in a message, or
+another group-chat member's detail written to this contact).
+
 ## The large network (`--network large`)
 
 The 16-person network in `contact-search-eval.json` is small enough that retrieval returns
@@ -140,7 +151,7 @@ falls back to today's rules, so nobody's bill or wait moves when there is no key
   costs what the call it would save costs.
 
 Questions and thresholds live together in `src/lib/decisions/catalog.ts`, tuned against one
-pinned version (`JEV_MODEL`). Values marked START there have not been through a tuned run.
+pinned version (`JEV_MODEL` in `src/lib/ai-models.ts`). Values marked START there have not been through a tuned run.
 
 **Only Jev may act on its own.** An LLM answer can veto, rank or suggest; it can never take
 an action, because its confidence is self-reported and nothing here has measured what it

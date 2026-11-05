@@ -328,7 +328,8 @@ export function ImportHub({
    * What is paid on this tab: pasting a calendar’s own link and keeping it in sync.
    * Connecting Google or Outlook — and the meetings and people that come with it — is free
    * on every plan now, so is LinkedIn import, and so is a one-time calendar FILE: it only
-   * logs meetings onto people already in the network and never creates anyone.
+   * logs meetings onto people already in the network and never creates anyone. Google Drive
+   * import is free too.
    */
   canUseSync?: boolean;
   google?: ProviderCalendarInput | null;
@@ -357,7 +358,7 @@ export function ImportHub({
   const readinessRef = useRef<{ at: number; promise: Promise<DriveReadiness> } | null>(null);
 
   function warmDrive() {
-    if (!driveConfigured || !canUseSync) return;
+    if (!driveConfigured) return;
     warmDrivePicker();
     const cached = readinessRef.current;
     if (cached && Date.now() - cached.at < READINESS_FRESH_MS) return;
@@ -660,19 +661,13 @@ export function ImportHub({
             <Button
               type="button"
               variant="outline"
-              disabled={!canUseSync || drivePickerBusy || queueBusy}
-              title={
-                !canUseSync
-                  ? IMPORT_COPY.drivePaywalled
-                  : queueBusy
-                    ? IMPORT_COPY.driveWaitForQueue
-                    : undefined
-              }
+              disabled={drivePickerBusy || queueBusy}
+              title={queueBusy ? IMPORT_COPY.driveWaitForQueue : undefined}
               onPointerEnter={warmDrive}
               onFocus={warmDrive}
               onClick={(e) => {
                 e.stopPropagation();
-                if (!canUseSync || queueBusy) return;
+                if (queueBusy) return;
                 void pickFromDrive();
               }}
             >

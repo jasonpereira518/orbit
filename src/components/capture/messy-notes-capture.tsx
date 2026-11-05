@@ -74,7 +74,6 @@ export function MessyNotesCapture({
   acceptsHandoff = false,
   onQueued,
   drive = null,
-  canUseSync = false,
 }: {
   ingest: CaptureIngest;
   onExtract: () => void;
@@ -90,7 +89,6 @@ export function MessyNotesCapture({
   onQueued?: (jobIds: string[]) => void;
   /** Google Picker config; the Drive button hides itself when this is incomplete. */
   drive?: DriveCaptureConfig | null;
-  canUseSync?: boolean;
 }) {
   const fanout = useCaptureFanout({ onSettled: onQueued });
   const [incoming, setIncoming] = useState<{ file: File; path: string }[]>([]);
@@ -400,7 +398,6 @@ export function MessyNotesCapture({
               the same rule as a multi-file drop. */}
           <DriveCaptureButton
             drive={drive}
-            canUseSync={canUseSync}
             disabled={busy || !ingest.hasApiKey}
             onQueued={(ids) => onQueued?.(ids)}
           />

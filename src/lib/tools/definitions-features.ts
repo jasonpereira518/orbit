@@ -1,5 +1,5 @@
 /**
- * Read tools added with the chat answer loop (docs/superpowers/plans/2026-10-19-chat-agent.md,
+ * Read tools added with the chat answer loop (docs/archive/superpowers/plans/2026-10-19-chat-agent.md,
  * Phase 1): exact counts and breakdowns over contacts and interactions, and one door into
  * each feature chat could not see before — events, opportunities, radar, outreach,
  * recruiters, the knowledge dossier, sent email, captures and imports.

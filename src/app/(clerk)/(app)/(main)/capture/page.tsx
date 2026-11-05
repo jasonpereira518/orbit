@@ -10,7 +10,6 @@ import { CaptureFlowLazy } from "@/components/capture/capture-flow-lazy";
 import { CaptureHistory, CaptureHistorySkeleton } from "@/components/capture/capture-history";
 import type { CaptureMode } from "@/components/capture/capture-tabs";
 import { requireUserId } from "@/lib/auth";
-import { getEntitlements } from "@/lib/entitlements";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { findEventById } from "@/lib/calendar-events";
 import { userTimeZone } from "@/lib/meeting-context";
@@ -92,7 +91,6 @@ export default async function CapturePage({
       }
     : null;
   const { usage } = await planPromise;
-  const { canUseSync } = await getEntitlements(userId);
   const job = await jobPromise;
   const jobs = await jobsPromise;
   const ignoredCount = await ignoredPromise;
@@ -130,7 +128,6 @@ export default async function CapturePage({
         ignoredCount={ignoredCount}
         quota={{ used: usage.used, limit: usage.limit }}
         userId={userId}
-        canUseSync={canUseSync}
         cloudNotes={cloudNotes}
         openCloudReview={params.review === "1"}
         drive={{

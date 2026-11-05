@@ -53,9 +53,12 @@ BEHIND the code — a build whose migration did not run — and is worth waking 
 ## Scheduled workflows were disabled (GitHub's 60-day rule)
 
 GitHub disables a public repository's scheduled workflows after 60 days without repository
-activity. That stops `ops` (sweep, process-stalled, drain, connector sync); the Better Stack
-heartbeat goes quiet within 30 minutes. (`backup` lives in the private ops repository, which
-the rule does not apply to.)
+activity. That stops `ops.yml`, the only scheduled workflow, so every job on a clock stops
+with it: the sweep, process-stalled, the webhook, connector-outbox and email drains, credit
+emails, connector sync, the job-feed, work-history and contact-name sweeps, the cloud notes
+scan, all three Radar jobs, the Stripe and Deepgram reconciliations and the weekly digest.
+The Better Stack heartbeat goes quiet within 30 minutes. (`backup` lives in the private ops
+repository, which the rule does not apply to.)
 
 ```bash
 gh api repos/jasonpereira518/orbit/actions/workflows --jq '.workflows[] | [.name, .state] | @tsv'
@@ -75,9 +78,11 @@ above. Vercel Pro crons remove the rule entirely.
 | `webhook.invalid_streak:clerk` / `:stripe` | The signing secret rolled or a second endpoint points here. Dashboard → Webhooks → copy the endpoint's secret into Vercel → redeploy. |
 | `stripe.checkout_error` | `/admin/health` → error events → the `kind` is Stripe's code. `resource_missing` = a price id from the wrong mode. |
 | `stripe.unattributed` | Critical: someone paid for a checkout Orbit could not match. error_events (source `stripe.unattributed`) → `context.eventId` → Stripe Dashboard → Events → that id → the customer's email → `/admin/users` → comp the plan, or refund. Warning: an invoice/refund for a customer with no account, usually one created in the Dashboard. |
+| `ai.security` | Five or more AI guardrail trips in an hour: refused tool calls, oversized MCP batches, draft floods, scrubbed answers. Critical at three or more accounts, which looks like a poisoned shared source or a campaign. `/admin/health` → error events, source `ai.security`: `kind` and account say what tripped and where. |
 | `resend.rejected` | `/admin/health` → error events → `resend.rejected` shows Resend's message. "domain is not verified" = `RESEND_FROM_EMAIL` must be on a domain verified under Resend → Domains; fix it in Vercel and redeploy. Only Orbit's own key is counted — a user's own Resend key failing shows on their message, not here. |
 | `import.wedged` / `import.failed_burst` | `/admin/health` → Failed and stalled imports → Retry. After 3 stalled resumes the job is marked failed with a message; the user re-uploads. |
 | `purge.stuck` | `SELECT id, target_user_id, last_error, completed_steps FROM data_purge_runs WHERE status = 'failed';` Fix the cause `last_error` names, then requeue: `UPDATE data_purge_runs SET status = 'running', attempts = 0, last_attempt_at = now() - interval '1 hour' WHERE id = '<id>';` The next nightly run finishes it (or trigger `/api/imports/process-stalled`). |
+| `cron.missed` / `cron.failed` | The hourly process-stalled job (`imports.process-stalled` in `cron_runs`) has not started for 25 hours, or its last run failed or was killed. Stalled imports and housekeeping are waiting. Follow "The nightly job or the sweep stopped" above. |
 | `cron.partial_streak` | `/admin/health` → Nightly job → the run's stats. Each housekeeping step in `src/app/api/imports/process-stalled/route.ts` is its own try/catch; the one whose counter stays at zero is failing. Sentry has the exception. |
 | `drain.failed` | No outbound webhook is being retried. Run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/webhooks/outbound/drain`; a 500 means the drain throws — Sentry has it. |
 | `radar.schedule_missed` | Radar's nightly pass started once and then went quiet for over 30 hours, so nobody's list is being refreshed overnight. Check the ops workflow ran the 04:17 step, then run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/radar/run`. Pages still rebuild a list older than a day when someone opens Radar. |
@@ -86,13 +91,20 @@ above. Vercel Pro crons remove the rule entirely.
 | `radarfeeds.run_failed` | The last news sweep failed or was killed. Read its `cron_runs` row and the `job.radar.feeds` error. One feed being down marks the sweep `partial`, which is not an alert; `external_sources.consecutive_failures` says which feed and for how long. To turn a feed off, set its `enabled` to false. |
 | `radardigest.schedule_missed` | Radar's Monday email, which runs hourly through Sunday and Monday UTC, has not started for six days, so a whole Sunday passed without a run and nobody gets their weekly list. Check the ops workflow ran the `13 * * * 0,1` step, then run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/radar/digest`. A run outside someone's Monday 06:00–09:00 sends them nothing, and the week claim means a repeated run never sends twice. |
 | `radardigest.run_failed` | The last Monday-email run failed or was killed. Read its `cron_runs` row and the `job.radar.digest` error. A send Resend refused marks the run `partial`, which is not an alert: that person's claim is released and the next hour retries; the `resend.rejected` error (kind `radar.digest`) carries Resend's reason, recorded once per run. `notConfigured` in the stats means `RESEND_API_KEY` or `RESEND_FROM_EMAIL` is unset. To stop the email for everyone, hide `page.radar`; for one person, set their `radar_digest_enabled` to 0. |
+| `workhistory.schedule_missed` / `workhistory.run_failed` | The hourly work-history sweep has not started for six hours (or never has), or its last run failed or was killed, so contacts' job moves go unnoticed. Check the ops workflow ran the :37 step, then run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/work-history/sweep`. A `partial` run is normal and not an alert. |
 | `backfill.failed` | `/admin/health` → error events, source `backfill.failed`: `kind` names the backfill, `message` says why. Two or more accounts means it is not one user's key — check the provider status panel and `ai.provider_outage`. |
 | `config.statement_timeout_unbounded` | Run `ALTER ROLE <app role> SET statement_timeout = '20s';` (Neon one-time settings below), then confirm `GET /api/health?token=$HEALTH_TOKEN` shows `config.statementTimeout: "20s"`. It clears on the next sweep. |
 | `embedding.backlog` | Check `backfill.failed`, `embedding.unembeddable` and `ai.provider_outage` first. One account: usually that user's key (they already see an account alert). Several: `/admin/health` → Nightly job stats — `embeddingsGenerated` 0 with `embeddingBackfillsKicked` > 0 means every kick is failing. |
+| `sync.schedule_missed` / `sync.run_failed` | The connector sync (every 15 minutes) has not started for three hours, or its last run failed or was killed, so mailboxes, calendars and connectors are not syncing. Silence is usually the schedule: see "Scheduled workflows were disabled" above. Run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/sync/run`; a failure is in its `cron_runs` row (`sync.run`) and Sentry. |
+| `sync.wedged` | A Gmail or Outlook connection has held its sync lease for over 15 minutes. The scheduler reclaims a lease at 10, so nothing is running the schedule at all: check `sync.schedule_missed` and the ops workflow first. |
+| `sync.failing` | Gmail or Outlook connections disarmed after repeated sync failures (`sync_status = 'error'`, `next_sync_at` null). They never retry on their own; the user reconnects. |
 | `sync.lagging` | More connections are due than a run syncs (20 per run, 4 at a time). `sync.run` stats: `budgetExhausted` true on every run means the budget is the limit — raise `CONNECTIONS_PER_RUN` in `src/lib/sync-scheduler.ts` or schedule more often (Vercel Pro crons); many `failed` means a provider problem. |
+| `jobfeed.schedule_missed` / `jobfeed.run_failed` | The hourly job-feed sweep has not started for six hours (or never has), or its last run failed or was killed, so nobody hears about roles opening at companies they know someone at. Check the ops workflow ran the :23 step, then run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/jobs/feed/sweep`. A `partial` run is normal and not an alert. |
 | `embedding.unembeddable` | `SELECT error_kind, source_type, count(*) FROM embedding_failures WHERE failed_at > now() - interval '1 day' GROUP BY 1, 2;`. One kind on one provider across users is a provider change (check its status page and changelog); the rows retry once the bisect in `src/lib/embedding-backfill.ts` can embed them. |
 | `ai.quota_failures` | Informational. Users with an empty provider balance already see a "top up" account alert. Many at once on Orbit's own key (`key_owner = 'orbit'`, local dev only) means topping up that account. |
 | `calendar.disarmed` | `SELECT sync_error, count(*) FROM gmail_connections WHERE next_sync_at IS NULL AND sync_error IS NOT NULL GROUP BY 1 ORDER BY 2 DESC;` One error string across many accounts is Google's side (API change, consent-screen or scope change, project quota in Google Cloud Console). Users reconnect from the Integrations dialog once it is fixed. |
+| `reauth.needed` | Informational: the count of Gmail/Outlook connections that are not `active` and need the user to re-authorize. Only the user can fix it, by reconnecting. |
+| `outreach.overdue` | Campaign follow-up steps (`outreach_messages.status = 'scheduled'`) a day or more past their `scheduled_for`. No job sends these: a due step becomes a draft only when the person generates due follow-ups (`generateDueFollowUps` in `src/actions/outreach.ts`), so a count here is not a stopped cron. |
 | `avatar.source_exhausted` | Informational: that source's shared daily allowance (`RATE_LIMITS.avatarSourceShared`) is gone and photo lookups wait for tomorrow. Daily before noon means raising the budget or buying the source's paid plan (`MICROLINK_API_KEY` skips the shared Microlink budget). |
 | `apollo.hosted_cap_hits` | Informational: accounts used their daily hosted Apollo allowance (`RATE_LIMITS.apolloSearch` / `apolloEnrich`). Compare with the Apollo plan's credits before raising either. |
 | `billing.ledger_drift` | Live MRR and the revenue ledger disagree and nothing has landed for an hour. Likeliest causes, in order: a Stripe webhook was dropped (`/admin/health` → webhooks), an account was comped over a live subscription (the comp zeroes live MRR but the invoices keep booking), or an account was deleted before its cancellation arrived. `SELECT user_id, sum(mrr_delta_cents) FROM billing_events GROUP BY 1 HAVING sum(mrr_delta_cents) <> 0;` against `user_settings` names the account. `analytics/checks/reconciliation.sql` has the full set. |
@@ -110,12 +122,24 @@ above. Vercel Pro crons remove the rule entirely.
 | `config.missing` | Vercel → Environment Variables. The alert names the variable. |
 | `config.alerts_undeliverable` | Slack → your app → Incoming Webhooks → copy the URL → Vercel → Environment Variables → `SLACK_OPS_WEBHOOK_URL` (Production) → Redeploy. Until then `/admin/health` is the only place alerts appear. |
 | `ai.provider_outage:*` | Not ours; it clears when the provider recovers. |
+| `errors.burst` | Five or more `error_events` rows in an hour, not counting `perf.slow`, `backfill.failed` and `ai.security`, which have alerts of their own (the table is throttled, so this is a real burst). `/admin/health` → error events; the `source` they share names the area, Sentry has the stack. |
 | `perf.slow_burst` | `/admin/health` → error events → `perf.slow` rows name the call and account. |
 | `ai.managed_failing:*` | Orbit's own key for that provider was refused or throttled — every account on included AI without a key of its own has lost AI. Check the key and its quota (and the prepaid balance) in the provider console; replace `ORBIT_MANAGED_<PROVIDER>_API_KEY` in Vercel and redeploy. |
 | `ai.managed_unconfigured` | Pro/Max accounts exist but no `ORBIT_MANAGED_*_API_KEY` is set (or `ORBIT_MANAGED_AI=off`). Set one. |
 | `ai.managed_pool:<provider>` | That provider's pool (`MANAGED_AI_POOLS`) is at 75%+. Anthropic refills on the 15th and OpenAI takes over meanwhile (warning only). OpenAI spent is critical: top up, raise `MANAGED_AI_POOLS.openai.capMicros`, deploy. With every pool spent included AI refuses. |
 | `ai.managed_spend_spike` / `ai.managed_runway` | Managed spend is spiking, or outrunning subscription revenue (expected while Free usage dominates — the pool alert is the one to act on). `/admin/billing/costs` → "On Orbit's AI keys". Lower `monthlyCredits` in `src/lib/plans/plan-config.ts`, pause from `/admin/billing`, or in an emergency set `ORBIT_MANAGED_AI=off` and redeploy. |
 | `ai.managed_cap_hit` | Info: accounts used their whole monthly allowance. A rising count means the cap is too tight for real use. |
+| `speech.credit` | The Deepgram credit (`DEEPGRAM_CREDIT` in `src/lib/speech-cost.ts`) passed a rung: warnings at 50/75%, at 90% Free voice notes leave Orbit's key, critical at 97% (every plan's voice notes and chat mic leave it) and 100% (no new meeting starts on it). The message says what users now get. Top up Deepgram, raise `capMicros`, deploy. |
+| `speech.credit_runway` | At the last 7 days' pace the credit runs out in under 45 days. `/admin/billing/costs`; top it up, or tighten the `speech` allowances in `plan-config.ts`. |
+| `speech.spend_spike` | Over $75 of Deepgram in 24 hours (`SPEECH_CREDIT_ALERTS.dailySpikeMicros`). Check the last `/api/ops/speech-usage` reconciliation for an account streaming past its meter (see Deepgram below). |
+| `budget.month` | Month-to-date spend (Deepgram, Orbit-paid AI, bills entered in `infra_costs`) passed 50% (info), 75% or 90% (warning) or 100% (critical) of `ORBIT_MONTHLY_BUDGET_CENTS`. `/admin/billing/costs` shows where it went. Silent while that variable is unset. |
+
+**Granola** has no job of its own. It is a `connector_connections` row that the connector
+sync (`/api/sync/run`) runs through `syncGranola` in `src/lib/connectors/granola.ts`; its
+results count in that run's `connectorClaimed` / `connectorSynced` / `connectorFailed` stats.
+Connecting finishes at `/api/granola/callback`, which kicks a sync pass; a failed connect is
+an error event with source `oauth.granola.callback`. The OAuth client is registered per
+connect, so there is no Granola client id or secret to set.
 
 ## Radar: switches
 
@@ -184,15 +208,18 @@ enrichment.
   closing tab, so a crashed tab or a blocking extension is spend the meter never saw. It alerts only on
   a gap over both 110% and two minutes a day (`MIN_SHORTFORM_GAP_SECONDS`), because dictation is
   many tiny rounded sessions; a gap is usually a lost beacon, not abuse.
-- **The two caps**, both in `src/lib/speech-limits.ts` (`SPEECH_LIMITS`), metered in audio
-  seconds per calendar month (UTC) and enforced through `speechAllowance` in
-  `src/lib/speech-quota.ts`:
-  - `meeting` — Free: none; Pro: 5 hours (18,000 s); Lifetime: 10 hours (36,000 s). Paid-only by
-    design; free accounts get `limit: 0` and never reach Deepgram for a meeting.
-  - `shortform` (voice notes + chat mic) — Free: 1 hour (3,600 s); Pro and Lifetime: 5 hours
-    (18,000 s) each. Generous on purpose: an abuse ceiling, not a meter anyone should watch.
-  - Raising either is a one-line change to `SPEECH_LIMITS`; there is no `ORBIT_MANAGED_*`-style
-    env var for it.
+- **The two caps**, per plan in `src/lib/plans/plan-config.ts` (`speech.meetingSeconds` and
+  `speech.shortformSeconds`; `SPEECH_LIMITS` in `src/lib/speech-limits.ts` is derived from
+  them), metered in audio seconds per calendar month (UTC) and enforced through
+  `speechAllowance` in `src/lib/speech-quota.ts`:
+  - `meeting` — Free: none; Pro: 8 hours (28,800 s); Max and Lifetime: 15 hours (54,000 s)
+    each. Paid-only by design; free accounts get `limit: 0` and never reach Deepgram for a
+    meeting.
+  - `shortform` (voice notes + chat mic) — Free: 1.5 hours (5,400 s); Pro: 8 hours (28,800 s);
+    Max and Lifetime: 15 hours (54,000 s) each. Generous on purpose: an abuse ceiling, not a
+    meter anyone should watch.
+  - Raising either is a one-line change to that plan's `speech` entry in `plan-config.ts`;
+    there is no `ORBIT_MANAGED_*`-style env var for it.
   - A cap is only enforced while Deepgram is the engine. With the kill switch on, transcription
     runs on the user’s own OpenAI/Gemini key and costs Orbit nothing, so a spent cap blocks
     nothing — pulling the lever during an incident does not also lock paying accounts out of
@@ -277,7 +304,7 @@ runner. The first real drill needs the secrets set.
 - Verify the restore window under Project → Settings.
 - **JIT off for the app role.** With Postgres's default `jit = on`, a large sequential scan
   compiles before it runs: the contacts search took 1.78 s with JIT and 0.67 s without at
-  100k contacts (`PERFORMANCE_AUDIT.md` §1.3). Check and set:
+  100k contacts ([`PERFORMANCE_AUDIT.md`](audits/PERFORMANCE_AUDIT.md) §1.3). Check and set:
   ```sql
   SHOW jit;                                  -- as the app role
   ALTER ROLE <app role> SET jit = off;       -- new connections pick it up

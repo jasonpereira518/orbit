@@ -4,17 +4,21 @@ A transparent, dependency-free model of what one Orbit account costs per month, 
 usage profile, and what that means at 100 / 1,000 / 10,000 / 50,000 accounts.
 
 ```
-node cost/unit-economics/model.mjs                    # today: included AI paused, Deepgram 2x opt-out premium
+node cost/unit-economics/model.mjs                    # default: included AI not counted, Deepgram 2x opt-out premium
 node cost/unit-economics/model.mjs --mip 1            # Deepgram at list price (if your invoice says so)
-node cost/unit-economics/model.mjs --managed-ai on    # what resuming included AI would cost
+node cost/unit-economics/model.mjs --managed-ai on    # count included AI as Orbit's cost
 node cost/unit-economics/model.mjs --inputs mine.json # your own copy of the inputs
 ```
+
+Included (managed) AI is on by default in the app (`managedAiPausedDefault` in
+`src/lib/ai-access.ts` returns false); pausing it is an admin runtime switch
+(`site_settings.managed_ai_paused`). The model's default leaves it out; `--managed-ai on` adds it.
 
 It prints a report and writes `output/report.md` plus one CSV per table (`cost_per_user`,
 `margin_subscriptions`, `deepgram_credit`, `free_cost`, `scale`, `spend_by_category`,
 `sensitivity`). A scenario run writes beside the default rather than over it
-(`report.mip-1.md`, `scale.managed-ai-on.csv`, ...). The CSVs open in any spreadsheet. No
-network, database or secrets are read.
+(`report.mip-1.md`, `scale.managed-ai-on.csv`, ...). `output/` is gitignored because it holds
+margins. The CSVs open in any spreadsheet. No network, database or secrets are read.
 
 Plans modelled: Free, Pro and Max. Lifetime is granted by an admin, never sold, and is left out on
 purpose. Speech is costed at full price even though the one-time $15,000 Deepgram credit
@@ -27,8 +31,8 @@ numbers in step when the credit is topped up.
 | File | What it is |
 |---|---|
 | `inputs.json` | Every number. Nothing in `model.mjs` is a price. |
-| `model.mjs` | The arithmetic. About 300 lines, top to bottom: per-user cost → revenue net of Stripe → the Deepgram credit → Free → scale points and cliffs → break-even → sensitivity. |
-| `output/` | Generated. Safe to delete; rerun to recreate. |
+| `model.mjs` | The arithmetic, top to bottom: per-user cost → revenue net of Stripe → the Deepgram credit → Free → scale points and cliffs → break-even → sensitivity. |
+| `output/` | Generated and gitignored (it holds margins). Safe to delete; rerun to recreate. |
 | `../reconcile/` | The monthly check of the admin cost screens against real invoices. |
 
 ## How each number is labelled
@@ -100,7 +104,8 @@ from m group by kind;
 ```
 
 Compare `total` with Deepgram's billed minutes for the same month. A gap above ~10% is
-unmetered streaming (see COST_AUDIT.md U1).
+unmetered streaming: a modified client can stream past the plan cap, because the server cannot
+close an open socket.
 
 **Query 3: database size and the embedding duplicate** → `storage.*`
 
@@ -178,7 +183,9 @@ node cost/reconcile/reconcile.mjs ~/orbit-private/2026-09-invoices.json ~/orbit-
 ## What the model leaves out (on purpose)
 
 - Taxes, chargebacks, refunds, and your own time.
-- Web-search fees on included AI (not metered in code: `src/lib/ai.ts` web search).
+- Web-search fees on included AI. The app budgets and meters them (`src/lib/web-search-budget.ts`:
+  a per-account monthly cap, an Orbit-wide daily cap, and an admin pause switch); the model has
+  no input for them.
 - Outreach SMS/email on Orbit's Twilio/Resend keys: not shipped (coming-soon).
 - Apollo: bring-your-own-key on every plan, so $0 to Orbit.
 - Neon compute load is a rough 40 CU-hours per 1,000 MAU above the floor; replace it with

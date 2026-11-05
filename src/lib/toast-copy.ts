@@ -8,7 +8,7 @@
  * once it is used by more than one file; one-off wording stays at its call site.
  *
  * The voice, from the friendlier-toasts spec
- * (docs/superpowers/specs/2026-09-10-friendlier-toasts-design.md):
+ * (docs/archive/superpowers/specs/2026-09-10-friendlier-toasts-design.md):
  *
  * - Say what happened, then what to do.
  * - Blame the system, never the person.

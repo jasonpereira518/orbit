@@ -6,7 +6,7 @@ How Orbit stays fast, what guards it, and how to measure before guessing.
 
 | Guard | Runs | Catches |
 |---|---|---|
-| `npm run perf:pages` (`scripts/smoke-page-budgets.ts`) | CI (`npm test`) | The dashboard, graph and notification-panel scans pulling `notes` or base64 avatars again, or their statement counts creeping up. 3,000-contact fixture. Radar too: a whole run ≤ 26 statements (flat in network size), `/radar` ≤ 6, the dashboard's morning briefing ≤ 3. |
+| `npm run perf:pages` (`scripts/smoke-page-budgets.ts`) | CI (`npm test`) | The dashboard, graph and notification-panel scans pulling `notes` or base64 avatars again, or their statement counts creeping up. 3,000-contact fixture. Radar too: a whole run ≤ 27 statements (flat in network size), `/radar` ≤ 6, the dashboard's morning briefing ≤ 3. |
 | `scripts/smoke-write-path.ts` | CI | An embedding-provider call sneaking back onto the request path of a contact save. |
 | `scripts/smoke-import-perf.ts` | by hand (`npm run test:smoke`) | Per-row statements in the import engine (wall-clock budgets, so not in CI). |
 | `scripts/smoke-behavior-golden.ts` | CI | ANY change in what the MCP server (`tools/list` + every tool), the extension API, `/api/v1`, the page loaders, the contact/settings actions return, or in what their writes leave in the database. A characterization snapshot (`scripts/fixtures/behavior-golden.json`) for behavior-preserving work: re-record with `--update` only on code you trust, ideally in a worktree at the commit before your change. |
@@ -24,11 +24,13 @@ Set in route segment configs, not `vercel.json`. Hobby's ceiling with Fluid Comp
 |---|---|---|
 | pages (default) | Vercel default | Nothing user-facing should need more. |
 | `(app)/(main)/layout.tsx` | 60 | Every signed-in page unless it overrides. It was 300 as a stopgap; the dashboard payload is bounded now. |
-| `capture/page.tsx`, `imports/page.tsx` | 300 | Their server actions summarise a meeting (several model calls) or start a large import. |
-| `chat/page.tsx`, `/api/chat` | 60 | A full model completion on the user's own key. |
-| `/api/imports/process-stalled`, `/api/embeddings/backfill`, `/api/linkedin/timeline-events/backfill`, `/api/imports/[id]/continue`, `/api/sync/run`, `/api/radar/run`, `/api/radar/feeds/sweep`, `/api/radar/digest`, `/api/capture/jobs`, `/api/capture/jobs/[id]/run`, `/api/scan/[token]/pages`, `/api/export` | 300 | Batch work that self-continues past the ceiling, or streams a whole account's export. |
+| `capture/page.tsx`, `imports/page.tsx`, `meetings/page.tsx`, `contacts/[id]/page.tsx` | 300 | Their server actions summarise a meeting (several model calls), start a large import, or run a web search for work history. |
+| `chat/page.tsx`, `/api/chat`, `/api/knowledge/refresh` | 60 | A full model completion, or one contact brief. |
+| `/api/imports/process-stalled`, `/api/embeddings/backfill`, `/api/linkedin/timeline-events/backfill`, `/api/imports/[id]/continue`, `/api/sync/run`, `/api/radar/run`, `/api/radar/feeds/sweep`, `/api/radar/digest`, `/api/jobs/feed/sweep`, `/api/work-history/sweep`, `/api/work-history/research`, `/api/contacts/name-sweep`, `/api/cloud-notes/run`, `/api/credits/notices`, `/api/relationships/run`, `/api/capture/jobs`, `/api/capture/jobs/[id]/run`, `/api/scan/[token]/pages`, `/api/export` | 300 | Batch work that self-continues past the ceiling, or streams a whole account's export. |
+| `/api/research` | 150 | A web-searched answer runs several fetches before it writes a word (`webSearchJson` allows 120 s). |
 | `/api/capture/meetings/[id]/chunks` | 120 | One chunk's transcription, which can fall through Wispr's 60 s deadline before Whisper starts. |
-| `/api/ops/sweep`, `/api/webhooks/outbound/drain`, `/api/mcp`, `/api/mcp/[token]`, `/api/scan/[token]/finish` | 60 | Bounded reads, or network work inside its own 40 s budget. |
+| `/api/ops/billing-reconcile`, `/api/ops/weekly-digest` | 120 | Ops reports: the daily Stripe comparison pages through every live subscription; the weekly digest posts to Slack. |
+| `/api/ops/sweep`, `/api/webhooks/outbound/drain`, `/api/connectors/outbox/drain`, `/api/email/drain`, `/api/ops/speech-usage`, `/api/mcp`, `/api/mcp/[token]`, `/api/scan/[token]/finish` | 60 | Bounded reads, or network work inside its own 40 s budget. |
 | `/api/extension/parse`, `/api/extension/starters` | 30 | One small completion for the extension panel. |
 | `/api/health` | 10 | Every check inside is capped at 4 s. |
 
@@ -52,7 +54,7 @@ Set in route segment configs, not `vercel.json`. Hobby's ceiling with Fluid Comp
 
 ## Measuring
 
-- At account sizes from empty to 100k contacts: `scripts/dev/perf/` (see its README) — seeding, per-statement profiles with real-parameter EXPLAINs, import throughput. `PERFORMANCE_AUDIT.md` is the baseline it produced.
+- At account sizes from empty to 100k contacts: `scripts/dev/perf/` (see its README) — seeding, per-statement profiles with real-parameter EXPLAINs, import throughput. [`PERFORMANCE_AUDIT.md`](audits/PERFORMANCE_AUDIT.md) is the baseline it produced.
 - Statement shape and count: `DEBUG_QUERIES=1 npx tsx scripts/smoke-page-budgets.ts` lists every statement a page issues.
 - Real plans: enable Drizzle's `logger: true` locally, paste the SQL into Neon's SQL editor with `EXPLAIN (ANALYZE, BUFFERS)`, and read `shared read` — that is the cold-storage cost.
 - Bundles: `npm run analyze` (`next experimental-analyze`, Turbopack-native). For numbers per route, `node scripts/dev/bundle-report.mjs` after a build: first-load client JS (raw and gzip), preloaded fonts, and the server JS each route's function traces (what a cold start evaluates), API routes included.

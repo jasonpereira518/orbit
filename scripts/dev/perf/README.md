@@ -1,10 +1,11 @@
 # Performance harness
 
-The tools behind `PERFORMANCE_AUDIT.md`. Each runs against its own PGlite directory, never
-`.data/pglite`, and never against production. Seed once, copy the directory before every
-measurement, and compare two commits by interleaving runs on identical copies (`git stash`
-between them): absolute milliseconds drift with the machine, so only same-machine A/B
-comparisons are claims.
+The tools behind [`PERFORMANCE_AUDIT.md`](../../../docs/audits/PERFORMANCE_AUDIT.md). Each runs
+against its own PGlite directory, never `.data/pglite`, and never against production. Seed
+once, copy the directory before every measurement, and compare two commits by interleaving
+runs on identical copies (park uncommitted work in a temporary WIP commit between them, not
+`git stash`, which is shared across worktrees and other sessions): absolute milliseconds drift
+with the machine, so only same-machine A/B comparisons are claims.
 
 | Script | Measures |
 |---|---|

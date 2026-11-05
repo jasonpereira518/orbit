@@ -136,6 +136,7 @@ Format per event: **fires when** / **must not fire when** / **read by**. Propert
 - Added: v181.
 
 ## mcp_disconnected
+- Status: defined in the schema, but nothing emits it yet.
 - Fires when: an OAuth grant or key is revoked.
 - Must not fire when: an expiry.
 - Read by: MCP retention.
@@ -172,6 +173,7 @@ Format per event: **fires when** / **must not fire when** / **read by**. Propert
 - Added: v181.
 
 ## error_shown
+- Status: defined in the schema, but nothing emits it yet.
 - Fires when: the client renders a server failure to the person (toast or error state).
 - Must not fire when: an error nobody saw.
 - Read by: Failures that touched users.

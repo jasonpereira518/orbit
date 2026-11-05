@@ -3,7 +3,7 @@
  *
  * `recruiters` rows are shared across accounts once anyone contributes to them, and their
  * `full_name`, `firm` and `specialty` are read into other users' chat prompts. Since the AI
- * security audit (docs/ai-security-audit-2026-09-26.md, finding 2) every write goes through
+ * security audit (Sep 26 AI security audit, finding 2) every write goes through
  * `cleanRecruiterFields`; this brings the rows that predate it into line with the same rule,
  * via `recruiterCleanPatch`, so there is one definition of "clean".
  *
