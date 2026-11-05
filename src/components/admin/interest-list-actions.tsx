@@ -31,7 +31,7 @@ const BUTTON =
 /**
  * Let one person in: a Clerk invitation, emailed by Clerk, that creates an account even while
  * the site is in stealth. No confirm dialog — it grants one address one link, is revocable
- * from /admin/access, and is audited there like every other invitation.
+ * from /admin/access/invites, and is audited there like every other invitation.
  */
 function InviteButton({ email }: { email: string }) {
   const [pending, start] = useTransition();

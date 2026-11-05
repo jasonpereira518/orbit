@@ -1,5 +1,6 @@
 /**
- * Renders the Beta, Launch and Retain pages against seeded data and walks the element tree.
+ * Renders the Growth tabs (Acquisition, Activation, Retention, Features) — once the Beta, Launch
+ * and Retain pages — against seeded data and walks the element tree.
  * They sit behind the admin gate in a browser, so this is the only way to run their loaders and
  * catch a column that does not exist before an operator opens the page.
  *
@@ -9,9 +10,11 @@ import "./smoke/_env";
 import { run } from "./smoke/_env";
 import { sql } from "drizzle-orm";
 import { getDb } from "../src/db";
-import AdminBetaPage from "../src/app/(clerk)/(admin)/admin/beta/page";
-import AdminLaunchPage from "../src/app/(clerk)/(admin)/admin/launch/page";
-import AdminRetainPage from "../src/app/(clerk)/(admin)/admin/retain/page";
+import AdminAcquisitionPage from "../src/app/(clerk)/(admin)/admin/growth/page";
+import AdminActivationPage from "../src/app/(clerk)/(admin)/admin/growth/activation/page";
+import AdminRetentionPage from "../src/app/(clerk)/(admin)/admin/growth/retention/page";
+import AdminFeaturesPage from "../src/app/(clerk)/(admin)/admin/growth/features/page";
+import { GROWTH_TABS } from "../src/components/admin/admin-tabs";
 import { ADMIN_NAV } from "../src/components/admin/admin-nav";
 
 let failures = 0;
@@ -67,29 +70,32 @@ run(async () => {
   await db.execute(sql`DELETE FROM site_invites WHERE wave_id = 'w97'`);
   await db.execute(sql`INSERT INTO site_invites (email, wave_id, source, accepted_user_id) VALUES ('pp@example.test', 'w97', 'manual', ${U})`);
 
+  const params = { searchParams: Promise.resolve({}) };
   console.log("navigation");
-  for (const href of ["/admin/beta", "/admin/launch", "/admin/retain"]) {
-    check(`the console links to ${href}`, ADMIN_NAV.some((n) => n.href === href));
+  check("the console links to Growth", ADMIN_NAV.some((n) => n.href === "/admin/growth"));
+  for (const href of ["/admin/growth/activation", "/admin/growth/retention", "/admin/growth/features"]) {
+    check(`Growth has a ${href} tab`, GROWTH_TABS.some((t) => t.href === href));
   }
 
-  console.log("\nBeta");
-  const beta = await render(AdminBetaPage);
-  check("renders the wave table with the seeded wave", beta.includes("Invite waves") && beta.includes("w97"));
-  check("explains how activation is judged", beta.includes("Activated means"));
-  check("shows the first cliff", beta.includes("The first cliff"));
-  check("never names the account", !beta.includes("pp@example.test") && !beta.includes(U));
+  console.log("\nActivation");
+  const activation = await render(() => AdminActivationPage(params));
+  check("renders the wave table with the seeded wave", activation.includes("Invite waves") && activation.includes("w97"));
+  check("shows the first cliff", activation.includes("The first cliff"));
+  check("never names the account", !activation.includes("pp@example.test") && !activation.includes(U));
 
-  console.log("\nLaunch");
-  const launch = await render(AdminLaunchPage);
-  check("renders sign-ups by channel with the seeded source", launch.includes("Sign-ups by channel") && launch.includes("reddit"));
-  check("says what zeros mean for new surfaces", launch.includes("not measured"));
-  check("renders limits and conversion", launch.includes("Limits hit"));
+  console.log("\nAcquisition");
+  process.env.ANALYTICS_SALT ??= "smoke-prodpages-salt";
+  const acquisition = await render(() => AdminAcquisitionPage(params));
+  check("renders sign-ups by first touch with the seeded source", acquisition.includes("Sign-ups by first touch") && acquisition.includes("reddit"));
 
-  console.log("\nRetain");
-  const retain = await render(AdminRetainPage);
-  check("renders retention and pools", retain.includes("Retention by signup month") && retain.includes("Going cold"));
-  check("withholds a churn rate under 100 subscribers", retain.includes("withheld below 100"));
-  check("points at the money pages for margin", retain.includes("Costs and margin"));
+  console.log("\nFeatures");
+  const features = await render(() => AdminFeaturesPage(params));
+  check("says what zeros mean for new surfaces", features.includes("not measured"));
+
+  console.log("\nRetention");
+  const retention = await render(() => AdminRetentionPage(params));
+  check("renders retention and pools", retention.includes("Retention by signup month") && retention.includes("Going cold"));
+  check("withholds a churn rate under 100 subscribers", retention.includes("withheld below"));
 
   await db.execute(sql`DELETE FROM site_invites WHERE wave_id = 'w97'`);
   await db.execute(sql`DELETE FROM user_settings WHERE user_id = ${U}`);

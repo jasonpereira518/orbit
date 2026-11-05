@@ -1,6 +1,3 @@
-import Link from "next/link";
-import { Suspense } from "react";
-import { ChevronRight } from "lucide-react";
 import {
   AdminPageHeader,
   AdminPanel,
@@ -10,530 +7,420 @@ import {
   MiniBars,
   Td,
   Th,
+  TrendBars,
 } from "@/components/admin/primitives";
-import { TimeSeriesChart, type ChartSeries } from "@/components/admin/growth-charts";
-import { GrowthMoreMetrics } from "@/components/admin/growth-more-metrics";
+import { GrowthTabs } from "@/components/admin/admin-tabs";
+import { InternalBrowserToggle } from "@/components/admin/internal-browser-toggle";
 import {
-  activationTrend,
-  depthTrend,
-  featureAdoption,
-  firstSignupAt,
-  growthSnapshot,
-  retentionCurves,
-  rollingActiveTrend,
-  userTotalsTrend,
-  viewersTrend,
-  type Grain,
-} from "@/lib/admin-trends";
-import { WaitlistStatsPanel } from "@/components/admin/waitlist-stats-panel";
-import { getWaitlistStats } from "@/lib/admin-interest-list";
-import { getWaitlist } from "@/lib/admin-product-health";
+  ENGAGED_SECONDS,
+  MIN_RATE_DENOMINATOR,
+  RANGES,
+  acquisitionFunnel,
+  deviceBreakdown,
+  formatDuration,
+  geoBreakdown,
+  rangeDays,
+  rangeGrain,
+  sourceBreakdown,
+  topRoutes,
+  trafficTotals,
+  trafficTrend,
+  type Range,
+} from "@/lib/admin-analytics";
 import { analyticsDisabledReason } from "@/lib/analytics-visitor";
-import { describeActivation } from "@/lib/activity";
 import { formatRate } from "@/lib/format-rate";
-import {
-  GRAIN_LABEL,
-  GROWTH_GRAINS,
-  GROWTH_RANGES,
-  RANGE_LABEL,
-  grainAllowed,
-  growthHref,
-  longLabel,
-  monthLabel,
-  rangeSpanDays,
-  resolveGrowthWindow,
-  shortLabel,
-} from "@/lib/growth-range";
-import { cn } from "@/lib/utils";
+import { channelBreakdown, freeToPaid } from "@/lib/product-metrics";
+import { TrafficRangeLinks } from "./range-nav";
 
-export const metadata = { title: "Admin · Growth" };
-
-/** Retention looks at the last six monthly cohorts, twelve weeks out, whatever the range. */
-const RETENTION_COHORTS = 6;
-const RETENTION_WEEKS = 12;
-
-const BUCKET_HEADING: Record<Grain, string> = { day: "Day", week: "Week", month: "Month" };
+export const metadata = { title: "Admin · Growth · Acquisition" };
 
 /**
- * How many people use Orbit, and how much, over time.
+ * Acquisition: what happened before anybody signed up, and what it turned into.
  *
- * Deliberately not on `/admin`, which stays triage-only. And deliberately narrow: this page
- * tracks accounts and what they do. Sections about the machinery (AI calls, data quality,
- * row counts) moved to Health, and "where onboarding stalls" moved to Conversion.
+ * Every other screen in this console starts from an account. This one supplies the
+ * denominator for "of the people who saw Orbit, how many stayed": traffic, the conversion
+ * funnel, and where sign-ups came from.
  *
- * Two kinds of engagement, in two charts, because they fail differently. "Opened Orbit"
- * (signed-in page views) sees the person who reads their network every morning and edits
- * nothing. "Did something" (writes) sees only people who act. Either alone misreports:
- * views flatter a product people glance at and leave; writes miss the readers.
+ * TWO LABELS ON THIS PAGE ARE LOAD-BEARING, and both exist because the pipeline sets no
+ * cookie:
  *
- * Counts, not rates, everywhere a number is printed — axes, tiles, tables. A percentage
- * appears only in a chart's readout, beside its fraction, and only past
- * `MIN_RATE_DENOMINATOR`. See `admin-trends.ts` for why the house rule bends that far and
- * no further.
+ *   "Visitor-days" is not a headcount. The visitor hash is salted per UTC day, so one
+ *   person across a week is seven of them. The average-per-day hint beside it is the
+ *   closest honest answer to "how many people", and neither number is ever called "users".
  *
- * The window is `?range=` and `?grain=` in the URL, so a view can be linked and the page
- * stays a server component; the charts are client islands that only draw what they're given.
+ *   "Median session" is measured first view to last, plus whatever the exit beacon
+ *   managed to report for the final page. A single-page visit whose beacon never landed has
+ *   no measurable length and is left out, rather than counted as zero seconds and dragging
+ *   the median towards nothing.
+ *
+ * Bounces are MARKETING bounces: anonymous sessions that saw one page and left inside
+ * `ENGAGED_SECONDS`. A signed-in customer opening their dashboard and closing the tab has
+ * not bounced, and one page read for five minutes is not a bounce either.
+ *
+ * THE FUNNEL BREAKS THE HOUSE RULE, ON PURPOSE AND WITH A LIMIT. Conversion rate is a ratio
+ * or it is nothing, so every stage prints its own fraction and the percentage is withheld
+ * until the denominator reaches {@link MIN_RATE_DENOMINATOR}. Its stages are NOT one chain
+ * of people: 1-2 count traffic, 3 the interest list, 4-6 accounts — three populations over
+ * the same days. Nothing connects the visitor who read /pricing on Tuesday to the account
+ * created on Thursday, because the visitor hash dies at midnight.
+ *
+ * Orbit's own traffic — admins, the showcase account, opted-out browsers — is excluded from
+ * everything here and counted beside the page-views tile, the same way bots are.
  */
-export default async function AdminGrowthPage({
+export default async function AdminAcquisitionPage({
   searchParams,
 }: {
-  searchParams: Promise<{ range?: string; grain?: string }>;
+  searchParams: Promise<{ range?: string }>;
 }) {
   const params = await searchParams;
-  const first = await firstSignupAt().catch(() => null);
-  const { range, grain, buckets, spanDays } = resolveGrowthWindow(params, first);
+  const range: Range = RANGES.includes(params.range as Range)
+    ? (params.range as Range)
+    : "30d";
 
-  const [snapshot, totals, viewers, rolling, depth, curves, activation, adoption, waitlist, waitlistStats] =
+  const disabled = analyticsDisabledReason();
+  const now = new Date();
+
+  // Each panel degrades on its own rather than taking the page down.
+  const [totals, trend, routes, geo, sources, devices, stages, channels, paid] =
     await Promise.all([
-      growthSnapshot(spanDays),
-      userTotalsTrend(grain, buckets),
-      // Degrades on its own: a missing page_views table empties one chart, not the page.
-      viewersTrend(grain, buckets).catch(() => null),
-      rollingActiveTrend(grain, buckets),
-      depthTrend(grain, buckets),
-      retentionCurves(RETENTION_COHORTS, RETENTION_WEEKS),
-      activationTrend(grain, buckets),
-      featureAdoption(),
-      getWaitlist(6).catch(() => null),
-      getWaitlistStats().catch(() => null),
+      trafficTotals(range).catch(() => null),
+      trafficTrend(range).catch(() => []),
+      topRoutes(range).catch(() => []),
+      geoBreakdown(range).catch(() => null),
+      sourceBreakdown(range).catch(() => null),
+      deviceBreakdown(range).catch(() => []),
+      acquisitionFunnel(range).catch(() => []),
+      channelBreakdown(now, rangeDays(range)).catch(() => []),
+      freeToPaid(now).catch(() => null),
     ]);
 
-  const labels = totals.map((p) => shortLabel(p.bucketStart, grain));
-  const titles = totals.map((p) => longLabel(p.bucketStart, grain));
-  const per = grain === "day" ? "day" : grain;
-  const trackingOff = analyticsDisabledReason();
+  const grain = rangeGrain(range);
+  const window = totals?.window;
+  // Over the days that HAVE data: a 90-day range twelve days after tracking began is twelve.
+  const shownDays = window ? Math.max(1, Math.round(window.days)) : rangeDays(range);
+  /** MM-DD. For weekly buckets this is the week's first day, which is what the spine emits. */
+  const label = (d: Date) => d.toISOString().slice(5, 10);
 
-  const spanText = range === "all" ? "since launch" : `in the last ${RANGE_LABEL[range]}`;
-  const beforeText = range === "all" ? null : `${snapshot.newPrev} the ${RANGE_LABEL[range]} before`;
+  // A real trickle over 90 days averages below one a day. "~0/day" beside a non-zero
+  // total reads as a bug, so the sub-one case says so instead of rounding it away.
+  const excluded = [
+    totals?.botViews ? `${totals.botViews.toLocaleString()} automated` : null,
+    totals?.internalViews ? `${totals.internalViews.toLocaleString()} of Orbit's own` : null,
+  ].filter(Boolean);
+  const excludedHint = excluded.length ? `${excluded.join(" · ")} not counted` : undefined;
 
-  // Retention: one series per cohort that has anyone in it, null where a week has not been
-  // lived through by every member yet (a gap, never a zero).
-  const retentionSeries: ChartSeries[] = curves
-    .filter((c) => c.size > 0)
-    .map((c) => {
-      const values: Array<number | null> = Array.from({ length: RETENTION_WEEKS + 1 }, () => null);
-      for (const w of c.weeks) values[w.week] = w.active;
-      return {
-        key: c.cohortStart.toISOString(),
-        label: monthLabel(c.cohortStart),
-        color: "var(--series-1)",
-        values,
-        denominator: c.size,
-      };
-    });
-  // Start on the newest cohort that has a line to draw, not a lone week-0 dot.
-  const defaultCohort =
-    [...retentionSeries].reverse().find((s) => s.values.filter((v) => v != null).length >= 2)
-      ?.key ?? retentionSeries.at(-1)?.key;
+  const perDay = (n: number) => (n === 0 ? "0" : n < 1 ? "<1" : `~${Math.round(n)}`);
 
-  const ratio = (count: number, active: number) =>
-    active > 0 ? Math.round((count / active) * 10) / 10 : 0;
+  // Each funnel population is scaled against its own largest stage. One scale across all
+  // three drew a few signups as a sliver under thousands of visitor-days.
+  const groupMax = new Map<string, number>();
+  for (const stage of stages) {
+    groupMax.set(stage.group, Math.max(groupMax.get(stage.group) ?? 1, stage.count));
+  }
 
   return (
     <>
       <AdminPageHeader
         title="Growth"
         subtitle={
-          <>
-            <span className="tabular-nums">{snapshot.total}</span> account
-            {snapshot.total === 1 ? "" : "s"} ·{" "}
-            <span className="tabular-nums">{snapshot.wau}</span> active in the last 7 days
-          </>
+          disabled ? (
+            "Traffic is not recording."
+          ) : (
+            <>
+              <span className="tabular-nums">
+                {(totals?.views ?? 0).toLocaleString()}
+              </span>{" "}
+              page view{totals?.views === 1 ? "" : "s"} over {shownDays} day
+              {shownDays === 1 ? "" : "s"}
+              {window?.clamped && (
+                <> (tracking began {window.from.toISOString().slice(0, 10)})</>
+              )}{" "}
+              · <span className="tabular-nums">{totals?.sessions ?? 0}</span> session
+              {totals?.sessions === 1 ? "" : "s"}
+            </>
+          )
         }
       />
 
-      <div className="space-y-6">
-        {/* One row of filters, above everything it scopes. Links, not client state: the
-            window belongs in the URL. */}
-        <nav
-          aria-label="Time window"
-          className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs"
-        >
-          <div className="flex items-center gap-3">
-            {GROWTH_RANGES.map((r, i) => (
-              <span key={r} className="flex items-center gap-3">
-                {i > 0 && <span className="text-muted-foreground/40">·</span>}
-                <Link
-                  href={growthHref(r, grainAllowed(grain, rangeSpanDays(r, first)) ? grain : null)}
-                  aria-current={range === r ? "page" : undefined}
-                  className={
-                    range === r ? "text-primary" : "text-muted-foreground hover:text-foreground"
-                  }
-                >
-                  {RANGE_LABEL[r]}
-                </Link>
-              </span>
-            ))}
-          </div>
-          <span aria-hidden className="h-3 w-px bg-border" />
-          <div className="flex items-center gap-3">
-            {GROWTH_GRAINS.map((g, i) => {
-              const allowed = grainAllowed(g, spanDays);
-              return (
-                <span key={g} className="flex items-center gap-3">
-                  {i > 0 && <span className="text-muted-foreground/40">·</span>}
-                  {allowed ? (
-                    <Link
-                      href={growthHref(range, g)}
-                      aria-current={grain === g ? "page" : undefined}
-                      className={
-                        grain === g
-                          ? "text-primary"
-                          : "text-muted-foreground hover:text-foreground"
-                      }
-                    >
-                      {GRAIN_LABEL[g]}
-                    </Link>
-                  ) : (
-                    <span
-                      className="cursor-not-allowed text-muted-foreground/40"
-                      title={
-                        g === "day"
-                          ? "Daily stops at 90 days — past that it's a smear, not a chart."
-                          : "One monthly bar for 30 days would be a single number."
-                      }
-                    >
-                      {GRAIN_LABEL[g]}
-                    </span>
-                  )}
-                </span>
-              );
-            })}
-          </div>
-        </nav>
+      <GrowthTabs />
 
-        {/* Where things stand now, each against the period just before. Pairs of counts,
-            never a growth rate. */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          <MetricTile
-            label="Accounts"
-            value={snapshot.total}
-            hint={`+${snapshot.newNow} ${spanText}`}
-          />
-          <MetricTile
-            label="New accounts"
-            value={snapshot.newNow}
-            hint={beforeText ?? spanText}
-          />
-          <MetricTile
-            label="Active today"
-            value={snapshot.dau}
-            hint={`${snapshot.dauPrev} the day before`}
-          />
-          <MetricTile
-            label="Active 7 days"
-            value={snapshot.wau}
-            hint={`${snapshot.wauPrev} the week before`}
-          />
-          <MetricTile
-            label="Active 30 days"
-            value={snapshot.mau}
-            hint={`${snapshot.mauPrev} the 30 days before`}
-          />
-        </div>
-
-        <AdminPanel title="Accounts over time">
-          <TimeSeriesChart
-            labels={labels}
-            titles={titles}
-            partialLast
-            bucketHeading={BUCKET_HEADING[grain]}
-            ariaLabel={`Accounts over time: ${snapshot.total} in total, ${snapshot.newNow} new ${spanText}.`}
-            emptyLabel="No accounts yet."
-            plots={[
-              {
-                title: "Total accounts",
-                mark: "line",
-                height: 150,
-                series: [
-                  {
-                    key: "total",
-                    label: "Total",
-                    color: "var(--series-1)",
-                    values: totals.map((p) => p.total),
-                  },
-                ],
-              },
-              {
-                title: `New accounts per ${per}`,
-                mark: "bar",
-                height: 100,
-                series: [
-                  {
-                    key: "added",
-                    label: "New",
-                    color: "var(--series-2)",
-                    values: totals.map((p) => p.added),
-                  },
-                ],
-              },
-            ]}
-          />
-          <p className="mt-3 text-xs text-muted-foreground">
-            Counts accounts that still exist. Deleting an account purges its history, so
-            the total can never show one that has since left.
+      {disabled ? (
+        <AdminPanel title="Traffic collection is off">
+          <p className="py-4 text-sm text-muted-foreground">
+            {disabled} Set it to any long random string and redeploy; the value is the
+            secret behind the daily visitor salt, so changing it later resets visitor
+            identity from that day forward.
+          </p>
+          <p className="text-sm text-muted-foreground">
+            It is deliberately optional — <code>check:env</code> gates every production
+            deploy, and a missing analytics secret should never be able to stop one. The
+            cost of that is this screen: an empty table and a disabled pipeline look
+            identical, so this is the page saying which one it is.
           </p>
         </AdminPanel>
+      ) : (
+        <div className="space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <TrafficRangeLinks base="/admin/growth" range={range} />
+            <InternalBrowserToggle />
+          </div>
 
-        <div className="grid gap-6 lg:grid-cols-2">
-          <AdminPanel title="Opened Orbit">
-            {!viewers ? (
-              <EmptyState>Signed-in page views are unavailable.</EmptyState>
-            ) : (
-              <TimeSeriesChart
-                labels={labels}
-                titles={titles}
-                partialLast
-                ariaLabel={`Accounts that opened Orbit per ${per}.`}
-                emptyLabel={trackingOff ?? "No signed-in page views in this window."}
-                plots={[
-                  {
-                    title: `Accounts with a signed-in view, per ${per}`,
-                    mark: "line",
-                    height: 150,
-                    series: [
-                      {
-                        key: "viewers",
-                        label: "Accounts",
-                        color: "var(--series-1)",
-                        values: viewers.map((p) => p.viewers),
-                      },
-                    ],
-                  },
-                  {
-                    title: `Page views per ${per}`,
-                    mark: "bar",
-                    height: 90,
-                    series: [
-                      {
-                        key: "views",
-                        label: "Views",
-                        color: "var(--series-3)",
-                        values: viewers.map((p) => p.views),
-                      },
-                    ],
-                  },
-                ]}
-              />
-            )}
-            <p className="mt-3 text-xs text-muted-foreground">
-              Signed-in views only, bots excluded. This is who showed up — including people
-              who read and changed nothing.
-            </p>
-          </AdminPanel>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            <MetricTile
+              label="Page views"
+              value={(totals?.views ?? 0).toLocaleString()}
+              hint={excludedHint}
+            />
+            <MetricTile
+              label="Visitor-days"
+              value={(totals?.visitorDays ?? 0).toLocaleString()}
+              hint={`${perDay(totals?.avgDailyVisitors ?? 0)}/day over ${shownDays} measured day${shownDays === 1 ? "" : "s"} · not a headcount`}
+              tone="accent"
+            />
+            <MetricTile
+              label="Median session"
+              value={formatDuration(totals?.medianSessionSeconds ?? null)}
+              hint={`first view to last, plus time on the last page · ${(totals?.measuredSessions ?? 0).toLocaleString()} measured`}
+            />
+            <MetricTile
+              label="Marketing bounce"
+              value={`${totals?.bouncedSessions ?? 0} of ${totals?.anonymousSessions ?? 0}`}
+              hint={`signed-out visits that saw one page for under ${ENGAGED_SECONDS}s`}
+              tone="muted"
+            />
+            <MetricTile
+              label="Free to paid"
+              value={paid ? formatRate(paid.paid, paid.eligible) : "—"}
+              hint={
+                paid && paid.paid >= 5 && paid.medianDaysToPay !== null
+                  ? `activated accounts a month old · median ${paid.medianDaysToPay} days to pay`
+                  : "activated accounts a month old · median shown from five payers"
+              }
+            />
+          </div>
 
-          <AdminPanel title="Did something" action={<span className="text-xs text-muted-foreground">deliberate actions only</span>}>
-            <TimeSeriesChart
-              labels={labels}
-              titles={titles}
-              partialLast
-              ariaLabel={`Active accounts: ${snapshot.dau} today, ${snapshot.wau} in 7 days, ${snapshot.mau} in 30 days.`}
-              emptyLabel="Nobody has done anything in this window."
-              notes={rolling.map((p) => [
-                { label: "DAU of MAU", value: formatRate(p.dau, p.mau) },
-              ])}
-              plots={[
-                {
-                  mark: "line",
-                  height: 266,
-                  series: [
-                    {
-                      key: "mau",
-                      label: "30-day",
-                      color: "var(--series-3)",
-                      values: rolling.map((p) => p.mau),
-                    },
-                    {
-                      key: "wau",
-                      label: "7-day",
-                      color: "var(--series-2)",
-                      values: rolling.map((p) => p.wau),
-                    },
-                    {
-                      key: "dau",
-                      label: "1-day",
-                      color: "var(--series-1)",
-                      values: rolling.map((p) => p.dau),
-                    },
-                  ],
-                },
-              ]}
+          <AdminPanel title={grain === "week" ? "Views per week" : "Views per day"}>
+            <TrendBars
+              rows={trend.map((p) => ({
+                label: label(p.bucketStart),
+                count: p.views,
+                secondary: p.visitorDays,
+                secondaryLabel: "visitor-days",
+                partial: p.partial,
+              }))}
+              secondaryTone="neutral"
+              headings={{ count: "Views", secondary: "Visitors" }}
+              emptyLabel="No traffic recorded in this window."
             />
             <p className="mt-3 text-xs text-muted-foreground">
-              Accounts that wrote anything — a contact, note, chat, import or AI call — in
-              the trailing 1, 7 and 30 days at the end of each {per}.
+              {grain === "week" ? "Weeks" : "Days"} are cut in UTC, the same boundary the
+              visitor hash rotates on, so they will not line up with a local-time dashboard.
+              Periods before tracking began are not drawn.
             </p>
           </AdminPanel>
-        </div>
 
-        <AdminPanel
-          title="Retention by signup month"
-          action={
-            <span className="text-xs text-muted-foreground">
-              last {RETENTION_COHORTS} cohorts · pick one to compare
-            </span>
-          }
-        >
-          <TimeSeriesChart
-            labels={Array.from({ length: RETENTION_WEEKS + 1 }, (_, w) => `W${w}`)}
-            titles={Array.from({ length: RETENTION_WEEKS + 1 }, (_, w) =>
-              w === 0 ? "Week 0 (signup week)" : `Week ${w} after signup`
-            )}
-            bucketHeading="Week"
-            emphasis="select"
-            defaultSelected={defaultCohort}
-            ariaLabel="Accounts from each signup month still active in each week after joining."
-            emptyLabel="No signups in the last six months."
-            plots={[{ mark: "line", height: 220, series: retentionSeries }]}
-          />
-          <p className="mt-3 text-xs text-muted-foreground">
-            Each line is one month&apos;s signups: how many were still writing N weeks
-            after joining. A week appears once every member has lived through it, so recent
-            cohorts draw short lines rather than false drop-offs.
-          </p>
-        </AdminPanel>
-
-        <AdminPanel title="Actions per active account">
-          <TimeSeriesChart
-            labels={labels}
-            titles={titles}
-            partialLast
-            ariaLabel={`Actions per active account per ${per}, by feature.`}
-            emptyLabel="Nobody has done anything in this window."
-            notes={depth.map((p) => [
-              { label: "Active accounts", value: p.active.toLocaleString() },
-              {
-                label: "Actions",
-                value: (p.captures + p.notes + p.chats + p.imports).toLocaleString(),
-              },
-            ])}
-            plots={[
-              {
-                mark: "stacked",
-                height: 200,
-                decimals: 1,
-                series: [
-                  {
-                    key: "captures",
-                    label: "Captures",
-                    color: "var(--series-1)",
-                    values: depth.map((p) => ratio(p.captures, p.active)),
-                  },
-                  {
-                    key: "notes",
-                    label: "Notes logged",
-                    color: "var(--series-2)",
-                    values: depth.map((p) => ratio(p.notes, p.active)),
-                  },
-                  {
-                    key: "chats",
-                    label: "Chat messages",
-                    color: "var(--series-3)",
-                    values: depth.map((p) => ratio(p.chats, p.active)),
-                  },
-                  {
-                    key: "imports",
-                    label: "Imports",
-                    color: "var(--series-4)",
-                    values: depth.map((p) => ratio(p.imports, p.active)),
-                  },
-                ],
-              },
-            ]}
-          />
-          <p className="mt-3 text-xs text-muted-foreground">
-            Deliberate actions only, each counted once: a capture&apos;s notes are not
-            counted again as notes, synced and imported interactions are excluded, and AI
-            calls (a side effect of these) are on the Health page.
-          </p>
-        </AdminPanel>
-
-        <AdminPanel title="Activation by signup cohort">
-          {activation.every((p) => p.signed === 0) ? (
-            <EmptyState>No signups in this window.</EmptyState>
-          ) : (
-            <AdminTable label="Activation by signup cohort"
-              minWidth="sm"
-              head={
-                <>
-                  <Th>Joined</Th>
-                  <Th numeric>Signed up</Th>
-                  <Th numeric>Onboarded</Th>
-                  <Th numeric>Added a contact</Th>
-                  <Th numeric>Activated</Th>
-                </>
-              }
-            >
-              {/* Newest first, and only periods anyone joined in — at daily grain the
-                  empty days would bury the ones that matter. */}
-              {[...activation]
-                .reverse()
-                .filter((p) => p.signed > 0)
-                .map((p) => (
-                  <tr
-                    key={p.bucketStart.toISOString()}
-                    className="border-b border-border/40 last:border-b-0"
-                  >
-                    <Td className="tabular-nums">{longLabel(p.bucketStart, grain)}</Td>
-                    <Td numeric>{p.signed}</Td>
-                    <Td
-                      numeric
-                      className={cn(p.onboarded === 0 && "text-destructive")}
-                    >
-                      {formatRate(p.onboarded, p.signed)}
+          <AdminPanel title="Conversion funnel">
+            {stages.length === 0 ? (
+              <EmptyState>Nothing recorded in this window yet.</EmptyState>
+            ) : (
+              <AdminTable label="Conversion funnel" minWidth="none"
+                head={
+                  <>
+                    <Th>Stage</Th>
+                    <Th numeric>Count</Th>
+                    <Th>Conversion</Th>
+                  </>
+                }
+              >
+                {stages.map((stage) => (
+                  <tr key={stage.label} className="border-b border-border/40">
+                    <Td>
+                      <div>{stage.label}</div>
+                      {stage.note && (
+                        <div className="text-xs text-muted-foreground">{stage.note}</div>
+                      )}
                     </Td>
-                    <Td numeric>{formatRate(p.firstContact, p.signed)}</Td>
-                    <Td numeric>
-                      {/* Only accounts old enough to have had the whole window can be judged. */}
-                      {p.matured === 0 ? "—" : formatRate(p.activated, p.matured)}
+                    <Td numeric>{stage.count.toLocaleString()}</Td>
+                    <Td>
+                      <div className="flex items-center gap-3">
+                        {/* Hand-built, like every other bar in this console. */}
+                        <div
+                          className="h-1.5 shrink-0 rounded-full bg-primary/70"
+                          style={{
+                            width: `${(stage.count / (groupMax.get(stage.group) ?? 1)) * 100}%`,
+                            minWidth: 2,
+                          }}
+                          aria-hidden
+                        />
+                        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                          {stage.of == null
+                            ? "—"
+                            : `${formatRate(stage.count, stage.of)} ${stage.ofLabel ?? ""}`.trim()}
+                        </span>
+                      </div>
                     </Td>
                   </tr>
                 ))}
-            </AdminTable>
-          )}
-          <p className="mt-3 border-t border-border/40 pt-2 text-xs text-muted-foreground">
-            {describeActivation()} Internal and tester accounts are left out.
-          </p>
-        </AdminPanel>
-
-        <div className="grid gap-6 lg:grid-cols-2">
-          {/* The one cross-account total that changes a decision: which parts of Orbit are
-              load-bearing and which are decoration. */}
-          <AdminPanel title="Accounts that have used each feature">
-            <MiniBars rows={adoption.map(({ label, count }) => ({ label, count }))} />
+              </AdminTable>
+            )}
+            <p className="mt-3 border-t border-border/40 pt-2 text-xs text-muted-foreground">
+              Three populations over the same days — traffic, the interest list, accounts —
+              not one group of people followed through; percentages appear from{" "}
+              {MIN_RATE_DENOMINATOR}, and Activated and Paid (Lifetime included, net of
+              refunds) count only accounts a week old.
+            </p>
           </AdminPanel>
 
-          <WaitlistStatsPanel stats={waitlistStats} recent={waitlist?.recent} />
-        </div>
+          <AdminPanel title="Most viewed pages">
+            {routes.length === 0 ? (
+              <EmptyState>Nothing recorded yet.</EmptyState>
+            ) : (
+              <AdminTable label="Most viewed pages" minWidth="sm"
+                head={
+                  <>
+                    <Th>Route</Th>
+                    <Th numeric>Views</Th>
+                    <Th numeric>Visitor-days</Th>
+                    <Th numeric>Median time</Th>
+                  </>
+                }
+              >
+                {routes.map((r) => (
+                  <tr key={r.route} className="border-b border-border/40">
+                    <Td className="font-mono text-xs">{r.route}</Td>
+                    <Td numeric>{r.views.toLocaleString()}</Td>
+                    <Td numeric>{r.visitorDays.toLocaleString()}</Td>
+                    <Td numeric className="text-muted-foreground">
+                      {formatDuration(r.medianDwellSeconds)}
+                      {r.dwellSamples > 0 && (
+                        <span className="ml-1 text-muted-foreground/60">
+                          (n={r.dwellSamples.toLocaleString()})
+                        </span>
+                      )}
+                    </Td>
+                  </tr>
+                ))}
+              </AdminTable>
+            )}
+          </AdminPanel>
 
-        {/* Detail, closed by default. Native <details> so it opens without JavaScript, and
-            its own Suspense boundary so these queries never hold up the charts above —
-            the section streams in while it is still closed. */}
-        <details className="group">
-          <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-border/70 bg-card px-4 py-3 text-sm font-medium transition-colors duration-fast hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
-            <ChevronRight
-              aria-hidden
-              className="size-4 text-muted-foreground transition-transform duration-fast group-open:rotate-90"
-            />
-            More metrics
-            <span className="font-normal text-muted-foreground">
-              · workflow stages, consistent use, AI cost, artifacts, data quality — weekly,
-              last 12 weeks
-            </span>
-          </summary>
-          <div className="mt-6">
-            <Suspense
-              fallback={
-                <p className="py-8 text-center text-sm text-muted-foreground">
-                  Loading more metrics…
+          {/* Visits and sign-ups side by side: page views say who arrived from where, the
+              sign-up table says which of those first touches became accounts. Two
+              pipelines with no join between them, so two lists, one panel. */}
+          <AdminPanel title="Sources">
+            <div className="grid gap-6 lg:grid-cols-2">
+              <div>
+                <SubHeading>Sign-ups by first touch</SubHeading>
+                {channels.length === 0 ? (
+                  <EmptyState>No sign-ups in this window.</EmptyState>
+                ) : (
+                  <AdminTable
+                    label="Sign-ups by first touch"
+                    minWidth="none"
+                    head={
+                      <>
+                        <Th>First touch</Th>
+                        <Th numeric>Sign-ups</Th>
+                        <Th numeric>Activated</Th>
+                      </>
+                    }
+                  >
+                    {channels.map((c) => (
+                      <tr key={c.channel} className="border-b border-border/40 last:border-b-0">
+                        <Td>{c.channel}</Td>
+                        <Td numeric>{c.signups}</Td>
+                        <Td numeric>{c.matured === 0 ? "—" : formatRate(c.activated, c.matured)}</Td>
+                      </tr>
+                    ))}
+                  </AdminTable>
+                )}
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Invited accounts carry the waitlist row&apos;s first touch.
+                  &ldquo;unattributed&rdquo; never rendered the app (API or connector only);
+                  it is not &ldquo;direct&rdquo;.
                 </p>
-              }
-            >
-              <GrowthMoreMetrics />
-            </Suspense>
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <SubHeading>Referrers · views</SubHeading>
+                  {!sources || sources.referrers.length === 0 ? (
+                    <EmptyState>
+                      No external referrers. Direct visits are not listed — they would be
+                      the tallest bar and say nothing.
+                    </EmptyState>
+                  ) : (
+                    <MiniBars rows={sources.referrers.map((s) => ({ label: s.label, count: s.views }))} />
+                  )}
+                </div>
+                {sources && sources.sources.length > 0 && (
+                  <div>
+                    <SubHeading>utm_source · views</SubHeading>
+                    <MiniBars rows={sources.sources.map((s) => ({ label: s.label, count: s.views }))} />
+                  </div>
+                )}
+                {sources && sources.campaigns.length > 0 && (
+                  <div>
+                    <SubHeading>utm_campaign · views</SubHeading>
+                    <MiniBars rows={sources.campaigns.map((s) => ({ label: s.label, count: s.views }))} />
+                  </div>
+                )}
+              </div>
+            </div>
+          </AdminPanel>
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            <AdminPanel title="Countries">
+              {!geo || geo.countries.every((c) => c.country == null) ? (
+                <EmptyState>
+                  No geography recorded. Vercel&apos;s IP headers do not exist locally, so
+                  this stays empty outside a deployment.
+                </EmptyState>
+              ) : (
+                <MiniBars
+                  rows={geo.countries.map((c) => ({
+                    label: c.country ?? "Unknown",
+                    count: c.views,
+                  }))}
+                />
+              )}
+            </AdminPanel>
+
+            <AdminPanel title="Audience">
+              <SubHeading>Devices</SubHeading>
+              {devices.length === 0 ? (
+                <EmptyState>Nothing recorded yet.</EmptyState>
+              ) : (
+                <MiniBars rows={devices.map((d) => ({ label: d.device, count: d.views }))} />
+              )}
+              <div className="mt-4">
+                <SubHeading>Signed in vs anonymous</SubHeading>
+                <MiniBars
+                  rows={[
+                    { label: "Signed in", count: totals?.signedInViews ?? 0 },
+                    {
+                      label: "Anonymous",
+                      count: (totals?.views ?? 0) - (totals?.signedInViews ?? 0),
+                    },
+                  ]}
+                />
+              </div>
+              <p className="mt-3 text-xs text-muted-foreground">
+                Neither includes Orbit&apos;s own traffic: admin console views are never
+                recorded, and your account, the showcase account and any browser marked
+                &ldquo;don&apos;t count&rdquo; are left out of everything on this page.
+              </p>
+            </AdminPanel>
           </div>
-        </details>
-      </div>
+        </div>
+      )}
     </>
+  );
+}
+
+function SubHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+      {children}
+    </div>
   );
 }

@@ -1,4 +1,4 @@
-import { desc, sql } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { managedKeysConfigured } from "@/lib/ai-access";
 import { initialsFromName } from "@/lib/initials";
@@ -10,6 +10,7 @@ import {
   contacts,
   imports,
   interactions,
+  opsAlertState,
   usageEvents,
   userSettings,
 } from "@/db/schema";
@@ -247,9 +248,10 @@ async function queryAggregates() {
 }
 
 /**
- * How long the /admin overview reuses one set of aggregates. The overview re-polls every
- * 30 s; live, that is ten whole-table scans a minute per open tab on compute users share.
- * Counts may lag by up to this long; user_settings — signups, plans, suspensions — never does.
+ * How long the /admin overview and the /admin/users roster reuse one set of aggregates. The
+ * overview re-polls every 60 s and the roster re-reads on every sort and page; live, each was
+ * five whole-table scans per hit on compute users share. Counts may lag by up to this long;
+ * user_settings — signups, plans, suspensions — never does.
  */
 export const ADMIN_AGGREGATES_TTL_MS = 10 * 60 * 1000;
 
@@ -267,10 +269,40 @@ function aggregatesWithin(maxAgeMs: number): ReturnType<typeof queryAggregates> 
   return value;
 }
 
+export type AdminAggregates = Awaited<ReturnType<typeof queryAggregates>>;
+
+/** The per-user aggregates, memoized for `maxAgeMs` (the roster's read path). */
+export function cachedAdminAggregates(
+  maxAgeMs = ADMIN_AGGREGATES_TTL_MS
+): Promise<AdminAggregates> {
+  return aggregatesWithin(maxAgeMs);
+}
+
 export async function loadAdminUserRows(
   options: { aggregatesMaxAgeMs?: number; includeExcluded?: boolean } = {}
 ): Promise<AdminUserRow[]> {
   return (await loadAdminSnapshot(options)).rows;
+}
+
+/**
+ * A personal key for the provider the user actually selected. Someone set to Anthropic with
+ * only a Gemini key configured still cannot run a capture.
+ */
+function hasKeyForProvider(row: {
+  aiProvider: string | null;
+  hasGemini: boolean;
+  hasOpenai: boolean;
+  hasAnthropic: boolean;
+  hasOpenrouter: boolean;
+}): boolean {
+  const provider = row.aiProvider ?? "gemini";
+  return provider === "openai"
+    ? row.hasOpenai
+    : provider === "anthropic"
+      ? row.hasAnthropic
+      : provider === "openrouter"
+        ? row.hasOpenrouter
+        : row.hasGemini;
 }
 
 /** The rows plus the set of activated accounts, from one pass over the aggregates. */
@@ -349,17 +381,7 @@ export async function loadAdminSnapshot(
       u?.lastAt
     );
 
-    // A personal key for the provider the user actually selected. Someone set to
-    // Anthropic with only a Gemini key configured still cannot run a capture.
-    const provider = row.aiProvider ?? "gemini";
-    const hasProviderKey =
-      provider === "openai"
-        ? row.hasOpenai
-        : provider === "anthropic"
-          ? row.hasAnthropic
-          : provider === "openrouter"
-            ? row.hasOpenrouter
-            : row.hasGemini;
+    const hasProviderKey = hasKeyForProvider(row);
 
     return {
       userId: row.userId,
@@ -413,7 +435,10 @@ export async function loadAdminSnapshot(
  * column later via `after()`. A naive `IS NOT NULL` check would undercount every account
  * that predates that backfill.
  */
-function isOnboarded(row: AdminUserRow): boolean {
+function isOnboarded(row: {
+  onboardedAt: Date | null;
+  counts: { contacts: number; imports: number };
+}): boolean {
   return (
     row.onboardedAt != null || row.counts.contacts > 0 || row.counts.imports > 0
   );
@@ -464,7 +489,9 @@ export type PlanBreakdown = {
  * Comped, lifetime and subscribed are kept apart on purpose. A merged "paying customers"
  * number would flatter itself, so `paid` excludes comps; `paidOrComped` is the plan count.
  */
-export function buildPlanBreakdown(rows: AdminUserRow[]): PlanBreakdown {
+export function buildPlanBreakdown(
+  rows: Array<Pick<AdminUserRow, "plan" | "planSource">>
+): PlanBreakdown {
   const comped = rows.filter((r) => r.planSource === "comp").length;
   const lifetime = rows.filter((r) => r.planSource === "lifetime").length;
   const subscribed = rows.filter((r) => r.planSource === "subscription").length;
@@ -503,7 +530,7 @@ function aiWillRun(row: Pick<AdminUserRow, "hasProviderKey" | "plan">, managedAi
 }
 
 export function buildAlerts(
-  rows: AdminUserRow[],
+  rows: TriageRow[],
   now = new Date(),
   /** Whether this deployment holds a managed AI key, so Pro and Max accounts run without one. */
   managedAi = Object.values(managedKeysConfigured()).some(Boolean)
@@ -712,4 +739,188 @@ export function subscriptionsNeedingAttention(
       (r.subscriptionStatus === "canceled" &&
         (r.subscriptionPeriodEnd?.getTime() ?? 0) > ts)
   );
+}
+
+/* ------------------------------------------------------------------------------------
+ * Overview triage: alerts, recent signups and the activity KPIs, on a narrow read
+ * --------------------------------------------------------------------------------- */
+
+/** What `buildAlerts` and the recent-signups list read. Every `AdminUserRow` is one. */
+export type TriageRow = Pick<
+  AdminUserRow,
+  | "userId"
+  | "email"
+  | "signupAt"
+  | "plan"
+  | "planSource"
+  | "subscriptionStatus"
+  | "subscriptionPeriodEnd"
+  | "aiProvider"
+  | "hasProviderKey"
+  | "onboardedAt"
+  | "lastSeenAt"
+> & {
+  counts: Pick<
+    AdminUserRow["counts"],
+    "contacts" | "interactions" | "imports" | "aiCalls" | "aiFailures"
+  >;
+};
+
+export type OverviewTriage = {
+  rows: TriageRow[];
+  alerts: AdminAlert[];
+  /** Newest six accounts. */
+  recent: TriageRow[];
+  signupsLast7d: number;
+  activeLast7d: number;
+};
+
+/**
+ * `/admin`'s data, and its 60-second poll's. Not `getAdminOverview`: that selects every
+ * `user_settings` column (names, avatars, Stripe ids, comp notes) to build a funnel and
+ * totals the overview no longer shows. This reads only the columns the alerts and the
+ * recent list need, joined onto the same memoized aggregates.
+ */
+export async function getOverviewTriage(now = new Date()): Promise<OverviewTriage> {
+  const db = await getDb();
+  const [settingsRows, { contactAgg, interactionAgg, importAgg, chatAgg, usageAgg }] =
+    await Promise.all([
+      db
+        .select({
+          userId: userSettings.userId,
+          email: userSettings.email,
+          createdAt: userSettings.createdAt,
+          lastActiveAt: userSettings.lastActiveAt,
+          onboardingCompletedAt: userSettings.onboardingCompletedAt,
+          aiProvider: userSettings.aiProvider,
+          hasGemini: sql<boolean>`${userSettings.geminiApiKeyEncrypted} is not null`,
+          hasOpenai: sql<boolean>`${userSettings.openaiApiKeyEncrypted} is not null`,
+          hasAnthropic: sql<boolean>`${userSettings.anthropicApiKeyEncrypted} is not null`,
+          hasOpenrouter: sql<boolean>`${userSettings.openrouterApiKeyEncrypted} is not null`,
+          accountKind: userSettings.accountKind,
+          compedPlan: userSettings.compedPlan,
+          lifetimePurchasedAt: userSettings.lifetimePurchasedAt,
+          subscriptionPlan: userSettings.subscriptionPlan,
+          subscriptionStatus: userSettings.subscriptionStatus,
+          subscriptionPeriodEnd: userSettings.subscriptionPeriodEnd,
+        })
+        .from(userSettings)
+        .orderBy(desc(userSettings.createdAt)),
+      aggregatesWithin(ADMIN_AGGREGATES_TTL_MS),
+    ]);
+
+  const byUser = <T extends { userId: string }>(rows: T[]) =>
+    new Map(rows.map((r) => [r.userId, r]));
+  const contactsBy = byUser(contactAgg);
+  const interactionsBy = byUser(interactionAgg);
+  const importsBy = byUser(importAgg);
+  const chatBy = byUser(chatAgg);
+  const usageBy = byUser(usageAgg);
+
+  const rows = settingsRows
+    .filter((r) => !isExcludedAccount({ userId: r.userId, accountKind: r.accountKind }))
+    .map((row): TriageRow => {
+      const c = contactsBy.get(row.userId);
+      const i = interactionsBy.get(row.userId);
+      const im = importsBy.get(row.userId);
+      const u = usageBy.get(row.userId);
+      const { plan, source } = resolvePlan(row);
+      return {
+        userId: row.userId,
+        email: row.email,
+        signupAt: row.createdAt,
+        plan,
+        planSource: source,
+        subscriptionStatus: row.subscriptionStatus,
+        subscriptionPeriodEnd: row.subscriptionPeriodEnd,
+        aiProvider: row.aiProvider,
+        hasProviderKey: hasKeyForProvider(row),
+        onboardedAt: row.onboardingCompletedAt,
+        lastSeenAt: maxDate(
+          row.lastActiveAt,
+          c?.lastAt,
+          i?.lastAt,
+          im?.lastAt,
+          chatBy.get(row.userId)?.lastAt,
+          u?.lastAt
+        ),
+        counts: {
+          contacts: c?.n ?? 0,
+          interactions: i?.n ?? 0,
+          imports: im?.n ?? 0,
+          aiCalls: u?.n ?? 0,
+          aiFailures: num(u?.failures),
+        },
+      };
+    });
+
+  const ts = now.getTime();
+  return {
+    rows,
+    alerts: buildAlerts(rows, now),
+    recent: rows.slice(0, 6),
+    signupsLast7d: windowCount(rows.map((r) => r.signupAt), 7, now).current,
+    activeLast7d: rows.filter(
+      (r) => r.lastSeenAt && ts - r.lastSeenAt.getTime() <= 7 * DAY_MS
+    ).length,
+  };
+}
+
+/** Open ops alerts, by severity — the Overview's "N open ops alerts" chip. One indexed count. */
+export async function countOpenOpsAlerts(): Promise<{ open: number; critical: number }> {
+  const db = await getDb();
+  const [row] = await db
+    .select({
+      open: countInt,
+      critical: sql<number>`(count(*) filter (where ${opsAlertState.severity} = 'critical'))::int`,
+    })
+    .from(opsAlertState)
+    .where(eq(opsAlertState.active, true));
+  return { open: num(row?.open), critical: num(row?.critical) };
+}
+
+/** The JSON shape of `/admin`'s live tick (dates as ISO strings). */
+export type OverviewLiveRow = {
+  userId: string;
+  email: string | null;
+  signupAt: string;
+  plan: Plan;
+  planSource: PlanSource;
+  counts: { contacts: number; interactions: number };
+  hasProviderKey: boolean;
+};
+
+export type OverviewLiveData = {
+  alerts: AdminAlert[];
+  recent: OverviewLiveRow[];
+  signupsLast7d: number;
+  activeLast7d: number;
+  /** Null when `ops_alert_state` cannot be read; the chip then hides rather than lies. */
+  opsAlerts: { open: number; critical: number } | null;
+};
+
+/** What `/admin` paints first and what its poll returns, from the same two reads. */
+export async function getOverviewLive(
+  now = new Date()
+): Promise<OverviewLiveData & { triage: OverviewTriage }> {
+  const [triage, opsAlerts] = await Promise.all([
+    getOverviewTriage(now),
+    countOpenOpsAlerts().catch(() => null),
+  ]);
+  return {
+    triage,
+    alerts: triage.alerts,
+    recent: triage.recent.map((r) => ({
+      userId: r.userId,
+      email: r.email,
+      signupAt: r.signupAt.toISOString(),
+      plan: r.plan,
+      planSource: r.planSource,
+      counts: { contacts: r.counts.contacts, interactions: r.counts.interactions },
+      hasProviderKey: r.hasProviderKey,
+    })),
+    signupsLast7d: triage.signupsLast7d,
+    activeLast7d: triage.activeLast7d,
+    opsAlerts,
+  };
 }

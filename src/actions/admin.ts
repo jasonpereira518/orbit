@@ -220,11 +220,12 @@ export async function getAuditTrail(targetUserId: string) {
 /** Paths that show account state. Any operator write invalidates all of them. */
 function revalidateInterestList() {
   revalidatePath("/admin/growth");
-  revalidatePath("/admin/growth/interest-list");
+  // Layout, not page: the Broadcasts tab's audience count reads the same list.
+  revalidatePath("/admin/access", "layout");
 }
 
 function revalidateBroadcasts() {
-  revalidatePath("/admin/growth/broadcasts");
+  revalidatePath("/admin/access/broadcasts");
 }
 
 function revalidateAdmin(targetUserId?: string) {
@@ -354,7 +355,7 @@ export async function setSurfaceHiddenAction(input: {
   await setSurfaceHidden(adminUserId, input.surfaceKey, input.hidden);
 
   revalidatePath("/", "layout");
-  revalidatePath("/admin/product");
+  revalidatePath("/admin/product", "layout");
   return { ok: true };
 }
 
@@ -372,7 +373,7 @@ export async function setSurfaceComingSoonAction(input: {
   await setSurfaceComingSoon(adminUserId, input.surfaceKey, input.soon);
 
   revalidatePath("/", "layout");
-  revalidatePath("/admin/product");
+  revalidatePath("/admin/product", "layout");
   return { ok: true };
 }
 
@@ -389,7 +390,7 @@ export async function setSurfaceTiersAction(input: {
   await setSurfaceTiers(adminUserId, input.surfaceKey, input.plans);
 
   revalidatePath("/", "layout");
-  revalidatePath("/admin/product");
+  revalidatePath("/admin/product", "layout");
   return { ok: true };
 }
 
@@ -400,7 +401,7 @@ export async function setNavOrderAction(input: { order: string[] }): Promise<{ o
   await setNavOrder(adminUserId, input.order);
 
   revalidatePath("/", "layout");
-  revalidatePath("/admin/product");
+  revalidatePath("/admin/product", "layout");
   return { ok: true };
 }
 
@@ -425,7 +426,7 @@ export async function setConstellationConfigAction(input: {
   const next = await setConstellationConfig(adminUserId, input);
 
   revalidatePath("/", "layout");
-  revalidatePath("/admin/product");
+  revalidatePath("/admin/product", "layout");
   revalidatePath("/graph");
   revalidatePath("/dashboard");
   return next;
@@ -1053,9 +1054,9 @@ export async function refreshProvidersAction(): Promise<{ ok: true }> {
 
 /* ------------------------------------------------------------------------ site access */
 
+/** The stealth switch sits in the header of every Access tab, so all of them go stale. */
 function revalidateAccess() {
-  revalidatePath("/admin/access");
-  revalidatePath("/admin/growth/interest-list");
+  revalidatePath("/admin/access", "layout");
 }
 
 /**
@@ -1087,7 +1088,7 @@ export async function setWaitlistDemoAction(input: {
   const enabled = await setWaitlistDemoEnabled(adminUserId, input.enabled === true);
   revalidatePath("/interest");
   revalidatePath("/");
-  revalidatePath("/admin/growth/interest-list");
+  revalidatePath("/admin/access");
   return { ok: true, enabled };
 }
 
@@ -1160,7 +1161,7 @@ export async function setWebSearchPausedAction(input: {
 /* ------------------------------------------------- Shared LinkedIn photo takedown ------- */
 
 function revalidateAvatars() {
-  revalidatePath("/admin/avatars");
+  revalidatePath("/admin/product/photos");
   revalidatePath("/admin/users");
 }
 

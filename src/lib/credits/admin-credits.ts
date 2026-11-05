@@ -38,7 +38,7 @@ export type CreditsMoney = {
     /** Unused credits on live packs, and what the buyers paid for them, pro rata. */
     unusedCredits: number;
     cents: number;
-    /** The part of it held by accounts no longer on Pro or Max: frozen, not spendable. */
+    /** The part of it held by accounts on a plan where packs cannot be spent (Lifetime): frozen. */
     frozenCents: number;
   };
   allowance: {
@@ -134,14 +134,7 @@ export async function loadCreditsMoney(
           notInternal(creditGrants.userId)
         )
       ),
-    db
-      .select({
-        micros: sql<string>`coalesce(sum(${managedCostSql()}), 0)::bigint`,
-        calls: sql<string>`count(*)`,
-        accounts: sql<string>`count(DISTINCT ${usageEvents.userId})`,
-      })
-      .from(usageEvents)
-      .where(managedWindow(since, undefined, false)),
+    managedAiUsage(days, now),
     // Model cost plus Deepgram per account in one ranking. `speech_usage` is unaliased because
     // `speechMicrosSql()` qualifies its columns with the table name.
     db.execute(sql`
@@ -160,12 +153,7 @@ export async function loadCreditsMoney(
       ORDER BY sum(t.micros) DESC, t.user_id
       LIMIT 10
     `),
-    db.execute(sql`
-      SELECT round(coalesce(sum(${speechMicrosSql()}), 0))::bigint AS micros
-      FROM speech_usage
-      WHERE speech_usage.created_at >= ${since}
-        AND NOT ${internalAccountSql(sql`speech_usage.user_id`)}
-    `),
+    deepgramCostMicros(days, now),
   ]);
 
   const booked = packLedger[0];
@@ -205,10 +193,10 @@ export async function loadCreditsMoney(
       usedCredits: Math.round((grantedMicros - num(allowance[0]?.remaining)) / MICROS_PER_CREDIT),
     },
     managedAi: {
-      costMicros: num(managed[0]?.micros),
-      deepgramMicros: num(rowsOf<{ micros: string }>(speech)[0]?.micros),
-      calls: num(managed[0]?.calls),
-      accounts: num(managed[0]?.accounts),
+      costMicros: managed.costMicros,
+      deepgramMicros: speech,
+      calls: managed.calls,
+      accounts: managed.accounts,
       topSpenders: rowsOf<{ user_id: string; micros: string; calls: number }>(topSpenders).map((r) => ({
         userId: r.user_id,
         micros: num(r.micros),
@@ -260,12 +248,29 @@ export async function managedAiCostMicros(
   now = new Date(),
   opts: { includeInternal?: boolean } = {}
 ): Promise<number> {
+  return (await managedAiUsage(days, now, opts)).costMicros;
+}
+
+/**
+ * `managedAiCostMicros` with the call and account counts beside it, from the same statement.
+ * The ONE reader of Orbit-key AI cost: the Money pages, the credits section and the YC
+ * Runway / Unit Economics pages all go through here.
+ */
+export async function managedAiUsage(
+  days = 30,
+  now = new Date(),
+  opts: { includeInternal?: boolean } = {}
+): Promise<{ costMicros: number; calls: number; accounts: number }> {
   const db = await getDb();
   const [row] = await db
-    .select({ micros: sql<string>`coalesce(sum(${managedCostSql()}), 0)::bigint` })
+    .select({
+      micros: sql<string>`coalesce(sum(${managedCostSql()}), 0)::bigint`,
+      calls: sql<string>`count(*)`,
+      accounts: sql<string>`count(DISTINCT ${usageEvents.userId})`,
+    })
     .from(usageEvents)
     .where(managedWindow(new Date(now.getTime() - days * 86_400_000), undefined, opts.includeInternal ?? false));
-  return num(row?.micros);
+  return { costMicros: num(row?.micros), calls: num(row?.calls), accounts: num(row?.accounts) };
 }
 
 /** Deepgram spend over the trailing window, priced from `speech_usage`; same internal rule as above. */

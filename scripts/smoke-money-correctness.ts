@@ -50,7 +50,7 @@ import {
 } from "../src/lib/billing-events";
 import { decideStripeEvent } from "../src/lib/billing-stripe";
 import { PRICE_LOOKUP_KEYS } from "../src/lib/stripe-config";
-import { managedAiCostMicros, deepgramCostMicros, loadCreditsMoney } from "../src/lib/credits/admin-credits";
+import { managedAiCostMicros, managedAiUsage, deepgramCostMicros, loadCreditsMoney } from "../src/lib/credits/admin-credits";
 import { loadManagedAiOpsFacts } from "../src/lib/managed-ai-ops";
 import { monthStart } from "../src/lib/infra-costs";
 import {
@@ -165,7 +165,7 @@ run(async () => {
   const managed0 = await managedAiCostMicros(30, now);
   const managedAll0 = await managedAiCostMicros(30, now, { includeInternal: true });
   const dg0 = await deepgramCostMicros(30, now);
-  const breakdown0 = await costToRunBreakdown(30);
+  const managedUsage0 = await managedAiUsage(30, now);
   const credits0 = await loadCreditsMoney(new Set(), 30, now);
   const ops0 = await loadManagedAiOpsFacts(now);
   const runway0 = await loadRunwayMetrics(now);
@@ -373,7 +373,7 @@ run(async () => {
   const customerManaged = 2_000_000 + UNPRICED_CALL_MICROS.embedding + 50_000_000 + 4_000_000;
   const dMan = (await managedAiCostMicros(30, now)) - managed0;
   check("managedAiCostMicros: priced + stand-in, Orbit's keys, no Deepgram, no user keys, no admin", dMan === customerManaged, dMan);
-  check("…the cost-to-run breakdown reports the same figure", (await costToRunBreakdown(30)).orbitKeyMicros - breakdown0.orbitKeyMicros === customerManaged);
+  check("…and managedAiUsage (the one reader) agrees, with its call count", (await managedAiUsage(30, now)).costMicros - managedUsage0.costMicros === customerManaged);
   const credits = await loadCreditsMoney(new Set(), 30, now);
   check("…and so does the credits section", credits.managedAi.costMicros - credits0.managedAi.costMicros === customerManaged);
   const allManaged = customerManaged + 3_000_000;
@@ -386,7 +386,7 @@ run(async () => {
   const adminDg = speechCostMicros([{ kind: "shortform", source: "file", seconds: 300 }]);
   check("600 s of shortform file audio prices at 99 000 micros", customerDg === 99_000, customerDg);
   check("Deepgram for customers: priced from speech_usage, internal left out", (await deepgramCostMicros(30, now)) - dg0 === customerDg);
-  check("…the cost-to-run breakdown and the credits section show the same", (await costToRunBreakdown(30)).deepgramMicros - breakdown0.deepgramMicros === customerDg && credits.managedAi.deepgramMicros - credits0.managedAi.deepgramMicros === customerDg);
+  check("…the credits section shows the same", credits.managedAi.deepgramMicros - credits0.managedAi.deepgramMicros === customerDg);
   check("burn carries ALL Deepgram (the admin's too) in its own line", Math.abs((runway.deepgramMonthlyUsd - runway0.deepgramMonthlyUsd) * 1e6 - (customerDg + adminDg)) < 1);
   check("…which is speechSpendMicros", (await speechSpendMicros(hAgo(24 * 30))) - speechAll0 === customerDg + adminDg);
   check("per-account Deepgram agrees with the total", ((await speechSpendByUser(hAgo(24 * 30), new Date(now.getTime() + 1))).get(SUB) ?? 0) === customerDg);
@@ -482,19 +482,21 @@ run(async () => {
   /* ---- pages ----------------------------------------------------------------------- */
   console.log("\nThe pages render with the new figures");
   const { default: MoneyPage } = await import("../src/app/(clerk)/(admin)/admin/billing/page");
-  const { default: MovementPage } = await import("../src/app/(clerk)/(admin)/admin/billing/movement/page");
+  const { default: RevenuePage } = await import("../src/app/(clerk)/(admin)/admin/billing/revenue/page");
   const { default: CostsPage } = await import("../src/app/(clerk)/(admin)/admin/billing/costs/page");
-  const { default: DemandPage } = await import("../src/app/(clerk)/(admin)/admin/billing/demand/page");
-  const { default: RunCostPage } = await import("../src/app/(clerk)/(admin)/admin/billing/run-cost/page");
   const { default: EconomicsPage } = await import("../src/app/(clerk)/(admin)/admin/yc/economics/page");
   const { default: RunwayPage } = await import("../src/app/(clerk)/(admin)/admin/yc/runway/page");
 
   const money = textOf(await MoneyPage()).join("|");
-  check("Money: Lifetime sold and holders, and the intro / standard histogram", money.includes("Lifetime sold") && money.includes("holders") && money.includes("Intro ($25)") && money.includes("Standard ($75)"));
-  const movement = textOf(await MovementPage()).join("|");
-  check("Movement: the stale '$5/mo becomes $4.17/mo' copy is gone; prices come from the plan table", !movement.includes("4.17") && movement.includes("$8.99") && movement.includes("$7.50"), movement.slice(movement.indexOf("Contract"), movement.indexOf("Contract") + 160));
+  check("Money: Lifetime sold and holders, with the intro / standard split in its hint", money.includes("Lifetime sold") && money.includes("holders") && money.includes("Intro ($25)") && money.includes("Standard ($75)"));
+  check("Money: no stale 'from the Access page' copy", !money.includes("Access page"));
+  const movement = textOf(await RevenuePage()).join("|");
+  check("Revenue: the comped account is listed (targeted read), and the wall panel renders", movement.includes(COMP) && movement.includes("Refused, 30 days"));
+  check("Revenue: the stale '$5/mo becomes $4.17/mo' copy is gone; prices come from the plan table", !movement.includes("4.17") && movement.includes("$8.99") && movement.includes("$7.50"), movement.slice(movement.indexOf("Contract"), movement.indexOf("Contract") + 160));
   const costs = textOf(await CostsPage()).join("|");
   check("Costs: the unit-economics table, the heavy-user list (ids), and CAC", costs.includes("Unit economics by plan") && costs.includes(FREE) && costs.includes("CAC"));
+  check("Costs: the run-cost material is here (distribution, by model, by operation)", costs.includes("Spend per account, by month") && costs.includes("By model, 30 days") && costs.includes("By operation, 30 days"));
+  check("Costs: no stale BYOK / Access-page copy", !costs.includes("every plan but Lifetime") && !costs.includes("Access page"));
   const economics = textOf(await EconomicsPage()).join("|");
   const cacText = cac.cac === null ? "—" : `$${cac.cac.toFixed(0)}`;
   const cacCosts = cac.cac === null ? "—" : `$${Math.round(cac.cac)}`;
@@ -502,9 +504,6 @@ run(async () => {
   check("Economics labels an estimate as an estimate, or says why there is no LTV", economics.includes("LTV (estimate)") || economics.includes("subscriber-months") || economics.includes("no "), economics.slice(0, 300));
   const runwayText = textOf(await RunwayPage()).join("|");
   check("Runway says burn includes Deepgram and acquisition", runwayText.includes("Deepgram") && runwayText.includes("Acquisition"));
-  await DemandPage();
-  await RunCostPage();
-  check("Demand and Cost-to-run render", true);
 
   /* ---- 1.13: observed LTV once there is enough subscriber time ----------------------- */
   console.log("\nLTV from the ledger once the window has 100 subscriber-months");

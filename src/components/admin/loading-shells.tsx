@@ -21,7 +21,7 @@ type PanelBlock = {
 };
 
 export type LoadingBlock =
-  | { tiles: 3 | 4 | 5 }
+  | { tiles: 1 | 2 | 3 | 4 | 5 }
   | ({ panel: true } & PanelBlock)
   | { pair: [PanelBlock, PanelBlock] }
   | { toolbar: true }
@@ -29,6 +29,8 @@ export type LoadingBlock =
   | { range: true };
 
 const TILE_GRID = {
+  1: "grid gap-3 sm:max-w-xs",
+  2: "grid gap-3 sm:grid-cols-2",
   3: "grid gap-3 sm:grid-cols-3",
   4: "grid gap-3 sm:grid-cols-2 lg:grid-cols-4",
   5: "grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5",

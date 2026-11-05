@@ -493,18 +493,3 @@ export async function churnSummary(now: Date = new Date()): Promise<ChurnSummary
   const r = rowsOf<Record<string, number>>(res)[0] ?? {};
   return { canceledLast90d: num(r.canceled), subscribersNow: num(r.subscribers) };
 }
-
-/** The three newest unresolved bug reports, as ids and areas only; the text stays behind a click. */
-export async function newestBugs(limit = 3): Promise<Array<{ id: string; area: string | null; createdAt: Date }>> {
-  const db = await getDb();
-  const res = await db.execute(sql`
-    SELECT id, area, created_at FROM feedback
-    WHERE category = 'bug' AND status <> 'resolved'
-    ORDER BY created_at DESC LIMIT ${limit}
-  `);
-  return rowsOf<Record<string, string | Date | null>>(res).map((r) => ({
-    id: String(r.id),
-    area: r.area ? String(r.area) : null,
-    createdAt: new Date(String(r.created_at)),
-  }));
-}

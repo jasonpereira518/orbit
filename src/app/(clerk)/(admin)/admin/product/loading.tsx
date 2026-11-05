@@ -1,3 +1,4 @@
+import { ProductSectionTabs } from "@/components/admin/admin-tabs";
 import { AdminLoading } from "@/components/admin/loading-shells";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -14,12 +15,13 @@ function ToggleRows({ count }: { count: number }) {
   );
 }
 
-/** Mirrors /admin/product: header, the two preview cards, the tab row, then the page list. */
+/** Mirrors /admin/product (Pages): header, the tab row, the two preview cards, then the page list. */
 export default function AdminProductLoading() {
   return (
     <AdminLoading
       title="Product"
       subtitle="Loading surfaces…"
+      tabs={<ProductSectionTabs />}
       blocks={[
         { panel: true, title: "Preview", body: <Skeleton className="h-10 w-full max-w-xl" /> },
         { panel: true, title: "Pages, in sidebar order", body: <ToggleRows count={8} /> },

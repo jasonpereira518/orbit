@@ -1,6 +1,6 @@
 /**
- * Guards the queries behind `/admin/growth`: user totals, signed-in viewers, rolling
- * active accounts, retention curves and per-feature depth.
+ * Guards the queries behind the Growth tabs: user totals, signed-in viewers, rolling active accounts,
+ * retention curves, per-feature depth and AI cost.
  *
  * Every failure these catch is silent in the rendered page — a chart with a wrong number
  * still draws a perfectly plausible line. So the assertions are about invariants a reader
@@ -27,14 +27,12 @@ import { getDb } from "../src/db";
 import {
   aiOperationCosts,
   aiWeeklyUsage,
-  consistentUsersTrend,
   depthTrend,
   growthSnapshot,
   retentionCurves,
   rollingActiveTrend,
   userTotalsTrend,
   viewersTrend,
-  workflowStagesTrend,
 } from "../src/lib/admin-trends";
 import { MIN_RATE_DENOMINATOR, formatRate } from "../src/lib/format-rate";
 import { grainAllowed, growthHref, resolveGrowthWindow } from "../src/lib/growth-range";
@@ -64,8 +62,8 @@ async function main() {
   check("monthly over 30 days is refused", !grainAllowed("month", 30));
   const allTime = resolveGrowthWindow({ range: "all", grain: "month" }, new Date(now.getTime() - 400 * DAY), now);
   check("all-time spans back to the first signup", allTime.spanDays >= 400 && allTime.buckets >= 13, JSON.stringify(allTime));
-  check("default window has a bare href", growthHref("90d", "week") === "/admin/growth");
-  check("non-default window keeps its params", growthHref("12m", "week") === "/admin/growth?range=12m&grain=week");
+  check("default window has a bare href", growthHref("90d", "week", "/admin/growth/retention") === "/admin/growth/retention");
+  check("non-default window keeps its params", growthHref("12m", "week", "/admin/growth/retention") === "/admin/growth/retention?range=12m&grain=week");
 
   console.log("\nRate rule");
   check(`below ${MIN_RATE_DENOMINATOR} the percentage is withheld`, formatRate(9, MIN_RATE_DENOMINATOR - 1) === `9 of ${MIN_RATE_DENOMINATOR - 1}`);
@@ -80,7 +78,6 @@ async function main() {
     depth: await depthTrend("week", BUCKETS),
     snapshot: await growthSnapshot(56),
     retention: await retentionCurves(6, 12),
-    stages: await workflowStagesTrend("week", BUCKETS),
   };
 
   // --- 3. Seed ------------------------------------------------------------------------
@@ -153,7 +150,6 @@ async function main() {
     depth: await depthTrend("week", BUCKETS),
     snapshot: await growthSnapshot(56),
     retention: await retentionCurves(6, 12),
-    stages: await workflowStagesTrend("week", BUCKETS),
   };
 
   const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
@@ -260,27 +256,11 @@ async function main() {
     Boolean(young) && !young!.weeks.some((w) => w.week === 0)
   );
 
-  console.log("\nWorkflow stages");
-  const stageDelta = (k: "signedUp" | "onboarded" | "hasContacts" | "loggedActivity" | "cameBack") =>
-    sum(after.stages.map((p) => p[k])) - sum(before.stages.map((p) => p[k]));
-  // a and b wrote 7+ days after joining; c (three days old) chatted but cannot have come back.
-  check("two accounts came back", stageDelta("cameBack") === 2, `delta ${stageDelta("cameBack")}`);
-  check("c stops at logged activity", stageDelta("loggedActivity") === 1, `delta ${stageDelta("loggedActivity")}`);
-  check(
-    "stages partition each week's signups",
-    after.stages.every((p, i) => {
-      const t = after.totals[i]!;
-      return p.signedUp + p.onboarded + p.hasContacts + p.loggedActivity + p.cameBack === t.added;
-    })
-  );
-
-  // --- 5. Consistency and AI cost: their own seed, their own baseline ----------------
-  console.log("\nConsistent use");
-  const cBefore = await consistentUsersTrend(BUCKETS);
+  // --- 5. AI cost: its own seed, its own baseline -------------------------------------
   const aiBefore = await aiWeeklyUsage(BUCKETS);
   const opsBefore = await aiOperationCosts(30);
 
-  // k writes once a week, four weeks running: consistent by both definitions.
+  // k owns the AI calls below.
   await user("k", ago(40 * DAY));
   for (const d of [0, 7, 14, 21]) await contact("k", ago(d * DAY + 1 * HOUR));
   // AI: two managed-key calls, one BYOK call, one failed unpriced call.
@@ -291,14 +271,6 @@ async function main() {
   await db.execute(ev("orbit", 2500, 1));
   await db.execute(ev("user", 700, 1));
   await db.execute(ev("user", null, 0));
-
-  const cAfter = await consistentUsersTrend(BUCKETS);
-  check(
-    "all-four ≤ three-of-four at every week",
-    cAfter.every((p) => p.allFour <= p.threeOfFour)
-  );
-  check("k counts as active in all four weeks", last(cAfter).allFour - last(cBefore).allFour === 1, `delta ${last(cAfter).allFour - last(cBefore).allFour}`);
-  check("and in three-of-four", last(cAfter).threeOfFour - last(cBefore).threeOfFour === 1);
 
   console.log("\nAI usage and cost");
   const aiAfter = await aiWeeklyUsage(BUCKETS);
