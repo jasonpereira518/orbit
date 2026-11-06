@@ -1,5 +1,6 @@
 "use client";
 
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useRouter } from "next/navigation";
 import { useState, useTransition, type ComponentType } from "react";
 import {
@@ -45,12 +46,6 @@ import { cn } from "@/lib/utils";
 export type RailTarget =
   | { kind: "view"; view: ReminderView | "suggested" }
   | { kind: "list"; id: string };
-
-export function sameTarget(a: RailTarget, b: RailTarget) {
-  return a.kind === "view" && b.kind === "view"
-    ? a.view === b.view
-    : a.kind === "list" && b.kind === "list" && a.id === b.id;
-}
 
 const VIEWS: Array<{
   view: ReminderView;
@@ -179,7 +174,7 @@ export function ReminderRail({
               label="Suggested"
               className="text-amber-900 dark:text-amber-100"
               trailing={
-                <span className="rounded-full bg-amber-500/15 px-1.5 text-[11px] font-medium tabular-nums text-amber-800 dark:text-amber-200">
+                <span className="rounded-full bg-amber-500/15 px-1.5 text-2xs font-medium tabular-nums text-amber-800 dark:text-amber-200">
                   {counts.suggested}
                   <span className="sr-only"> to review</span>
                 </span>
@@ -190,7 +185,7 @@ export function ReminderRail({
       </ul>
 
       <div>
-        <h2 className="mb-1.5 px-2.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        <h2 className="mb-1.5 px-2.5 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
           Lists
         </h2>
         <ul className="space-y-0.5">
@@ -343,6 +338,7 @@ function RailButton({
       type="button"
       onClick={onClick}
       aria-current={active ? "page" : undefined}
+      {...(label === "Today" ? tourAnchor("reminders.rail-today") : {})}
       className={cn(
         "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors duration-fast",
         "outline-none focus-visible:ring-2 focus-visible:ring-ring/40",

@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import Link from "next/link";
 import { RecruiterLogForm } from "@/components/recruiters/recruiter-log-form";
 import { requireUserId } from "@/lib/auth";
@@ -7,7 +8,12 @@ import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
+export const metadata = { title: "Log a recruiter" };
+
 export default async function NewRecruiterPage() {
+  const gate = await pageVisibilityGate("page.recruiters");
+  if (gate) return gate;
+
   const { canUseRecruiters } = await getEntitlements(await requireUserId());
   if (!canUseRecruiters) return <RecruitersLocked />;
 

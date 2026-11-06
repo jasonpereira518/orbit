@@ -23,7 +23,7 @@ import { run } from "./smoke/_env";
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "../src/db";
 import { calendarSubscriptions } from "../src/db/schema";
-import { syncCalendarSubscription } from "../src/lib/calendar-sync";
+import { maskIcsUrl, openIcsUrl, sealIcsUrl, syncCalendarSubscription } from "../src/lib/calendar-sync";
 
 const USER = "calendar-subscription-sync-smoke-user";
 
@@ -552,6 +552,35 @@ run(async () => {
       );
     } finally {
       Date.now = realDateNow;
+      globalThis.fetch = realFetch;
+    }
+  }
+
+  // --- the feed URL at rest (Oct 13 2026): encrypted on write, plaintext rows still read ---
+  {
+    const secretUrl = "https://93.184.216.34/calendar/ical/x/private-s3cr3t/basic.ics";
+    const sealed = sealIcsUrl(secretUrl);
+    check("a sealed feed URL does not hold the secret", !sealed.includes("s3cr3t") && !sealed.startsWith("https://"));
+    check("a sealed feed URL opens back to the URL", openIcsUrl(sealed) === secretUrl);
+    check("a plaintext row saved before encryption still opens", openIcsUrl(secretUrl) === secretUrl);
+    check("an undecryptable value opens to null, not a fetch of garbage", openIcsUrl("deadbeef:00:11") === null);
+    check("the browser sees the host, never the secret path", maskIcsUrl(sealed) === "https://93.184.216.34/…");
+
+    await reset();
+    const realFetch = globalThis.fetch;
+    const fetched: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      fetched.push(String(input instanceof Request ? input.url : input));
+      return new Response("BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n", { status: 200, headers: { "Content-Type": "text/calendar" } });
+    }) as typeof fetch;
+    try {
+      const [sealedSub] = await db
+        .insert(calendarSubscriptions)
+        .values({ userId: USER, icsUrl: sealed, enabled: 1 })
+        .returning();
+      await syncCalendarSubscription(USER, sealedSub!.id);
+      check("a sealed subscription syncs from the decrypted URL", fetched.some((u) => u.includes("private-s3cr3t")), fetched.join(", "));
+    } finally {
       globalThis.fetch = realFetch;
     }
   }

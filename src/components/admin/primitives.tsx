@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { PLAN_LABELS, type Plan } from "@/lib/plan-limits";
 import type { PlanSource } from "@/lib/entitlements";
 import { RelativeTime } from "@/components/admin/relative-time";
+import { ScrollRegion } from "@/components/ui/scroll-region";
 import { cn } from "@/lib/utils";
 
 /**
@@ -44,7 +45,10 @@ export function AdminPageHeader({
           )}
         </div>
       </div>
-      {action && <div className="shrink-0">{action}</div>}
+      {/* `max-w-full`, not `shrink-0`: a row of actions that can't fit beside the title drops
+          below it and may still wrap, where `shrink-0` held it at its full width and ran it
+          off a phone's screen (/admin/growth/interest-list, +45px at 360). */}
+      {action && <div className="min-w-0 max-w-full">{action}</div>}
     </div>
   );
 }
@@ -65,7 +69,9 @@ export function AdminPanel({
   return (
     <section
       className={cn(
-        "rounded-xl border border-border/70 bg-card",
+        // `min-w-0`: as a grid or flex child, a panel otherwise refuses to shrink below its
+        // widest row and runs off a phone's screen.
+        "min-w-0 rounded-xl border border-border/70 bg-card",
         className
       )}
     >
@@ -151,7 +157,7 @@ export function MiniBars({
         const pct = (row.count / max) * 100;
         const body = (
           <>
-            <span className="w-36 shrink-0 truncate text-muted-foreground">
+            <span className="w-24 shrink-0 truncate text-muted-foreground sm:w-36">
               {row.label}
             </span>
             <span className="w-10 shrink-0 text-right tabular-nums">
@@ -182,7 +188,7 @@ export function MiniBars({
             {row.href ? (
               <Link
                 href={row.href}
-                className="flex flex-1 items-center gap-3 hover:text-primary"
+                className="flex min-w-0 flex-1 items-center gap-3 hover:text-primary"
               >
                 {body}
               </Link>
@@ -245,7 +251,7 @@ export function TrendBars({
       {headings && (
         <li
           aria-hidden
-          className="flex items-center gap-3 pb-1 text-[11px] uppercase tracking-wide text-muted-foreground/70"
+          className="flex items-center gap-3 pb-1 text-2xs uppercase tracking-wide text-muted-foreground-subtle"
         >
           <span className="w-24 shrink-0" />
           <span className="w-10 shrink-0 text-right">{headings.count}</span>
@@ -405,9 +411,16 @@ export function AdminTable({
   head,
   children,
   minWidth = "lg",
+  label,
 }: {
   head: React.ReactNode;
   children: React.ReactNode;
+  /**
+   * Names the scroll box, which joins the tab order while the table overflows so a keyboard
+   * can reach its hidden columns (axe `scrollable-region-focusable`). Usually the panel's
+   * title. Unique per page: two regions with one name are indistinguishable in a landmarks list.
+   */
+  label?: string;
   /**
    * The width below which the table scrolls instead of squeezing its columns. `lg` suits a
    * full-width roster; a two- or three-column table in a half-width panel wants `none`, or
@@ -415,18 +428,21 @@ export function AdminTable({
    */
   minWidth?: keyof typeof TABLE_MIN_WIDTH;
 }) {
-  return (
-    // Wide tables scroll inside their own container so the page body never does.
-    <div className="overflow-x-auto">
-      <table className={cn("w-full border-collapse text-sm", TABLE_MIN_WIDTH[minWidth])}>
-        <thead>
-          <tr className="border-b border-border/60 text-left text-xs uppercase tracking-wider text-muted-foreground">
-            {head}
-          </tr>
-        </thead>
-        <tbody>{children}</tbody>
-      </table>
-    </div>
+  const table = (
+    <table className={cn("w-full border-collapse text-sm", TABLE_MIN_WIDTH[minWidth])}>
+      <thead>
+        <tr className="border-b border-border/60 text-left text-xs uppercase tracking-wider text-muted-foreground">
+          {head}
+        </tr>
+      </thead>
+      <tbody>{children}</tbody>
+    </table>
+  );
+  // Wide tables scroll inside their own container so the page body never does.
+  return label ? (
+    <ScrollRegion label={label}>{table}</ScrollRegion>
+  ) : (
+    <div className="overflow-x-auto">{table}</div>
   );
 }
 
@@ -523,12 +539,16 @@ export function CodeDetail({ children }: { children: React.ReactNode }) {
 export function TrendTable({
   columns,
   rows,
+  label,
 }: {
   columns: string[];
   rows: Array<{ period: string; values: number[] }>;
+  /** See `AdminTable`'s `label`. */
+  label?: string;
 }) {
   return (
     <AdminTable
+      label={label}
       minWidth={columns.length <= 2 ? "none" : "sm"}
       head={
         <>

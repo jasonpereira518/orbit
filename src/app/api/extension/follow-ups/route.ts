@@ -11,6 +11,7 @@ export const dynamic = "force-dynamic";
 /** Schedule, snooze, or clear a contact's follow-up. */
 export const POST = extensionRoute<FollowUpRequest, FollowUpResponse>({
   schema: followUpRequestSchema,
+  action: "schedule_follow_up",
   handler: async ({ userId, input }) => {
     const { contactId, reminderId, title, ...followUp } = input;
     const result = await scheduleContactFollowUp(userId, {

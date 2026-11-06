@@ -13,6 +13,7 @@
  * A tooltip keeps the reason and gives the height back.
  */
 
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bell,
@@ -150,6 +151,7 @@ function Scroller({ children }: { children: React.ReactNode }) {
       ref={ref}
       onScroll={measure}
       data-slot="chat-suggestions"
+      {...tourAnchor("chat.suggestions")}
       className={cn(
         "-mx-1 flex items-center gap-2 overflow-x-auto overflow-y-hidden touch-pan-x px-1 pb-0.5",
         "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
@@ -212,7 +214,7 @@ export function SuggestionCards({
                   row is hardest to read. Shown inline only below `sm`, where it costs one
                   extra pill's width rather than the row's height. */}
               {s.basis && (
-                <span className="truncate text-[11px] text-muted-foreground sm:hidden">
+                <span className="truncate text-2xs text-muted-foreground sm:hidden">
                   · {s.basis}
                 </span>
               )}
@@ -255,41 +257,5 @@ export function SuggestionCardsSkeleton() {
         />
       ))}
     </Scroller>
-  );
-}
-
-/**
- * The same suggestions as plain pills, for the floating ask bar.
- *
- * Its popover is `w-80` inside a 48vh cap, so this variant wraps instead of scrolling and
- * the caller caps how many it shows. No tooltip: a tooltip inside a popover has to escape
- * two stacking contexts to be read, and the bar is a transient surface people type in
- * rather than browse. The reason rides on `title` instead, which costs nothing.
- */
-export function SuggestionPills({
-  items,
-  disabled,
-  onPick,
-}: {
-  items: readonly ChatSuggestion[];
-  disabled?: boolean;
-  onPick: (suggestion: ChatSuggestion) => void;
-}) {
-  if (!items.length) return null;
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {items.map((s) => (
-        <button
-          key={s.id}
-          type="button"
-          disabled={disabled}
-          title={s.basis || undefined}
-          onClick={() => onPick(s)}
-          className="max-w-full truncate rounded-full border border-border/70 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
-        >
-          {s.question}
-        </button>
-      ))}
-    </div>
   );
 }

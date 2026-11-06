@@ -8,7 +8,8 @@
  * Run: npx tsx scripts/smoke-brand-colors.ts
  */
 import { brandKey, lookupBrand } from "@/lib/brand-colors";
-import { companyBrandColor as cardColor, uiFriendlyBrand } from "@/lib/company-brand";
+import { companyBrandColor as cardColor, companyBrandText, uiFriendlyBrand } from "@/lib/company-brand";
+import { MIN_CONTRAST, worstContrast } from "@/lib/contrast";
 import {
   clusterBrandColor,
   companyBrandColor as skyCompanyColor,
@@ -70,7 +71,9 @@ check("'J.P. Morgan' and 'JP Morgan' share a key", brandKey("J.P. Morgan") === b
 
 console.log("\neach consumer keeps its own contract");
 check("card returns null for empty", cardColor("") === null && cardColor("   ") === null && cardColor(null) === null);
-check("card greys a monochrome brand", cardColor("Vercel") === "#9CA3AF");
+// A monochrome brand gets no tint: a light grey measured 2.5:1 as text on a white card, so the
+// name renders in the surrounding muted text colour instead.
+check("card leaves a monochrome brand untinted", cardColor("Vercel") === null);
 check("sky draws a black brand as a visible grey", /^#([0-9a-f]{2})\1\1$/i.test(skyCompanyColor("Vercel")));
 check("sky keeps Duke blue (lifted within its hue, not greyed)", (() => {
   const c = schoolStarColor("Duke University");
@@ -78,6 +81,18 @@ check("sky keeps Duke blue (lifted within its hue, not greyed)", (() => {
 })());
 check("card hash fallback keeps its shape", cardColor("Acme Widgets") === cardColor("  acme   WIDGETS "));
 check("sky neutral for empty school", schoolStarColor("") === "#c8d0dc");
+
+console.log("\nbrand tints as text clear AA in both themes");
+// Figma's orange measured 3.56:1 on a white card and Stripe's blurple 3.31:1 on the dark one
+// when the raw brand was the text colour.
+for (const name of ["Figma", "Stripe", "Snapchat", "Anthropic", "Google Cloud", "Acme Widgets", "Metaverse Labs"]) {
+  const text = companyBrandText(name);
+  const style = (text?.style ?? {}) as Record<string, string>;
+  const light = style["--brand-text"] ? worstContrast(style["--brand-text"], "light") : 0;
+  const dark = style["--brand-text-dark"] ? worstContrast(style["--brand-text-dark"], "dark") : 0;
+  check(`${name}: ${light.toFixed(2)}:1 light, ${dark.toFixed(2)}:1 dark (≥ ${MIN_CONTRAST})`, light >= MIN_CONTRAST && dark >= MIN_CONTRAST);
+}
+check("a monochrome brand has no text tint", companyBrandText("Vercel") === null);
 
 if (failures) {
   console.error(`\nsmoke-brand-colors: ${failures} check(s) failed`);

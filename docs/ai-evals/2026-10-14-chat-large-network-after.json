@@ -1,0 +1,190 @@
+{
+  "label": "new-large",
+  "provider": "gemini",
+  "model": "gemini-3.8-flash",
+  "date": "2026-10-15T01:23:37.871Z",
+  "commit": "5703d7ac",
+  "fixtures": "98ad814ef127",
+  "runs": 3,
+  "decisions": null,
+  "network": "large",
+  "tasks": {
+    "chat": {
+      "cases": 21,
+      "metrics": {
+        "mentionRecall": 1,
+        "retrievalRecall": 0.8846153846153846,
+        "factRecall": 1
+      },
+      "misses": [],
+      "p50LatencyMs": 9128,
+      "costMicros": 171480.66666666666,
+      "costPerCaseMicros": 8165.746031746031,
+      "usage": [
+        {
+          "operation": "chat.answer",
+          "model": "gemini-3.8-flash",
+          "calls": 63,
+          "failures": 0,
+          "inputTokens": 160353,
+          "outputTokens": 59680,
+          "cachedInputTokens": 0,
+          "costMicros": 344072,
+          "unpriced": 0,
+          "p50Ms": 6322
+        },
+        {
+          "operation": "chat.gather",
+          "model": "gemini-3.8-flash",
+          "calls": 37,
+          "failures": 0,
+          "inputTokens": 152038,
+          "outputTokens": 5923,
+          "cachedInputTokens": 3114,
+          "costMicros": 134144,
+          "unpriced": 0,
+          "p50Ms": 2328
+        },
+        {
+          "operation": "chat.rerank",
+          "model": "gemini-3.1-flash-lite",
+          "calls": 9,
+          "failures": 3,
+          "inputTokens": 13305,
+          "outputTokens": 6696,
+          "cachedInputTokens": 0,
+          "costMicros": 13372,
+          "unpriced": 0,
+          "p50Ms": 2963
+        },
+        {
+          "operation": "chat.understand",
+          "model": "gemini-3.1-flash-lite",
+          "calls": 63,
+          "failures": 0,
+          "inputTokens": 41667,
+          "outputTokens": 8283,
+          "cachedInputTokens": 0,
+          "costMicros": 22854,
+          "unpriced": 0,
+          "p50Ms": 961
+        },
+        {
+          "operation": "search.embed",
+          "model": "gemini-embedding-001",
+          "calls": 37,
+          "failures": 0,
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "costMicros": 0,
+          "unpriced": 37,
+          "p50Ms": 216
+        },
+        {
+          "operation": "search.embed.batch",
+          "model": "gemini-embedding-001",
+          "calls": 12,
+          "failures": 6,
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "costMicros": 0,
+          "unpriced": 6,
+          "p50Ms": 415
+        }
+      ]
+    },
+    "research": {
+      "cases": 14,
+      "metrics": {
+        "mentionRecall": 1,
+        "factRecall": 1,
+        "routingAccuracy": 1,
+        "forbiddenHits": 0,
+        "inventedContactIds": 0,
+        "filteredRecommendations": 0,
+        "meanLookups": 4.1000000000000005,
+        "meanRounds": 2.533333333333333
+      },
+      "misses": [],
+      "p50LatencyMs": 15825,
+      "costMicros": 208292,
+      "costPerCaseMicros": 14878,
+      "usage": [
+        {
+          "operation": "chat.answer",
+          "model": "gemini-3.8-flash",
+          "calls": 42,
+          "failures": 0,
+          "inputTokens": 178725,
+          "outputTokens": 42502,
+          "cachedInputTokens": 0,
+          "costMicros": 293432,
+          "unpriced": 0,
+          "p50Ms": 7254
+        },
+        {
+          "operation": "chat.gather",
+          "model": "gemini-3.8-flash",
+          "calls": 76,
+          "failures": 0,
+          "inputTokens": 330474,
+          "outputTokens": 17054,
+          "cachedInputTokens": 4393,
+          "costMicros": 308853,
+          "unpriced": 0,
+          "p50Ms": 2628
+        },
+        {
+          "operation": "chat.rerank",
+          "model": "gemini-3.1-flash-lite",
+          "calls": 15,
+          "failures": 12,
+          "inputTokens": 7140,
+          "outputTokens": 3829,
+          "cachedInputTokens": 0,
+          "costMicros": 7528,
+          "unpriced": 0,
+          "p50Ms": 4001
+        },
+        {
+          "operation": "chat.understand",
+          "model": "gemini-3.1-flash-lite",
+          "calls": 42,
+          "failures": 0,
+          "inputTokens": 27972,
+          "outputTokens": 5373,
+          "cachedInputTokens": 0,
+          "costMicros": 15063,
+          "unpriced": 0,
+          "p50Ms": 956
+        },
+        {
+          "operation": "search.embed",
+          "model": "gemini-embedding-001",
+          "calls": 56,
+          "failures": 0,
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "costMicros": 0,
+          "unpriced": 56,
+          "p50Ms": 218
+        },
+        {
+          "operation": "search.embed.batch",
+          "model": "gemini-embedding-001",
+          "calls": 15,
+          "failures": 6,
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "costMicros": 0,
+          "unpriced": 9,
+          "p50Ms": 506
+        }
+      ]
+    }
+  }
+}

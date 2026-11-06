@@ -10,6 +10,8 @@ import type { PGlite } from "@electric-sql/pglite";
 import * as schema from "./schema";
 import { formatVectorLiteral } from "@/lib/pgvector";
 import { noteQuery } from "@/lib/query-counter";
+import { RELATED_SQL_LOWER } from "@/lib/related-contacts";
+import { AI_DERIVED_SOURCE, EXCHANGE_TOUCH_TYPES, MEETING_TOUCH_TYPES, NOTE_TOUCH_TYPES, sqlList } from "@/lib/touch-kinds";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
@@ -51,16 +53,37 @@ CREATE TABLE IF NOT EXISTS user_settings (
   ai_model text DEFAULT 'gemini-3.8-flash',
   ai_model_migrated_from text,
   writing_instructions text,
+  email_signature_text text,
+  email_signature_html text,
+  default_send_provider text,
   onboarding_completed_at timestamptz,
+  onboarding_path text,
+  tour_started_at timestamptz,
+  tour_stop text,
+  tour_exited_at timestamptz,
+  tour_completed_at timestamptz,
+  linkedin_export_requested_at timestamptz,
+  linkedin_reminder_shown_at timestamptz,
+  credits_intro_shown_at timestamptz,
+  cloud_notes_auto_extract integer NOT NULL DEFAULT 0,
   first_name text,
   last_name text,
   profile_image_url text,
+  sender_bio text,
+  career_profile jsonb,
+  email_activity_sync integer NOT NULL DEFAULT 0,
   signup_referrer text,
   signup_utm_source text,
   signup_utm_medium text,
   signup_utm_campaign text,
   signup_landing_path text,
   signup_attributed_at timestamptz,
+  signup_attribution_source text,
+  signup_session_id text,
+  account_kind text,
+  ai_key_added_at timestamptz,
+  invite_id uuid,
+  interest_signup_id uuid,
   comped_plan text,
   lifetime_purchased_at timestamptz,
   lifetime_checkout_session_id text,
@@ -94,6 +117,9 @@ CREATE TABLE IF NOT EXISTS user_settings (
   email_intel_enabled integer NOT NULL DEFAULT 0,
   email_intel_cursor_at timestamptz,
   email_intel_next_at timestamptz,
+  chat_auto_apply integer NOT NULL DEFAULT 0,
+  relationship_engine_enabled integer NOT NULL DEFAULT 1,
+  chat_self_names jsonb NOT NULL DEFAULT '[]',
   timeline_backfill_forced_on integer NOT NULL DEFAULT 1,
   suspended_at timestamptz,
   suspended_reason text,
@@ -135,6 +161,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   first_name text,
   last_name text,
   preferred_name text,
+  name_guess jsonb,
   company text,
   company_id uuid REFERENCES companies(id) ON DELETE SET NULL,
   title text,
@@ -149,6 +176,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   mastodon_acct text,
   profile_image_url text,
   profile_image_checked_at timestamp,
+  profile_image_source text,
   relationship_score integer NOT NULL DEFAULT 2,
   priority_level integer NOT NULL DEFAULT 0,
   source text,
@@ -168,6 +196,8 @@ CREATE TABLE IF NOT EXISTS contacts (
   notes text,
   embedding_stale_at timestamptz,
   work_history_due_at timestamptz,
+  work_history_misses integer NOT NULL DEFAULT 0,
+  work_history_miss_slug text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -180,7 +210,9 @@ CREATE TABLE IF NOT EXISTS extension_usage (
   request_count integer NOT NULL DEFAULT 0,
   ai_window_started_at timestamptz NOT NULL DEFAULT now(),
   ai_count integer NOT NULL DEFAULT 0,
-  last_seen_at timestamptz
+  last_seen_at timestamptz,
+  first_seen_at timestamptz,
+  version text
 );
 CREATE TABLE IF NOT EXISTS user_goals (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -211,6 +243,7 @@ CREATE TABLE IF NOT EXISTS interactions (
   source text,
   external_id text,
   note_batch_id uuid,
+  import_id uuid,
   raw_notes text,
   ai_summary text,
   topics jsonb DEFAULT '[]',
@@ -245,12 +278,15 @@ CREATE TABLE IF NOT EXISTS reminders (
   action_kind text NOT NULL DEFAULT 'task',
   created_by text NOT NULL DEFAULT 'user',
   note_batch_id uuid,
+  import_id uuid,
   source_interaction_id uuid REFERENCES interactions(id) ON DELETE SET NULL,
   action_item_id uuid,
   source_excerpt text,
   raw_date_phrase text,
   date_basis text,
   item_hash text,
+  calendar_event_key text,
+  completed_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS suggested_reminders (
@@ -333,6 +369,7 @@ CREATE TABLE IF NOT EXISTS action_items (
   completed_at timestamptz,
   item_hash text NOT NULL,
   reminder_id uuid REFERENCES reminders(id) ON DELETE SET NULL,
+  owed_by text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS action_items_user_item_hash_uidx ON action_items(user_id, item_hash);
@@ -371,6 +408,49 @@ CREATE TABLE IF NOT EXISTS contact_briefs (
   model text,
   input_hash text
 );
+CREATE TABLE IF NOT EXISTS relationship_digests (
+  contact_id uuid PRIMARY KEY REFERENCES contacts(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  what_they_do text,
+  working_on text,
+  summary text,
+  topics jsonb NOT NULL DEFAULT '[]',
+  open_threads jsonb NOT NULL DEFAULT '[]',
+  message_count integer NOT NULL DEFAULT 0,
+  sources jsonb NOT NULL DEFAULT '[]',
+  watermark_at timestamptz,
+  watermark_interaction_id uuid,
+  history_truncated_before timestamptz,
+  attempts integer NOT NULL DEFAULT 0,
+  last_error text,
+  batch_job_id uuid,
+  batch_pending_until timestamptz,
+  run_id uuid,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS relationship_digests_user_idx ON relationship_digests(user_id);
+CREATE TABLE IF NOT EXISTS relationship_runs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  import_id uuid,
+  status text NOT NULL DEFAULT 'queued',
+  claim_token text,
+  lease_until timestamptz,
+  inline_used integer NOT NULL DEFAULT 0,
+  processed integer NOT NULL DEFAULT 0,
+  skipped integer NOT NULL DEFAULT 0,
+  failed integer NOT NULL DEFAULT 0,
+  reminders_created integer NOT NULL DEFAULT 0,
+  facts_added integer NOT NULL DEFAULT 0,
+  open_threads_added integer NOT NULL DEFAULT 0,
+  flags jsonb NOT NULL DEFAULT '[]',
+  note_batch_id uuid,
+  last_error text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  finished_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS relationship_runs_user_status_idx ON relationship_runs(user_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS relationship_runs_one_active_uidx ON relationship_runs(user_id) WHERE status IN ('queued', 'running', 'waiting_key');
 CREATE TABLE IF NOT EXISTS imports (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -385,6 +465,8 @@ CREATE TABLE IF NOT EXISTS imports (
   error_message text,
   stats jsonb DEFAULT '{}',
   stall_resumes integer NOT NULL DEFAULT 0,
+  reverted_at timestamptz,
+  revert_stats jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -396,11 +478,25 @@ CREATE TABLE IF NOT EXISTS import_job_rows (
   payload jsonb NOT NULL,
   status text NOT NULL DEFAULT 'pending',
   contact_id uuid,
+  outcome text,
+  revert_snapshot jsonb,
   error_message text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS import_job_rows_import_status_idx ON import_job_rows(import_id, status);
+CREATE TABLE IF NOT EXISTS import_files (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  import_id uuid NOT NULL REFERENCES imports(id) ON DELETE CASCADE,
+  path text NOT NULL,
+  byte_size integer NOT NULL,
+  role text NOT NULL,
+  gz text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS import_files_user_idx ON import_files(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS import_files_import_path_uidx ON import_files(import_id, path);
 CREATE TABLE IF NOT EXISTS ai_suggestions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -750,6 +846,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   proposed_actions jsonb DEFAULT '[]',
   feedback text,
   feedback_note text,
+  answer_outcome text,
   slot uuid,
   version integer NOT NULL DEFAULT 1,
   is_active boolean NOT NULL DEFAULT true,
@@ -914,6 +1011,30 @@ CREATE TABLE IF NOT EXISTS calendar_sources (
 );
 CREATE INDEX IF NOT EXISTS calendar_sources_user_idx ON calendar_sources(user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS calendar_sources_conn_cal_uidx ON calendar_sources(connection_id, calendar_id);
+CREATE TABLE IF NOT EXISTS calendar_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  source_id uuid NOT NULL REFERENCES calendar_sources(id) ON DELETE CASCADE,
+  provider_event_id text NOT NULL,
+  ical_uid text,
+  series_id text,
+  title text NOT NULL DEFAULT '',
+  start_at timestamptz NOT NULL,
+  end_at timestamptz,
+  all_day boolean NOT NULL DEFAULT false,
+  location text,
+  agenda text,
+  conference_url text,
+  conference_kind text,
+  attendees jsonb NOT NULL DEFAULT '[]',
+  attendee_count integer NOT NULL DEFAULT 0,
+  guests_hidden boolean NOT NULL DEFAULT false,
+  self_response text,
+  organizer_email text,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS calendar_events_source_event_uidx ON calendar_events(source_id, provider_event_id);
+CREATE INDEX IF NOT EXISTS calendar_events_user_start_idx ON calendar_events(user_id, start_at);
 CREATE TABLE IF NOT EXISTS usage_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -925,6 +1046,7 @@ CREATE TABLE IF NOT EXISTS usage_events (
   output_tokens integer,
   cached_input_tokens integer,
   estimated_cost_micros integer,
+  web_searches integer,
   cost_source text NOT NULL DEFAULT 'estimated',
   key_owner text NOT NULL DEFAULT 'user',
   success integer NOT NULL DEFAULT 1,
@@ -1266,6 +1388,9 @@ CREATE TABLE IF NOT EXISTS interest_list_signups (
   pass_check_count integer NOT NULL DEFAULT 0,
   pass_last_checked_at timestamptz,
   signup_event_label text,
+  join_session_id text,
+  user_id text,
+  converted_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_email_uidx ON interest_list_signups(email);
@@ -1274,6 +1399,40 @@ CREATE INDEX IF NOT EXISTS interest_list_signups_created_idx ON interest_list_si
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_token_uidx ON interest_list_signups(share_token);
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_referral_slug_uidx ON interest_list_signups(referral_slug);
 CREATE INDEX IF NOT EXISTS interest_list_signups_referred_by_idx ON interest_list_signups(referred_by_id);
+CREATE TABLE IF NOT EXISTS site_invites (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  email text NOT NULL,
+  interest_list_signup_id uuid,
+  wave_id text,
+  clerk_invitation_id text,
+  source text NOT NULL DEFAULT 'manual',
+  invited_by text,
+  emailed boolean NOT NULL DEFAULT false,
+  sent_at timestamptz NOT NULL DEFAULT now(),
+  accepted_user_id text,
+  accepted_at timestamptz,
+  revoked_at timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS site_invites_clerk_invitation_uidx ON site_invites(clerk_invitation_id);
+CREATE INDEX IF NOT EXISTS site_invites_email_idx ON site_invites(email);
+CREATE INDEX IF NOT EXISTS site_invites_wave_sent_idx ON site_invites(wave_id, sent_at);
+CREATE INDEX IF NOT EXISTS site_invites_accepted_user_idx ON site_invites(accepted_user_id);
+CREATE TABLE IF NOT EXISTS product_events (
+  id uuid PRIMARY KEY,
+  name text NOT NULL,
+  version integer NOT NULL DEFAULT 1,
+  occurred_at timestamptz NOT NULL DEFAULT now(),
+  user_id text,
+  session_id text,
+  surface text NOT NULL,
+  actor text NOT NULL,
+  is_internal boolean NOT NULL DEFAULT false,
+  properties jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS product_events_name_occurred_idx ON product_events(name, occurred_at);
+CREATE INDEX IF NOT EXISTS product_events_user_occurred_idx ON product_events(user_id, occurred_at);
+CREATE INDEX IF NOT EXISTS product_events_session_idx ON product_events(session_id);
 CREATE TABLE IF NOT EXISTS waitlist_poll_votes (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   option_id text NOT NULL,
@@ -1418,12 +1577,54 @@ CREATE TABLE IF NOT EXISTS org_brand_colors (
   resolved_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS org_brand_colors_key_uidx ON org_brand_colors(name_key, kind);
+CREATE TABLE IF NOT EXISTS linkedin_avatars (
+  slug text PRIMARY KEY,
+  image_url text,
+  source text NOT NULL,
+  resolved_at timestamptz NOT NULL DEFAULT now(),
+  blocked_at timestamptz,
+  blocked_by text
+);
+CREATE INDEX IF NOT EXISTS linkedin_avatars_resolved_at_idx ON linkedin_avatars(resolved_at);
+CREATE TABLE IF NOT EXISTS cloud_note_sources (
+  user_id text NOT NULL,
+  provider text NOT NULL,
+  cursor text,
+  backfilled_at timestamptz,
+  next_scan_at timestamptz NOT NULL DEFAULT now(),
+  lease_until timestamptz,
+  last_scan_at timestamptz,
+  last_error text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, provider)
+);
+CREATE INDEX IF NOT EXISTS cloud_note_sources_due_idx ON cloud_note_sources(next_scan_at);
+CREATE TABLE IF NOT EXISTS cloud_note_files (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  provider text NOT NULL,
+  file_id text NOT NULL,
+  name text NOT NULL,
+  web_url text,
+  modified_at timestamptz,
+  status text NOT NULL DEFAULT 'found',
+  reason text,
+  detected_by text NOT NULL DEFAULT 'rules',
+  from_backfill integer NOT NULL DEFAULT 0,
+  capture_job_id uuid,
+  notified_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS cloud_note_files_user_file_uidx ON cloud_note_files(user_id, provider, file_id);
+CREATE INDEX IF NOT EXISTS cloud_note_files_user_status_idx ON cloud_note_files(user_id, status);
 CREATE TABLE IF NOT EXISTS site_settings (
   id integer PRIMARY KEY DEFAULT 1,
   stealth_enabled boolean,
   stealth_since timestamptz,
   waitlist_demo_enabled boolean,
   managed_ai_paused boolean,
+  web_search_paused boolean,
   updated_at timestamptz NOT NULL DEFAULT now(),
   updated_by text,
   CONSTRAINT site_settings_single_row CHECK (id = 1)
@@ -1652,6 +1853,45 @@ CREATE TABLE IF NOT EXISTS connector_outbox (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS connector_outbox_action_uidx ON connector_outbox(user_id, connector_id, action, entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS connector_outbox_due_idx ON connector_outbox(status, next_attempt_at);
+CREATE TABLE IF NOT EXISTS email_sends (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  provider text NOT NULL,
+  from_email text NOT NULL,
+  from_name text,
+  to_emails jsonb NOT NULL,
+  cc jsonb NOT NULL DEFAULT '[]'::jsonb,
+  bcc jsonb NOT NULL DEFAULT '[]'::jsonb,
+  subject text NOT NULL,
+  body_text text NOT NULL,
+  body_html text,
+  contact_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  origin text NOT NULL,
+  origin_ref text,
+  idempotency_key text,
+  status text NOT NULL DEFAULT 'queued',
+  send_at timestamptz NOT NULL,
+  sent_at timestamptz,
+  attempts integer NOT NULL DEFAULT 0,
+  claimed_by uuid,
+  lease_until timestamptz,
+  last_error text,
+  failure_kind text,
+  rfc_message_id text NOT NULL,
+  provider_message_id text,
+  provider_thread_id text,
+  in_reply_to_send_id uuid,
+  in_reply_to_rfc_id text,
+  attachments jsonb NOT NULL DEFAULT '[]'::jsonb,
+  dismissed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS email_sends_idempotency_uidx ON email_sends(user_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND (status IN ('queued','sending','sent') OR failure_kind = 'ambiguous');
+CREATE INDEX IF NOT EXISTS email_sends_due_idx ON email_sends(send_at) WHERE status = 'queued';
+CREATE INDEX IF NOT EXISTS email_sends_user_created_idx ON email_sends(user_id, created_at);
+CREATE INDEX IF NOT EXISTS email_sends_user_status_idx ON email_sends(user_id, status);
+CREATE INDEX IF NOT EXISTS email_sends_contact_ids_idx ON email_sends USING gin (contact_ids);
 CREATE TABLE IF NOT EXISTS contact_identities (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1702,6 +1942,9 @@ CREATE TABLE IF NOT EXISTS meeting_sessions (
   digest jsonb,
   digest_error text,
   note_batch_id uuid,
+  calendar_event_key text,
+  calendar_series_id text,
+  user_notes text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -2492,13 +2735,153 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // at 142 would never run a 141, so it takes its own number. Scanned every remote ref on Sep 30
 // 2026: 142 (main) is the highest claimed anywhere, so 143 is the next free integer.
 //
-// 145 = email insights (Email Intelligence P0/P1): user_settings.email_intel_enabled /
+// 144 = contact_briefs.goal_fit, how a person bears on the user's active goals, judged by the
+// brief's model call and shown on the Knowledge page's dossier. Nullable with no backfill: a
+// brief with no fit is "not judged yet", and the dossier regenerates it on open. Scanned every
+// remote ref on Sep 30 2026: 143 (main, the radar_apollo_cursor drop) is the highest claimed
+// anywhere, so 144 is the next free integer.
+//
+// 146 = email_sends (the person-to-person outbox every 1:1 send goes through — direct email P1)
+// and user_settings.email_signature_text / email_signature_html / default_send_provider. First
+// claimed 140 on claude/orbit-direct-email-cc0746; main moved to 143 while it was open, and a
+// database already at 143 would never run a 140, so it takes its own number. Scanned every local
+// and remote ref and every worktree's working src/db/index.ts on Sep 30 2026: 145
+// (claude/email-search-context-7329e6) is the highest claimed anywhere, so 146 is the next free
+// integer. Re-checked Oct 4 2026 when merging main (144): still free; 147/148 are
+// claimed by the relationship-engine branches, which merge after.
+//
+// 147 = the relationship engine: relationship_digests + relationship_runs (new tables),
+// action_items.owed_by, user_settings.relationship_engine_enabled. Re-scanned every remote ref
+// on Oct 4 2026 when merging main (146, the direct-email outbox): 146 is the highest claimed
+// outside the relationship-engine branches, so 147 stays free.
+//
+// 148 = user_settings.chat_self_names (relationship engine P2). 147 is P1 (merged as #398).
+//
+// 149 = this branch (PR #187): user_settings.sender_bio, user_settings.email_activity_sync
+// and contacts_user_last_touch_idx. Built as 35-39, merged once as 66, and renumbered again
+// here because main has since claimed every number up to 148 for different DDL — a database
+// stamped by any of those would treat 66 as ancient and never run these.
+//
+// `contact_job_changes` is NOT in this list any more. Main built the same feature as
+// `contact_career_moves` (v133) with a typed `kind`, start dates and a dedupe-key unique
+// index, and its changelog names this PR as the reason it picked a different table name.
+// Keeping both would give one database two job-movement logs, so this branch's table, its
+// detection module and its suggestion type are dropped in favour of main's.
+//
+// 150 = the onboarding revision (quick setup + guided tour over the real pages), built as 93
+// and renumbered 106, then 149, on its main merges: user_settings.onboarding_path,
+// tour_started_at, tour_stop, tour_exited_at, tour_completed_at, linkedin_export_requested_at
+// and linkedin_reminder_shown_at. NOT 149: main took it for #187 (sender_bio,
+// email_activity_sync) while this branch also declared 149 — the same silent collision this
+// log records above, caught on the merge. Rescanned every remote ref, every local branch and
+// every worktree's working file on Oct 6 2026: 149 was the highest claimed anywhere.
+//
+// 151 = importing the user's OWN LinkedIn profile (Profile, Positions, Skills, SavedJobAlerts):
+// user_settings.career_profile. Rescanned every remote ref and every worktree's working file on
+// Oct 8 2026: 150 was the highest claimed anywhere.
+//
+// 154 = the one-time "your AI credits are here" screen: user_settings.credits_intro_shown_at.
+// NOT 152 or 153: claude/calendar-events-p0 holds 152 and claude/sprint-c-audience holds 153.
+// Rescanned every remote ref, every local branch and every worktree's working file on
+// Oct 12 2026: 153 was the highest claimed anywhere.
+//
+// 159 = the shared LinkedIn photo cache: linkedin_avatars (global, keyed by profile slug) and
+// contacts.profile_image_source. NOT 155, 156 or 158: the calendar branches hold them
+// (claude/calendar-prep-c holds 158, and the gate never re-runs a lower version).
+//
+// 164 = cloud notes (Drive/OneDrive meeting notes): cloud_note_sources, cloud_note_files and
+// user_settings.cloud_notes_auto_extract. NOT 160–163: the calendar stack holds them
+// (#420–#436 renumbered Oct 14). Rescanned every local branch and remote ref on Oct 14 2026:
+// 163 was the highest claimed anywhere.
+//
+// 165 = the raw files of a LinkedIn export: import_files. NOT 160-164: the calendar stack holds
+// 160-163 and claude/cloud-notes-auto-extract-799187 holds 164 (the job-change-alerts-radar
+// worktree also has an uncommitted 164). Rescanned every ref and worktree on Oct 15 2026.
+//
+// 166 = calendar_events (new table): a mirror of the near calendar (two days back, two weeks
+// ahead) for calendar-aware chat, event-linked reminders and the recorder. Built as 152 on
+// Oct 11, renumbered to 160 on Oct 14, and to 166 on Oct 15 when merging main: main reached
+// 164 (#446), and a database stamped 164 would never run a 160. NOT 165:
+// claude/linkedin-export-upload-cc7326 holds it. Rescanned every local and remote ref and
+// every worktree's working file on Oct 15 2026: 165 was the highest claimed anywhere.
+//
+// 167 = reminders.calendar_event_key + meeting_sessions.calendar_event_key (event-linked
+// reminders and recordings). Built as 155 on Oct 12, renumbered to 161 on Oct 14 and to 167 on
+// Oct 15, above 166 (this stack's calendar_events), since main reached 164. Rescanned Oct 15
+// 2026: 166 was the highest claimed.
+//
+// 168 = calendar_events.agenda + meeting_sessions.calendar_series_id (the summarizer reads the
+// calendar invite). Built as 156 on Oct 13, renumbered to 162 on Oct 14 and to 168 on Oct 15,
+// above 167, since main reached 164. Rescanned Oct 15 2026: 167 (this stack) was the highest claimed.
+//
+// 169 = guest_profiles (new table): what an on-demand "Look up" found about a meeting guest who
+// is not a contact. Built as 158 on Oct 13, renumbered to 163 on Oct 14 and to 169 on Oct 15,
+// above 168, since main reached 164. Rescanned Oct 15 2026: 168 (this stack) was the highest claimed.
+//
+// 170 = guest_profiles dropped: guest "Look up" runs on Find people's research (researchPerson)
+// and its briefs live in ai_result_cache, read back by key. The table was a day old (v169) and
+// held only cached web lookups. Rescanned every ref and worktree on Oct 15 2026: 169 was the
+// highest claimed anywhere.
+//
+// 171 = the performance pass (PERFORMANCE_AUDIT.md): indexes only — contacts_user_name_norm_idx,
+// contacts_unscored_idx, interactions_user_contact_date_idx, contact_career_moves_contact_fk_idx,
+// contacts_user_email_prefix_idx, the related-contacts corpus functions with
+// contacts_unusual_json_idx and contacts_related_corpus_trgm, contacts_goal_relevance_idx.
+// Rescanned every remote ref on Oct 17 2026: 170 was the highest claimed anywhere.
+//
+// 178 = contact_touch_counts (new table) with its statement-level triggers on interactions and a
+// one-time recount; contacts_with_notes_idx. The dashboard reads eligibility tallies from it
+// instead of aggregating every interaction (PERFORMANCE_AUDIT.md, round 3 follow-up). NOT
+// 172-177: branches claim up to 177 (claude/trusting-wozniak-ebsks3 at 177). Rescanned every
+// remote ref on Oct 19 2026: 177 was the highest claimed anywhere.
+//
+// 179 = this branch's web-search budget, renumbered from 175 + 178 when merging main (main took
+// 178 for contact_touch_counts, and a database stamped 178 would never run a 175):
+// site_settings.web_search_paused (the admin switch that stops hosted web search for every
+// account), usage_events.web_searches (searches per call, for the per-feature breakdown), and
+// contacts.work_history_misses + work_history_miss_slug (two misses against the same LinkedIn
+// slug stop automatic work-history checks; a new URL lifts it). Rescanned every remote ref on
+// Oct 19 2026: 178 (main) was the highest claimed anywhere.
+//
+// 181 = measurement (docs: ANALYTICS_PLAN.md): user_settings.account_kind / ai_key_added_at /
+// signup_attribution_source / signup_session_id / invite_id / interest_signup_id,
+// reminders.completed_at, extension_usage.first_seen_at + version, interest_list_signups
+// .join_session_id / user_id / converted_at, and two new tables: site_invites (Orbit's own
+// invitation ledger) and product_events (append-only, schema-validated telemetry). Renumbered from 171 on Oct 19 2026
+// after main reached 179; rescanned every remote ref that day: 180 was the highest claimed anywhere.
+//
+// 182 = chat_messages.answer_outcome: each chat answer labelled answered, partial or abstained
+// (`@/lib/chat-abstention`), so the share of "I don't know" answers is measured. Built as 176 on
+// Oct 19 and renumbered the same day when main reached 178: a database stamped 178 would never
+// apply a 176. Rescanned every remote ref and worktree on Oct 19 2026: 179
+// (claude/web-search-cost-reduction-3e2210, now main) was the highest claimed anywhere; rescanned
+// again on merging it: 181 (claude/sweet-maxwell-bu2l9z) sat above. Renumbered 180 → 182 when that
+// 181 reached main (a database stamped 181 would never apply a 180); rescanned every remote ref:
+// 181 (main) was the highest claimed anywhere.
+//
+// 183 = user_settings.chat_auto_apply: the person lets chat make its small, reversible changes
+// itself (`@/lib/chat-auto-apply`), each a done card with Undo. Off by default. Rescanned every
+// remote ref on Oct 19 2026: 182 (claude/chat-agent-p0-prefetch, this branch's base) was the
+// highest claimed anywhere.
+//
+// 185 = contacts.name_guess: a name read from a handle ("jsmith42", "john.doe") and how sure
+// Orbit is of it (`@/lib/contact-name-guess`); weak ones get a "?" to confirm or change.
+// Rescanned every remote ref on Oct 28 2026: 184 (claude/events-v2-nudge,
+// claude/nifty-mendel-250e9b) was the highest claimed anywhere.
+//
+// 186 = meeting_sessions.user_notes: the notes box from a recorded meeting, stored with it
+// instead of only in the browser, so /meetings can show and edit them. Rescanned every remote
+// ref and worktree on Nov 5 2026: 185 (main) was the highest claimed anywhere.
+//
+// 189 = email insights (Email Intelligence P0/P1): user_settings.email_intel_enabled /
 // email_intel_cursor_at / email_intel_next_at plus the email_threads and email_events tables.
-// Scanned every local and remote ref and every worktree on Sep 30 2026: 144 is the highest
-// claimed anywhere, so 145 is the next free integer.
-// (Merged main at 143 into this branch: both sides' DDL and alters are kept, and only the
-// version is new, so a database stamped 143 by main still runs this branch's 145 DDL.)
-export const SCHEMA_VERSION = 145;
+// Built as 145 on Sep 30 2026 and renumbered here on Nov 5 2026 when merging main: main reached
+// 186, and a database stamped 186 would never run a 145. NOT 187 or 188: claude/admin-tracking-events
+// holds 187 and the brave-dijkstra-e56398 worktree holds 188 (both unpushed). Rescanned every
+// remote ref and every worktree's working file on Nov 5 2026: 188 was the highest claimed anywhere.
+// (Merged main at 186: both sides' DDL and alters are kept, and only the version is new, so a
+// database stamped 186 by main still runs this branch's 189 DDL.)
+export const SCHEMA_VERSION = 189;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2539,6 +2922,7 @@ async function storedLinkedinSlugExpression(run: StatementRunner): Promise<strin
   }
 }
 
+
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
  * few thousand people. Kept apart from `DDL` because these are all `ALTER`/`CREATE INDEX`
@@ -2548,6 +2932,153 @@ async function storedLinkedinSlugExpression(run: StatementRunner): Promise<strin
  *
  * Ordering matters: generated columns before the indexes that read them.
  */
+/**
+ * IMMUTABLE wrappers for the related-contacts SQL (`src/actions/contacts.ts`), so it can be
+ * indexed. `orbit_related_corpus` is exactly the corpus `listRelatedContacts` lowers and
+ * LIKEs — pieces joined with a space, lowered with `RELATED_SQL_LOWER`, U+0130 expanded —
+ * and is built from that constant so the two cannot drift. `orbit_unusual_json_array` is
+ * `unusualJsonArraySql`. Immutable is true of both: no table, setting or time is read.
+ *
+ * The nested call is schema-qualified because index builds evaluate expressions with a
+ * restricted `search_path` (Postgres 17+): unqualified, `CREATE INDEX` fails with
+ * "function orbit_json_text(jsonb) does not exist".
+ */
+const RELATED_CORPUS_FUNCTIONS = [
+  `CREATE OR REPLACE FUNCTION orbit_json_text(j jsonb) RETURNS text
+     LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $f$
+     SELECT CASE WHEN jsonb_typeof(j) = 'array'
+       THEN coalesce((SELECT string_agg(t.e, ' ') FROM jsonb_array_elements_text(j) AS t(e)), '')
+       ELSE '' END $f$`,
+  `CREATE OR REPLACE FUNCTION orbit_related_corpus(a text, n text, kf jsonb, si jsonb) RETURNS text
+     LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $f$
+     SELECT replace(translate(
+       coalesce(a, '') || ' ' || coalesce(n, '') || ' ' || public.orbit_json_text(kf) || ' ' || public.orbit_json_text(si),
+       '${RELATED_SQL_LOWER.from}', '${RELATED_SQL_LOWER.to}'), chr(304), chr(105) || chr(775)) $f$`,
+  `CREATE OR REPLACE FUNCTION orbit_unusual_json_array(j jsonb) RETURNS boolean
+     LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $f$
+     SELECT CASE WHEN j IS NULL THEN false
+       WHEN jsonb_typeof(j) = 'null' THEN false
+       WHEN jsonb_typeof(j) <> 'array' THEN true
+       ELSE EXISTS (SELECT 1 FROM jsonb_array_elements(j) AS u(v) WHERE jsonb_typeof(u.v) NOT IN ('string', 'null'))
+     END $f$`,
+];
+
+/**
+ * `contact_touch_counts`: each contact's constellation-eligibility tallies
+ * (`constellationSignalAggregates`), kept current by statement-level triggers on
+ * `interactions` so the dashboard reads them instead of aggregating every interaction in the
+ * account on each load (~350 ms of its chart statement at 100k contacts on Postgres 16).
+ *
+ * Triggers rather than refreshing at scoring time: several writers change interactions
+ * without rescoring anyone (an interaction's type edited, a note batch undone, an import
+ * until it finalises), and eligibility has always been read live. A trigger is exact for
+ * every writer, present and future. Statement-level with transition tables, so a bulk
+ * import pays one grouped upsert per INSERT statement, not one per row; an UPDATE that
+ * changes no tally (a reorder, a note edited) writes nothing.
+ *
+ * The kinds come from `src/lib/touch-kinds.ts`, the same lists the SQL aggregates use.
+ * `scripts/smoke-touch-counts.ts` holds the table to a live recount after every kind of write.
+ */
+const TOUCH_IS = `(source IS NULL OR source <> '${AI_DERIVED_SOURCE}')`;
+const TOUCH_COLUMNS = [
+  ["note_interactions", `interaction_type IN ${sqlList(NOTE_TOUCH_TYPES)}`],
+  ["meeting_interactions", `interaction_type IN ${sqlList(MEETING_TOUCH_TYPES)}`],
+  ["message_inbound", `interaction_type IN ${sqlList(EXCHANGE_TOUCH_TYPES)} AND direction = 'in'`],
+  ["message_outbound", `interaction_type IN ${sqlList(EXCHANGE_TOUCH_TYPES)} AND direction = 'out'`],
+  ["message_undirected", `interaction_type IN ${sqlList(EXCHANGE_TOUCH_TYPES)} AND direction IS NULL`],
+  ["total", "true"],
+] as const;
+const TOUCH_NAMES = TOUCH_COLUMNS.map(([c]) => c).join(", ");
+/** Per-column `sum(case …)` of `weight` over rows that count as a touch. */
+const touchSums = (weight: string) =>
+  TOUCH_COLUMNS.map(([c, when]) => `sum(CASE WHEN ${when} THEN ${weight} ELSE 0 END)::int AS ${c}`).join(",\n       ");
+const touchAdd = (target: string, delta: string) =>
+  TOUCH_COLUMNS.map(([c]) => `${c} = ${target}.${c} + ${delta}.${c}`).join(", ");
+const touchChanged = TOUCH_COLUMNS.map(([c]) => `${c} <> 0`).join(" OR ");
+
+/** The one-time recount, run with writes to `interactions` blocked (see TOUCH_COUNT_DDL). */
+const TOUCH_RECOUNT = `INSERT INTO contact_touch_counts (contact_id, user_id, ${TOUCH_NAMES})
+     SELECT contact_id, min(user_id),
+       ${touchSums("1")}
+       FROM interactions WHERE ${TOUCH_IS}
+      GROUP BY contact_id
+     ON CONFLICT (contact_id) DO NOTHING`;
+
+const TOUCH_COUNT_DDL = [
+  `CREATE TABLE IF NOT EXISTS contact_touch_counts (
+     contact_id uuid PRIMARY KEY REFERENCES contacts(id) ON DELETE CASCADE,
+     user_id text NOT NULL,
+     note_interactions integer NOT NULL DEFAULT 0,
+     meeting_interactions integer NOT NULL DEFAULT 0,
+     message_inbound integer NOT NULL DEFAULT 0,
+     message_outbound integer NOT NULL DEFAULT 0,
+     message_undirected integer NOT NULL DEFAULT 0,
+     total integer NOT NULL DEFAULT 0
+   )`,
+  // The dashboard reads one user's rows whole: an index-only scan.
+  `CREATE INDEX IF NOT EXISTS contact_touch_counts_user_idx
+     ON contact_touch_counts(user_id, contact_id) INCLUDE (${TOUCH_NAMES})`,
+  `CREATE OR REPLACE FUNCTION orbit_touch_counts_insert() RETURNS trigger LANGUAGE plpgsql AS $f$
+   BEGIN
+     INSERT INTO contact_touch_counts AS c (contact_id, user_id, ${TOUCH_NAMES})
+     SELECT contact_id, min(user_id),
+       ${touchSums("1")}
+       FROM changed WHERE ${TOUCH_IS}
+      GROUP BY contact_id
+     ON CONFLICT (contact_id) DO UPDATE SET ${touchAdd("c", "EXCLUDED")};
+     RETURN NULL;
+   END $f$`,
+  // Only ever an UPDATE: when the contact itself is being deleted its row goes by cascade, and
+  // inserting one back would fail the foreign key.
+  `CREATE OR REPLACE FUNCTION orbit_touch_counts_delete() RETURNS trigger LANGUAGE plpgsql AS $f$
+   BEGIN
+     UPDATE contact_touch_counts c SET ${touchAdd("c", "d")}
+       FROM (SELECT contact_id,
+               ${touchSums("-1")}
+               FROM changed WHERE ${TOUCH_IS}
+              GROUP BY contact_id) d
+      WHERE c.contact_id = d.contact_id;
+     RETURN NULL;
+   END $f$`,
+  // An interaction re-typed, re-directed, re-sourced, or moved to another contact (a merge):
+  // the new rows counted in, the old ones out, and only contacts whose tallies moved written.
+  `CREATE OR REPLACE FUNCTION orbit_touch_counts_update() RETURNS trigger LANGUAGE plpgsql AS $f$
+   BEGIN
+     INSERT INTO contact_touch_counts AS c (contact_id, user_id, ${TOUCH_NAMES})
+     SELECT contact_id, user_id, ${TOUCH_NAMES} FROM (
+       SELECT contact_id, min(user_id) AS user_id,
+         ${touchSums("w")}
+         FROM (SELECT contact_id, user_id, interaction_type, direction, 1 AS w FROM after_rows WHERE ${TOUCH_IS}
+               UNION ALL
+               SELECT contact_id, user_id, interaction_type, direction, -1 FROM before_rows WHERE ${TOUCH_IS}) moved
+        GROUP BY contact_id) delta
+      WHERE ${touchChanged}
+     ON CONFLICT (contact_id) DO UPDATE SET ${touchAdd("c", "EXCLUDED")};
+     RETURN NULL;
+   END $f$`,
+  // The triggers and the recount in one transaction, with writes to interactions blocked, so
+  // no row can land between them: counted twice or not at all. The recount runs only while
+  // the table is empty (the first boot of this version, or a database with no history).
+  `DO $do$ BEGIN
+     LOCK TABLE interactions IN SHARE ROW EXCLUSIVE MODE;
+     CREATE OR REPLACE TRIGGER interactions_touch_counts_insert AFTER INSERT ON interactions
+       REFERENCING NEW TABLE AS changed FOR EACH STATEMENT EXECUTE FUNCTION orbit_touch_counts_insert();
+     CREATE OR REPLACE TRIGGER interactions_touch_counts_delete AFTER DELETE ON interactions
+       REFERENCING OLD TABLE AS changed FOR EACH STATEMENT EXECUTE FUNCTION orbit_touch_counts_delete();
+     CREATE OR REPLACE TRIGGER interactions_touch_counts_update AFTER UPDATE ON interactions
+       REFERENCING OLD TABLE AS before_rows NEW TABLE AS after_rows
+       FOR EACH STATEMENT EXECUTE FUNCTION orbit_touch_counts_update();
+     IF NOT EXISTS (SELECT 1 FROM contact_touch_counts) THEN
+       ${TOUCH_RECOUNT};
+     END IF;
+   END $do$`,
+  // "Has notes", answered without reading every contact's notes (TOAST) to find out: the
+  // dashboard's eligibility predicate joins to this instead of testing contactHasNotesSql
+  // per row, which was ~380 ms of its chart statement at 100k. Same predicate exactly.
+  `CREATE INDEX IF NOT EXISTS contacts_with_notes_idx ON contacts(user_id, id)
+     WHERE notes IS NOT NULL AND btrim(notes) <> ''`,
+];
+
 export const SCALE_DDL: string[] = [
   // --- v62: meeting-notes workflow ---------------------------------------------------
   //
@@ -2564,6 +3095,9 @@ export const SCALE_DDL: string[] = [
   `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS confidence_score integer`,
   // The brief's single "what to do next" clause.
   `ALTER TABLE contact_briefs ADD COLUMN IF NOT EXISTS next_step text`,
+  // Schema v144: how the person bears on the user's active goals ({ judged, items }, see
+  // contactBriefs.goalFit). Null = never judged; no backfill.
+  `ALTER TABLE contact_briefs ADD COLUMN IF NOT EXISTS goal_fit jsonb`,
   // Multi-file capture: one file = one meeting = one job, grouped by batch_group_id.
   `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS batch_group_id uuid`,
   `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS source_label text`,
@@ -2688,6 +3222,8 @@ export const SCALE_DDL: string[] = [
      dirty_at timestamptz
    )`,
 
+  ...TOUCH_COUNT_DDL,
+
   // --- Indexes ---------------------------------------------------------------------
   //
   // Serves the default keyset page. The trailing full_name and id break ties so the cursor
@@ -2699,10 +3235,20 @@ export const SCALE_DDL: string[] = [
   // the same way, so the index has to be declared that way to serve it.
   `CREATE INDEX IF NOT EXISTS contacts_user_closeness_idx ON contacts(user_id, closeness DESC, id DESC)`,
   `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
-  // For the composer's pickers, which open on "who have I actually spoken to lately"
-  // rather than whoever is alphabetically first. `updated_at` is the wrong column for
-  // that — editing a contact is not talking to them.
-  `CREATE INDEX IF NOT EXISTS contacts_user_last_interaction_idx ON contacts(user_id, last_interaction_at DESC NULLS LAST)`,
+  // Backs BOTH the "Last spoken" sort on /contacts and the composer's pickers, which open
+  // on "who have I actually spoken to lately" rather than whoever is alphabetically first
+  // (`updated_at` is the wrong column for that — editing a contact is not talking to them).
+  //
+  // Main grew `contacts_user_last_interaction_idx` with the same leading columns while this
+  // branch grew this one; they are not kept side by side because this is a strict superset —
+  // the `id DESC` tiebreak the keyset cursor in `listContactsPage` needs, on top of a prefix
+  // that answers the picker's query identically. Two indexes over the same columns cost
+  // every write twice and buy one query nothing.
+  //
+  // NULLS LAST must be spelled out here and in `orderFor` together: an index whose null
+  // ordering disagrees with the query's is simply not used, and the sort silently becomes a
+  // full scan as the network grows.
+  `CREATE INDEX IF NOT EXISTS contacts_user_last_touch_idx ON contacts(user_id, last_interaction_at DESC NULLS LAST, id DESC)`,
   `CREATE INDEX IF NOT EXISTS contacts_search_gin ON contacts USING gin(search_tsv)`,
   `CREATE INDEX IF NOT EXISTS contacts_slug_idx ON contacts(linkedin_slug) WHERE linkedin_slug IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS contacts_user_email_idx ON contacts(user_id, email) WHERE email IS NOT NULL`,
@@ -2984,6 +3530,55 @@ export const SCALE_DDL: string[] = [
      ON chat_messages(created_at DESC) WHERE feedback IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS page_views_user_created_idx
      ON page_views(user_id, created_at) WHERE user_id IS NOT NULL`,
+
+  // v171, the performance pass (PERFORMANCE_AUDIT.md). Measured on Postgres 16 at 100k
+  // contacts / 300k interactions.
+  //
+  // Same-name duplicate detection (`findNameCollisions`, behind the badge on every /contacts
+  // render) joins contacts to themselves on `lower(btrim(full_name))`. With nothing indexing
+  // that expression the planner nested-looped over the primary key: 82 s at 10k contacts,
+  // cancelled at 240 s at 100k. With this index: 49 ms and 458 ms. `trim(x)` is how Postgres
+  // spells `btrim(x)`, so this matches the query's predicate exactly. Rewriting the query
+  // instead does not hold: Postgres 16 inlined a GROUP BY rewrite back into the same loop.
+  `CREATE INDEX IF NOT EXISTS contacts_user_name_norm_idx
+     ON contacts(user_id, lower(trim(full_name)))`,
+  // Every closeness-cohort read counts the user's unscored contacts first. Near-empty in
+  // steady state; without it the count scanned the whole network (73 ms at 100k).
+  `CREATE INDEX IF NOT EXISTS contacts_unscored_idx
+     ON contacts(user_id) WHERE closeness_computed_at IS NULL`,
+  // Per-contact reads over a user's history: the cohort's touch counts (GROUP BY contact_id
+  // with type/direction/source filters), last touch per contact (DISTINCT ON contact_id
+  // ORDER BY interaction_date DESC, id DESC) and newest-first timelines. The INCLUDEd
+  // columns make the first two index-only: 1,169 -> 186 ms and 298 -> 74 ms at 100k.
+  // `interactions_contact_idx` stays: it is the FK index for the contacts cascade.
+  `CREATE INDEX IF NOT EXISTS interactions_user_contact_date_idx
+     ON interactions(user_id, contact_id, interaction_date DESC, id DESC)
+     INCLUDE (interaction_type, direction, source)`,
+  // The contacts cascade into contact_career_moves had only (user_id, contact_id, ...) to
+  // use, which the per-parent `WHERE contact_id = $1` cannot (see docs/performance.md).
+  `CREATE INDEX IF NOT EXISTS contact_career_moves_contact_fk_idx
+     ON contact_career_moves(contact_id)`,
+  // The email arm of contact search (`contactSearchIdsCondition`): a prefix LIKE on the
+  // lowered address. `text_pattern_ops` is what lets a b-tree answer LIKE 'x%' under a
+  // non-C collation. Postgres 16, 100k contacts: 68 ms seq scan -> 0.06 ms.
+  `CREATE INDEX IF NOT EXISTS contacts_user_email_prefix_idx
+     ON contacts(user_id, lower(coalesce(email, '')) text_pattern_ops)`,
+  // Related contacts (`listRelatedContacts`) prefilter every contact's text for a mention of
+  // the source with a superset LIKE (see `mentionLikePatterns`). Written inline, that is a
+  // full scan that detoasts every note and summary on every profile view and hover prefetch:
+  // 11 s at 100k contacts on Postgres 16. These are the same expressions as IMMUTABLE
+  // functions, so they can be indexed (`contacts_related_corpus_trgm` in applyScaleSchema,
+  // and the partial index below), and the query's arms become index scans: 167 ms.
+  ...RELATED_CORPUS_FUNCTIONS,
+  `CREATE INDEX IF NOT EXISTS contacts_unusual_json_idx ON contacts(user_id)
+     WHERE orbit_unusual_json_array(key_facts) OR orbit_unusual_json_array(shared_interests)`,
+  // The dashboard's goal-aligned card (`getGoalAlignedContactIds`): the top few contacts by
+  // stored goal relevance, in exactly the query's order, so it reads them instead of
+  // sorting every scored contact. Partial, so contacts with no relevance cost nothing.
+  // Postgres 16, 100k contacts: 60 ms -> 0.15 ms.
+  `CREATE INDEX IF NOT EXISTS contacts_goal_relevance_idx
+     ON contacts(user_id, ((closeness_breakdown->>'goalRelevance')::float8) DESC, updated_at DESC, id DESC)
+     WHERE (closeness_breakdown->>'goalRelevance')::float8 > 0`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */
@@ -3058,6 +3653,22 @@ export async function applyScaleSchema(run: StatementRunner, failed?: SchemaFail
     globalForDb.orbitTrigram = true;
   } catch {
     globalForDb.orbitTrigram = false;
+  }
+
+  // The related-contacts mention prefilter (see RELATED_CORPUS_FUNCTIONS): LIKE '%name%' is
+  // only index-backed through trigrams. Its own guard, so a failure here cannot switch off
+  // trigram matching elsewhere; without it the query is still correct, just a full scan.
+  if (globalForDb.orbitTrigram) {
+    try {
+      await run(
+        `CREATE INDEX IF NOT EXISTS contacts_related_corpus_trgm ON contacts
+         USING gin(orbit_related_corpus(ai_summary, notes, key_facts, shared_interests) gin_trgm_ops)`
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (failed) failed.push({ statement: "CREATE INDEX contacts_related_corpus_trgm", message });
+      else console.error("[db] contacts_related_corpus_trgm failed\n", message);
+    }
   }
 
   // `contact_tags` has a surrogate primary key and no natural uniqueness, so a double write
@@ -3277,6 +3888,27 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "interactions", "external_id", "text");
   await ensureColumn(client, "interactions", "direction", "text");
   await ensureColumn(client, "contacts", "constellation_pin", "text");
+  await ensureColumn(client, "user_settings", "sender_bio", "text");
+  await ensureColumn(client, "user_settings", "career_profile", "jsonb");
+  await ensureColumn(client, "reminders", "calendar_event_key", "text");
+  await ensureColumn(client, "meeting_sessions", "calendar_event_key", "text");
+  await ensureColumn(client, "meeting_sessions", "calendar_series_id", "text");
+  await ensureColumn(client, "calendar_events", "agenda", "text");
+  await ensureColumn(client, "user_settings", "signup_attribution_source", "text");
+  await ensureColumn(client, "user_settings", "signup_session_id", "text");
+  await ensureColumn(client, "user_settings", "account_kind", "text");
+  await ensureColumn(client, "user_settings", "ai_key_added_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "invite_id", "uuid");
+  await ensureColumn(client, "user_settings", "interest_signup_id", "uuid");
+  await ensureColumn(client, "reminders", "completed_at", "timestamptz");
+  await ensureColumn(client, "extension_usage", "first_seen_at", "timestamptz");
+  await ensureColumn(client, "extension_usage", "version", "text");
+  await ensureColumn(client, "interest_list_signups", "join_session_id", "text");
+  await ensureColumn(client, "interest_list_signups", "user_id", "text");
+  await ensureColumn(client, "interest_list_signups", "converted_at", "timestamptz");
+  await ensureColumn(client, "chat_messages", "answer_outcome", "text");
+  await ensureColumn(client, "user_settings", "chat_auto_apply", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "user_settings", "email_activity_sync", "integer NOT NULL DEFAULT 0");
   await ensureColumn(
     client,
     "interactions",
@@ -3326,6 +3958,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "contacts", "school", "text");
   await ensureColumn(client, "contacts", "profile_image_url", "text");
   await ensureColumn(client, "contacts", "profile_image_checked_at", "timestamp");
+  await ensureColumn(client, "contacts", "profile_image_source", "text");
   await ensureColumn(
     client,
     "user_settings",
@@ -3366,6 +3999,15 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "wizard_offered_at", "timestamptz");
   await ensureColumn(client, "user_settings", "wizard_step", "text");
   await ensureColumn(client, "user_settings", "wizard_completed_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "onboarding_path", "text");
+  await ensureColumn(client, "user_settings", "tour_started_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "tour_stop", "text");
+  await ensureColumn(client, "user_settings", "tour_exited_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "tour_completed_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "linkedin_export_requested_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "linkedin_reminder_shown_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "credits_intro_shown_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "cloud_notes_auto_extract", "integer NOT NULL DEFAULT 0");
   await ensureColumn(client, "user_settings", "email", "text");
   await ensureColumn(client, "user_settings", "calendar_feed_token", "text");
   await ensureColumn(client, "user_settings", "inbound_log_token", "text");
@@ -3528,10 +4170,16 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   // existence check entirely when no `source_id` is supplied.
   await ensureColumn(client, "contacts", "embedding_stale_at", "timestamptz");
   await ensureColumn(client, "contacts", "work_history_due_at", "timestamptz");
+  await ensureColumn(client, "contacts", "work_history_misses", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "contacts", "work_history_miss_slug", "text");
+  await ensureColumn(client, "usage_events", "web_searches", "integer");
   await ensureColumn(client, "user_settings", "work_history_auto_enabled", "integer NOT NULL DEFAULT 1");
   await ensureColumn(client, "user_settings", "email_intel_enabled", "integer NOT NULL DEFAULT 0");
   await ensureColumn(client, "user_settings", "email_intel_cursor_at", "timestamptz");
   await ensureColumn(client, "user_settings", "email_intel_next_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "relationship_engine_enabled", "integer NOT NULL DEFAULT 1");
+  await ensureColumn(client, "user_settings", "chat_self_names", "jsonb NOT NULL DEFAULT '[]'");
+  await ensureColumn(client, "action_items", "owed_by", "text");
 
   try {
     await client.exec(
@@ -3633,6 +4281,8 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "radar_digest_unsub_token_hash", "text");
   await ensureColumn(client, "contacts", "bluesky_handle", "text");
   await ensureColumn(client, "contacts", "mastodon_acct", "text");
+  await ensureColumn(client, "contacts", "name_guess", "jsonb");
+  await ensureColumn(client, "meeting_sessions", "user_notes", "text");
   await ensureColumn(client, "recommendations", "base_score", "integer");
   await ensureColumn(client, "recommendations", "ai_delta", "integer");
   await ensureColumn(client, "recommendations", "ai_angle", "text");
@@ -3644,6 +4294,10 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "recommendations", "outcome_at", "timestamptz");
   // v136: what autopilot scheduled for a card.
   await ensureColumn(client, "recommendations", "autopilot", "jsonb");
+  // v146 (first claimed 140): direct email — signature and default sending mailbox. Same reasoning as every block above.
+  await ensureColumn(client, "user_settings", "email_signature_text", "text");
+  await ensureColumn(client, "user_settings", "email_signature_html", "text");
+  await ensureColumn(client, "user_settings", "default_send_provider", "text");
 
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
@@ -3941,6 +4595,24 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS school text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_url text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_checked_at timestamp`,
+  // Schema v159: where a contact's photo came from (google|outlook|gravatar|apollo|public|
+  // extension|upload), and the cross-user LinkedIn photo cache keyed by profile slug. Null
+  // source = unknown (older rows); no backfill.
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_source text`,
+  `CREATE TABLE IF NOT EXISTS linkedin_avatars (slug text PRIMARY KEY, image_url text, source text NOT NULL, resolved_at timestamptz NOT NULL DEFAULT now(), blocked_at timestamptz, blocked_by text)`,
+  `CREATE INDEX IF NOT EXISTS linkedin_avatars_resolved_at_idx ON linkedin_avatars(resolved_at)`,
+  // Schema v164: cloud notes. One row per watched drive (its own change cursor — never
+  // gmail_connections.sync_cursor, which calendar sync owns) and one per doc found or extracted,
+  // which is the dedupe, the panel row and the review dialog. Plus the auto-extract switch.
+  `CREATE TABLE IF NOT EXISTS cloud_note_sources (user_id text NOT NULL, provider text NOT NULL, cursor text, backfilled_at timestamptz, next_scan_at timestamptz NOT NULL DEFAULT now(), lease_until timestamptz, last_scan_at timestamptz, last_error text, created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (user_id, provider))`,
+  `CREATE INDEX IF NOT EXISTS cloud_note_sources_due_idx ON cloud_note_sources(next_scan_at)`,
+  `CREATE TABLE IF NOT EXISTS cloud_note_files (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, provider text NOT NULL, file_id text NOT NULL, name text NOT NULL, web_url text, modified_at timestamptz, status text NOT NULL DEFAULT 'found', reason text, detected_by text NOT NULL DEFAULT 'rules', from_backfill integer NOT NULL DEFAULT 0, capture_job_id uuid, notified_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS cloud_note_files_user_file_uidx ON cloud_note_files(user_id, provider, file_id)`,
+  `CREATE INDEX IF NOT EXISTS cloud_note_files_user_status_idx ON cloud_note_files(user_id, status)`,
+  // Schema v165: the raw files of a LinkedIn export (import_files), hung off its imports row.
+  `CREATE TABLE IF NOT EXISTS import_files (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, import_id uuid NOT NULL REFERENCES imports(id) ON DELETE CASCADE, path text NOT NULL, byte_size integer NOT NULL, role text NOT NULL, gz text NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE INDEX IF NOT EXISTS import_files_user_idx ON import_files(user_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS import_files_import_path_uidx ON import_files(import_id, path)`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS x_handle text`,
   `CREATE INDEX IF NOT EXISTS contacts_user_linkedin_idx ON contacts(user_id, linkedin_url)`,
   `CREATE INDEX IF NOT EXISTS contacts_user_x_idx ON contacts(user_id, x_handle)`,
@@ -4017,6 +4689,12 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS max_nudge_seen_at timestamptz`,
   `ALTER TABLE gate_events ADD COLUMN IF NOT EXISTS unlock_plan text`,
   `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS managed_ai_paused boolean`,
+  // Schema v179: the admin console's web-search switch (null = never set = running).
+  `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS web_search_paused boolean`,
+  // Schema v179: searches per call, and the work-history miss streak that stops auto checks.
+  `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS web_searches integer`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS work_history_misses integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS work_history_miss_slug text`,
   // Schema v139: the credit emails at 80% and 100% of the monthly allowance — the switch, and
   // which cycle and level were last sent (claimed in one UPDATE before each send).
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credit_email_enabled integer NOT NULL DEFAULT 1`,
@@ -4038,6 +4716,32 @@ const alters = [
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS resolution_note text`,
   `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS sender_bio text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS career_profile jsonb`,
+  // Schema v161: the calendar event a reminder or a recording belongs to — the provider's
+  // per-instance id, not a calendar_events FK, because that table only holds a two-week window.
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS calendar_event_key text`,
+  `ALTER TABLE meeting_sessions ADD COLUMN IF NOT EXISTS calendar_event_key text`,
+  // Schema v162: the invite’s agenda (for the meeting summarizer) and the recurring series a
+  // recording belongs to (for "last time" in the next one).
+  `ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS agenda text`,
+  // Schema v181: measurement. Account kind and attribution/identity links on user_settings, the
+  // moment a reminder was completed, extension first-seen/version, and the waitlist-to-account
+  // link. The two new tables (site_invites, product_events) are in the DDL template.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_attribution_source text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_session_id text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS account_kind text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_key_added_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS invite_id uuid`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS interest_signup_id uuid`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS completed_at timestamptz`,
+  `ALTER TABLE extension_usage ADD COLUMN IF NOT EXISTS first_seen_at timestamptz`,
+  `ALTER TABLE extension_usage ADD COLUMN IF NOT EXISTS version text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS join_session_id text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS user_id text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS converted_at timestamptz`,
+  `ALTER TABLE meeting_sessions ADD COLUMN IF NOT EXISTS calendar_series_id text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_activity_sync integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS terms_accepted_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS terms_version text`,
@@ -4052,7 +4756,20 @@ const alters = [
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS proposed_actions jsonb DEFAULT '[]'`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback text`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback_note text`,
+  // Schema v182: whether a chat answer answered (`@/lib/chat-abstention`).
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS answer_outcome text`,
+  // Schema v183: chat may apply its small, reversible changes itself (`@/lib/chat-auto-apply`).
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS chat_auto_apply integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS writing_instructions text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_path text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS tour_started_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS tour_stop text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS tour_exited_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS tour_completed_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS linkedin_export_requested_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS linkedin_reminder_shown_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credits_intro_shown_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS cloud_notes_auto_extract integer NOT NULL DEFAULT 0`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS slot uuid`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true`,
@@ -4077,6 +4794,35 @@ const alters = [
   `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS raw_date_phrase text`,
   `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS date_basis text`,
   `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS item_hash text`,
+  // Schema v34: revertible imports.
+  //
+  // `import_id` is the provenance that makes an undo exact — the revert deletes the rows
+  // carrying its own id and nothing else. Written only on INSERT (the engine leaves it out
+  // of its ON CONFLICT set clause), so a re-import that refreshes a row someone logged by
+  // hand never claims it.
+  //
+  // `outcome` is the column this feature was waiting on: `import_job_rows` recorded WHICH
+  // contact a row produced but not whether the import created that person or merged into
+  // someone already there. Both are `done` with a contact id, and deleting a merged-into
+  // contact would destroy a person who predates the import entirely.
+  //
+  // `revert_snapshot` carries the pre-merge values of exactly the columns the merge writes,
+  // so a fold-in can be rolled back rather than only counted. NULL on every pre-v34 row,
+  // which `revertImport` reports as unrevertible instead of guessing.
+  //
+  // No backfill is possible for any of the three: nothing recorded create-vs-merge, and the
+  // overwritten values are gone. Imports finished before this lands stay unrevertible, and
+  // the UI says so rather than offering a button that would do the wrong thing.
+  `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS import_id uuid`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS import_id uuid`,
+  `ALTER TABLE import_job_rows ADD COLUMN IF NOT EXISTS outcome text`,
+  `ALTER TABLE import_job_rows ADD COLUMN IF NOT EXISTS revert_snapshot jsonb`,
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS reverted_at timestamptz`,
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS revert_stats jsonb`,
+  // Partial: the overwhelming majority of interactions and reminders are hand-made and
+  // carry NULL here, and the only query that reads the column asks for one import's rows.
+  `CREATE INDEX IF NOT EXISTS interactions_import_idx ON interactions(import_id) WHERE import_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS reminders_import_idx ON reminders(import_id) WHERE import_id IS NOT NULL`,
   ...ADMIN_V2_STATEMENTS,
   // Embedding staleness: imports flag contacts here instead of embedding inline, and a
   // separate backfill drains them. The dedupe is safe to re-run — it only ever deletes
@@ -4378,6 +5124,10 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_digest_unsub_token_hash text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS bluesky_handle text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS mastodon_acct text`,
+  // Schema v185: a name read from a handle, and whether it is a weak guess (`@/lib/contact-name-guess`).
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS name_guess jsonb`,
+  // Schema v186: what the person typed during a recorded meeting, kept with it (/meetings).
+  `ALTER TABLE meeting_sessions ADD COLUMN IF NOT EXISTS user_notes text`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS base_score integer`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS ai_delta integer`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS ai_angle text`,
@@ -4388,12 +5138,33 @@ const alters = [
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS acted_at timestamptz`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS outcome_at timestamptz`,
   `DROP INDEX IF EXISTS recommendations_live_uidx`,
+  // Schema v170: guest "Look up" now files its briefs in ai_result_cache with Find people's
+  // research, so the table v169 created holds nothing anything reads — only short-lived
+  // copies of web lookups, re-runnable on demand. Dropped rather than left behind unpurged.
+  `DROP TABLE IF EXISTS guest_profiles`,
   // Schema v136: what autopilot scheduled for a card, so its Undo reverses exactly that.
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS autopilot jsonb`,
   // Schema v143: user_settings.radar_apollo_cursor, the cursor for a Radar-owned Apollo
   // re-check that was never built. #371 took it out of the code first, so the deployment
   // still serving while this runs never selects it (the wispr_api_key_encrypted precedent, v89).
   `ALTER TABLE user_settings DROP COLUMN IF EXISTS radar_apollo_cursor`,
+  // Schema v146 (first claimed 140): email_sends, the person-to-person outbox (direct email P1),
+  // plus the signature and default sending mailbox on user_settings.
+  `CREATE TABLE IF NOT EXISTS email_sends (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, provider text NOT NULL, from_email text NOT NULL, from_name text, to_emails jsonb NOT NULL, cc jsonb NOT NULL DEFAULT '[]'::jsonb, bcc jsonb NOT NULL DEFAULT '[]'::jsonb, subject text NOT NULL, body_text text NOT NULL, body_html text, contact_ids jsonb NOT NULL DEFAULT '[]'::jsonb, origin text NOT NULL, origin_ref text, idempotency_key text, status text NOT NULL DEFAULT 'queued', send_at timestamptz NOT NULL, sent_at timestamptz, attempts integer NOT NULL DEFAULT 0, claimed_by uuid, lease_until timestamptz, last_error text, failure_kind text, rfc_message_id text NOT NULL, provider_message_id text, provider_thread_id text, in_reply_to_send_id uuid, in_reply_to_rfc_id text, attachments jsonb NOT NULL DEFAULT '[]'::jsonb, dismissed_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS email_sends_idempotency_uidx ON email_sends(user_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND (status IN ('queued','sending','sent') OR failure_kind = 'ambiguous')`,
+  `CREATE INDEX IF NOT EXISTS email_sends_due_idx ON email_sends(send_at) WHERE status = 'queued'`,
+  `CREATE INDEX IF NOT EXISTS email_sends_user_created_idx ON email_sends(user_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS email_sends_user_status_idx ON email_sends(user_id, status)`,
+  `CREATE INDEX IF NOT EXISTS email_sends_contact_ids_idx ON email_sends USING gin (contact_ids)`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_signature_text text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_signature_html text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS default_send_provider text`,
+  // Schema v147: the relationship engine. Tables are in the template; these are the columns
+  // it adds to tables that older databases already have.
+  `ALTER TABLE action_items ADD COLUMN IF NOT EXISTS owed_by text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS relationship_engine_enabled integer NOT NULL DEFAULT 1`,
+  // Schema v148: sender labels the owner picked as "me" in chat exports (WhatsApp has no "Me").
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS chat_self_names jsonb NOT NULL DEFAULT '[]'`,
 ];
 
 /**
@@ -4410,7 +5181,31 @@ const alters = [
  * has been silently missing from production since August 2026. Now: columns first, and
  * every real failure is returned rather than only logged.
  */
+/**
+ * #184 (never merged; its schema 56) created a different `calendar_events` — keyed by provider
+ * and `external_id` — on any database a preview of it migrated. `CREATE TABLE IF NOT EXISTS`
+ * would then keep that one, every index on `source_id`/`start_at` would fail, and the build
+ * would refuse to deploy. Set it aside first: renamed, not dropped — nothing reads it, but
+ * deleting someone's rows is not a migration's call. Its indexes keep names ours never use.
+ * Exported for `smoke-calendar-events`.
+ */
+export async function setAsideAbandonedCalendarEvents(run: StatementRunner, failed: SchemaFailure[]): Promise<void> {
+  let legacy = false;
+  try {
+    legacy =
+      rowsOf<unknown>(
+        await run(
+          `SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'calendar_events' AND column_name = 'external_id'`
+        )
+      ).length > 0;
+  } catch {
+    return;
+  }
+  if (legacy) await runStatements(run, ["ALTER TABLE calendar_events RENAME TO calendar_events_abandoned_v56"], "DDL", failed);
+}
+
 async function applySchema(run: StatementRunner, failed: SchemaFailure[]): Promise<void> {
+  await setAsideAbandonedCalendarEvents(run, failed);
   const statements = DDL.split(";")
     .map((s) => s.trim())
     .filter(Boolean);

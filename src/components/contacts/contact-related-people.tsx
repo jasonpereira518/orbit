@@ -1,6 +1,8 @@
 import { IntentLink } from "@/components/ui/intent-link";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { ContactAvatarPreview } from "@/components/contacts/contact-preview-card";
+import { ContactName } from "@/components/contacts/contact-name";
+import { openNameGuess } from "@/lib/contact-name-guess";
 import { ContactRelatedReachOut } from "@/components/contacts/contact-related-reach-out";
 import {
   Card,
@@ -53,8 +55,15 @@ export function ContactRelatedPeople({
                     profileImageUrl: person.profileImageUrl,
                     summary: person.aiSummary,
                     detail: person.reasonLabel,
+                    nameGuess: openNameGuess(person),
                   }}
                 >
+                  <ContactName
+                    contactId={person.id}
+                    name={display}
+                    guess={openNameGuess(person)}
+                    className="flex min-w-0 flex-1 items-start"
+                  >
                   <IntentLink
                     href={`/contacts/${person.id}`}
                     className="flex min-w-0 flex-1 items-center gap-3 transition-opacity hover:opacity-80"
@@ -76,11 +85,12 @@ export function ContactRelatedPeople({
                           .filter(Boolean)
                           .join(" · ") || "No role yet"}
                       </p>
-                      <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                      <p className="mt-0.5 truncate text-2xs text-muted-foreground">
                         {person.reasonLabel}
                       </p>
                     </div>
                   </IntentLink>
+                  </ContactName>
                 </ContactAvatarPreview>
                 <ContactRelatedReachOut
                   contactId={person.id}

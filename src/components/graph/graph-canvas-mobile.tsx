@@ -526,7 +526,7 @@ export function GraphCanvasMobile(props: GraphChartProps) {
         A star chart of {contactCount} {contactCount === 1 ? "person" : "people"} around
         you
         {clusterCount > 0
-          ? `, grouped into ${clusterCount} ${clusterCount === 1 ? "company or school" : "companies and schools"}`
+          ? `, grouped into ${clusterCount} ${clusterCount === 1 ? "group" : "companies, schools and industries"}`
           : ""}
         . This is a visual view —{" "}
         <Link href="/contacts">browse the same people as a list</Link>.

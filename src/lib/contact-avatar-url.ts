@@ -18,10 +18,51 @@ const PLACEHOLDER_IMAGE_HOSTS = ["static.licdn.com/aero"];
 /** Host suffix for our Vercel Blob avatar store. */
 const BLOB_AVATAR_HOST_SUFFIX = ".public.blob.vercel-storage.com";
 
+/**
+ * Marker written when a LinkedIn photo lookup found nothing.
+ *
+ * Without it, `/api/avatars/[contactId]` re-ran the whole Microlink + Unavatar resolution
+ * on EVERY page view of every photoless contact, because a failure persisted nothing.
+ * Browsing ~30 profiles in a minute exhausted `RATE_LIMITS.avatarResolve` (30/min) and
+ * started returning 429s — for contacts that were never going to have a photo.
+ *
+ * A sentinel in `profileImageUrl` rather than a new column: every reader already funnels
+ * through the two predicates below, so teaching them this shape makes the marker
+ * invisible everywhere else, and no migration is involved.
+ */
+/**
+ * Exported because the SQL mirrors in `contact-avatar-sql.ts` and `avatar-backfill.ts`
+ * interpolate it rather than restating the literal. Those two carry a comment telling you to
+ * keep them in step with these predicates, and the marker shipped without either being
+ * updated — so the value is now shared rather than promised.
+ */
+export const NO_PHOTO_PREFIX = "orbit:no-photo:";
+
+/** How long to trust a negative result before trying the provider again. */
+export const NO_PHOTO_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+export function noPhotoMarker(now: Date = new Date()) {
+  return `${NO_PHOTO_PREFIX}${now.getTime()}`;
+}
+
+/** True while a "we looked and found nothing" marker is still fresh. */
+export function hasFreshNoPhotoMarker(
+  url: string | null | undefined,
+  now: Date = new Date()
+): boolean {
+  const u = url?.trim();
+  if (!u?.startsWith(NO_PHOTO_PREFIX)) return false;
+  const at = Number(u.slice(NO_PHOTO_PREFIX.length));
+  if (!Number.isFinite(at)) return false;
+  return now.getTime() - at < NO_PHOTO_TTL_MS;
+}
+
 /** True when a stored URL is known-bad in the browser (rate limits / placeholders). */
 export function isUnusableAvatarUrl(url: string | null | undefined): boolean {
   if (!url?.trim()) return true;
   const u = url.trim();
+  // The negative-cache marker is not a photo — every client must fall back to initials.
+  if (u.startsWith(NO_PHOTO_PREFIX)) return true;
   if (u.startsWith("data:image/")) return false;
   return BROKEN_AVATAR_HOSTS.some((h) => u.includes(h));
 }
@@ -39,6 +80,37 @@ export function isUnfetchableImageUrl(url: string | null | undefined): boolean {
   const u = url?.trim();
   if (!u) return true;
   return PLACEHOLDER_IMAGE_HOSTS.some((h) => u.includes(h));
+}
+
+/**
+ * `/api/avatars/{id}`, versioned by the photo the caller can see.
+ *
+ * The route answers a stored Blob or shared photo with a redirect, and a redirect the
+ * browser may not cache is one authenticated function call per avatar per render — about
+ * fifty on a contacts page (LATENCY_PLAN NET-1). With `?v=` the route marks the redirect
+ * cacheable for a day, and the version is a hash of the photo URL the list or profile
+ * already holds, so a new photo is a new URL: the browser never serves a stale one. The
+ * `/api/avatars/{id}` value `clientAvatarUrlSql` returns for inline photos carries no
+ * version (the route already serves those bytes with its own cache header) and neither
+ * does on-demand resolution, which has no photo yet.
+ */
+export function avatarRouteUrl(contactId: string, visibleUrl: string | null | undefined): string {
+  const base = `/api/avatars/${contactId}`;
+  const u = visibleUrl?.trim();
+  // Already a route URL: keep a cache-busting query the caller added (`?t=` after a backfill).
+  if (u?.startsWith(`${base}?`)) return u;
+  if (!u || isUnusableAvatarUrl(u) || u.startsWith("/api/avatars/") || u.startsWith("data:")) return base;
+  return `${base}?v=${avatarVersion(u)}`;
+}
+
+/** FNV-1a over the URL, base 36: short, stable, and different whenever the photo is. */
+export function avatarVersion(url: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < url.length; i++) {
+    h ^= url.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(36);
 }
 
 /**

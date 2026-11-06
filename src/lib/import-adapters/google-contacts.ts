@@ -41,6 +41,7 @@ export const googleContactsAdapter: ImportAdapter<GoogleContactRowPayload> = {
       email: payload.email || undefined,
       phone: payload.phone || undefined,
       profileImageUrl: payload.photoUrl || undefined,
+      profileImageSource: "google",
       source: "google_contacts",
       // Kept explicit even though `contactInsertValues` coalesces `input.relationshipScore
       // ?? 2` to the same value — this task changes plumbing only, not the semantics of
@@ -59,6 +60,7 @@ export const googleContactsAdapter: ImportAdapter<GoogleContactRowPayload> = {
       email: payload.email || undefined,
       phone: payload.phone || undefined,
       profileImageUrl: payload.photoUrl || undefined,
+      profileImageSource: "google",
       source: "google_contacts",
       howMet: "Google Contacts",
       metContext: "online",

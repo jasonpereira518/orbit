@@ -500,10 +500,13 @@ export async function markRecommendationsSeen(userId: string, ids: readonly stri
 export const RADAR_OUTCOME_WINDOW_DAYS = 14;
 
 /**
- * Outcomes: an accepted (or autopilot-applied) card whose contact then had a real
- * interaction within `RADAR_OUTCOME_WINDOW_DAYS` gets `outcome_at`. One statement per run,
- * over the account's recent accepts only. "Real" is `countsAsTouch`: an AI-derived row is
- * not a conversation. Returns how many cards converted this time.
+ * Outcomes: an accepted (or autopilot-applied) card whose contact then RESPONDED within
+ * `RADAR_OUTCOME_WINDOW_DAYS` gets `outcome_at`. One statement per run, over the account's
+ * recent accepts only. A response is a real interaction not marked outbound: a reply
+ * (`direction = 'in'`), or a call, meeting or note logged afterwards (direction unknown —
+ * the same reading as `@/lib/awaiting-reply`). The user's own email or "mark sent" is
+ * `out`, so acting on a card is never its own outcome. An AI-derived row is not a
+ * conversation either. Returns how many cards converted this time.
  */
 export async function detectRadarOutcomes(userId: string, now: Date): Promise<number> {
   const db = await getDb();
@@ -524,6 +527,7 @@ export async function detectRadarOutcomes(userId: string, now: Date): Promise<nu
              AND i.interaction_date >= r2.acted_at
              AND i.interaction_date <= LEAST(r2.acted_at + make_interval(days => ${RADAR_OUTCOME_WINDOW_DAYS}), ${at}::timestamptz)
              AND (i.source IS NULL OR i.source <> ${AI_DERIVED_SOURCE})
+             AND i.direction IS DISTINCT FROM 'out'
            GROUP BY r2.id
         ) t
        WHERE r.id = t.id

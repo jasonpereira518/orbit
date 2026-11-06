@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs/config";
+import { withBotId } from "botid/next/config";
 import { buildSecurityHeaders } from "./src/lib/security-headers";
 import {
   hostMatchValue,
@@ -12,6 +13,8 @@ import {
 import { CAPTURE_BODY_SIZE_LIMIT } from "./src/lib/capture-limits";
 
 const nextConfig: NextConfig = {
+  // No `X-Powered-By: Next.js`: the exact framework is no one's business but ours.
+  poweredByHeader: false,
   // `*.bench.tsx` routes (the constellation benchmark, src/app/bench) exist only in a build
   // made with ORBIT_BENCH=1, so no deployed build ever contains them.
   pageExtensions: [
@@ -50,7 +53,13 @@ const nextConfig: NextConfig = {
   // and before public/ is served, which is why the allowlist lives here rather than in
   // src/proxy.ts. Stealth's redirects on the app host are the proxy's: they change at runtime.
   async redirects() {
-    return waitlistRedirects();
+    return [
+      ...waitlistRedirects(),
+      // Imports is the Imports tab on /capture. Here rather than a redirect() in a page: this
+      // is a real 307, so the browser keeps an old link's `#import-panel-*` hash (a page's
+      // redirect lands after streaming starts and loses it). The query passes through.
+      { source: "/imports", destination: "/capture?mode=imports", permanent: false },
+    ];
   },
   async rewrites() {
     return { beforeFiles: [...waitlistRewrites(), ...waitlistReferralRewrites(), ...localWaitlistRewrites()], afterFiles: [], fallback: [] };
@@ -164,10 +173,13 @@ const nextConfig: NextConfig = {
   },
 };
 
+// Vercel BotID (the waitlist join): proxies its challenge script under BOTID_PATH_PREFIX
+// (src/lib/waitlist-host.ts) by appending to `beforeFiles` and adding headers for that path.
+//
 // Sentry's build plugin: injects the instrumentation and, when SENTRY_AUTH_TOKEN is set,
 // uploads source maps. Without org/project/token it is a no-op wrapper, so local builds
 // and previews are unaffected. Only Turbopack-safe options are passed.
-export default withSentryConfig(nextConfig, {
+export default withSentryConfig(withBotId(nextConfig), {
   org: process.env.SENTRY_ORG,
   project: process.env.SENTRY_PROJECT,
   authToken: process.env.SENTRY_AUTH_TOKEN,

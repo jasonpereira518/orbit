@@ -19,6 +19,7 @@
  * Usage:
  *   npx tsx scripts/seed-showcase.ts --user demo-user --reset
  *   npx tsx scripts/seed-showcase.ts --user user_xxx --reset --confirm
+ *   npx tsx scripts/seed-showcase.ts --user demo-user --reset [--persona founder|student]
  */
 import { config } from "dotenv";
 config({ path: ".env.local" });
@@ -55,6 +56,11 @@ function value(name: string) {
 
 const USER = value("user");
 const RESET = flag("reset");
+const PERSONA = value("persona") ?? "founder";
+if (PERSONA !== "founder" && PERSONA !== "student") {
+  console.error(`--persona must be founder or student (got "${PERSONA}")`);
+  process.exit(1);
+}
 const REMOTE = Boolean(process.env.DATABASE_URL?.trim());
 
 if (!USER || USER.startsWith("--")) {
@@ -111,7 +117,7 @@ async function main() {
     await db.delete(tags).where(eq(tags.userId, userId));
   }
 
-  const summary = await seedDemoWorkspace(userId);
+  const summary = await seedDemoWorkspace(userId, PERSONA === "student" ? { persona: "student" } : {});
   console.log(`Seeded the demo workspace for "${userId}"`);
   for (const [name, count] of Object.entries(summary)) {
     console.log(`  ${name.padEnd(18)} ${count}`);

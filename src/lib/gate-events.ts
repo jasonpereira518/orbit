@@ -1,7 +1,8 @@
-import { and, eq, gt } from "drizzle-orm";
+import { and, desc, eq, gt } from "drizzle-orm";
 import { getDb } from "@/db";
 import { gateEvents } from "@/db/schema";
 import { unlockPlanFor, type FeatureKey, type Plan } from "@/lib/plans/plan-config";
+import { GATES } from "@/lib/product-event-schemas";
 
 /**
  * Records every time a plan gate refused someone.
@@ -27,8 +28,40 @@ import { unlockPlanFor, type FeatureKey, type Plan } from "@/lib/plans/plan-conf
 /**
  * The `FeatureKey` values plus the metered caps gated outside `requireEntitlement`: the free
  * contact cap, and the monthly Apollo enrichment and speech allowances.
+ *
+ * `managedCredits`, `backgroundFloor`, `speechShortform` and `speechMeeting` are the pricing-v2
+ * walls that used to leave no row at all (the refusal threw before anything was recorded):
+ * out of managed-AI credits, below the credits reserved for things the person asks for, and
+ * the two monthly Deepgram allowances. They are the same strings the `checkout_started`
+ * `from_gate` property admits (`GATES` in `product-event-schemas.ts`).
  */
-export type GateFeature = FeatureKey | "contacts";
+export type MeteredGate = "managedCredits" | "backgroundFloor" | "speechShortform" | "speechMeeting";
+export type GateFeature = FeatureKey | "contacts" | MeteredGate;
+
+/** Every gate key a checkout can be attributed to; the closed list `?gate=` is validated against. */
+export type KnownGate = (typeof GATES)[number];
+
+const METERED_GATES: ReadonlySet<string> = new Set<MeteredGate>([
+  "managedCredits",
+  "backgroundFloor",
+  "speechShortform",
+  "speechMeeting",
+]);
+
+/**
+ * The cheapest plan that gets someone past this wall. For a plan-feature that is the first
+ * plan that includes it (`unlockPlanFor`). A metered wall has no such feature flag — Free,
+ * Pro and Max all have credits and speech, in different amounts — so the answer is the plan
+ * ABOVE the one they were on, and null when there is none (a Max account out of credits is
+ * unlocked by a pack, not a plan). Without this a metered key fell through `unlockPlanFor`
+ * to "max" for everyone.
+ */
+export function unlockPlanForGate(feature: GateFeature, plan: Plan): "free" | "orbit" | "max" | null {
+  if (!METERED_GATES.has(feature)) return unlockPlanFor(feature as FeatureKey | "contacts");
+  if (plan === "free") return "orbit";
+  if (plan === "orbit") return "max";
+  return null;
+}
 
 export async function recordGateHit(input: {
   userId: string;
@@ -48,7 +81,7 @@ export async function recordGateHit(input: {
       // The cheapest plan someone could buy to get past this wall. Denormalised for the
       // same reason as `plan`: the demand screen reads "who wanted Max", and plan
       // boundaries move between pricing versions.
-      unlockPlan: unlockPlanFor(input.feature),
+      unlockPlan: unlockPlanForGate(input.feature, input.plan),
       context: input.context ?? {},
     });
   } catch {
@@ -92,4 +125,34 @@ export async function recordGateHitThrottled(input: {
     return;
   }
   await recordGateHit(input);
+}
+
+
+/** Whether `value` is one of the closed gate keys (`GATES`). Anything else, a typo or a hand-edited URL, is not. */
+export function isKnownGate(value: unknown): value is KnownGate {
+  return typeof value === "string" && (GATES as readonly string[]).includes(value);
+}
+
+/** How far back "the gate that sent them here" looks when the URL does not say. */
+export const RECENT_GATE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The feature of the most recent wall this account hit, if it was within `windowMs` (a day by
+ * default) and is one of the closed gate keys. Read when a checkout starts without an explicit
+ * `?gate=`: the paywall that sent someone to /pricing and on to /upgrade could not carry its
+ * name along, and the gate row is the only trace of what they wanted. Never throws.
+ */
+export async function mostRecentGate(userId: string, windowMs = RECENT_GATE_WINDOW_MS): Promise<KnownGate | null> {
+  try {
+    const db = await getDb();
+    const [row] = await db
+      .select({ feature: gateEvents.feature })
+      .from(gateEvents)
+      .where(and(eq(gateEvents.userId, userId), gt(gateEvents.createdAt, new Date(Date.now() - windowMs))))
+      .orderBy(desc(gateEvents.createdAt))
+      .limit(1);
+    return isKnownGate(row?.feature) ? row.feature : null;
+  } catch {
+    return null;
+  }
 }

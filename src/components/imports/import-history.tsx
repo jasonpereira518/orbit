@@ -14,10 +14,13 @@ import {
   BookUser,
   Calendar as CalendarIcon,
   Contact,
+  FileArchive,
   FileSpreadsheet,
   FileText,
   Mail,
+  MessageCircle,
   MessageSquare,
+  MessageSquareText,
   Upload,
   type LucideIcon,
 } from "lucide-react";
@@ -37,6 +40,11 @@ import {
   type ImportHistoryItem,
 } from "@/actions/imports";
 import { dismissDriveFlag } from "@/actions/drive";
+import {
+  deleteLinkedInExportFiles,
+  listLinkedInExportFiles,
+} from "@/actions/linkedin-export-files";
+import type { ExportFileListing } from "@/lib/linkedin-export-store";
 import { createReminder } from "@/actions/reminders";
 import type {
   ImportedPerson,
@@ -77,11 +85,14 @@ const SOURCE_ICON: Record<string, { icon: LucideIcon; badge: string }> = {
   google_contacts: { icon: Contact, badge: CONNECTIONS_BADGE },
   outlook_contacts: { icon: Contact, badge: CONNECTIONS_BADGE },
   linkedin_messages: { icon: MessageSquare, badge: MESSAGES_BADGE },
+  whatsapp_chat: { icon: MessageCircle, badge: MESSAGES_BADGE },
+  imessage_chat: { icon: MessageSquareText, badge: MESSAGES_BADGE },
   gmail_recruiter_scan: { icon: Mail, badge: MESSAGES_BADGE },
   outlook_recruiter_scan: { icon: Mail, badge: MESSAGES_BADGE },
   calendar_ics: { icon: CalendarIcon, badge: CALENDAR_BADGE },
   calendar_csv: { icon: CalendarIcon, badge: CALENDAR_BADGE },
   drive_docs: { icon: FileText, badge: CONNECTIONS_BADGE },
+  linkedin_export: { icon: FileArchive, badge: CONNECTIONS_BADGE },
 };
 
 const UNKNOWN_ICON = { icon: Upload, badge: "bg-muted text-muted-foreground" };
@@ -445,6 +456,10 @@ export function ImportDetailBody({
           />
         ) : null}
 
+        {item.importType === "linkedin_export" ? (
+          <ExportFiles key={item.id} importId={item.id} />
+        ) : null}
+
         {item.stats?.flaggedCommitments?.length ? (
           <WorthALook
             key={item.id}
@@ -482,6 +497,90 @@ export function ImportDetailBody({
         ) : null}
       </div>
     </>
+  );
+}
+
+function fileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * The files a LinkedIn export kept, each downloadable, and a way to forget them all. Read on
+ * open rather than carried on the history row: only this sheet needs the list.
+ */
+function ExportFiles({ importId }: { importId: string }) {
+  const [files, setFiles] = useState<ExportFileListing[] | null>(null);
+  const [deleting, startDelete] = useTransition();
+
+  useEffect(() => {
+    let alive = true;
+    void listLinkedInExportFiles(importId)
+      .then((list) => alive && setFiles(list))
+      .catch(() => alive && setFiles([]));
+    return () => {
+      alive = false;
+    };
+  }, [importId]);
+
+  if (files === null) {
+    return <p className="text-xs text-muted-foreground">Looking up the files…</p>;
+  }
+
+  return (
+    <div>
+      <h3 className="text-sm font-medium">Files kept</h3>
+      {files.length === 0 ? (
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          None any more — a newer export replaced them, or they were deleted
+        </p>
+      ) : (
+        <>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Orbit reads the ones marked “read” and keeps the rest for later. Only your latest
+            export is kept.
+          </p>
+          <ul className="mt-2 divide-y divide-border/60 rounded-lg border border-border/60">
+            {files.map((f) => (
+              <li key={f.id} className="flex items-center justify-between gap-3 px-3 py-1.5 text-xs">
+                <a
+                  href={`/api/imports/files/${f.id}`}
+                  className="min-w-0 truncate underline-offset-2 hover:underline"
+                  download
+                >
+                  {f.path}
+                </a>
+                <span className="flex shrink-0 items-center gap-2 text-muted-foreground">
+                  {f.role === "parsed" ? <Badge variant="outline">read</Badge> : null}
+                  {fileSize(f.byteSize)}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mt-2"
+            disabled={deleting}
+            onClick={() =>
+              startDelete(async () => {
+                const res = await deleteLinkedInExportFiles(importId);
+                if ("error" in res) {
+                  toast.error(res.error);
+                  return;
+                }
+                setFiles([]);
+                toast.success("Deleted the export’s files — what Orbit learned from them stays");
+              })
+            }
+          >
+            {deleting ? "Deleting…" : "Delete these files"}
+          </Button>
+        </>
+      )}
+    </div>
   );
 }
 

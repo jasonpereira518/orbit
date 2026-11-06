@@ -7,7 +7,7 @@ What to do when something is wrong, and how the routine things are done. Short o
 | Signal | Where |
 |---|---|
 | Something is down | Better Stack monitor on `/api/health` → `#orbit-ops-critical` |
-| Backups stopped (`backup.stale`) | Better Stack heartbeat "orbit backup" (36 h without a ping) → `#orbit-ops-critical`; then GitHub → Actions → `backup` |
+| Backups stopped (`backup.stale`) | Better Stack heartbeat "orbit backup" (36 h without a ping) → `#orbit-ops-critical`; then the private ops repository → Actions → `backup` |
 | A known condition opened / recovered | ops sweep → `#orbit-ops` (critical also → `#orbit-ops-critical`) |
 | An exception nobody anticipated | Sentry (linked from `/admin/health`) |
 | What is open right now | `/admin/health` → System status strip and Open alerts |
@@ -53,16 +53,15 @@ BEHIND the code — a build whose migration did not run — and is worth waking 
 ## Scheduled workflows were disabled (GitHub's 60-day rule)
 
 GitHub disables a public repository's scheduled workflows after 60 days without repository
-activity. That stops `ops` (sweep, process-stalled, drain, connector sync) and `backup` at once;
-the Better Stack heartbeat goes quiet within 30 minutes.
+activity. That stops `ops` (sweep, process-stalled, drain, connector sync); the Better Stack
+heartbeat goes quiet within 30 minutes. (`backup` lives in the private ops repository, which
+the rule does not apply to.)
 
 ```bash
 gh api repos/jasonpereira518/orbit/actions/workflows --jq '.workflows[] | [.name, .state] | @tsv'
 # a disabled one reads "disabled_inactivity"
 gh workflow enable ops.yml --repo jasonpereira518/orbit
-gh workflow enable backup.yml --repo jasonpereira518/orbit
 gh workflow run ops.yml --repo jasonpereira518/orbit
-gh workflow run backup.yml --repo jasonpereira518/orbit
 ```
 
 Or GitHub → Actions → the workflow → **Enable workflow**, then **Run workflow**. Any push to
@@ -98,14 +97,26 @@ above. Vercel Pro crons remove the rule entirely.
 | `calendar.disarmed` | `SELECT sync_error, count(*) FROM gmail_connections WHERE next_sync_at IS NULL AND sync_error IS NOT NULL GROUP BY 1 ORDER BY 2 DESC;` One error string across many accounts is Google's side (API change, consent-screen or scope change, project quota in Google Cloud Console). Users reconnect from the Integrations dialog once it is fixed. |
 | `avatar.source_exhausted` | Informational: that source's shared daily allowance (`RATE_LIMITS.avatarSourceShared`) is gone and photo lookups wait for tomorrow. Daily before noon means raising the budget or buying the source's paid plan (`MICROLINK_API_KEY` skips the shared Microlink budget). |
 | `apollo.hosted_cap_hits` | Informational: accounts used their daily hosted Apollo allowance (`RATE_LIMITS.apolloSearch` / `apolloEnrich`). Compare with the Apollo plan's credits before raising either. |
+| `billing.ledger_drift` | Live MRR and the revenue ledger disagree and nothing has landed for an hour. Likeliest causes, in order: a Stripe webhook was dropped (`/admin/health` → webhooks), an account was comped over a live subscription (the comp zeroes live MRR but the invoices keep booking), or an account was deleted before its cancellation arrived. `SELECT user_id, sum(mrr_delta_cents) FROM billing_events GROUP BY 1 HAVING sum(mrr_delta_cents) <> 0;` against `user_settings` names the account. `analytics/checks/reconciliation.sql` has the full set. |
+| `billing.stripe_drift` | Critical: Stripe and the database disagree about at least one live subscription (plan, amount, or whether it is live at all). The daily job (`POST /api/ops/billing-reconcile`) returns the accounts when run by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/ops/billing-reconcile`. `in_stripe_not_in_db`: someone is paying for something they do not have, so comp the plan and find the missed webhook. `in_db_not_in_stripe`: someone has a plan they do not pay for. |
+| `billing.reconcile_missed` / `billing.reconcile_failed` | The 06:23 UTC Stripe comparison has not run for 30 hours, or its last run failed. Check the ops workflow ran the step; `STRIPE_SECRET_KEY` must be set (a restricted read key is enough). Run it by hand with the `curl` above. |
+| `product.signups_drop` | Sign-ups in the last 7 days are under half of the 7 before, with at least 10 in the earlier week. Check `/admin/analytics` for a traffic drop first (the beacon, a renamed route), then the waitlist and invite flow. |
+| `product.activation_drop` | The week that just finished its first week activated at under 60% of the trailing rate, with at least 20 accounts in it. Read `/admin/beta` by onboarding path and wave; a change that shipped to that cohort is the usual cause. |
+| `product.funnel_break` | Critical: 10 or more accounts in two days and not one capture saved by anyone. Capture is probably broken: try one yourself, then `/admin/health` → AI failures and the capture job statuses. |
+| `product.checkout_break` | Critical: checkouts started in the last day and nothing paid. Stripe Dashboard → Developers → Logs, then `stripe.checkout_error` and the webhook streaks above. |
+| `quality.failure_rate:capture` / `:import` / `:email` | More than 5% of that flow's attempts failed in 24 hours, with at least 20 attempts. `/admin/beta` → Failures people saw names how many accounts it touched; the flow's own status column (`capture_jobs.status`, `imports.status`, `email_sends.status`) and its `error` text name the cause. |
+| `cost.heavy_user` | An account cost Orbit more in a day than its plan's ceiling (`DAILY_COST_CEILING_MICROS` in `src/lib/product-ops.ts`). `/admin/billing/costs` lists heavy accounts; for a voice-heavy free account check the speech cap, for a Lifetime or comped one decide whether to cap. |
+| `tracking.silence` / `tracking.events_silence` | Critical: no page view for two hours in the daytime after a busy day before, so every traffic number is going stale. Check `ANALYTICS_SALT` is set, `/api/p/v` (or `/api/track`) answers 204, and that the beacon is in the root layout. `tracking.events_silence` is the same for `product_events`: a deploy that broke `track()` (Sentry source `analytics.track`). |
+| `cron.silent:<job>` | A job that records runs (`email.drain`, `connectors.outbox`, `credits.notices`, `cloud-notes.run`) has not started for longer than its cadence allows. Check the ops workflow ran it, then run it by hand with the route's `curl`. A dead email drain means messages are queued and not sent. |
 | `deploy.drift` | A build is failing. Vercel → Deployments → open the red one → fix → push. |
 | `config.missing` | Vercel → Environment Variables. The alert names the variable. |
 | `config.alerts_undeliverable` | Slack → your app → Incoming Webhooks → copy the URL → Vercel → Environment Variables → `SLACK_OPS_WEBHOOK_URL` (Production) → Redeploy. Until then `/admin/health` is the only place alerts appear. |
 | `ai.provider_outage:*` | Not ours; it clears when the provider recovers. |
 | `perf.slow_burst` | `/admin/health` → error events → `perf.slow` rows name the call and account. |
-| `ai.managed_failing:*` | Orbit's own key for that provider was refused or throttled — every Lifetime account without a key of its own has lost AI. Check the key and its quota in the provider console; replace `ORBIT_MANAGED_<PROVIDER>_API_KEY` in Vercel and redeploy. |
-| `ai.managed_unconfigured` | Lifetime accounts exist but no `ORBIT_MANAGED_*_API_KEY` is set (or `ORBIT_MANAGED_AI=off`). Set one, or accept that Lifetime is BYOK until you do. |
-| `ai.managed_spend_spike` / `ai.managed_runway` | Managed spend is outrunning what Lifetime brought in. `/admin/billing/costs` → "On Orbit's AI keys". Lower `MANAGED_AI_BUDGET` in `src/lib/managed-ai-policy.ts`, or in an emergency set `ORBIT_MANAGED_AI=off` and redeploy. |
+| `ai.managed_failing:*` | Orbit's own key for that provider was refused or throttled — every account on included AI without a key of its own has lost AI. Check the key and its quota (and the prepaid balance) in the provider console; replace `ORBIT_MANAGED_<PROVIDER>_API_KEY` in Vercel and redeploy. |
+| `ai.managed_unconfigured` | Pro/Max accounts exist but no `ORBIT_MANAGED_*_API_KEY` is set (or `ORBIT_MANAGED_AI=off`). Set one. |
+| `ai.managed_pool:<provider>` | That provider's pool (`MANAGED_AI_POOLS`) is at 75%+. Anthropic refills on the 15th and OpenAI takes over meanwhile (warning only). OpenAI spent is critical: top up, raise `MANAGED_AI_POOLS.openai.capMicros`, deploy. With every pool spent included AI refuses. |
+| `ai.managed_spend_spike` / `ai.managed_runway` | Managed spend is spiking, or outrunning subscription revenue (expected while Free usage dominates — the pool alert is the one to act on). `/admin/billing/costs` → "On Orbit's AI keys". Lower `monthlyCredits` in `src/lib/plans/plan-config.ts`, pause from `/admin/billing`, or in an emergency set `ORBIT_MANAGED_AI=off` and redeploy. |
 | `ai.managed_cap_hit` | Info: accounts used their whole monthly allowance. A rising count means the cap is too tight for real use. |
 
 ## Radar: switches
@@ -125,12 +136,15 @@ Monday email. Every switch, smallest first:
   not beating the ones it demoted after two weeks.
 - **All of Radar:** hide `page.radar` in `/admin/product`. The nightly pass, the news sweep and
   the Monday email all stand down, and no AI key is spent.
-- **Released on Sep 30 2026** (`comingSoon` removed from `page.radar` in `src/lib/surfaces.ts`).
-  Since then the nightly pass claims every account active in the last 60 days (25 per claim,
-  continuing itself), the hourly news sweep runs as soon as any account has had a pass, and the
-  Monday email goes to accounts active in the last 30 days that have a pending Today or Soon
-  card and haven't turned it off. Putting `comingSoon: true` back returns the pass to accounts
-  that have opened Radar and stops the email; to stop everything, hide the page instead.
+- **Coming soon or released:** Radar ships coming soon (`comingSoon: true` on `page.radar` in
+  `src/lib/surfaces.ts`). Either way round can be flipped without a deploy from the coming-soon
+  toggle in `/admin/product` (a `live:page.radar` or `soon:page.radar` row, which wins over the
+  code), or in code by deleting or restoring that line. While it is coming soon, the nightly
+  pass runs only for accounts that have opened Radar (admins previewing it, plus anyone who
+  opened it while it was out), the news sweep runs only once one of them has had a pass, and the
+  Monday email sends nothing. Once released, the pass claims every account active in the last
+  60 days and the email goes to active accounts with a pending card. It was released on Sep 30
+  2026 (#380) and put back behind coming soon the same day.
 
 ## Email insights: switches
 
@@ -168,18 +182,18 @@ smallest first:
   are ordinary; `failed` and `errors` are worth a look; `rejected_*` counts events the
   validator dropped and is the way to tell an over-strict floor from a quiet mailbox).
 
-## Managed AI keys (Orbit Lifetime) — NOT SHIPPED
+## Managed AI keys (included AI, every plan)
 
-**Currently off.** `MANAGED_AI_ENABLED = false` in `src/lib/managed-ai-policy.ts`: AI is bring-your-own-key on every deployed plan, Lifetime included, and no `ORBIT_MANAGED_*` variable is read anywhere. Setting one does nothing. Turning managed AI on is that flag plus the public copy (pricing, `/privacy`, `/terms`, which bumps `TERMS_VERSION`). The rest of this section describes the dormant path.
+Every plan includes a monthly AI allowance on Orbit's own provider keys, metered in credits (1 credit = $0.01 of model cost): `monthlyCredits` in `src/lib/plans/plan-config.ts` (Free 50 + a one-time 25 starter, Pro 300, Max 650, Lifetime 150). Only `src/lib/ai-access.ts` can issue a key (`scripts/smoke-ai-access.ts` fails the suite if anything else reads an AI key or builds a provider client). An account with its own key can prefer it in Settings; own-key calls never use credits.
 
-**The one exception is `next dev`**, which runs AI on the bare `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` names in the developer's `.env.local` (`localDevAiEnabled` in `ai-access.ts`: managed AI off, `VERCEL` unset, `NODE_ENV=development` — a deployment is none of these). A key saved in Settings still wins, and `ORBIT_DEMO_MANAGED_AI=off` turns it off to see the production BYOK states.
+- **Keys:** `ORBIT_MANAGED_ANTHROPIC_API_KEY` and `ORBIT_MANAGED_OPENAI_API_KEY`. No managed Gemini key in production. Orbit picks the route on its own key, whatever provider the account selected: `MANAGED_PROVIDER_ORDER` is Anthropic → OpenAI → Gemini, at `MANAGED_DEFAULT_MODELS` (Claude Haiku 5.5, sent at effort `low`; OpenAI `gpt-4o-mini`, `gpt-4.1-nano` for fast-tier work). Embeddings and Whisper run on OpenAI only — Anthropic has neither. Own-key calls keep the account's provider and model.
+- **The pools:** `MANAGED_AI_POOLS` in `src/lib/managed-ai-policy.ts`, one per provider, summing Orbit-paid spend on that provider since its window opened (Deepgram excluded). Anthropic: $190 cap on the $200/month credit, the window restarts on the 15th (`monthlyResetDay`), so it refills by itself. OpenAI: $950 cap on the $1,000 prepaid credit, no reset — after a top-up raise `capMicros` and deploy. A spent pool drops its provider and the next one takes over; with every pool spent, included AI refuses ("Orbit's AI isn't available right now"). Checked in the same 30s-cached read as the admin switch. `/admin/billing` shows one line per pool; `ai.managed_pool:<provider>` warns at 75% (a spent monthly pool stays a warning, a spent prepaid pool is critical).
+- **Admin switch:** `/admin/billing` → included AI on/paused (`site_settings.managed_ai_paused`). Never set reads as PAUSED on production — the reason users see "Orbit’s AI isn’t available right now" until someone turns it on.
+- **Kill switch:** `ORBIT_MANAGED_AI=off`. Every account falls back to its own key, with that same notice.
+- **Credits intro:** accounts created before `CREDITS_INTRO_LAUNCHED_AT` (`src/lib/credits-intro.ts`, set it to the ship date) get the full-screen "your AI credits are here" moment once, claimed atomically into `user_settings.credits_intro_shown_at`. It waits while included AI can't run. Replay for one account: `UPDATE user_settings SET credits_intro_shown_at = NULL WHERE user_id = '…';`. Dev preview: `?credits-intro=free|orbit|max|lifetime`.
+- **Per-account cap:** the account's credits (`src/lib/credits/`). Bulk background work stops at half the monthly allowance.
 
-AI is bring-your-own-key on every plan except Lifetime. A Lifetime account with no key of its own runs on Orbit's managed keys, and only `src/lib/ai-access.ts` can issue one (`scripts/smoke-ai-access.ts` fails the suite if anything else reads an AI key or builds a provider client).
-
-- **Keys:** `ORBIT_MANAGED_GEMINI_API_KEY` (cheapest, preferred), `ORBIT_MANAGED_OPENAI_API_KEY`, `ORBIT_MANAGED_ANTHROPIC_API_KEY`. Production only reads these names; the bare `GEMINI_API_KEY`-style names work off Vercel only.
-- **Kill switch:** `ORBIT_MANAGED_AI=off`. Every Lifetime account falls back to BYOK, with the notice "Orbit’s AI isn’t available right now — add your own API key".
-- **Cap:** `MANAGED_AI_BUDGET` in `src/lib/managed-ai-policy.ts`, per account per calendar month (UTC), metered from `usage_events` where `key_owner = 'orbit'`. Bulk background work stops at half.
-- **Revocation:** anything that takes Lifetime away takes managed AI away on the account's next AI call — there is no cache to clear. Today that is removing a comp in `/admin`; a full refund or a lost dispute does it once the launch plan's P0 revocation (`revokeLifetimePurchase`) lands. Until then, refund a Lifetime purchase AND clear `lifetime_purchased_at` by hand.
+**`next dev`** runs localhost demo accounts on the bare `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` names in `.env.local`, unmetered; `ORBIT_DEMO_MANAGED_AI=off` makes localhost behave like production.
 
 ## Deepgram (speech-to-text)
 
@@ -249,8 +263,10 @@ the delivery detail when it happened.
 
 ## Restore the database
 
-Daily encrypted dumps: GitHub → Actions → `backup` → artifacts (90 days). Take a fresh one
-first with **Run workflow** if the database is still readable.
+Daily encrypted dumps: the private ops repository → Actions → `backup` → artifacts (90 days).
+They are kept out of this repository on purpose: a public repository's workflow artifacts can
+be downloaded by anyone signed in to GitHub. Take a fresh one first with **Run workflow** if
+the database is still readable.
 
 You need `age` and a `pg_restore` at least as new as the `pg_dump` that wrote the file
 (`PG_MAJOR` in `backup.yml`, 18 today — an older one stops with "unsupported version in file
@@ -297,3 +313,37 @@ runner. The first real drill needs the secrets set.
   reports `config.statementTimeout`. `"0"` means unbounded — the ALTER ROLE never ran, or ran
   on the wrong role.
 - Verify the restore window under Project → Settings.
+- **JIT off for the app role.** With Postgres's default `jit = on`, a large sequential scan
+  compiles before it runs: the contacts search took 1.78 s with JIT and 0.67 s without at
+  100k contacts (`PERFORMANCE_AUDIT.md` §1.3). Check and set:
+  ```sql
+  SHOW jit;                                  -- as the app role
+  ALTER ROLE <app role> SET jit = off;       -- new connections pick it up
+  ```
+  The HTTP driver opens a connection per request, so this applies on the next one.
+
+## Database performance checks (Neon)
+
+Quarterly, or after a release that adds indexes (`SCALE_DDL` in `src/db/index.ts`).
+
+- **Indexes nobody reads.** Every index costs every write to its table. On the production
+  branch, after at least a week of traffic since the last stats reset:
+  ```sql
+  SELECT relname AS table, indexrelname AS index, idx_scan,
+         pg_size_pretty(pg_relation_size(indexrelid)) AS size
+    FROM pg_stat_user_indexes
+   WHERE schemaname = 'public' AND idx_scan = 0
+   ORDER BY pg_relation_size(indexrelid) DESC;
+  ```
+  An unused index is a candidate, not a verdict: check that it is not a unique constraint, a
+  foreign-key lookup a rare delete needs, or a path only a monthly job takes. Drop it in the
+  DDL (with a schema version bump), never by hand.
+- **Slowest statements.** With `pg_stat_statements` enabled on the project:
+  ```sql
+  SELECT calls, round(total_exec_time) AS total_ms, round(mean_exec_time) AS mean_ms,
+         rows, left(query, 120) AS query
+    FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 20;
+  ```
+  Compare against the local profile (`scripts/dev/perf/`, see `docs/performance.md`); a
+  statement here that the seeded profile does not show is a plan that only production data
+  produces.

@@ -5,14 +5,16 @@
  * existing contact whenever the parse found one ("save to the same contact if they're
  * already there"), switchable with one click.
  */
+import { useState } from "react";
 import Link from "next/link";
 import { motion } from "motion/react";
+import { ReminderContactPicker } from "@/components/reminders/reminder-contact-picker";
 import type { BulkNoteDuplicate } from "@/lib/capture/types";
 import { SPRING_PILL } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
 export function SaveTargetChoice({
-  candidates,
+  candidates: matched,
   value,
   onChange,
   name,
@@ -26,6 +28,9 @@ export function SaveTargetChoice({
   /** Opened from this contact's profile: the choice is made. */
   lockedName?: string | null;
 }) {
+  // A contact the matcher missed, chosen by search. Kept beside the matcher's candidates so
+  // the card can name them.
+  const [picked, setPicked] = useState<BulkNoteDuplicate | null>(null);
   if (lockedName) {
     return (
       <p className="text-xs text-muted-foreground">
@@ -33,11 +38,27 @@ export function SaveTargetChoice({
       </p>
     );
   }
+  const pickOther = (
+    <ReminderContactPicker
+      value={null}
+      placeholder="Someone else…"
+      triggerClassName="h-7 text-xs"
+      onChange={(next) => {
+        if (!next) return;
+        setPicked({ id: next.id, fullName: next.name, company: null, title: null, reason: "Picked by you", confidence: 1 });
+        onChange(next.id);
+      }}
+    />
+  );
+  const candidates = picked && !matched.some((c) => c.id === picked.id) ? [picked, ...matched] : matched;
   if (!candidates.length) {
     return (
-      <p className="text-xs text-muted-foreground">
-        Nobody by this name yet — they&apos;ll be added as a <span className="font-medium text-foreground">new contact</span>.
-      </p>
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <p>
+          Nobody by this name yet — they&apos;ll be added as a <span className="font-medium text-foreground">new contact</span>.
+        </p>
+        {pickOther}
+      </div>
     );
   }
   const selected = candidates.find((c) => c.id === value) ?? null;
@@ -85,6 +106,7 @@ export function SaveTargetChoice({
           {lowConfidence && (
             <span className="text-amber-700 dark:text-warning">Looks like a match — worth a glance</span>
           )}
+          {pickOther}
         </div>
       )}
     </div>

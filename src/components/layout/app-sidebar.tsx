@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import { preloadCaptureFlow } from "@/components/capture/capture-flow-lazy";
-import { Plus, Search } from "lucide-react";
+import { preloadChatPanel } from "@/components/chat/chat-panel-lazy";
+import { Lock, Plus, Search } from "lucide-react";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/lib/ask-bar-events";
 import { UserButton } from "@clerk/nextjs";
 import { motion } from "motion/react";
@@ -14,7 +15,16 @@ import {
   isNavActive,
   type AppNavItem,
 } from "@/components/layout/app-nav";
-import { isHrefComingSoon, isHrefHidden, surfaceKeyForHref } from "@/lib/surfaces";
+import {
+  COMING_SOON_UNLOCK_PLAN,
+  isHrefComingSoon,
+  isHrefHidden,
+  orderNavItems,
+  surfaceKeyForHref,
+  tierTagPlan,
+  tierTagTitle,
+} from "@/lib/surfaces";
+import { PLAN_LABELS, PLAN_SHORT_LABELS } from "@/lib/plans/plan-config";
 import { NavPendingDot } from "@/components/layout/nav-pending-dot";
 import { OrbitLogo } from "@/components/orbit-logo";
 import type { Plan } from "@/lib/plan-limits";
@@ -25,13 +35,27 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { clerkAppearance } from "@/lib/clerk-appearance";
 import { useModKeyLabel } from "@/lib/use-mod-key";
 
+/** Nav destinations whose page leans on a lazy client chunk: warmed on hover or focus. */
+const CHUNK_WARMERS: Record<string, (() => void) | undefined> = {
+  "/capture": preloadCaptureFlow,
+  // The recorder on /meetings is the same flow.
+  "/meetings": preloadCaptureFlow,
+  "/chat": preloadChatPanel,
+};
+
 function SidebarNavLink({
   item,
   pathname,
   hiddenFromUsers = false,
+  soon,
+  tiers,
 }: {
   item: AppNavItem;
   pathname: string;
+  /** The plans that may open this page, when an operator limited it (`tierTags`). */
+  tiers?: readonly Plan[];
+  /** Pages currently marked coming soon (operator-controlled). */
+  soon: ReadonlySet<string>;
   /**
    * Visible to this viewer but hidden from everyone else — only ever true for an operator,
    * who is exempt. Marked rather than dropped: the person who can undo a forgotten toggle
@@ -43,7 +67,9 @@ function SidebarNavLink({
   const Icon = item.icon;
   // Shown to operators too, who still reach the real page: the tag is how they know what
   // everyone else gets. "Hidden" outranks it, because a hidden page is not even announced.
-  const comingSoon = !hiddenFromUsers && isHrefComingSoon(item.href);
+  const comingSoon = !hiddenFromUsers && isHrefComingSoon(item.href, soon);
+  // After both: an unreleased or hidden page's plan is beside the point until it opens.
+  const tierPlan = !hiddenFromUsers && !comingSoon && tiers ? tierTagPlan(tiers) : null;
   // Hover or focus upgrades a link to a full prefetch, so the click that follows lands
   // without a skeleton (see `@/lib/intent-prefetch`). Not for the page already open. The
   // daily routes (`prefetchFull`) are NOT prefetched in full ahead of that here, unlike the
@@ -51,19 +77,22 @@ function SidebarNavLink({
   // the click and fresh, where one taken at page load is usually old enough by then that
   // the page has to refresh itself on arrival (`FreshOnArrival`).
   const NavLink = active ? Link : IntentLink;
-  // /capture's form is a lazy client chunk the route prefetch does not include.
-  const warm = item.href === "/capture" && !active ? preloadCaptureFlow : undefined;
+  // /capture's form and /chat's panel are lazy client chunks the route prefetch does not include.
+  const warm = active ? undefined : CHUNK_WARMERS[item.href];
   return (
     <NavLink
       href={item.href}
+      aria-current={active ? "page" : undefined}
       onPointerEnter={warm}
       onFocus={warm}
       title={
         hiddenFromUsers
           ? `${item.label} — hidden from users`
           : comingSoon
-            ? `${item.label} — coming soon`
-            : item.label
+            ? `${item.label} — coming soon · unlocks with ${PLAN_LABELS[COMING_SOON_UNLOCK_PLAN]}`
+            : tiers && tierPlan
+              ? tierTagTitle(item.label, tiers)
+              : item.label
       }
       className={cn(
         "relative flex items-center justify-center gap-2.5 rounded-xl px-2 py-2.5 text-sm transition-colors lg:justify-start lg:px-3 lg:py-2",
@@ -83,21 +112,38 @@ function SidebarNavLink({
         />
       )}
       <Icon className="relative z-10 h-4 w-4 shrink-0" />
-      <span className="relative z-10 hidden lg:inline">{item.label}</span>
+      {/* Below lg the rail is icons only; the label stays in the accessibility tree. */}
+      <span className="relative z-10 max-lg:sr-only">{item.label}</span>
       {hiddenFromUsers && (
-        <span className="relative z-10 ml-auto hidden rounded-full border border-border/70 px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground lg:inline">
+        <span className="relative z-10 ml-auto hidden rounded-full border border-border/70 px-1.5 py-px text-3xs uppercase tracking-wide text-muted-foreground lg:inline">
           Hidden
         </span>
       )}
       {comingSoon && (
         <>
-          <span className="relative z-10 ml-auto hidden rounded-full border border-warning/40 px-1.5 py-px text-[10px] uppercase tracking-wide text-warning lg:inline">
+          <span className="relative z-10 ml-auto hidden rounded-full border border-warning/40 px-1.5 py-px text-3xs uppercase tracking-wide text-warning lg:inline">
             Soon
           </span>
           {/* The icon rail has no room for a word, so the tag collapses to its colour. */}
           <span
             aria-hidden
             className="absolute top-1.5 right-2.5 z-10 size-1.5 rounded-full bg-warning lg:hidden"
+          />
+        </>
+      )}
+      {tierPlan && (
+        <>
+          <span
+            data-plan={tierPlan}
+            className="relative z-10 ml-auto hidden items-center gap-1 rounded-full border border-tier-border px-1.5 py-px text-3xs uppercase tracking-wide text-tier-accent lg:inline-flex"
+          >
+            <Lock aria-hidden className="size-2.5" />
+            {PLAN_SHORT_LABELS[tierPlan]}
+          </span>
+          <span
+            aria-hidden
+            data-plan={tierPlan}
+            className="absolute top-1.5 right-2.5 z-10 size-1.5 rounded-full bg-tier-accent lg:hidden"
           />
         </>
       )}
@@ -113,6 +159,9 @@ export function AppSidebar({
   plan,
   hidden,
   hiddenForUsers,
+  comingSoon,
+  navOrder,
+  tierTags,
 }: {
   pathname: string;
   clerkOn: boolean;
@@ -122,9 +171,21 @@ export function AppSidebar({
   hidden: ReadonlySet<string>;
   /** Surfaces hidden from ordinary users, whether or not this viewer is exempt. */
   hiddenForUsers: ReadonlySet<string>;
+  /** Pages marked coming soon, whether or not this viewer is previewing them. */
+  comingSoon: ReadonlySet<string>;
+  /** Operator-chosen order, as surface keys. */
+  navOrder: readonly string[];
+  /** Tier-limited pages → the plans that may open them. */
+  tierTags: Readonly<Record<string, Plan[]>>;
 }) {
-  const core = APP_NAV_CORE.filter((item) => !isHrefHidden(item.href, hidden));
-  const extras = APP_NAV_EXTRAS.filter((item) => !isHrefHidden(item.href, hidden));
+  // One ordered list, then split: a page marked coming soon always drops below the divider,
+  // whatever group the code declared it in, and keeps its place in the operator's order
+  // within that group.
+  const ordered = orderNavItems([...APP_NAV_CORE, ...APP_NAV_EXTRAS], navOrder).filter(
+    (item) => !isHrefHidden(item.href, hidden)
+  );
+  const core = ordered.filter((item) => !isHrefComingSoon(item.href, comingSoon));
+  const extras = ordered.filter((item) => isHrefComingSoon(item.href, comingSoon));
   const captureHidden = hidden.has("page.capture");
   const mod = useModKeyLabel();
   const shortcut = mod === "⌘" ? "⌘K" : "Ctrl K";
@@ -132,9 +193,17 @@ export function AppSidebar({
     const key = surfaceKeyForHref(item.href);
     return key !== null && hiddenForUsers.has(key);
   };
+  const tiersOf = (item: AppNavItem) => {
+    const key = surfaceKeyForHref(item.href);
+    return key === null ? undefined : tierTags[key];
+  };
 
   return (
-    <aside className="liquid-glass flex h-full w-[4.5rem] flex-col text-sidebar-foreground lg:w-60">
+    // The desktop banner: logo, the main action and the navigation. Not <aside> (it is not
+    // complementary content, and a second complementary landmark clashed with pages that
+    // have their own). Only one banner exists at a time: the phone header is display:none
+    // from md, where this appears.
+    <header className="liquid-glass flex h-full w-[4.5rem] flex-col text-sidebar-foreground lg:w-60">
       {/* Stacked on the icon rail, where logo and search cannot share a row; side by side
           once the panel is wide enough to carry the wordmark. */}
       <div className="flex flex-col items-center gap-3 px-3 py-5 lg:flex-row lg:justify-between lg:gap-2 lg:px-5 lg:py-6">
@@ -150,7 +219,7 @@ export function AppSidebar({
             <p className="font-[family-name:var(--font-display)] text-lg leading-none tracking-tight text-sidebar-primary">
               Orbit
             </p>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">
+            <p className="mt-0.5 text-2xs text-muted-foreground">
               Network tracker
             </p>
           </div>
@@ -174,7 +243,7 @@ export function AppSidebar({
           />
           <TooltipContent side="bottom">
             Search
-            <kbd className="ml-1.5 rounded border border-current/20 px-1 text-[10px] opacity-80">
+            <kbd className="ml-1.5 rounded border border-current/20 px-1 text-3xs opacity-80">
               {shortcut}
             </kbd>
           </TooltipContent>
@@ -199,18 +268,20 @@ export function AppSidebar({
           )}
         >
           <Plus className="h-4 w-4" />
-          <span className="hidden lg:inline">Log interaction</span>
+          <span className="max-lg:sr-only">Log interaction</span>
         </IntentLink>
       </div>
       )}
 
-      <nav className="relative flex flex-1 flex-col gap-0.5 px-1.5 lg:px-2">
+      <nav aria-label="Main" className="relative flex flex-1 flex-col gap-0.5 px-1.5 lg:px-2">
         {core.map((item) => (
           <SidebarNavLink
+            soon={comingSoon}
             key={item.href}
             item={item}
             pathname={pathname}
             hiddenFromUsers={tagged(item)}
+            tiers={tiersOf(item)}
           />
         ))}
 
@@ -218,7 +289,7 @@ export function AppSidebar({
         {extras.length > 0 && (
           <div className="my-2 flex items-center gap-2 px-2 lg:px-3">
             <div className="h-px flex-1 bg-border/60" />
-            <span className="hidden text-[10px] font-medium uppercase tracking-wider text-muted-foreground/80 lg:inline">
+            <span className="hidden text-3xs font-medium uppercase tracking-wider text-muted-foreground-subtle lg:inline">
               Coming soon
             </span>
             <div className="hidden h-px flex-1 bg-border/60 lg:block" />
@@ -227,10 +298,12 @@ export function AppSidebar({
 
         {extras.map((item) => (
           <SidebarNavLink
+            soon={comingSoon}
             key={item.href}
             item={item}
             pathname={pathname}
             hiddenFromUsers={tagged(item)}
+            tiers={tiersOf(item)}
           />
         ))}
 
@@ -239,6 +312,7 @@ export function AppSidebar({
             above when a short viewport leaves no slack for `mt-auto` to eat. */}
         <div className="mt-auto py-2">
           <SidebarNavLink
+            soon={comingSoon}
             item={APP_NAV_SETTINGS}
             pathname={pathname}
           />
@@ -263,6 +337,6 @@ export function AppSidebar({
           </p>
         )}
       </div>
-    </aside>
+    </header>
   );
 }

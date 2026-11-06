@@ -18,6 +18,7 @@ import { SpeechUsageCard, type SpeechAllowances } from "@/components/settings/sp
 import { ApiSettings } from "@/components/settings/api-settings";
 import { AssistantsSettings } from "@/components/settings/assistants-settings";
 import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
+import { GranolaSettings } from "@/components/settings/granola-settings";
 import { IntegrationIcon, StatusDot, statusText } from "@/components/settings/integration-ui";
 import { IntegrationsOverview } from "@/components/settings/integrations-overview";
 import { OutreachSettings } from "@/components/settings/outreach-settings";
@@ -70,10 +71,14 @@ export function tabForImportJob(kind: ImportJobKind): IntegrationTabId | null {
       return "microsoft";
     case "contacts_file":
       return null;
+    case "chat":
+      return null;
     case "calendar":
       return null;
     case "drive_docs":
       return null;
+    case "linkedin_export":
+      return "linkedin";
   }
 }
 
@@ -506,7 +511,7 @@ function DialogBody({
               <div key={group.key}>
                 <p
                   aria-hidden
-                  className="px-2.5 pt-3 pb-1.5 text-[0.6875rem] font-semibold tracking-[0.08em] text-muted-foreground/80 uppercase"
+                  className="px-2.5 pt-3 pb-1.5 text-[0.6875rem] font-semibold tracking-[0.08em] text-muted-foreground-subtle uppercase"
                 >
                   {group.label}
                 </p>
@@ -656,6 +661,8 @@ function Panel({
           <LinkedInMessagesImport />
         </div>
       );
+    case "granola":
+      return <GranolaSettings />;
     case "ai":
       return (
         <div className="space-y-5">

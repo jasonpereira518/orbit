@@ -39,7 +39,7 @@ const QUIET_FRAMES = Math.ceil(QUIET_WINDOW_MS / FRAME_MS);
  * A frame this loud is sound, whatever the room. -50 dBFS: well under speech (typically
  * -35 to -15) and over the floor of a muted tab, which is exact digital zero.
  */
-const ABSOLUTE_VOICE_RMS = 0.003;
+export const ABSOLUTE_VOICE_RMS = 0.003;
 /** Less than this much sound in a whole chunk and it is silence — no transcription call. */
 const MIN_VOICED_MS = 300;
 const MIN_VOICED_FRAMES = Math.ceil(MIN_VOICED_MS / FRAME_MS);

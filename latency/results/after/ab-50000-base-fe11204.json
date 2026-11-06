@@ -1,0 +1,57 @@
+{
+  "tier": "50000",
+  "latencyMs": 25,
+  "at": "2026-10-17T23:11:44.417Z",
+  "rows": [
+    {
+      "op": "dashboard bundle (getDashboardData)",
+      "group": "page",
+      "statements": 15,
+      "kb": 8600.3,
+      "cpu_ms": 5177.1,
+      "sql": [
+        "select \"id\", \"company\", \"school\", \"industry\", \"relationship_score\", \"stated_closeness\", \"p",
+        "select \"id\", \"user_id\", \"text\", \"active\", \"created_at\" from \"user_goals\" \"userGoals\" where",
+        "select \"contact_tags\".\"contact_id\", count(*)::int from \"contact_tags\" inner join \"contacts",
+        "select \"id\", \"user_id\", \"contact_id\", \"list_id\", \"title\", \"description\", \"due_date\", \"stat",
+        "select \"id\", \"user_id\", \"suggestion_type\", \"title\", \"description\", \"related_contact_ids\", ",
+        " select id, jsonb_build_object( 'raw', closeness_breakdown->'raw', 'closeness', closeness_",
+        "select \"text\" from \"user_goals\" \"userGoals\" where (\"userGoals\".\"user_id\" = $1 and \"userGoa",
+        "select \"contact_id\", count(*) filter (where \"interaction_date\" >= $1)::int, count(*)::int,",
+        "select \"user_id\", \"snapshot\", \"contact_count\", \"computed_at\", \"dirty_at\" from \"closeness_c",
+        "select count(*)::int from \"contacts\" where (\"contacts\".\"user_id\" = $1 and \"contacts\".\"clos",
+        " select count(*)::int as total, count(*) filter ( where last_interaction_at is not null an",
+        " select 'company' as kind, btrim(company) as name from contacts where user_id = $1 and btr",
+        " select id, (closeness_breakdown->>'goalRelevance')::float8 as goal_relevance from contact",
+        "select \"contacts\".\"id\", \"contacts\".\"full_name\", \"contacts\".\"preferred_name\", \"contacts\".\"t",
+        "select \"id\", \"full_name\", \"preferred_name\", \"company\", \"title\", \"school\", \"email\", \"linked"
+      ],
+      "sim_ms": 5156,
+      "depth": 0,
+      "est_ms_rtt8": 5177,
+      "est_ms_rtt40": 5177
+    },
+    {
+      "op": "graph (default scope)",
+      "group": "page",
+      "statements": 9,
+      "kb": 34685.6,
+      "cpu_ms": 7998.9,
+      "sql": [
+        "select \"contacts\".\"id\", \"contacts\".\"full_name\", \"contacts\".\"preferred_name\", \"contacts\".\"c",
+        "select \"id\", \"user_id\", \"text\", \"active\", \"created_at\" from \"user_goals\" \"userGoals\" where",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        " select id, closeness_breakdown as breakdown from contacts where user_id = $1 and closenes",
+        "select \"text\" from \"user_goals\" \"userGoals\" where (\"userGoals\".\"user_id\" = $1 and \"userGoa",
+        "select \"contact_id\", count(*) filter (where \"interaction_date\" >= $1)::int, count(*)::int,",
+        "select \"user_id\", \"snapshot\", \"contact_count\", \"computed_at\", \"dirty_at\" from \"closeness_c",
+        "select count(*)::int from \"contacts\" where (\"contacts\".\"user_id\" = $1 and \"contacts\".\"clos",
+        "select \"id\", \"filter_enabled\", \"min_inbound_messages\", \"min_outbound_messages\", \"updated_a"
+      ],
+      "sim_ms": 7688,
+      "depth": 0,
+      "est_ms_rtt8": 7999,
+      "est_ms_rtt40": 7999
+    }
+  ]
+}

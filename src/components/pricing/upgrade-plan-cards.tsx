@@ -113,7 +113,10 @@ export function UpgradePlanCards({
   currentPlan,
   founding,
   checkoutOpen,
+  gate,
 }: {
+  /** The paywall that sent the buyer here, from `/upgrade?gate=`; validated by the page. */
+  gate?: string | null;
   currentPlan: Plan;
   /** Whether this account's first subscription gets founding pricing. */
   founding: boolean;
@@ -134,7 +137,7 @@ export function UpgradePlanCards({
       );
     }
     if (currentPlan === "lifetime") {
-      return <CardNotice>Your Lifetime plan already includes this, with AI on your own key.</CardNotice>;
+      return <CardNotice>Your Lifetime plan already includes this.</CardNotice>;
     }
     if (currentPlan === "orbit" || currentPlan === "max") {
       return (
@@ -154,7 +157,7 @@ export function UpgradePlanCards({
         </p>
       );
     }
-    return <SubscriptionCheckoutButton plan={plan} period={period} />;
+    return <SubscriptionCheckoutButton plan={plan} period={period} gate={gate} />;
   };
 
   return (

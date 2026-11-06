@@ -85,6 +85,10 @@ const defaultUploader: FanoutUploader = async ({ files, label, batchGroupId, anc
     autoQueue: true,
     fileHashes,
   });
+  if (res.ok && res.duplicate) {
+    const when = new Date(res.duplicate.capturedAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+    return { ok: true, jobId: res.job.id, duplicate: true, notice: `Already captured on ${when} — not read again` };
+  }
   if (res.ok) return { ok: true, jobId: res.job.id, notice: prepareNotice(prepared) };
   return { ok: false, error: res.error, status: res.status, retryAfterSec: res.retryAfterSec };
 };

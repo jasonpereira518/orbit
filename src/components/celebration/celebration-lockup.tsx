@@ -19,7 +19,7 @@ import { EASE_HOUSE } from "@/lib/motion";
 
 /**
  * Outfit ships no italic file and has no `slnt` axis, so the lean is a skew.
- * That is not a compromise here: `UNLOCKED!` is all caps, and at all caps a
+ * That is not a compromise here: `ACTIVATED!` is all caps, and at all caps a
  * true italic and an oblique are the same object — there are no lowercase
  * letterform substitutions (single-storey `a`, `f` descender) to miss. The
  * reference is itself an obliqued grotesk.
@@ -105,7 +105,7 @@ export function CelebrationLockup({
           className={wordClass}
           style={{ ...wordStyle, transform: `skewX(${SKEW_DEG}deg)` }}
         >
-          Unlocked!
+          Activated!
         </h1>
       </div>
     );
@@ -139,7 +139,7 @@ export function CelebrationLockup({
         animate={{ scale: 1, opacity: 1, skewX: SKEW_DEG }}
         transition={{ ...ENTRY_SPRING, opacity: { duration: 0.09 } }}
       >
-        Unlocked!
+        Activated!
       </motion.h1>
     </div>
   );

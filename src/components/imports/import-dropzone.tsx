@@ -5,6 +5,7 @@ import { FolderOpen, Loader2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
 import { pathFromRelative, type DroppedFile } from "@/lib/capture/file-drop";
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { cn } from "@/lib/utils";
 
 /**
@@ -20,12 +21,15 @@ export function ImportDropzone({
   busy = false,
   disabled = false,
   extraAction,
+  chatImports = false,
 }: {
   onFiles: (files: DroppedFile[]) => void;
   busy?: boolean;
   disabled?: boolean;
   /** A third button alongside "Choose files" / "Choose a folder" — currently just Drive. */
   extraAction?: ReactNode;
+  /** Also accept WhatsApp / iMessage `.txt` exports; they go to the Chat messages card. */
+  chatImports?: boolean;
 }) {
   const filesInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
@@ -47,6 +51,7 @@ export function ImportDropzone({
 
   return (
     <section
+      {...tourAnchor("imports.dropzone")}
       // A convenience target for pointers, not a control: the two buttons inside are the
       // accessible way in, and they stay the only tab stops. Giving this a role and a
       // tabindex would add a third stop that does exactly what the first one already does.
@@ -112,7 +117,11 @@ export function ImportDropzone({
         className="sr-only"
         tabIndex={-1}
         aria-hidden
-        accept=".csv,.zip,.ics,.ical,.vcf,.vcard,text/csv,text/calendar,application/zip"
+        accept={
+          chatImports
+            ? ".csv,.zip,.ics,.ical,.vcf,.vcard,.txt,text/csv,text/calendar,text/plain,application/zip"
+            : ".csv,.zip,.ics,.ical,.vcf,.vcard,text/csv,text/calendar,application/zip"
+        }
         onChange={(e) => {
           handle(e.target.files);
           e.target.value = "";

@@ -15,7 +15,7 @@ import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
 const INPUT =
-  "w-full rounded-lg border border-border/70 bg-transparent px-3 py-2 text-sm outline-none focus:border-primary/50";
+  "w-full rounded-lg border border-border/70 bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 /**
  * Operator-added waitlist signups from an in-person event. Paste a spreadsheet column of

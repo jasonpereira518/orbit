@@ -76,7 +76,7 @@ function main() {
     );
     check("a capped run names the number", blocked.includes("4"), blocked);
     check("says the plan limit is full", /plan.*contact limit is full/i.test(blocked), blocked);
-    check("and links to upgrade", html(React.createElement(IngestResultCard, { summary: { ...SUMMARY, blockedByPlan: 1 } })).includes('href="/upgrade"'));
+    check("and links to upgrade", html(React.createElement(IngestResultCard, { summary: { ...SUMMARY, blockedByPlan: 1 } })).includes('href="/upgrade?gate=contacts"'));
     check(
       "singular vs plural is right",
       text(React.createElement(IngestResultCard, { summary: { ...SUMMARY, blockedByPlan: 1 } })).includes("person wasn't")

@@ -4,6 +4,8 @@
  * See `@/lib/ai-security` for the threat model.
  */
 
+import type { UserSocialLinks } from "@/lib/graph-data";
+
 /** Longest external link an answer may carry. Real profile and event URLs fit easily. */
 const MAX_EXTERNAL_HREF = 200;
 /** Longest query string an external link may carry — enough for `?utm_source=…`, not a note. */
@@ -57,4 +59,37 @@ export function safeHttpUrl(value: string | null | undefined): string | null {
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
   if (url.username || url.password) return null;
   return url.toString();
+}
+
+/**
+ * A link to someone's profile or site: `safeHttpUrl`, plus a host with a dot in it. Without the
+ * dot check a handle typed into a URL field — `@ada`, `ada` — becomes `https://ada/`.
+ */
+export function safeProfileUrl(value: string | null | undefined): string | null {
+  const url = safeHttpUrl(value);
+  return url && new URL(url).hostname.includes(".") ? url : null;
+}
+
+const SOCIAL_FIELDS = {
+  linkedin: "LinkedIn",
+  twitter: "X / Twitter",
+  github: "GitHub",
+  website: "Personal site",
+} as const satisfies Record<keyof UserSocialLinks, string>;
+
+/** The socials a person saves, as https links — or the first field that is not one, by name. */
+export function normalizeSocialLinks(
+  input: Partial<Record<keyof UserSocialLinks, unknown>>,
+): { ok: true; links: UserSocialLinks } | { ok: false; error: string } {
+  const links: UserSocialLinks = {};
+  for (const key of Object.keys(SOCIAL_FIELDS) as (keyof UserSocialLinks)[]) {
+    const raw = String(input[key] ?? "").trim();
+    if (!raw) continue;
+    const url = safeProfileUrl(raw);
+    if (!url) {
+      return { ok: false, error: `That ${SOCIAL_FIELDS[key]} link doesn’t look like a web address — paste the whole link` };
+    }
+    links[key] = url;
+  }
+  return { ok: true, links };
 }

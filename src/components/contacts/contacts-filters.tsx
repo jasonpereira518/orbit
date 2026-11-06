@@ -1,8 +1,10 @@
 "use client";
 
+import { emitTourEvent } from "@/lib/tour/tour-events";
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Building2, ChevronDown, X } from "lucide-react";
+import { Building2, ChevronDown, GraduationCap, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -16,6 +18,12 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  CONTACT_SORTS,
+  QUIET_OPTIONS,
+  SAME_SCHOOL_AS_ME,
+  type ContactSort,
+} from "@/lib/contacts-page";
 import { cn } from "@/lib/utils";
 
 const SEARCH_DEBOUNCE_MS = 250;
@@ -33,6 +41,9 @@ type FilterState = {
   company: string;
   minScore: string;
   followUp: string;
+  sort: string;
+  quiet: string;
+  school: string;
 };
 
 export function ContactsFilters({
@@ -40,6 +51,12 @@ export function ContactsFilters({
   initialCompany,
   initialMinScore,
   initialFollowUp,
+  initialSort,
+  initialQuiet,
+  initialTag,
+  initialLetter,
+  initialSchool = "",
+  schoolOptions = { mine: [], network: [] },
   importId,
   children,
 }: {
@@ -47,6 +64,18 @@ export function ContactsFilters({
   initialCompany: string;
   initialMinScore: string;
   initialFollowUp?: string;
+  initialSort?: string;
+  initialQuiet?: string;
+  /**
+   * Not editable here, but carried through every `apply()` — see the note there. Changing
+   * the company filter used to silently drop the active tag and the A-Z letter.
+   */
+  initialTag?: string;
+  initialLetter?: string;
+  /** `?school=`: a school name, or `SAME_SCHOOL_AS_ME`. */
+  initialSchool?: string;
+  /** The user's own schools and the network's, most common first (`listContactSchoolOptions`). */
+  schoolOptions?: { mine: string[]; network: string[] };
   /**
    * The active `/contacts?importId=…` scope, if any. Not a control this component offers —
    * only the page's banner sets or clears it — but every filter change here rebuilds the URL
@@ -63,6 +92,9 @@ export function ContactsFilters({
   const [companyOpen, setCompanyOpen] = useState(false);
   const [minScore, setMinScore] = useState(initialMinScore || "any");
   const [followUp, setFollowUp] = useState(initialFollowUp || "");
+  const [sort, setSort] = useState(initialSort || "name");
+  const [quiet, setQuiet] = useState(initialQuiet || "");
+  const [school, setSchool] = useState(initialSchool);
   const debounceRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -77,15 +109,29 @@ export function ContactsFilters({
     const cc = (next?.company ?? company).trim();
     const ms = next?.minScore ?? minScore;
     const fu = next?.followUp ?? followUp;
+    const so = next?.sort ?? sort;
+    const qt = next?.quiet ?? quiet;
+    const sc = (next?.school ?? school).trim();
     if (qq) params.set("q", qq);
     if (cc) params.set("company", cc);
     if (ms && ms !== "any") params.set("minScore", ms);
     if (fu === "due") params.set("followUp", "due");
+    if (so && so !== "name") params.set("sort", so);
+    if (qt) params.set("quiet", qt);
+    if (sc) params.set("school", sc);
+    // Neither is editable from this component, but both live in the same URL. Rebuilding
+    // the query string from scratch without them meant that touching any filter here threw
+    // away the active tag and the A-Z letter — the list jumped back to "everyone, from A"
+    // and nothing said why.
+    if (initialTag) params.set("tag", initialTag);
+    if (initialLetter) params.set("letter", initialLetter);
     if (importId) params.set("importId", importId);
     const qs = params.toString();
     const href = qs ? `/contacts?${qs}` : "/contacts";
+    // A new query string is a fresh server render already, and a revisited one served from
+    // the router cache is re-read by the page's `FreshOnArrival`. The `router.refresh()` that
+    // used to follow rendered the whole page a second time per search (LATENCY_PLAN CLI-3).
     router.replace(href);
-    router.refresh();
   }
 
   function scheduleSearch(value: string) {
@@ -103,7 +149,18 @@ export function ContactsFilters({
 
   const closenessLabel =
     CLOSENESS_OPTIONS.find((o) => o.value === minScore)?.label ?? "Any";
+  const sortLabel =
+    CONTACT_SORTS.find((o) => o.value === (sort as ContactSort))?.label ?? "Name";
+  const quietActive = Boolean(quiet);
+  const quietLabel =
+    QUIET_OPTIONS.find((o) => String(o.value) === quiet)?.label ?? "";
   const companyActive = Boolean(company.trim());
+  const schoolActive = Boolean(school.trim());
+  const schoolLabel = school === SAME_SCHOOL_AS_ME ? "Same school as me" : school;
+  const pickSchool = (next: string) => {
+    setSchool(next);
+    apply({ school: next });
+  };
   const closenessActive = minScore !== "any";
 
   return (
@@ -141,6 +198,7 @@ export function ContactsFilters({
           onQChange={(value) => {
             setQ(value);
             scheduleSearch(value);
+            if (value.trim()) emitTourEvent("contacts.searched");
           }}
           onClearQ={() => {
             setQ("");
@@ -167,6 +225,111 @@ export function ContactsFilters({
             apply({ minScore: val });
           }}
         />
+      </div>
+
+      {/* Ordering and "gone quiet" sit outside the search pill on purpose: the pill answers
+          "which people", these answer "in what order" and "how stale". The sorts existed for
+          a while with no control at all — they could only be reached by typing ?sort= into
+          the address bar. */}
+      <div className="mx-auto flex w-full max-w-xl flex-wrap items-center justify-center gap-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5"
+              />
+            }
+          >
+            Sort:{" "}
+            <span className="font-medium text-foreground">{sortLabel}</span>
+            <ChevronDown className="size-3.5 opacity-60" aria-hidden />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            {CONTACT_SORTS.map((option) => (
+              <DropdownMenuItem
+                key={option.value}
+                onClick={() => {
+                  setSort(option.value);
+                  apply({ sort: option.value });
+                }}
+              >
+                {option.label}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                type="button"
+                variant={quietActive ? "default" : "outline"}
+                size="sm"
+                className="h-8 gap-1.5"
+              />
+            }
+          >
+            {quietActive ? `Quiet ${quietLabel}` : "Gone quiet"}
+            <ChevronDown className="size-3.5 opacity-60" aria-hidden />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem
+              onClick={() => {
+                setQuiet("");
+                apply({ quiet: "" });
+              }}
+            >
+              Any
+            </DropdownMenuItem>
+            {QUIET_OPTIONS.map((option) => (
+              <DropdownMenuItem
+                key={option.value}
+                onClick={() => {
+                  const next = String(option.value);
+                  setQuiet(next);
+                  apply({ quiet: next });
+                }}
+              >
+                {option.label}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+        {(schoolActive || schoolOptions.mine.length > 0 || schoolOptions.network.length > 0) && (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  type="button"
+                  variant={schoolActive ? "default" : "outline"}
+                  size="sm"
+                  className="h-8 max-w-56 gap-1.5"
+                />
+              }
+            >
+              <GraduationCap className="size-3.5" aria-hidden />
+              <span className="truncate">{schoolActive ? schoolLabel : "School"}</span>
+              <ChevronDown className="size-3.5 opacity-60" aria-hidden />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="max-h-80 overflow-y-auto">
+              <DropdownMenuItem onClick={() => pickSchool("")}>Any school</DropdownMenuItem>
+              {schoolOptions.mine.length > 0 && (
+                <DropdownMenuItem onClick={() => pickSchool(SAME_SCHOOL_AS_ME)}>
+                  Same school as me
+                </DropdownMenuItem>
+              )}
+              {schoolOptions.network.map((name) => (
+                <DropdownMenuItem key={name} onClick={() => pickSchool(name)}>
+                  {name}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-border/70 bg-card">
@@ -213,7 +376,7 @@ function SearchPill({
     <div
       className={cn(
         "flex h-11 w-full items-center gap-1 rounded-full border border-border/70 bg-card pl-3.5 pr-1.5 shadow-sm",
-        "focus-within:border-primary/40 focus-within:ring-[3px] focus-within:ring-primary/15"
+        "focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
       )}
     >
       <input
@@ -222,6 +385,7 @@ function SearchPill({
         value={q}
         aria-label="Search contacts"
         autoComplete="off"
+        {...tourAnchor("contacts.search")}
         className={cn(
           "h-full min-w-0 flex-1 bg-transparent text-sm outline-none",
           "placeholder:text-muted-foreground"
@@ -255,16 +419,20 @@ function SearchPill({
           )}
         >
           <Building2 className="size-3.5" />
-          <span className="hidden max-w-[5rem] truncate sm:inline">
+          <span className="max-w-[5rem] truncate max-sm:sr-only">
             {companyActive ? company : "Company"}
           </span>
           <ChevronDown className="size-3 opacity-60" />
         </PopoverTrigger>
         <PopoverContent align="end" className="w-64 space-y-2 p-3">
-          <p className="text-xs font-medium text-muted-foreground">
+          <label
+            htmlFor="contacts-company-filter"
+            className="block text-xs font-medium text-muted-foreground"
+          >
             Exact company
-          </p>
+          </label>
           <Input
+            id="contacts-company-filter"
             autoFocus
             placeholder="e.g. Acme"
             value={companyDraft}
@@ -310,7 +478,10 @@ function SearchPill({
           )}
         >
           <span className="truncate">
-            {closenessActive ? closenessLabel : "Strength"}
+            {/* The control filters on `minScore`, which is CLOSENESS — the blended
+                score — not the 1-5 rating the profile calls "Your rating". Labelling it
+                "Strength" made three different numbers share two names. */}
+            {closenessActive ? closenessLabel : "Closeness"}
           </span>
           <ChevronDown className="size-3 opacity-60" />
         </DropdownMenuTrigger>

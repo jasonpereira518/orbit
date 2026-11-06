@@ -354,13 +354,9 @@ export function rmsLevel(frame: Float32Array): number {
 
 // ── Formatting ────────────────────────────────────────────────────────────────────────
 
-/** Elapsed time as `m:ss`, for the recorder's running clock. */
-export function formatElapsed(ms: number): string {
-  const safe = Math.max(0, Math.floor(ms / 1000));
-  const minutes = Math.floor(safe / 60);
-  const seconds = safe % 60;
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
-}
+// Lives in its own tiny module so the always-mounted meeting widget can use it without
+// importing this whole file; re-exported so every existing import keeps working.
+export { formatElapsed } from "@/lib/format-elapsed";
 
 /** Sample count → milliseconds at the target rate. */
 export function samplesToMs(sampleCount: number): number {

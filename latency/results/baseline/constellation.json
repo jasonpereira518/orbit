@@ -1,0 +1,63 @@
+{
+  "base": "http://localhost:3417",
+  "at": "2026-10-17T11:07:52.097Z",
+  "rows": [
+    {
+      "n": 500,
+      "profile": "desktop",
+      "fetch_kb": 301,
+      "ready_ms": 518,
+      "long_tasks_ms": 84,
+      "idle_fps": 60.3,
+      "pan_fps": 60.1,
+      "pan_p95_frame_ms": 16.7,
+      "zoom_fps": 37,
+      "nodes": 177,
+      "heap_mb": 49.4,
+      "timeout": false
+    },
+    {
+      "n": 5000,
+      "profile": "desktop",
+      "fetch_kb": 2969,
+      "ready_ms": 972,
+      "long_tasks_ms": 237,
+      "idle_fps": 60.2,
+      "pan_fps": 60.1,
+      "pan_p95_frame_ms": 16.7,
+      "zoom_fps": 52.2,
+      "nodes": 133,
+      "heap_mb": 22.2,
+      "timeout": false
+    },
+    {
+      "n": 50000,
+      "profile": "desktop",
+      "fetch_kb": 29671,
+      "ready_ms": 2764,
+      "long_tasks_ms": 1355,
+      "idle_fps": 59.3,
+      "pan_fps": 59.1,
+      "pan_p95_frame_ms": 16.8,
+      "zoom_fps": 54.2,
+      "nodes": 100,
+      "heap_mb": 147.4,
+      "timeout": false
+    },
+    {
+      "n": 500,
+      "profile": "mobile4g",
+      "error": "Error: page.evaluate: TypeError: Cannot read properties of null (reading 'getBoundingClientRect')\n    at center (eval at evaluate (:311:30), <anonymous>:3:42)\n    at eval (eval at evaluate (:311:30), "
+    },
+    {
+      "n": 5000,
+      "profile": "mobile4g",
+      "error": "Error: page.evaluate: TypeError: Cannot read properties of null (reading 'getBoundingClientRect')\n    at center (eval at evaluate (:311:30), <anonymous>:3:42)\n    at eval (eval at evaluate (:311:30), "
+    },
+    {
+      "n": 50000,
+      "profile": "mobile4g",
+      "error": "Error: page.evaluate: TypeError: Cannot read properties of null (reading 'getBoundingClientRect')\n    at center (eval at evaluate (:311:30), <anonymous>:3:42)\n    at eval (eval at evaluate (:311:30), "
+    }
+  ]
+}

@@ -107,6 +107,12 @@ async function main() {
   check("it claims once", (await claimPendingPlanUpgrade(USER))?.plan === "lifetime");
   check("and not twice", (await claimPendingPlanUpgrade(USER)) === null);
 
+  const down = await queuePlanUpgradeTransition({
+    userId: USER, before: LIFETIME, after: ORBIT, eventKey: `${USER}-paid-down`,
+  });
+  check("a paid -> lower paid change queues an event", down?.plan === "orbit");
+  check("...which claims once", (await claimPendingPlanUpgrade(USER))?.plan === "orbit");
+
   /* ------------------------------------------------------------------------- comps */
 
   // Comps move the resolved plan without any subscription or purchase being written, so
@@ -141,7 +147,7 @@ async function main() {
 
   /* ----------------------------------------------------------------------- deletion */
 
-  check("rows exist before the purge", (await pendingCount(USER)) === 2);
+  check("rows exist before the purge", (await pendingCount(USER)) === 3);
   await purgeUserData(USER);
   check("purge removes the account's events", (await pendingCount(USER)) === 0);
   check("...and leaves other accounts alone", (await pendingCount(OTHER)) === 1);

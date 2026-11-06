@@ -23,11 +23,11 @@
  * Auth-free and free of `next/server`, like `note-batch-save.ts`: server actions schedule
  * it in `after()`, and `scripts/smoke-work-history-research.ts` drives it with a fake model.
  */
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contactProfiles, contacts } from "@/db/schema";
 import { userCanUseAi, webSearchJson, parseAiJson, type WebSource } from "@/lib/ai";
-import { fenceUntrusted } from "@/lib/ai-security";
+import { auditUntrustedWrite, cleanSingleLine, fenceUntrusted } from "@/lib/ai-security";
 import {
   sanitizeIncomingExperiences,
   saveContactProfile,
@@ -46,6 +46,13 @@ import { reportError } from "@/lib/report-error";
 
 /** A web-found history is re-researched at most this often on its own. */
 export const WORK_HISTORY_REFRESH_DAYS = 30;
+
+/**
+ * Automatic checks in a row that found nobody, against the same LinkedIn slug, before the
+ * sweep and LinkedIn-pull kicks stop asking. Two, because a second miss on the same anchored
+ * query almost never turns into a find on the third — it just bills two more searches.
+ */
+export const WORK_HISTORY_MAX_MISSES = 2;
 
 /**
  * Searches one person may cost. Every search is billed on its own (a per-search fee, plus
@@ -182,8 +189,9 @@ export const checkCurrentRoleWithWebSearch: CurrentRoleChecker = async (userId, 
     maxOutputTokens: CURRENT_ROLE_OUTPUT_TOKENS,
   });
   const raw = parseAiJson<RawCurrentRole>(json);
-  const org = typeof raw.current?.organization === "string" ? raw.current.organization.trim() : "";
-  const title = typeof raw.current?.title === "string" && raw.current.title.trim() ? raw.current.title.trim() : null;
+  auditUntrustedWrite(userId, "work_history.recheck", "answer", json);
+  const org = cleanSingleLine(typeof raw.current?.organization === "string" ? raw.current.organization : null, 200) ?? "";
+  const title = cleanSingleLine(typeof raw.current?.title === "string" ? raw.current.title : null, 200);
   return {
     confident: raw.match === "confident",
     current: org ? { organization: org, title } : null,
@@ -200,9 +208,11 @@ export const researchWithWebSearch: WorkHistoryResearcher = async (userId, subje
     maxOutputTokens: MAX_OUTPUT_TOKENS,
   });
   const raw = parseAiJson<RawAnswer>(json);
+  // Tripwire, never a block: the answer was read off pages anyone can publish.
+  auditUntrustedWrite(userId, "work_history.research", "answer", json);
   return {
     confident: raw.match === "confident",
-    headline: typeof raw.headline === "string" && raw.headline.trim() ? raw.headline.trim() : null,
+    headline: cleanSingleLine(typeof raw.headline === "string" ? raw.headline : null, 300),
     experiences: sanitizeIncomingExperiences(raw.experiences),
     sources,
   };
@@ -255,8 +265,10 @@ export function nextWorkHistoryDue(
   const random = options.random ?? Math.random;
   const day = 86_400_000;
   switch (outcome) {
+    // A week, not a day: a failed search may already have been billed, and a contact that
+    // keeps failing was costing two searches every day.
     case "error":
-      return new Date(now.getTime() + jittered(day, random));
+      return new Date(now.getTime() + jittered(7 * day, random));
     case "rate_limited": {
       // The day's allowance is spent: the next UTC day, spread over its first hours.
       const tomorrow = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
@@ -305,8 +317,9 @@ export async function researchContactWorkHistory(
     outcome = run.outcome;
     cadence = run.cadence;
     freshFrom = run.freshFrom;
-  } catch {
-    outcome = "error";
+  } catch (err) {
+    // The web-search budget refuses from inside the search (month spent, Orbit's day, paused).
+    outcome = isRateLimitedError(err) ? "rate_limited" : "error";
   }
 
   // Every outcome reschedules, whoever asked: a contact pulled from LinkedIn today is not
@@ -322,6 +335,8 @@ export async function researchContactWorkHistory(
         cadence = row ?? null;
       }
       if (cadence) {
+        const missed = outcome === "not_found" || outcome === "unsure";
+        const found = outcome === "saved" || outcome === "unchanged";
         await db
           .update(contacts)
           .set({
@@ -329,6 +344,15 @@ export async function researchContactWorkHistory(
               from: freshFrom,
               random: options.random,
             }),
+            // The streak counts misses against one slug; a miss on a new slug starts it over.
+            ...(missed
+              ? {
+                  workHistoryMisses: sql`CASE WHEN ${contacts.workHistoryMissSlug} IS NOT DISTINCT FROM ${contacts.linkedinSlug} THEN ${contacts.workHistoryMisses} + 1 ELSE 1 END`,
+                  workHistoryMissSlug: sql`${contacts.linkedinSlug}`,
+                }
+              : found
+                ? { workHistoryMisses: 0, workHistoryMissSlug: null }
+                : {}),
           })
           .where(and(eq(contacts.userId, userId), eq(contacts.id, contactId)));
       }
@@ -471,17 +495,28 @@ async function researchOnce(
       detectJobChanges(baseline, answer.experiences),
       { source: "web", now }
     );
+    const patch: { company?: string; title?: string; school?: string } = {};
     // Nothing known about where they work until now: fill it in, without calling it a move.
     if (!moves.length && !baseline.hasBaseline) {
       const current = answer.experiences.find((e) => e.kind === "role" && e.isCurrent);
       if (current) {
-        await updateContactForUser(
-          userId,
-          contactId,
-          { company: current.organization, ...(current.title ? { title: current.title } : {}) },
-          { skipRevalidate: true, skipEmbedding: true, skipSummary: true }
-        );
+        patch.company = current.organization;
+        if (current.title) patch.title = current.title;
       }
+    }
+    // The same for school: LinkedIn's Connections.csv has no school column, so research is
+    // where an imported contact's school comes from. The answer lists the most recent first.
+    // Never overwrites a school the user (or a LinkedIn paste) already set.
+    if (!contact.school?.trim()) {
+      const school = answer.experiences.find((e) => e.kind === "education")?.organization;
+      if (school) patch.school = school;
+    }
+    if (Object.keys(patch).length) {
+      await updateContactForUser(userId, contactId, patch, {
+        skipRevalidate: true,
+        skipEmbedding: true,
+        skipSummary: true,
+      });
     }
   } catch (err) {
     // The history is stored, and the snapshot a later check compares against is now the
@@ -531,7 +566,11 @@ export async function researchWorkHistories(
 
 /**
  * Which of these contacts a LinkedIn pull should research: they have a LinkedIn URL and no
- * history from the extension or a recent web search. One query for the whole batch.
+ * history from the extension or a recent web search, and they are not a recent miss. A
+ * contact the last search could not find waits for its scheduled re-check, and after
+ * `WORK_HISTORY_MAX_MISSES` stops being asked at all — "Refresh from LinkedIn" and every
+ * capture naming them used to re-bill the same failed search. A new LinkedIn URL (a new
+ * slug) lifts both. One query for the whole batch.
  */
 export async function contactsNeedingWorkHistory(
   userId: string,
@@ -542,7 +581,14 @@ export async function contactsNeedingWorkHistory(
   const db = await getDb();
   const [rows, profiles] = await Promise.all([
     db
-      .select({ id: contacts.id, linkedinUrl: contacts.linkedinUrl })
+      .select({
+        id: contacts.id,
+        linkedinUrl: contacts.linkedinUrl,
+        linkedinSlug: contacts.linkedinSlug,
+        dueAt: contacts.workHistoryDueAt,
+        misses: contacts.workHistoryMisses,
+        missSlug: contacts.workHistoryMissSlug,
+      })
       .from(contacts)
       .where(and(eq(contacts.userId, userId), inArray(contacts.id, contactIds))),
     db
@@ -560,7 +606,11 @@ export async function contactsNeedingWorkHistory(
       .filter((p) => p.source === "extension" || (p.source === "web" && p.capturedAt.getTime() >= cutoff))
       .map((p) => p.contactId),
   );
-  return rows.filter((r) => r.linkedinUrl?.trim() && !settled.has(r.id)).map((r) => r.id);
+  const recentMiss = (r: (typeof rows)[number]) =>
+    r.missSlug !== null &&
+    r.missSlug === r.linkedinSlug &&
+    (r.misses >= WORK_HISTORY_MAX_MISSES || (r.dueAt !== null && r.dueAt.getTime() > now.getTime()));
+  return rows.filter((r) => r.linkedinUrl?.trim() && !settled.has(r.id) && !recentMiss(r)).map((r) => r.id);
 }
 
 /** Most contacts one kick may name. A pull larger than this is an import, not a lookup. */

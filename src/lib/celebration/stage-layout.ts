@@ -28,8 +28,8 @@ export const HERO_LOGO_PX = 96;
  * Mirrors `MAX_PERKS`. Deliberately a local constant rather than a parameter:
  * the canvas calls `stageLayout()` independently of the DOM, and a parameter
  * it could default differently is precisely how the two halves drift apart.
- * Lifetime (5 perks) gets a little unclaimed slack, which the centring
- * absorbs; on wide layouts 5 and 6 perks are both three grid rows anyway.
+ * Any tier with fewer than six perks gets a little unclaimed slack, which the
+ * centring absorbs; on wide layouts five and six perks are both three rows.
  */
 const BUDGET_PERKS = 6;
 
@@ -37,14 +37,11 @@ const BUDGET_PERKS = 6;
  * files have to be edited together. */
 const WORD_LEADING = 0.85;
 /**
- * Measured layout width of "UNLOCKED!" set in Outfit Black, in ems — taken
- * from `getBoundingClientRect()` in the browser (9.9), rounded up for margin.
- * It covers the nine glyphs, the inline padding that catches the skew's
- * overhang, and the outline's stroke at each end. The word's size is derived
- * from this so it cannot overflow, which no width-fraction guess achieved:
- * the first attempt assumed 8em and ran 15px off both edges of a 375px phone.
+ * "ACTIVATED!" measures about 6.3em in Outfit Black on a 390px viewport.
+ * Budget 7.5em for its skew and outline, then derive its size from the
+ * available width so it stays bold without clipping on a phone.
  */
-const WORD_EM = 10.2;
+const WORD_EM = 7.5;
 const PERK_LEADING = 1.375;
 const WELCOME_LEADING = 1.5;
 

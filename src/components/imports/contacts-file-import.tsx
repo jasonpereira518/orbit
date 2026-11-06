@@ -15,6 +15,7 @@ import {
   BusyHint,
   ImportFilePicker,
   ImportWarningBanner,
+  ensureFits,
 } from "@/components/imports/import-utils";
 import { formatUploadSize } from "@/lib/capture-limits";
 import {
@@ -152,6 +153,7 @@ export function ContactsFileImport() {
               if (text.length > MAX_CONTACTS_FILE_CHARS) {
                 throw new UserFacingError(contactsFileTooLargeMessage());
               }
+              ensureFits(text);
               setFileText(text);
               await preview(text, file.name);
             } catch (err) {
