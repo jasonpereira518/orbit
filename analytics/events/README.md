@@ -136,7 +136,7 @@ Format per event: **fires when** / **must not fire when** / **read by**. Propert
 - Added: v181.
 
 ## mcp_disconnected
-- Fires when: `revokeApiKey` revokes a live `mcp_url` key (the twin of `createApiKey`'s `mcp_connected`). `client` is `other`, as at creation. One per key (deterministic id over the key id). Wired in v187.
+- Fires when: `revokeApiKey` revokes a live `mcp_url` key (the twin of `createApiKey`'s `mcp_connected`). `client` is `other`, as at creation. One per key (deterministic id over the key id). Wired in v191 (built as 187).
 - Must not fire when: an expiry, a second revoke of the same key, or revoking a plain `api` key. OAuth grants are revoked in Clerk's account portal, which sends Orbit nothing, so an OAuth disconnect is not recorded.
 - Read by: MCP retention.
 - Added: v181.
@@ -190,7 +190,7 @@ Format per event: **fires when** / **must not fire when** / **read by**. Propert
 - Added: v181.
 
 ## error_shown
-- Fires when: an error boundary renders its error screen: `ErrorFallback` in `src/app/error.tsx` and every route group's `error.tsx`, and `src/app/global-error.tsx`. Client event, through the `event` beacon kind. `where` is a fixed name per boundary (`boundary.root`, `boundary.global`, `boundary.app`, `boundary.admin`, `boundary.auth`, `boundary.checkout`, `boundary.marketing`, `boundary.site`); `error_kind` is `chunk_load` (a code chunk failed to load), `network` (offline), `server` (a Server Component failure, which carries a digest), `render` (anything else) or `unknown` (a non-Error throw). Never the message, digest or stack. Once per error instance (a WeakSet), so re-renders and StrictMode do not double it. Wired in v187.
+- Fires when: an error boundary renders its error screen: `ErrorFallback` in `src/app/error.tsx` and every route group's `error.tsx`, and `src/app/global-error.tsx`. Client event, through the `event` beacon kind. `where` is a fixed name per boundary (`boundary.root`, `boundary.global`, `boundary.app`, `boundary.graph`, `boundary.admin`, `boundary.auth`, `boundary.checkout`, `boundary.marketing`, `boundary.site`); `error_kind` is `chunk_load` (a code chunk failed to load), `network` (offline), `server` (a Server Component failure, which carries a digest), `render` (anything else) or `unknown` (a non-Error throw). Never the message, digest or stack. Once per error instance (a WeakSet), so re-renders and StrictMode do not double it. Wired in v191 (built as 187).
 - Must not fire when: an error nobody saw, or a toast (toasts are not wired).
 - Read by: Failures that touched users.
 - Added: v181.
