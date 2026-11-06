@@ -3429,6 +3429,14 @@ body {
   }
 }
 
+/* The landing page on a phone: the waitlist pill and social icons are fixed to the bottom
+ * edge over a fade, so a link focused or scrolled to stops above them (WCAG 2.4.11). */
+@media (width < 48rem) {
+  html:has([data-landing-bottom-fade]) {
+    scroll-padding-bottom: 5.5rem;
+  }
+}
+
 /* The admin console scrolls the window under a sticky header: keep focused and
  * scrolled-to elements clear of it (WCAG 2.4.11). */
 html:has(.admin-console) {

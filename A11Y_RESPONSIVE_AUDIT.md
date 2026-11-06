@@ -671,7 +671,7 @@ All of it went through the shared layer first: the primitives, the theme tokens 
 - Listbox semantics for reminder rows.
 - An in-app "Reduce motion" setting.
 
-**Found after the audit, still open:** on the landing page, "How it works" steps the dot hasn't reached are dimmed or invisible while on screen, and the fixed "Join the waitlist" pill covers text at the bottom on phones.
+**Found after the audit, fixed in a follow-up:** on the landing page, "How it works" steps the dot hadn't reached sat on screen dimmed or invisible; the step text is now always fully opaque and only the dot and a small slide follow the scroll. On phones the fixed "Join the waitlist" pill and social icons covered body text; they now sit on a bottom fade, the page ends a fade's height lower, and `scroll-padding-bottom` keeps a focused link above them.
 
 ---
 
