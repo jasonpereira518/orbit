@@ -56,6 +56,13 @@ export type BulkNotePersonPreview = {
   noteHash?: string;
   noteLabel?: string | null;
   /**
+   * Set on a card from a note picked in Granola: which note, and when the meeting was. On the
+   * card rather than the job because a combined review folds several notes into one new job
+   * (`mergeCaptureBatchRows`), and the job's own hints don't survive that. Saving it logs the
+   * meeting as Granola's, at its real time, under the id the sync checks.
+   */
+  granola?: { noteId: string; meetingAt: string };
+  /**
    * Set when a web lookup (`capture/web-lookup.ts`) filled empty fields on this card: which
    * ones, the page it read, and the cached brief's key so the save can attach their career.
    */
@@ -188,7 +195,7 @@ export const ACTIVE_CAPTURE_JOB_STATUSES: readonly CaptureJobStatus[] = [
  * server-action call could make its own row immortal (the retention purge in
  * `resumeStalledCaptureJobs` never reaps a `ready`/`reviewing` row).
  */
-export type CaptureJobSource = "messy" | "voice" | "meeting" | "scan" | "phone" | "api";
+export type CaptureJobSource = "messy" | "voice" | "meeting" | "scan" | "phone" | "api" | "granola";
 
 /** One transcribed block of media, in the order it arrived. */
 export type CaptureIngestedBlock = { text: string; source: string };
