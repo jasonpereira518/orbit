@@ -669,4 +669,7 @@ export async function finalizeIngest(
     );
   }
   await kickEmbeddingBackfill(ctx.userId).catch(reportAndContinue({ where: "job.ingest.embedding-kick", userId: ctx.userId }, null));
+  // Contacts this import saved under a handle ("jsmith42") get a real name, or a "?".
+  const { kickNameSweep } = await import("@/lib/contact-name-sweep");
+  await kickNameSweep(ctx.userId);
 }

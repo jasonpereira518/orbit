@@ -9,17 +9,20 @@ import { searchMeetingPassagesFor } from "@/lib/meetings-list";
 import { searchMemories } from "@/lib/memory-search";
 
 /**
- * One passage about a single interaction or meeting, kept structured so the answer can cite
- * it. Only interaction- and meeting-sourced passages: a note_batch or brief passage has no
- * single dated event to cite and no page to deep-link to.
+ * One passage about a single interaction, meeting or email event, kept structured so the
+ * answer can cite it. Only those sources: a note_batch or brief passage has no single dated
+ * event to cite and no page to deep-link to.
  */
 export type NotePassage = {
   sourceId: string;
   contactId: string | null;
   date: string | null;
   snippet: string;
-  /** Omitted for an interaction (the original and still the common case). */
-  kind?: "interaction" | "meeting";
+  /**
+   * Omitted for an interaction (the original and still the common case). An `email_event` is
+   * what the user's mail said, as the email-insights feature noted it.
+   */
+  kind?: "interaction" | "meeting" | "email_event";
   /** A meeting passage: when in the call it was said (null for its summary), and its title. */
   startMs?: number | null;
   title?: string | null;
@@ -215,8 +218,10 @@ export async function factLane(
 
   const passages: NotePassage[] = [
     ...memories
-      .filter((m) => m.sourceKind === "interaction")
+      .filter((m) => m.sourceKind === "interaction" || m.sourceKind === "email_event")
       .map((m) => ({
+        // Omitted for a note, as before; set only for mail so the prompt and the chip can tell.
+        ...(m.sourceKind === "email_event" ? { kind: "email_event" as const } : {}),
         sourceId: m.sourceId,
         contactId: m.contactIds[0] ?? m.contactId ?? null,
         date: m.occurredAt ? new Date(m.occurredAt).toISOString().slice(0, 10) : null,

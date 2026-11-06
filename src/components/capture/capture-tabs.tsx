@@ -1,12 +1,19 @@
 "use client";
 
 import { motion } from "motion/react";
+import { useRouter } from "next/navigation";
 import { SPRING_PILL } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
 export type CaptureMode = "messy" | "voice" | "meeting" | "library" | "cloud";
+/**
+ * A tab on /capture. `"imports"` is not a capture mode: the import hub renders server-side on
+ * `/capture?mode=imports`, so choosing it navigates instead of switching local state.
+ */
+export type CaptureTab = CaptureMode | "imports";
 
-export const CAPTURE_MODES: ReadonlyArray<{ id: CaptureMode; label: string; blurb: string }> = [
+/** `"meeting"` is the recorder on /meetings, which hosts the same flow with no tabs. */
+export const CAPTURE_MODES: ReadonlyArray<{ id: CaptureTab; label: string; blurb: string }> = [
   {
     id: "messy",
     label: "Messy Notes",
@@ -20,12 +27,6 @@ export const CAPTURE_MODES: ReadonlyArray<{ id: CaptureMode; label: string; blur
       "Just finished a conversation? Say who you met and what you agreed — Orbit transcribes it, then pulls out the people.",
   },
   {
-    id: "meeting",
-    label: "Meeting",
-    blurb:
-      "On a call? Orbit listens along, then summarizes it and pulls out the people, next steps, blockers and open questions.",
-  },
-  {
     id: "library",
     label: "Notes Library",
     blurb:
@@ -37,13 +38,19 @@ export const CAPTURE_MODES: ReadonlyArray<{ id: CaptureMode; label: string; blur
     blurb:
       "Pick meeting notes straight from Google Drive or OneDrive — one or a stack of them. Each becomes its own capture to review.",
   },
+  {
+    id: "imports",
+    label: "Imports",
+    blurb:
+      "Bring in your exports and accounts — a LinkedIn ZIP, contacts files, calendars, Google and Outlook. Once they're in, browse everything in Knowledge.",
+  },
 ];
 
-export function captureTabId(mode: CaptureMode) {
+export function captureTabId(mode: CaptureTab) {
   return `capture-tab-${mode}`;
 }
 
-export function capturePanelId(mode: CaptureMode) {
+export function capturePanelId(mode: CaptureTab) {
   return `capture-panel-${mode}`;
 }
 
@@ -52,28 +59,32 @@ export function capturePanelId(mode: CaptureMode) {
  * app uses, plus the tab/tabpanel wiring the old bar lacked.
  *
  * Five tabs is tight on a narrow phone: the bar is `inline-flex w-full` with `flex-1`
- * children, so the labels shrink rather than wrap. Verify at 360px before adding a sixth.
+ * children whose labels never wrap, and it scrolls sideways once they cannot fit.
+ * Verify at 360px before adding another.
  */
 export function CaptureTabs({
   mode,
   onChange,
   disabled = false,
   showCloud = false,
+  showImports = false,
 }: {
-  mode: CaptureMode;
-  onChange: (mode: CaptureMode) => void;
-  /** A job is in flight or a meeting is recording — switching would lose it. */
+  mode: CaptureTab;
+  onChange: (mode: CaptureTab) => void;
+  /** A job is in flight — switching would lose it. */
   disabled?: boolean;
   /** The Drive & OneDrive tab — only while the cloud-notes surface is live for this viewer. */
   showCloud?: boolean;
+  /** The Imports tab — only while the `page.imports` surface is live for this viewer. */
+  showImports?: boolean;
 }) {
   return (
     <div
       role="tablist"
       aria-label="Capture mode"
-      className="inline-flex w-full rounded-lg bg-muted p-[3px] sm:w-auto"
+      className="inline-flex w-full overflow-x-auto rounded-lg bg-muted p-[3px] sm:w-auto"
     >
-      {CAPTURE_MODES.filter((m) => showCloud || m.id !== "cloud").map((m) => (
+      {CAPTURE_MODES.filter((m) => (showCloud || m.id !== "cloud") && (showImports || m.id !== "imports")).map((m) => (
         <ModeTab
           key={m.id}
           id={captureTabId(m.id)}
@@ -85,6 +96,28 @@ export function CaptureTabs({
           {m.label}
         </ModeTab>
       ))}
+    </div>
+  );
+}
+
+/**
+ * The tab bar on `/capture?mode=imports`, where the capture flow is not mounted: any other
+ * tab navigates back to it, opened on that mode.
+ */
+export function ImportsTabBar({ showCloud = false }: { showCloud?: boolean }) {
+  const router = useRouter();
+  const blurb = CAPTURE_MODES.find((m) => m.id === "imports")?.blurb;
+  return (
+    <div className="space-y-2">
+      <CaptureTabs
+        mode="imports"
+        showImports
+        showCloud={showCloud}
+        onChange={(next) => {
+          if (next !== "imports") router.push(`/capture?mode=${next}`);
+        }}
+      />
+      {blurb && <p className="text-sm text-muted-foreground">{blurb}</p>}
     </div>
   );
 }
@@ -115,7 +148,7 @@ function ModeTab({
       disabled={disabled && !active}
       onClick={onClick}
       className={cn(
-        "relative flex-1 rounded-md px-2 py-1.5 text-sm font-medium transition-colors sm:flex-none sm:px-4",
+        "relative flex-1 whitespace-nowrap rounded-md px-1.5 py-1.5 text-sm font-medium transition-colors sm:flex-none sm:px-4",
         active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
         "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-muted-foreground"
       )}

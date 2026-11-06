@@ -249,7 +249,7 @@ export async function retryImportAction(input: {
   after(() => ops.runImportJob(importId));
 
   revalidateAdmin(input.targetUserId);
-  revalidatePath("/imports");
+  revalidatePath("/capture");
   return { ok: true };
 }
 
@@ -261,7 +261,7 @@ export async function cancelImportAction(input: {
   const adminUserId = await requireAdminUserId();
   await ops.cancelImport(adminUserId, input);
   revalidateAdmin(input.targetUserId);
-  revalidatePath("/imports");
+  revalidatePath("/capture");
   return { ok: true };
 }
 

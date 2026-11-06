@@ -26,8 +26,8 @@ check("no rows → null", relationshipHealth([], { now: NOW }) === null);
 }
 
 {
-  const h = relationshipHealth([row(at(30), null, "google_calendar")], { now: NOW })!;
-  check("meeting 30d ago at default cadence → 50", h.current === 50, h.current);
+  const h = relationshipHealth([row(at(45), null, "google_calendar")], { now: NOW })!;
+  check("meeting 45d ago at default cadence → 50", h.current === 50, h.current);
 }
 
 {
@@ -49,11 +49,11 @@ check("no rows → null", relationshipHealth([], { now: NOW }) === null);
 }
 
 {
-  const meeting = [row(at(40), null, "google_calendar")];
+  const meeting = [row(at(90), null, "google_calendar")];
   const quarterly = relationshipHealth(meeting, { now: NOW, cadenceDays: 90 })!;
-  const monthly = relationshipHealth(meeting, { now: NOW })!;
-  check("quarterly cadence is not penalized at day 40", quarterly.current > 70, quarterly.current);
-  check("default cadence decays at day 40", monthly.current < 45, monthly.current);
+  const unset = relationshipHealth(meeting, { now: NOW })!;
+  check("quarterly cadence is at half strength at day 90", quarterly.current === 50, quarterly.current);
+  check("default cadence decays further by day 90", unset.current === 25, unset.current);
 }
 
 {
@@ -74,12 +74,21 @@ check("no rows → null", relationshipHealth([], { now: NOW }) === null);
 
 {
   const h = relationshipHealth([row(at(1), null, "google_calendar")], { now: NOW, cadenceDays: 1 })!;
-  check("cadence clamps to a 14-day floor", h.components.recency > 0.9, h.components);
+  check("cadence clamps to a 21-day floor", h.components.recency > 0.95, h.components);
 }
 
 {
-  const h = relationshipHealth([row(at(260), null, "google_calendar")], { now: NOW, cadenceDays: 14 })!;
+  const h = relationshipHealth([row(at(260), null, "google_calendar")], { now: NOW, cadenceDays: 21 })!;
   check("a scored point is never 0 (0 means no touch yet)", h.current === 1, h.current);
+}
+
+{
+  // Generosity: a 2:1 split and a two-day reply are a healthy relationship, not a warning.
+  const rows = [row(at(10), "out"), row(at(8), "in"), row(at(6), "out")];
+  const h = relationshipHealth(rows, { now: NOW })!;
+  check("a 2:1 split is full reciprocity", h.components.reciprocity === 1, h.components);
+  check("two-day replies score well", h.components.latency! > 0.6, h.components);
+  check("a lightly-active, two-way contact scores well", h.current >= 75, h.current);
 }
 
 console.log("\nsmoke-relationship-health: all checks passed");

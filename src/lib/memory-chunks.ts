@@ -21,7 +21,7 @@ import { getDb, runAtomicWrite, type AtomicStatement } from "@/db";
 import { memoryChunks } from "@/db/schema";
 import { computeContentHash } from "@/lib/search";
 
-export type MemorySourceKind = "interaction" | "note_batch" | "brief";
+export type MemorySourceKind = "interaction" | "note_batch" | "brief" | "email_event";
 
 export type MemoryChunkDraft = {
   chunkIndex: number;

@@ -209,6 +209,18 @@ export async function updateMeetingDetails(
   return row;
 }
 
+/** The meeting's notes box. Empty text clears it. False when there is no such meeting of theirs. */
+export async function setMeetingUserNotes(userId: string, sessionId: string, notes: string): Promise<boolean> {
+  if (!/^[0-9a-f-]{36}$/i.test(sessionId)) return false;
+  const db = await getDb();
+  const rows = await db
+    .update(meetingSessions)
+    .set({ userNotes: notes || null, updatedAt: new Date() })
+    .where(and(eq(meetingSessions.id, sessionId), eq(meetingSessions.userId, userId)))
+    .returning();
+  return rows.length > 0;
+}
+
 /** A provider event or series id from the client: shape-checked, since it is only ever compared. */
 function calendarIdOrNull(v: unknown): string | null {
   return typeof v === "string" && /^[\w@.-]{1,256}$/.test(v) ? v : null;
@@ -918,16 +930,27 @@ export async function getNoteBatchForUser(userId: string, batchId: string) {
   return row ?? null;
 }
 
-/** Who "I" is on a recording — so the user is never offered as a contact from their own call. */
-export async function loadMeetingSelf(
-  userId: string,
-): Promise<{ firstName: string | null; lastName: string | null }> {
+/**
+ * Who "I" is — on a recording, and in any note the user writes — so the user is never
+ * offered as a contact from their own capture.
+ */
+export async function loadMeetingSelf(userId: string): Promise<{
+  firstName: string | null;
+  lastName: string | null;
+  email: string | null;
+  linkedinUrl: string | null;
+}> {
   const db = await getDb();
   const row = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
-    columns: { firstName: true, lastName: true },
+    columns: { firstName: true, lastName: true, email: true, socialLinks: true },
   });
-  return { firstName: row?.firstName ?? null, lastName: row?.lastName ?? null };
+  return {
+    firstName: row?.firstName ?? null,
+    lastName: row?.lastName ?? null,
+    email: row?.email ?? null,
+    linkedinUrl: row?.socialLinks?.linkedin ?? null,
+  };
 }
 
 // ── Input hygiene ─────────────────────────────────────────────────────────────────────

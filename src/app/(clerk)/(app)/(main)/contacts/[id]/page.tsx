@@ -15,6 +15,7 @@ import { ContactExperienceSection } from "@/components/contacts/contact-experien
 import { ContactFollowUpSection } from "@/components/contacts/contact-follow-up-section";
 import { ContactMentionsSection } from "@/components/contacts/contact-mentions-section";
 import { ContactProfileHero } from "@/components/contacts/contact-profile-hero";
+import { openNameGuess } from "@/lib/contact-name-guess";
 import { ContactProfileOverview } from "@/components/contacts/contact-profile-overview";
 import { ContactRelatedPeople } from "@/components/contacts/contact-related-people";
 import { ContactRemindersSection } from "@/components/contacts/contact-reminders-section";
@@ -332,6 +333,7 @@ export default async function ContactDetailPage({
           displayName={displayName}
           fullName={contact.fullName}
           preferredName={contact.preferredName}
+          nameGuess={openNameGuess(contact)}
           firstName={contact.firstName}
           title={contact.title}
           company={contact.company}

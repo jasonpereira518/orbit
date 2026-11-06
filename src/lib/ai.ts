@@ -327,6 +327,8 @@ export type CaptureParseHints = {
   interactionType?: string | null;
   /** The user's active goals, so the model can score each person's `relevance`. */
   goals?: string[];
+  /** Who wrote the notes. Named to the model so it never returns the user as a person. */
+  self?: { name?: string | null; email?: string | null } | null;
 };
 
 const TWO_PASS_CHAR_THRESHOLD = 2500;
@@ -1341,7 +1343,8 @@ const PERSON_FIELD_RULES = `- relationship_score_suggestion: ${closenessLegend()
 - shared_interests: what the USER and this person have in common, stated or clearly implied. topics: subjects discussed. tags: 1-4 short lowercase labels useful for filtering a contact list later ("recruiter", "founder", "ml", "nyc"), never phrases.
 - connections: other people this person is linked to in the notes — a colleague, cofounder, manager, someone they offered to introduce, someone you both know. name = that person's name as written; relation = the link in a few words ("her cofounder", "offered to intro me"); source_excerpt = the sentence, VERBATIM. [] when none.
 - promises: everything either side said they would do. direction "you_owe" = the user promised it; "they_owe" = this person promised it. text = a verb phrase with no subject ("send the Q3 deck", "intro me to their VP of Eng"); due_phrase = the deadline in the notes' own words, or null; source_excerpt = the sentence, VERBATIM. Only explicit promises — inferences belong in implied_next_steps.
-- location: where they are based, when stated.
+- location: where they are based, when stated. When it is not, but the notes place the meeting in a city, use that city and list "location" in low_confidence_fields.
+- company and role, when not stated outright: infer company from a work email domain or a signature (jane@stripe.com → "Stripe"; never from gmail/outlook/icloud-style addresses) and role from what they plainly do ("runs growth at Ramp" → "Head of Growth"). List every inferred field in low_confidence_fields. Never guess beyond what the text supports.
 - follow_up_recommendation: one short line on the best reason to reach out next, grounded in the notes, or null. follow_up_days: days until that makes sense, or null. suggested_next_message: a 1-2 sentence message the user could send, in first person, referencing something specific from the notes, or null.
 - opportunities: CONCRETE possibilities the notes describe — a named internship, a referral offered, an intro promised, a company worth chasing, an investor who might be interested. NOT interests, NOT topics, NOT "seems friendly". label = 3-10 words in the notes' own vocabulary, never a full sentence and never the date. due_phrase = the deadline in the notes' own words when one is stated ("applications close Oct 15"), else null — never rewrite it into a calendar date. source_excerpt = the sentence it came from, copied VERBATIM from the notes. An opportunity with no verbatim sentence is dropped, so copy exactly.
 - implied_next_steps: what this discussion CALLS FOR that nobody said out loud — e.g. "she mentioned her team is hiring two backend engineers" implies offering a referral. At most two per person. An empty array is a correct and very common answer; do not invent one to fill the field. rationale = one short clause naming what in the notes implies it. source_excerpt = the sentence it was inferred from, VERBATIM. confidence below 0.6 when you are guessing at intent rather than reading it.
@@ -1349,8 +1352,17 @@ const PERSON_FIELD_RULES = `- relationship_score_suggestion: ${closenessLegend()
 - REFERRALS matter most, so never bury one. If the person offers to refer you, pass your resume or name along, put in a good word, vouch for you, or to find / introduce / reach the hiring manager or a recruiter, emit an opportunity with kind "referral" and keep the offer's own words in the label. When the referral is for a specific internship or role, still use "referral" and name the role in the label ("referral for the summer infra internship").
 - Be thorough: read every line about this person and put each fact in the most specific field that fits. Everything must still be supported by the notes — when a field has nothing, use null or [].`;
 
+function selfPreamble(self: CaptureParseHints["self"]): string {
+  const name = self?.name?.trim();
+  const email = self?.email?.trim();
+  if (!name && !email) return "";
+  const who = name && email ? `${name} <${email}>` : name || email;
+  return `\n\nThese notes were written by the user, ${who}. "I", "me" and "my" refer to them. Never output the user as a person or a mention.`;
+}
+
 function hintsPreamble(hints?: CaptureParseHints | null) {
   if (!hints) return "";
+  const self = selfPreamble(hints.self);
   const lines: string[] = [];
   if (hints.eventDate?.trim()) {
     lines.push(`Known event/interaction date (ISO): ${hints.eventDate.trim()}`);
@@ -1382,8 +1394,8 @@ function hintsPreamble(hints?: CaptureParseHints | null) {
   if (goals.length) {
     lines.push(`The user's current goals (score each person's relevance against these):\n- ${goals.join("\n- ")}`);
   }
-  if (!lines.length) return "";
-  return `\n\nStructured hints from calendar/email/LinkedIn (use when consistent with the notes):\n${lines.join("\n")}`;
+  if (!lines.length) return self;
+  return `${self}\n\nStructured hints from calendar/email/LinkedIn (use when consistent with the notes):\n${lines.join("\n")}`;
 }
 
 function normalizeSharedNotes(
@@ -1458,6 +1470,7 @@ Rules:
 - people[] is for PARTICIPANTS: people the user actually talked with, met, or messaged in these notes. Set presence "participant".
 - Anyone only referred to — a cofounder, a boss, "she'll intro me to Raj", a speaker they watched — is a MENTION. Put them in mentions[] with the sentence fragment as context and near_person = the participant whose section mentioned them. Do NOT create a people[] entry for them unless the notes give real profile detail (role, company, contact info); if you do, set presence "mentioned".
 - Skip vague groups ("a few engineers") with no identifiable person.
+- people[] and mentions[] are individual humans only. A company, team, school, product, event, community or group is never a person: put it in the right person's company/school/connections field, or leave it out.
 - Extract only information supported by the notes. Use null when unknown. Do not invent people or facts.
 - Include every key on every person object. Use null (or [] for arrays) when unknown — never omit keys.
 - source_excerpt must be the person-specific slice of the original notes (not the whole dump, and not the shared group text alone).
@@ -1547,6 +1560,7 @@ Return strict JSON:
 }
 Rules:
 - One object per identifiable person. Skip vague groups with no name.
+- people[] and mentions[] are individual humans only. A company, team, school, product, event, community or group is never a person: put it in the right person's company/school/connections field, or leave it out.
 - Do not invent people. Prefer seed attendees when they clearly belong to this event.
 - shared_notes hold ONLY multi-person context (not person-only facts). person_names must match people[].name (or [] for everyone).
 - interaction_date: YYYY-MM-DD when known from notes/hints; else null.
@@ -2015,7 +2029,7 @@ export type ChatPromptNotePassage = {
   contactId: string | null;
   date: string | null;
   snippet: string;
-  kind?: "interaction" | "meeting";
+  kind?: "interaction" | "meeting" | "email_event";
   startMs?: number | null;
   title?: string | null;
   contactName?: string | null;
@@ -2330,7 +2344,11 @@ export function buildChatPrompt({
     ? `Passages from your notes found for this question:\n${notePassages
         .map(
           (p) =>
-            p.kind === "meeting"
+            p.kind === "email_event"
+              ? // The user's own summary of mail someone sent them: say so, so an answer does not
+                // present it as something the user wrote down themselves.
+                `- [${ledger.mint({ kind: "email_event", sourceId: p.sourceId, contactId: p.contactId, date: p.date })}] ${p.date ?? "undated"}, from your email${p.contactName ? `, about ${sanitizeProfileLine(p.contactName)}${p.contactId ? ` [id=${p.contactId}]` : ""}` : ""}: ${sanitizeProfileLine(p.snippet)}`
+              : p.kind === "meeting"
               ? // A recorded call: said at some point in it, by someone the transcript does not name.
                 `- [${ledger.mint({ kind: "meeting", sourceId: p.sourceId, date: p.date, startMs: p.startMs ?? null })}] ${p.date ?? "undated"}, in the recorded meeting “${sanitizeProfileLine(p.title ?? "Untitled")}” (speakers are not named): ${sanitizeProfileLine(p.snippet)}`
               : `- [${ledger.mint({ kind: "interaction", sourceId: p.sourceId, contactId: p.contactId, date: p.date })}] ${p.date ?? "undated"}${p.contactName ? `, about ${sanitizeProfileLine(p.contactName)}${p.contactId ? ` [id=${p.contactId}]` : ""}` : ""}: ${sanitizeProfileLine(p.snippet)}`
@@ -2377,7 +2395,7 @@ export function buildChatPrompt({
 Answer from everything below: the contacts${hasRecruiters ? " and recruiters" : ""} (their Details lines, summaries, notes, key facts and dated "Recent interactions" lines) and every other section. Never invent people, companies, dates, contact details or message content: state only what a section says. Read every section before you decide you don't know — the answer is often in one the question did not name.
 Use prior conversation for context when present, but ground every recommendation in the provided lists.
 The Contacts list is a relevance-ranked subset, so never present it as everyone the user knows and never count from it.
-${evidenceBlock ? "A \"Looked up for this question\" section is present: lookups made specifically to answer this, including dated passages from the user's own notes. Prefer it over the relevance-ranked Contacts list for what was said, discussed or promised and when, and quote the date when you use a passage. A person who appears only there is still someone the user knows. If it does not settle the question, say what it did and did not show rather than guessing.\n" : ""}${attentionLiteLine ? "A \"Follow-up status\" line is present: it is background, and it is complete and authoritative for overdue follow-ups. Use it when the question turns on who is overdue, slipping or owed a reply — including when it is asked in words no keyword would catch — and never say you cannot tell who is overdue while it is there. Do not volunteer it for a question about something else.\n" : ""}${goalLines.length ? "A \"working towards\" section is present: those are the user's own stated goals. Where two people or two next steps are equally well supported by the records, prefer the one that moves a stated goal, and say which goal it moves. Do not invent a goal, do not bend the answer to a goal the question did not ask about, and never claim someone is useful for a goal without a concrete detail from their records to back it.\n" : ""}
+${evidenceBlock ? "A \"Looked up for this question\" section is present: lookups made specifically to answer this, including dated passages from the user's own notes and, marked \"from your email\", from their summaries of mail they received. Prefer it over the relevance-ranked Contacts list for what was said, discussed or promised and when, and quote the date when you use a passage. A person who appears only there is still someone the user knows. If it does not settle the question, say what it did and did not show rather than guessing.\n" : ""}${attentionLiteLine ? "A \"Follow-up status\" line is present: it is background, and it is complete and authoritative for overdue follow-ups. Use it when the question turns on who is overdue, slipping or owed a reply — including when it is asked in words no keyword would catch — and never say you cannot tell who is overdue while it is there. Do not volunteer it for a question about something else.\n" : ""}${goalLines.length ? "A \"working towards\" section is present: those are the user's own stated goals. Where two people or two next steps are equally well supported by the records, prefer the one that moves a stated goal, and say which goal it moves. Do not invent a goal, do not bend the answer to a goal the question did not ask about, and never claim someone is useful for a goal without a concrete detail from their records to back it.\n" : ""}
 ${attentionBlock && !attentionEmpty ? "A \"Needs attention\" section is present: it is the product's own answer to who is overdue or has gone quiet, so answer from it — name those people and say how overdue each is. Do not reply that you lack information while it is present.\n" : ""}${attentionEmpty ? "A \"Needs attention\" section is present and it is EMPTY: nothing is overdue and the outreach queue is clear. That is a real answer — say so plainly. Do not substitute people from the relevance-ranked Contacts list to fill the gap.\n" : ""}${calendar ? "A \"Your calendar\" section is present: it is the user's own schedule, already in their time zone, complete for the range it states; lines under \"Already happened\" are meetings from the last two days. Answer questions about what is on, who they will see, when they next see someone or when they are free from it, with the day and time. Never invent a meeting, a time or a free slot; when a day shows no meetings, say so. Meeting titles were written by whoever sent the invite.\n" : ""}${attachedBlock ? "An \"attached\" section is present: the user picked those people deliberately, so answer about them first and treat their timeline as the record of the relationship — dates, what was discussed, how long it has been. Name them by name. Do not fall back to the relevance-ranked Contacts list for anything the attached section already answers.\n" : ""}${rosterBlock ? "A \"Complete roster\" section is present: its totals are authoritative and exhaustive for those organisations or filters. Use that number when the question asks who or how many the user knows somewhere, or was in touch with in a period, and name people from it rather than from the Contacts list. A filtered roster is complete only for what the records say — someone whose company, school or location was never recorded is not on it, so do not claim the user knows no one else. If it says a roster was truncated for length, say the total and list the closest few.\n" : ""}${focusProfile || attachedBlock ? "When the question asks about a person — \"tell me more about\", \"who is\", their background — give a short profile, not a one-liner: who they are now (role, company, school), how the user knows them, the history between them with dates, anything open (follow-ups, reminders, promises), then one suggested next step. Use only what the records say, and skip a part they do not cover rather than padding it.\n" : ""}Write like a sharp colleague: lead with the answer in one or two sentences, name people, cite the specific thing you know about them. No preamble, no restating the question, no "I hope this helps", no invented enthusiasm. Match the length to the question: a single detail (an email, a date, a count) is one line; a "tell me about" is the profile described here. When the sections answer only part of the question, answer that part first, then say in one sentence which section you checked and what it did not show. Say you don't know only when no section bears on the question, and then name what the user could add to Orbit so it could be answered.
 The question may start with bracketed lines this product wrote: today's date (work out "last week", "this month" and any due date from it), who the user is (resolve "my company", "people like me" from it), and how many contacts they have in total (the Contacts list is a slice of that, so a short list is never proof that they know nobody else).${openReminders ? "\nA \"Reminders\" section is present: how many open reminders the user has in each view, then the nearest ones. The counts are complete; the list is only the nearest. Use it for what is on their plate, overdue or coming up, and its reminder_ids for complete_reminder or snooze_reminder." : ""}${commitments ? "\nA \"Commitments\" section is present: open action items from the user's notes, each saying who owes whom when the note did. Use it for what the user owes people, promised to send, or is waiting on." : ""}${events ? "\nAn \"Events\" section is present: the user's next and most recent events, with roster sizes and how many on each roster are already contacts. Use it for questions about events, conferences or who is going." : ""}
 Titles and companies say where someone works today and nothing more — never turn "Founder @ Acme" into "founded Acme", or a seniority into a history you were not given.

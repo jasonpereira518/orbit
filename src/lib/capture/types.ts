@@ -55,6 +55,11 @@ export type BulkNotePersonPreview = {
    */
   noteHash?: string;
   noteLabel?: string | null;
+  /**
+   * Set when a web lookup (`capture/web-lookup.ts`) filled empty fields on this card: which
+   * ones, the page it read, and the cached brief's key so the save can attach their career.
+   */
+  web?: { filled: string[]; sourceUrl: string | null; key: string } | null;
 };
 
 /** One typed opportunity awaiting review, shaped for the client. */
@@ -121,6 +126,8 @@ export type CaptureParseResult = {
   suggestionsSkipped: RejectedCounts;
   mentions: PreviewMention[];
   mentionedOnly: MentionedOnlyPerson[];
+  /** Names the model returned as people that read as companies or teams; never carded. */
+  skippedNonPeople?: string[];
   /**
    * Set when the notes carried LinkedIn profile URLs, so the review step can say when a
    * name was read off a URL rather than looked up. Null when none were pasted, and absent
@@ -230,6 +237,9 @@ export type CapturePersonEdits = {
   website: string | null;
   school: string | null;
   industry: string | null;
+  email: string | null;
+  linkedinUrl: string | null;
+  location: string | null;
 };
 
 /**

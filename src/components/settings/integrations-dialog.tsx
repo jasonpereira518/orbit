@@ -18,6 +18,7 @@ import { SpeechUsageCard, type SpeechAllowances } from "@/components/settings/sp
 import { ApiSettings } from "@/components/settings/api-settings";
 import { AssistantsSettings } from "@/components/settings/assistants-settings";
 import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
+import { GranolaSettings } from "@/components/settings/granola-settings";
 import { IntegrationIcon, StatusDot, statusText } from "@/components/settings/integration-ui";
 import { IntegrationsOverview } from "@/components/settings/integrations-overview";
 import { OutreachSettings } from "@/components/settings/outreach-settings";
@@ -106,17 +107,10 @@ const MicrosoftAccountPage = dynamic(
     })),
   { loading: () => <PanelSkeleton /> }
 );
-const LinkedInConnectionsImport = dynamic(
+const LinkedInSettings = dynamic(
   () =>
-    import("@/components/imports/linkedin-connections-import").then((m) => ({
-      default: m.LinkedInConnectionsImport,
-    })),
-  { loading: () => <PanelSkeleton /> }
-);
-const LinkedInMessagesImport = dynamic(
-  () =>
-    import("@/components/imports/linkedin-messages-import").then((m) => ({
-      default: m.LinkedInMessagesImport,
+    import("@/components/settings/linkedin-settings").then((m) => ({
+      default: m.LinkedInSettings,
     })),
   { loading: () => <PanelSkeleton /> }
 );
@@ -654,12 +648,9 @@ function Panel({
         />
       );
     case "linkedin":
-      return (
-        <div className="space-y-5">
-          <LinkedInConnectionsImport />
-          <LinkedInMessagesImport />
-        </div>
-      );
+      return <LinkedInSettings />;
+    case "granola":
+      return <GranolaSettings />;
     case "ai":
       return (
         <div className="space-y-5">

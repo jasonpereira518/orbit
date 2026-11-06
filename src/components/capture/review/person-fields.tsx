@@ -43,6 +43,9 @@ export type PersonFieldValues = {
   website: string;
   school: string;
   industry: string;
+  email: string;
+  linkedinUrl: string;
+  location: string;
 };
 
 /** Someone this person is linked to in the note — shown, not edited. */
@@ -72,9 +75,9 @@ export function PersonFields({
 }) {
   const work = value.work;
   const hasWork = Boolean(work.team || work.building || work.hiring || work.lookingFor || work.priorities.length);
-  const hasHandles = Boolean(value.phone || value.xHandle || value.website || value.school || value.industry);
+  const hasHandles = Boolean(value.phone || value.xHandle || value.website || value.school || value.industry || value.linkedinUrl);
   const setWork = (patch: Partial<PersonFieldValues["work"]>) => onChange({ work: { ...work, ...patch } });
-  const guessed = ["name", "company", "role", "met_at"].some((f) => lowConfidence.has(f));
+  const guessed = ["name", "company", "role", "met_at", "location", "email"].some((f) => lowConfidence.has(f));
   return (
     <div className={cn("space-y-3", !compact && "space-y-4")}>
       {guessed && (
@@ -92,6 +95,12 @@ export function PersonFields({
         </Field>
         <Field id={`${idPrefix}-met`} label="Met at" low={lowConfidence.has("met_at")}>
           <Input id={`${idPrefix}-met`} value={value.metAt} onChange={(e) => onChange({ metAt: e.target.value })} autoComplete="off" />
+        </Field>
+        <Field id={`${idPrefix}-location`} label="Location" low={lowConfidence.has("location")}>
+          <Input id={`${idPrefix}-location`} value={value.location} onChange={(e) => onChange({ location: e.target.value })} autoComplete="off" />
+        </Field>
+        <Field id={`${idPrefix}-email`} label="Email" low={lowConfidence.has("email")}>
+          <Input id={`${idPrefix}-email`} type="email" value={value.email} onChange={(e) => onChange({ email: e.target.value })} autoComplete="off" />
         </Field>
         <Field id={`${idPrefix}-tags`} label="Tags" hint="comma-separated" className="sm:col-span-2">
           <Input id={`${idPrefix}-tags`} value={value.tags} onChange={(e) => onChange({ tags: e.target.value })} placeholder="founder, ai, met at demo day" autoComplete="off" />
@@ -145,6 +154,9 @@ export function PersonFields({
 
       <Section title="Handles" count={hasHandles ? 1 : 0}>
         <div className="grid gap-3 sm:grid-cols-2">
+          <Field id={`${idPrefix}-linkedin`} label="LinkedIn" className="sm:col-span-2">
+            <Input id={`${idPrefix}-linkedin`} type="url" value={value.linkedinUrl} onChange={(e) => onChange({ linkedinUrl: e.target.value })} placeholder="linkedin.com/in/…" autoComplete="off" />
+          </Field>
           <Field id={`${idPrefix}-phone`} label="Phone">
             <Input id={`${idPrefix}-phone`} type="tel" value={value.phone} onChange={(e) => onChange({ phone: e.target.value })} autoComplete="off" />
           </Field>
