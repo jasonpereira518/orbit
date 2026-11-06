@@ -11,7 +11,7 @@
  * runs with `createsContacts: false` by design, so the number that matters is the meetings it
  * logged, not the people it did not invent.
  */
-import { createsContacts } from "@/lib/imports/import-sources";
+import { createsContacts, isChatImport } from "@/lib/imports/import-sources";
 
 export type ImportChipTone = "neutral" | "good" | "warn" | "offer";
 
@@ -37,6 +37,11 @@ export type SummarisableImport = {
     meetingsLogged?: number;
     docsRead?: number;
     flaggedCommitments?: unknown[];
+    filesSaved?: number;
+    filesTooLarge?: number;
+    filesPrivate?: number;
+    targetsAdded?: number;
+    backgroundAdded?: number;
   } | null;
 };
 
@@ -67,6 +72,16 @@ export function summarizeImport(item: SummarisableImport): ImportChip[] {
     add(stats.docsRead, (n) => `${n} doc${n === 1 ? "" : "s"} read`, "neutral");
   }
 
+  if (item.importType === "linkedin_export") {
+    add(stats.filesSaved, (n) => `${n} file${n === 1 ? "" : "s"} kept`, "neutral");
+    add(stats.interactionsLogged, (n) => `${n} note${n === 1 ? "" : "s"} on people`, "good");
+    add(stats.targetsAdded, (n) => `${n} target compan${n === 1 ? "y" : "ies"}`, "good");
+    add(stats.backgroundAdded, (n) => `${n} background entr${n === 1 ? "y" : "ies"}`, "neutral");
+    add(stats.filesPrivate, (n) => `${n} private left on your device`, "neutral");
+    add(stats.filesTooLarge, (n) => `${n} too big to keep`, "warn");
+    return chips;
+  }
+
   if (createsContacts(item.importType)) {
     add(item.contactsCreated, (n) => `${n} added`, "good");
     add(
@@ -76,8 +91,16 @@ export function summarizeImport(item: SummarisableImport): ImportChip[] {
     );
   }
 
-  // Calendar's real output, and the one every calendar row used to be missing.
-  add(stats.interactionsLogged, (n) => `${n} meetings logged`, "good");
+  // Calendar's real output, and the one every calendar row used to be missing. A chat import
+  // logs conversation sessions, which are not meetings.
+  add(
+    stats.interactionsLogged,
+    (n) =>
+      isChatImport(item.importType)
+        ? `${n} chat session${n === 1 ? "" : "s"}`
+        : `${n} meetings logged`,
+    "good",
+  );
   add(
     stats.remindersCreated,
     (n) => `${n} reminder${n === 1 ? "" : "s"}`,

@@ -1,7 +1,7 @@
 import { ERROR_SOURCES, recordErrorEvent, shouldRecordThrottled } from "@/lib/error-events";
 
 /** Which background backfill failed — the `kind` column of the error row. */
-export type BackfillKind = "embeddings" | "linkedin_timeline";
+export type BackfillKind = "embeddings" | "linkedin_timeline" | "relationships";
 
 /**
  * Records a backfill that threw where only a swallowed `catch {}` would otherwise see it.

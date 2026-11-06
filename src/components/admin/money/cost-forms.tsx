@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { addOneOffCostAction, setInfraCostAction } from "@/actions/admin-money";
+import { addAcquisitionSpendAction } from "@/actions/admin-yc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -37,9 +38,10 @@ function thisMonthValue() {
 export function CostEntryForm() {
   const router = useRouter();
   const [pending, start] = useTransition();
-  const [mode, setMode] = useState<"recurring" | "oneoff">("recurring");
+  const [mode, setMode] = useState<"recurring" | "oneoff" | "acquisition">("recurring");
   const [provider, setProvider] = useState("vercel");
   const [category, setCategory] = useState("");
+  const [channel, setChannel] = useState("");
   const [month, setMonth] = useState(thisMonthValue());
   const [amountUsd, setAmountUsd] = useState("");
   const [note, setNote] = useState("");
@@ -48,7 +50,11 @@ export function CostEntryForm() {
   const valid =
     Number.isFinite(amount) &&
     amount > 0 &&
-    (mode === "recurring" ? provider.trim().length > 0 : category.trim().length > 0);
+    (mode === "recurring"
+      ? provider.trim().length > 0
+      : mode === "oneoff"
+        ? category.trim().length > 0
+        : channel.trim().length > 0);
 
   function submit() {
     if (!valid) return;
@@ -62,6 +68,10 @@ export function CostEntryForm() {
           amountUsd: amount,
           note: note.trim() || undefined,
         });
+      } else if (mode === "acquisition") {
+        // One month of marketing spend, owned by exactly that month (see the action).
+        await addAcquisitionSpendAction({ channel: channel.trim(), amountUsd: amount, month });
+        setChannel("");
       } else {
         await addOneOffCostAction({
           category: category.trim(),
@@ -87,6 +97,7 @@ export function CostEntryForm() {
           [
             ["recurring", "Monthly bill"],
             ["oneoff", "One-off"],
+            ["acquisition", "Acquisition"],
           ] as const
         ).map(([value, label]) => (
           <button
@@ -122,6 +133,17 @@ export function CostEntryForm() {
                 <option key={p} value={p} />
               ))}
             </datalist>
+          </div>
+        ) : mode === "acquisition" ? (
+          <div>
+            <Label htmlFor="cost-channel">Channel</Label>
+            <Input
+              id="cost-channel"
+              value={channel}
+              onChange={(e) => setChannel(e.target.value)}
+              placeholder="Google Ads"
+              className="w-36"
+            />
           </div>
         ) : (
           <div>
@@ -178,7 +200,9 @@ export function CostEntryForm() {
       <p className="text-xs text-muted-foreground">
         {mode === "recurring"
           ? "Replaces any existing figure for that provider and month, so a restated bill corrects rather than doubles."
-          : "Appended. Two one-off costs in the same month are two costs, not a correction."}
+          : mode === "acquisition"
+            ? "Appended to the month you pick and counted in that month only. It feeds CAC here and on the Unit Economics page, and Runway's burn."
+            : "Appended. Two one-off costs in the same month are two costs, not a correction."}
       </p>
     </div>
   );

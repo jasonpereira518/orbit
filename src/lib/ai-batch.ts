@@ -381,18 +381,6 @@ export async function listPendingBatchJobs(limit = 25): Promise<AiBatchJobRow[]>
   });
 }
 
-export async function pendingBatchJobsFor(userId: string, operation?: AiOperationId): Promise<AiBatchJobRow[]> {
-  const db = await getDb();
-  return db.query.aiBatchJobs.findMany({
-    where: and(
-      eq(aiBatchJobs.userId, userId),
-      eq(aiBatchJobs.status, "submitted"),
-      ...(operation ? [eq(aiBatchJobs.operation, operation)] : [])
-    ),
-    orderBy: [asc(aiBatchJobs.createdAt)],
-  });
-}
-
 /**
  * Asks the provider whether one batch is done.
  *

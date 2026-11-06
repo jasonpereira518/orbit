@@ -1,11 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { toast } from "@/lib/toast";
 import {
   clearApiKey,
   getSettings,
   saveAiSettings,
+  saveChatAutoApply,
   saveWorkHistoryAutoEnabled,
 } from "@/actions/settings";
 import { cn } from "@/lib/utils";
@@ -23,10 +25,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SettingsSection } from "@/components/settings/settings-section";
 import { Disclosure } from "@/components/settings/disclosure";
-import { ProviderCard, SAVE_THREW, TIER_LABELS } from "@/components/settings/provider-card";
+import { ClearKeyButton, ProviderCard, SAVE_THREW, TIER_LABELS } from "@/components/settings/provider-card";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
-import { AI_NOTICE_COPY } from "@/lib/ai-access-copy";
+import { FREE_AI_EXPLAINER, noticeCopyFor } from "@/lib/ai-access-copy";
 import { managedModel } from "@/lib/managed-ai-policy";
 import { setAiKeyPreference } from "@/actions/credits";
 import { CreditsCard } from "@/components/credits/credits-card";
@@ -75,7 +77,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
   // A dev server running on the keys in `.env.local`: the included-AI machinery, but the
   // developer's own key, so it says so rather than promising what no deployment does.
   const onLocalDevKeys = ai.eligibility === "demo" && ai.managedConfigured;
-  // Pro and Max: AI included on Orbit's keys (unless paused).
+  // Every plan: AI included on Orbit's keys (unless paused).
   const onIncluded = ai.eligibility === "plan" && ai.managedConfigured && !ai.managedPaused;
   const hasAnyPersonalKey = settings.providers.some((p) => p.hasPersonalKey);
   // What Orbit's key would run for the provider on screen, when it is the one paying.
@@ -140,10 +142,10 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
     <SettingsSection
       title="AI provider"
       description={
-        onIncluded
-          ? "Orbit uses AI to turn your notes into contacts and answer questions about your network. Your plan includes AI on Orbit’s keys, metered in credits — or bring your own key, which never uses credits."
-          : ai.plan === "lifetime"
-            ? "Orbit uses AI to turn your notes into contacts and answer questions about your network. On Orbit Lifetime, AI runs on your own key — pick a provider and paste it. Keys are encrypted at rest and only used for your account."
+        onIncluded && ai.plan === "free"
+          ? FREE_AI_EXPLAINER
+          : onIncluded
+            ? "Orbit uses AI to turn your notes into contacts and answer questions about your network. Your plan includes AI on Orbit’s keys, metered in credits. Orbit picks the model for it (Claude Haiku 5.5, with OpenAI as backup) — or bring your own key to choose, which never uses credits."
             : "Orbit uses AI to turn your notes into contacts and answer questions about your network. Pick a provider and paste its key — keys are encrypted at rest and only used for your account."
       }
     >
@@ -244,13 +246,63 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
         </button>
       </div>
 
+      {/* Chat's own changes. Off by default: with it off every change chat suggests is a card
+          to confirm; on, the small reversible ones happen and land as done cards with Undo. */}
+      <div className="flex items-start justify-between gap-4 rounded-xl border border-border/70 p-3">
+        <div className="space-y-0.5">
+          <p id="chat-auto-apply-label" className="text-sm font-medium text-ink">
+            Let chat make small changes for you
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Logging a note, adding a tag or reminder, snoozing or ticking something off happens
+            when you ask, with Undo on each one in the{" "}
+            <Link href="/chat" className="text-primary underline underline-offset-2">
+              chat
+            </Link>
+            . Edits to someone&rsquo;s details, deletes and anything a note asked for still wait
+            for you to confirm.
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={settings.chatAutoApply}
+          aria-labelledby="chat-auto-apply-label"
+          disabled={pending}
+          onClick={() => {
+            const next = !settings.chatAutoApply;
+            setSettings({ ...settings, chatAutoApply: next });
+            start(async () => {
+              try {
+                await saveChatAutoApply(next);
+              } catch (err) {
+                setSettings({ ...settings, chatAutoApply: !next });
+                toast.error(friendlyError(err, TOAST_COPY.saveFailed));
+              }
+            });
+          }}
+          className={cn(
+            "tap-target relative mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full outline-none transition-colors duration-fast ease-house focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50",
+            settings.chatAutoApply ? "bg-primary" : "bg-muted-foreground/30"
+          )}
+        >
+          <span
+            aria-hidden
+            className={cn(
+              "pointer-events-none size-4 rounded-full bg-background shadow-sm transition-transform duration-fast ease-house",
+              settings.chatAutoApply ? "translate-x-[1.125rem]" : "translate-x-0.5"
+            )}
+          />
+        </button>
+      </div>
+
       <Disclosure label="Advanced">
         <p className="text-sm text-muted-foreground">
           {onLocalDevKeys
             ? "This dev server runs AI on the keys in your .env.local — nothing to set up. Save a key above and it is used instead, which is also how you see what a deployed account sees. Keys are encrypted at rest and only used for your account."
             : onIncluded
               ? "Your plan includes AI on Orbit’s own keys — nothing to set up. You can still bring your own Gemini, OpenAI, or Anthropic key and choose which runs first; calls on your own key never use credits. Keys are encrypted at rest and only used for your account."
-              : `Choose Gemini, OpenAI, or Anthropic above and paste your own API key. Keys are encrypted at rest and only used for your account.${ai.plan === "free" && ai.managedConfigured ? " Orbit Pro and Orbit Max include AI, so no key is needed there." : ""}`}
+              : `Choose Gemini, OpenAI, or Anthropic above and paste your own API key. Keys are encrypted at rest and only used for your account.${ai.managedConfigured ? " Every plan, Free included, has AI on Orbit’s own keys, so a key is optional; included AI is paused right now." : ""}`}
         </p>
 
         {/* No live region below: this sits inside a collapsed panel, and hidden content is
@@ -268,7 +320,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
                       : `Your ${providerMeta.label} key is saved and runs first — it never uses credits`
                     : `Your ${providerMeta.label} key is saved`
                 : provider === ai.selectedProvider && ai.reason
-                  ? AI_NOTICE_COPY[ai.reason].title("use AI")
+                  ? noticeCopyFor(ai.reason, ai.plan, null).title("use AI")
                   : managedRuns
                     ? onLocalDevKeys
                       ? `Using your .env.local ${providerMeta.label} key — ${modelLabel(provider, managedRuns)}`
@@ -360,20 +412,16 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
                   {/* Per key, not per selected provider: switching provider used to leave the
                       old key live for embeddings and transcription with no way to remove it. */}
                   {p.hasPersonalKey ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
+                    <ClearKeyButton
+                      label={p.label}
+                      resetsSearch={p.clearResetsSearch}
                       disabled={pending}
+                      variant="ghost"
                       aria-label={`Clear saved ${p.label} key`}
-                      onClick={() =>
-                        start(async () => {
-                          await clearKey(p.id);
-                        })
-                      }
+                      onConfirm={() => start(async () => { await clearKey(p.id); })}
                     >
                       Clear
-                    </Button>
+                    </ClearKeyButton>
                   ) : null}
                 </li>
               ))}

@@ -9,6 +9,7 @@ import { getOutlookConnectionStatus } from "@/actions/outlook";
 import { getLastLinkedInImportAt } from "@/actions/imports";
 import { listCalendarSubscriptions } from "@/actions/calendar";
 import { listEventConnections } from "@/lib/events/connections";
+import { getConnectorConnection } from "@/lib/connectors/connections";
 import { requireUserId } from "@/lib/auth";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
 import { withDemoIntegrationStatuses } from "@/lib/demo-workspace-connections";
@@ -55,7 +56,7 @@ function plural(n: number, word: string) {
  * two of them to third-party config — never sit in front of the settings page.
  */
 export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
-  const [settings, feed, keys, webhooks, google, outlook, linkedin, icsSubs, eventConns] =
+  const [settings, feed, keys, webhooks, google, outlook, linkedin, icsSubs, eventConns, granola] =
     await Promise.all([
       settle(getSettings()),
       settle(getCalendarFeedStatus()),
@@ -66,6 +67,7 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
       settle(getLastLinkedInImportAt()),
       settle(listCalendarSubscriptions()),
       settle(requireUserId().then((id) => listEventConnections(id))),
+      settle(requireUserId().then((id) => getConnectorConnection(id, "granola"))),
     ]);
   const now = new Date();
   const pages: IntegrationStatuses["pages"] = {};
@@ -180,6 +182,16 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
       : keys.length > 0
         ? { state: "on", detail: plural(keys.length, "key") }
         : { state: "off", detail: "No keys" };
+
+  connectors.granola =
+    granola === "unknown"
+      ? "unknown"
+      : !granola
+        ? { state: "off", detail: "Not connected" }
+        : granola.status === "needs_reauth"
+          ? { state: "partial", detail: "Reconnect needed" }
+          : { state: "on", detail: "Connected" };
+  pages.granola = connectors.granola;
 
   // The registry and this action must answer for the same connectors. The smoke test checks
   // the list against the registry; this checks the implementation against the list.

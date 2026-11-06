@@ -13,7 +13,7 @@ import "./smoke/_env";
 
 import { eq, like } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { interestListSignups, rateLimitBuckets } from "../src/db/schema";
+import { errorEvents, interestListSignups, productEvents, rateLimitBuckets } from "../src/db/schema";
 import { generateUnsubscribeToken } from "../src/lib/interest-list-email";
 import {
   getInterestProof,
@@ -31,6 +31,9 @@ import {
 } from "../src/lib/interest-list";
 import { joinInterestListCore, saveInterestListNameCore, type JoinContext } from "../src/lib/interest-list-join";
 import type { EmailLinks } from "../src/lib/interest-list-email";
+import { RATE_LIMITS } from "../src/lib/rate-limit";
+import { isBotRequest, setBotCheckForTests } from "../src/lib/bot-check";
+import { joinInterestList, saveInterestListName } from "../src/actions/interest-list";
 
 const PREFIX = "smoke-join-";
 
@@ -216,6 +219,7 @@ async function joinPath() {
   check("a bad address is refused with the form's copy", !bad.ok && bad.message === "That address doesn't look right.");
 
   // --- rate limit: the eleventh submit from one IP gets a fake ticket and no row
+  const limitedFrom = Date.now() - 1_000;
   for (let i = 1; i <= 10; i += 1) {
     const r = await joinInterestListCore({ ...base, email: `${PREFIX}rl${i}@example.test` }, ctx("rl"));
     check(`submit ${i} of 10 lands`, r.ok && Boolean(await rowFor(`${PREFIX}rl${i}@example.test`)));
@@ -223,6 +227,23 @@ async function joinPath() {
   const eleventh = await joinInterestListCore({ ...base, email: `${PREFIX}rl11@example.test` }, ctx("rl"));
   check("eleventh submit still answers ok", eleventh.ok);
   check("eleventh submit writes no row", (await rowFor(`${PREFIX}rl11@example.test`)) === undefined);
+  // The human the limiter dropped is COUNTED, with nothing about them (audit D6).
+  // (Earlier smokes sharing this database may have left the same event behind.)
+  const limitedSince = new Date(limitedFrom);
+  let limited = [] as Array<typeof productEvents.$inferSelect>;
+  for (let i = 0; i < 60 && limited.length === 0; i += 1) {
+    limited = (await db.select().from(productEvents).where(eq(productEvents.name, "waitlist_join_limited"))).filter((e) => e.occurredAt >= limitedSince);
+    if (limited.length === 0) await new Promise((r) => setTimeout(r, 25));
+  }
+  check("a rate-limited join is counted as waitlist_join_limited", limited.length === 1 && limited[0]?.properties.reason === "rate_limited");
+  check(
+    "…as a system event, with no user, session, address or IP",
+    limited[0]?.actor === "system" &&
+      limited[0]?.userId === null &&
+      limited[0]?.sessionId === null &&
+      !JSON.stringify(limited[0]).includes("rl11") &&
+      Object.keys(limited[0]?.properties ?? {}).join() === "reason"
+  );
 
   // --- the proof memo was invalidated by the inserts
   const proof = await getInterestProof();
@@ -338,12 +359,119 @@ async function slugPath() {
   check("…and it is stored", (await rowFor(`${PREFIX}legacy-slug@example.test`))?.referralSlug === `${PREFIX}legacy-slug`);
 }
 
+/**
+ * The global welcome cap: one bucket for every sender, so a flood of fresh addresses from
+ * many IPs cannot turn the join into a mail cannon. Past it the row and the ticket still
+ * land; only the mail is dropped. The bucket is real shared state, so it is put back.
+ */
+async function welcomeCapPath() {
+  console.log("\nwelcome cap…");
+  const db = await getDb();
+  const bucket = "interest.welcome:global";
+  const [prior] = await db.select().from(rateLimitBuckets).where(eq(rateLimitBuckets.bucket, bucket));
+  const sent: string[] = [];
+  const ctx: JoinContext = {
+    ip: "smoke-cap",
+    attribution: null,
+    sendWelcome: async (email) => {
+      sent.push(email);
+    },
+    sendTier: async () => undefined,
+  };
+  try {
+    await db
+      .insert(rateLimitBuckets)
+      .values({ bucket, windowStartedAt: new Date(), count: RATE_LIMITS.interestWelcome.limit })
+      .onConflictDoUpdate({
+        target: rateLimitBuckets.bucket,
+        set: { windowStartedAt: new Date(), count: RATE_LIMITS.interestWelcome.limit },
+      });
+    const r = await joinInterestListCore(
+      { email: `${PREFIX}capped@example.test`, website: "", elapsedMs: MIN_FILL_MS + 10 },
+      ctx
+    );
+    const row = (await db.select().from(interestListSignups).where(eq(interestListSignups.email, `${PREFIX}capped@example.test`)))[0];
+    check("a join past the welcome cap still answers ok", r.ok);
+    check("…and still lands its row", Boolean(row));
+    check("…with its real ticket", r.ok && r.ticket.shareToken === row?.shareToken);
+    check("…but sends no welcome", sent.length === 0, sent.join(","));
+  } finally {
+    if (prior) {
+      await db.update(rateLimitBuckets).set({ windowStartedAt: prior.windowStartedAt, count: prior.count }).where(eq(rateLimitBuckets.bucket, bucket));
+    } else {
+      await db.delete(rateLimitBuckets).where(eq(rateLimitBuckets.bucket, bucket));
+    }
+  }
+}
+
+/**
+ * BotID's verdict, checked in the actions before anything else. A bot gets the same answer
+ * a rate-limited caller does — a plausible ticket, a quiet ok — and nothing is written.
+ * The verdict is stubbed: the real one only exists on Vercel.
+ */
+async function botVerdictPath() {
+  console.log("\nBotID verdict in the actions…");
+  const db = await getDb();
+  const email = `${PREFIX}botid@example.test`;
+  const botRows = async () => (await db.select().from(errorEvents).where(eq(errorEvents.source, "bot.check")));
+  await db.delete(errorEvents).where(eq(errorEvents.source, "bot.check"));
+  setBotCheckForTests(async () => true);
+  try {
+    const r = await joinInterestList({ email, website: "", elapsedMs: MIN_FILL_MS + 10 });
+    check("a bot's join answers ok with a ticket", r.ok && r.ticket.shareToken.length > 10);
+    check("a bot's join writes no row", (await db.select().from(interestListSignups).where(eq(interestListSignups.email, email))).length === 0);
+    check("a bot's ticket resolves to nothing", r.ok && (await getTicketByShareToken(r.ticket.shareToken)) === null);
+    check("a bot's join is not returning", r.ok && r.returning === false);
+
+    const joined = await joinInterestListCore(
+      { email: `${PREFIX}botname@example.test`, website: "", elapsedMs: MIN_FILL_MS + 10 },
+      { ip: "smoke-botname", attribution: null, sendWelcome: async () => undefined, sendTier: async () => undefined }
+    );
+    if (!joined.ok) throw new Error("bot name-step join failed");
+    const named = await saveInterestListName({ shareToken: joined.ticket.shareToken, firstName: "Bot", lastName: "Net" });
+    const row = (await db.select().from(interestListSignups).where(eq(interestListSignups.email, `${PREFIX}botname@example.test`)))[0];
+    check("a bot's name step answers ok", named.ok);
+    check("a bot's name step writes nothing", row?.firstName === null);
+    const blocked = await botRows();
+    check("two bot verdicts record one throttled \"blocked\" event", blocked.length === 1 && blocked[0].kind === "blocked", JSON.stringify(blocked.map((r) => r.kind)));
+    check("…with nothing from the request in it", blocked[0]?.userId === null && blocked[0]?.message === null && Object.keys(blocked[0]?.context ?? {}).length === 0);
+  } finally {
+    setBotCheckForTests(null);
+  }
+
+  // The fail-open path: BotID throws (production build, no Vercel OIDC token), the request is
+  // let through, and the outage leaves one throttled event.
+  await db.delete(errorEvents).where(eq(errorEvents.source, "bot.check"));
+  const env = process.env as Record<string, string | undefined>;
+  const saved = { NODE_ENV: env.NODE_ENV, VERCEL_OIDC_TOKEN: env.VERCEL_OIDC_TOKEN };
+  const log = [console.error, console.warn];
+  console.error = console.warn = () => undefined;
+  env.NODE_ENV = "production";
+  delete env.VERCEL_OIDC_TOKEN;
+  try {
+    const first = await isBotRequest();
+    const second = await isBotRequest();
+    env.NODE_ENV = saved.NODE_ENV;
+    const failed = await botRows();
+    check("a BotID check that throws fails open", first === false && second === false);
+    check("…and records one throttled \"check_failed\" event", failed.length === 1 && failed[0].kind === "check_failed", JSON.stringify(failed.map((r) => r.kind)));
+    check("…with nothing from the request in it", failed[0]?.userId === null && failed[0]?.message === null && Object.keys(failed[0]?.context ?? {}).length === 0);
+  } finally {
+    [console.error, console.warn] = log;
+    env.NODE_ENV = saved.NODE_ENV;
+    if (saved.VERCEL_OIDC_TOKEN !== undefined) env.VERCEL_OIDC_TOKEN = saved.VERCEL_OIDC_TOKEN;
+    await db.delete(errorEvents).where(eq(errorEvents.source, "bot.check"));
+  }
+}
+
 async function main() {
   await cleanup();
   await readModel();
   await joinPath();
   await namePath();
   await slugPath();
+  await welcomeCapPath();
+  await botVerdictPath();
   await cleanup();
   console.log("\nwaitlist join: all checks passed");
   process.exit(0);

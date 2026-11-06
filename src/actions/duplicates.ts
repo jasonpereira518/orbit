@@ -93,7 +93,8 @@ export async function listRecentMerges(limit = 20): Promise<RecentMerge[]> {
     .from(contactMerges)
     .where(eq(contactMerges.userId, userId))
     .orderBy(desc(contactMerges.mergedAt))
-    .limit(limit);
+    // Bounded: a server action's arguments come from any client.
+    .limit(Math.min(Math.max(Math.trunc(Number(limit) || 20), 1), 100));
   if (!rows.length) return [];
 
   const winners = await db

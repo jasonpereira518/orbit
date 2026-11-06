@@ -223,7 +223,7 @@ export default async function AdminTrafficPage({
             {routes.length === 0 ? (
               <EmptyState>Nothing recorded yet.</EmptyState>
             ) : (
-              <AdminTable minWidth="sm"
+              <AdminTable label="Most viewed pages" minWidth="sm"
                 head={
                   <>
                     <Th>Route</Th>
@@ -259,7 +259,7 @@ export default async function AdminTrafficPage({
                 until no loading skeleton is left on screen.
               </EmptyState>
             ) : (
-              <AdminTable minWidth="sm"
+              <AdminTable label="Page load speed" minWidth="sm"
                 head={
                   <>
                     <Th>Route</Th>
@@ -374,7 +374,7 @@ export default async function AdminTrafficPage({
             {accounts.length === 0 ? (
               <EmptyState>No signed-in traffic recorded in this window.</EmptyState>
             ) : (
-              <AdminTable
+              <AdminTable label="Most active accounts"
                 head={
                   <>
                     <Th>Account</Th>

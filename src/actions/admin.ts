@@ -18,11 +18,15 @@ import { resolvePlan } from "@/lib/entitlements";
 import type { Plan } from "@/lib/plans/plan-config";
 import { setCompedPlan } from "@/lib/user-settings";
 import { grantLifetime, previewLifetime, revokeLifetime, type LifetimePreview } from "@/lib/admin-lifetime";
+import { setAccountKindAsAdmin, type AccountKind } from "@/lib/admin-account-kind";
 import { runOpsSweep } from "@/lib/ops-sweep";
 import { notifySlack } from "@/lib/ops-notify";
 import { sendSlackDM } from "@/lib/slack-dm";
 import {
   PREVIEW_UNRELEASED_COOKIE,
+  setNavOrder,
+  setSurfaceComingSoon,
+  setSurfaceTiers,
   setSurfaceHidden,
   VIEW_AS_USER_COOKIE,
 } from "@/lib/surface-visibility";
@@ -31,7 +35,12 @@ import {
   type ConstellationConfig,
 } from "@/lib/constellation-config";
 import { setStealth } from "@/lib/site-access";
-import { setManagedAiPaused, type ManagedAiSwitchState } from "@/lib/managed-ai-switch";
+import {
+  setManagedAiPaused,
+  setWebSearchPaused,
+  type ManagedAiSwitchState,
+  type WebSearchSwitchState,
+} from "@/lib/managed-ai-switch";
 import { setWaitlistDemoEnabled } from "@/lib/waitlist-demo";
 import {
   inviteToSite,
@@ -40,6 +49,7 @@ import {
   type SiteInviteResult,
 } from "@/lib/site-invites";
 import { UserFacingError } from "@/lib/errors";
+import { blockSharedAvatar, unblockSharedAvatar } from "@/lib/admin-avatars";
 
 /**
  * Every export here re-asserts `requireAdminUserId()`.
@@ -107,6 +117,26 @@ export async function setCompAction(input: {
   // Resolved from the returned row, NOT from getEntitlements(): that helper is a React
   // cache() memo and may still hold the pre-write value within this same request.
   return { ok: true, plan: resolvePlan(row).plan };
+}
+
+/**
+ * Mark an account `internal` (the operator, a teammate, the showcase account), `tester`, or
+ * neither (`null`, a real customer). Takes the account out of, or back into, every product and
+ * revenue aggregate. A reason is required and an audit row is written; the body is
+ * `setAccountKindAsAdmin`.
+ */
+export async function setAccountKindAction(input: {
+  targetUserId: string;
+  kind: AccountKind | null;
+  reason: string;
+}): Promise<{ ok: true; kind: AccountKind | null; changed: boolean }> {
+  const adminUserId = await requireAdminUserId();
+  const result = await setAccountKindAsAdmin(adminUserId, input);
+  revalidatePath("/admin");
+  revalidatePath("/admin/users");
+  revalidatePath("/admin/growth");
+  revalidatePath(`/admin/users/${input.targetUserId}`);
+  return { ok: true, kind: result.to, changed: result.changed };
 }
 
 /* ------------------------------------------------------------- Lifetime (admin) ------- */
@@ -219,7 +249,7 @@ export async function retryImportAction(input: {
   after(() => ops.runImportJob(importId));
 
   revalidateAdmin(input.targetUserId);
-  revalidatePath("/imports");
+  revalidatePath("/capture");
   return { ok: true };
 }
 
@@ -231,7 +261,7 @@ export async function cancelImportAction(input: {
   const adminUserId = await requireAdminUserId();
   await ops.cancelImport(adminUserId, input);
   revalidateAdmin(input.targetUserId);
-  revalidatePath("/imports");
+  revalidatePath("/capture");
   return { ok: true };
 }
 
@@ -322,6 +352,52 @@ export async function setSurfaceHiddenAction(input: {
   const adminUserId = await requireAdminUserId();
 
   await setSurfaceHidden(adminUserId, input.surfaceKey, input.hidden);
+
+  revalidatePath("/", "layout");
+  revalidatePath("/admin/product");
+  return { ok: true };
+}
+
+/**
+ * Mark a page coming soon (or release it) for everyone. Same shape and invalidation as
+ * `setSurfaceHiddenAction`: the app shell builds the sidebar's "Soon" tags from this, and
+ * the dashboard, settings and radar jobs all key off it.
+ */
+export async function setSurfaceComingSoonAction(input: {
+  surfaceKey: string;
+  soon: boolean;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+
+  await setSurfaceComingSoon(adminUserId, input.surfaceKey, input.soon);
+
+  revalidatePath("/", "layout");
+  revalidatePath("/admin/product");
+  return { ok: true };
+}
+
+/**
+ * Limit a page to some tiers, or open it to all of them. Same shape and invalidation as the
+ * two toggles above: the app shell tags and locks the sidebar from these rules.
+ */
+export async function setSurfaceTiersAction(input: {
+  surfaceKey: string;
+  plans: string[];
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+
+  await setSurfaceTiers(adminUserId, input.surfaceKey, input.plans);
+
+  revalidatePath("/", "layout");
+  revalidatePath("/admin/product");
+  return { ok: true };
+}
+
+/** Save the sidebar order for everyone. See `setNavOrder`. */
+export async function setNavOrderAction(input: { order: string[] }): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+
+  await setNavOrder(adminUserId, input.order);
 
   revalidatePath("/", "layout");
   revalidatePath("/admin/product");
@@ -1024,11 +1100,19 @@ export async function inviteToSiteAction(input: {
   email: string;
   notify: boolean;
   firstName?: string | null;
+  /** The operator's wave label (`w1`, `w2`); validated in `inviteToSite`. */
+  wave?: string | null;
 }): Promise<SiteInviteResult | { kind: "error"; message: string }> {
   const adminUserId = await requireAdminUserId();
   const firstName = input.firstName?.trim().slice(0, 60) || null;
   try {
-    const result = await inviteToSite({ adminUserId, email: input.email, notify: input.notify, firstName });
+    const result = await inviteToSite({
+      adminUserId,
+      email: input.email,
+      notify: input.notify,
+      firstName,
+      wave: input.wave ?? null,
+    });
     revalidateAccess();
     return result;
   } catch (err) {
@@ -1060,4 +1144,37 @@ export async function setManagedAiPausedAction(input: {
   const state = await setManagedAiPaused(adminUserId, input.paused === true, input.reason);
   revalidatePath("/admin/billing");
   return state;
+}
+
+/** Stop or restart hosted web search for every account. Audited; same 30-second reach. */
+export async function setWebSearchPausedAction(input: {
+  paused: boolean;
+  reason: string;
+}): Promise<WebSearchSwitchState> {
+  const adminUserId = await requireAdminUserId();
+  const state = await setWebSearchPaused(adminUserId, input.paused === true, input.reason);
+  revalidatePath("/admin/billing");
+  return state;
+}
+
+/* ------------------------------------------------- Shared LinkedIn photo takedown ------- */
+
+function revalidateAvatars() {
+  revalidatePath("/admin/avatars");
+  revalidatePath("/admin/users");
+}
+
+/** Remove a shared LinkedIn photo and block the slug from being re-fetched or re-contributed. */
+export async function blockSharedAvatarAction(input: { slug: string; reason: string }): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  await blockSharedAvatar(adminUserId, input);
+  revalidateAvatars();
+  return { ok: true };
+}
+
+export async function unblockSharedAvatarAction(input: { slug: string; reason: string }): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  await unblockSharedAvatar(adminUserId, input);
+  revalidateAvatars();
+  return { ok: true };
 }

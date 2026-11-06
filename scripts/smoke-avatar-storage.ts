@@ -14,6 +14,7 @@ import {
   isDurableAvatarUrl,
   parseImageDataUrl,
 } from "../src/lib/contact-avatar";
+import { setAvatarBlobClientForTests } from "../src/lib/avatar-blob";
 
 // 1x1 JPEG — real enough for sharp to decode, small enough to inline.
 const PIXEL_JPEG_BASE64 =
@@ -112,6 +113,16 @@ async function main() {
 
     // A broken storage backend must surface as a storage failure, not as a
     // per-contact miss — that distinction is what stops the 0%-forever job.
+    //
+    // The Blob client is stubbed to fail the way a rejected token does. This used to make a
+    // real request to Vercel's Blob API with the bogus token, which passed only where that
+    // API was reachable and hung for the full runner timeout where it was not.
+    setAvatarBlobClientForTests({
+      put: async () => {
+        throw new Error("Vercel Blob: Access denied, please provide a valid token for this resource.");
+      },
+      del: async () => {},
+    });
     await withEnv(
       { BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_bogus_store_bogustoken" },
       async () => {
@@ -120,6 +131,8 @@ async function main() {
           await downloadAndPersistAvatar("contact-2", photoUrl, local);
         } catch (err) {
           thrown = err;
+        } finally {
+          setAvatarBlobClientForTests(null);
         }
         if (!(thrown instanceof AvatarStorageError)) {
           throw new Error(

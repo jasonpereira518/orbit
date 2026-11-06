@@ -1,3 +1,5 @@
+import { tourAnchor } from "@/lib/tour/tour-anchors";
+import { Suspense } from "react";
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import { formatDistanceToNow } from "date-fns";
@@ -10,18 +12,32 @@ import { DashboardGraphPreview } from "@/components/dashboard/dashboard-graph-pr
 import { DueFollowUpRow } from "@/components/dashboard/due-follow-up-row";
 import { GenerateFollowUpsButton } from "@/components/dashboard/generate-follow-ups-button";
 import { GoalsSummary } from "@/components/dashboard/goals-summary";
+import { LinkedInExportNudge, LinkedInRefreshNudge } from "@/components/dashboard/linkedin-export-nudge";
+import { LinkedInExportCard } from "@/components/linkedin/linkedin-export-card";
+import { linkedinCardState } from "@/lib/linkedin-export-card";
 import { NetworkDepthChart } from "@/components/dashboard/network-depth-chart";
 import { NetworkStatsCard } from "@/components/dashboard/network-stats-card";
 import { PlanLaunchCard } from "@/components/dashboard/plan-launch-card";
 import { RemindersDashboardCard } from "@/components/dashboard/reminders-dashboard-card";
 import { SuggestedOutreachCard } from "@/components/dashboard/suggested-outreach-card";
-import { OutreachPerformanceCard } from "@/components/outreach/outreach-performance-card";
+import { formatReplyRate } from "@/lib/outreach-metrics";
 import { buttonVariants } from "@/components/ui/button";
 import { CARD_HOVER, PRESS, ROW_HOVER_INSET } from "@/lib/interaction";
-import { companyBrandColor } from "@/lib/company-brand";
+import { companyBrandText } from "@/lib/company-brand";
 import { cn } from "@/lib/utils";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+import { getLastLinkedInImportAt, getLinkedInNudgeVisible, hasLinkedInImport } from "@/lib/linkedin-reminder";
+import { daysSince, linkedInRefreshLevel } from "@/lib/linkedin-export";
+import { ensureUserSettings } from "@/lib/user-settings";
+import { getGmailConnectionStatus } from "@/actions/gmail";
+import { getOutlookConnectionStatus } from "@/actions/outlook";
+import { SetupChecklistCard, type SetupChecklistItem } from "@/components/dashboard/setup-checklist-card";
+import { integrationHref } from "@/components/settings/sections";
+import { aiDenialFromSettings } from "@/lib/ai-access";
+import { contactUsageForUser } from "@/lib/contact-writes";
+import { countTourExamples, hasOwnInteraction } from "@/lib/onboarding-examples/status";
+import { tourRailVisible, tourResumable } from "@/lib/tour/tour-state";
 import { MorningBriefing } from "@/components/radar/morning-briefing";
 import type { RadarBriefing } from "@/lib/radar/page-data";
 
@@ -80,6 +96,119 @@ function contactMeta(data: BundleData, contactId: string | null | undefined) {
 const revealDelay = (ms: number) =>
   ({ "--reveal-delay": `${ms}ms` }) as React.CSSProperties;
 
+/**
+ * The LinkedIn export card (start it, then "ready about …") or the arrival nudge that follows
+ * the full-screen reminder. Once a LinkedIn import exists, only the refresh card: 90+ days
+ * after the last upload (`linkedInRefreshLevel`), so it leads the dashboard when it is urgent.
+ */
+export async function LinkedInExportNudgeSection() {
+  const userId = await requireUserId();
+  const lastImportAt = await getLastLinkedInImportAt(userId);
+  if (lastImportAt) {
+    const now = new Date();
+    if (linkedInRefreshLevel(lastImportAt, now) !== "urgent") return null;
+    return <LinkedInRefreshNudge days={daysSince(lastImportAt, now)} />;
+  }
+  const settings = await ensureUserSettings(userId);
+  if (await getLinkedInNudgeVisible(userId, settings)) return <LinkedInExportNudge email={settings.email ?? null} />;
+  const state = linkedinCardState({
+    imported: await hasLinkedInImport(userId),
+    requestedAt: settings.linkedinExportRequestedAt ?? null,
+    onboardingDone: Boolean(settings.onboardingCompletedAt),
+  });
+  if (!state.show) return null;
+  return <LinkedInExportCard where="dashboard" requestedAt={settings.linkedinExportRequestedAt?.toISOString() ?? null} />;
+}
+
+/**
+ * "Finish setting up": what onboarding left open, with live status. Renders nothing while
+ * the guided tour's rail is up (the tour is the checklist then), and nothing once every
+ * item is done. The card itself handles per-device dismissal.
+ */
+export async function SetupChecklistSection() {
+  const userId = await requireUserId();
+  const settings = await ensureUserSettings(userId);
+  if (!settings.onboardingCompletedAt || tourRailVisible(settings)) return null;
+
+  const [gmail, outlook, usage, examples, logged] = await Promise.all([
+    getGmailConnectionStatus(),
+    getOutlookConnectionStatus(),
+    contactUsageForUser(userId),
+    countTourExamples(userId),
+    hasOwnInteraction(userId),
+  ]);
+
+  const items: SetupChecklistItem[] = [];
+  const aiDenial = aiDenialFromSettings(userId, settings);
+  if (aiDenial) {
+    items.push({
+      id: "ai-key",
+      label: aiDenial === "key_required" ? "Add your AI key" : "Add your own AI key",
+      detail:
+        aiDenial === "key_required"
+          ? "Capture from notes, Chat and profile briefs run on it."
+          : "Orbit’s AI isn’t available right now, so capture, Chat and briefs need a key of your own",
+      href: integrationHref("ai"),
+    });
+  }
+  // What onboarding set up, in its order: the AI key, Google/Microsoft, then the things the
+  // tour practised. Each item leaves as soon as it is done. LinkedIn has its own card.
+  const anyConfigured = gmail.configured || outlook.configured;
+  const connected = gmail.connected || outlook.connected;
+  if (anyConfigured && !connected) {
+    // Free for one account on every plan. Names only what this deployment can offer.
+    const which =
+      gmail.configured && outlook.configured ? "Google or Microsoft" : gmail.configured ? "Google" : "Microsoft";
+    items.push({
+      id: "connect",
+      label: `Connect ${which}`,
+      detail: "Bring in your contacts and keep your meetings in sync.",
+      href: gmail.configured ? "/imports#import-google-contacts" : "/imports#import-outlook-contacts",
+    });
+  }
+  if (usage.used === 0) {
+    items.push({
+      id: "people",
+      label: "Add your first people",
+      detail: "From notes, by hand, or the LinkedIn ZIP.",
+      href: "/capture",
+    });
+  }
+  if (usage.used > 0 && !logged) {
+    items.push({
+      id: "log",
+      label: "Log your first interaction",
+      detail: "Open someone and press Log interaction; their timeline and follow-up start there.",
+      href: "/contacts",
+    });
+  }
+  if (tourResumable(settings)) {
+    items.push({
+      id: "resume-tour",
+      label: "Resume the guided tour",
+      detail: "Pick up where you left off; the example people come back for it.",
+      action: "resume-tour",
+    });
+  } else if (!settings.tourStartedAt) {
+    items.push({
+      id: "tour",
+      label: "Take the guided tour",
+      detail: "Three minutes across every page, with a few example people in place.",
+      action: "start-tour",
+    });
+  }
+  if (examples > 0) {
+    items.push({
+      id: "examples",
+      label: "Remove the example people",
+      detail: examples === 1 ? "One is still in your orbit from the tour." : `${examples} are still in your orbit from the tour.`,
+      action: "remove-examples",
+    });
+  }
+  if (items.length === 0) return null;
+  return <SetupChecklistCard items={items} />;
+}
+
 export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
   const { data } = await bundle;
   const isEmptyNetwork = data.stats.totalContacts === 0;
@@ -128,6 +257,7 @@ export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
         // today" — the cards are four short numbers and fit side by side fine.
         className="reveal-mount grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4"
         style={revealDelay(40)}
+        {...tourAnchor("dashboard.stats")}
       >
         <StatCard
           label="Contacts"
@@ -228,8 +358,11 @@ export async function MorningBriefingSection({ briefing }: { briefing: Promise<R
 export async function SuggestedOutreachSection({
   bundle,
   radar,
+  outreach,
 }: {
   bundle: DashboardBundle;
+  /** Streams on its own; when it is absent (or the account has never sent) there is no rate to show. */
+  outreach?: OutreachSummary | null;
   /**
    * Started by the page only for viewers who can see Radar. Once Radar has run for them, the
    * morning briefing above replaces this card; until then, and for everyone else, it stays.
@@ -245,6 +378,15 @@ export async function SuggestedOutreachSection({
       style={revealDelay(0)}
     >
       <SuggestedOutreachCard
+        replyRate={
+          outreach ? (
+            // Its own boundary: the rate is a separate query, and the suggestions must not
+            // wait on it.
+            <Suspense fallback={null}>
+              <OutreachReplyRate summary={outreach} />
+            </Suspense>
+          ) : null
+        }
         networkIsEmpty={data.stats.totalContacts === 0}
         dueFollowUpCount={data.stats.dueFollowUps}
         items={data.suggestions.map((s) => {
@@ -267,34 +409,27 @@ export async function SuggestedOutreachSection({
   );
 }
 
-export async function OutreachPerformanceSection({
-  summary,
-}: {
-  summary: OutreachSummary;
-}) {
-  const outreachPerformance = await summary;
-  // Nothing sent and nothing built: the card renders "—", "0 positive / 0 sent" and an
-  // invitation into a paid surface. That is a hole on the dashboard for every account that
-  // has never run a campaign, which is most of them and all new ones. It reappears the
-  // moment there is a campaign to report on.
-  if (
-    outreachPerformance.accountMetrics.sentCount === 0 &&
-    outreachPerformance.accountMetrics.campaignCount === 0
-  ) {
-    return null;
-  }
+/**
+ * The account's reply rate, as a small link beside the Suggested outreach heading.
+ *
+ * It used to be a card of its own beside that one, which halved the suggestions for the
+ * accounts that had ever sent anything. Renders nothing when nothing has been sent and nothing
+ * built: "—" and "0 / 0" is a hole for the many accounts that have never run a campaign.
+ */
+async function OutreachReplyRate({ summary }: { summary: OutreachSummary }) {
+  const { accountMetrics } = await summary;
+  if (accountMetrics.sentCount === 0 && accountMetrics.campaignCount === 0) return null;
   return (
-    <div
-      className="reveal-mount h-full min-w-0 lg:flex-1 [&>*]:h-full"
-      style={revealDelay(0)}
+    <Link
+      href="/outreach"
+      title={`${accountMetrics.positiveReplyCount} positive replies from ${accountMetrics.sentCount} sent`}
+      className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted"
     >
-      <OutreachPerformanceCard
-        accountRate={outreachPerformance.accountMetrics.successfulReplyRate}
-        sentCount={outreachPerformance.accountMetrics.sentCount}
-        positiveReplyCount={outreachPerformance.accountMetrics.positiveReplyCount}
-        campaigns={outreachPerformance.topCampaigns}
-      />
-    </div>
+      Reply rate
+      <span className="font-semibold text-ink">
+        {formatReplyRate(accountMetrics.successfulReplyRate)}
+      </span>
+    </Link>
   );
 }
 
@@ -450,15 +585,17 @@ export async function RecentlyUpdatedSection({
                       <p className="text-xs text-muted-foreground">
                         {c.company ? (
                           <span
-                            className="font-medium"
-                            style={{ color: companyBrandColor(c.company) ?? undefined }}
+                            className={cn("font-medium", companyBrandText(c.company)?.className)}
+                            style={companyBrandText(c.company)?.style}
                           >
                             {c.company}
                           </span>
                         ) : (
                           "No company"
                         )}
+                        {c.title ? ` · ${c.title}` : ""}
                       </p>
+                      <p className="mt-0.5 text-xs text-ink/70">{describeUpdate(c)}</p>
                     </div>
                   </div>
                   <span className="shrink-0 text-xs text-muted-foreground">
@@ -473,6 +610,29 @@ export async function RecentlyUpdatedSection({
       </Card>
     </div>
   );
+}
+
+/**
+ * What a recent update was, as far as the row itself can tell. Orbit keeps no per-field edit
+ * history, so this reads the timestamps the contact does carry: created and updated within a
+ * minute of each other is a new contact; a last-interaction stamp that lands with the update is
+ * a logged interaction; anything else is an edit to the details. It names the kind of change,
+ * never a field it cannot know.
+ */
+function describeUpdate(c: {
+  createdAt: Date | string;
+  updatedAt: Date | string;
+  lastInteractionAt: Date | string | null;
+}): string {
+  const updated = new Date(c.updatedAt).getTime();
+  if (updated - new Date(c.createdAt).getTime() < 60_000) return "Added to your orbit";
+  if (
+    c.lastInteractionAt &&
+    Math.abs(updated - new Date(c.lastInteractionAt).getTime()) < 120_000
+  ) {
+    return "Interaction logged";
+  }
+  return "Details updated";
 }
 
 export async function TailSection({ bundle }: { bundle: DashboardBundle }) {

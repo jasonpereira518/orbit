@@ -10,7 +10,9 @@
  * click, before the server has a row) and "the resume notice was dismissed". Everything
  * a reload must restore lives on the job; everything else is decoration.
  */
+import type { CaptureParseHints } from "@/lib/ai";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import {
@@ -33,16 +35,18 @@ import { discardCaptureBatch, getActiveCaptureJobs, mergeCaptureBatch } from "@/
 import { ExtractingStage } from "@/components/capture/extracting-stage";
 import { IgnoredPeopleSection } from "@/components/capture/ignored-people-section";
 import { MeetingCaptureTab } from "@/components/capture/meeting-capture-tab";
+import { useMeetingFlow } from "@/components/capture/meeting-session";
 import { MeetingSummaryCard, type SelectableMeetingItem } from "@/components/capture/meeting-summary-card";
 import { MessyNotesCapture } from "@/components/capture/messy-notes-capture";
 import { PersonDeck } from "@/components/capture/review/person-deck";
-import { StructuredCaptureForm } from "@/components/capture/structured-capture-form";
+import { CloudNotesPicker } from "@/components/capture/cloud-notes-picker";
+import type { CloudNotesState } from "@/actions/cloud-notes";
 import { VoiceCapture } from "@/components/capture/voice-capture";
 import type { SuggestionReviewItem } from "@/components/chat/bulk-notes-panel";
 import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import type { CaptureJobView } from "@/lib/capture-jobs";
 import { clearCaptureJob, refreshCaptureJob, seedCaptureJob, useCaptureJob } from "@/lib/capture/job-store";
-import { acceptedPeople, choicesFromOpportunities, firstPendingIndex, initialPhaseFor, type CapturePhase } from "@/lib/capture/review-reducer";
+import { acceptedPeople, captureJobText, choicesFromOpportunities, firstPendingIndex, initialPhaseFor, prefillJobFor, type CapturePhase } from "@/lib/capture/review-reducer";
 import type { CaptureDecision, CaptureDecisions, CaptureJobSource } from "@/lib/capture/types";
 import { useCaptureIngest } from "@/lib/capture/use-capture-ingest";
 import { captureDraftKey, clearCaptureDraft } from "@/lib/capture-draft";
@@ -76,7 +80,7 @@ export function CaptureFlow({
   aiReason = null,
   canTranscribe = false,
   canUseMeetings = false,
-  meetingsDeniedMessage,
+  meetingsDeniedMessage = "",
   resumableMeeting = null,
   ignoredCount = 0,
   quota,
@@ -84,12 +88,20 @@ export function CaptureFlow({
   history = null,
   canUseSync = false,
   drive = null,
+  initialMeeting = null,
+  cloudNotes = null,
+  openCloudReview = false,
+  showImports = false,
+  onSaved,
+  variant = "capture",
 }: {
   initialJob: CaptureJobView | null;
   /** Every reachable job, so a multi-file drop can render its queue. */
   initialJobs?: CaptureJobView[];
   initialContactId?: string | null;
   initialContactName?: string | null;
+  /** A calendar meeting to write up (`/capture?event=`): the box starts with its people seeded. */
+  initialMeeting?: { notes: string; hints: CaptureParseHints } | null;
   defaultMode?: CaptureMode;
   hasApiKey?: boolean;
   /** The AI gate's reason when `hasApiKey` is false — which notice to show. */
@@ -98,7 +110,7 @@ export function CaptureFlow({
   /** Meeting recording is on Orbit Pro, Max and Lifetime. False shows an upgrade prompt instead of the recorder. */
   canUseMeetings?: boolean;
   /** `FEATURE_DENIAL.meetings`, read on the server — this file is a client component and cannot import `@/lib/entitlements` (it reaches the database). */
-  meetingsDeniedMessage: string;
+  meetingsDeniedMessage?: string;
   resumableMeeting?: ResumableMeeting | null;
   ignoredCount?: number;
   quota?: { used: number; limit: number | null } | null;
@@ -110,7 +122,26 @@ export function CaptureFlow({
   canUseSync?: boolean;
   /** Google Picker config, from the server's env. Any gap hides the Drive button. */
   drive?: DriveCaptureConfig | null;
+  /** The Drive & OneDrive tab's state; null while the cloud-notes surface is not live for this viewer. */
+  cloudNotes?: CloudNotesState | null;
+  /** Open the "these look like meeting notes" dialog on arrival (the toast's and the bell's Review). */
+  openCloudReview?: boolean;
+  /** Show the Imports tab (the `page.imports` surface is live). Choosing it navigates to `/capture?mode=imports`. */
+  showImports?: boolean;
+  /**
+   * Embedded in onboarding: notes only (no mode tabs, no ignored-people list), and a save
+   * hands back to the caller instead of showing the saved screen. The store is cleared
+   * first, so coming back to the step later starts on an empty box.
+   */
+  onSaved?: () => void;
+  /**
+   * Where the flow is hosted. `"meetings"` is the recorder on /meetings: meeting mode only,
+   * no tabs, and the only host that collects a finished recording's analysis. `"capture"`
+   * is every other way in, with no Meeting tab.
+   */
+  variant?: "capture" | "meetings";
 }) {
+  const meetingsHost = variant === "meetings";
   const router = useRouter();
   const { job: storeJob } = useCaptureJob();
   // The server's job is shown on first paint and pushed into the store right after mount
@@ -122,11 +153,23 @@ export function CaptureFlow({
     seeded.current = true;
     if (initialJob) seedCaptureJob(initialJob, { force: true });
   }, [initialJob]);
-  const job = seeded.current ? storeJob : (storeJob ?? initialJob);
+  const anyJob = seeded.current ? storeJob : (storeJob ?? initialJob);
+  // The store holds one job for the whole app. /meetings only shows a meeting's: a notes
+  // capture someone left mid-review is Capture's to resume, not the recorder's to replace.
+  const job = meetingsHost && anyJob?.sourceKind !== "meeting" ? null : anyJob;
 
-  const [mode, setMode] = useState<CaptureMode>(() =>
-    initialJob && (initialJob.status === "transcribed" || initialJob.status === "ingesting") ? tabForSource(initialJob.sourceKind) : defaultMode
-  );
+  const meetingFlow = useMeetingFlow();
+  const [mode, setMode] = useState<CaptureMode>(() => {
+    if (meetingsHost) return "meeting";
+    const initial =
+      initialJob && (initialJob.status === "ingesting" || prefillJobFor(initialJob))
+        ? tabForSource(initialJob.sourceKind)
+        : defaultMode;
+    // Capture has no Meeting tab: a failed meeting's text prefills the notes box instead.
+    const opened = initial === "meeting" ? "messy" : initial;
+    // A link into the Drive tab for someone the tab is not live for.
+    return opened === "cloud" && !cloudNotes ? "messy" : opened;
+  });
   /**
    * The queue over a multi-file drop.
    *
@@ -216,20 +259,20 @@ export function CaptureFlow({
       });
   }, [activeBatchId, queueBusy, batchReadyCount]);
 
-  const [meetingBusy, setMeetingBusy] = useState(false);
   const [pendingStart, setPendingStart] = useState(false);
   const [reviewOpened, setReviewOpened] = useState(false);
   const [foundHold, setFoundHold] = useState(false);
   const [meetingAnalysis, setMeetingAnalysis] = useState<MeetingAnalysis | null>(null);
 
-  const prefill = initialJob && initialJob.status === "transcribed" ? initialJob : null;
-  const prefillText = prefill ? [prefill.inputText, ...prefill.blocks.map((b) => b.text)].filter(Boolean).join("\n\n---\n\n") : "";
+  const prefill = prefillJobFor(initialJob);
+  const prefillText = prefill ? captureJobText(prefill) : "";
 
   const messy = useCaptureIngest({
     sourceKind: "messy",
     hasApiKey,
     aiReason,
-    initialNotes: prefill && prefill.sourceKind !== "voice" ? prefillText : "",
+    initialNotes: prefill && prefill.sourceKind !== "voice" ? prefillText : (initialMeeting?.notes ?? ""),
+    initialHints: prefill ? null : (initialMeeting?.hints ?? null),
     initialJobId: prefill && prefill.sourceKind !== "voice" ? prefill.id : null,
     onAutoExtract: (text, hints, jobId) => void startExtraction({ text, hints, jobId, sourceKind: "messy" }),
   });
@@ -375,6 +418,32 @@ export function CaptureFlow({
     if (id) void discardCaptureJob(id);
   }, [pendingStart, job?.id]);
 
+  /**
+   * Try again on an extraction failure: re-queue the SAME row (`queueCaptureJobRow` accepts
+   * `failed`) with what is in the box now — or, when the box is empty (a meeting, or a
+   * failure seen from another tab), the text the job still holds. Blank text is refused here
+   * (and the button is hidden): the action writes `text || null` over `input_text`, so a
+   * blank retry would wipe the stored text and queue nothing to extract.
+   */
+  const retryExtraction = useCallback(() => {
+    if (!job || job.result) return;
+    const ingest = job.sourceKind === "voice" ? voice : messy;
+    const fromBox = Boolean(ingest.notes.trim());
+    const text = fromBox ? ingest.notes : captureJobText(job);
+    if (!text.trim()) return;
+    void startExtraction({
+      text,
+      hints: fromBox ? ingest.hints : null, // null keeps the row's stored hints
+      jobId: job.id,
+      sourceKind: job.sourceKind,
+      meetingSessionId: job.meetingSessionId,
+      mentionPicks: fromBox ? ingest.mentionPicks : job.mentionPicks,
+    });
+  }, [job, messy, voice, startExtraction]);
+
+  const retryBox = job?.sourceKind === "voice" ? voice : messy;
+  const canRetry = Boolean(job && !job.result && (retryBox.notes.trim() || captureJobText(job).trim()));
+
   const save = useCallback(async (jobId: string) => {
     const res = await saveCaptureJob(jobId);
     if (!res.ok) {
@@ -426,10 +495,43 @@ export function CaptureFlow({
     [startExtraction]
   );
 
+  // A meeting the user finished while elsewhere is summarized in the background; this is
+  // where it is collected, whenever /meetings next mounts. Only there: Capture claiming it
+  // would put the meeting's review on the wrong page.
+  const hasPendingMeeting = meetingFlow?.hasPendingAnalysis ?? false;
+  const claimMeeting = meetingFlow?.claimAnalysis;
+  useEffect(() => {
+    if (!meetingsHost || !hasPendingMeeting || !claimMeeting) return;
+    const done = claimMeeting();
+    if (done) onMeetingAnalyzed(done.analysis, done.sessionId);
+  }, [meetingsHost, hasPendingMeeting, claimMeeting, onMeetingAnalyzed]);
+
+  // Once per save made HERE: the effect re-runs on every phase change, and the caller moves
+  // on. A job already "saved" when first seen (saved on /capture earlier this session and
+  // still in the module-level store) never hands off, or onboarding would skip the step: it
+  // is cleared instead, so the step opens on an empty notes box (embedded has no saved screen).
+  const handedOffRef = useRef<string | null>(null);
+  const seenUnsavedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!onSaved || !job) return;
+    if (phase !== "saved") {
+      seenUnsavedRef.current = job.id;
+      return;
+    }
+    if (handedOffRef.current === job.id) return;
+    if (seenUnsavedRef.current !== job.id) {
+      clearCaptureJob();
+      return;
+    }
+    handedOffRef.current = job.id;
+    clearCaptureJob();
+    onSaved();
+  }, [onSaved, phase, job]);
+
   // ── Render ──────────────────────────────────────────────────────────────────────────
   const items = job?.result?.items ?? [];
   const reviewIndex = job ? firstPendingIndex(items, job.decisions) : -1;
-  const inputLocked = phase !== "input" || meetingBusy;
+  const inputLocked = phase !== "input";
   const blurb = CAPTURE_MODES.find((m) => m.id === mode)?.blurb;
 
   const meetingHeader =
@@ -441,9 +543,15 @@ export function CaptureFlow({
     <div className="space-y-6">
       {phase === "input" && quota && !initialContactId && <ContactQuotaNotice used={quota.used} limit={quota.limit} />}
 
-      {phase === "input" && (
+      {phase === "input" && !onSaved && !meetingsHost && (
         <div className="space-y-2">
-          <CaptureTabs mode={mode} onChange={setMode} disabled={inputLocked} />
+          <CaptureTabs
+            mode={mode}
+            onChange={(next) => (next === "imports" ? router.push("/capture?mode=imports") : setMode(next))}
+            disabled={inputLocked}
+            showCloud={Boolean(cloudNotes)}
+            showImports={showImports}
+          />
           {blurb && <p className="text-sm text-muted-foreground">{blurb}</p>}
         </div>
       )}
@@ -452,12 +560,17 @@ export function CaptureFlow({
         <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-destructive/30 bg-destructive/[0.04] px-3 py-2 text-sm">
           <span>{job.error ?? "Couldn’t finish that capture"}</span>
           <div className="flex gap-2">
-            {job.result && (
+            {job.result ? (
               <button type="button" className="font-medium text-primary hover:underline" onClick={() => void save(job.id)}>
                 Try saving again
               </button>
-            )}
-            <button type="button" className="font-medium text-muted-foreground hover:underline" onClick={() => void startOver()}>
+            ) : canRetry ? (
+              <button type="button" className="font-medium text-primary hover:underline" onClick={retryExtraction}>
+                Try again
+              </button>
+            ) : null}
+            {/* An extraction failure dismisses like Stop: the job goes, the notes stay. */}
+            <button type="button" className="font-medium text-muted-foreground hover:underline" onClick={job.result ? () => void startOver() : stopExtraction}>
               Dismiss
             </button>
           </div>
@@ -506,8 +619,6 @@ export function CaptureFlow({
                 canTranscribe={canTranscribe}
                 canUseMeetings={canUseMeetings}
                 meetingsDeniedMessage={meetingsDeniedMessage}
-                onBusyChange={setMeetingBusy}
-                onAnalyzed={onMeetingAnalyzed}
                 panelId={capturePanelId("meeting")}
                 tabId={captureTabId("meeting")}
               />
@@ -542,10 +653,14 @@ export function CaptureFlow({
                 canUseSync={canUseSync}
               />
             )}
-            {mode === "structured" && (
-              <div id={capturePanelId("structured")} role="tabpanel" aria-labelledby={captureTabId("structured")}>
-                <StructuredCaptureForm initialContactId={initialContactId} initialContactName={initialContactName} />
-              </div>
+            {mode === "cloud" && cloudNotes && (
+              <CloudNotesPicker
+                state={cloudNotes}
+                openReview={openCloudReview}
+                panelId={capturePanelId("cloud")}
+                tabId={captureTabId("cloud")}
+                onQueued={refreshQueue}
+              />
             )}
           </motion.div>
         )}
@@ -573,6 +688,11 @@ export function CaptureFlow({
         {phase === "review" && job && reviewIndex >= 0 && (
           <motion.div key="review" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: DUR.base }} className="space-y-4">
             {meetingHeader}
+            {job.result?.skippedNonPeople?.length ? (
+              <p className="text-xs text-muted-foreground">
+                Skipped {job.result.skippedNonPeople.join(", ")}: {job.result.skippedNonPeople.length === 1 ? "reads" : "read"} as a company or group, not a person.
+              </p>
+            ) : null}
             <PersonDeck
               items={items}
               decisions={job.decisions}
@@ -592,7 +712,7 @@ export function CaptureFlow({
             saving={phase === "saving"}
             headerSlot={meetingHeader}
             onDecide={applyDecision}
-            onSave={() => void save(job.id)}
+            onSave={() => save(job.id)}
             onStartOver={() => void startOver()}
             onBack={() => {
               const last = acceptedPeople(items, job.decisions).at(-1) ?? null;
@@ -602,8 +722,16 @@ export function CaptureFlow({
           />
         )}
 
-        {phase === "saved" && job?.result && (
+        {phase === "saved" && job?.result && !onSaved && (
           <motion.div key="saved" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+            {meetingsHost && job.meetingSessionId && (
+              <Link
+                href={`/meetings/${job.meetingSessionId}`}
+                className="inline-block text-sm font-medium text-primary underline-offset-2 hover:underline"
+              >
+                Open this meeting →
+              </Link>
+            )}
             {meetingHeader}
             <CaptureSaved result={job.result} decisions={job.decisions} onCaptureMore={() => void startOver()} />
           </motion.div>
@@ -611,7 +739,7 @@ export function CaptureFlow({
       </AnimatePresence>
 
       {phase === "input" && history}
-      {phase !== "review" && <IgnoredPeopleSection initialCount={ignoredCount} />}
+      {phase !== "review" && !onSaved && !meetingsHost && <IgnoredPeopleSection initialCount={ignoredCount} />}
     </div>
   );
 }
@@ -642,7 +770,7 @@ function SummaryStep({
   saving: boolean;
   headerSlot: React.ReactNode;
   onDecide: (key: string, decision: CaptureDecision) => void;
-  onSave: () => void;
+  onSave: () => Promise<void>;
   onStartOver: () => void;
   onBack: () => void;
 }) {
@@ -654,6 +782,10 @@ function SummaryStep({
   const [opportunityChoices, setOpportunityChoices] = useState(() => job.decisions.opportunities);
   const timer = useRef<number | null>(null);
   const opportunityTimer = useRef<number | null>(null);
+  // "Saving…" from the click until the action replies; by then a successful save has
+  // already moved the job to "saving" (save() seeds it before returning).
+  const [pressed, setPressed] = useState(false);
+  const busy = saving || pressed;
 
   function change(next: SuggestionReviewItem[]) {
     setSuggestions(next);
@@ -683,22 +815,27 @@ function SummaryStep({
    * the tick — the write the runner reads is the one in the database, not the one on screen.
    */
   async function saveNow() {
-    const pending: Parameters<typeof recordCaptureChoices>[1] = {};
-    if (timer.current) {
-      window.clearTimeout(timer.current);
-      timer.current = null;
-      pending.reminders = choicesFromSuggestions(suggestions, result.suggestedReminders);
+    setPressed(true);
+    try {
+      const pending: Parameters<typeof recordCaptureChoices>[1] = {};
+      if (timer.current) {
+        window.clearTimeout(timer.current);
+        timer.current = null;
+        pending.reminders = choicesFromSuggestions(suggestions, result.suggestedReminders);
+      }
+      if (opportunityTimer.current) {
+        window.clearTimeout(opportunityTimer.current);
+        opportunityTimer.current = null;
+        pending.opportunities = opportunityChoices;
+      }
+      if (Object.keys(pending).length) {
+        const res = await recordCaptureChoices(job.id, pending);
+        if (res.ok) seedCaptureJob(res.job, { force: true });
+      }
+      await onSave();
+    } finally {
+      setPressed(false);
     }
-    if (opportunityTimer.current) {
-      window.clearTimeout(opportunityTimer.current);
-      opportunityTimer.current = null;
-      pending.opportunities = opportunityChoices;
-    }
-    if (Object.keys(pending).length) {
-      const res = await recordCaptureChoices(job.id, pending);
-      if (res.ok) seedCaptureJob(res.job, { force: true });
-    }
-    onSave();
   }
 
   const meetingExtraCount = job.decisions.meeting?.extraReminderKeys.length ?? 0;
@@ -714,7 +851,7 @@ function SummaryStep({
       onSave={() => void saveNow()}
       onStartOver={onStartOver}
       onBack={onBack}
-      saving={saving}
+      saving={busy}
       error={job.status === "failed" ? job.error : null}
       headerSlot={headerSlot}
       hasMeeting={Boolean(job.meetingSessionId)}

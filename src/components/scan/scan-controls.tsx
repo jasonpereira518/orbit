@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Camera, ScanLine, Smartphone, Upload } from "lucide-react";
+import { Camera, Smartphone, Upload } from "lucide-react";
 import { ScanCameraLazy } from "@/components/scan/scan-camera-lazy";
 import { ScanQrHandoff } from "@/components/scan/scan-qr-handoff";
 import { Button } from "@/components/ui/button";
@@ -108,6 +108,7 @@ export function ScanControls({
   onPages,
   onFiles,
   onTranscript,
+  onUploadClick,
   compact = false,
 }: {
   /** The host's accept string, for the general picker. */
@@ -130,6 +131,12 @@ export function ScanControls({
    * taken just now, so there is nothing to sort and nothing that could have been read before.
    */
   onFiles?: (files: File[]) => void;
+  /**
+   * Desktop only: what the Upload button does instead of opening the file picker — a host
+   * that stages files in its own pop-up first. The phone tile still opens the picker, since
+   * a touch screen has nothing to drag.
+   */
+  onUploadClick?: () => void;
   /** The phone handoff returns text the server already transcribed, and the job it sits on. */
   onTranscript: (text: string, sources: string[], captureJobId?: string) => void;
 }) {
@@ -233,7 +240,7 @@ export function ScanControls({
         )}
       >
         <Button type="button" variant="outline" disabled={busy} className={compactButton}
-          onClick={() => fileRef.current?.click()}>
+          onClick={() => (onUploadClick ? onUploadClick() : fileRef.current?.click())}>
           <Upload className={iconSize} />
           Upload notes / media
         </Button>
@@ -345,15 +352,6 @@ function ScanTile({
       <span className="text-sm font-medium text-ink">{label}</span>
       <span className="text-xs text-muted-foreground">{hint}</span>
     </button>
-  );
-}
-
-/** The chip that marks a scan-related header, matching the import panels' icon chips. */
-export function ScanChip() {
-  return (
-    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-import-scan/10 text-import-scan">
-      <ScanLine className="h-4 w-4" />
-    </span>
   );
 }
 

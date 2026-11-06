@@ -3,7 +3,9 @@ import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import {
   getClosenessCohortSlim,
+  storedScoresAreCurrent,
   type ClosenessCohortSlimResult,
+  type ClosenessScalars,
 } from "@/lib/closeness-cohort";
 
 /** How many due follow-ups the dashboard card, and every reader of its list, shows. */
@@ -25,7 +27,7 @@ const TIER_RANK = { inner: 0, mid: 1, outer: 2 } as const;
 export function compareDueFollowUps(
   a: DueCandidate,
   b: DueCandidate,
-  cohort: Pick<ClosenessCohortSlimResult, "byId">
+  cohort: { byId: { get(id: string): Pick<ClosenessScalars, "tier"> | undefined } }
 ): number {
   const aTime = a.nextFollowUpAt ? new Date(a.nextFollowUpAt).getTime() : 0;
   const bTime = b.nextFollowUpAt ? new Date(b.nextFollowUpAt).getTime() : 0;
@@ -73,17 +75,39 @@ export async function loadDueFollowUps(
   opts: { cohort?: Promise<ClosenessCohortSlimResult> } = {}
 ): Promise<DueFollowUp[]> {
   const db = await getDb();
-  const [candidates, cohort] = await Promise.all([
-    db.query.contacts.findMany({
-      where: and(
-        eq(contacts.userId, userId),
-        isNotNull(contacts.nextFollowUpAt),
-        lte(contacts.nextFollowUpAt, sql`now() + interval '1 hour'`)
+  // Only the candidates' tiers are needed to rank them. When the stored scores are current
+  // they are read with the candidates (`closeness_breakdown->>'tier'` is exactly what the
+  // slim cohort reports); only otherwise is the whole network's cohort loaded, as before.
+  // MCP `due_followups` at 100k contacts read 19 MB to rank a dozen rows.
+  const [candidates, current] = await Promise.all([
+    db
+      .select({
+        id: contacts.id,
+        company: contacts.company,
+        priorityLevel: contacts.priorityLevel,
+        nextFollowUpAt: contacts.nextFollowUpAt,
+        tier: sql<ClosenessScalars["tier"] | null>`(closeness_breakdown->>'tier')`,
+      })
+      .from(contacts)
+      .where(
+        and(
+          eq(contacts.userId, userId),
+          isNotNull(contacts.nextFollowUpAt),
+          lte(contacts.nextFollowUpAt, sql`now() + interval '1 hour'`)
+        )
       ),
-      columns: { id: true, company: true, priorityLevel: true, nextFollowUpAt: true },
-    }),
-    opts.cohort ?? getClosenessCohortSlim(userId),
+    opts.cohort ? Promise.resolve(false) : storedScoresAreCurrent(userId),
   ]);
+  const cohort: { byId: { get(id: string): Pick<ClosenessScalars, "tier"> | undefined } } =
+    opts.cohort
+      ? await opts.cohort
+      : current
+        ? {
+            byId: new Map(
+              candidates.flatMap((c) => (c.tier ? [[c.id, { tier: c.tier }] as const] : []))
+            ),
+          }
+        : await getClosenessCohortSlim(userId);
 
   const now = new Date();
   const top = candidates

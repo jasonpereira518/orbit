@@ -37,9 +37,9 @@ function flagValue(name: string, fallback: string) {
 
 const EMAIL = flagValue("email", "demo@orbit.com");
 const BASE_URL = flagValue("base-url", "https://myorbitnetwork.com").replace(/\/$/, "");
-// 30 days — the longest Clerk documents for this — so the link doesn't go stale before
-// you get to it. Does NOT make it reusable; see the header comment.
-const EXPIRES_IN_SECONDS = Number(flagValue("expires-seconds", String(30 * 24 * 60 * 60)));
+// A week, the same as the admin console's links: a leaked link is a sign-in as the demo
+// account, so not a month. Does NOT make it reusable; see the header comment.
+const EXPIRES_IN_SECONDS = Number(flagValue("expires-seconds", String(7 * 24 * 60 * 60)));
 
 const secretKey = process.env.CLERK_SECRET_KEY?.trim();
 if (!secretKey) {

@@ -10,7 +10,8 @@
  *      names come from real results, never from an estimate or a timer.
  *   2. **Completions arrive out of order,** because retrieval, rosters, attention and
  *      recruiters all run inside one `Promise.all`. So this is a keyed map, not a stack: a
- *      `done` finds its own step by kind and never pops someone else's.
+ *      `done` finds its own step by id (its kind, unless the kind runs more than once) and
+ *      never pops someone else's.
  *
  * Labels are written here rather than in the browser so the wire carries finished sentences
  * — the client renders what the server says happened, and cannot invent a stage.
@@ -22,11 +23,17 @@ export type StepPatch = {
   label?: string;
   detail?: string;
   refs?: ChatStepRef[];
+  /**
+   * Which step of this kind, when a kind runs more than once — each research lookup is its
+   * own `gather:N` step, so the trail keeps every one instead of relabelling one line.
+   * Defaults to the kind itself, the one-step-per-kind case every other stage is.
+   */
+  id?: string;
 };
 
 export type StepEmitter = {
   /** Announce a stage as running. Safe to call for a stage that may later be abandoned. */
-  start: (kind: ChatStepKind, label: string, detail?: string) => void;
+  start: (kind: ChatStepKind, label: string, detail?: string, id?: string) => void;
   /** Mark a stage finished, filling in its real duration and whatever it found. */
   done: (kind: ChatStepKind, patch?: StepPatch) => void;
   /**
@@ -50,26 +57,27 @@ export const NULL_STEPS: StepEmitter = {
 };
 
 export function createStepEmitter(onStep: (step: ChatStep) => void): StepEmitter {
-  const steps = new Map<ChatStepKind, ChatStep>();
-  const startedAt = new Map<ChatStepKind, number>();
-  const order: ChatStepKind[] = [];
+  const steps = new Map<string, ChatStep>();
+  const startedAt = new Map<string, number>();
+  const order: string[] = [];
 
   return {
-    start(kind, label, detail) {
-      if (!steps.has(kind)) order.push(kind);
-      startedAt.set(kind, Date.now());
-      const step: ChatStep = { id: kind, kind, label, detail, status: "active" };
-      steps.set(kind, step);
+    start(kind, label, detail, id = kind) {
+      if (!steps.has(id)) order.push(id);
+      startedAt.set(id, Date.now());
+      const step: ChatStep = { id, kind, label, detail, status: "active" };
+      steps.set(id, step);
       onStep(step);
     },
     done(kind, patch) {
-      const began = startedAt.get(kind);
-      const prior = steps.get(kind);
+      const id = patch?.id ?? kind;
+      const began = startedAt.get(id);
+      const prior = steps.get(id);
       // A `done` without a `start` still reports, rather than being dropped silently —
       // better a step with no duration than a stage the user never hears about.
-      if (!prior && !order.includes(kind)) order.push(kind);
+      if (!prior && !order.includes(id)) order.push(id);
       const step: ChatStep = {
-        id: kind,
+        id,
         kind,
         label: patch?.label ?? prior?.label ?? kind,
         detail: patch?.detail ?? prior?.detail,
@@ -77,11 +85,11 @@ export function createStepEmitter(onStep: (step: ChatStep) => void): StepEmitter
         ms: began === undefined ? undefined : Date.now() - began,
         refs: patch?.refs ?? prior?.refs,
       };
-      steps.set(kind, step);
+      steps.set(id, step);
       onStep(step);
     },
     update(kind, patch) {
-      const prior = steps.get(kind);
+      const prior = steps.get(patch.id ?? kind);
       // Nothing to add to a stage that never reported: better silent than a step with no
       // status. The late arrival can only enrich a stage the user has already been told about.
       if (!prior) return;
@@ -91,7 +99,7 @@ export function createStepEmitter(onStep: (step: ChatStep) => void): StepEmitter
         detail: patch.detail ?? prior.detail,
         refs: patch.refs ?? prior.refs,
       };
-      steps.set(kind, step);
+      steps.set(prior.id, step);
       // Fire-and-forget callers reach this after the stream may have closed (the client
       // left, or the answer already landed); a throw here would be an unhandled rejection
       // for something the user cannot see and does not need.
@@ -102,8 +110,8 @@ export function createStepEmitter(onStep: (step: ChatStep) => void): StepEmitter
       }
     },
     snapshot() {
-      return order.flatMap((kind) => {
-        const step = steps.get(kind);
+      return order.flatMap((id) => {
+        const step = steps.get(id);
         return step ? [step] : [];
       });
     },

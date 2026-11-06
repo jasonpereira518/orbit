@@ -1,6 +1,8 @@
 "use client";
 
+import type { ComponentProps } from "react";
 import dynamic from "next/dynamic";
+import type { FollowUpDraftSheet as FollowUpDraftSheetType } from "@/components/follow-up/follow-up-draft-sheet";
 
 /**
  * Start fetching the sheet's code before it is opened — on hover or focus of whatever opens
@@ -23,27 +25,7 @@ const FollowUpDraftSheet = dynamic(
   { ssr: false, loading: () => null }
 );
 
-export function FollowUpDraftSheetLazy({
-  open,
-  onOpenChange,
-  contactId,
-  contactName,
-  initialDraft,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  contactId: string;
-  contactName: string;
-  /** A draft already written (Radar's pre-drafted Today cards). Shown without a model call. */
-  initialDraft?: string | null;
-}) {
-  return (
-    <FollowUpDraftSheet
-      open={open}
-      onOpenChange={onOpenChange}
-      contactId={contactId}
-      contactName={contactName}
-      initialDraft={initialDraft}
-    />
-  );
+/** The sheet's own props, passed straight through. A type-only import, so no code is pulled in. */
+export function FollowUpDraftSheetLazy(props: ComponentProps<typeof FollowUpDraftSheetType>) {
+  return <FollowUpDraftSheet {...props} />;
 }

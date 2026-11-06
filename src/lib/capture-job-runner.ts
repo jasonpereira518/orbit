@@ -34,17 +34,20 @@ import {
   opportunityKey,
   opportunityKindFor,
   reminderFactsFor,
+  reminderTitleOverride,
   saveTimeMergeTarget,
   setAsidePeople,
 } from "@/lib/capture/review-reducer";
 import type { CaptureJobResult, CaptureParseResult, CaptureDecisions, CaptureSavedSummary } from "@/lib/capture/types";
 
 import { resolveAvatarNow } from "@/lib/avatar-backfill";
-import { downloadAndPersistAvatar, fetchLinkedInPhotoUrl } from "@/lib/contact-avatar";
+import { downloadAndPersistAvatar } from "@/lib/contact-avatar";
+import { resolveLinkedInPhotoCached } from "@/lib/shared-avatars";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
-import { buildDuplicateIndex, findDuplicateCandidatesIndexed, DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
+import { buildDuplicateIndex, findDuplicateCandidatesIndexed, linkedinSlug, DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { kickWorkHistoryResearch, linkedInCaptureContactIds } from "@/lib/work-history-research";
+import { writeResearchedProfile } from "@/lib/web-research";
 import { reportAndContinue, reportedFailure } from "@/lib/report-error";
 import { upsertIgnoredPeople, type IgnoredPersonInput } from "@/lib/ignored-people";
 import { getMeetingSession, getNoteBatchForUser, markMeetingSessionSaved, toNoteBatchMeeting } from "@/lib/meeting-sessions";
@@ -61,6 +64,8 @@ import {
 } from "@/lib/note-batch-save";
 import { hashSourceNote } from "@/lib/suggested-reminder-utils";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { trackCaptureFailed, trackCaptureSaved } from "@/lib/capture-events";
+import { eventErrorKind } from "@/lib/event-error-kind";
 import {
   MAX_PERSONAL_DETAILS,
   MAX_TAKEAWAYS,
@@ -174,6 +179,8 @@ async function runExtraction(id: string, deps: CaptureRunnerDeps): Promise<Captu
     const parsed = await Promise.race([
       parse(row.userId, corpus, row.inputHints, {
         meetingSessionId: row.meetingSessionId,
+        // The review flow: someone will look at these cards, so new people are worth a search.
+        lookUpNewPeople: true,
         // Stored on the job rather than folded into `inputHints`, because a contact id is
         // not a parse hint — and anything on an AI-facing type eventually ends up in a prompt.
         mentionPicks: row.mentionPicks ?? [],
@@ -195,7 +202,7 @@ async function runExtraction(id: string, deps: CaptureRunnerDeps): Promise<Captu
     if (err instanceof ClaimLostError) return getCaptureJobById(id);
     // The job row keeps the person's copy; the real error is reported with its reference
     // so "Couldn’t read those notes" is never the only trace of what went wrong.
-    await settleCaptureJob(id, token, {
+    const landed = await settleCaptureJob(id, token, {
       status: "failed",
       error: reportedFailure(err, TOAST_COPY.notesReadFailed, {
         where: "job.capture.parse",
@@ -203,6 +210,9 @@ async function runExtraction(id: string, deps: CaptureRunnerDeps): Promise<Captu
         extra: { jobId: id, sourceKind: row.sourceKind },
       }).error,
     });
+    // Only the runner that held the claim records the outcome; the claim token names the
+    // attempt, so a re-run after a retry is a new failure and a replay is not.
+    if (landed) trackCaptureFailed(row, "parse", eventErrorKind(err), token);
   }
   return getCaptureJobById(id);
 }
@@ -233,14 +243,27 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
     if (existing) {
       out = summarizeExistingBatch(existing);
     } else {
-      const input = await buildSaveInput(row);
+      // A job in the review flow: the person ticked these reminders, so each is a follow-up they set.
+      const input = { ...(await buildSaveInput(row)), trackFollowUps: true };
       out = await save(userId, input);
-      linkedInContactIds = linkedInCaptureContactIds(input.participants, out.contactIds);
+      // A card looked up while it was extracted already holds their career: write it from
+      // the cached brief rather than paying for the same search again.
+      const fromWeb = new Set<string>();
+      for (const [i, p] of input.participants.entries()) {
+        const contactId = out.contactIds[i];
+        if (!p.webResearchKey || !contactId) continue;
+        const written = await writeResearchedProfile(userId, contactId, p.webResearchKey).catch(() => false);
+        if (written) fromWeb.add(contactId);
+      }
+      linkedInContactIds = linkedInCaptureContactIds(input.participants, out.contactIds).filter((id) => !fromWeb.has(id));
     }
 
     const saved = savedSummary(row, out);
     const result: CaptureJobResult = { ...row.result, saved };
     await settleCaptureJob(id, token, { status: "saved", noteBatchId: out.batchId, result, error: null });
+    // The batch is written whether or not this runner still held the claim, so the fact is
+    // recorded either way; the id is the job's, so a resumed save lands on the same row.
+    trackCaptureSaved(row, { created: out.created, updated: out.updated });
 
     // The photos this capture was read from, claimed for its batch so the history can show
     // them. Idempotent: an attached photo is not claimable twice.
@@ -268,7 +291,7 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
         const db = await getDb();
         await resolveAvatarNow(db, userId, out.contactIds[0]!, {
           persistRemote: downloadAndPersistAvatar,
-          resolveLinkedIn: (id, url) => fetchLinkedInPhotoUrl(id, url, userId),
+          resolveLinkedIn: (id, url) => resolveLinkedInPhotoCached(id, url, userId),
         }).catch(reportAndContinue(followOn("avatar"), false));
       }
 
@@ -281,7 +304,7 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
       }
     }
   } catch (err) {
-    await settleCaptureJob(id, token, {
+    const landed = await settleCaptureJob(id, token, {
       status: "failed",
       error: reportedFailure(err, "Couldn’t save those people — try again?", {
         where: "job.capture.save",
@@ -289,6 +312,9 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
         extra: { jobId: id },
       }).error,
     });
+    if (landed) {
+      trackCaptureFailed(row, "save", err instanceof Error && err.message === "Extract people before saving" ? "not_extracted" : eventErrorKind(err), token);
+    }
   }
   return getCaptureJobById(id);
 }
@@ -395,6 +421,15 @@ export async function saveInputFromParse(ctx: ParseSaveContext): Promise<SaveNot
       ...(edits.website !== undefined ? { website: normalizeWebsite(edits.website) } : {}),
       ...(edits.school !== undefined ? { school: edits.school?.trim().slice(0, 200) || null } : {}),
       ...(edits.industry !== undefined ? { industry: edits.industry?.trim().slice(0, 200) || null } : {}),
+      ...(edits.location !== undefined ? { location: edits.location?.trim().slice(0, 200) || null } : {}),
+      // An address or profile link that does not look like one is dropped, not saved: both
+      // become identity keys, and a typo there would claim someone else's identity.
+      ...(edits.email !== undefined
+        ? { email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(edits.email?.trim() ?? "") ? edits.email!.trim().toLowerCase() : null }
+        : {}),
+      ...(edits.linkedinUrl !== undefined
+        ? { linkedin_url: linkedinSlug(edits.linkedinUrl) ? edits.linkedinUrl!.trim() : null }
+        : {}),
     };
     const top =
       !decision.mergeContactId && index
@@ -450,11 +485,13 @@ export async function saveInputFromParse(ctx: ParseSaveContext): Promise<SaveNot
     const facts = reminderFactsFor(item, decision);
     return {
       notes: item.notes,
+      webResearchKey: item.web?.key ?? null,
       ...(item.noteHash ? { sourceHash: item.noteHash } : {}),
       parsed,
       mergeContactId,
       createReminder: facts.createReminder,
       relationshipScore: facts.closeness,
+      closenessChosen: decision.closenessChosen === true,
       tagNames: decision.tagNames?.length ? decision.tagNames : parsed.tags,
       // A rhythm the person stated outranks both the model's inference and the closeness
       // table — they said the interval out loud. `reminderFactsFor` applies it, so the
@@ -489,7 +526,7 @@ export async function saveInputFromParse(ctx: ParseSaveContext): Promise<SaveNot
     .map((s) => {
       const o = overrides[s.key] ?? {};
       return {
-        title: s.title,
+        title: reminderTitleOverride(o.title, s.title) ?? s.title,
         description: s.description,
         rawDatePhrase: s.rawDatePhrase,
         yearInferred: s.yearInferred,

@@ -269,6 +269,20 @@ export async function countUnscoredContacts(userId: string): Promise<number> {
 }
 
 /**
+ * Up to `limit` never-scored contacts, for callers that only need to know whether there are
+ * "a few" or "many". Served by the partial `contacts_unscored_idx`.
+ */
+export async function listUnscoredContactIds(userId: string, limit: number): Promise<string[]> {
+  const db = await getDb();
+  const rows = await db
+    .select({ id: contacts.id })
+    .from(contacts)
+    .where(and(eq(contacts.userId, userId), isNull(contacts.closenessComputedAt)))
+    .limit(limit);
+  return rows.map((r) => r.id);
+}
+
+/**
  * Score one contact against the stored distribution and write just that row.
  *
  * This is what keeps ordinary writes off the expensive path. Without it a newly created

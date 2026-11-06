@@ -1,7 +1,9 @@
-import { and, eq, gte, lt, sql } from "drizzle-orm";
+import { and, eq, gte, lt, sql, type SQL } from "drizzle-orm";
 import { getDb } from "@/db";
 import { billingEvents, userSettings } from "@/db/schema";
 import type { BillingEventKind } from "@/db/schema";
+import { internalAccountSql } from "@/lib/analytics-internal";
+import { PLAN_CONFIG } from "@/lib/plans/plan-config";
 
 /**
  * What each billing webhook meant financially.
@@ -22,8 +24,9 @@ import type { BillingEventKind } from "@/db/schema";
  * money is not a thing to be careful about, it is a thing to make structurally impossible
  * to get wrong. The retry information is not lost; it still lives one table over.
  *
- * Imports only drizzle and `@/db`. No `next/server` — the webhook route is not the only
- * caller, and a script that reaches this must still be able to exit.
+ * Imports drizzle, `@/db`, the plan table and the shared internal-account predicate
+ * (`analytics-internal`, which every money query must use). It loads without a request and a
+ * script that reaches it still exits — `scripts/smoke-money-correctness.ts` pins that.
  */
 
 export const MONTHLY_CENTS = 500;
@@ -39,22 +42,41 @@ export const ANNUAL_MONTHLY_EQUIVALENT_CENTS = Math.round(ANNUAL_CENTS / 12);
 export type { BillingEventKind } from "@/db/schema";
 
 /**
+ * What a subscription row is worth per month when `subscription_monthly_cents` was never
+ * recorded (every row written before the column existed).
+ *
+ * TIER-AWARE, not a flat $5: a null on a Max row used to be valued at the legacy $5 here and
+ * at Max's list price in `revenueAtRiskCents`, so one account was two different amounts on
+ * two screens. Null on Pro (or an unknown tier) is a legacy $5 subscription — the only kind
+ * that predates the column — so it keeps reading exactly as it always did.
+ */
+export function fallbackMonthlyCents(plan?: string | null): number {
+  if (plan === "max") return PLAN_CONFIG.max.monthlyPriceCents ?? MONTHLY_CENTS;
+  return MONTHLY_CENTS;
+}
+
+/**
  * The recurring value of a subscription state, in cents per month.
  *
  * `canceled` is worth its full value until the period ends — the user has paid through it
  * and `resolvePlan` honours that time, so booking the churn early would show revenue
  * disappearing while the entitlement is still live.
+ *
+ * `past_due` keeps its full value: the subscription is still entitled and Stripe is still
+ * retrying. The money that is wobbling is reported separately as the "at risk" figure
+ * (`currentMrrDetail().pastDueCents`, `revenueAtRiskCents`) rather than by quietly shrinking MRR.
  */
 export function monthlyValueCents(
   status: "active" | "past_due" | "canceled" | null,
   periodEnd: Date | null,
   now: Date = new Date(),
-  monthlyCents: number | null = null
+  monthlyCents: number | null = null,
+  plan: string | null = null
 ): number {
   // Null means "we never recorded what this subscription is worth", which is every row
-  // written before the column existed. Falling back to the monthly price keeps those rows
-  // reading exactly as they did before, so no historical figure moves on deploy day.
-  const value = monthlyCents ?? MONTHLY_CENTS;
+  // written before the column existed. The tier-aware fallback keeps those rows reading as
+  // they did before, so no historical figure moves on deploy day.
+  const value = monthlyCents ?? fallbackMonthlyCents(plan);
   if (status === "active") return value;
   if (status === "past_due") return value;
   if (status === "canceled") {
@@ -139,6 +161,85 @@ export async function recordBillingEvent(input: {
   }
 }
 
+/** The ledger kinds that move recurring revenue. Everything else is cash or a status change. */
+export const MRR_KINDS = ["new", "expansion", "contraction", "churn", "reactivation"] as const;
+
+/**
+ * SQL: whether an account is comped right now (`comped_plan IS NOT NULL`). Never null.
+ * Revenue metrics exclude these (a comp pays nothing); product metrics keep them.
+ */
+export function compedAccountSql(column: SQL): SQL {
+  return sql`EXISTS (SELECT 1 FROM user_settings cp WHERE cp.user_id = ${column} AND cp.comped_plan IS NOT NULL)`;
+}
+
+/**
+ * SQL: should this ledger row count toward revenue figures?
+ *
+ *  - Internal and tester accounts never count (audit I2): the operator's own test
+ *    subscription is not MRR, a new subscriber, cash in, or a CAC denominator.
+ *  - Comped accounts are excluded from the MRR-moving kinds only. Live MRR already skips them
+ *    (`currentMrrCents`), so the ledger must too or every comp-over-a-paying-subscriber is
+ *    permanent "drift" (audit I5); but the CASH they went on to pay was real money.
+ *  - A null `user_id` (a backfilled refund, a row anonymised by account deletion) is kept:
+ *    there is no account to test, and dropping it would lose real cash.
+ */
+export function ledgerRowCountsSql(userId: SQL, kind: SQL = sql`${billingEvents.kind}`): SQL {
+  const mrrKinds = sql.join(
+    MRR_KINDS.map((k) => sql`${k}`),
+    sql`, `
+  );
+  return sql`(NOT ${internalAccountSql(userId)} AND (${kind} NOT IN (${mrrKinds}) OR NOT ${compedAccountSql(userId)}))`;
+}
+
+/**
+ * SQL: has this account been refunded in full — refunds summed against everything it paid
+ * (payments, Lifetime, packs) are at least that total? Per account and in cash, so a
+ * subscriber refunded one month of three is NOT fully refunded, and a buyer whose only charge
+ * was refunded is. Rows with a null `user_id` cannot be attributed, so a backfilled refund
+ * never un-pays anyone (audit M11). Never null.
+ */
+export function fullyRefundedSql(userId: SQL): SQL {
+  return sql`EXISTS (
+    SELECT 1 FROM billing_events pr
+    WHERE pr.user_id = ${userId}
+    GROUP BY pr.user_id
+    HAVING coalesce(sum(pr.amount_cents) FILTER (WHERE pr.kind IN ('lifetime', 'payment', 'credit_pack')), 0) > 0
+       AND coalesce(sum(pr.amount_cents) FILTER (WHERE pr.kind = 'refund'), 0)
+           >= coalesce(sum(pr.amount_cents) FILTER (WHERE pr.kind IN ('lifetime', 'payment', 'credit_pack')), 0)
+  )`;
+}
+
+/**
+ * SQL: is this account PAID — the one definition every reader shares (audit M6).
+ *
+ *   (a Lifetime purchase  OR  any recurring revenue ever booked  OR  a lifetime booking)
+ *   AND NOT fully refunded
+ *   AND NOT internal/tester
+ *   [AND NOT comped, unless `includeComped`]
+ *
+ * Takes the user-id column as SQL (`sql\`s.user_id\``) so it composes into any query. Used by
+ * `paidSignupsByChannel` and `gateDemand` here; the Conversion funnel (`acquisitionFunnel`)
+ * and the overview's plan breakdown should adopt it rather than keep their own variants.
+ */
+export function paidAccountSql(
+  userId: SQL,
+  opts: { includeComped?: boolean } = {}
+): SQL {
+  const comped = opts.includeComped ? sql`true` : sql`NOT ${compedAccountSql(userId)}`;
+  return sql`(
+    (
+      EXISTS (SELECT 1 FROM user_settings pl WHERE pl.user_id = ${userId} AND pl.lifetime_purchased_at IS NOT NULL)
+      OR EXISTS (
+        SELECT 1 FROM billing_events pb
+        WHERE pb.user_id = ${userId} AND (pb.mrr_delta_cents > 0 OR pb.kind = 'lifetime')
+      )
+    )
+    AND NOT ${fullyRefundedSql(userId)}
+    AND NOT ${internalAccountSql(userId)}
+    AND ${comped}
+  )`;
+}
+
 export type MrrMovement = {
   newCents: number;
   expansionCents: number;
@@ -146,7 +247,7 @@ export type MrrMovement = {
   churnCents: number;
   reactivationCents: number;
   netCents: number;
-  /** One-time revenue. Deliberately outside `netCents` — Lifetime is not recurring. */
+  /** One-time revenue (Lifetime and credit packs). Deliberately outside `netCents` — neither is recurring. */
   oneTimeCents: number;
   /**
    * Recurring cash actually received: invoices paid. Kept out of `oneTimeCents` because a
@@ -155,7 +256,9 @@ export type MrrMovement = {
    * exactly zero.
    */
   paymentCents: number;
-  /** All cash in, whatever its shape: `payment` + `lifetime`. */
+  /** How many charges brought that cash in — Stripe's fixed fee is per charge, not per month. */
+  chargeCount: number;
+  /** All cash in, whatever its shape: `payment` + `lifetime` + `credit_pack`. */
   cashInCents: number;
   /** Cash in less cash returned. The bottom line for a period. */
   netCashCents: number;
@@ -180,7 +283,11 @@ export async function mrrMovement(since: Date, until: Date): Promise<MrrMovement
     })
     .from(billingEvents)
     .where(
-      and(gte(billingEvents.effectiveAt, since), lt(billingEvents.effectiveAt, until))
+      and(
+        gte(billingEvents.effectiveAt, since),
+        lt(billingEvents.effectiveAt, until),
+        ledgerRowCountsSql(sql`${billingEvents.userId}`)
+      )
     )
     .groupBy(billingEvents.kind);
 
@@ -198,6 +305,7 @@ export async function mrrMovement(since: Date, until: Date): Promise<MrrMovement
     netCents: 0,
     oneTimeCents: 0,
     paymentCents: 0,
+    chargeCount: 0,
     cashInCents: 0,
     netCashCents: 0,
     refundedCents: 0,
@@ -223,10 +331,17 @@ export async function mrrMovement(since: Date, until: Date): Promise<MrrMovement
         out.reactivationCents += delta;
         break;
       case "lifetime":
+      // A $5 credit pack is one-time cash exactly like Lifetime. It was missing from this
+      // switch, so every "cash in", "one-time", contribution and net-cash figure that says
+      // it includes packs silently left them out (audit M1). It is a separate Stripe
+      // charge, so it also counts toward the per-charge fixed fee.
+      case "credit_pack":
         out.oneTimeCents += num(r.amount);
+        out.chargeCount += num(r.n);
         break;
       case "payment":
         out.paymentCents += num(r.amount);
+        out.chargeCount += num(r.n);
         break;
       case "refund":
         out.refundedCents += num(r.amount);
@@ -263,8 +378,15 @@ export async function mrrMovement(since: Date, until: Date): Promise<MrrMovement
  * movements and drifts if any event was ever missed; this is a snapshot of what is true
  * right now. **When they disagree, a webhook was dropped** — which is a real failure mode
  * this codebase has already seen once, and one nothing else would surface.
+ *
+ * Comped accounts and internal/tester accounts (admins, the showcase, `account_kind`) are
+ * excluded: neither pays. `pastDueCents` is the part of the total whose payment is failing
+ * right now — still counted (the subscription is entitled and Stripe is retrying), but
+ * reported beside the total so the number is never read as safer than it is.
  */
-export async function currentMrrCents(now: Date = new Date()): Promise<number> {
+export async function currentMrrDetail(
+  now: Date = new Date()
+): Promise<{ mrrCents: number; pastDueCents: number }> {
   const db = await getDb();
   const rows = await db
     .select({
@@ -274,16 +396,26 @@ export async function currentMrrCents(now: Date = new Date()): Promise<number> {
       comped: userSettings.compedPlan,
       monthlyCents: userSettings.subscriptionMonthlyCents,
     })
-    .from(userSettings);
+    .from(userSettings)
+    .where(sql`NOT ${internalAccountSql(sql`${userSettings.userId}`)}`);
 
-  return rows.reduce((total, r) => {
+  let mrrCents = 0;
+  let pastDueCents = 0;
+  for (const r of rows) {
     // A comped account pays nothing regardless of what its subscription columns say.
-    if (r.comped) return total;
-    if (r.plan !== "orbit" && r.plan !== "max") return total;
+    if (r.comped) continue;
+    if (r.plan !== "orbit" && r.plan !== "max") continue;
     // The stored value is what the webhook booked (founding discount included), so the two
     // derivations agree for every price, not only the legacy $5 one.
-    return total + monthlyValueCents(r.status, r.periodEnd, now, r.monthlyCents);
-  }, 0);
+    const value = monthlyValueCents(r.status, r.periodEnd, now, r.monthlyCents, r.plan);
+    mrrCents += value;
+    if (r.status === "past_due") pastDueCents += value;
+  }
+  return { mrrCents, pastDueCents };
+}
+
+export async function currentMrrCents(now: Date = new Date()): Promise<number> {
+  return (await currentMrrDetail(now)).mrrCents;
 }
 
 /**
@@ -310,6 +442,17 @@ export async function hasPriorRevenue(userId: string, before?: Date): Promise<bo
     .limit(1);
 
   return rows.length > 0;
+}
+
+/** Σ `mrr_delta_cents` the ledger holds for one account: what it currently believes they pay. */
+export async function ledgerMrrCents(userId: string): Promise<number> {
+  const db = await getDb();
+  const [row] = await db
+    .select({ total: sql<string>`coalesce(sum(${billingEvents.mrrDeltaCents}), 0)` })
+    .from(billingEvents)
+    .where(eq(billingEvents.userId, userId));
+  const n = Number(row?.total ?? 0);
+  return Number.isFinite(n) ? n : 0;
 }
 
 /**
@@ -372,9 +515,13 @@ export async function mrrReconciliation(now: Date = new Date()): Promise<{
   const db = await getDb();
   const [liveCents, rows] = await Promise.all([
     currentMrrCents(now),
+    // The same population as the live side: no internal/tester accounts, no comped ones.
+    // Without this an operator's own test subscription (or a comp placed over a paying
+    // subscriber) is permanent "drift" that blames a dropped webhook (audit I2, I5).
     db
       .select({ total: sql<string>`coalesce(sum(${billingEvents.mrrDeltaCents}), 0)` })
-      .from(billingEvents),
+      .from(billingEvents)
+      .where(ledgerRowCountsSql(sql`${billingEvents.userId}`)),
   ]);
 
   const raw = Number(rows[0]?.total ?? 0);

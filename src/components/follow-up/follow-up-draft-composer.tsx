@@ -1,17 +1,43 @@
 "use client";
 
 import { Copy, ExternalLink, Mail } from "lucide-react";
+import { usePathname } from "next/navigation";
 import type { ContactFollowUpSendOptions } from "@/actions/contacts";
+import { ConnectMailboxButton } from "@/components/email/connect-mailbox-button";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { DraftLinkWarning } from "@/components/follow-up/draft-link-warning";
 
 /**
  * The one-line hint above the draft. Until the send options arrive it is a placeholder bar of
  * the same line height (`text-xs` = 16px), with the old words kept for screen readers.
  */
-function SendHint({ hint, loading }: { hint: string; loading: boolean }) {
-  if (!loading) return <p className="text-xs text-muted-foreground">{hint}</p>;
+function SendHint({
+  hint,
+  loading,
+  sendOptions,
+}: {
+  hint: string;
+  loading: boolean;
+  sendOptions?: ContactFollowUpSendOptions | null;
+}) {
+  const pathname = usePathname();
+  const block = sendOptions?.hasEmail ? sendOptions.sendBlock : null;
+  if (!loading) {
+    if (!block || block === "cap_reached") return <p className="text-xs text-muted-foreground">{hint}</p>;
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-xs text-muted-foreground">{hint}</p>
+        <ConnectMailboxButton
+          reason={block}
+          provider={sendOptions?.sendBlockProvider ?? null}
+          outlookAvailable={sendOptions?.outlookAvailable ?? false}
+          returnTo={pathname || "/contacts"}
+        />
+      </div>
+    );
+  }
   return (
     <div className="flex h-4 items-center">
       <Skeleton className="h-3 w-56 max-w-full" />
@@ -35,6 +61,7 @@ export function FollowUpDraftComposer({
   onMarkSent,
   onOpenLinkedIn,
   emptyHint,
+  aiDraft,
 }: {
   contactName: string;
   draft: string;
@@ -48,16 +75,22 @@ export function FollowUpDraftComposer({
   onMarkSent: (channel: "email" | "linkedin_message" | "note") => void;
   onOpenLinkedIn: (url: string) => void;
   emptyHint?: string;
+  /** What the model wrote, so a link it planted stays flagged while the person edits. */
+  aiDraft?: string | null;
 }) {
   const hint = !sendOptions
     ? "Loading send options…"
     : sendOptions.canSendEmail
-      ? "You can send this by email with one click."
-      : sendOptions.hasLinkedIn
-        ? "LinkedIn can’t be sent automatically — copy, open their profile, then mark sent."
-        : sendOptions.hasEmail
-          ? "Add a Resend API key in Settings to send email from Orbit — or copy and mark sent."
-          : "Add an email or LinkedIn URL to send or open a follow-up.";
+      ? "You can send this from your own email with one click."
+      : sendOptions.hasEmail && sendOptions.sendBlock === "cap_reached"
+        ? "You’ve reached today’s email limit — copy and mark sent."
+        : sendOptions.hasEmail && sendOptions.sendBlock
+          ? "Connect your email to send this from your own address — or copy and mark sent."
+          : sendOptions.hasLinkedIn
+            ? "LinkedIn can’t be sent automatically — copy, open their profile, then mark sent."
+            : sendOptions.hasEmail
+              ? "Copy it into your email, then mark sent."
+              : "Add an email or LinkedIn URL to send or open a follow-up.";
 
   const markChannel: "email" | "linkedin_message" | "note" = sendOptions?.canSendEmail
     ? "email"
@@ -72,7 +105,7 @@ export function FollowUpDraftComposer({
     // actions under it — rather than a line of text the box then pushes aside.
     return (
       <div className="space-y-3">
-        <SendHint hint={hint} loading={!sendOptions} />
+        <SendHint hint={hint} loading={!sendOptions} sendOptions={sendOptions} />
         <div className="space-y-2 rounded-lg border border-input px-2.5 py-2">
           <Skeleton className="h-3.5 w-11/12" />
           <Skeleton className="h-3.5 w-full" />
@@ -95,7 +128,7 @@ export function FollowUpDraftComposer({
   if (!draft) {
     return (
       <div className="space-y-2">
-        <SendHint hint={hint} loading={!sendOptions} />
+        <SendHint hint={hint} loading={!sendOptions} sendOptions={sendOptions} />
         <p className="text-sm text-muted-foreground">
           {emptyHint ||
             `Generate a warm follow-up grounded in your history with ${contactName}.`}
@@ -106,13 +139,14 @@ export function FollowUpDraftComposer({
 
   return (
     <div className="space-y-3">
-      <SendHint hint={hint} loading={!sendOptions} />
+      <SendHint hint={hint} loading={!sendOptions} sendOptions={sendOptions} />
       <Textarea
         rows={8}
         value={draft}
         onChange={(e) => onDraftChange(e.target.value)}
         className="resize-y text-sm"
       />
+      <DraftLinkWarning text={draft} aiText={aiDraft} />
       <div className="flex flex-wrap gap-2">
         <Button type="button" variant="outline" size="sm" onClick={onCopy}>
           <Copy className="size-3.5" />
@@ -147,7 +181,7 @@ export function FollowUpDraftComposer({
           disabled={sending || marking}
           onClick={() => onMarkSent(markChannel)}
         >
-          {marking ? "Saving…" : "Mark sent"}
+          {marking ? "Saving…" : markChannel === "linkedin_message" ? "Mark sent on LinkedIn" : "Mark sent"}
         </Button>
       </div>
     </div>

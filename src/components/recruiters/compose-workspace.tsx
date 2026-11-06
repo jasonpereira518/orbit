@@ -144,6 +144,7 @@ export function ComposeWorkspace({
                     <Checkbox
                       checked={picked.has(r.id)}
                       onCheckedChange={() => setPicked((p) => toggle(p, r.id))}
+                      aria-label={`Include ${r.fullName}`}
                     />
                     <span className="min-w-0 flex-1 text-sm">
                       <span className="block font-medium">{r.fullName}</span>
@@ -151,7 +152,7 @@ export function ComposeWorkspace({
                         {r.firm || "Unknown firm"} · {r.email}
                       </span>
                       {!r.hasHistory && (
-                        <span className="mt-0.5 block text-xs text-muted-foreground/80">
+                        <span className="mt-0.5 block text-xs text-muted-foreground-subtle">
                           No history yet — the draft will be more generic.
                         </span>
                       )}
@@ -301,6 +302,7 @@ export function ComposeWorkspace({
                   setSelectedDrafts((p) => toggle(p, d.id))
                 }
                 className="mt-1"
+                aria-label={`Select draft to ${d.recruiterName}`}
               />
               <div className="min-w-0 flex-1">
                 <p className="font-medium text-ink">{d.recruiterName}</p>

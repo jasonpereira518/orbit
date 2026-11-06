@@ -115,10 +115,19 @@ function attempt<T>(warnings: string[], label: string, fn: () => T): T | null {
   }
 }
 
-function decodeEntities(raw: string): string {
+/** The named entities real pages actually use; an unknown one is left as written. */
+const NAMED_ENTITIES: Record<string, string> = {
+  mdash: "—", ndash: "–", hellip: "…", rsquo: "’", lsquo: "‘", rdquo: "”", ldquo: "“",
+  middot: "·", bull: "•", copy: "©", reg: "®", trade: "™", eacute: "é", egrave: "è",
+  aacute: "á", iacute: "í", oacute: "ó", uacute: "ú", ntilde: "ñ", ccedil: "ç", uuml: "ü",
+  ouml: "ö", auml: "ä", szlig: "ß",
+};
+
+export function decodeEntities(raw: string): string {
   return raw
     .replace(/&#(\d+);/g, (_, d: string) => String.fromCodePoint(Number(d)))
     .replace(/&#x([0-9a-f]+);/gi, (_, h: string) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&([a-z]+);/g, (whole, name: string) => NAMED_ENTITIES[name] ?? whole)
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
     .replace(/&lt;/g, "<")
@@ -141,7 +150,7 @@ function clean(raw: string | null | undefined): string | null {
  * both orders are tried. `[^>]*` keeps each match inside a single tag, which is what stops
  * this from running away across the document.
  */
-function meta(html: string, names: string[]): string | null {
+export function meta(html: string, names: string[]): string | null {
   for (const name of names) {
     const key = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const patterns = [
@@ -189,7 +198,7 @@ function parseDate(raw: unknown): { date: Date | null; timezone: string | null }
   return { date, timezone: offset };
 }
 
-type JsonLdNode = Record<string, unknown>;
+export type JsonLdNode = Record<string, unknown>;
 
 /**
  * Every JSON-LD object on the page, flattened.
@@ -197,7 +206,7 @@ type JsonLdNode = Record<string, unknown>;
  * `@graph` and top-level arrays are both common, and an event is routinely nested inside one
  * rather than sitting alone — so the tree is walked instead of only reading the root.
  */
-function jsonLdNodes(html: string, warnings: string[]): JsonLdNode[] {
+export function jsonLdNodes(html: string, warnings: string[]): JsonLdNode[] {
   const out: JsonLdNode[] = [];
   const blocks = html.matchAll(
     /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi

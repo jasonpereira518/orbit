@@ -44,15 +44,22 @@ export function ContactBriefCard({ contactId, standing, nextStep, recentDiscussi
         <CardAction>
           <Button type="button" variant="ghost" size="sm" className="h-7 gap-1.5 text-xs text-muted-foreground" disabled={pending}
             onClick={() => start(async () => {
-              try { await regenerateContactSummary(contactId); router.refresh(); }
+              try {
+                const res = await regenerateContactSummary(contactId);
+                if (res.aiError) toast.error(res.aiError);
+                router.refresh();
+              }
               catch (err) { toast.error(friendlyError(err, "Couldn’t refresh that — try again?")); }
             })}>
             <RefreshCw className="size-3.5" /> {stale ? "Updating…" : "Refresh"}
           </Button>
         </CardAction>
       </CardHeader>
-      <CardContent className="grid gap-5 pt-4 lg:grid-cols-[1.2fr_1fr]">
-        <div className="space-y-4">
+      {/* `minmax(0, …)` tracks, `min-w-0` columns and `wrap-anywhere`: the brief quotes names,
+          companies and pasted URLs verbatim, and one long unbroken word otherwise sets the
+          column's minimum width and pushes the card past a phone's edge. */}
+      <CardContent className="grid grid-cols-1 gap-5 pt-4 wrap-anywhere lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+        <div className="min-w-0 space-y-4">
           <p className="text-sm leading-relaxed text-ink">
             {standing ?? "Log an interaction below and the brief will write itself from your notes."}
           </p>
@@ -81,14 +88,14 @@ export function ContactBriefCard({ contactId, standing, nextStep, recentDiscussi
                       {/* local noon: a date-time string without a zone parses as local time */}
                       {format(new Date(`${d.dateIso}T12:00:00`), "MMM d")}
                     </button>
-                    <span className="text-ink">{d.line}</span>
+                    <span className="min-w-0 text-ink">{d.line}</span>
                   </li>
                 ))}
               </ul>
             </div>
           )}
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">Open next steps</p>
           <ContactNextSteps items={nextSteps} />
         </div>

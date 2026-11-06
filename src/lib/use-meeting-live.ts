@@ -36,7 +36,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { openDeepgramLive, type LiveHandle, type LiveResult } from "@/lib/deepgram-live";
 import { listenParams } from "@/lib/deepgram-params";
-import { labelSpeakers, type LiveWord } from "@/lib/speaker-map";
+import { claimedYou, labelSpeakers, type LiveWord, type SpeakerTimeline } from "@/lib/speaker-map";
 import { LiveCoverageGate } from "@/lib/meeting-live-coverage";
 import { TARGET_SAMPLE_RATE } from "@/lib/voice-recording";
 import type { RecordedMeetingChunk } from "@/lib/use-meeting-recorder";
@@ -86,11 +86,16 @@ export type UseMeetingLiveOptions = {
   /** Where this recorder sits on the meeting's timeline. A resumed meeting starts above 0. */
   offsetMs: () => number;
   /** The recorder's raw per-source loudness — how "you" is told from everyone else. */
-  loudness: () => { micDominantShare: (startMs: number, endMs: number) => number | null };
+  loudness: () => SpeakerTimeline;
   /** The recorder id the session was created or resumed with. */
   recorderId: () => string;
   /** A finished sentence. Already numbered, and posted with the next batch. */
   onSegment: (segment: LiveSegment, opts: { reconnected: boolean }) => void;
+  /**
+   * The user turned out to be the voice posted as `label` since `fromSeq`: relabel those
+   * sentences "you" on screen, as the server does in storage. Optional for older callers.
+   */
+  onYou?: (label: string, fromSeq: number) => void;
   /** Chunks the live path did not cover. Upload them the old way, oldest first. */
   onChunksNeeded: (chunks: RecordedMeetingChunk[]) => void;
   /** Live transcription is off for this meeting; say so once. */
@@ -184,6 +189,13 @@ export function useMeetingLive(options: UseMeetingLiveOptions): MeetingLiveHandl
   const wordsRef = useRef<LiveWord[]>([]);
   const labelsRef = useRef<Map<number, string>>(new Map());
   const labelledAtRef = useRef(0);
+  /** Speakers heard on earlier connections of this recording, so a reconnect numbers on from them. */
+  const speakerOffsetRef = useRef(0);
+  /** The first seq this connection posted: the server relabels "you" from here on, never earlier. */
+  const connectionFromSeqRef = useRef<number | null>(null);
+  /** A "you" claim not yet delivered, and the last one the server took. */
+  const pendingYouRef = useRef<{ label: string; fromSeq: number } | null>(null);
+  const sentYouRef = useRef<string | null>(null);
   const batchRef = useRef<LiveSegment[]>([]);
   const batchFailuresRef = useRef(0);
   /** The next sentence starts a new connection's numbering — the transcript says so. */
@@ -262,16 +274,23 @@ export function useMeetingLive(options: UseMeetingLiveOptions): MeetingLiveHandl
   const postBatch = useCallback(async (): Promise<boolean> => {
     const sessionId = sessionRef.current;
     const segments = batchRef.current;
-    if (!sessionId || segments.length === 0) return true;
+    const you = pendingYouRef.current;
+    if (!sessionId || (segments.length === 0 && !you)) return true;
     batchRef.current = [];
     const coveredMs = segments.reduce((max, s) => Math.max(max, s.endMs), 0);
     try {
       const res = await fetch(`/api/capture/meetings/${encodeURIComponent(sessionId)}/segments`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-orbit-recorder": cb.current.recorderId() },
-        body: JSON.stringify({ segments }),
+        // `you` relabels the sentences this connection posted under that label before it
+        // was known to be the user (`claimedYou`).
+        body: JSON.stringify(you ? { segments, you } : { segments }),
       });
       if (!res.ok) throw new Error(`segments-${res.status}`);
+      if (you && pendingYouRef.current === you) {
+        pendingYouRef.current = null;
+        sentYouRef.current = you.label;
+      }
     } catch {
       // Back at the front of the queue, oldest first, whatever happens next: a reconnect
       // will try them again, and Stop flushes twice before giving up on them.
@@ -283,7 +302,7 @@ export function useMeetingLive(options: UseMeetingLiveOptions): MeetingLiveHandl
       return batchFailuresRef.current < 2;
     }
     batchFailuresRef.current = 0;
-    gateRef.current.advance(coveredMs);
+    if (segments.length) gateRef.current.advance(coveredMs);
     return true;
   }, []);
 
@@ -341,13 +360,19 @@ export function useMeetingLive(options: UseMeetingLiveOptions): MeetingLiveHandl
       for (const word of result.words) {
         wordsRef.current.push({ ...word, start: base + word.start, end: base + word.end });
       }
-      // Labels improve as evidence accumulates — a speaker who has said twenty words is a
-      // far better bet than one who has said three — so they are recomputed periodically
-      // rather than pinned at first sight. Sentences already posted keep the label they had.
+      // Labels are stable per speaker (`speaker-map.ts`); what improves with evidence is who
+      // "you" is, so the map is refreshed periodically — and at once when a voice appears that
+      // has no label yet, or its first sentence would be posted with none.
       const now = Date.now();
-      if (now - labelledAtRef.current >= RELABEL_EVERY_MS) {
+      const unlabelled = result.words.some((w) => w.speaker !== null && !labelsRef.current.has(w.speaker));
+      if (unlabelled || now - labelledAtRef.current >= RELABEL_EVERY_MS) {
         labelledAtRef.current = now;
-        labelsRef.current = labelSpeakers(wordsRef.current, cb.current.loudness());
+        labelsRef.current = labelSpeakers(wordsRef.current, cb.current.loudness(), { offset: speakerOffsetRef.current });
+        const you = claimedYou(wordsRef.current);
+        if (you && you !== sentYouRef.current && pendingYouRef.current?.label !== you && connectionFromSeqRef.current !== null) {
+          pendingYouRef.current = { label: you, fromSeq: connectionFromSeqRef.current };
+          cb.current.onYou?.(you, connectionFromSeqRef.current);
+        }
       }
 
       const seq = cb.current.nextSeq();
@@ -358,6 +383,7 @@ export function useMeetingLive(options: UseMeetingLiveOptions): MeetingLiveHandl
         return;
       }
 
+      if (connectionFromSeqRef.current === null) connectionFromSeqRef.current = seq;
       const speakerId = dominantSpeaker(result.words);
       const speaker = speakerId === null ? null : (labelsRef.current.get(speakerId) ?? null);
       const segment: LiveSegment = {
@@ -506,10 +532,16 @@ export function useMeetingLive(options: UseMeetingLiveOptions): MeetingLiveHandl
       baseMsRef.current = fromMs;
       lastFinalMsRef.current = 0;
       // Deepgram numbers speakers per connection, so evidence from the old one would label
-      // the wrong people. Start again; sentences already posted keep their labels.
+      // the wrong people. Start again, numbering on from the voices already heard so a new
+      // voice never inherits an old label; sentences already posted keep theirs.
+      speakerOffsetRef.current += new Set(
+        wordsRef.current.flatMap((w) => (w.speaker === null ? [] : [w.speaker])),
+      ).size;
       wordsRef.current = [];
       labelsRef.current = new Map();
       labelledAtRef.current = 0;
+      connectionFromSeqRef.current = null;
+      sentYouRef.current = null;
       attemptRef.current = 0;
       batchFailuresRef.current = 0;
       quotaRef.current = { remainingSeconds: token.remainingSeconds, fromMs: audioMsRef.current };
@@ -586,6 +618,10 @@ export function useMeetingLive(options: UseMeetingLiveOptions): MeetingLiveHandl
     wordsRef.current = [];
     labelsRef.current = new Map();
     labelledAtRef.current = 0;
+    speakerOffsetRef.current = 0;
+    connectionFromSeqRef.current = null;
+    pendingYouRef.current = null;
+    sentYouRef.current = null;
     // The audio clock is per RECORDER, not per meeting: a resumed meeting's earlier minutes
     // are added back through `offsetMs()`, the same way the chunker does it.
     audioMsRef.current = 0;

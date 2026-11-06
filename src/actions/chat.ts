@@ -7,15 +7,18 @@ import {
   chatThreads,
   contacts,
   interactions,
+  meetingSessions,
+  meetingTranscriptSegments,
   type ChatRecommendation,
 } from "@/db/schema";
-import { chatWithNetwork } from "@/lib/ai";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { requireUserId } from "@/lib/auth";
 import { prepareChatContext } from "@/lib/chat-context";
-import { maybeGather } from "@/lib/chat-gather";
+import { labelAnswer } from "@/lib/chat-abstention";
+import { rollBackApplied } from "@/lib/chat-auto-apply";
+import { answerWithLookups } from "@/lib/chat-agent-loop";
 import { citedIds, stripUnresolvedMarkers } from "@/lib/chat-evidence";
-import { validateProposedActions } from "@/lib/chat-proposed-actions";
+import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 import {
   buildChatSuggestions,
   GENERIC_SUGGESTIONS,
@@ -23,7 +26,7 @@ import {
   type ChatSuggestion,
 } from "@/lib/chat-suggestions";
 import { loadSuggestionSignals } from "@/lib/chat-suggestions-data";
-import { persistAssistantTurn } from "@/lib/chat-persist";
+import { discardUnansweredQuestion, persistAssistantTurn } from "@/lib/chat-persist";
 import { discardCountAfter, loadVersions, switchVersion } from "@/lib/chat-versions";
 import { isRefineKind, refineDraft } from "@/lib/chat-refine";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
@@ -266,6 +269,40 @@ export async function getEvidenceSnippet(messageId: string, id: string) {
     };
   }
 
+  if (source.kind === "meeting") {
+    const meeting = await db.query.meetingSessions.findFirst({
+      where: and(
+        eq(meetingSessions.id, source.sourceId),
+        eq(meetingSessions.userId, userId),
+        inArray(meetingSessions.status, ["analyzed", "saved"])
+      ),
+      columns: { id: true, title: true, startedAt: true, digest: true },
+    });
+    if (!meeting) return { found: false as const };
+    // The line that was cited, when there is one; otherwise how the meeting went overall.
+    const line =
+      source.startMs === null
+        ? null
+        : await db.query.meetingTranscriptSegments.findFirst({
+            where: and(
+              eq(meetingTranscriptSegments.sessionId, meeting.id),
+              eq(meetingTranscriptSegments.userId, userId),
+              eq(meetingTranscriptSegments.startMs, source.startMs)
+            ),
+            columns: { text: true },
+          });
+    return {
+      found: true as const,
+      kind: "meeting" as const,
+      meetingId: meeting.id,
+      contactId: null,
+      contactName: null,
+      title: meeting.title?.trim() || meeting.digest?.title?.trim() || "Untitled meeting",
+      date: meeting.startedAt.toISOString().slice(0, 10),
+      snippet: (line?.text || meeting.digest?.summary || "").trim().slice(0, 600),
+    };
+  }
+
   const row = await db.query.interactions.findFirst({
     where: and(eq(interactions.id, source.sourceId), eq(interactions.userId, userId)),
     columns: { contactId: true, interactionType: true, interactionDate: true, aiSummary: true, rawNotes: true },
@@ -337,8 +374,13 @@ async function askNetworkInner(
   options?: { threadId?: string; contactId?: string; contextContactIds?: string[] }
 ) {
   const requestStartedAt = Date.now();
+  // Hoisted so the failure path below can reach them: the question is written before the
+  // model runs, and if nothing answers it, it has to go.
+  let askedUserId: string | null = null;
+  let askedMessageId: string | null = null;
   try {
     const userId = await requireUserForSurface("page.chat");
+    askedUserId = userId;
     await consumeBucket("chat", userId, RATE_LIMITS.chat);
     const db = await getDb();
     const threadId = options?.threadId ?? null;
@@ -352,34 +394,23 @@ async function askNetworkInner(
     });
 
     if (threadId) {
-      await db.insert(chatMessages).values({
-        threadId,
-        userId,
-        role: "user",
-        content: ctx.q,
-        attachedContacts: ctx.attachedPeople.map((p) => ({ id: p.id, name: p.name })),
-      });
+      const [userRow] = await db
+        .insert(chatMessages)
+        .values({
+          threadId,
+          userId,
+          role: "user",
+          content: ctx.q,
+          attachedContacts: ctx.attachedPeople.map((p) => ({ id: p.id, name: p.name })),
+        })
+        .returning();
+      askedMessageId = userRow?.id ?? null;
     }
 
-    // The same routing as the streaming route, so the two paths cannot answer differently.
-    const { evidence, notePassages } = await maybeGather(userId, ctx, { requestStartedAt });
-
-    const result = await chatWithNetwork(
-      userId,
-      ctx.scopedQuestion,
-      ctx.modelContacts,
-      ctx.priorTurns,
-      ctx.orgRosters,
-      ctx.attention,
-      ctx.modelRecruiters,
-      ctx.focusProfile,
-      ctx.attachedContext,
-      ctx.goals,
-      ctx.attentionLite,
-      evidence,
-      notePassages,
-      ctx.writingInstructions
-    );
+    // The same answer as the streaming route (`answerWithLookups`), with nothing to stream to.
+    const result = await answerWithLookups(userId, ctx, { onDelta: () => {}, requestStartedAt });
+    // The rounds that looked something up: every round but the last, which writes the answer.
+    const toolRounds = Math.max(0, result.run.rounds - 1);
     const recommendations = ctx.filterRecommendations(
       (result.recommendations || []) as ChatRecommendation[]
     );
@@ -388,13 +419,23 @@ async function askNetworkInner(
     const validIds = new Set(Object.keys(result.evidence));
     const { text: cleanAnswer } = stripUnresolvedMarkers(result.answer, validIds);
     const citedEvidence = Object.fromEntries(citedIds(cleanAnswer).map((id) => [id, result.evidence[id]]));
-    const proposedActions = validateProposedActions(result.proposedActions, ctx.allowedContacts, ctx.contactNames);
+    const proposedActions: StoredProposedAction[] = result.proposals;
 
+    // A turn that applied changes itself and then failed to save would leave them with no card
+    // to undo from (`@/lib/chat-auto-apply`), so they are put back.
     const saved = await persistAssistantTurn(userId, threadId, ctx.thread?.title ?? null, ctx.q, {
       answer: cleanAnswer,
       recommendations,
       evidence: citedEvidence,
       proposedActions,
+      answerOutcome: labelAnswer(cleanAnswer, {
+        citedCount: Object.keys(citedEvidence).length,
+        recommendedCount: recommendations.length,
+      }),
+      metrics: { durationMs: Date.now() - requestStartedAt, toolRounds },
+    }).catch(async (err) => {
+      await rollBackApplied(userId, proposedActions);
+      throw err;
     });
 
     return {
@@ -415,6 +456,16 @@ async function askNetworkInner(
       focusedContactId: options?.contactId?.trim() || null,
     };
   } catch (err) {
+    // The question is already in the thread (it is written before the model runs, carrying
+    // the people attached to it). Nothing answered it, so it does not stay — see
+    // `discardUnansweredQuestion`.
+    if (askedUserId) {
+      await discardUnansweredQuestion(
+        askedUserId,
+        options?.threadId ?? null,
+        askedMessageId
+      ).catch(() => {});
+    }
     // Returned as data, so unlike a throw it is never stripped in production — which
     // made `toUserFacingError` (it keeps `err.message`) a leak that reached users. On the
     // server the real error is still in hand, so `friendlyError` can recognise a genuine

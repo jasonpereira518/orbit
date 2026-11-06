@@ -13,6 +13,7 @@ import { SkyHint } from "@/components/interest/sky-hint";
 import { FooterWordmark } from "@/components/landing/footer-wordmark";
 import { FaqList, type FaqItem } from "@/components/marketing/faq-list";
 import { FeaturePoll, type FeaturePollInitial } from "@/components/interest/feature-poll";
+import { SIGNUP_OPEN_STOPS, signupOpenHero } from "@/components/interest/signup-open-copy";
 import { EarlyAccessPath, JourneyTitle } from "@/components/interest/early-access-path";
 import { PillarArt, type PillarArtKind } from "@/components/interest/pillar-art";
 import { getWaitlistOrigin, getWaitlistPageUrl } from "@/lib/app-url";
@@ -34,6 +35,7 @@ import {
 import { getWaitlistDemoEnabled } from "@/lib/waitlist-demo";
 import { getPollInitial } from "@/lib/waitlist-poll-votes";
 import { BASE_STARS, POLL_VOTER_COOKIE } from "@/lib/waitlist-poll";
+import { getSiteMode } from "@/lib/site-access";
 import { isWaitlistHostHeader } from "@/lib/waitlist-host";
 
 // The proof line, the invited strip and the pass all come from the URL and the database
@@ -71,7 +73,8 @@ export async function generateMetadata({
   const params = await searchParams;
   const origin = getWaitlistOrigin();
   const base: Metadata = {
-    title: TITLE,
+    // Absolute: the waitlist is its own surface and does not carry the app's "· Orbit" suffix.
+    title: { absolute: TITLE },
     description: DESCRIPTION,
     metadataBase: new URL(origin),
     // Replaces the root layout's icon list, which names the product's logo file. The
@@ -222,6 +225,9 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
   const onWaitlistHost = await servedOnWaitlistHost();
   const pagePath = onWaitlistHost ? "/" : "/interest";
   const privacyHref = onWaitlistHost ? "/privacy" : "/interest/privacy";
+  // On the app domain with sign-up open, the "opening in waves" story is stale: say Orbit is open.
+  // The waitlist host never reads the mode, so its render and latency are unchanged.
+  const isSignupOpen = !onWaitlistHost && !(await getSiteMode()).stealth;
 
   // The proof line never depends on either token, so it runs alongside the pass.
   const voterId = await readVoterId();
@@ -296,10 +302,15 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
         </div>
       </header>
 
-      <main className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-20 pt-6 md:px-10 md:pt-10">
+      <main id="main-content" className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-20 pt-6 md:px-10 md:pt-10">
         <div className="relative">
           <RingsBackdrop />
-          <InterestHero initial={initial} pageUrl={getWaitlistPageUrl()} pagePath={pagePath} />
+          <InterestHero
+            initial={initial}
+            pageUrl={getWaitlistPageUrl()}
+            pagePath={pagePath}
+            signupOpen={isSignupOpen ? signupOpenHero(initial.kind === "ticket") : undefined}
+          />
         </div>
 
         <Reveal className="reveal-celestial mt-20 block">
@@ -396,6 +407,7 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
               planet={ticket?.planet ?? null}
               joinHref="#interest-join"
               tiersHref="#waitlist-referrals"
+              openStops={isSignupOpen ? SIGNUP_OPEN_STOPS : undefined}
             />
           </Reveal>
         </section>

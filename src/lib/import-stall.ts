@@ -20,8 +20,17 @@ import { reportError } from "@/lib/report-error";
  * `RESUMABLE_IMPORT_TYPES` stays the single list of what may be resumed at all.
  */
 
-/** How long a server-owned import must be untouched before this backstop resumes it. */
-export const CRON_STALL_THRESHOLD_MS = 3 * 60 * 1000;
+/**
+ * How long a server-owned import must be untouched before this backstop resumes it.
+ *
+ * Longer than the continue route's `maxDuration` (300 s) so the previous runner is
+ * guaranteed dead by then; a shorter wait let a second runner claim rows the first was
+ * still processing.
+ *
+ * ponytail: no row lease. If duplicates still appear, add claim_token / lease_until the way
+ * `src/lib/relationship-engine/runner.ts` does.
+ */
+export const CRON_STALL_THRESHOLD_MS = 6 * 60 * 1000;
 
 /** Resumes allowed before giving up. The fourth stall marks the job failed. */
 export const MAX_STALL_RESUMES = 3;
@@ -45,6 +54,23 @@ export const STALL_SWEEP_LIMIT = 50;
 export async function kickImportContinuation(importId: string): Promise<void> {
   const res = await internalFetch(`/api/imports/${importId}/continue`, { method: "POST" });
   if (!res.ok) throw new Error(`import continuation kick answered ${res.status}`);
+}
+
+/**
+ * Start a job the caller just created in its own 300s invocation.
+ *
+ * A Server Action's `after()` runs inside the invoking page's function, so a job started
+ * from a 60s page (the recruiter scans, which the integrations dialog can start anywhere)
+ * was killed at ~60s against its 4.5-minute budget and sat until the stall sweep. When the
+ * kick is refused (no `CRON_SECRET` in local dev, a network error), run the job here as
+ * before: the jobs are safe to start twice.
+ */
+export async function startJobInOwnInvocation(importId: string, runHere: (importId: string) => Promise<void>): Promise<void> {
+  try {
+    await kickImportContinuation(importId);
+  } catch {
+    await runHere(importId);
+  }
 }
 
 export type StallSweepResult = {

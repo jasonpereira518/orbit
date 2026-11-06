@@ -9,6 +9,7 @@ import { hashSourceNote } from "@/lib/suggested-reminder-utils";
 import type { CaptureParseHints } from "@/lib/ai";
 import { runCaptureParse } from "@/lib/capture-parse";
 import { captureSourceKinds } from "@/lib/note-batches";
+import { trackCaptureSaved } from "@/lib/capture-events";
 import {
   captureImageFiles,
   normalizeCaptureInput,
@@ -31,7 +32,8 @@ import {
 } from "@/lib/capture-limits";
 import { getDb } from "@/db";
 import { resolveAvatarNow } from "@/lib/avatar-backfill";
-import { downloadAndPersistAvatar, fetchLinkedInPhotoUrl } from "@/lib/contact-avatar";
+import { downloadAndPersistAvatar } from "@/lib/contact-avatar";
+import { resolveLinkedInPhotoCached } from "@/lib/shared-avatars";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { kickWorkHistoryResearch, linkedInCaptureContactIds } from "@/lib/work-history-research";
 import {
@@ -244,6 +246,18 @@ export async function confirmBulkCapture(
         : null,
   });
 
+  // The reviewed-and-confirmed path has no capture job, so the batch id stands in for it: one
+  // `capture_saved` per batch, however many times the action is reached.
+  trackCaptureSaved(
+    {
+      id: out.batchId,
+      userId,
+      sourceKind: batch.meeting ? "meeting" : "messy",
+      sources: [...(batch.sources ?? []), ...(batch.photoIds?.length ? ["photos"] : [])],
+    },
+    { created: out.created, updated: out.updated }
+  );
+
   // After the save, not inside it: a photo is a record of where the notes came from, and a
   // failure to claim one must not roll back contacts and reminders the person just reviewed.
   if (batch.photoIds?.length) {
@@ -264,7 +278,7 @@ export async function confirmBulkCapture(
     const db = await getDb();
     await resolveAvatarNow(db, userId, out.contactIds[0]!, {
       persistRemote: downloadAndPersistAvatar,
-      resolveLinkedIn: (id, url) => fetchLinkedInPhotoUrl(id, url, userId),
+      resolveLinkedIn: (id, url) => resolveLinkedInPhotoCached(id, url, userId),
     });
   }
 

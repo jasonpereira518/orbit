@@ -10,7 +10,7 @@
  * inference as something they were told, which is the failure this split exists to prevent.
  */
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { CalendarClock, ChevronDown, ChevronUp, Lightbulb } from "lucide-react";
 import type { SuggestionReviewItem } from "@/components/chat/bulk-notes-panel";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -21,7 +21,7 @@ import { shortDayLabel } from "@/lib/reminder-due-bucket";
 import { cn } from "@/lib/utils";
 import type { RejectedCounts } from "@/lib/date-commitment-extract";
 import { skippedNoteText } from "@/lib/capture/skipped-note";
-
+import { REMINDER_TITLE_MAX } from "@/lib/capture/review-reducer";
 export type ReviewablePerson = { key: string; name: string };
 
 export function SuggestedRemindersReview({
@@ -109,6 +109,7 @@ function ReminderRow({
   people: ReviewablePerson[];
   update: (key: string, patch: Partial<SuggestionReviewItem>) => void;
 }) {
+  const uid = useId();
   return (
     <li className="space-y-2 rounded-xl border border-border/60 bg-card p-3">
       <div className="flex items-start gap-2">
@@ -122,28 +123,36 @@ function ReminderRow({
           <Input
             value={item.title}
             onChange={(e) => update(item.key, { title: e.target.value })}
+            maxLength={REMINDER_TITLE_MAX}
             aria-label="Reminder title"
           />
 
           <div className="grid gap-2 sm:grid-cols-2">
             <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Date</Label>
+              <Label htmlFor={`${uid}-date`} className="text-xs text-muted-foreground">
+                Date
+              </Label>
               <DatePickerButton
+                id={`${uid}-date`}
+                aria-describedby={item.yearInferred ? `${uid}-year` : undefined}
                 value={item.dueDateIso}
                 onSelect={(ymd) => update(item.key, { dueDateIso: ymd })}
                 label={item.dueDateIso ? shortDayLabel(item.dueDateIso) : "Pick a date"}
                 className={cn("w-full justify-start font-normal", item.yearInferred && "ring-1 ring-amber-500/50")}
               />
               {item.yearInferred && (
-                <p className="text-xs text-amber-700 dark:text-warning">
+                <p id={`${uid}-year`} className="text-xs text-amber-700 dark:text-warning">
                   Year not stated — assumed {item.dueDateIso.slice(0, 4)}
                 </p>
               )}
             </div>
 
             <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Contact</Label>
+              <Label htmlFor={`${uid}-contact`} className="text-xs text-muted-foreground">
+                Contact
+              </Label>
               <select
+                id={`${uid}-contact`}
                 className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
                 value={item.personNameOverride ?? ""}
                 onChange={(e) =>
@@ -187,7 +196,7 @@ function SourceLine({ item }: { item: SuggestionReviewItem }) {
           : `from “${item.rawDatePhrase ?? ""}”`}
       </button>
       {!implied && item.dateBasis !== "absolute" && (
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-2xs text-muted-foreground">
           {" "}
           · counted from {item.anchorIso}
           {item.dateBasis === "vague" ? " (no date given, default 2 weeks)" : ""}

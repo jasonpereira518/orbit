@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { canConnect } from "@/lib/connection-limits";
 import { auth } from "@clerk/nextjs/server";
+import { kickSyncPass } from "@/lib/sync-kick";
 import { consumeOutlookOAuthState } from "@/actions/outlook";
 import {
   exchangeCodeForTokens,
@@ -10,6 +11,7 @@ import {
 import { isDemoMode } from "@/lib/auth";
 import { missingMicrosoftPurposes, serializeMicrosoftPurposes } from "@/lib/microsoft-scopes";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
+import { dropCloudNoteSource, syncCloudNoteSource } from "@/lib/cloud-notes/sources";
 
 /** Keeps `error_events.kind` low-cardinality so the admin console can group on it. */
 function classifyOAuthFailure(err: unknown): string {
@@ -105,6 +107,13 @@ export async function GET(request: Request) {
       redirectBase.searchParams.set("reason", "missing_scope");
       return NextResponse.redirect(redirectBase);
     }
+
+    // Armed means due now; see the Google callback for why the kick is worth firing.
+    // Cloud notes: an account switch points the cursor at someone else's drive.
+    if (switchedFrom) await dropCloudNoteSource(sessionUserId, "microsoft");
+    await syncCloudNoteSource(sessionUserId, "microsoft", connection?.scopes);
+
+    if (connection?.nextSyncAt) after(() => kickSyncPass());
 
     redirectBase.searchParams.set("outlook", "connected");
     return NextResponse.redirect(redirectBase);

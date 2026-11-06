@@ -183,7 +183,7 @@ export function TimelineDateScrubber({
         className
       )}
     >
-      <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+      <p className="mb-2 text-3xs font-medium uppercase tracking-wide text-muted-foreground">
         Jump
       </p>
       <nav
@@ -271,7 +271,7 @@ export function TimelineDateScrubber({
               {showLabels ? (
                 <span
                   className={cn(
-                    "text-[10px] leading-none transition-colors",
+                    "text-3xs leading-none transition-colors",
                     isActive
                       ? "font-semibold text-primary"
                       : "text-muted-foreground group-hover:text-foreground"
@@ -284,7 +284,7 @@ export function TimelineDateScrubber({
           );
         })}
       </nav>
-      <p className="mt-2 max-w-full truncate text-center text-[10px] text-muted-foreground">
+      <p className="mt-2 max-w-full truncate text-center text-3xs text-muted-foreground">
         {footer ?? "—"}
       </p>
     </div>

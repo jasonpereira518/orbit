@@ -3,7 +3,6 @@ import {
   LayoutDashboard,
   Users,
   Sparkles,
-  Upload,
   Send,
   MessageSquare,
   Network,
@@ -13,6 +12,8 @@ import {
   BookOpen,
   PartyPopper,
   Radar,
+  AudioLines,
+  UserSearch,
 } from "lucide-react";
 
 export type AppNavItem = {
@@ -57,11 +58,6 @@ const CAPTURE: AppNavItem = {
   label: "Capture",
   icon: Sparkles,
 };
-const IMPORTS: AppNavItem = {
-  href: "/imports",
-  label: "Imports",
-  icon: Upload,
-};
 const EVENTS: AppNavItem = {
   href: "/events",
   label: "Events",
@@ -95,6 +91,16 @@ const RADAR: AppNavItem = {
   label: "Radar",
   icon: Radar,
 };
+const MEETINGS: AppNavItem = {
+  href: "/meetings",
+  label: "Meetings",
+  icon: AudioLines,
+};
+const FIND: AppNavItem = {
+  href: "/find",
+  label: "Find people",
+  icon: UserSearch,
+};
 const KNOWLEDGE: AppNavItem = {
   href: "/knowledge",
   label: "Knowledge",
@@ -107,21 +113,21 @@ export const APP_NAV_CORE: AppNavItem[] = [
   RADAR,
   CONTACTS,
   CAPTURE,
+  MEETINGS,
   REMINDERS,
   CHAT,
-  IMPORTS,
   CONSTELLATION,
 ];
 
 /**
- * Items under the "Coming soon" divider (Settings is rendered separately).
+ * Default-secondary destinations (Settings is rendered separately).
  *
- * The name is stale for Knowledge, which has shipped — it stays in this group rather than
- * moving up to `APP_NAV_CORE` because the divider's label describes Events and Outreach,
- * the two items that actually are coming soon (`comingSoon` in `src/lib/surfaces.ts`), and
- * splitting the group over one released item was a deliberate no per product decision.
+ * The sidebar no longer treats this as "the group under the Coming soon divider": it merges
+ * core and extras, applies the operator's order, and puts whatever is currently marked
+ * coming soon below the divider (see `AppSidebar`). Kept as a separate list as the code's
+ * default order.
  */
-export const APP_NAV_EXTRAS: AppNavItem[] = [EVENTS, OUTREACH, KNOWLEDGE];
+export const APP_NAV_EXTRAS: AppNavItem[] = [FIND, EVENTS, OUTREACH, KNOWLEDGE];
 
 export const APP_NAV_SETTINGS: AppNavItem = {
   href: "/settings",
@@ -148,8 +154,9 @@ export const MOBILE_BOTTOM_NAV: Array<
 export const MOBILE_MORE_NAV = [
   RADAR,
   REMINDERS,
-  IMPORTS,
   CONSTELLATION,
+  MEETINGS,
+  FIND,
   EVENTS,
   OUTREACH,
   KNOWLEDGE,

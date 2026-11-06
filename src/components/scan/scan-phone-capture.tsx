@@ -231,7 +231,7 @@ export function ScanPhoneCapture({ token }: { token: string }) {
                     alt={`Page ${i + 1}`}
                     className="aspect-[3/4] w-full rounded-lg border border-border/60 object-cover"
                   />
-                  <span className="absolute left-1 top-1 rounded-md bg-black/60 px-1.5 py-0.5 text-[11px] font-medium text-white">
+                  <span className="absolute left-1 top-1 rounded-md bg-black/60 px-1.5 py-0.5 text-2xs font-medium text-white">
                     {i + 1}
                   </span>
                   <button

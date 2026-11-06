@@ -236,7 +236,7 @@ export function ContactOpportunitiesSection({
                           <Badge variant="secondary">{opportunityKindLabel(o.kind)}</Badge>
                           <span
                             className={cn(
-                              "rounded-4xl border px-2 py-0.5 text-[11px] font-medium",
+                              "rounded-4xl border px-2 py-0.5 text-2xs font-medium",
                               STATUS_CLASS[toneFor(o.status)]
                             )}
                           >
@@ -262,7 +262,7 @@ export function ContactOpportunitiesSection({
                                 aria-pressed={false}
                                 disabled={pending}
                                 onClick={() => changeStatus(o, s.value)}
-                                className="rounded-4xl border border-border/60 px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none disabled:opacity-50"
+                                className="rounded-4xl border border-border/60 px-2 py-0.5 text-2xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none disabled:opacity-50"
                               >
                                 {s.label}
                               </button>

@@ -3,7 +3,8 @@ import {
   ATTRIBUTION_COOKIE,
   parseAttribution,
 } from "@/lib/attribution-parse";
-import { recordDirectVisit, recordFirstTouch } from "@/lib/attribution";
+import { attributionPending, recordDirectVisit, recordFirstTouch } from "@/lib/attribution";
+import { claimSiteInviteGrant } from "@/lib/site-invites";
 
 /**
  * Move the first-touch cookie into the account row, once.
@@ -29,8 +30,15 @@ export async function captureAttribution(userId: string): Promise<void> {
     const attribution = parseAttribution(raw);
 
     if (attribution) {
-      await recordFirstTouch(userId, attribution);
+      await recordFirstTouch(userId, attribution, "cookie");
     } else {
+      // No cookie. An invited account's cookie lives on the waitlist host, so this is the
+      // normal shape of an invited sign-up, and the waitlist row holds its real channel. The
+      // Clerk webhook that links the account to that row can land AFTER this first render, so
+      // while the account is still unattributed the link is made here first (one Clerk call,
+      // once per account: `attributionPending` is false from then on). It also fills the
+      // ledger for a webhook that never arrives.
+      if (await attributionPending(userId)) await claimSiteInviteGrant(userId);
       await recordDirectVisit(userId);
     }
   } catch {

@@ -1,19 +1,24 @@
 import { formatLastTouch } from "@/lib/relative-date";
 import { ConstellationPinButton } from "@/components/contacts/constellation-pin-button";
+import { HealthSparkline } from "@/components/contacts/health-sparkline";
+import { StatPillExplainer } from "@/components/contacts/stat-pill-explainer";
 import { Badge } from "@/components/ui/badge";
 import {
   closenessPercentChipClass,
   type ClosenessBreakdown,
 } from "@/lib/closeness";
-import { cn } from "@/lib/utils";
+import type { RelationshipHealth } from "@/lib/relationship-health";
 
 export function ContactStatPills({
   closeness,
   lastTouchAt,
   hasLoggedInteraction,
+  health,
   constellation,
 }: {
   closeness: ClosenessBreakdown;
+  /** Null when there is no touch in the window to score — the pill is left out. */
+  health?: RelationshipHealth | null;
   lastTouchAt: Date | string | null;
   /**
    * Whether an `interactions` row exists. `lastTouchAt` falls back to
@@ -44,15 +49,50 @@ export function ContactStatPills({
     // `items-center` so the constellation button sits on the same baseline as the badges —
     // it is a real button and slightly taller than they are.
     <div className="flex flex-wrap items-center gap-2">
-      <Badge
-        variant="secondary"
-        className={cn(
-          "rounded-full px-3 py-1 text-xs font-medium",
-          closenessPercentChipClass(closeness.closeness)
-        )}
+      <StatPillExplainer
+        label={`Closeness ${pct}%. Show what this means.`}
+        className={closenessPercentChipClass(closeness.closeness)}
+        title={`Closeness ${pct}% · how much they matter`}
+        body={
+          <>
+            <p className="text-muted-foreground">
+              Where this person sits in your network: your rating, how recently and how often
+              you&apos;re in touch, and how they fit your goals — ranked against everyone else
+              you know.
+            </p>
+            <p className="border-t pt-2 text-muted-foreground">
+              Health, next to it, is how the conversation itself is going: reply speed, who
+              writes, and recency.
+            </p>
+          </>
+        }
       >
         Closeness {pct}%
-      </Badge>
+      </StatPillExplainer>
+      {health ? (
+        <HealthSparkline health={health} />
+      ) : (
+        // Shown rather than left out: a missing pill reads as a bug, not as "no data".
+        <StatPillExplainer
+          label="Health: nothing recent to score. Show what this means."
+          className="border border-dashed border-border bg-transparent font-normal text-muted-foreground"
+          title="Health · nothing recent to score"
+          body={
+            <>
+              <p className="text-muted-foreground">
+                Health scores how the conversation is going — reply speed, who writes, and
+                recency — from messages, emails and meetings in the last nine months. There
+                haven&apos;t been any with this person in that time.
+              </p>
+              <p className="text-muted-foreground">
+                Log a touch, or import your LinkedIn messages or email, and it will appear.
+              </p>
+            </>
+          }
+        >
+          Health —
+        </StatPillExplainer>
+      )}
       <Badge
         variant="secondary"
         className="rounded-full px-3 py-1 text-xs font-medium capitalize"

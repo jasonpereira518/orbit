@@ -252,14 +252,14 @@ export function ScanCamera({
                   className="h-16 rounded-md border border-border/60 object-cover"
                   style={{ aspectRatio: VIEWFINDER_STYLE.aspectRatio }}
                 />
-                <span className="absolute bottom-0 left-0 rounded-br-lg rounded-tl-lg bg-black/60 px-1 text-[10px] text-white">
+                <span className="absolute bottom-0 left-0 rounded-br-lg rounded-tl-lg bg-black/60 px-1 text-3xs text-white">
                   {i + 1}
                 </span>
                 <button
                   type="button"
                   onClick={() => discard(page.id)}
                   aria-label={`Discard page ${i + 1}`}
-                  className="absolute -right-1.5 -top-1.5 grid size-5 place-items-center rounded-full border border-border bg-card text-muted-foreground hover:text-ink"
+                  className="tap-target absolute -right-2 -top-2 grid size-6 place-items-center rounded-full border border-border bg-card text-muted-foreground hover:text-ink"
                 >
                   <X className="size-3" />
                 </button>

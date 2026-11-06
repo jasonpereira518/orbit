@@ -88,6 +88,7 @@ export const CONTEXT_CODES: ReadonlySet<string> = new Set([
   "stated_close",
   "target_company",
   "goal_match",
+  "focus_match",
   "touched_recently",
   "dismissed_recently",
   "already_scheduled",
@@ -103,6 +104,36 @@ export type RadarReason = { code: string; label: string; points: number };
  */
 export function leadReason(reasons: readonly RadarReason[]): RadarReason | undefined {
   return reasons.find((r) => r.points > 0 && !CONTEXT_CODES.has(r.code) && !r.code.startsWith("also:"));
+}
+
+/** A new role or title: news to congratulate. */
+export const JOB_MOVE_CODE = "job_change";
+/** A departure with no new role yet: a check-in, never a congratulation. */
+export const JOB_LEFT_CODE = "job_change_left";
+
+/** The intent a draft is written to, per email reason: fixed words, never third-party text. */
+export const EMAIL_DRAFT_INTENTS: Readonly<Record<string, string>> = {
+  email_prep: "an interview or call coming up",
+  email_followup: "a reply you owe them from your email",
+  email_job: "a role that came up at their company",
+  email_process: "a hiring process you are in at their company",
+  email_news: "news from their company",
+  email_event: "an event you were invited to",
+};
+
+/**
+ * What a draft is for, in the card's own words, so it is about the reason the card exists.
+ * The intent goes into the draft prompt unfenced, and a card built from mail carries a sentence
+ * a model wrote from someone else's email, so it gets a fixed phrase instead. Both the nightly
+ * drafts and the card's on-demand draft sheet call this, so one rule covers both.
+ */
+export function draftIntent(target: { kind: RecommendationKind; reasons: readonly RadarReason[] }): string {
+  const lead = leadReason(target.reasons);
+  const fixed = lead ? EMAIL_DRAFT_INTENTS[lead.code] : undefined;
+  if (fixed) return `${KIND_LABELS[target.kind]}: ${fixed}`;
+  if (lead?.code === JOB_MOVE_CODE) return `Congratulate them on the new role: ${lead.label}. Warm and short; no ask.`;
+  if (lead?.code === JOB_LEFT_CODE) return `Check in after their move: ${lead.label}. Don't congratulate them.`;
+  return lead ? `${KIND_LABELS[target.kind]}: ${lead.label}` : KIND_LABELS[target.kind];
 }
 
 /**

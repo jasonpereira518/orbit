@@ -62,7 +62,7 @@ export function ClosenessControl({
                 />
               )}
               <span className="relative z-10 text-sm font-semibold tabular-nums">{level.value}</span>
-              <span className="relative z-10 hidden text-[10px] leading-tight sm:block">{level.label}</span>
+              <span className="relative z-10 hidden text-3xs leading-tight sm:block">{level.label}</span>
             </label>
           );
         })}
