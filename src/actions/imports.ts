@@ -1,5 +1,6 @@
 "use server";
 
+import { requirePageUser } from "@/lib/plan-guards";
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
@@ -167,7 +168,7 @@ const MAX_YOU_FILE_CHARS = 2_000_000;
  * other previews: a thrown message is stripped in production.
  */
 export async function previewLinkedInYou(target: YouTarget, text: string) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   if (!isYouTarget(target) || text.length > MAX_YOU_FILE_CHARS) {
     return refusal("That file isn’t one Orbit can read for your profile.");
   }
@@ -184,7 +185,7 @@ export async function previewLinkedInYou(target: YouTarget, text: string) {
  * Skills never disturbs the headline, and writes `sender_bio` only when the patch carries one.
  */
 export async function applyLinkedInYou(input: { target: YouTarget; text: string; keys: string[] }) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   if (!isYouTarget(input.target) || input.text.length > MAX_YOU_FILE_CHARS) {
     return refusal("That file isn’t one Orbit can read for your profile.");
   }
@@ -210,7 +211,7 @@ export async function clearLinkedInYou() {
 }
 
 export async function previewLinkedInCsv(csvText: string) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   // parseLinkedInConnectionsCsv throws for expected validation failures (empty
   // file, wrong export type, no rows found). Server Actions strip thrown error
   // messages in production, replacing them with a generic digest — so those
@@ -290,7 +291,7 @@ export async function startLinkedInImport(
   fileName: string,
   selectedIds?: string[],
 ): Promise<{ importId: string; totalRows: number }> {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   const db = await getDb();
 
   const { rows } = parseLinkedInConnectionsCsv(csvText);
@@ -729,7 +730,7 @@ async function storedSelfLinkedInUrl(userId: string): Promise<string | null> {
  * like a Connections export" is only worth writing if it reaches the person.
  */
 export async function previewLinkedInMessagesCsv(csvText: string) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   let parsed: ReturnType<typeof parseLinkedInMessagesCsv>;
   try {
     parsed = parseLinkedInMessagesCsv(csvText);
@@ -849,7 +850,7 @@ export async function startLinkedInMessagesImport(
   fileName: string,
   selectedConversationIds?: string[],
 ): Promise<{ importId: string; totalRows: number }> {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   const db = await getDb();
 
   const { messages } = parseLinkedInMessagesCsv(csvText);
@@ -1066,7 +1067,7 @@ export async function previewCalendarImport(payload: {
   kind: "ics" | "csv";
   text: string;
 }) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   const db = await getDb();
   const existing = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
@@ -1178,7 +1179,7 @@ export async function confirmCalendarImport(payload: {
   fileName: string;
   createFollowUps?: boolean;
 }): Promise<{ importId: string; totalRows: number }> {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   const db = await getDb();
   const createFollowUps = payload.createFollowUps !== false;
 
@@ -1294,7 +1295,7 @@ export async function previewGoogleContacts(): Promise<{
   contactsScopeGranted: boolean;
   people: GoogleContactPerson[];
 }> {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   if (await isDemoWorkspace(userId)) {
     return { connected: true, contactsScopeGranted: true, people: await demoAddressBookPreview(userId) };
   }
@@ -1375,7 +1376,7 @@ export async function previewGoogleContacts(): Promise<{
 export async function confirmGoogleContactsImport(
   selectedIds: string[],
 ): Promise<{ importId: string; totalRows: number }> {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   if (await isDemoWorkspace(userId)) {
     return recordDemoContactsImport(userId, "google_contacts", selectedIds.length);
   }
@@ -1446,7 +1447,7 @@ export async function previewOutlookContacts(): Promise<{
   contactsScopeGranted: boolean;
   people: OutlookContactPerson[];
 }> {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   if (await isDemoWorkspace(userId)) {
     const people = await demoAddressBookPreview(userId);
     return {
@@ -1524,7 +1525,7 @@ export async function previewOutlookContacts(): Promise<{
 export async function confirmOutlookContactsImport(
   selectedIds: string[],
 ): Promise<{ importId: string; totalRows: number }> {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   if (await isDemoWorkspace(userId)) {
     return recordDemoContactsImport(userId, "outlook_contacts", selectedIds.length);
   }
@@ -1623,7 +1624,7 @@ export async function previewContactsFile(
       warnings: string[];
     }
 > {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   let parsed: ReturnType<typeof parseContactsFile>;
   try {
     parsed = parseContactsFile(text, fileName);
@@ -1717,7 +1718,7 @@ export async function confirmContactsFileImport(
   fileName: string,
   selectedIds: string[],
 ): Promise<{ importId: string; totalRows: number }> {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   const db = await getDb();
 
   // Throws on a file the preview would have refused — the client only gets here from a
@@ -1802,7 +1803,7 @@ const PHOTO_MATCH_CHUNK = 500;
  * its next tick, the same as any other remote photo.
  */
 export async function matchGooglePhotos(): Promise<GooglePhotoMatchResult> {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   if (await isDemoWorkspace(userId)) {
     return { connected: true, contactsScopeGranted: true, matched: 0, remaining: 0 };
   }

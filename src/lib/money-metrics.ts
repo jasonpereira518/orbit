@@ -170,8 +170,8 @@ export type CostToRunPoint = {
 /**
  * What Orbit costs the people who use it, as a DISTRIBUTION rather than an average.
  *
- * Partly the users' money and partly Orbit's (own keys on Free and Lifetime; included AI
- * on Pro and Max is the costs page's "On Orbit's AI keys" tile) — but it is the
+ * Partly the users' money (their own keys, on any plan) and partly Orbit's (included AI
+ * on every plan, the costs page's "On Orbit's AI keys" tile) — but it is the
  * number that decides whether BYOK stays viable, and a mean hides the only interesting
  * case. One power user at fifty times the median is the whole story, and an average
  * reports it as a mild uptick.
@@ -251,13 +251,12 @@ export async function costToRunPerUser(
 }
 
 /**
- * Where the AI money goes, for the window retention still covers.
+ * Where the AI money goes, for the window retention still covers: by model, by operation, and
+ * the heaviest accounts — every key, the users' own included, plus Deepgram priced from
+ * `speech_usage` inside `topSpenders` (an account's voice minutes are part of what it costs).
  *
- * `orbitKeyMicros` is the managed-AI figure: `managedCostSql()` (the ops / credit definition,
- * with its stand-in for unpriced calls), Orbit's keys only, Deepgram rows excluded — the SAME
- * number `managedAiCostMicros`, the credits section and the ops sweep report. Deepgram is
- * priced from `speech_usage` and reported on its own (`deepgramMicros`), then shown inside
- * `topSpenders`, where an account's voice minutes are part of what it costs.
+ * The managed-AI total is NOT here: it is `managedAiCostMicros` (`credits/admin-credits.ts`),
+ * the one reader of Orbit-key cost, so no page can compute it a second way.
  */
 export async function costToRunBreakdown(days = 30) {
   const db = await getDb();
@@ -265,7 +264,7 @@ export async function costToRunBreakdown(days = 30) {
   const notInternal = sql`NOT ${internalAccountSql(sql`${usageEvents.userId}`)}`;
   const windowed = and(gte(usageEvents.createdAt, since), notInternal);
 
-  const [byModel, byOperation, topSpenders, byOwner, speech] = await Promise.all([
+  const [byModel, byOperation, topSpenders] = await Promise.all([
     db
       .select({
         label: sql<string>`${usageEvents.provider} || ' / ' || ${usageEvents.model}`,
@@ -306,19 +305,6 @@ export async function costToRunBreakdown(days = 30) {
       ORDER BY sum(t.micros) DESC, t.user_id
       LIMIT 10
     `),
-    db
-      .select({
-        orbit: sql<string>`coalesce(sum(${managedCostSql()}) FILTER (WHERE ${usageEvents.keyOwner} = 'orbit' AND ${usageEvents.provider} <> 'deepgram'), 0)::bigint`,
-        user: sql<string>`coalesce(sum(${usageEvents.estimatedCostMicros}) FILTER (WHERE ${usageEvents.keyOwner} = 'user'), 0)::bigint`,
-      })
-      .from(usageEvents)
-      .where(windowed),
-    db.execute(sql`
-      SELECT round(coalesce(sum(${speechMicrosSql()}), 0))::bigint AS micros
-      FROM speech_usage
-      WHERE speech_usage.created_at >= ${since}
-        AND NOT ${internalAccountSql(sql`speech_usage.user_id`)}
-    `),
   ]);
 
   const shape = (rows: Array<{ label: string; micros: string; calls: string }>) =>
@@ -332,10 +318,6 @@ export async function costToRunBreakdown(days = 30) {
       micros: num(r.micros),
       calls: num(r.calls),
     })),
-    orbitKeyMicros: num(byOwner[0]?.orbit),
-    userKeyMicros: num(byOwner[0]?.user),
-    /** Deepgram dollars over the window, priced from `speech_usage`. Not part of `orbitKeyMicros`. */
-    deepgramMicros: num(rowsOf<{ micros: string }>(speech)[0]?.micros),
   };
 }
 
@@ -455,6 +437,31 @@ export async function compedForegoneCents(): Promise<{
 }
 
 /**
+ * The comped accounts themselves, newest first: one targeted read of `user_settings` rather
+ * than the whole admin roster. Internal and tester accounts are left out, as in
+ * `compedForegoneCents`.
+ */
+export async function compedAccounts() {
+  const db = await getDb();
+  return db
+    .select({
+      userId: userSettings.userId,
+      email: userSettings.email,
+      plan: userSettings.compedPlan,
+      note: userSettings.compedNote,
+      compedAt: userSettings.compedAt,
+    })
+    .from(userSettings)
+    .where(
+      and(
+        sql`${userSettings.compedPlan} IS NOT NULL`,
+        sql`NOT ${internalAccountSql(sql`${userSettings.userId}`)}`
+      )
+    )
+    .orderBy(desc(userSettings.compedAt));
+}
+
+/**
  * Recurring revenue currently at risk (Pro and Max), in money: past-due subscriptions (still
  * counted in MRR at full value) and pending cancellations (still paid through). Internal and
  * comped accounts are excluded, and a subscription with no recorded price is valued at its
@@ -550,6 +557,8 @@ export const KNOWN_GATES = [
   "backgroundFloor",
   "speechShortform",
   "speechMeeting",
+  // A page an operator limited to some tiers (`setSurfaceTiers`).
+  "page",
 ] as const;
 
 /* ------------------------------------------------------------ lifetime sales ------- */
@@ -646,6 +655,8 @@ export type HeavyUser = {
 export async function planUnitEconomics(now = new Date()): Promise<{
   rows: PlanEconomicsRow[];
   heavyUsers: HeavyUser[];
+  /** Every account's month figures, so a page can price accounts ranked by another reader. */
+  byAccount: ReadonlyMap<string, HeavyUser>;
   monthStart: Date;
 }> {
   const db = await getDb();
@@ -715,6 +726,7 @@ export async function planUnitEconomics(now = new Date()): Promise<{
     ECONOMICS_PLANS.map((plan) => [plan, { plan, accounts: 0, revenueCents: 0, costMicros: 0, marginCents: 0 }])
   );
   const perAccount: HeavyUser[] = [];
+  const byAccount = new Map<string, HeavyUser>();
 
   for (const a of accounts) {
     const resolved = resolvePlan(
@@ -757,9 +769,9 @@ export async function planUnitEconomics(now = new Date()): Promise<{
     row.revenueCents += revenueCents;
     row.costMicros += costMicros;
 
-    if (costMicros > 0 && costMicros / 10_000 > revenueCents) {
-      perAccount.push({ userId: a.userId, plan, revenueCents, costMicros });
-    }
+    const figures = { userId: a.userId, plan, revenueCents, costMicros };
+    byAccount.set(a.userId, figures);
+    if (costMicros > 0 && costMicros / 10_000 > revenueCents) perAccount.push(figures);
   }
 
   const rows = ECONOMICS_PLANS.map((plan) => {
@@ -770,5 +782,5 @@ export async function planUnitEconomics(now = new Date()): Promise<{
     .sort((x, y) => y.costMicros / 10_000 - y.revenueCents - (x.costMicros / 10_000 - x.revenueCents) || x.userId.localeCompare(y.userId))
     .slice(0, 25);
 
-  return { rows, heavyUsers, monthStart: start };
+  return { rows, heavyUsers, byAccount, monthStart: start };
 }

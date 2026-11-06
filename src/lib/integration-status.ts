@@ -8,6 +8,7 @@
  * Gmail was connected when mail access had never been given.
  */
 import { formatDistance } from "date-fns";
+import { availableOn } from "@/lib/plans/plan-config";
 import type { IntegrationTabId } from "@/components/settings/sections";
 import type { ConnectorStatusId } from "@/lib/connectors/status";
 import type { ConnectionHealth } from "@/lib/connection-status";
@@ -69,6 +70,11 @@ export type GoogleConnectionInput = {
   hasCalendarScope: boolean;
   canRead: boolean;
   canSend: boolean;
+  /**
+   * The Meetings switch is off (`gmail_connections.calendar_sync_enabled`, v192). Google no
+   * longer pauses the whole connection for it, so connection health alone can't say so.
+   */
+  syncPaused?: boolean;
 };
 
 /** The fields of `OutlookConnectionStatus` this module reads. */
@@ -89,7 +95,8 @@ export type MicrosoftConnectionInput = {
  * certainty and nothing else: the account still says whether it is connected, what contacts
  * and meetings it allows, and whether it signed Orbit out.
  */
-type Plan = { canUseRecruiters: boolean } | "unknown";
+/** `recruitersOn`: `availableOn("recruiters", effective config)`, for the locked inbox's line. */
+type Plan = { canUseRecruiters: boolean; recruitersOn?: string } | "unknown";
 type ProviderName = "Google" | "Microsoft";
 
 function accountState(c: { configured: boolean; connected: boolean; status: ConnectionHealth | null }): AccountState {
@@ -125,7 +132,7 @@ function meetingsStatus(
 function inboxCapability(granted: boolean, plan: Plan): { inbox?: CapabilityStatus } {
   if (plan === "unknown") return {};
   if (!plan.canUseRecruiters) {
-    return { inbox: { state: "locked", detail: "Part of Orbit Pro and Max" } };
+    return { inbox: { state: "locked", detail: `Part of ${plan.recruitersOn ?? availableOn("recruiters")}` } };
   }
   return { inbox: { state: granted ? "available" : "not_allowed" } };
 }
@@ -138,7 +145,10 @@ export function googleAccountStatus(c: GoogleConnectionInput, plan: Plan): Accou
     email: c.emailAddress,
     capabilities: {
       contacts: { state: c.canImportContacts ? "available" : "not_allowed" },
-      meetings: meetingsStatus(c.hasCalendarScope, c.status, c.syncError, "Google"),
+      meetings:
+        c.hasCalendarScope && c.syncPaused && c.status !== "disarmed"
+          ? { state: "off", detail: "Off" }
+          : meetingsStatus(c.hasCalendarScope, c.status, c.syncError, "Google"),
       ...inboxCapability(c.canRead, plan),
       send: { state: c.canSend ? "on" : "not_allowed" },
     },

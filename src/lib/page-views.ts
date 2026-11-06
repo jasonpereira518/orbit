@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { getDb } from "@/db";
 import { pageViews } from "@/db/schema";
 import type { DeviceKind } from "@/lib/analytics-visitor";
@@ -93,6 +93,42 @@ export async function recordLoad(
     .update(pageViews)
     .set({ loadMs: Math.round(loadMs), navType })
     .where(and(eq(pageViews.id, id), isNull(pageViews.loadMs)));
+}
+
+/** Past this a vital is not a measurement any more (a lid closed mid-load), same as `MAX_LOAD_MS`. */
+export const MAX_VITAL_MS = 60_000;
+/** CLS ×1000. A CLS of 10 is already absurd; anything above is noise. */
+export const MAX_CLS_MILLI = 10_000;
+
+export type Vitals = { lcpMs?: unknown; inpMs?: unknown; clsMilli?: unknown };
+
+/**
+ * Record Core Web Vitals for a view, from the `vitals` beacon.
+ *
+ * MONOTONIC, like dwell: the client reports each metric as it changes (LCP until the first
+ * input, INP and CLS until the page hides), so each column keeps the greatest value seen and a
+ * late or repeated beacon can only confirm it. A value out of range is dropped, not clamped.
+ *
+ * FIRST VIEW ONLY. The client sends vitals only for the document's first view, and the
+ * `nav_type` guard holds that on the server too: a soft navigation has no LCP, so a vitals
+ * beacon naming a soft view's id is a bug or a forgery, and updates nothing.
+ */
+export async function recordVitals(id: string, vitals: Vitals): Promise<void> {
+  const valid = (v: unknown, max: number): number | null =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= max ? Math.round(v) : null;
+  const lcp = valid(vitals.lcpMs, MAX_VITAL_MS);
+  const inp = valid(vitals.inpMs, MAX_VITAL_MS);
+  const cls = valid(vitals.clsMilli, MAX_CLS_MILLI);
+  const set: Partial<Record<"lcpMs" | "inpMs" | "clsMilli", SQL>> = {};
+  if (lcp !== null) set.lcpMs = sql`greatest(coalesce(${pageViews.lcpMs}, 0), ${lcp})`;
+  if (inp !== null) set.inpMs = sql`greatest(coalesce(${pageViews.inpMs}, 0), ${inp})`;
+  if (cls !== null) set.clsMilli = sql`greatest(coalesce(${pageViews.clsMilli}, 0), ${cls})`;
+  if (Object.keys(set).length === 0) return;
+  const db = await getDb();
+  await db
+    .update(pageViews)
+    .set(set)
+    .where(and(eq(pageViews.id, id), sql`${pageViews.navType} is distinct from 'soft'`));
 }
 
 /**

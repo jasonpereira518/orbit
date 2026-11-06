@@ -1,16 +1,11 @@
 import { and, desc, eq, gt, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import {
-  chatThreads,
   contacts,
-  interactions,
   interestListSignups,
-  outreachCampaigns,
-  recruiters,
   reminders,
-  tags,
+  suggestedReminders,
   usageEvents,
-  userGoals,
   userSettings,
 } from "@/db/schema";
 import { countInt, num } from "@/lib/admin-metrics";
@@ -96,8 +91,6 @@ export async function getAiOperationAdoption(days = 30, now = new Date()) {
   };
 }
 
-export type ArtifactRow = { label: string; rows: number; users: number };
-
 export type FunnelParking = { step: string; count: number };
 
 export type WaitlistSummary = {
@@ -117,7 +110,6 @@ export type TrendRow = { period: string; values: number[] };
 export type ProductSnapshot = {
   adoption: FeatureAdoptionRow[];
   neverUsed: string[];
-  artifacts: ArtifactRow[];
   onboardingParking: FunnelParking[];
   wizardParking: FunnelParking[];
   /** In-app guided tour stops people closed the tab on. */
@@ -128,40 +120,6 @@ export type ProductSnapshot = {
   weekly: TrendRow[];
 };
 
-
-/**
- * Durable artifacts, one round trip.
- *
- * Catches what `usage_events` structurally cannot: reminders, tags, goals and the graph
- * leave no AI call behind, so a usage-only view would report them as unused.
- */
-export async function getArtifacts(): Promise<ArtifactRow[]> {
-  const db = await getDb();
-
-  const [contactRows, interactionRows, reminderRows, threadRows, campaignRows, tagRows, goalRows, recruiterRows] =
-    await Promise.all([
-      db.select({ n: countInt, u: sql<string>`count(distinct ${contacts.userId})` }).from(contacts),
-      db.select({ n: countInt, u: sql<string>`count(distinct ${interactions.userId})` }).from(interactions),
-      db.select({ n: countInt, u: sql<string>`count(distinct ${reminders.userId})` }).from(reminders),
-      db.select({ n: countInt, u: sql<string>`count(distinct ${chatThreads.userId})` }).from(chatThreads),
-      db.select({ n: countInt, u: sql<string>`count(distinct ${outreachCampaigns.userId})` }).from(outreachCampaigns),
-      db.select({ n: countInt, u: sql<string>`count(distinct ${tags.userId})` }).from(tags),
-      db.select({ n: countInt, u: sql<string>`count(distinct ${userGoals.userId})` }).from(userGoals),
-      db.select({ n: countInt }).from(recruiters),
-    ]);
-
-  return [
-    { label: "Contacts", rows: contactRows[0]?.n ?? 0, users: num(contactRows[0]?.u) },
-    { label: "Interactions", rows: interactionRows[0]?.n ?? 0, users: num(interactionRows[0]?.u) },
-    { label: "Reminders", rows: reminderRows[0]?.n ?? 0, users: num(reminderRows[0]?.u) },
-    { label: "Chat threads", rows: threadRows[0]?.n ?? 0, users: num(threadRows[0]?.u) },
-    { label: "Campaigns", rows: campaignRows[0]?.n ?? 0, users: num(campaignRows[0]?.u) },
-    { label: "Tags", rows: tagRows[0]?.n ?? 0, users: num(tagRows[0]?.u) },
-    { label: "Goals", rows: goalRows[0]?.n ?? 0, users: num(goalRows[0]?.u) },
-    // Global directory — no per-user count to give.
-    { label: "Recruiters (shared)", rows: recruiterRows[0]?.n ?? 0, users: 0 },
-  ];
-}
 
 /**
  * Where incomplete accounts are parked RIGHT NOW.
@@ -265,6 +223,7 @@ export async function getDataQuality(): Promise<DataQualityRow[]> {
     dupeName,
     staleReminders,
     orphans,
+    confirmedNoReminder,
   ] = await Promise.all([
     // Every plain per-row check on `contacts` in ONE pass. The duplicate and embedding
     // checks below need a GROUP BY or an anti-join, so they stay their own statements.
@@ -336,6 +295,14 @@ export async function getDataQuality(): Promise<DataQualityRow[]> {
           WHERE NOT EXISTS (SELECT 1 FROM user_settings u WHERE u.user_id = im.user_id)
       ) o
     `),
+    // A confirm that wrote its status but never landed the reminder row: a half-committed
+    // transaction, so a code bug rather than drift — but it lives with the other row checks.
+    db
+      .select({ n: countInt })
+      .from(suggestedReminders)
+      .where(
+        and(eq(suggestedReminders.status, "confirmed"), isNull(suggestedReminders.reminderId))
+      ),
   ]);
 
   const pass = contactPass[0];
@@ -370,6 +337,11 @@ export async function getDataQuality(): Promise<DataQualityRow[]> {
     {
       label: "Reminders pending 90+ days overdue",
       count: staleReminders[0]?.n ?? 0,
+    },
+    {
+      label: "Confirmed suggestion, no reminder",
+      count: confirmedNoReminder[0]?.n ?? 0,
+      hint: "a confirm that half-committed",
     },
     {
       label: "Orphaned rows (no user_settings)",

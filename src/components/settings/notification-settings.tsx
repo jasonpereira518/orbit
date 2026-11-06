@@ -108,6 +108,7 @@ export function NotificationSettings({
         await showDesktopNotification(
           {
             id: `orbit-welcome-${Date.now()}`,
+            kind: "test",
             title: "Orbit is ready",
             body: "You’ll get alerts here when follow-ups are due.",
             url: "/dashboard",

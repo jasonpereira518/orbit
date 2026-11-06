@@ -1,5 +1,6 @@
 "use client";
 
+import { useViewerPlan } from "@/components/viewer-plan";
 import { emitTourEvent } from "@/lib/tour/tour-events";
 import { tourAnchor } from "@/lib/tour/tour-anchors";
 import {
@@ -275,6 +276,7 @@ export function ChatPanel({
    */
   initialThreads?: ChatThreadPage | null;
 } = {}) {
+  const { planConfig } = useViewerPlan();
   const [threads, setThreads] = useState<ThreadSummary[]>(() => initialThreads?.threads ?? []);
   /**
    * Whether the history list has been read at least once. Until then an empty list means
@@ -757,7 +759,7 @@ export function ChatPanel({
             steps: row.activity ?? undefined,
             evidence: row.evidence ?? undefined,
             proposedActions: row.proposedActions ?? undefined,
-            // Stored since v190; older answers have none and show no chips.
+            // Stored since v193; older answers have none and show no chips.
             followUps: row.followUps?.length ? row.followUps : undefined,
             feedback: row.feedback ?? null,
             // It came out of the database, so by definition there is a row to rate.
@@ -853,7 +855,7 @@ export function ChatPanel({
     if (gmail === "connected") {
       toast.success("Gmail connected — you can send now");
     } else if (gmail === "error") {
-      const oauth = describeOAuthReason(params.get("reason"), "Gmail", params.get("purpose"));
+      const oauth = describeOAuthReason(params.get("reason"), "Gmail", params.get("purpose"), planConfig);
       if (oauth.cancelled) toast.message(oauth.message);
       else toast.error(oauth.message);
     }

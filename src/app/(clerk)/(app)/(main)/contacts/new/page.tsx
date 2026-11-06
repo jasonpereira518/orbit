@@ -4,6 +4,7 @@ import { ContactForm } from "@/components/contacts/contact-form";
 import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import { LockedFeature } from "@/components/locked-feature";
 import { getPlanOverview } from "@/actions/settings";
+import { availableOn } from "@/lib/plans/plan-config";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
 export const metadata = { title: "Add contact" };
@@ -28,7 +29,7 @@ export default async function NewContactPage({
           ...(one(params.title) ? { title: one(params.title) } : {}),
         }
       : undefined;
-  const { usage } = await getPlanOverview();
+  const { usage, planConfig } = await getPlanOverview();
   const atLimit = usage.limit !== null && usage.remaining === 0;
 
   // Don't render a form that cannot succeed. The server-side check in
@@ -40,10 +41,12 @@ export default async function NewContactPage({
       <div className="mx-auto max-w-2xl">
         <RenderStamp />
         <LockedFeature
+          feature="contacts"
+          config={planConfig}
           title={`You've reached ${usage.limit} contacts`}
           description="Every contact you already have stays right where it is — fully visible and editable. Upgrading lifts the limit so you can keep adding people."
           highlights={[
-            "Unlimited contacts on Orbit Pro and Orbit Max",
+            `Unlimited contacts on ${availableOn("contacts", planConfig)}`,
             "Nothing is ever hidden or deleted at the limit",
             "Your existing notes, reminders, and history are untouched",
           ]}

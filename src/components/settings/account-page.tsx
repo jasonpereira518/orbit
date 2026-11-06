@@ -72,9 +72,15 @@ export function AccountPageShell({
   onConnect,
   onDisconnect,
   hasDeletableData,
+  mark,
+  stripe,
   children,
 }: {
   provider: AccountProvider;
+  /** The provider's logo, shown in place of the initials avatar. Optional: Microsoft passes none. */
+  mark?: React.ReactNode;
+  /** Brand colors for a thin strip under the header, in order. Exact published values only. */
+  stripe?: readonly string[];
   /** Null while the status is still loading, or if it never arrived. */
   account: AccountStatus | null;
   loading: boolean;
@@ -137,10 +143,18 @@ export function AccountPageShell({
         provider={provider}
         name={name}
         email={account.email}
+        mark={mark}
         onConnect={onConnect}
         onDisconnect={onDisconnect}
         hasDeletableData={hasDeletableData}
       />
+      {stripe?.length ? (
+        <div aria-hidden className="flex h-1 overflow-hidden rounded-full">
+          {stripe.map((color) => (
+            <span key={color} className="flex-1" style={{ backgroundColor: color }} />
+          ))}
+        </div>
+      ) : null}
 
       {signedOut ? (
         <div className="flex flex-wrap items-center gap-3 rounded-xl bg-warning/10 p-4 text-sm text-warning">
@@ -179,8 +193,14 @@ export function FeatureRow({
   control,
   onAction,
   disabled,
+  tone,
   children,
 }: {
+  /**
+   * A brand color (hex) for the icon tile: the tile is a soft wash of it, the icon the color
+   * itself. Decorative — the title names the row. Leave out for the neutral tile.
+   */
+  tone?: string;
   /** Anchor for a link that opens the page at one row — `?integration=gmail` at the inbox. */
   id?: string;
   icon: React.ReactNode;
@@ -204,6 +224,11 @@ export function FeatureRow({
         <span
           aria-hidden
           className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground"
+          style={
+            tone
+              ? { backgroundColor: `color-mix(in srgb, ${tone} 14%, transparent)`, color: tone }
+              : undefined
+          }
         >
           {icon}
         </span>
@@ -286,6 +311,7 @@ function AccountHeader({
   provider,
   name,
   email,
+  mark,
   onConnect,
   onDisconnect,
   hasDeletableData,
@@ -293,6 +319,7 @@ function AccountHeader({
   provider: AccountProvider;
   name: string;
   email: string | null;
+  mark?: React.ReactNode;
   onConnect: () => void;
   onDisconnect: (opts: { alsoDelete: boolean }) => void;
   hasDeletableData?: boolean;
@@ -301,9 +328,15 @@ function AccountHeader({
 
   return (
     <div className="flex items-center gap-3">
-      <Avatar>
-        <AvatarFallback className="text-xs font-medium">{initials(email, name)}</AvatarFallback>
-      </Avatar>
+      {mark ? (
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm ring-1 ring-border/60">
+          {mark}
+        </span>
+      ) : (
+        <Avatar>
+          <AvatarFallback className="text-xs font-medium">{initials(email, name)}</AvatarFallback>
+        </Avatar>
+      )}
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium text-ink">{name}</p>
         <p className="truncate text-sm text-muted-foreground">{email ?? "Connected"}</p>

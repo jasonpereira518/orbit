@@ -79,6 +79,11 @@ CREATE TABLE IF NOT EXISTS user_settings (
   signup_landing_path text,
   signup_attributed_at timestamptz,
   signup_attribution_source text,
+  last_touch_source text,
+  last_touch_medium text,
+  last_touch_campaign text,
+  last_touch_landing_path text,
+  last_touch_at timestamptz,
   signup_session_id text,
   account_kind text,
   ai_key_added_at timestamptz,
@@ -817,9 +822,13 @@ CREATE TABLE IF NOT EXISTS outreach_messages (
   last_action_at timestamptz,
   error_message text,
   delivery_id text,
+  delivered_at timestamptz,
+  opened_at timestamptz,
+  clicked_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS outreach_messages_delivery_idx ON outreach_messages(delivery_id) WHERE delivery_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS outreach_messages_prospect_idx ON outreach_messages(prospect_id);
 CREATE INDEX IF NOT EXISTS outreach_messages_status_idx ON outreach_messages(status);
 CREATE INDEX IF NOT EXISTS outreach_messages_outcome_idx ON outreach_messages(outcome);
@@ -951,6 +960,8 @@ CREATE TABLE IF NOT EXISTS gmail_connections (
   sync_started_at timestamptz,
   sync_error text,
   sync_failures integer NOT NULL DEFAULT 0,
+  calendar_sync_enabled integer NOT NULL DEFAULT 1,
+  contacts_sync_enabled integer NOT NULL DEFAULT 1,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -2093,6 +2104,9 @@ CREATE TABLE IF NOT EXISTS page_views (
   dwell_ms integer,
   load_ms integer,
   nav_type text,
+  lcp_ms integer,
+  inp_ms integer,
+  cls_milli integer,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS page_views_created_idx ON page_views(created_at);
@@ -2101,6 +2115,14 @@ CREATE INDEX IF NOT EXISTS page_views_session_idx ON page_views(session_id, crea
 CREATE INDEX IF NOT EXISTS page_views_visitor_idx ON page_views(visitor_hash, created_at);
 CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country, created_at);
 CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_internal, created_at);
+CREATE TABLE IF NOT EXISTS metrics_daily (
+  day date NOT NULL,
+  metric text NOT NULL,
+  dim text NOT NULL DEFAULT '',
+  value bigint NOT NULL,
+  computed_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (day, metric, dim)
+);
 `;
 
 // NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
@@ -2889,11 +2911,28 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // (Merged main at 186: both sides' DDL and alters are kept, and only the version is new, so a
 // database stamped 186 by main still runs this branch's 189 DDL.)
 //
-// 190 = chat_messages.follow_ups: the rule-derived next questions an answer offered, stored with
-// it so the chips survive a reload and a regenerate instead of living only on the stream's
-// `done` event. Rescanned every remote ref on Nov 5 2026 after merging main at 189: 189 was the
-// highest claimed anywhere.
-export const SCHEMA_VERSION = 190;
+// 191 (built as 187) = standard tracking: page_views.lcp_ms / inp_ms / cls_milli (web vitals on a document's
+// first view), user_settings.last_touch_source / _medium / _campaign / _landing_path / _at (the
+// last channel-bearing landing before signup), and outreach_messages.delivered_at / opened_at /
+// clicked_at with outreach_messages_delivery_idx (Resend engagement, matched on delivery_id);
+// metrics_daily (new table: the daily rollup `src/lib/metrics-rollup.ts` writes, kept forever);
+// and indexes reminders_user_created_idx, capture_jobs_user_created_idx (the activity union),
+// product_events_created_idx, gate_events_created_idx (the retention prune), in
+// ADMIN_V2_STATEMENTS. Renumbered 187 → 191 on Nov 6 2026 when merging main at 189: a
+// database stamped 189 would never run a 187. NOT 190: the unpushed chat-loading-updates-pane
+// worktree claims it. Rescanned every remote ref and worktree on Nov 6 2026: 190 was the
+// highest claimed anywhere. Both sides' DDL and alters are kept; only the version is new.
+//
+// 192 = gmail_connections.calendar_sync_enabled + contacts_sync_enabled: the Google page's
+// per-feature switches, replacing the Meetings switch's pause of the whole connection (paused
+// rows are converted to both-off and re-armed). Rescanned every remote ref and worktree on
+// Nov 6 2026: 191 (main) was the highest claimed anywhere.
+//
+// 193 (built as 190) = chat_messages.follow_ups: the rule-derived next questions an answer
+// offered, stored with it so the chips survive a reload and a regenerate instead of living only
+// on the stream's `done` event. Renumbered 190 → 193 on Nov 6 2026 when merging main at 192: a
+// database stamped 192 would never run a 190.
+export const SCHEMA_VERSION = 193;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -4297,6 +4336,18 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "contacts", "mastodon_acct", "text");
   await ensureColumn(client, "contacts", "name_guess", "jsonb");
   await ensureColumn(client, "meeting_sessions", "user_notes", "text");
+  // v187: standard tracking — web vitals, last-touch attribution, Resend engagement.
+  await ensureColumn(client, "page_views", "lcp_ms", "integer");
+  await ensureColumn(client, "page_views", "inp_ms", "integer");
+  await ensureColumn(client, "page_views", "cls_milli", "integer");
+  await ensureColumn(client, "user_settings", "last_touch_source", "text");
+  await ensureColumn(client, "user_settings", "last_touch_medium", "text");
+  await ensureColumn(client, "user_settings", "last_touch_campaign", "text");
+  await ensureColumn(client, "user_settings", "last_touch_landing_path", "text");
+  await ensureColumn(client, "user_settings", "last_touch_at", "timestamptz");
+  await ensureColumn(client, "outreach_messages", "delivered_at", "timestamptz");
+  await ensureColumn(client, "outreach_messages", "opened_at", "timestamptz");
+  await ensureColumn(client, "outreach_messages", "clicked_at", "timestamptz");
   await ensureColumn(client, "recommendations", "base_score", "integer");
   await ensureColumn(client, "recommendations", "ai_delta", "integer");
   await ensureColumn(client, "recommendations", "ai_angle", "text");
@@ -4345,6 +4396,13 @@ const ADMIN_V2_STATEMENTS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS reminders_user_item_hash_uidx ON reminders(user_id, item_hash)`,
   `CREATE INDEX IF NOT EXISTS reminders_note_batch_idx ON reminders(note_batch_id)`,
   `CREATE INDEX IF NOT EXISTS interactions_note_batch_idx ON interactions(note_batch_id)`,
+  // v187: the rest of the activity union's `(user_id, created_at)` scans
+  // (`intentionalActionsSince`; interactions and chat_messages have theirs above), and the
+  // `created_at` the retention prune deletes by (`analytics-retention.ts`).
+  `CREATE INDEX IF NOT EXISTS reminders_user_created_idx ON reminders(user_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS capture_jobs_user_created_idx ON capture_jobs(user_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS product_events_created_idx ON product_events(created_at)`,
+  `CREATE INDEX IF NOT EXISTS gate_events_created_idx ON gate_events(created_at)`,
 ];
 
 /**
@@ -4772,7 +4830,7 @@ const alters = [
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback_note text`,
   // Schema v182: whether a chat answer answered (`@/lib/chat-abstention`).
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS answer_outcome text`,
-  // Schema v190: an answer's follow-up chips, so they survive a reload (`deriveFollowUps`).
+  // Schema v193: an answer's follow-up chips, so they survive a reload (`deriveFollowUps`).
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS follow_ups jsonb DEFAULT '[]'`,
   // Schema v183: chat may apply its small, reversible changes itself (`@/lib/chat-auto-apply`).
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS chat_auto_apply integer NOT NULL DEFAULT 0`,
@@ -4891,6 +4949,13 @@ const alters = [
     // predicate keeps the index to the handful of armed connections rather than every row.
     `CREATE INDEX IF NOT EXISTS ${table}_due_idx ON ${table}(next_sync_at) WHERE next_sync_at IS NOT NULL`,
   ]),
+  // v192: Google's per-feature sync switches. A connection the old Meetings switch paused had
+  // its WHOLE sync stopped (contacts and email activity too), so it becomes both lanes off,
+  // as two visible switches, and the connection is re-armed — the mailbox pass is governed by
+  // its own setting. Nothing pauses a Google row any more, so this matches nothing next time.
+  `ALTER TABLE gmail_connections ADD COLUMN IF NOT EXISTS calendar_sync_enabled integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE gmail_connections ADD COLUMN IF NOT EXISTS contacts_sync_enabled integer NOT NULL DEFAULT 1`,
+  `UPDATE gmail_connections SET calendar_sync_enabled = 0, contacts_sync_enabled = 0, sync_status = 'idle', next_sync_at = now() WHERE sync_status = 'paused'`,
   // Arm the connections that already exist.
   //
   // `sync_status IS NULL` is the load-bearing half of this predicate, not decoration.
@@ -5145,6 +5210,20 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS name_guess jsonb`,
   // Schema v186: what the person typed during a recorded meeting, kept with it (/meetings).
   `ALTER TABLE meeting_sessions ADD COLUMN IF NOT EXISTS user_notes text`,
+  // Schema v187: web vitals on the first view, last-touch attribution, Resend engagement.
+  `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS lcp_ms integer`,
+  `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS inp_ms integer`,
+  `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS cls_milli integer`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_touch_source text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_touch_medium text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_touch_campaign text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_touch_landing_path text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_touch_at timestamptz`,
+  `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS delivered_at timestamptz`,
+  `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS opened_at timestamptz`,
+  `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS clicked_at timestamptz`,
+  `CREATE INDEX IF NOT EXISTS outreach_messages_delivery_idx ON outreach_messages(delivery_id) WHERE delivery_id IS NOT NULL`,
+  `CREATE TABLE IF NOT EXISTS metrics_daily (day date NOT NULL, metric text NOT NULL, dim text NOT NULL DEFAULT '', value bigint NOT NULL, computed_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (day, metric, dim))`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS base_score integer`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS ai_delta integer`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS ai_angle text`,

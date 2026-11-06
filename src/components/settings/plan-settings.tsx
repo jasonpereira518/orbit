@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { WarpLink } from "@/components/warp/warp-link";
 import { planCopy, unlimitedContactsLine } from "@/lib/plan-copy";
 import type { Plan } from "@/lib/plan-limits";
+import type { PlanConfig } from "@/lib/plans/plan-config";
 import type { DemoAccountReason } from "@/lib/demo-account";
 import type { Entitlements, PlanSource } from "@/lib/entitlements";
 
@@ -135,13 +136,16 @@ export function PlanSettings({
   entitlements,
   usage,
   demoAccount,
+  config,
 }: {
+  /** The effective plan table, so "What's included" follows an admin's plan rules. */
+  config?: Record<Plan, PlanConfig>;
   entitlements: Entitlements;
   usage: { used: number; limit: number | null; remaining: number | null };
   /** Set when plan limits are lifted because this is a demo account, not because of the plan. */
   demoAccount: DemoAccountReason | null;
 }) {
-  const copy = planCopy(entitlements.plan);
+  const copy = planCopy(entitlements.plan, config);
   const note = SOURCE_NOTE[entitlements.source];
   const isFree = entitlements.plan === "free";
   const accent = TIER_ACCENT[entitlements.plan];

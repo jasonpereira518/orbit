@@ -33,7 +33,9 @@ import type { Engines } from "@/lib/decisions/engine";
 import { decideCalendarEvents } from "@/lib/decisions/calendar";
 import type { CalendarSyncCursor } from "@/db/schema";
 
-const CALENDAR_API = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
+/** One calendar's events. "primary" is the account's own calendar; others come from `listGoogleCalendars`. */
+const eventsUrl = (calendarId = "primary") =>
+  `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`;
 
 /**
  * How far back the FIRST sync reaches, and how far forward.
@@ -321,6 +323,8 @@ export function storedEventsOf(items: GoogleEvent[]): StoredCalendarEvent[] {
  */
 export async function fetchCalendarWindow(opts: {
   accessToken: string;
+  /** Defaults to the primary calendar. */
+  calendarId?: string;
   from: Date;
   to: Date;
   maxResults?: number;
@@ -339,7 +343,7 @@ export async function fetchCalendarWindow(opts: {
       timeMax: opts.to.toISOString(),
     });
     if (pageToken) params.set("pageToken", pageToken);
-    const res = await googleFetchWithRetry(`${CALENDAR_API}?${params}`, {
+    const res = await googleFetchWithRetry(`${eventsUrl(opts.calendarId)}?${params}`, {
       headers: { Authorization: `Bearer ${opts.accessToken}` },
       timeoutMs: opts.timeoutMs ?? 20_000,
       fetchImpl: opts.fetchImpl,
@@ -356,6 +360,8 @@ export async function fetchCalendarWindow(opts: {
 export type FetchPageOptions = {
   accessToken: string;
   cursor: CalendarSyncCursor | null;
+  /** Defaults to the primary calendar. */
+  calendarId?: string;
   now?: Date;
   /** Injectable for tests; defaults to global fetch. */
   fetchImpl?: typeof fetch;
@@ -388,7 +394,7 @@ export async function fetchCalendarPage(opts: FetchPageOptions): Promise<Calenda
   // first sync restarts from the beginning every run and never reaches its last page.
   if (cursor?.pageToken) params.set("pageToken", cursor.pageToken);
 
-  const res = await googleFetchWithRetry(`${CALENDAR_API}?${params}`, {
+  const res = await googleFetchWithRetry(`${eventsUrl(opts.calendarId)}?${params}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
     // Well inside the scheduler's 60-second per-connection budget.
     timeoutMs: 20_000,
@@ -512,4 +518,44 @@ export function advanceCursor(
     syncToken: page.nextSyncToken ?? previous?.syncToken ?? null,
     pageToken: null,
   };
+}
+
+export type GoogleCalendarListEntry = { id: string; summary: string; primary: boolean; color: string | null };
+
+/**
+ * The calendars this account can read, for the Google page's picker. `calendar.readonly` —
+ * the scope meetings already need — covers calendarList, so this asks Google for nothing new.
+ */
+export async function listGoogleCalendars(opts: {
+  accessToken: string;
+  fetchImpl?: typeof fetch;
+}): Promise<GoogleCalendarListEntry[]> {
+  const out: GoogleCalendarListEntry[] = [];
+  let pageToken: string | undefined;
+  for (let page = 0; page < 5; page++) {
+    const params = new URLSearchParams({ minAccessRole: "reader", maxResults: "250" });
+    if (pageToken) params.set("pageToken", pageToken);
+    const res = await (opts.fetchImpl ?? fetch)(
+      `https://www.googleapis.com/calendar/v3/users/me/calendarList?${params}`,
+      { headers: { Authorization: `Bearer ${opts.accessToken}` } },
+    );
+    if (!res.ok) throw new Error(`Google calendar list failed (${res.status})`);
+    const body = (await res.json()) as {
+      items?: Array<{ id?: string; summary?: string; summaryOverride?: string; primary?: boolean; backgroundColor?: string; deleted?: boolean }>;
+      nextPageToken?: string;
+    };
+    for (const c of body.items ?? []) {
+      if (!c.id || c.deleted) continue;
+      out.push({
+        // The primary calendar's id is the address; "primary" is what the sync already keys it by.
+        id: c.primary ? "primary" : c.id,
+        summary: (c.summaryOverride || c.summary || c.id).trim(),
+        primary: Boolean(c.primary),
+        color: typeof c.backgroundColor === "string" ? c.backgroundColor : null,
+      });
+    }
+    pageToken = body.nextPageToken;
+    if (!pageToken) break;
+  }
+  return out;
 }

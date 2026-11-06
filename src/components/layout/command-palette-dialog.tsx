@@ -259,7 +259,8 @@ export function CommandPaletteDialog({
           const rows = await searchContactsForPicker(
             term || undefined,
             term ? SEARCH_CONTACTS : RECENT_CONTACTS,
-            "recent"
+            "recent",
+            "command_palette"
           );
           if (request === requestRef.current) setPeople(rows);
         } catch {

@@ -6,6 +6,7 @@ import "./smoke/_env";
 
 import { eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
+import { getEffectivePlanConfig } from "../src/lib/plans/plan-rules";
 import { contacts, emailEvents, emailThreads, gmailConnections, ignoredPeople, userSettings } from "../src/db/schema";
 import { syncIdentitiesForContact } from "../src/lib/contact-identity";
 import { INBOX_CANDIDATES, INBOX_SHOWN, findInboxPerson, loadInboxPeople } from "../src/lib/email-intel/inbox-people";
@@ -154,6 +155,9 @@ async function main() {
   check("an account with nothing on file costs one statement", stopQueryCount() === 1);
 
   console.log("\nOn the Radar page");
+  // The app_surface_flags read (page flags + runtime plan rules) is memoized per instance for
+  // 15s and the app shell has always made it by the time a page loads; warm it, as a request has.
+  await getEffectivePlanConfig();
   startQueryCount();
   const pageOff = await loadRadarPage(W);
   const pageOffStatements = stopQueryCount();

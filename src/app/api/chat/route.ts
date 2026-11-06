@@ -79,6 +79,7 @@ export async function POST(request: Request) {
         contactId?: unknown;
         contextContactIds?: unknown;
         versionOf?: unknown;
+        timeZone?: unknown;
       }
     | null;
   const threadId = typeof body?.threadId === "string" ? body.threadId : null;
@@ -174,6 +175,8 @@ export async function POST(request: Request) {
           steps,
           excludeSlot: versionTarget?.slot ?? null,
           access,
+          // Checked in `prepareChatContext`; anything unrecognized falls back to the stored zone.
+          timeZone: typeof body?.timeZone === "string" ? body.timeZone : null,
         });
         if (threadId) {
           const db = await getDb();

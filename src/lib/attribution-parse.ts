@@ -18,6 +18,12 @@
 /** How long a first touch stays claimable. Longer than most funnels, shorter than forever. */
 export const ATTRIBUTION_COOKIE = "orbit_attr";
 export const ATTRIBUTION_MAX_AGE_S = 90 * 24 * 60 * 60;
+/**
+ * The LAST touch: the most recent landing that carried a channel, overwritten on every such
+ * landing (same flags and lifetime as the first-touch cookie). Kept beside first touch, never
+ * instead of it — "what brought them back the day they signed up" is a different question.
+ */
+export const LAST_TOUCH_COOKIE = "orbit_attr_last";
 
 export type Attribution = {
   referrer: string | null;
@@ -100,6 +106,24 @@ export function hasSignal(a: Attribution): boolean {
 
 export function serializeAttribution(a: Attribution): string {
   return JSON.stringify(a);
+}
+
+/** The last-touch cookie's value: the attribution plus when that landing happened (epoch ms). */
+export function serializeLastTouch(a: Attribution, at: number): string {
+  return JSON.stringify({ ...a, at });
+}
+
+export function parseLastTouch(raw: string | null | undefined): { attribution: Attribution; at: Date } | null {
+  const attribution = parseAttribution(raw);
+  if (!attribution) return null;
+  try {
+    const at = (JSON.parse(raw!) as { at?: unknown }).at;
+    // A cookie is user input: an absent, absurd or future time becomes "unknown when", not a lie.
+    const ok = typeof at === "number" && Number.isFinite(at) && at > 0 && at <= Date.now() + 5 * 60_000;
+    return { attribution, at: ok ? new Date(at) : new Date() };
+  } catch {
+    return null;
+  }
 }
 
 export function parseAttribution(raw: string | null | undefined): Attribution | null {

@@ -28,6 +28,7 @@ import {
 } from "@/lib/contacts-page-cursor";
 import { contactsListSelection } from "@/lib/contact-avatar-sql";
 import { openNameGuess } from "@/lib/contact-name-guess";
+import { trackSearchPerformed } from "@/lib/search-events";
 import { schoolCondition, type RankedContact } from "@/lib/hybrid-search";
 import { listSchools } from "@/lib/events/target-companies";
 import {
@@ -190,6 +191,11 @@ export async function listContactsPage(
     totalP,
     addedByImports(userId, importIds, page.map((r) => r.id)),
   ]);
+
+  // The first page of a search is the search; "load more" (a cursor) is not another one.
+  if (q && !cursor) {
+    trackSearchPerformed({ userId, surface: "contacts_page", query: q, resultCount: total ?? page.length });
+  }
 
   return {
     items: page.map((row) => ({

@@ -45,7 +45,7 @@ const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
  *
  *  - **Ad-hoc expenses**, summed over a trailing 30-day window.
  *  - **Infrastructure**, taken from the most recent month with a bill actually entered.
- *  - **Included AI** (Pro and Max), the real model cost on Orbit's keys over the trailing
+ *  - **Included AI** (every plan), the real model cost on Orbit's keys over the trailing
  *    30 days, from `usage_events` — `managedAiCostMicros`, the one managed-AI definition.
  *    It arrives as provider bills later, but waiting for them would overstate runway by
  *    exactly the months managed AI has been running.

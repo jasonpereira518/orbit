@@ -10,6 +10,8 @@ import {
   index,
   uniqueIndex,
   primaryKey,
+  date,
+  bigint,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
 import type {
@@ -314,6 +316,19 @@ export const userSettings = pgTable("user_settings", {
    * never reaches the app host). Null on accounts attributed before this column existed.
    */
   signupAttributionSource: text("signup_attribution_source").$type<"cookie" | "direct" | "waitlist">(),
+  /**
+   * LAST touch before signup, beside the first touch above: the most recent landing that
+   * carried a channel (the `orbit_attr_last` cookie, overwritten by `src/proxy.ts` on every
+   * such landing). Written once, in the same UPDATE as `signup_*`, so it means "what brought
+   * them back the time they signed up", never a later visit. `source` is the UTM source, else
+   * the referrer host (the precedence `channelOf` uses); `at` is when that landing happened.
+   * All null when the account had no last-touch cookie at signup.
+   */
+  lastTouchSource: text("last_touch_source"),
+  lastTouchMedium: text("last_touch_medium"),
+  lastTouchCampaign: text("last_touch_campaign"),
+  lastTouchLandingPath: text("last_touch_landing_path"),
+  lastTouchAt: timestamp("last_touch_at", { withTimezone: true }),
   /**
    * The per-tab analytics session id (the beacon's `pv_sid`) of the first signed-in render. It
    * lets an operator say "this account's first session came in on /pricing from Reddit"
@@ -1206,6 +1221,8 @@ export const interactions = pgTable(
       .where(sql`interaction_type = 'linkedin_message'`),
     // Soft unique for import dedupe; NULLs allowed (manual notes have no externalId).
     uniqueIndex("interactions_user_external_uidx").on(t.userId, t.externalId),
+    // ADMIN_V2_STATEMENTS: the activity union's per-account time scan.
+    index("interactions_user_created_idx").on(t.userId, t.createdAt),
   ]
 );
 
@@ -1308,6 +1325,8 @@ export const reminders = pgTable(
     uniqueIndex("reminders_user_item_hash_uidx").on(t.userId, t.itemHash),
     // Created by SCALE_DDL; declared here so the two never disagree again.
     index("reminders_user_contact_idx").on(t.userId, t.contactId),
+    // ADMIN_V2_STATEMENTS (v187): the activity union's per-account time scan.
+    index("reminders_user_created_idx").on(t.userId, t.createdAt),
   ]
 );
 
@@ -2905,11 +2924,22 @@ export const outreachMessages = pgTable(
     sentAt: timestamp("sent_at", { withTimezone: true }),
     lastActionAt: timestamp("last_action_at", { withTimezone: true }),
     errorMessage: text("error_message"),
+    /** Resend's email id for an email send (Twilio's SID for SMS). The Resend webhook matches on it. */
     deliveryId: text("delivery_id"),
+    /**
+     * Resend engagement for an email sent on Orbit's Resend account, from the webhook
+     * (`email.delivered` / `email.opened` / `email.clicked`). First timestamp wins; NULL means
+     * not (yet) seen, or the account's own Resend key sent it (its webhooks never reach Orbit).
+     */
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    openedAt: timestamp("opened_at", { withTimezone: true }),
+    clickedAt: timestamp("clicked_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
+    // Partial (delivery_id IS NOT NULL) in the DDL: the Resend webhook's lookup.
+    index("outreach_messages_delivery_idx").on(t.deliveryId),
     index("outreach_messages_prospect_idx").on(t.prospectId),
     index("outreach_messages_status_idx").on(t.status),
     index("outreach_messages_outcome_idx").on(t.outcome),
@@ -3278,6 +3308,8 @@ export type ProviderSyncCursor = {
      */
     blockedByPlan?: number | null;
   } | null;
+  /** Google: when the contacts lane last finished a pass, for the Google page's "synced X ago". */
+  contactsSyncedAt?: string | null;
   /** Same nullability rule as `calendar` above — a cleared cursor is a real state. */
   luma?: EventProviderSyncCursor | null;
   eventbrite?: EventProviderSyncCursor | null;
@@ -3439,6 +3471,13 @@ export const gmailConnections = pgTable(
     /** Last time this connection produced a usable access token. */
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
     ...syncStateColumns(),
+    /**
+     * The Google page's per-feature switches. Each pauses only its own lane of the sync
+     * (`syncGoogleConnection`); the connection itself stays armed, so turning meetings off no
+     * longer stops background contacts sync or email-activity logging with it.
+     */
+    calendarSyncEnabled: integer("calendar_sync_enabled").default(1).notNull(),
+    contactsSyncEnabled: integer("contacts_sync_enabled").default(1).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -3688,7 +3727,7 @@ export const chatMessages = pgTable(
     answerOutcome: text("answer_outcome").$type<"answered" | "partial" | "abstained">(),
     /**
      * The next questions this answer offered — rule-derived by `deriveFollowUps`, never
-     * model-written. Stored so the chips survive a reload; empty on rows from before v190.
+     * model-written. Stored so the chips survive a reload; empty on rows from before v193.
      */
     followUps: jsonb("follow_ups").$type<string[]>().default([]),
     /**
@@ -3720,6 +3759,8 @@ export const chatMessages = pgTable(
     uniqueIndex("chat_messages_slot_version_role_uidx")
       .on(t.slot, t.version, t.role)
       .where(sql`slot is not null`),
+    // ADMIN_V2_STATEMENTS: the activity union's per-account time scan.
+    index("chat_messages_user_created_idx").on(t.userId, t.createdAt),
   ]
 );
 
@@ -4148,6 +4189,8 @@ export const captureJobs = pgTable(
     index("capture_jobs_stall_idx").on(t.status, t.updatedAt),
     index("capture_jobs_user_batch_idx").on(t.userId, t.batchGroupId),
     index("capture_jobs_source_file_hashes_idx").using("gin", t.sourceFileHashes),
+    // ADMIN_V2_STATEMENTS (v187): the activity union's per-account time scan.
+    index("capture_jobs_user_created_idx").on(t.userId, t.createdAt),
   ]
 );
 
@@ -4989,6 +5032,8 @@ export const gateEvents = pgTable(
   (t) => [
     index("gate_events_feature_created_idx").on(t.feature, t.createdAt),
     index("gate_events_user_created_idx").on(t.userId, t.createdAt),
+    // ADMIN_V2_STATEMENTS (v187): the retention prune deletes by created_at.
+    index("gate_events_created_idx").on(t.createdAt),
   ]
 );
 
@@ -6105,6 +6150,15 @@ export const pageViews = pgTable(
      * router's transition start). The two are different populations and are never mixed.
      */
     navType: text("nav_type").$type<"hard" | "soft">(),
+    /**
+     * Core Web Vitals for a document's FIRST view only (a client-side navigation has no LCP),
+     * from `useReportWebVitals` via the `vitals` beacon. Each is the largest value reported
+     * (they only grow over a page's life), NULL when never reported. CLS is stored ×1000 as
+     * an integer (`cls_milli` 100 = CLS 0.1).
+     */
+    lcpMs: integer("lcp_ms"),
+    inpMs: integer("inp_ms"),
+    clsMilli: integer("cls_milli"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -6343,6 +6397,26 @@ export type NewContactMerge = typeof contactMerges.$inferInsert;
 export type DuplicateSuggestion = typeof duplicateSuggestions.$inferSelect;
 export type NewDuplicateSuggestion = typeof duplicateSuggestions.$inferInsert;
 export type PageView = typeof pageViews.$inferSelect;
+
+/**
+ * One number per (UTC day, metric, dimension), written by the daily rollup
+ * (`src/lib/metrics-rollup.ts`) so trend charts read a few hundred rows instead of re-scanning
+ * every event table. `dim` is '' for an undimensioned metric (never NULL, so it can sit in the
+ * primary key). Recomputed and upserted for the last three days on every run, so it is
+ * idempotent and late writes settle. KEPT FOREVER: a few dozen rows a day, no user ids, nothing
+ * to purge.
+ */
+export const metricsDaily = pgTable(
+  "metrics_daily",
+  {
+    day: date("day", { mode: "string" }).notNull(),
+    metric: text("metric").notNull(),
+    dim: text("dim").notNull().default(""),
+    value: bigint("value", { mode: "number" }).notNull(),
+    computedAt: timestamp("computed_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.day, t.metric, t.dim] })]
+);
 export type NewPageView = typeof pageViews.$inferInsert;
 
 /* ------------------------------------------------------------------------------------
@@ -6578,6 +6652,8 @@ export const productEvents = pgTable(
     index("product_events_name_occurred_idx").on(t.name, t.occurredAt),
     index("product_events_user_occurred_idx").on(t.userId, t.occurredAt),
     index("product_events_session_idx").on(t.sessionId),
+    // ADMIN_V2_STATEMENTS (v187): the retention prune deletes by created_at.
+    index("product_events_created_idx").on(t.createdAt),
   ]
 );
 

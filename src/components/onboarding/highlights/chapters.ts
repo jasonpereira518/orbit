@@ -1,5 +1,13 @@
 import type { ComponentType } from "react";
 import { EXTENSION_PUBLISHED } from "@/lib/plan-copy";
+import { COMING_SOON_UNLOCK_PLAN } from "@/lib/surfaces";
+import {
+  salePlansWith,
+  type FeatureKey,
+  type Plan,
+  type PlanConfig,
+  type PurchasablePlan,
+} from "@/lib/plans/plan-config";
 import {
   BellRing,
   MessageCircleQuestion,
@@ -39,6 +47,26 @@ export type PlanFlag = keyof Pick<
   "canUseOutreach" | "canUseHostedSending" | "canUseRecruiters" | "canUseSync" | "canUseExtension" | "canUseApi"
 >;
 
+const FLAG_FEATURE: Record<PlanFlag, FeatureKey> = {
+  canUseOutreach: "outreach",
+  canUseHostedSending: "hostedSending",
+  canUseRecruiters: "recruiters",
+  canUseSync: "sync",
+  canUseExtension: "extension",
+  canUseApi: "api",
+};
+
+/**
+ * The plan a locked line's tag names: the cheapest plan on sale with that feature under
+ * `config` (the effective plan table). A line with no flag (coming soon) names the plan
+ * coming-soon surfaces unlock on.
+ */
+export function unlockTagPlan(flag: PlanFlag | undefined, config: Record<Plan, PlanConfig>): PurchasablePlan {
+  if (!flag) return COMING_SOON_UNLOCK_PLAN;
+  const plans = salePlansWith(FLAG_FEATURE[flag], config);
+  return plans.find((p): p is PurchasablePlan => p !== "free") ?? "max";
+}
+
 export type ChapterNeed = "ai" | "linkedin";
 
 export type HighlightChapter = {
@@ -48,7 +76,8 @@ export type HighlightChapter = {
   label: string;
   title: string;
   blurb: string;
-  bullets: Array<{ label: string; entitlement?: PlanFlag; soon?: boolean }>;
+  /** `labelFor`: the line worded from the effective plan table, when it states a plan fact. */
+  bullets: Array<{ label: string; labelFor?: (config: Record<Plan, PlanConfig>) => string; entitlement?: PlanFlag; soon?: boolean }>;
   /** The whole chapter is a paid feature. */
   entitlement?: PlanFlag;
   /** What this chapter's page needs before it does anything: tagged from live facts. */
@@ -149,7 +178,13 @@ export const HIGHLIGHT_CHAPTERS: HighlightChapter[] = [
       "LinkedIn, Google and Outlook, contact files and calendars all feed one orbit. Upload a file and review everyone before they land.",
     bullets: [
       { label: "LinkedIn connections and messages, ZIP and all" },
-      { label: "Google and Outlook contacts; Free connects one of the two" },
+      {
+        label: "Google and Outlook contacts; Free connects one of the two",
+        labelFor: (config) =>
+          config.free.features.extraConnections
+            ? "Every plan connects both Google and Outlook contacts"
+            : "Google and Outlook contacts; Free connects one of the two",
+      },
       { label: "vCard and CSV from any address book" },
       { label: "Calendar sync for your meetings", entitlement: "canUseSync" },
     ],

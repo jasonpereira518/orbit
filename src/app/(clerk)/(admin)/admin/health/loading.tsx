@@ -1,12 +1,13 @@
+import { OpsTabs } from "@/components/admin/admin-tabs";
 import { AdminLoading } from "@/components/admin/loading-shells";
 
-export default function AdminHealthLoading() {
+export default function AdminOpsAccountsLoading() {
   return (
     <AdminLoading
-      title="Health"
+      title="Ops"
       subtitle="Checking every account…"
+      tabs={<OpsTabs />}
       blocks={[
-        { panel: true, title: "Status", height: "h-10" },
         { panel: true, title: "Open alerts", height: "h-16" },
         { tiles: 4 },
         { panel: true, title: "Accounts that cannot use AI at all", height: "h-10" },

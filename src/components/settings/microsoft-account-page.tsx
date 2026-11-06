@@ -50,6 +50,8 @@
  * (`contacts.jobRunning`) instead, as the Google page's do.
  */
 
+import { useViewerPlan } from "@/components/viewer-plan";
+import { availableOn } from "@/lib/plans/plan-config";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
@@ -95,7 +97,8 @@ export function MicrosoftAccountPage({
   const connection = useMicrosoftConnection({ returnTo, label: "Microsoft" });
   const contacts = useContactsImport("microsoft");
   const { status } = connection;
-  const account = status ? microsoftAccountStatus(status, { canUseRecruiters }) : null;
+  const recruitersOn = availableOn("recruiters", useViewerPlan().planConfig);
+  const account = status ? microsoftAccountStatus(status, { canUseRecruiters, recruitersOn }) : null;
   const capabilities = account?.capabilities ?? {};
 
   const showsInbox = inboxVisible && active;
@@ -361,6 +364,7 @@ function InboxRow({
   onAllow: () => void;
   onOpenPage: (page: IntegrationTabId) => void;
 }) {
+  const recruitersOn = availableOn("recruiters", useViewerPlan().planConfig);
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const { scan, running, phaseLabel, percent, start, cancel } = useRecruiterScan(
@@ -418,7 +422,7 @@ function InboxRow({
     >
       {control.kind === "locked" ? (
         <p className="text-sm text-muted-foreground">
-          {capability?.detail ?? "Part of Orbit Pro and Max"}
+          {capability?.detail ?? `Part of ${recruitersOn}`}
         </p>
       ) : null}
 

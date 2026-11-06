@@ -97,7 +97,7 @@ async function main() {
   check(
     "the question carries today's date, so relative dates are not guessed",
     // Local day, as the prompt writes it: a UTC day failed this every evening after 8pm EDT.
-    ctx.scopedQuestion.startsWith(`[Today is ${isoDay(new Date())}.]`),
+    ctx.scopedQuestion.startsWith(`[Today is ${isoDay(new Date())}. Now: `),
     ctx.scopedQuestion
   );
   check(

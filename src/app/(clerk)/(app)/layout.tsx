@@ -1,4 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
@@ -26,7 +27,6 @@ import {
 import { getEntitlements } from "@/lib/entitlements";
 import { aiDenialFromSettings } from "@/lib/ai-access";
 import { creditPeriodFor } from "@/lib/credits/ledger";
-import { PLAN_CONFIG } from "@/lib/plans/plan-config";
 import { getLinkedInReminderState } from "@/lib/linkedin-reminder";
 import { tourRailVisible } from "@/lib/tour/tour-state";
 import { isOnboardingGatedPath, needsOnboarding } from "@/lib/onboarding";
@@ -157,18 +157,20 @@ export default async function AppLayout({
 
   // Whether included AI can run on this deployment at all — see ViewerPlanProvider.
   const includedAiAvailable = Object.values(managedKeysConfigured()).some(Boolean);
-  const aiReason = aiDenialFromSettings(userId, settings);
-  const creditsResetAt = PLAN_CONFIG[plan].monthlyCredits ? creditPeriodFor(settings).end.toISOString() : null;
+  const planConfig = await getEffectivePlanConfig();
+  const aiReason = aiDenialFromSettings(userId, settings, planConfig);
+  const creditsResetAt = planConfig[plan].monthlyCredits ? creditPeriodFor(settings).end.toISOString() : null;
   // The one-time "your AI credits are here" screen. Free: answered from the row already read.
   const creditsIntroDue = isCreditsIntroDue({
     createdAt: settings.createdAt,
     shownAt: settings.creditsIntroShownAt ?? null,
     plan,
     includedAiAvailable,
+    config: planConfig,
   });
 
   return (
-    <ViewerPlanProvider value={{ plan, includedAiAvailable, aiReason, creditsResetAt }}>
+    <ViewerPlanProvider value={{ plan, includedAiAvailable, aiReason, creditsResetAt, planConfig }}>
       {/* Renders nothing. Before AppShell, not inside it: siblings render in order, so every
           color the shell and the page ask for is registered by then. */}
       <LearnedBrandColors brands={brandColors.learned} />

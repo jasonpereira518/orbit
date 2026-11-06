@@ -875,6 +875,50 @@ run(async () => {
     check("the un-started calendar's cursor did not", sourceCursorOf(sourceB) === null, JSON.stringify(sourceB?.sync_cursor));
   }
 
+  // --- The Google page's per-feature switches (v192) --------------------------------------
+  // Meetings off stops only the calendar lane: the connection stays armed and synced, and the
+  // contacts lane (here, a stubbed grant without contacts) is unaffected by the switch.
+  await clearAll();
+  {
+    const id = await seed("sched-calendar-off");
+    const db = await getDb();
+    await db.execute(sql`UPDATE gmail_connections SET calendar_sync_enabled = 0 WHERE id = ${id}`);
+    const { deps, fetchedFor } = depsFor(new Map([["sched-calendar-off", "ok" as const]]));
+    const stats = await runSyncPass({ deps });
+    check("meetings off: no calendar call is made", fetchedFor.length === 0, JSON.stringify(fetchedFor));
+    check("meetings off: the connection still counts as synced", stats.synced === 1, JSON.stringify(stats));
+    const row = await readConn(id);
+    check("meetings off: it is rescheduled, not disarmed or paused", row.next_sync_at !== null && row.sync_status === "idle", JSON.stringify(row));
+  }
+
+  // Every enabled Google calendar is read, each by its own id; a disabled one is not.
+  await clearAll();
+  {
+    const id = await seed("sched-multi-cal");
+    const db = await getDb();
+    for (const [calendarId, enabled] of [["primary", 1], ["work@group.calendar.google.com", 1], ["holidays", 0]] as const) {
+      await db.execute(sql`
+        INSERT INTO calendar_sources (user_id, provider, connection_id, calendar_id, enabled)
+        VALUES ('sched-multi-cal', 'google', ${id}, ${calendarId}, ${enabled})
+      `);
+    }
+    const asked: string[] = [];
+    const deps: SyncDeps = {
+      getAccessToken: async () => "stub-token:sched-multi-cal",
+      fetchPage: async ({ calendarId }) => {
+        asked.push(calendarId ?? "primary");
+        return emptyPage();
+      },
+    };
+    const stats = await runSyncPass({ deps });
+    check("multi-calendar: the connection syncs", stats.synced === 1, JSON.stringify(stats));
+    check(
+      "multi-calendar: both enabled calendars are read, the disabled one is not",
+      asked.sort().join(",") === "primary,work@group.calendar.google.com",
+      JSON.stringify(asked),
+    );
+  }
+
   await clearAll();
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
