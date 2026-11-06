@@ -7,8 +7,8 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { emailEvents, emailThreads, userSettings } from "@/db/schema";
-import { statusFor, type ExtractedEvent, type ThreadResult } from "./types";
+import { emailEvents, emailThreads, ignoredPeople, userSettings } from "@/db/schema";
+import { INBOX_IGNORED_CONTEXT, statusFor, type ExtractedEvent, type ThreadResult } from "./types";
 
 export async function upsertThreadResult(userId: string, result: ThreadResult): Promise<{ changed: boolean }> {
   const db = await getDb();
@@ -99,11 +99,24 @@ export async function knownThreadVersions(userId: string, threadIds: string[]): 
   return out;
 }
 
+/**
+ * The names dismissed from the "From your inbox" strip. A dismissal is a name taken from the
+ * person's mail, kept on the set-aside list, so it goes when the feature's data goes. The
+ * marker is the row's fixed `context`; a capture's own entries never carry it.
+ */
+export async function deleteInboxDismissals(userId: string): Promise<void> {
+  const db = await getDb();
+  await db
+    .delete(ignoredPeople)
+    .where(and(eq(ignoredPeople.userId, userId), eq(ignoredPeople.context, INBOX_IGNORED_CONTEXT)));
+}
+
 /** Everything the feature recorded for one account, and the switch itself. */
 export async function deleteEmailIntelData(userId: string): Promise<void> {
   const db = await getDb();
   await db.delete(emailEvents).where(eq(emailEvents.userId, userId));
   await db.delete(emailThreads).where(eq(emailThreads.userId, userId));
+  await deleteInboxDismissals(userId);
   await db
     .update(userSettings)
     .set({ emailIntelEnabled: 0, emailIntelCursorAt: null, emailIntelNextAt: null, updatedAt: new Date() })
