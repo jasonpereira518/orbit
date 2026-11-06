@@ -149,5 +149,5 @@ export function buildDiscoveryQuery(input: {
   const what = field ? ` working in ${field}${at}` : at ? ` working${at}` : "";
   if (school) return `${school} alumni${what}`;
   if (what) return `People${what}`;
-  return input.aim ? "People in my field who could help me get started" : null;
+  return null; // an aim alone is not searchable
 }

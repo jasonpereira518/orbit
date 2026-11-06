@@ -76,7 +76,7 @@ console.log("\nbuildDiscoveryQuery");
   const c = buildDiscoveryQuery({ aim: aim("product"), companies: ["A", "B", "C", "D"], schools: [] });
   check("companies capped at 3", c === "People working in product at A, B, or C", String(c));
   const f = buildDiscoveryQuery({ aim: aim(null), companies: [], schools: [] });
-  check("aim only is not empty", !!f && f.length > 10 && !/undefined|null/.test(f), String(f));
+  check("aim only -> null", f === null, String(f));
   const s = buildDiscoveryQuery({ aim: null, companies: [], schools: ["UNC"] });
   check("school only", s === "UNC alumni", String(s));
 }
