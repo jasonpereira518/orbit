@@ -87,7 +87,9 @@ export function SceneComets() {
               <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#0f3d3e] text-sm font-medium text-[#e8f3f1]">
                 PR
               </div>
-              <div className="min-w-0 flex-1 md:flex-initial">
+              {/* A real basis, so on a phone the chip wraps under the text (its ml-13 lines it up)
+                  instead of squeezing the name into a column a few letters wide. */}
+              <div className="min-w-0 flex-1 basis-40 md:flex-initial md:basis-auto">
                 <p className="text-sm font-medium text-[#e8f3f1]">
                   Priya Raman
                 </p>

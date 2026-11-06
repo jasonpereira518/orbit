@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { format, formatDistanceToNow } from "date-fns";
 import { ChevronLeft, ChevronRight, Focus, LayoutList, Play, RefreshCw, Wand2 } from "lucide-react";
+import { AiKeyNotice } from "@/components/ai-key-notice";
 import { Button } from "@/components/ui/button";
+import { useViewerPlan } from "@/components/viewer-plan";
 import { RecommendationCard, type RecommendationCardData } from "@/components/radar/recommendation-card";
 import { RadarSettingsSheet } from "@/components/radar/radar-settings-sheet";
 import { useRadarKeys } from "@/components/radar/use-radar-keys";
@@ -73,6 +75,7 @@ function prefersReducedMotion() {
 export function RadarView(props: RadarViewProps) {
   const { recommendations, lastRunAt, nextRunAt, paused, aiAvailable, hasContacts, settings, autopilot, changes, signalsThisWeek, inboxPeople, focusId } =
     props;
+  const { aiReason } = useViewerPlan();
   const router = useRouter();
   const [pending, start] = useTransition();
   const linked = focusId ? recommendations.findIndex((r) => r.id === focusId) : -1;
@@ -171,6 +174,8 @@ export function RadarView(props: RadarViewProps) {
       {changes.length > 0 && <WhatChanged changes={changes} onJump={jumpTo} />}
       {autopilot.length > 0 && <AutopilotDid items={autopilot} />}
       <InboxPeople people={inboxPeople} onAdd={addInboxPerson} onDismiss={dismissInboxPerson} onChanged={() => router.refresh()} />
+
+      {!aiAvailable && recommendations.length > 0 && <AiKeyNotice feature="draft" reason={aiReason ?? "key_required"} compact />}
 
       {recommendations.length === 0 ? (
         <EmptyState hasContacts={hasContacts} ranOnce={lastRunAt !== null} nextRunAt={nextRunAt} paused={paused} />
@@ -335,7 +340,7 @@ function FocusDeck({
             {s.keys.map((k, j) => (
               <span key={k}>
                 {j > 0 ? "/" : ""}
-                <kbd className="rounded border border-border/70 bg-muted px-1 font-sans text-[11px] text-ink">{k}</kbd>
+                <kbd className="rounded border border-border/70 bg-muted px-1 font-sans text-2xs text-ink">{k}</kbd>
               </span>
             ))}{" "}
             {s.label}

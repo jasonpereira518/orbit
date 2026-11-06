@@ -1,35 +1,58 @@
-import * as Sentry from "@sentry/nextjs";
-import { scrubSentryEvent } from "@/lib/sentry-scrub";
+import { initBotId } from "botid/client/core";
 import { markNavStart } from "@/lib/nav-timing";
+import { loadSentry, reportClientError, sentryIfLoaded } from "@/lib/sentry-lazy";
+import { BOTID_PROTECTED_POSTS } from "@/lib/waitlist-host";
 
 /**
- * Browser-side Sentry: hydration errors, client exceptions, and errors caught by the
- * error boundaries (`src/components/error-fallback.tsx`, `src/app/global-error.tsx`).
- * Inert without `NEXT_PUBLIC_SENTRY_DSN`. No session replay — it would eat the free
- * tier and record other people's contacts.
+ * Browser-side Sentry, loaded after the page is up rather than with it.
+ *
+ * The SDK is ~83 KB gzipped. Initialized here at startup, it sat on every route's critical
+ * path: on a cold mobile load of the landing page it competed with the render-blocking CSS
+ * and the app's own chunks, and hydration landed ~5 s in (Oct 13 audit). Now it loads at the
+ * first idle moment after `load`. An error before then is queued by loading Sentry at once
+ * to report it, so nothing is dropped; what is given up is the pageload trace for the 10%
+ * tracing sample and breadcrumbs from before init. Sentry's own handlers take over once it
+ * has initialized, so these early listeners step aside.
  */
-Sentry.init({
-  dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
-  enabled: Boolean(process.env.NEXT_PUBLIC_SENTRY_DSN),
-  environment: process.env.NEXT_PUBLIC_VERCEL_ENV ?? "development",
-  tracesSampleRate: 0.1,
-  replaysSessionSampleRate: 0,
-  replaysOnErrorSampleRate: 0,
-  sendDefaultPii: false,
-  // Calendar, scan and MCP URLs carry their credential in the path (src/lib/sentry-scrub.ts).
-  beforeSend: scrubSentryEvent,
-  beforeSendTransaction: scrubSentryEvent,
-  beforeBreadcrumb: (crumb) => scrubSentryEvent({ breadcrumbs: [crumb] }).breadcrumbs![0]!,
-});
+// Once Sentry is up its own global handlers report these, so the early ones go quiet.
+const onEarlyError = (event: ErrorEvent) => {
+  if (!sentryIfLoaded()) reportClientError(event.error ?? new Error(event.message));
+};
+const onEarlyRejection = (event: PromiseRejectionEvent) => {
+  if (!sentryIfLoaded()) reportClientError(event.reason);
+};
+window.addEventListener("error", onEarlyError);
+window.addEventListener("unhandledrejection", onEarlyRejection);
+
+function start() {
+  void loadSentry().then(() => {
+    window.removeEventListener("error", onEarlyError);
+    window.removeEventListener("unhandledrejection", onEarlyRejection);
+  });
+}
+const startWhenIdle = () =>
+  typeof window.requestIdleCallback === "function"
+    ? window.requestIdleCallback(start, { timeout: 5_000 })
+    : window.setTimeout(start, 2_000);
+if (document.readyState === "complete") startWhenIdle();
+else window.addEventListener("load", startWhenIdle, { once: true });
 
 /**
- * Every client-side navigation starts here. Sentry gets its breadcrumb, and page-load timing
- * gets its clock start (`src/lib/nav-timing.ts`, read back by the pageview beacon).
+ * Vercel BotID: the waitlist join's server-action POSTs carry a proof the actions check
+ * (`src/lib/bot-check.ts`). Every other request passes through untouched. Stays at startup,
+ * unlike Sentry: a join submitted before it initialized would carry no proof.
+ */
+initBotId({ protect: BOTID_PROTECTED_POSTS });
+
+/**
+ * Every client-side navigation starts here. Page-load timing gets its clock start
+ * (`src/lib/nav-timing.ts`, read back by the pageview beacon), and Sentry its breadcrumb once
+ * it has loaded.
  */
 export function onRouterTransitionStart(
   url: string,
   navigationType: "push" | "replace" | "traverse"
 ) {
   markNavStart(url);
-  Sentry.captureRouterTransitionStart(url, navigationType);
+  sentryIfLoaded()?.captureRouterTransitionStart(url, navigationType);
 }

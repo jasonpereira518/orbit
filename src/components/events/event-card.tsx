@@ -56,7 +56,7 @@ export function EventCard({
           />
         ) : null}
         {event.role === "hosted" ? (
-          <span className="absolute left-2 top-2 rounded-full bg-black/55 px-2 py-0.5 text-[11px] font-medium text-white">
+          <span className="absolute left-2 top-2 rounded-full bg-black/55 px-2 py-0.5 text-2xs font-medium text-white">
             Hosted
           </span>
         ) : null}
@@ -68,13 +68,13 @@ export function EventCard({
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             {found ? (
               // An event nobody added has to say so, in the place people look first.
-              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-2xs text-muted-foreground">
                 <Sparkles className="size-3" aria-hidden />
                 {found}
               </span>
             ) : null}
             {rsvp ? (
-              <span className="rounded-full border border-border/70 px-2 py-0.5 text-[11px] text-muted-foreground">
+              <span className="rounded-full border border-border/70 px-2 py-0.5 text-2xs text-muted-foreground">
                 {rsvp}
               </span>
             ) : null}

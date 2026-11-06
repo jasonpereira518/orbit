@@ -108,11 +108,7 @@ export function CelebrationContent({
             skipped={skipped}
           />
 
-          {/* The manifest. Each perk is a struck chip cut from the field's own
-              light: the slab wipes in from the left, the diamond lands, the
-              words are ink from frame one. Deliberately not glowing dots and
-              hairlines — those are light-on-dark devices and are invisible
-              here. */}
+          {/* Each perk arrives as a simple line with a circular bullet. */}
           {cascading && (
             <ul
               className={
@@ -132,33 +128,18 @@ export function CelebrationContent({
                 return (
                   <motion.li
                     key={`${played}-${perk}`}
-                    className={`relative isolate flex items-center gap-2.5 rounded-[3px] ${
-                      layout.narrow ? "w-full px-3" : "w-fit px-3.5"
-                    }`}
+                    className={`flex items-center gap-2.5 ${layout.narrow ? "w-full" : "w-fit"}`}
                     style={{ paddingBlock: layout.perkPadY, color: theme.ink }}
                     initial={skipped ? false : { opacity: 0, x: from, y: 6 }}
                     animate={{ opacity: 1, x: 0, y: 0 }}
                     transition={{ ...PERK_SPRING, delay }}
                   >
-                    {/* The old hairline's beat, made solid. */}
                     <motion.span
                       aria-hidden
-                      className="absolute inset-0 -z-10 origin-left rounded-[3px]"
-                      style={{ backgroundColor: theme.chip }}
-                      initial={skipped ? false : { scaleX: 0 }}
-                      animate={{ scaleX: 1 }}
-                      transition={{
-                        duration: 0.45,
-                        ease: EASE_HOUSE,
-                        delay: delay + 0.06,
-                      }}
-                    />
-                    <motion.span
-                      aria-hidden
-                      className="h-2 w-2 shrink-0 rounded-[1px]"
+                      className="h-2 w-2 shrink-0 rounded-full"
                       style={{ backgroundColor: theme.ink }}
-                      initial={skipped ? false : { rotate: 0, scale: 0 }}
-                      animate={{ rotate: 45, scale: 1 }}
+                      initial={skipped ? false : { scale: 0 }}
+                      animate={{ scale: 1 }}
                       transition={{ ...PERK_SPRING, delay }}
                     />
                     <span style={{ fontSize: layout.perkPx, lineHeight: 1.375 }}>

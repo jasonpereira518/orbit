@@ -1,10 +1,11 @@
 import { getGmailConnectionStatus } from "@/actions/gmail";
-import { getPlanOverview, getSettings } from "@/actions/settings";
+import { getEmailSettings, getPlanOverview, getSettings } from "@/actions/settings";
 import { listGoals } from "@/actions/goals";
 import { getDisplayProfile, isClerkConfigured } from "@/lib/auth";
 import { AppearanceSettings } from "@/components/settings/appearance-settings";
 import { DataSettings } from "@/components/settings/data-settings";
 import { GoalsSettings } from "@/components/settings/goals-settings";
+import { EmailSettings } from "@/components/settings/email-settings";
 import { TargetCompaniesSettings } from "@/components/settings/target-companies-settings";
 import { getSchools, getTargetCompanies } from "@/actions/target-companies";
 import { CreditsSettings } from "@/components/settings/credits-settings";
@@ -14,6 +15,7 @@ import { IntegrationsSettings } from "@/components/settings/integrations-setting
 import { NotificationSettings } from "@/components/settings/notification-settings";
 import { EmailIntelSetting } from "@/components/settings/email-intel-setting";
 import { RadarDigestSetting } from "@/components/settings/radar-digest-setting";
+import { MeetingNudgeSetting } from "@/components/settings/meeting-nudge-setting";
 import { PlanSettings } from "@/components/settings/plan-settings";
 import { ProfileSettings } from "@/components/settings/profile-settings";
 import { SettingsSection } from "@/components/settings/settings-section";
@@ -27,6 +29,8 @@ import {
 } from "@/components/settings/sections";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+import { tourResumable } from "@/lib/tour/tour-state";
+import { ensureUserSettings } from "@/lib/user-settings";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { surfaceKeyForSettingsId, FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
 import { speechAllowance } from "@/lib/speech-quota";
@@ -36,6 +40,8 @@ import { cookies } from "next/headers";
 import { after } from "next/server";
 import { captureRadarTimeZone } from "@/lib/radar/digest";
 import { TZ_COOKIE } from "@/lib/reminder-due-bucket";
+
+export const metadata = { title: "Settings" };
 
 /**
  * Anchor for a card that stands alone. Ids and grouping live in `sections.ts`.
@@ -66,7 +72,7 @@ const GROUP = Object.fromEntries(SETTINGS_GROUPS.map((g) => [g.key, g])) as Reco
 >;
 
 /**
- * One of the five named groups, and the rail's anchor for it. Renders nothing when every
+ * One of the named groups, and the rail's anchor for it. Renders nothing when every
  * card in it is hidden, so a label never floats above an empty stretch of page — and the
  * rail, built from the same visibility, never offers a row that scrolls nowhere.
  */
@@ -104,8 +110,10 @@ export default async function SettingsPage() {
     visibility,
     targetCompanies,
     schools,
+    settingsRow,
     meetingAllowance,
     shortformAllowance,
+    emailSettings,
   ] = await Promise.all([
     getSettings(),
     listGoals(),
@@ -114,8 +122,13 @@ export default async function SettingsPage() {
     resolveSurfaceVisibility(userId),
     getTargetCompanies(),
     getSchools(),
+    ensureUserSettings(userId),
     speechAllowance(userId, "meeting"),
     speechAllowance(userId, "shortform"),
+    // Loaded here, not by the section on mount: this page replaceStates on mount (OAuth
+    // params, hash cleanup), and a Next router restore drops any server action queued at
+    // that moment — the section would sit on its skeleton forever. Null when hidden.
+    getEmailSettings().catch(() => null),
   ]);
   // `speechAllowance` returns a Date; the panel below is a client component, so hand it
   // down as an ISO string the same way `managed-ai-policy`'s allowance already does.
@@ -174,6 +187,8 @@ export default async function SettingsPage() {
             profile={profile}
             clerkEnabled={isClerkConfigured()}
             initialSocialLinks={initialSettings.socialLinks}
+            initialSenderBio={initialSettings.senderBio}
+            initialCareer={initialSettings.careerProfile}
           />
         </Section>
         <Section id="settings-plan" hidden={hidden}>
@@ -181,6 +196,18 @@ export default async function SettingsPage() {
             entitlements={planOverview.entitlements}
             usage={planOverview.usage}
             demoAccount={planOverview.demoAccount}
+          />
+        </Section>
+      </Group>
+
+      <Group group="goals" visible={groupVisible("goals")}>
+        <Section id="settings-goals" hidden={hidden}>
+          <GoalsSettings initialGoals={initialGoals} />
+        </Section>
+        <Section id="settings-targets" hidden={hidden}>
+          <TargetCompaniesSettings
+            initialCompanies={targetCompanies}
+            initialSchools={schools}
           />
         </Section>
       </Group>
@@ -209,16 +236,11 @@ export default async function SettingsPage() {
                 allowed={emailIntelEntitlements?.canUseRecruiters === true}
               />
             ) : null}
+            {shows("settings-notifications") ? <MeetingNudgeSetting /> : null}
           </SettingsSection>
         ) : null}
-        <Section id="settings-goals" hidden={hidden}>
-          <GoalsSettings initialGoals={initialGoals} />
-        </Section>
-        <Section id="settings-targets" hidden={hidden}>
-          <TargetCompaniesSettings
-            initialCompanies={targetCompanies}
-            initialSchools={schools}
-          />
+        <Section id="settings-email" hidden={hidden}>
+          <EmailSettings initial={emailSettings} />
         </Section>
       </Group>
 
@@ -239,7 +261,10 @@ export default async function SettingsPage() {
         >
           {shows("settings-knowledge") ? <KnowledgeSettings /> : null}
           {shows("settings-help") ? (
-            <HelpSettings feedbackEnabled={!hidden.has(FEEDBACK_SURFACE_KEY)} />
+            <HelpSettings
+              feedbackEnabled={!hidden.has(FEEDBACK_SURFACE_KEY)}
+              tourResumable={tourResumable(settingsRow)}
+            />
           ) : null}
           <CreditsSettings />
         </SettingsSection>

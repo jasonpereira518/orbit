@@ -183,7 +183,14 @@ async function candidateRows(
                 FROM contact_tags ct
                 JOIN tags t ON t.id = ct.tag_id AND t.user_id = ${userId}
                WHERE ct.contact_id = c.id) AS tag_names,
-             (SELECT count(*) FROM reminders rm WHERE rm.contact_id = c.id AND rm.user_id = ${userId})::int AS reminder_count,
+             (SELECT count(*) FROM reminders rm
+               WHERE rm.contact_id = c.id AND rm.user_id = ${userId}
+                 -- The relationship engine's reminders are the import's own consequence, not a
+                 -- user touch; counting them would make every analyzed person un-undoable.
+                 AND NOT COALESCE(rm.created_by = 'ai' AND rm.note_batch_id IN (
+                   SELECT rr.note_batch_id FROM relationship_runs rr
+                    WHERE rr.user_id = ${userId} AND rr.note_batch_id IS NOT NULL
+                 ), false))::int AS reminder_count,
              (SELECT count(*) FROM interactions i
                 WHERE i.contact_id = c.id AND i.user_id = ${userId}
                   AND (i.external_id IS NULL OR i.created_at > ${runEndedIso}::timestamptz))::int AS interaction_count,

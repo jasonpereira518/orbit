@@ -1,5 +1,26 @@
 import { sql } from "drizzle-orm";
 import { contacts } from "@/db/schema";
+import { NO_PHOTO_PREFIX } from "@/lib/contact-avatar-url";
+
+/** A contact's LinkedIn URL must be on a linkedin.com host before it may show a shared photo. */
+export const LINKEDIN_HOST_RE = "^(https?://)?([a-z0-9-]+\\.)*linkedin\\.com/";
+
+/**
+ * The shared (cross-user) LinkedIn photo for a contact row, or NULL. THE one rule every photo
+ * reader uses: precedence is manual upload > shared > the contact's own photo, so a contact
+ * whose `profile_image_source` is 'upload' never gets one; a blocked or "found nothing" row
+ * never matches. A scalar subquery (a primary-key lookup per row) rather than a JOIN so it
+ * drops into relational `extras`, raw SQL and plain selects alike without adding a statement.
+ * `contacts.linkedin_slug` has no host check of its own, hence the regex on the URL. Only an
+ * `https://` shared image is ever used (defence in depth: writers validate too).
+ * Inner columns are literal `la.*` so drizzle can never strip their qualifier.
+ */
+export const sharedAvatarUrlSql = sql<string | null>`(CASE WHEN ${contacts.profileImageSource} IS DISTINCT FROM 'upload' THEN (
+  SELECT la.image_url FROM linkedin_avatars la
+   WHERE la.slug = ${contacts.linkedinSlug}
+     AND la.blocked_at IS NULL AND la.image_url LIKE 'https://%'
+     AND ${contacts.linkedinUrl} ~* ${LINKEDIN_HOST_RE}
+) END)`;
 
 /**
  * `clientContactAvatarUrl()` expressed in SQL, so list scans can return a browser-safe
@@ -12,14 +33,28 @@ import { contacts } from "@/db/schema";
  * and `clientContactAvatarUrl` in `src/lib/contact-avatar-url.ts`; keep the three in step.
  *
  * Server-only (imports drizzle); the pure helpers stay in `contact-avatar-url.ts`.
+ *
+ * The `NO_PHOTO_PREFIX` branch is the one that was missing. The negative-cache marker is not
+ * a photo, and without that branch it fell through to the ELSE and was handed to the graph
+ * and the dashboard as the src of an image element — a broken image where an initials
+ * fallback belongs. `isUnusableAvatarUrl` has refused the marker since it shipped; this
+ * mirror never learned it, which is precisely the drift the note above warns about. The
+ * prefix is now interpolated from the same constant rather than restated here.
+ *
+ * The inline-photo branch is tested first, on an 11-character `substr`, so Postgres
+ * decompresses only that prefix of a toasted base64 photo rather than all of it: every list,
+ * dashboard and graph scan runs this per contact (LATENCY_PLAN DB-4). A data URL is never
+ * blank and never the marker, so moving it first changes no result.
  */
-export const clientAvatarUrlSql = sql<string | null>`CASE
-  WHEN ${contacts.profileImageUrl} IS NULL OR btrim(${contacts.profileImageUrl}) = '' THEN NULL
-  WHEN ${contacts.profileImageUrl} LIKE 'data:image/%' THEN '/api/avatars/' || ${contacts.id}
+export const clientAvatarUrlSql = sql<string | null>`coalesce(${sharedAvatarUrlSql}, CASE
+  WHEN ${contacts.profileImageUrl} IS NULL THEN NULL
+  WHEN substr(${contacts.profileImageUrl}, 1, 11) = 'data:image/' THEN '/api/avatars/' || ${contacts.id}
+  WHEN btrim(${contacts.profileImageUrl}) = '' THEN NULL
+  WHEN ${contacts.profileImageUrl} LIKE ${NO_PHOTO_PREFIX + "%"} THEN NULL
   WHEN ${contacts.profileImageUrl} LIKE '%unavatar.io%'
     OR ${contacts.profileImageUrl} LIKE '%static.licdn.com/aero%' THEN NULL
   ELSE btrim(${contacts.profileImageUrl})
-END`;
+END)`;
 
 /**
  * The columns the contacts list selects.
@@ -35,6 +70,7 @@ export const contactsListSelection = {
   firstName: contacts.firstName,
   lastName: contacts.lastName,
   preferredName: contacts.preferredName,
+  nameGuess: contacts.nameGuess,
   title: contacts.title,
   company: contacts.company,
   school: contacts.school,
@@ -52,6 +88,8 @@ export const contactsListSelection = {
     OR (${contacts.email} IS NOT NULL AND btrim(${contacts.email}) <> '')
   )`,
   relationshipScore: contacts.relationshipScore,
+  /** Only read for the "Example" chip on the guided tour’s seeded people. */
+  source: contacts.source,
   closeness: contacts.closeness,
   closenessTier: contacts.closenessTier,
   priorityLevel: contacts.priorityLevel,

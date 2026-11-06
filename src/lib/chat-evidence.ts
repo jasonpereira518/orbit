@@ -28,10 +28,26 @@ export type EvidenceSource =
       kind: "contact";
       /** The contact's summary, notes and key facts as a whole — not one dated event. */
       contactId: string;
+    }
+  | {
+      kind: "meeting";
+      /** `meeting_sessions.id`. One chip per meeting, whichever of its lines was cited. */
+      sourceId: string;
+      /** ISO day, for display. */
+      date: string | null;
+      /** Where in the meeting the cited line was said; null for its summary. */
+      startMs: number | null;
     };
 
 function keyOf(source: EvidenceSource): string {
-  return source.kind === "interaction" ? `interaction:${source.sourceId}` : `contact:${source.contactId}`;
+  switch (source.kind) {
+    case "interaction":
+      return `interaction:${source.sourceId}`;
+    case "meeting":
+      return `meeting:${source.sourceId}`;
+    default:
+      return `contact:${source.contactId}`;
+  }
 }
 
 export type EvidenceLedger = {

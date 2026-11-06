@@ -18,10 +18,13 @@ import { cn } from "@/lib/utils";
 export function SubscriptionCheckoutButton({
   plan,
   period = "monthly",
+  gate,
   className,
 }: {
   plan: PurchasablePlan;
   period?: BillingPeriod;
+  /** The paywall that sent the buyer here (`/upgrade?gate=`), already validated by the page. Event attribution only. */
+  gate?: string | null;
   className?: string;
 }) {
   const [pending, start] = useTransition();
@@ -37,7 +40,7 @@ export function SubscriptionCheckoutButton({
         onClick={() => {
           setError(null);
           start(async () => {
-            const result = await startSubscriptionCheckout(plan, period);
+            const result = await startSubscriptionCheckout(plan, period, gate);
             if ("url" in result) {
               // A full navigation, not router.push: the destination is Stripe's domain.
               window.location.href = result.url;

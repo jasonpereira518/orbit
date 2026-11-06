@@ -12,7 +12,9 @@
  */
 import type { PassStanding } from "./interest-list";
 
-const KEY = "waitlist-pass-seen";
+/** The localStorage key; also read by the inline script in `early-access-pill.tsx`. */
+export const PASS_SEEN_KEY = "waitlist-pass-seen";
+const KEY = PASS_SEEN_KEY;
 
 type Stored = PassStanding & { token: string };
 
@@ -52,5 +54,14 @@ export function writeSeen(token: string, standing: PassStanding, storage?: Stora
     (storage ?? local())?.setItem(KEY, JSON.stringify({ token, ...standing }));
   } catch {
     // Blocked or full: the next visit just has nothing to compare with.
+  }
+}
+
+/** Whether this device has shown any pass, i.e. someone here already joined. */
+export function hasSeenAnyPass(storage?: Storage): boolean {
+  try {
+    return Boolean((storage ?? local())?.getItem(KEY));
+  } catch {
+    return false;
   }
 }

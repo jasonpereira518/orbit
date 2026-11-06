@@ -7,6 +7,8 @@
  * extra topic or phrases a summary differently is not marked wrong.
  */
 
+import type { QuestionShape } from "../../src/lib/chat-retrieval";
+
 /** `scripts/eval-fixtures/ai-capture-eval.json` — runs the whole capture parse (people + dates). */
 export type CaptureEvalFixture = {
   cases: Array<{
@@ -119,12 +121,71 @@ export type TranscribeEvalFixture = {
 
 /** `scripts/eval-fixtures/ai-chat-eval.json` — questions over `contact-search-eval.json`'s network. */
 export type ChatEvalFixture = {
+  /** Look-alike contacts seeded beside the network, so a list question has more than 12 answers. */
+  bulk?: Array<{ count: number; namePrefix: string; school?: string; company?: string; location?: string }>;
   cases: Array<{
     id: string;
     question: string;
     /** Emails (from contact-search-eval.json) of contacts the answer must name. */
     mustMention: string[];
+    /** Earlier turns of the thread, for a follow-up. */
+    priorTurns?: Array<{ role: "user" | "assistant"; content: string }>;
+    /** Facts the answer must state; `{networkSize}` is the number of contacts seeded. */
+    mustSay?: string[];
+    /** A list question: the complete filtered roster must reach the prompt with this total. */
+    expectList?: { total: number };
+    /** A count question: the answer must state this number. */
+    expectCount?: number;
+    /** A person question: this contact (by email) must resolve and be the focused contact. */
+    expectPerson?: string;
+    /**
+     * The records hold no answer: the answer must say so — labelled `abstained` or `partial`
+     * by `labelAnswer` (src/lib/chat-abstention.ts) — and place no people. Without it, an
+     * `abstained` label on a case is a false "I don't know".
+     */
+    mustAbstain?: boolean;
+    /**
+     * The answer must propose a change through one of these chat writes
+     * (@/lib/tools/chat-writes) — a card, never a write. Scored as `proposalAccuracy`.
+     */
+    mustPropose?: string[];
+    /** A question, not a request — the answer must propose nothing. */
+    mustNotPropose?: boolean;
   }>;
+  /**
+   * Records seeded beside the network, so a case can ask about a field or section that is
+   * not on the contact card the search fixture writes. Contacts are named by email.
+   */
+  records?: {
+    details?: Array<{ email: string; phone?: string; linkedinUrl?: string; howMet?: string; dateMet?: string; nextFollowUpInDays?: number }>;
+    /** `dueInDays` relative to the run; null is a reminder with no date. */
+    reminders?: Array<{ title: string; email?: string; dueInDays: number | null }>;
+    /** Open action items, each on a seeded note with the contact. */
+    actionItems?: Array<{ email: string; text: string; owedBy: "me" | "them" }>;
+    /** The user's active goals, in their words. */
+    goals?: string[];
+    /** Open opportunities on contacts — what `set_opportunity_status` cases name. */
+    opportunities?: Array<{ email: string; kind: string; label: string }>;
+  };
+};
+
+/**
+ * `chat-large-network-eval.json`: generated look-alikes plus note-only targets, seeded on top
+ * of contact-search-eval.json by `--network large`. See its `$comment`.
+ */
+export type LargeNetworkFixture = ChatEvalFixture & {
+  distractors: number;
+  pools: Record<
+    "firstNames" | "lastNames" | "companies" | "titles" | "industries" | "locations" | "schools" | "notes" | "interactionNotes",
+    string[]
+  >;
+  contacts: SearchFixtureContact[];
+  notes: Array<{ id: string; email: string; date: string; type: string; text: string }>;
+};
+
+export type SearchFixtureContact = {
+  email: string; fullName: string; company: string; title: string; school: string;
+  industry: string; location: string; notes: string; tags: string[];
 };
 
 /** `scripts/eval-fixtures/ai-digest-eval.json` — meeting transcripts for the digest. */
@@ -169,14 +230,25 @@ export type ResearchEvalFixture = {
 };
 
 export type ChatRoutingEvalFixture = {
+  /** What "today" is for relative dates, so the time labels stay true. */
+  today: string;
   cases: Array<{
     id: string;
     question: string;
     priorTurns?: Array<{ role: "user" | "assistant"; content: string }>;
     expect: {
       depth: "single" | "research";
+      /** The question shape; an array accepts any of them. */
+      shape: QuestionShape | QuestionShape[];
+      /** A substring the parsed person must contain (case-insensitive). */
+      person?: string;
+      time?: "interacted" | "quiet";
       attention: boolean;
       recruiters: boolean;
+      /** About the user's own upcoming schedule (the calendar block). Absent means false. */
+      calendar?: boolean;
+      /** Asks when the user is free. Absent means false. */
+      availability?: boolean;
       /** Seeded company names whose rosters should attach. */
       roster: string[];
     };
@@ -250,5 +322,32 @@ export type SkipGatesEvalFixture = {
     state: Record<string, string>;
     skip: boolean;
     why?: string;
+  }>;
+};
+
+export type RelationshipEvalFixture = {
+  cases: Array<{
+    id: string;
+    contactName: string;
+    /** ISO "now" the rules run at. */
+    now: string;
+    /**
+     * Chat-import case: the messages are session transcripts (as a chat-import row holds them),
+     * so the window speaker is "Chat" and the source a chat app, not a named person.
+     */
+    chat?: boolean;
+    /** Phrases no fact, `whatTheyDo` or `workingOn` may mention (someone else's detail). */
+    forbiddenFacts?: string[];
+    messages: Array<{ at: string; from: "me" | "them"; text: string }>;
+    expect: {
+      /** Phrases that must appear in some fact. */
+      facts: string[];
+      commitments: Array<{ phrase: string; owedBy: "me" | "them"; dueIso?: string }>;
+      /** Reminders the rules must plan. */
+      reminders: number;
+      openThreads: number;
+      /** Must produce nothing at all (no model call). */
+      trivial?: boolean;
+    };
   }>;
 };

@@ -92,6 +92,8 @@ export type AttendeeSource =
   | "screenshot"
   | "page"
   | "calendar"
+  /** A guest list the user opened on Luma/Partiful and saved from the extension. */
+  | "extension"
   | EventProviderId;
 export type AttendeeRole = "attendee" | "host" | "speaker";
 

@@ -141,12 +141,12 @@ export function EventCompaniesPanel({
                   <span className="truncate text-sm font-medium text-ink">{row.name}</span>
                   {row.targetPriority ? (
                     // The reason to look at this row first.
-                    <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-2xs font-medium text-primary">
                       <Star className="size-3" aria-hidden />
                       Target
                     </span>
                   ) : null}
-                  <span className="rounded-full border border-border/70 px-2 py-0.5 text-[11px] text-muted-foreground">
+                  <span className="rounded-full border border-border/70 px-2 py-0.5 text-2xs text-muted-foreground">
                     {ROLE_LABEL[row.role]}
                   </span>
                 </div>

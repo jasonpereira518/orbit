@@ -23,6 +23,7 @@ import {
 import { requireUserId } from "@/lib/auth";
 import { requireOutreachUser } from "@/lib/plan-guards";
 import {
+  isDeliveredMessage,
   computeCampaignMetrics,
   computeChannelBreakdown,
   computeStepBreakdown,
@@ -33,6 +34,7 @@ import {
   generateOutreachDraftsBatch,
 } from "@/lib/outreach-drafts";
 import {
+  ALREADY_SENT_MESSAGE,
   assessOutreachQuality,
   DEMO_PROSPECT_SEND_MESSAGE,
   isDemoProspect,
@@ -49,6 +51,7 @@ import {
   type SequenceStep,
 } from "@/lib/outreach-types";
 import { asActionResult, UserFacingError } from "@/lib/errors";
+import { logMessageOutcomeForUser, updateOutreachDraftForUser } from "@/lib/outreach-writes";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { actionFailure } from "@/lib/action-failure";
 
@@ -865,33 +868,10 @@ export async function updateOutreachMessage(input: {
   body?: string;
 }) {
   const userId = await requireOutreachUser();
-  const db = await getDb();
-
-  const message = await db.query.outreachMessages.findFirst({
-    where: eq(outreachMessages.id, input.messageId),
-    with: {
-      prospect: {
-        with: { campaign: true },
-      },
-    },
-  });
-
-  if (!message || message.prospect.campaign.userId !== userId) {
-    throw new Error("Message not found");
-  }
-
-  const [updated] = await db
-    .update(outreachMessages)
-    .set({
-      subject: input.subject ?? message.subject,
-      body: input.body ?? message.body,
-      updatedAt: new Date(),
-    })
-    .where(eq(outreachMessages.id, input.messageId))
-    .returning();
-
-  revalidatePath(`/outreach/${message.prospect.campaignId}`);
-  return updated;
+  const changed = await updateOutreachDraftForUser(userId, input);
+  if (!changed) throw new Error("Message not found");
+  revalidatePath(`/outreach/${changed.campaignId}`);
+  return changed.after;
 }
 
 async function maybeLogOutreachInteraction(
@@ -933,6 +913,10 @@ export async function markMessageAction(input: {
   if (!message || message.prospect.campaign.userId !== userId) {
     throw new Error("Message not found");
   }
+
+  // Copying or reopening a delivered message must not walk it back from "sent", or log its
+  // interaction and schedule its follow-up a second time.
+  if (isDeliveredMessage(message)) return null;
 
   const now = new Date();
   const [updated] = await db
@@ -980,80 +964,18 @@ export async function logMessageOutcome(input: {
   notes?: string | null;
 }) {
   const userId = await requireOutreachUser();
-  const db = await getDb();
-
-  const message = await db.query.outreachMessages.findFirst({
-    where: eq(outreachMessages.id, input.messageId),
-    with: {
-      prospect: {
-        with: { campaign: true },
-      },
-    },
-  });
-
-  if (!message || message.prospect.campaign.userId !== userId) {
-    throw new Error("Message not found");
+  // The writes — message, prospect, skipped follow-ups, the contact's interaction — are in
+  // `logMessageOutcomeForUser`, shared with chat.
+  const logged = await logMessageOutcomeForUser(userId, input);
+  if (!logged) throw new Error("Message not found");
+  if (logged.contactId) {
+    revalidatePath(`/contacts/${logged.contactId}`);
+    revalidatePath("/graph");
   }
-
-  const now = new Date();
-  const [updated] = await db
-    .update(outreachMessages)
-    .set({
-      outcome: input.outcome,
-      outcomeNotes: input.notes?.trim() || null,
-      repliedAt: now,
-      lastActionAt: now,
-      updatedAt: now,
-    })
-    .where(eq(outreachMessages.id, input.messageId))
-    .returning();
-
-  let prospectStatus: string = message.prospect.status;
-  if (input.outcome === "positive_reply") {
-    prospectStatus = "interested";
-  } else if (
-    input.outcome === "negative_reply" ||
-    input.outcome === "unsubscribed"
-  ) {
-    prospectStatus = "not_interested";
-  } else if (input.outcome === "neutral_reply") {
-    prospectStatus = "replied";
-  } else if (input.outcome === "bounced") {
-    prospectStatus = message.prospect.status;
-  }
-
-  await db
-    .update(outreachProspects)
-    .set({ status: prospectStatus, updatedAt: now })
-    .where(eq(outreachProspects.id, message.prospectId));
-
-  // Cancel pending follow-ups once we have a reply or bounce/unsubscribe
-  if (input.outcome !== "bounced") {
-    await db
-      .update(outreachMessages)
-      .set({ status: "skipped", updatedAt: now })
-      .where(
-        and(
-          eq(outreachMessages.prospectId, message.prospectId),
-          eq(outreachMessages.status, "scheduled")
-        )
-      );
-  }
-
-  await maybeLogOutreachInteraction(
-    {
-      contactId: message.prospect.contactId,
-      campaignId: message.prospect.campaignId,
-    },
-    message.channel as OutreachChannel,
-    input.notes?.trim() || `Outcome: ${input.outcome}`,
-    input.outcome
-  );
-
-  revalidatePath(`/outreach/${message.prospect.campaignId}`);
+  revalidatePath(`/outreach/${logged.campaignId}`);
   revalidatePath("/outreach");
   revalidatePath("/dashboard");
-  return updated;
+  return logged.message;
 }
 
 async function scheduleNextFollowUpIfNeeded(input: {
@@ -1287,6 +1209,14 @@ async function sendOutreachMessageNow(messageId: string) {
     throw new UserFacingError(DEMO_PROSPECT_SEND_MESSAGE);
   }
 
+  // A delivered message is never sent twice. The bulk bar and a stale tab can both still
+  // point at one. Outside the try below: a refusal is not a failed send.
+  // ponytail: check-then-send, so two concurrent sends can still both pass; a conditional
+  // UPDATE claiming the row only while it is undelivered is the upgrade.
+  if (isDeliveredMessage(message)) {
+    throw new UserFacingError(ALREADY_SENT_MESSAGE);
+  }
+
   const quality = assessOutreachQuality([
     {
       messageId: message.id,
@@ -1448,7 +1378,9 @@ export async function bulkSendOutreach(input: {
 
   // Same scope as the preview above: only this campaign's messages are ever sent from here.
   const inCampaign = new Set(
-    (await campaignMessages(input.campaignId, input.messageIds)).map((m) => m.id)
+    (await campaignMessages(input.campaignId, input.messageIds))
+      .filter((m) => !isDeliveredMessage(m))
+      .map((m) => m.id)
   );
   const ids = input.messageIds.filter((id) => inCampaign.has(id)).slice(0, BULK_SEND_LIMIT);
   const results: Array<{ messageId: string; ok: boolean; error?: string }> = [];

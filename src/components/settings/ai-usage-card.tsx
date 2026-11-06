@@ -104,6 +104,12 @@ export function AiUsageCard() {
           ) : null}
         </div>
       )}
+      {summary?.webSearches && summary.webSearches.used > 0 ? (
+        <p className="mt-2 text-xs text-muted-foreground tabular-nums">
+          {summary.webSearches.used.toLocaleString()} of {summary.webSearches.limit.toLocaleString()} web searches
+          used this month — work history and research stop at the limit until the 1st.
+        </p>
+      ) : null}
     </SettingsSection>
   );
 }

@@ -6,9 +6,11 @@
  * 1. The client's `mode` is never trusted. A popup opened twice on a slow
  *    connection will happily send two creates, so the server rescores the page
  *    and refuses a create that collides with an existing contact.
- * 2. Merges union the list fields. `updateContactForUser` replaces them, and a
- *    naive merge would silently wipe years of accumulated key facts the moment
- *    someone hit "save" on a LinkedIn profile.
+ * 2. Merges union the list fields, via `updateContactForUser`'s `mergeFactLists`
+ *    option — it replaces them by default, and a naive merge would silently wipe
+ *    years of accumulated key facts the moment someone hit "save" on a LinkedIn
+ *    profile. `unionLists` below is kept for tag names, which that option does
+ *    not cover.
  */
 
 import { revalidatePath } from "next/cache";
@@ -67,7 +69,10 @@ function unionLists(
   return out;
 }
 
+/** A captured photo is this account's own (source "extension"); it never enters the shared LinkedIn pool. */
 function toContactInput(fields: SaveContactFields, source: string): ContactInput {
+  // No photo scraped is undefined, never null: in merge mode null would wipe a stored photo.
+  const photo = fields.photoUrl || undefined;
   return {
     fullName: fields.fullName,
     firstName: fields.firstName,
@@ -81,7 +86,8 @@ function toContactInput(fields: SaveContactFields, source: string): ContactInput
     linkedinUrl: fields.linkedinUrl,
     xHandle: fields.xHandle,
     website: fields.website,
-    profileImageUrl: fields.photoUrl ?? null,
+    profileImageUrl: photo,
+    profileImageSource: photo ? "extension" : undefined,
     relationshipScore: fields.relationshipScore,
     source,
     metContext: fields.metContext,
@@ -126,19 +132,21 @@ export async function saveContactFromExtension(
     }
 
     const patch = toContactInput(input.fields, existing.source ?? EXTENSION_SOURCE);
-    // Additive for the list fields — see the file header.
-    patch.keyFacts = unionLists(existing.keyFacts, input.fields.keyFacts);
-    patch.sharedInterests = unionLists(
-      existing.sharedInterests,
-      input.fields.sharedInterests
-    );
+    // Additive for the list fields — see the file header. The union itself now lives in
+    // `updateContactForUser` behind `mergeFactLists`, because this rule was implemented
+    // here and nowhere else, and the path that pastes notes did not have it: a note
+    // mentioning an existing contact replaced their key facts with the empty list the
+    // model returned. One implementation, used by both.
     patch.tagNames = unionLists(undefined, input.fields.tagNames);
     // Don't clobber a curated note with a scraped one.
     if (existing.notes && input.fields.notes) {
       patch.notes = `${existing.notes}\n\n${input.fields.notes}`;
     }
 
-    await updateContactForUser(userId, target, patch, WRITE_OPTIONS);
+    await updateContactForUser(userId, target, patch, {
+      ...WRITE_OPTIONS,
+      mergeFactLists: true,
+    });
     contactId = target;
     created = false;
   } else {

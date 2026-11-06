@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { AnimatePresence, motion, useAnimate } from "motion/react";
 import { joinInterestList, recordPassCheckAction, saveInterestListName } from "@/actions/interest-list";
+import { readPageviewSessionId } from "@/lib/pageview-session";
 import { BoardingPass } from "@/components/interest/boarding-pass";
 import { PlanetArt } from "@/components/interest/planet-art";
 import { ProofLine } from "@/components/interest/proof-line";
@@ -30,7 +31,7 @@ const HEADING =
   "font-[family-name:var(--font-display)] font-normal leading-[1.12] tracking-[-0.025em] text-[#e8f3f1]";
 
 const inputClass =
-  "w-full rounded-xl border border-[#e8f3f1]/[0.14] bg-[#05070f]/50 px-4.5 py-4 text-base text-[#e8f3f1] transition-colors placeholder:text-[#6d807c] focus:border-[#f2c14e]/50 focus:outline-none";
+  "w-full rounded-xl border border-[#e8f3f1]/[0.14] bg-[#05070f]/50 px-4.5 py-4 text-base text-[#e8f3f1] transition-colors placeholder:text-[#6d807c] focus:border-[#f2c14e]/50 focus:outline-none focus-visible:ring-3 focus-visible:ring-[#f2c14e]/70";
 
 const buttonClass =
   "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-landing-button-surface px-5 py-4 font-medium text-landing-button-label transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60";
@@ -74,12 +75,15 @@ export function InterestHero({
   initial,
   pageUrl,
   pagePath,
+  signupOpen,
 }: {
   initial: HeroInitial;
   /** The waitlist page on its own domain, for the share link. */
   pageUrl: string;
   /** The path this page is served at — `/` on the waitlist host — for the pass's URL. */
   pagePath: string;
+  /** Sign-up is open on the app domain: replaces the waves copy. Built on the server. */
+  signupOpen?: { eyebrow: string; lead: ReactNode };
 }) {
   const reduced = usePrefersReducedMotion();
   const [phase, setPhase] = useState<Phase>(initial.kind === "ticket" ? "ticket" : "form");
@@ -141,8 +145,16 @@ export function InterestHero({
   }, [phase, entrance, ticket, reduced, pagePath]);
 
   // Count a real browser open of the pass — not admin add, not email-link prefetch of HTML.
+  //
+  // NOT THE JOIN ITSELF. This effect fires the moment the ticket appears, which for a new
+  // member is the join they just made, so `pass_check_count` read +1 for every web joiner and
+  // "came back to look" was never zero (audit D7). The token a join produced in this mount is
+  // remembered and skipped; opening a pass later, or re-entering an address already on the
+  // list, is a real look and counts.
+  const joinedToken = useRef<string | null>(null);
   useEffect(() => {
     if (phase !== "ticket" || !ticket?.shareToken) return;
+    if (joinedToken.current === ticket.shareToken) return;
     void recordPassCheckAction(ticket.shareToken);
   }, [phase, ticket?.shareToken]);
 
@@ -173,11 +185,16 @@ export function InterestHero({
           website: String(data.get("website") ?? ""),
           elapsedMs: readyAt.current ? Date.now() - readyAt.current : 0,
           ref: ref ?? undefined,
+          // This tab's analytics session id, so the signup can be traced to its visit. Null
+          // where sessionStorage is blocked; the join is identical without it.
+          sessionId: readPageviewSessionId(),
         });
         if (!result.ok) {
           fail(result.message);
           return;
         }
+        // A brand-new member's first pass view is the join, not a return visit (see above).
+        if (!result.returning) joinedToken.current = result.ticket.shareToken;
         setTicket(result.ticket);
         // The referral tracker further down the page has no token until a reload; this hands
         // it the new pass so it can start watching for friends.
@@ -244,7 +261,7 @@ export function InterestHero({
     <>
       <section className="pt-10 text-center md:pt-16">
         <p className="text-xs uppercase tracking-[0.16em] text-landing-accent">
-          Early access · Opening in waves
+          {signupOpen ? signupOpen.eyebrow : "Early access · Opening in waves"}
         </p>
         <h1 className={cn(HEADING, "mt-4 grid text-[clamp(34px,5.4vw,60px)]")}>
           {/* Both headlines occupy the same grid cell so the crossfade does not reflow. */}
@@ -268,7 +285,9 @@ export function InterestHero({
           </AnimatePresence>
         </h1>
         <p className="mx-auto mt-5 max-w-[48ch] text-base leading-relaxed text-[#9aada8] sm:text-lg">
-          {showTicket ? (
+          {signupOpen ? (
+            signupOpen.lead
+          ) : showTicket ? (
             <>
               Your place is saved. We&apos;re letting people in wave by wave — share your link
               to move up to the front.

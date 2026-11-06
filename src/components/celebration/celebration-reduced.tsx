@@ -53,12 +53,12 @@ export function CelebrationReduced({
           {theme.perks.map((perk) => (
             <li
               key={perk}
-              className="flex items-center gap-2.5 rounded-[3px] px-3 py-1.5"
-              style={{ backgroundColor: theme.chip, color: theme.ink }}
+              className="flex items-center gap-2.5 py-1.5"
+              style={{ color: theme.ink }}
             >
               <span
                 aria-hidden
-                className="h-2 w-2 shrink-0 rotate-45 rounded-[1px]"
+                className="h-2 w-2 shrink-0 rounded-full"
                 style={{ backgroundColor: theme.ink }}
               />
               <span className="text-sm">{perk}</span>

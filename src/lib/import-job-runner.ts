@@ -7,13 +7,26 @@ import {
   confirmContactsFileImport,
   confirmGoogleContactsImport,
   confirmOutlookContactsImport,
-  getImportJobStatus,
-  startLinkedInImport,
   startLinkedInMessagesImport,
   type ImportJobStatus,
 } from "@/actions/imports";
 import { startDriveImport } from "@/actions/drive";
+import {
+  appendChatRows,
+  beginChatImport,
+  startChatImport,
+} from "@/actions/chat-imports";
+import {
+  appendLinkedInExportFiles,
+  beginLinkedInExport,
+  startLinkedInExport,
+} from "@/actions/linkedin-export-files";
+import { gzipBase64, MAX_EXPORT_APPEND_CHARS, MAX_EXPORT_FILE_GZ_CHARS } from "@/lib/imports/export-upload";
+import type { ChatConversationRowPayload } from "@/db/schema";
+import { MAX_APPEND_ROWS } from "@/lib/conversations/types";
+import { importPayloadFits } from "@/lib/capture-limits";
 import { UserFacingError, isUserFacingError } from "@/lib/errors";
+import { IMPORT_COPY } from "@/lib/imports/import-copy";
 import type { PickedDriveFile } from "@/lib/imports/drive-triage";
 import { type ImportProgressState } from "@/components/imports/import-utils";
 import {
@@ -24,6 +37,21 @@ import {
 } from "@/lib/background-jobs";
 
 const POLL_INTERVAL_MS = 1500;
+
+/**
+ * One progress poll, through `/api/imports/[id]/status` rather than the `getImportJobStatus`
+ * Server Action: a tab runs its actions one at a time, and this poll runs every 1.5 s for the
+ * whole import, so as an action every click during an import waited behind it
+ * (LATENCY_PLAN SRV-5). Same function on the server; throws where the action threw.
+ */
+async function fetchImportJobStatus(importId: string): Promise<ImportJobStatus> {
+  const res = await fetch(`/api/imports/${encodeURIComponent(importId)}/status`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+  });
+  if (!res.ok) throw new Error(`Import status poll failed (${res.status})`);
+  return (await res.json()) as ImportJobStatus;
+}
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
@@ -36,7 +64,9 @@ export type ImportJobKind =
   | "outlook_contacts"
   | "contacts_file"
   | "calendar"
-  | "drive_docs";
+  | "drive_docs"
+  | "chat"
+  | "linkedin_export";
 
 export type ImportJobSnapshot = {
   id: string;
@@ -80,7 +110,22 @@ export type ImportJobInput =
       fileName: string;
       createFollowUps: boolean;
     }
-  | { kind: "drive_docs"; files: PickedDriveFile[] };
+  | { kind: "drive_docs"; files: PickedDriveFile[] }
+  | {
+      kind: "chat";
+      source: "whatsapp" | "imessage";
+      fileName: string;
+      selfNames: string[];
+      rows: ChatConversationRowPayload[];
+    }
+  | {
+      kind: "linkedin_export";
+      fileName: string;
+      /** Every kept CSV; `read` yields its text (a folder `File`, or a ZIP member already open). */
+      files: { path: string; bytes: number; read: () => Promise<string> }[];
+      /** Private members left on the device, counted for the history row. */
+      privateCount: number;
+    };
 
 type Listener = () => void;
 
@@ -100,7 +145,11 @@ function emit() {
  * "0 contacts imported" for the whole run would be actively misleading there.
  */
 function importedLabelFor(kind: ServerOwnedKind): string {
-  return kind === "calendar" ? "meetings logged" : "contacts imported";
+  if (kind === "calendar") return "meetings logged";
+  // Each staged chat row is one participant, linked or created, not necessarily a new contact.
+  if (kind === "chat") return "people";
+  if (kind === "linkedin_export") return "files kept";
+  return "contacts imported";
 }
 
 function importedFigure(
@@ -135,6 +184,10 @@ function importJobLabel(kind: ImportJobKind) {
       return "Importing calendar";
     case "drive_docs":
       return "Reading Google Drive files";
+    case "chat":
+      return "Importing chats";
+    case "linkedin_export":
+      return "Keeping your LinkedIn export";
   }
 }
 
@@ -308,7 +361,9 @@ type ServerOwnedKind =
   | "outlook_contacts"
   | "contacts_file"
   | "calendar"
-  | "drive_docs";
+  | "drive_docs"
+  | "chat"
+  | "linkedin_export";
 
 /** Polls a server-owned import job's status until it leaves "processing"/"pending". */
 async function pollServerOwnedImportJob(
@@ -323,7 +378,7 @@ async function pollServerOwnedImportJob(
 
     let status: ImportJobStatus;
     try {
-      status = await getImportJobStatus(importId);
+      status = await fetchImportJobStatus(importId);
     } catch {
       await sleep(POLL_INTERVAL_MS);
       continue;
@@ -380,6 +435,7 @@ function completionMessage(
   status: ImportJobStatus,
   kind?: ImportJobKind,
 ): string {
+  if (kind === "linkedin_export") return exportCompletionMessage(status);
   const logsMeetings = kind === "calendar";
   const readsFiles = kind === "drive_docs";
   const parts = logsMeetings
@@ -422,6 +478,16 @@ function completionMessage(
       : "Nothing new to import \u2014 everyone was already in your orbit";
   }
   return `Imported: ${parts.join(", ")}`;
+}
+
+/** What keeping an export did: the files, then whatever its extras added. */
+function exportCompletionMessage(status: ImportJobStatus): string {
+  const n = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
+  const parts = [`${n(status.filesSaved, "file")} kept`];
+  if (status.interactionsLogged > 0) parts.push(`${n(status.interactionsLogged, "note")} added to people`);
+  if (status.targetsAdded > 0) parts.push(`${n(status.targetsAdded, "target company", "target companies")} added`);
+  if (status.backgroundAdded > 0) parts.push(`${n(status.backgroundAdded, "background entry", "background entries")} added`);
+  return `LinkedIn export: ${parts.join(", ")}`;
 }
 
 /**
@@ -560,6 +626,82 @@ export type StartImportJobOptions = {
  * `input` — the uploaded file's full text (a LinkedIn export can be tens of MB) — which is
  * otherwise held by the thunk for as long as the job is polled.
  */
+async function stageAndStartChatImport(
+  job: Extract<ImportJobInput, { kind: "chat" }>,
+): Promise<{ importId: string; totalRows: number }> {
+  const begun = await beginChatImport({
+    source: job.source,
+    fileName: job.fileName,
+    selfNames: job.selfNames,
+  });
+  if ("error" in begun) throw new UserFacingError(begun.error);
+  // The server requires each chunk's startIndex to equal the rows already staged, so a chunk
+  // is never retried: any error here is fatal for the job. ~1.5 MB of JSON per call keeps
+  // every action well under the 4.5 MB function body limit.
+  let batch: ChatConversationRowPayload[] = [];
+  let bytes = 0;
+  let index = 0;
+  const flush = async () => {
+    if (!batch.length) return;
+    const res = await appendChatRows(begun.importId, index, batch);
+    if ("error" in res) throw new UserFacingError(res.error);
+    index += batch.length;
+    batch = [];
+    bytes = 0;
+  };
+  for (const row of job.rows) {
+    const size = JSON.stringify(row).length;
+    if (
+      batch.length &&
+      (bytes + size > 1_500_000 || batch.length >= MAX_APPEND_ROWS)
+    ) {
+      await flush();
+    }
+    batch.push(row);
+    bytes += size;
+  }
+  await flush();
+  const started = await startChatImport(begun.importId);
+  if ("error" in started) throw new UserFacingError(started.error);
+  return { importId: begun.importId, totalRows: started.totalRows };
+}
+
+/**
+ * Gzip each kept file in the browser and send them in appends under the request cap, then
+ * close the upload. A file still too big once gzipped is counted, not sent.
+ */
+async function stageAndStartExport(
+  job: Extract<ImportJobInput, { kind: "linkedin_export" }>,
+): Promise<{ importId: string; totalRows: number }> {
+  const begun = await beginLinkedInExport(job.fileName);
+  if ("error" in begun) throw new UserFacingError(begun.error);
+  let batch: { path: string; byteSize: number; gz: string }[] = [];
+  let chars = 0;
+  let tooLarge = 0;
+  const flush = async () => {
+    if (!batch.length) return;
+    const res = await appendLinkedInExportFiles(begun.importId, batch);
+    if ("error" in res) throw new UserFacingError(res.error);
+    batch = [];
+    chars = 0;
+  };
+  for (const file of job.files) {
+    const text = await file.read();
+    const gz = await gzipBase64(text);
+    if (gz.length > MAX_EXPORT_FILE_GZ_CHARS) {
+      tooLarge++;
+      continue;
+    }
+    if (batch.length && chars + gz.length > MAX_EXPORT_APPEND_CHARS) await flush();
+    batch.push({ path: file.path, byteSize: new TextEncoder().encode(text).length, gz });
+    chars += gz.length;
+  }
+  await flush();
+  const started = await startLinkedInExport(begun.importId, { tooLarge, private: job.privateCount });
+  if ("error" in started) throw new UserFacingError(started.error);
+  return started;
+}
+
 function importStarter(
   input: ImportJobInput,
 ): () => Promise<{ importId: string; totalRows: number }> {
@@ -568,9 +710,26 @@ function importStarter(
     const job = pending;
     pending = null;
     if (!job) throw new Error("This import was already started.");
+    // The preview already refused anything this big; this covers the cards, which hold their
+    // own copy of the text, and keeps every kind from reaching a 413. Measured as the whole
+    // payload: the text plus the selected ids that ride in the same action argument.
+    // Connections go up in chunks (`stageAndStartConnections`), so only the others are bounded.
+    const text =
+      job.kind === "messages"
+        ? job.csvText
+        : job.kind === "contacts_file" || job.kind === "calendar"
+          ? job.text
+          : null;
+    if (!importPayloadFits(text, "ids" in job ? job.ids : [])) {
+      throw new UserFacingError(IMPORT_COPY.tooLarge);
+    }
     switch (job.kind) {
       case "connections":
-        return startLinkedInImport(job.csvText, job.fileName, job.ids);
+        // Loaded when a connections import starts: it brings the CSV parser, and this module
+        // is in every signed-in page's first load (the import progress watcher).
+        return import("@/lib/imports/linkedin-connections-client").then(({ stageAndStartConnections }) =>
+          stageAndStartConnections(job.csvText, job.fileName, job.ids),
+        );
       case "google_contacts":
         return confirmGoogleContactsImport(job.ids);
       case "outlook_contacts":
@@ -591,6 +750,10 @@ function importStarter(
           if (!r.ok) throw new UserFacingError(r.error);
           return r.value;
         });
+      case "chat":
+        return stageAndStartChatImport(job);
+      case "linkedin_export":
+        return stageAndStartExport(job);
     }
   };
 }
@@ -619,15 +782,23 @@ export function startImportJob(
       ? "attendees"
       : input.kind === "drive_docs"
         ? "files"
-        : input.ids.length === 1
-          ? "person"
-          : "people";
+        : input.kind === "chat"
+          ? "people"
+          : input.kind === "linkedin_export"
+            ? "files"
+            : input.ids.length === 1
+            ? "person"
+            : "people";
   const total =
     input.kind === "calendar"
       ? 1
       : input.kind === "drive_docs"
         ? input.files.length
-        : input.ids.length;
+        : input.kind === "chat"
+          ? input.rows.length
+          : input.kind === "linkedin_export"
+            ? input.files.length
+            : input.ids.length;
 
   const kind = input.kind;
   const begin = importStarter(input);

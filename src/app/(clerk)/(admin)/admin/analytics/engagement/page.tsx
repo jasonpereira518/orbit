@@ -34,6 +34,8 @@ export const metadata = { title: "Admin · Engagement" };
 const IMPORT_LABELS: Record<string, string> = {
   linkedin_connections: "LinkedIn connections",
   linkedin_messages: "LinkedIn messages",
+  whatsapp_chat: "WhatsApp chats",
+  imessage_chat: "iMessage chats",
   google_contacts: "Google contacts",
   outlook_contacts: "Outlook contacts",
   contacts_file: "Contacts file",
@@ -131,7 +133,7 @@ export default async function AdminEngagementPage({
           {imports.length === 0 ? (
             <EmptyState>Nothing completed in this window yet.</EmptyState>
           ) : (
-            <AdminTable minWidth="sm"
+            <AdminTable label="Imports completed, by provider" minWidth="sm"
               head={
                 <>
                   <Th>Provider</Th>
@@ -157,7 +159,7 @@ export default async function AdminEngagementPage({
           {captures.length === 0 ? (
             <EmptyState>Nothing saved in this window yet.</EmptyState>
           ) : (
-            <AdminTable minWidth="sm"
+            <AdminTable label="Captures saved, by source" minWidth="sm"
               head={
                 <>
                   <Th>Source</Th>
@@ -183,7 +185,7 @@ export default async function AdminEngagementPage({
           {outreach.length === 0 ? (
             <EmptyState>Nothing sent in this window yet.</EmptyState>
           ) : (
-            <AdminTable minWidth="none"
+            <AdminTable label="Outreach messages sent, by channel" minWidth="none"
               head={
                 <>
                   <Th>Channel</Th>

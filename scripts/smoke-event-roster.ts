@@ -27,6 +27,7 @@ import {
   deleteAttendeeForUser,
 } from "../src/lib/events/store";
 import {
+  parseRosterCsv,
   parseRosterText,
   speakersNotOnRoster,
   speakersToAttendees,
@@ -597,6 +598,38 @@ run(async () => {
     // Both columns existed from day one and nothing ever wrote them: the connectors computed
     // an external ref and it was dropped between the mapper and the insert.
     check("the provider's guest id is stored", stored.external_ref === "guest-1", String(stored.external_ref));
+
+    // The next sync reads Ada's registration answers and now knows her LinkedIn. Her row was
+    // keyed on her email; it must be filled in, not joined by a second Ada.
+    await upsertProviderAttendees(
+      USER,
+      promotedId,
+      [
+        {
+          externalRef: "guest-1",
+          fullName: "Ada Lovelace",
+          email: "ada@analytical.io",
+          company: "Analytical Engines",
+          title: null,
+          linkedinUrl: "https://www.linkedin.com/in/ada",
+          xHandle: null,
+          phone: "+15550101",
+          attendeeRole: "attendee",
+        },
+      ],
+      "luma"
+    );
+    const adas = rowsOf<{ linkedin_url: string | null; company: string | null }>(
+      await db.execute(sql`
+        SELECT linkedin_url, company FROM event_attendees
+         WHERE event_id = ${promotedId} AND full_name = 'Ada Lovelace'
+      `)
+    );
+    check(
+      "a Luma guest who gains a LinkedIn answer stays one row, filled in",
+      adas.length === 1 && adas[0]?.linkedin_url === "https://www.linkedin.com/in/ada" && adas[0]?.company === "Analytical Engines",
+      JSON.stringify(adas)
+    );
     check("and so is the phone number", stored.phone === "+15550101", String(stored.phone));
 
     // Fill-blanks, like every other column: a later paste cannot erase the provider's id.
@@ -633,6 +666,29 @@ run(async () => {
   );
 
   await reset();
+  console.log("\nCSV headers as exports write them");
+  {
+    // Luma's guest export uses snake_case; Excel leaves a byte-order mark on the first header.
+    const luma = parseRosterCsv(
+      "\uFEFFfirst_name,last_name,email,phone_number,approval_status\nAna,Founder,ana@acme.io,+15550001,approved\n"
+    );
+    const ana = luma.attendees[0];
+    check(
+      "snake_case and a BOM still match (Luma export)",
+      ana?.fullName === "Ana Founder" && ana.email === "ana@acme.io" && ana.phone === "+15550001",
+      JSON.stringify(ana)
+    );
+    const eb = parseRosterCsv("First Name,Last Name,Email,Company,Job Title\nKim,Lee,kim@x.io,Acme,CTO\n");
+    const kim = eb.attendees[0];
+    check(
+      "Title Case headers still match (Eventbrite export)",
+      kim?.fullName === "Kim Lee" && kim.company === "Acme" && kim.title === "CTO",
+      JSON.stringify(kim)
+    );
+    const spaced = parseRosterCsv("  Full   Name ,E-mail\nRo Sun,ro@x.io\n");
+    check("doubled spaces and padding still match", spaced.attendees[0]?.fullName === "Ro Sun" && spaced.attendees[0]?.email === "ro@x.io");
+  }
+
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
     process.exit(1);

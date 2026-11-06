@@ -79,6 +79,7 @@ export function EarlyAccessPath({
   planet,
   joinHref,
   tiersHref,
+  openStops,
 }: {
   token: string | null;
   referrals: number;
@@ -88,7 +89,10 @@ export function EarlyAccessPath({
   joinHref: string;
   /** The referral tracker. */
   tiersHref: string;
+  /** Sign-up is open: the stops, built on the server, in place of the waves copy. */
+  openStops?: readonly Stop[];
 }) {
+  const stops = openStops ?? STOPS;
   const serverInitial = useMemo<PassProgress>(
     () => ({ token, referrals, position }),
     [token, referrals, position]
@@ -109,6 +113,7 @@ export function EarlyAccessPath({
       position={live.position}
       joinHref={joinHref}
       tiersHref={tiersHref}
+      stops={stops}
     />
   );
 
@@ -154,8 +159,8 @@ export function EarlyAccessPath({
       </svg>
 
       <ol className="ml-2 grid gap-2 md:ml-0 md:grid-cols-4 md:gap-0">
-        {STOPS.map((stop, i) => {
-          const last = i === STOPS.length - 1;
+        {stops.map((stop, i) => {
+          const last = i === stops.length - 1;
           const done = i <= here;
           const isHere = i === here;
           const start = here < 0 && i === 0;
@@ -208,11 +213,11 @@ export function EarlyAccessPath({
                     </span>
                   )}
                   {isHere ? (
-                    <span className="early-path-marker absolute bottom-full mb-2 hidden whitespace-nowrap rounded-full border border-[#f2c14e]/40 bg-[#0b1120]/95 px-2.5 py-1 text-[11px] font-medium text-[#f2c14e] md:block">
+                    <span className="early-path-marker absolute bottom-full mb-2 hidden whitespace-nowrap rounded-full border border-[#f2c14e]/40 bg-[#0b1120]/95 px-2.5 py-1 text-2xs font-medium text-[#f2c14e] md:block">
                       You&apos;re here{live.position ? ` · #${formatTicketNumber(live.position)}` : ""}
                     </span>
                   ) : start ? (
-                    <span className="absolute bottom-full mb-2 hidden whitespace-nowrap rounded-full border border-[#f2c14e]/40 bg-[#0b1120]/95 px-2.5 py-1 text-[11px] font-medium text-[#f2c14e] md:block">
+                    <span className="absolute bottom-full mb-2 hidden whitespace-nowrap rounded-full border border-[#f2c14e]/40 bg-[#0b1120]/95 px-2.5 py-1 text-2xs font-medium text-[#f2c14e] md:block">
                       Start here
                     </span>
                   ) : null}
@@ -267,6 +272,7 @@ function StopDetail({
   position,
   joinHref,
   tiersHref,
+  stops,
 }: {
   index: number;
   hasPass: boolean;
@@ -274,10 +280,11 @@ function StopDetail({
   position: number | null;
   joinHref: string;
   tiersHref: string;
+  stops: readonly Stop[];
 }) {
   const link =
     "inline-flex items-center rounded-full border border-[#f2c14e]/40 px-3 py-1.5 text-xs text-[#f2c14e] transition-colors hover:border-[#f2c14e] hover:bg-[#f2c14e]/10";
-  const stop = STOPS[index]!;
+  const stop = stops[index]!;
   return (
     <div key={index} className="early-path-detail">
       <p className="text-sm leading-relaxed text-[#9aada8]">{stop.body}</p>

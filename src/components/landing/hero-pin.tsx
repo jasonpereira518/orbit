@@ -167,7 +167,7 @@ export const HeroPin = forwardRef<
 
         {/* py-4 below md: pt-2/pb-6 pushed the whole stack ~8px above centre,
           * which read as a top-heavy hero with dead space under the system. */}
-        <main className="relative z-10 flex min-h-0 flex-1 flex-col justify-center px-8 py-4 md:px-10 md:pb-10 md:pt-4">
+        <div className="relative z-10 flex min-h-0 flex-1 flex-col justify-center px-8 py-4 md:px-10 md:pb-10 md:pt-4">
           <div className="mx-auto grid w-full max-w-6xl items-center gap-4 sm:gap-6 md:-translate-y-6 md:gap-10 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:gap-12">
             <motion.div
               className="max-w-3xl"
@@ -205,7 +205,7 @@ export const HeroPin = forwardRef<
                   {RING_LABELS.map((label, i) => (
                     <motion.span
                       key={label.text}
-                      className="absolute left-1/2 inline-block -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#05070f]/70 px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] text-[#f2c14e]"
+                      className="absolute left-1/2 inline-block -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#05070f]/70 px-2.5 py-1 text-3xs uppercase tracking-[0.2em] text-[#f2c14e]"
                       style={{
                         top: `${50 - label.side * (label.r / SOLAR_VIEW) * 100}%`,
                         opacity: labelOpacities[i],
@@ -218,7 +218,7 @@ export const HeroPin = forwardRef<
               )}
             </motion.div>
           </div>
-        </main>
+        </div>
 
         {!reduced && (
           <motion.div

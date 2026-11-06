@@ -148,9 +148,8 @@ async function resolveApolloKey(
   const personal = decryptOrNull(settings?.apolloApiKeyEncrypted);
   if (personal) return { apiKey: personal, hosted: false };
 
-  // Orbit's shared Apollo key: Pro, Max and Lifetime, capped per month by plan
-  // (`spendHostedApollo`). Free adds its own key in Settings, which the short-circuit above
-  // already prefers on every plan.
+  // Orbit's shared Apollo key: no plan includes it (`hostedEnrichment` is off everywhere), so
+  // this returns null unless a plan turns the flag back on. `spendHostedApollo` still caps it.
   const { canUseHostedEnrichment } = loadedSettings
     ? entitlementsFromSettings(userId, loadedSettings)
     : await getEntitlements(userId);
@@ -169,8 +168,8 @@ export async function getApolloApiKey(
 /**
  * Counts `units` hosted calls. A user's own key never gets here.
  *
- * Enrichments are capped per MONTH by plan (`PLAN_CONFIG[plan].hostedEnrichmentsPerMonth`:
- * Pro 10, Max and Lifetime 25) — the number the pricing page promises. Searches only run in
+ * Enrichments are capped per MONTH by plan (`PLAN_CONFIG[plan].hostedEnrichmentsPerMonth`,
+ * currently 0 everywhere: no plan reaches this path). Searches only run in
  * the unshipped Outreach and Leads surfaces and keep just the daily abuse ceiling, which
  * also stays under enrichments.
  */
@@ -303,29 +302,15 @@ function mockCompanyName(filters: AudienceFilters, index: number) {
   if (fromKeywords) {
     // Use a meaningful phrase, not the first token + "Labs"
     const cleaned = fromKeywords
-      .replace(/\b(recruiters?|for|or|and|the|a|an)\b/gi, " ")
+      // `at`, `in` and `with` matter as much as the rest: "recruiters at Stripe"
+      // otherwise produced prospects working at a company called "at Stripe", with
+      // addresses @atstripe.example.com.
+      .replace(/\b(recruiters?|for|or|and|the|a|an|at|in|with|from)\b/gi, " ")
       .replace(/\s+/g, " ")
       .trim();
     if (cleaned.length >= 3) return cleaned.split(" ").slice(0, 4).join(" ");
   }
   return `Demo Company ${index}`;
-}
-
-/**
- * A sample prospect's email domain — ALWAYS under example.com, which is reserved so mail to
- * it can never be delivered. This used to return the real organisation domain from the
- * audience filters (capitalone.com), turning every sample into a plausible stranger.
- */
-/**
- * A sample prospect's email domain — ALWAYS under example.com, which is reserved so mail to
- * it can never be delivered. This used to return the real organisation domain from the
- * audience filters (capitalone.com), turning every sample into a plausible stranger.
- */
-function mockDomain(filters: AudienceFilters, company: string) {
-  const base =
-    filters.organizationDomains?.[0]?.trim().replace(/^www\./, "").split(".")[0] || company;
-  const label = base.toLowerCase().replace(/[^a-z0-9]+/g, "") || "demo";
-  return `${label}.example.com`;
 }
 
 function mockProspects(filters: AudienceFilters, page: number): NormalizedProspect[] {
@@ -363,14 +348,18 @@ function mockProspects(filters: AudienceFilters, page: number): NormalizedProspe
       "Martinez",
     ][i];
     const company = mockCompanyName(filters, n);
-    const domain = mockDomain(filters, company);
     const slug = `${first.toLowerCase()}-${last.toLowerCase()}-${n}`;
     return {
       externalId: `demo-${normalizeCompanyKey(company).replace(/\s+/g, "-")}-${n}`,
       fullName: `${first} ${last}`,
       title,
       company,
-      email: `${first.toLowerCase()}.${last.toLowerCase()}@${domain}`,
+      // `.invalid` is reserved by RFC 6761 and can never resolve. A fixed reserved domain
+      // rather than one derived from the company or the audience filters: nothing Orbit
+      // invents may carry an address that could route, and a domain built from the user's
+      // own search terms is one edit away from being one.
+      email: `${first.toLowerCase()}.${last.toLowerCase()}@demo.orbit.invalid`,
+      // The reserved 555 range, kept: it is the phone equivalent of `.invalid`.
       phone: n % 3 === 0 ? `+1415555${String(1000 + n).slice(-4)}` : null,
       linkedinUrl: `https://www.linkedin.com/in/${slug}`,
       location,

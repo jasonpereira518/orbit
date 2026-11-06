@@ -2,7 +2,7 @@
  * Provider health checks and their snapshot cache.
  *
  * The property that matters operationally: this must never be the reason an admin page
- * fails to render. Four third-party APIs sit behind it, any of which can be unreachable,
+ * fails to render. Twelve third-party services sit behind it, any of which can be unreachable,
  * misconfigured, or slow — so every degraded path has to produce a row rather than an
  * exception. This runs with no provider credentials at all, which is the worst case and
  * also the default for a fresh checkout.
@@ -15,13 +15,38 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { adminProviderSnapshots, errorEvents } from "../src/db/schema";
 import {
+  isProviderProblem,
   loadProviderStatuses,
   pruneProviderSnapshots,
+  stateFromStatuspageIndicator,
   type ProviderName,
+  type ProviderStatus,
 } from "../src/lib/admin-providers";
 import { ERROR_SOURCES } from "../src/lib/error-events";
 
-const PROVIDERS: ProviderName[] = ["vercel", "neon", "clerk", "stripe"];
+const PROVIDERS: ProviderName[] = [
+  "vercel", "neon", "clerk", "stripe", "blob", "resend", "slack",
+  "deepgram", "anthropic", "openai", "google", "microsoft",
+];
+
+// These read a public status page and need no credential, so with every key unset they would
+// still reach the network. The suite must not depend on someone else's uptime: stub them.
+const PUBLIC_FEED: ProviderName[] = ["resend", "deepgram", "anthropic", "openai"];
+const stubbed: Partial<Record<ProviderName, () => Promise<ProviderStatus>>> = Object.fromEntries(
+  PUBLIC_FEED.map((provider) => [
+    provider,
+    async (): Promise<ProviderStatus> => ({
+      provider,
+      label: provider,
+      status: "healthy",
+      detail: "stubbed",
+      checkedAt: new Date(),
+      stale: false,
+      href: "https://example.test",
+      metrics: {},
+    }),
+  ])
+);
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -43,22 +68,26 @@ async function main() {
   for (const key of [
     "VERCEL_API_TOKEN", "VERCEL_PROJECT_ID", "VERCEL_TEAM_ID",
     "NEON_API_KEY", "NEON_PROJECT_ID", "CLERK_SECRET_KEY", "STRIPE_SECRET_KEY",
+    "BLOB_READ_WRITE_TOKEN", "SLACK_BOT_TOKEN", "DEEPGRAM_API_KEY",
+    "GOOGLE_CLIENT_ID", "MICROSOFT_CLIENT_ID",
   ]) {
     delete process.env[key];
   }
 
   await cleanup();
 
-  const statuses = await loadProviderStatuses({ force: true });
-  check("returns one row per provider", statuses.length === 4, `${statuses.length}`);
+  const statuses = await loadProviderStatuses({ force: true, checks: stubbed });
+  check("returns one row per provider", statuses.length === PROVIDERS.length, `${statuses.length}`);
   check(
-    "covers all four by name",
+    "covers every provider by name",
     PROVIDERS.every((p) => statuses.some((s) => s.provider === p)),
     statuses.map((s) => s.provider).join(",")
   );
   check(
     "every unconfigured provider reads as such, never as healthy",
-    statuses.every((s) => s.status === "unconfigured"),
+    statuses
+      .filter((s) => !PUBLIC_FEED.includes(s.provider))
+      .every((s) => s.status === "unconfigured"),
     statuses.map((s) => `${s.provider}=${s.status}`).join(" ")
   );
   check(
@@ -75,8 +104,11 @@ async function main() {
 
   /* ------------------------------------------------------------------ the snapshot cache */
 
-  const cached = await loadProviderStatuses({});
-  check("a second unforced load still returns four rows", cached.length === 4);
+  const cached = await loadProviderStatuses({ checks: stubbed });
+  check(
+    "a second unforced load still returns every row",
+    cached.length === PROVIDERS.length
+  );
 
   // A snapshot past its expiry must degrade a `healthy` row rather than report it fresh:
   // "it was fine a day ago" is not the same claim as "it is fine".
@@ -96,7 +128,7 @@ async function main() {
   });
 
   const rows = await db.query.adminProviderSnapshots.findMany();
-  check("snapshots are stored one row per provider", rows.length <= 4, `${rows.length}`);
+  check("snapshots are stored one row per provider", rows.length <= PROVIDERS.length, `${rows.length}`);
 
   const removed = await pruneProviderSnapshots(new Date(Date.now() - 24 * 60 * 60 * 1000));
   check("pruning removes snapshots older than the cutoff", removed >= 1, `${removed}`);
@@ -105,6 +137,27 @@ async function main() {
     (await db.query.adminProviderSnapshots.findMany()).every(
       (r) => r.checkedAt.getTime() > Date.now() - 24 * 60 * 60 * 1000
     )
+  );
+
+  /* ------------------------------------------------------ status pages and the banner */
+
+  check(
+    "a Statuspage indicator maps to a provider state",
+    stateFromStatuspageIndicator("none") === "healthy" &&
+      stateFromStatuspageIndicator("minor") === "degraded" &&
+      stateFromStatuspageIndicator("major") === "unavailable" &&
+      stateFromStatuspageIndicator("critical") === "unavailable" &&
+      stateFromStatuspageIndicator("something-new") === "degraded"
+  );
+  check(
+    "an upstream partial outage is not a banner problem, a full one is",
+    !isProviderProblem({ provider: "openai", status: "degraded" }) &&
+      isProviderProblem({ provider: "openai", status: "unavailable" })
+  );
+  check(
+    "a degraded provider Orbit relies on directly is a banner problem",
+    isProviderProblem({ provider: "neon", status: "degraded" }) &&
+      !isProviderProblem({ provider: "neon", status: "unconfigured" })
   );
 
   console.log("Done.");

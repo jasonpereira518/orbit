@@ -97,7 +97,7 @@ function EditBody({
           onChange={(mergeContactId) => setDraft((d) => ({ ...d, mergeContactId }))}
           lockedName={lockedName}
         />
-        <ClosenessControl name={`edit-${index}-closeness`} value={draft.closeness} onChange={(closeness) => setDraft((d) => ({ ...d, closeness }))} />
+        <ClosenessControl name={`edit-${index}-closeness`} value={draft.closeness} onChange={(closeness) => setDraft((d) => ({ ...d, closeness, closenessChosen: true }))} />
       </div>
       <DialogFooter>
         <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>

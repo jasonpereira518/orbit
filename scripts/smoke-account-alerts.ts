@@ -40,6 +40,7 @@ import {
   appSurfaceFlags,
   calendarSubscriptions,
   contacts,
+  emailSends,
   gmailConnections,
   imports,
   outlookConnections,
@@ -86,6 +87,7 @@ async function reset() {
   const db = await getDb();
   await db.delete(contacts).where(eq(contacts.userId, USER));
   await db.delete(imports).where(eq(imports.userId, USER));
+  await db.delete(emailSends).where(eq(emailSends.userId, USER));
   await db
     .delete(calendarSubscriptions)
     .where(eq(calendarSubscriptions.userId, USER));
@@ -240,6 +242,41 @@ async function main() {
     !(await codes()).includes("import.failed")
   );
 
+  // --- 8b. email that didn't send ----------------------------------------------------
+  const addFailedSend = async (over: Partial<typeof emailSends.$inferInsert> = {}) => {
+    const db = await getDb();
+    await db.insert(emailSends).values({
+      userId: USER,
+      provider: "gmail",
+      fromEmail: "me@acme-corp.io",
+      to: ["ben@acme-corp.io"],
+      subject: "Hi",
+      bodyText: "Hello",
+      origin: "compose",
+      status: "failed",
+      failureKind: "permanent",
+      sendAt: new Date(),
+      rfcMessageId: `<${crypto.randomUUID()}@orbit.mail>`,
+      ...over,
+    });
+  };
+  await reset();
+  await addFailedSend();
+  await addFailedSend();
+  const emailAlerts = await getAccountAlerts(USER);
+  const emailAlert = emailAlerts.find((a) => a.code === "email.send_failed");
+  check("8b recent failed sends alert, counted", emailAlert?.title === "2 emails didn't send", emailAlert?.title);
+  check("8b and point at contacts", emailAlert?.cta?.href === "/contacts");
+  await reset();
+  await addFailedSend({ updatedAt: ago(IMPORT_ALERT_WINDOW_MS + DAY) });
+  check("8b a failure older than the window is silent", !(await codes()).includes("email.send_failed"));
+  await reset();
+  await addFailedSend({ dismissedAt: new Date() });
+  check("8b a dismissed failure is silent", !(await codes()).includes("email.send_failed"));
+  await reset();
+  await addFailedSend({ status: "canceled", failureKind: null });
+  check("8b an undone send is not a failure", !(await codes()).includes("email.send_failed"));
+
   await reset();
   await addImport({
     status: "processing",
@@ -265,6 +302,22 @@ async function main() {
     "9b a live import is not stalled",
     !(await codes()).includes("import.stalled")
   );
+
+  // --- 9c. LinkedIn refresh: 30 days after the last finished upload ---------------------
+  await reset();
+  await addImport({ status: "completed", createdAt: ago(29 * DAY) });
+  check("9c a 29-day-old LinkedIn import is fresh", !(await codes()).includes("import.linkedin_stale"));
+
+  await reset();
+  await addImport({ status: "completed", createdAt: ago(45 * DAY) });
+  await addImport({ status: "completed", createdAt: ago(31 * DAY), revertedAt: new Date() });
+  const stale = (await getAccountAlerts(USER)).find((a) => a.code === "import.linkedin_stale");
+  check("9c a 45-day-old LinkedIn import asks for a refresh", stale !== undefined);
+  check("9c it is a dismissible warning", stale?.severity === "warn" && stale?.dismissible === true);
+  check("9c an undone upload does not reset the clock", stale?.body?.includes("45 days") === true, stale?.body ?? undefined);
+
+  await addImport({ status: "completed", createdAt: ago(DAY), importType: "linkedin_messages" });
+  check("9c a newer messages upload counts as a refresh", !(await codes()).includes("import.linkedin_stale"));
 
   await reset();
   for (let i = 0; i < 3; i += 1) {
@@ -434,7 +487,9 @@ async function main() {
   ];
   const hideable: HealthCode[] = [
     "import.failed",
+    "email.send_failed",
     "import.stalled",
+    "import.linkedin_stale",
     "calendar.sync_error",
     "plan.contact_cap_near",
   ];
@@ -584,7 +639,9 @@ async function main() {
   const paidStatements = stopQueryCount();
   check(
     `19 paid account costs few statements (${paidStatements})`,
-    paidStatements <= 4,
+    // 5: surface visibility's demo-workspace check reads the settings row, which a request
+    // has already memoised but a standalone call like this one has not.
+    paidStatements <= 5,
     String(paidStatements)
   );
 

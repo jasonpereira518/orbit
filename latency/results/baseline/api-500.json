@@ -1,0 +1,583 @@
+{
+  "base": "http://localhost:3101",
+  "n": 30,
+  "concurrency": 5,
+  "at": "2026-10-17T08:21:28.156Z",
+  "results": {
+    "doc /dashboard": {
+      "path": "/dashboard",
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 495,
+        "ttfb_p50": 719,
+        "ttfb_p95": 913,
+        "ttfb_p99": 976,
+        "p50": 725,
+        "p95": 920,
+        "p99": 994
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 495,
+        "ttfb_p50": 3752,
+        "ttfb_p95": 3981,
+        "ttfb_p99": 4100,
+        "p50": 3815,
+        "p95": 4155,
+        "p99": 4167
+      }
+    },
+    "doc /contacts": {
+      "path": "/contacts",
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 509,
+        "ttfb_p50": 719,
+        "ttfb_p95": 842,
+        "ttfb_p99": 959,
+        "p50": 726,
+        "p95": 850,
+        "p99": 965
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 509,
+        "ttfb_p50": 3097,
+        "ttfb_p95": 3770,
+        "ttfb_p99": 3770,
+        "p50": 3112,
+        "p95": 3781,
+        "p99": 3782
+      }
+    },
+    "doc /contacts?q=hopper": {
+      "path": "/contacts?q=hopper",
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 283,
+        "ttfb_p50": 688,
+        "ttfb_p95": 873,
+        "ttfb_p99": 893,
+        "p50": 692,
+        "p95": 877,
+        "p99": 898
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 283,
+        "ttfb_p50": 3607,
+        "ttfb_p95": 4764,
+        "ttfb_p99": 4780,
+        "p50": 3654,
+        "p95": 4791,
+        "p99": 4793
+      }
+    },
+    "doc /contacts/[id]": {
+      "path": "/contacts/ff2c8cfe-6dee-4ec9-b3d4-edf8a944ffc0",
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 303,
+        "ttfb_p50": 695,
+        "ttfb_p95": 908,
+        "ttfb_p99": 932,
+        "p50": 705,
+        "p95": 914,
+        "p99": 937
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 303,
+        "ttfb_p50": 3104,
+        "ttfb_p95": 3322,
+        "ttfb_p99": 3381,
+        "p50": 3158,
+        "p95": 3389,
+        "p99": 3391
+      }
+    },
+    "doc /reminders": {
+      "path": "/reminders",
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 195,
+        "ttfb_p50": 285,
+        "ttfb_p95": 346,
+        "ttfb_p99": 373,
+        "p50": 290,
+        "p95": 350,
+        "p99": 378
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 195,
+        "ttfb_p50": 1466,
+        "ttfb_p95": 3038,
+        "ttfb_p99": 3042,
+        "p50": 1477,
+        "p95": 3050,
+        "p99": 3052
+      }
+    },
+    "doc /capture": {
+      "path": "/capture",
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 160,
+        "ttfb_p50": 266,
+        "ttfb_p95": 369,
+        "ttfb_p99": 385,
+        "p50": 269,
+        "p95": 373,
+        "p99": 389
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 160,
+        "ttfb_p50": 1217,
+        "ttfb_p95": 1381,
+        "ttfb_p99": 1387,
+        "p50": 1229,
+        "p95": 1403,
+        "p99": 1404
+      }
+    },
+    "doc /chat": {
+      "path": "/chat",
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 127,
+        "ttfb_p50": 196,
+        "ttfb_p95": 254,
+        "ttfb_p99": 261,
+        "p50": 200,
+        "p95": 257,
+        "p99": 265
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 127,
+        "ttfb_p50": 890,
+        "ttfb_p95": 991,
+        "ttfb_p99": 995,
+        "p50": 903,
+        "p95": 1010,
+        "p99": 1010
+      }
+    },
+    "doc /graph": {
+      "path": "/graph",
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 516,
+        "ttfb_p50": 356,
+        "ttfb_p95": 456,
+        "ttfb_p99": 470,
+        "p50": 368,
+        "p95": 466,
+        "p99": 479
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 516,
+        "ttfb_p50": 1963,
+        "ttfb_p95": 3105,
+        "ttfb_p99": 3107,
+        "p50": 1989,
+        "p95": 3124,
+        "p99": 3124
+      }
+    },
+    "doc /knowledge": {
+      "path": "/knowledge",
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 527,
+        "ttfb_p50": 327,
+        "ttfb_p95": 457,
+        "ttfb_p99": 534,
+        "p50": 333,
+        "p95": 465,
+        "p99": 542
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 527,
+        "ttfb_p50": 1380,
+        "ttfb_p95": 1665,
+        "ttfb_p99": 1668,
+        "p50": 1401,
+        "p95": 1721,
+        "p99": 1728
+      }
+    },
+    "doc /imports": {
+      "path": "/imports",
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 135,
+        "ttfb_p50": 231,
+        "ttfb_p95": 306,
+        "ttfb_p99": 321,
+        "p50": 235,
+        "p95": 309,
+        "p99": 325
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 135,
+        "ttfb_p50": 902,
+        "ttfb_p95": 1063,
+        "ttfb_p99": 1068,
+        "p50": 948,
+        "p95": 1103,
+        "p99": 1108
+      }
+    },
+    "doc /settings": {
+      "path": "/settings",
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 231,
+        "ttfb_p50": 296,
+        "ttfb_p95": 373,
+        "ttfb_p99": 392,
+        "p50": 301,
+        "p95": 378,
+        "p99": 397
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 231,
+        "ttfb_p50": 1459,
+        "ttfb_p95": 1711,
+        "ttfb_p99": 1715,
+        "p50": 1472,
+        "p95": 1721,
+        "p99": 1722
+      }
+    },
+    "api /api/health": {
+      "path": "/api/health",
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 48,
+        "ttfb_p95": 74,
+        "ttfb_p99": 913,
+        "p50": 48,
+        "p95": 75,
+        "p99": 913
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 182,
+        "ttfb_p95": 1215,
+        "ttfb_p99": 1241,
+        "p50": 183,
+        "p95": 1216,
+        "p99": 1241
+      }
+    },
+    "api mcp search_contacts": {
+      "path": "/api/mcp",
+      "single": {
+        "n": 10,
+        "status": "200",
+        "kb": 4,
+        "ttfb_p50": 132,
+        "ttfb_p95": 206,
+        "ttfb_p99": 206,
+        "p50": 132,
+        "p95": 206,
+        "p99": 206
+      },
+      "concurrent": {
+        "n": 10,
+        "status": "200",
+        "kb": 4,
+        "ttfb_p50": 401,
+        "ttfb_p95": 774,
+        "ttfb_p99": 774,
+        "p50": 401,
+        "p95": 774,
+        "p99": 774
+      }
+    },
+    "api mcp who_do_i_know_at": {
+      "path": "/api/mcp",
+      "single": {
+        "n": 10,
+        "status": "200",
+        "kb": 2,
+        "ttfb_p50": 136,
+        "ttfb_p95": 154,
+        "ttfb_p99": 154,
+        "p50": 136,
+        "p95": 154,
+        "p99": 154
+      },
+      "concurrent": {
+        "n": 10,
+        "status": "200",
+        "kb": 2,
+        "ttfb_p50": 289,
+        "ttfb_p95": 493,
+        "ttfb_p99": 493,
+        "p50": 290,
+        "p95": 493,
+        "p99": 493
+      }
+    },
+    "api mcp due_followups": {
+      "path": "/api/mcp",
+      "single": {
+        "n": 10,
+        "status": "200",
+        "kb": 3,
+        "ttfb_p50": 118,
+        "ttfb_p95": 130,
+        "ttfb_p99": 130,
+        "p50": 118,
+        "p95": 130,
+        "p99": 130
+      },
+      "concurrent": {
+        "n": 10,
+        "status": "200",
+        "kb": 3,
+        "ttfb_p50": 341,
+        "ttfb_p95": 698,
+        "ttfb_p99": 698,
+        "p50": 341,
+        "p95": 698,
+        "p99": 698
+      }
+    },
+    "api mcp get_network_overview": {
+      "path": "/api/mcp",
+      "single": {
+        "n": 10,
+        "status": "200",
+        "kb": 2,
+        "ttfb_p50": 138,
+        "ttfb_p95": 191,
+        "ttfb_p99": 191,
+        "p50": 138,
+        "p95": 191,
+        "p99": 191
+      },
+      "concurrent": {
+        "n": 10,
+        "status": "200",
+        "kb": 2,
+        "ttfb_p50": 356,
+        "ttfb_p95": 665,
+        "ttfb_p99": 665,
+        "p50": 356,
+        "p95": 665,
+        "p99": 665
+      }
+    },
+    "api mcp get_contact": {
+      "path": "/api/mcp",
+      "single": {
+        "n": 10,
+        "status": "200",
+        "kb": 6,
+        "ttfb_p50": 70,
+        "ttfb_p95": 88,
+        "ttfb_p99": 88,
+        "p50": 70,
+        "p95": 88,
+        "p99": 88
+      },
+      "concurrent": {
+        "n": 10,
+        "status": "200",
+        "kb": 6,
+        "ttfb_p50": 217,
+        "ttfb_p95": 367,
+        "ttfb_p99": 367,
+        "p50": 217,
+        "p95": 367,
+        "p99": 367
+      }
+    },
+    "api v1 contacts?q=": {
+      "path": "/api/v1/contacts?q=hopper&limit=20",
+      "single": {
+        "n": 10,
+        "status": "200",
+        "kb": 4,
+        "ttfb_p50": 89,
+        "ttfb_p95": 114,
+        "ttfb_p99": 114,
+        "p50": 90,
+        "p95": 114,
+        "p99": 114
+      },
+      "concurrent": {
+        "n": 10,
+        "status": "200",
+        "kb": 4,
+        "ttfb_p50": 266,
+        "ttfb_p95": 433,
+        "ttfb_p99": 433,
+        "p50": 266,
+        "p95": 433,
+        "p99": 433
+      }
+    },
+    "api v1 followups": {
+      "path": "/api/v1/followups",
+      "single": {
+        "n": 10,
+        "status": "200",
+        "kb": 3,
+        "ttfb_p50": 149,
+        "ttfb_p95": 193,
+        "ttfb_p99": 193,
+        "p50": 149,
+        "p95": 193,
+        "p99": 193
+      },
+      "concurrent": {
+        "n": 10,
+        "status": "200",
+        "kb": 3,
+        "ttfb_p50": 455,
+        "ttfb_p95": 809,
+        "ttfb_p99": 809,
+        "p50": 455,
+        "p95": 809,
+        "p99": 809
+      }
+    },
+    "api ext me": {
+      "path": "/api/extension/me",
+      "single": {
+        "n": 10,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 89,
+        "ttfb_p95": 107,
+        "ttfb_p99": 107,
+        "p50": 90,
+        "p95": 107,
+        "p99": 107
+      },
+      "concurrent": {
+        "n": 10,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 301,
+        "ttfb_p95": 1997,
+        "ttfb_p99": 1997,
+        "p50": 301,
+        "p95": 1997,
+        "p99": 1997
+      }
+    },
+    "api ext contacts?q=": {
+      "path": "/api/extension/contacts?q=hopper",
+      "single": {
+        "n": 10,
+        "status": "200",
+        "kb": 1,
+        "ttfb_p50": 87,
+        "ttfb_p95": 104,
+        "ttfb_p99": 104,
+        "p50": 88,
+        "p95": 104,
+        "p99": 104
+      },
+      "concurrent": {
+        "n": 10,
+        "status": "200",
+        "kb": 1,
+        "ttfb_p50": 257,
+        "ttfb_p95": 447,
+        "ttfb_p99": 447,
+        "p50": 257,
+        "p95": 447,
+        "p99": 447
+      }
+    },
+    "api avatar": {
+      "path": "/api/avatars/ff2c8cfe-6dee-4ec9-b3d4-edf8a944ffc0",
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 70,
+        "ttfb_p95": 161,
+        "ttfb_p99": 162,
+        "p50": 70,
+        "p95": 161,
+        "p99": 162
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 230,
+        "ttfb_p95": 429,
+        "ttfb_p99": 450,
+        "p50": 230,
+        "p95": 429,
+        "p99": 450
+      }
+    },
+    "api meetings candidates": {
+      "path": "/api/meetings/candidates",
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 100,
+        "ttfb_p95": 152,
+        "ttfb_p99": 352,
+        "p50": 100,
+        "p95": 152,
+        "p99": 352
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 301,
+        "ttfb_p95": 406,
+        "ttfb_p99": 454,
+        "p50": 301,
+        "p95": 406,
+        "p99": 455
+      }
+    }
+  }
+}

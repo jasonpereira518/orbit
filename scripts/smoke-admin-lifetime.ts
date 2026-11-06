@@ -82,7 +82,7 @@ run(async () => {
   check("granted, with no subscription to end", g1.subscription === "none");
   const ent = await getEntitlements(FREE);
   check("the account is Lifetime: Max features, API included", ent.plan === "lifetime" && ent.canUseApi && ent.contactLimit === null);
-  check("…with AI on its own key only — no credits, no packs", !ent.canUseHostedAi && !ent.canBuyCreditPacks);
+  check("…with included AI on its own allowance, and no packs", ent.canUseHostedAi && !ent.canBuyCreditPacks);
   const [grantRow] = await audit(FREE, "lifetime.grant");
   check("the grant is in the audit log, with the reason", grantRow?.adminUserId === ADMIN && grantRow.reason === "early supporter" &&
     (grantRow.detail as { from?: string })?.from === "free", grantRow);

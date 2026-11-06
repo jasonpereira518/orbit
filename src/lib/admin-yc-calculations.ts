@@ -58,6 +58,193 @@ export function computeLtv(
   return arpuUsd / (monthlyChurnPct / 100);
 }
 
+/* ---------------------------------------------------------------- data-driven LTV ---- */
+
+/** A calendar-free "month" for subscriber-months: 30 days, the same unit the typed churn uses. */
+const MONTH_MS = 30 * DAY_MS;
+
+/**
+ * Observed churn and LTV are withheld below this many subscriber-months in the window.
+ * One cancellation among a handful of subscribers is a double-digit swing in the monthly
+ * rate; printing it as a rate would be a number that means nothing (audit §2.8).
+ */
+export const MIN_SUBSCRIBER_MONTHS = 100;
+
+/** One recurring-revenue movement of one account, as booked in the ledger. */
+export type LedgerMrrRow = { userId: string; effectiveAt: Date; mrrDeltaCents: number };
+
+export type SubscriberWindowSummary = {
+  /** Accounts paying at the start and at the end of the window. */
+  startSubscribers: number;
+  endSubscribers: number;
+  /** Σ over accounts of the time each was paying, in 30-day months. */
+  subscriberMonths: number;
+  /** Σ over accounts of (monthly recurring value × time paying), in cent-months. */
+  mrrCentMonths: number;
+  /** Accounts that went from paying to not paying inside the window (logo churn). */
+  churned: number;
+  /** Accounts that went from not paying to paying inside the window (new + returning). */
+  acquired: number;
+};
+
+/**
+ * Replay the ledger's recurring movements over a window.
+ *
+ * An account is PAYING while its running Σ`mrr_delta_cents` is positive: `new` and
+ * `reactivation` raise it from zero, `churn` brings it back, `expansion` and `contraction`
+ * move the amount without changing whether it pays. Time is integrated exactly rather than
+ * sampled, so two subscribers for half the window each are one subscriber-month at 30 days.
+ *
+ * Rows need not be sorted. Rows at or after `until` are ignored; rows before `since` only
+ * establish the state the window starts in.
+ */
+export function summarizeSubscriberLedger(
+  rows: readonly LedgerMrrRow[],
+  since: Date,
+  until: Date
+): SubscriberWindowSummary {
+  const out: SubscriberWindowSummary = {
+    startSubscribers: 0,
+    endSubscribers: 0,
+    subscriberMonths: 0,
+    mrrCentMonths: 0,
+    churned: 0,
+    acquired: 0,
+  };
+  const from = since.getTime();
+  const to = until.getTime();
+  if (!(to > from)) return out;
+
+  const byUser = new Map<string, LedgerMrrRow[]>();
+  for (const row of rows) {
+    if (row.effectiveAt.getTime() >= to) continue;
+    const list = byUser.get(row.userId);
+    if (list) list.push(row);
+    else byUser.set(row.userId, [row]);
+  }
+
+  for (const list of byUser.values()) {
+    list.sort((a, b) => a.effectiveAt.getTime() - b.effectiveAt.getTime());
+    let level = 0;
+    let cursor = from;
+    let started = false;
+
+    const accrue = (until_: number) => {
+      if (level > 0 && until_ > cursor) {
+        const ms = until_ - cursor;
+        out.subscriberMonths += ms / MONTH_MS;
+        out.mrrCentMonths += (level * ms) / MONTH_MS;
+      }
+      cursor = until_;
+    };
+
+    for (const row of list) {
+      const at = row.effectiveAt.getTime();
+      if (at < from) {
+        level += row.mrrDeltaCents;
+        continue;
+      }
+      if (!started) {
+        started = true;
+        if (level > 0) out.startSubscribers++;
+      }
+      accrue(at);
+      const was = level > 0;
+      level += row.mrrDeltaCents;
+      const is = level > 0;
+      if (was && !is) out.churned++;
+      if (!was && is) out.acquired++;
+    }
+    if (!started && level > 0) out.startSubscribers++;
+    accrue(to);
+    if (level > 0) out.endSubscribers++;
+  }
+
+  return out;
+}
+
+/** Average monthly recurring revenue per paying account, in cents. `null` with no subscriber time. */
+export function computeArpaCents(mrrCentMonths: number, subscriberMonths: number): number | null {
+  if (!(subscriberMonths > 0)) return null;
+  return mrrCentMonths / subscriberMonths;
+}
+
+/**
+ * Monthly logo churn, as a percent: accounts lost per subscriber-month. `null` when there is
+ * no subscriber time to divide by. NOT gated on a minimum sample here — callers decide
+ * whether to show it (`resolveLtv` does, at `MIN_SUBSCRIBER_MONTHS`).
+ */
+export function computeObservedChurnPct(churned: number, subscriberMonths: number): number | null {
+  if (!(subscriberMonths > 0)) return null;
+  return (churned / subscriberMonths) * 100;
+}
+
+/**
+ * Gross margin as a fraction: (revenue − attributable cost) / revenue. `null` with no revenue
+ * — a margin on nothing is undefined, not 0% and not 100%. Can be negative.
+ */
+export function computeGrossMargin(revenueCents: number, attributableCostCents: number): number | null {
+  if (!(revenueCents > 0)) return null;
+  return (revenueCents - attributableCostCents) / revenueCents;
+}
+
+/** Months of gross profit it takes to earn back CAC. `null` when any input is missing or the profit is not positive. */
+export function computePaybackMonths(
+  cacUsd: number | null,
+  arpaUsd: number | null,
+  grossMargin: number | null
+): number | null {
+  if (cacUsd === null || arpaUsd === null || grossMargin === null) return null;
+  const monthlyProfit = arpaUsd * grossMargin;
+  if (!(monthlyProfit > 0)) return null;
+  return cacUsd / monthlyProfit;
+}
+
+export type LtvResolution =
+  | { basis: "observed"; ltvUsd: number; churnPct: number }
+  | { basis: "estimate"; ltvUsd: number; churnPct: number }
+  | { basis: "none"; ltvUsd: null; churnPct: null; reason: string };
+
+/**
+ * LTV = ARPA × gross margin ÷ monthly churn — from OBSERVED churn when the window has enough
+ * subscriber time to mean something, otherwise from the typed estimate, labelled as one.
+ *
+ *  - `observed`: ≥ `MIN_SUBSCRIBER_MONTHS` subscriber-months AND at least one cancellation.
+ *  - `estimate`: the typed churn override (the caller labels it "estimate" on screen).
+ *  - `none`: neither; `reason` says what is missing so the page can say so.
+ *
+ * With zero observed cancellations the observed rate is 0 and LTV is unbounded, which is not a
+ * number: it falls through to the estimate (or `none`) rather than printing infinity.
+ */
+export function resolveLtv(input: {
+  arpaUsd: number | null;
+  grossMargin: number | null;
+  subscriberMonths: number;
+  observedChurnPct: number | null;
+  typedChurnPct: number | null;
+}): LtvResolution {
+  const { arpaUsd, grossMargin, subscriberMonths, observedChurnPct, typedChurnPct } = input;
+  if (arpaUsd === null) return { basis: "none", ltvUsd: null, churnPct: null, reason: "no subscribers yet" };
+  if (grossMargin === null) return { basis: "none", ltvUsd: null, churnPct: null, reason: "no revenue yet to take a margin on" };
+  const value = (churnPct: number) => Math.max(0, (arpaUsd * grossMargin) / (churnPct / 100));
+
+  if (subscriberMonths >= MIN_SUBSCRIBER_MONTHS && observedChurnPct !== null && observedChurnPct > 0) {
+    return { basis: "observed", ltvUsd: value(observedChurnPct), churnPct: observedChurnPct };
+  }
+  if (typedChurnPct !== null && typedChurnPct > 0) {
+    return { basis: "estimate", ltvUsd: value(typedChurnPct), churnPct: typedChurnPct };
+  }
+  return {
+    basis: "none",
+    ltvUsd: null,
+    churnPct: null,
+    reason:
+      subscriberMonths < MIN_SUBSCRIBER_MONTHS
+        ? `${Math.round(subscriberMonths)} of ${MIN_SUBSCRIBER_MONTHS} subscriber-months needed, and no typed estimate`
+        : "no cancellations observed yet, and no typed estimate",
+  };
+}
+
 /** Percent of a fundraising target raised so far. Zero target reads as 0%, not NaN. */
 export function computeFundraisingProgress(
   targetUsd: number,

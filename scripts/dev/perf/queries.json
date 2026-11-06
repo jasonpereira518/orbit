@@ -1,0 +1,58 @@
+[
+ {
+  "name": "Q1 cohort touch counts",
+  "sql": "SELECT contact_id, count(*) FILTER (WHERE interaction_date >= now()-interval '365 days'), count(*), count(*) FILTER (WHERE interaction_type IN ('linkedin_message','email','message') AND direction='in') FROM interactions WHERE user_id='demo-user' AND (source IS NULL OR source <> 'ai_derived') GROUP BY contact_id"
+ },
+ {
+  "name": "Q2 unscored contacts",
+  "sql": "SELECT count(*) FROM contacts WHERE user_id='demo-user' AND closeness_computed_at IS NULL"
+ },
+ {
+  "name": "Q3 profile timeline",
+  "sql": "SELECT id, interaction_date, left(raw_notes,600) FROM interactions WHERE user_id='demo-user' AND contact_id=(SELECT contact_id FROM interactions WHERE user_id='demo-user' GROUP BY 1 ORDER BY count(*) DESC LIMIT 1) ORDER BY interaction_date DESC, same_day_order LIMIT 20"
+ },
+ {
+  "name": "Q4 last touch per contact (DISTINCT ON)",
+  "sql": "SELECT DISTINCT ON (contact_id) contact_id, direction, interaction_date FROM interactions WHERE user_id='demo-user' ORDER BY contact_id, interaction_date DESC, id DESC"
+ },
+ {
+  "name": "Q5 contact search keystroke",
+  "sql": "SELECT id FROM contacts WHERE user_id='demo-user' AND (search_tsv @@ websearch_to_tsquery('simple','ada') OR lower(full_name) LIKE 'ada%' OR lower(coalesce(company,'')) LIKE 'ada%' OR lower(coalesce(email,'')) LIKE 'ada%' OR EXISTS (SELECT 1 FROM contact_tags ct JOIN tags t ON t.id=ct.tag_id WHERE ct.contact_id=contacts.id AND lower(t.name) LIKE 'ada%')) ORDER BY sort_key, full_name, id LIMIT 51"
+ },
+ {
+  "name": "Q5b contact search count",
+  "sql": "SELECT count(*) FROM contacts WHERE user_id='demo-user' AND (search_tsv @@ websearch_to_tsquery('simple','ada') OR lower(full_name) LIKE 'ada%' OR lower(coalesce(company,'')) LIKE 'ada%' OR lower(coalesce(email,'')) LIKE 'ada%' OR EXISTS (SELECT 1 FROM contact_tags ct JOIN tags t ON t.id=ct.tag_id WHERE ct.contact_id=contacts.id AND lower(t.name) LIKE 'ada%'))"
+ },
+ {
+  "name": "Q6 notification-panel reminders",
+  "sql": "SELECT * FROM reminders WHERE user_id='demo-user' AND status='pending' ORDER BY due_date LIMIT 80"
+ },
+ {
+  "name": "Q8 prior drive import lookup",
+  "sql": "SELECT payload FROM import_job_rows WHERE user_id='demo-user' AND status='done' AND payload->>'kind'='drive_file' AND payload->>'sourceHash'='x' ORDER BY updated_at DESC LIMIT 1"
+ },
+ {
+  "name": "Q10 memory backfill sweep (global)",
+  "sql": "SELECT DISTINCT i.user_id FROM interactions i WHERE (coalesce(i.raw_notes,'')<>'' OR coalesce(i.ai_summary,'')<>'') AND NOT EXISTS (SELECT 1 FROM memory_chunks m WHERE m.user_id=i.user_id AND m.source_kind='interaction' AND m.source_id=i.id AND m.source_hash=md5(coalesce(floor(extract(epoch from i.interaction_date))::bigint::text,'')||'|'||coalesce(i.interaction_type,'')||'|'||coalesce(i.contact_id::text,'')||'|'||coalesce(nullif(i.raw_notes,''),i.ai_summary,''))) LIMIT 25"
+ },
+ {
+  "name": "Q11 knowledge-base search",
+  "sql": "SELECT id FROM interactions WHERE user_id='demo-user' AND (ai_summary ILIKE '%dinner%' OR raw_notes ILIKE '%dinner%' OR EXISTS (SELECT 1 FROM contacts c WHERE c.id=interactions.contact_id AND c.full_name ILIKE '%dinner%')) ORDER BY interaction_date DESC LIMIT 500"
+ },
+ {
+  "name": "Q12 listContactsMatching",
+  "sql": "SELECT c.id, count(*) OVER () total, (SELECT max(i.interaction_date) FROM interactions i WHERE i.user_id='demo-user' AND i.contact_id=c.id) last_at FROM contacts c WHERE c.user_id='demo-user' AND lower(coalesce(c.company,'')) LIKE '%acme%' ORDER BY CASE c.closeness_tier WHEN 'inner' THEN 0 WHEN 'mid' THEN 1 WHEN 'outer' THEN 2 ELSE 3 END, last_at DESC NULLS LAST, c.full_name LIMIT 200"
+ },
+ {
+  "name": "Q13 export page OFFSET",
+  "sql": "SELECT * FROM interactions WHERE user_id='demo-user' ORDER BY id LIMIT 500 OFFSET 20000"
+ },
+ {
+  "name": "Q15 FK probe contact_career_moves",
+  "sql": "SELECT 1 FROM contact_career_moves WHERE contact_id = (SELECT id FROM contacts WHERE user_id='demo-user' LIMIT 1)"
+ },
+ {
+  "name": "Q14 findNameCollisions (duplicates badge)",
+  "sql": "WITH names AS (SELECT lower(btrim(full_name)) AS k FROM contacts WHERE user_id='demo-user' AND btrim(coalesce(full_name,''))<>'' GROUP BY 1 HAVING count(*)>1)\nSELECT a.id::text, b.id::text FROM names n JOIN contacts a ON a.user_id='demo-user' AND lower(btrim(a.full_name))=n.k JOIN contacts b ON b.user_id='demo-user' AND lower(btrim(b.full_name))=n.k AND a.id<b.id\nWHERE NOT (btrim(coalesce(a.company,''))<>'' AND lower(btrim(a.company))=lower(btrim(b.company))) AND NOT (btrim(coalesce(a.title,''))<>'' AND lower(btrim(a.title))=lower(btrim(b.title)))\nAND NOT EXISTS (SELECT 1 FROM duplicate_suggestions s WHERE s.user_id='demo-user' AND s.status<>'pending' AND s.contact_a_id=LEAST(a.id,b.id) AND s.contact_b_id=GREATEST(a.id,b.id)) LIMIT 99"
+ }
+]

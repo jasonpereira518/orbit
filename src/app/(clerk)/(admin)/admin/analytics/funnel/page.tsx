@@ -17,6 +17,7 @@ import {
   type Range,
 } from "@/lib/admin-analytics";
 import { analyticsDisabledReason } from "@/lib/analytics-visitor";
+import { describeActivation } from "@/lib/activity";
 
 export const metadata = { title: "Admin · Conversion" };
 
@@ -99,7 +100,7 @@ export default async function AdminFunnelPage({
               {disabled ?? "Nothing recorded in this window yet."}
             </EmptyState>
           ) : (
-            <AdminTable minWidth="none"
+            <AdminTable label="The funnel" minWidth="none"
               head={
                 <>
                   <Th>Stage</Th>
@@ -181,9 +182,13 @@ export default async function AdminFunnelPage({
               count yet.
             </li>
             <li>
+              <span className="text-foreground">What activated means.</span>{" "}
+              {describeActivation()} The guided tour&apos;s example people never count.
+            </li>
+            <li>
               <span className="text-foreground">Orbit&apos;s own accounts are left out.</span>{" "}
-              Admins and the showcase account are excluded from every row, interest-list
-              signups included when their email matches.
+              Admins, the showcase account and any account marked internal or tester are
+              excluded from every row, interest-list signups included when their email matches.
             </li>
             <li>
               <span className="text-foreground">Paid includes Lifetime, net of refunds.</span> A one-off

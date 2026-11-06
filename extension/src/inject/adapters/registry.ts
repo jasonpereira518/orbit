@@ -1,3 +1,4 @@
+import { eventRosterAdapter } from "./event-roster";
 import { gmailAdapter } from "./gmail";
 import { genericAdapter } from "./generic";
 import { linkedinAdapter } from "./linkedin";
@@ -9,6 +10,7 @@ export const ADAPTERS: SiteAdapter[] = [
   linkedinAdapter,
   xAdapter,
   gmailAdapter,
+  eventRosterAdapter,
   genericAdapter,
 ];
 

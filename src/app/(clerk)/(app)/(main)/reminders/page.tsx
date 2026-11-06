@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { Suspense } from "react";
 import { loadReminderRail, loadRemindersPage } from "@/actions/reminders";
 import { listSuggestedReminders } from "@/actions/suggested-reminders";
@@ -8,6 +9,8 @@ import { RemindersStageSkeleton } from "@/components/loading/page-skeletons";
 import { isReminderActionKind } from "@/lib/reminder-action-kind";
 import { isReminderSource, isReminderView } from "@/lib/reminders-page";
 import { RenderStamp } from "@/components/layout/render-stamp";
+
+export const metadata = { title: "Reminders" };
 
 type Params = {
   view?: string;
@@ -20,11 +23,14 @@ type Params = {
   new?: string;
 };
 
-export default function RemindersPage({
+export default async function RemindersPage({
   searchParams,
 }: {
   searchParams: Promise<Params>;
 }) {
+  const gate = await pageVisibilityGate("page.reminders");
+  if (gate) return gate;
+
   return (
     <>
       <RenderStamp />

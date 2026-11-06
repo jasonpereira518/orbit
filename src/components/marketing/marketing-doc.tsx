@@ -76,7 +76,7 @@ export function MarketingDocShell({
         </div>
       )}
 
-      <main className="relative z-10">{children}</main>
+      <main id="main-content" className="relative z-10">{children}</main>
 
       {/* Lighter on the bottom than the top: there is nothing after this row,
           so symmetric padding just reads as a gap at the end of the page. */}
@@ -158,7 +158,7 @@ export function DocHero({
           <dl className="mt-8 grid grid-cols-2 gap-x-8 gap-y-5 border-t border-[#e8f3f1]/[0.07] pt-6 sm:flex sm:flex-wrap sm:gap-x-12">
             {meta.map((entry) => (
               <div key={entry.label}>
-                <dt className="text-[11px] uppercase tracking-[0.16em] text-[#6d807c]">
+                <dt className="text-2xs uppercase tracking-[0.16em] text-[#6d807c]">
                   {entry.label}
                 </dt>
                 <dd className="mt-1 text-sm text-[#e8f3f1]">{entry.value}</dd>
@@ -317,7 +317,7 @@ export function DocCard({
       <div className="flex items-center justify-between gap-3">
         <p className="text-[15px] text-[#e8f3f1]">{title}</p>
         {badge && (
-          <span className="shrink-0 rounded-full border border-[#e8f3f1]/[0.14] px-2 py-0.5 text-[10px] uppercase tracking-[0.1em] text-[#6d807c]">
+          <span className="shrink-0 rounded-full border border-[#e8f3f1]/[0.14] px-2 py-0.5 text-3xs uppercase tracking-[0.1em] text-[#6d807c]">
             {badge}
           </span>
         )}

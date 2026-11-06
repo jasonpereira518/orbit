@@ -1,4 +1,5 @@
 import { ComingSoon } from "@/components/coming-soon/coming-soon";
+import { TierLocked } from "@/components/locked-feature";
 import { SurfaceUnavailable } from "@/components/surface-unavailable";
 import { requireUserId } from "@/lib/auth";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
@@ -15,19 +16,23 @@ import { getSurface } from "@/lib/surfaces";
  * say, Dashboard to Events sails past it entirely, because the click never re-runs
  * `MainAppLayout` on the server, only `EventsPage`. The PAGE segment, by contrast, is the
  * one segment Next always refetches on every navigation — it is the only place a check like
- * this is guaranteed to run. Call it first, before any data fetch, in every page.tsx a
- * `comingSoon` surface covers (currently just Events and Outreach and their children —
- * small enough to check per page; `hidden` surfaces generally still rely on the layout).
+ * this is guaranteed to run. Call it first, before any data fetch, in EVERY page.tsx under
+ * a page surface an operator can mark coming soon or limit to some tiers (`canTierLock`) —
+ * a layout gate would not do, because Next renders a layout and its page in parallel, so
+ * the page's queries would still run behind it. `scripts/smoke-surface-visibility.ts`
+ * fails when a page.tsx under one of those routes skips it.
  */
 export async function pageVisibilityGate(surfaceKey: string) {
   const surface = getSurface(surfaceKey);
   const userId = await requireUserId();
-  const { hidden, comingSoon } = await resolveSurfaceVisibility(userId);
+  const { hidden, comingSoon, tierLocked } = await resolveSurfaceVisibility(userId);
   if (hidden.has(surfaceKey)) {
     return <SurfaceUnavailable label={surface?.label} />;
   }
   if (comingSoon.has(surfaceKey)) {
     return <ComingSoon surfaceKey={surfaceKey} label={surface?.label ?? surfaceKey} />;
   }
+  const plans = tierLocked.get(surfaceKey);
+  if (plans) return <TierLocked surfaceKey={surfaceKey} plans={plans} />;
   return null;
 }

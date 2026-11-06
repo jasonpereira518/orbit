@@ -71,6 +71,7 @@ Leave `DATABASE_URL` unset to use on-disk PGlite (`.data/pglite`). Schema change
 | `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | Server-side AI, local dev only — on Vercel every user brings a key |
 | `ENCRYPTION_SECRET` | Encrypts BYOK keys and OAuth tokens at rest |
 | `ORBIT_DEMO_DATA=off` | Start local accounts empty, for onboarding work |
+| `ORBIT_DEMO_PERSONA=student` | Seeds a student / new-grad workspace instead of the founder one (localhost only) |
 
 ## App surfaces
 

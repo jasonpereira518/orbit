@@ -1,18 +1,25 @@
 import { cache } from "react";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { after } from "next/server";
 import { getDb } from "@/db";
+import { notTourExample } from "@/lib/onboarding-examples/sql";
 import { contacts, imports, userSettings } from "@/db/schema";
 import { ensureUserSettings } from "@/lib/user-settings";
 
-async function persistOnboardingComplete(userId: string) {
+/**
+ * Stamps the first-run gate flag. `clearStep` is false only for the backfill below: a
+ * replay from Settings clears the flag but keeps `onboarding_step`, and `/onboarding` keeps
+ * rendering while that step is set — so the backfill firing mid-replay (the account has
+ * contacts) must not wipe the step and bounce the person to the dashboard.
+ */
+async function persistOnboardingComplete(userId: string, opts: { clearStep?: boolean } = {}) {
   const db = await getDb();
   await ensureUserSettings(userId);
   const updated = await db
     .update(userSettings)
     .set({
       onboardingCompletedAt: new Date(),
-      onboardingStep: null,
+      ...(opts.clearStep === false ? {} : { onboardingStep: null }),
       updatedAt: new Date(),
     })
     .where(eq(userSettings.userId, userId))
@@ -43,8 +50,10 @@ export const needsOnboarding = cache(async (userId: string) => {
 
   const db = await getDb();
   const [existingContact, existingImport] = await Promise.all([
+    // The tour's example people are not the person's own data, so they never count as
+    // "has a network" here (they only exist after the handoff anyway, which stamps the flag).
     db.query.contacts.findFirst({
-      where: eq(contacts.userId, userId),
+      where: and(eq(contacts.userId, userId), notTourExample(contacts.source)),
       columns: { id: true },
     }),
     db.query.imports.findFirst({
@@ -54,10 +63,20 @@ export const needsOnboarding = cache(async (userId: string) => {
   ]);
 
   if (existingContact || existingImport) {
-    // Don't block navigation on the backfill write.
-    after(() => {
-      void persistOnboardingComplete(userId).catch(() => {});
-    });
+    // A tour the user deliberately restarted must not be completed out from under them.
+    //
+    // "Replay tour" in Settings clears `onboardingCompletedAt`, but this backfill writes
+    // it straight back on the next gated page view — so the tour survived exactly one
+    // navigation, and was unreachable for any account with a single contact, which is
+    // every account past minute one. `onboardingStep` marks a tour in progress;
+    // `resetOnboarding` now sets it, so an explicit replay is distinguishable from a
+    // long-standing account that simply never had the flag written.
+    if (!settings.onboardingStep) {
+      // Don't block navigation on the backfill write.
+      after(() => {
+        void persistOnboardingComplete(userId, { clearStep: false }).catch(() => {});
+      });
+    }
     return false;
   }
 

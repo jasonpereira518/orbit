@@ -13,7 +13,8 @@ import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge"
 import {
   closenessPercentChipClass,
 } from "@/lib/closeness";
-import { companyBrandColor } from "@/lib/company-brand";
+import { companyBrandText } from "@/lib/company-brand";
+import type { NameGuess } from "@/lib/contact-name-guess";
 import { cn } from "@/lib/utils";
 
 export type ContactPreviewData = {
@@ -33,6 +34,8 @@ export type ContactPreviewData = {
   summary?: string | null;
   /** Extra line (e.g. related-person reason). */
   detail?: string | null;
+  /** An unsure name read from a handle (`openNameGuess`); the card says so. */
+  nameGuess?: NameGuess | null;
 };
 
 const OPEN_DELAY_MS = 200;
@@ -117,7 +120,7 @@ export function ContactAvatarPreview({
   const meta = [contact.school, contact.location].filter(Boolean).join(" · ");
   const summary = contact.summary?.trim() || "";
   const detail = contact.detail?.trim() || "";
-  const companyColor = companyBrandColor(contact.company);
+  const companyBrand = companyBrandText(contact.company);
 
   return (
     <>
@@ -160,6 +163,17 @@ export function ContactAvatarPreview({
                 <p className="truncate text-sm font-medium leading-snug text-ink">
                   {displayName}
                 </p>
+                {contact.nameGuess ? (
+                  <p className="truncate text-2xs leading-snug text-muted-foreground">
+                    {contact.nameGuess.source === "none" ? (
+                      "Real name not known yet"
+                    ) : (
+                      <>
+                        Name guessed from <bdi>{contact.nameGuess.from || "an empty name"}</bdi>
+                      </>
+                    )}
+                  </p>
+                ) : null}
                 {contact.title?.trim() ? (
                   <p className="truncate text-xs leading-snug text-muted-foreground">
                     {contact.title.trim()}
@@ -167,10 +181,11 @@ export function ContactAvatarPreview({
                 ) : null}
                 {contact.company?.trim() ? (
                   <p
-                    className="truncate text-xs font-medium leading-snug"
-                    style={
-                      companyColor ? { color: companyColor } : undefined
-                    }
+                    className={cn(
+                      "truncate text-xs font-medium leading-snug",
+                      companyBrand ? companyBrand.className : "text-muted-foreground"
+                    )}
+                    style={companyBrand?.style}
                   >
                     {contact.company.trim()}
                   </p>
@@ -191,7 +206,7 @@ export function ContactAvatarPreview({
                 {typeof contact.closeness === "number" && (
                   <span
                     className={cn(
-                      "rounded-md px-1.5 py-0.5 text-[11px] font-medium tabular-nums",
+                      "rounded-md px-1.5 py-0.5 text-2xs font-medium tabular-nums",
                       closenessPercentChipClass(contact.closeness)
                     )}
                   >
@@ -201,7 +216,7 @@ export function ContactAvatarPreview({
               </div>
             )}
             {detail ? (
-              <p className="mt-2 truncate text-[11px] text-muted-foreground">
+              <p className="mt-2 truncate text-2xs text-muted-foreground">
                 {detail}
               </p>
             ) : null}

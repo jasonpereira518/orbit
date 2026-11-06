@@ -1,5 +1,6 @@
 "use client";
 
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import Link from "next/link";
 import { memo, useCallback, type KeyboardEvent, type MouseEvent } from "react";
 import {
@@ -189,6 +190,7 @@ export const ReminderRow = memo(function ReminderRow({
           <button
             type="button"
             tabIndex={-1}
+            {...tourAnchor("reminders.row-done")}
             onClick={(e) => {
               stop(e);
               if (isDone) handlers.onReopen(item.id);
@@ -249,7 +251,7 @@ export const ReminderRow = memo(function ReminderRow({
               {isNoteworthyType(item.reminderType, item.noteBatchId) && (
                 <span
                   className={cn(
-                    "rounded-full px-1.5 py-px text-[10px] font-medium uppercase tracking-wide",
+                    "rounded-full px-1.5 py-px text-3xs font-medium uppercase tracking-wide",
                     reminderTypeStyle(item.reminderType)
                   )}
                 >

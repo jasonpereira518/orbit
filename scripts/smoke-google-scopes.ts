@@ -126,9 +126,11 @@ check(
   JSON.stringify(googleScopesFor(["drive"])) ===
     JSON.stringify([...identity, GOOGLE_SCOPES.drive]),
 );
+// The one restricted Drive scope is cloud notes' own purpose (CASA-gated); the Picker never asks for it.
 check(
-  "no restricted Drive scope anywhere",
-  !Object.values(GOOGLE_SCOPES).some((s) => /drive\.(readonly|metadata)/.test(s)),
+  "drive.readonly only behind drive_scan",
+  Object.values(GOOGLE_SCOPES).filter((s) => /drive\.(readonly|metadata)/.test(s)).join() === requiredScopeFor("drive_scan") &&
+    !googleScopesFor(["drive", "contacts", "calendar"]).some((s) => /drive\.(readonly|metadata)/.test(s)),
 );
 check(
   "a contacts-only grant doesn't cover drive",

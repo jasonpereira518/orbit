@@ -5,7 +5,7 @@
  *  - 80% sends once; the next run sends nothing; 100% then sends once more.
  *  - Crossing both levels between runs sends only the 100% email.
  *  - At 100%, an account with pack credits hears it is on packs; one without hears AI paused.
- *  - Opted out, or on a plan without included AI: nothing.
+ *  - Opted out, or on Free (in-app notice only): nothing.
  *  - A send the mailer refuses gives the claim back, so the next run tries again.
  *  - Unsubscribe links are signed, verified, and turn the email off.
  *
@@ -29,6 +29,7 @@ const JUMP = `${P}jump`;
 const PACKS = `${P}packs`;
 const OPTED_OUT = `${P}optout`;
 const FREE = `${P}free`;
+const LIFETIME = `${P}lifetime`;
 const REFUSED = `${P}refused`;
 const MAX = `${P}max`;
 const DAY = 86_400_000;
@@ -44,7 +45,7 @@ run(async () => {
   check("all used is 100", notices.noticeLevelFor(2_000_000, 0) === 100 && notices.noticeLevelFor(2_000_000, -5) === 100);
 
   const db = await getDb();
-  const users = [LOW, JUMP, PACKS, OPTED_OUT, FREE, REFUSED, MAX];
+  const users = [LOW, JUMP, PACKS, OPTED_OUT, FREE, LIFETIME, REFUSED, MAX];
   const reset = async () => {
     await db.delete(schema.creditGrants).where(inArray(schema.creditGrants.userId, users));
     await db.delete(schema.errorEvents).where(inArray(schema.errorEvents.userId, users));
@@ -62,6 +63,7 @@ run(async () => {
   await db.insert(schema.userSettings).values([
     pro(LOW), pro(JUMP), pro(PACKS), pro(OPTED_OUT, { creditEmailEnabled: 0 }), pro(REFUSED),
     { userId: FREE, email: `${FREE}@example.test` },
+    { userId: LIFETIME, email: `${LIFETIME}@example.test`, lifetimePurchasedAt: periodStart },
     { ...pro(MAX), subscriptionPlan: "max" },
   ]);
   const allowance = (userId: string, usedCredits: number, granted = 200) => ({
@@ -74,7 +76,8 @@ run(async () => {
     allowance(PACKS, 200),
     { userId: PACKS, kind: "pack", grantKey: `${P}pack`, microsGranted: 2_500_000, microsRemaining: 2_500_000, amountCents: 500, stripeRef: "cs_cn" },
     allowance(OPTED_OUT, 200),
-    allowance(FREE, 200),
+    allowance(FREE, 180),
+    allowance(LIFETIME, 180),
     allowance(REFUSED, 180),
     allowance(MAX, 450, 500),
   ]);
@@ -101,8 +104,16 @@ run(async () => {
   check("at 100% with pack credits: now on packs, with how many", to(PACKS).length === 1 &&
     /pack credits/.test(to(PACKS)[0].subject) && /250 left/.test(to(PACKS)[0].text), to(PACKS)[0]?.text);
   check("opted out: nothing", to(OPTED_OUT).length === 0);
-  check("a plan without included AI: nothing", to(FREE).length === 0);
+  check("Free: 90% used, in-app only, never an email", to(FREE).length === 0);
+  check("Lifetime (no packs to offer): in-app only, never an email", to(LIFETIME).length === 0);
   check("Max is never offered Max", to(MAX).length === 1 && !/move to Orbit Max/.test(to(MAX)[0].text));
+  // The builder itself, per plan: a pack only where the plan can buy one, the plan above only on Pro.
+  const built = (plan: "free" | "orbit" | "max" | "lifetime") =>
+    notices.buildCreditEmail({ level: 100, plan, grantedCredits: 150, usedCredits: 150, packCredits: 0, resetsAt: new Date("2026-11-01T00:00:00Z") }, "https://example.test/u").text;
+  check("Lifetime's email (built directly) offers no pack and no plan move, only its own key",
+    !/pack/i.test(built("lifetime")) && !/move to Orbit/.test(built("lifetime")) && /you can switch to your own AI key/.test(built("lifetime")), built("lifetime"));
+  check("Pro's email offers a pack and Max; Max's only the pack",
+    /\$5 pack/.test(built("orbit")) && /move to Orbit Max/.test(built("orbit")) && /\$5 pack/.test(built("max")) && !/move to Orbit Max/.test(built("max")));
   check("every email carries its one-click unsubscribe link",
     sent.every((m) => m.unsubscribeUrl.includes("/api/credits/email/unsubscribe?token=") && m.text.includes(m.unsubscribeUrl) &&
       m.html.includes("Turn it off")));

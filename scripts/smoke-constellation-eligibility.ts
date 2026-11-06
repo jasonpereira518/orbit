@@ -21,6 +21,7 @@ import {
   EMPTY_SIGNAL_COUNTS,
   MAX_MESSAGE_THRESHOLD,
   MIN_MESSAGE_THRESHOLD,
+  userTagCount,
   type ConstellationContactFields,
   type ContactSignalCounts,
   type EligibilityReason,
@@ -38,7 +39,7 @@ const INERT: ConstellationContactFields = {
   statedCloseness: null,
   priorityLevel: 0,
   nextFollowUpAt: null,
-  tagCount: 0,
+  userTagCount: 0,
 };
 
 function fields(over: Partial<ConstellationContactFields> = {}): ConstellationContactFields {
@@ -75,7 +76,7 @@ check(
 check(
   "pinned out even with notes, a meeting and a full exchange",
   verdict(
-    { noteInteractions: 5, meetingInteractions: 2, linkedInInbound: 9, linkedInOutbound: 9 },
+    { noteInteractions: 5, meetingInteractions: 2, messageInbound: 9, messageOutbound: 9 },
     { pin: "out", hasNotesText: true, statedCloseness: 5 }
   ) === "pinned_out"
 );
@@ -91,46 +92,46 @@ check(
 );
 check(
   "a single message alongside a meeting is still a meeting, not a failed exchange",
-  verdict({ meetingInteractions: 1, linkedInInbound: 1 }) === "meeting"
+  verdict({ meetingInteractions: 1, messageInbound: 1 }) === "meeting"
 );
 
 console.log("\nThe two-sided message rule…");
 check(
   "3 in and 3 out clears the default bar",
-  verdict({ linkedInInbound: 3, linkedInOutbound: 3 }) === "linkedin_exchange"
+  verdict({ messageInbound: 3, messageOutbound: 3 }) === "message_exchange"
 );
 check(
   "2 and 2 does not",
-  verdict({ linkedInInbound: 2, linkedInOutbound: 2 }) === "none"
+  verdict({ messageInbound: 2, messageOutbound: 2 }) === "none"
 );
 check(
   "nine inbound with nothing back is a broadcast, not a conversation",
-  verdict({ linkedInInbound: 9, linkedInOutbound: 0 }) === "none"
+  verdict({ messageInbound: 9, messageOutbound: 0 }) === "none"
 );
 check(
   "and nine outbound with no reply is not one either",
-  verdict({ linkedInInbound: 0, linkedInOutbound: 9 }) === "none"
+  verdict({ messageInbound: 0, messageOutbound: 9 }) === "none"
 );
 
 console.log("\nThe legacy fallback for imports that predate direction…");
 check(
   "6 undirected messages clear the combined bar",
-  verdict({ linkedInUndirected: 6 }) === "linkedin_volume_fallback"
+  verdict({ messageUndirected: 6 }) === "message_volume_fallback"
 );
 check(
   "5 undirected do not",
-  verdict({ linkedInUndirected: 5 }) === "none"
+  verdict({ messageUndirected: 5 }) === "none"
 );
 // This is the one that matters most. Once ANY of a contact's rows carries a direction, that
 // contact has been re-uploaded and the strict rule must take over — otherwise a one-sided
 // thread would keep qualifying forever on the strength of its own volume.
 check(
   "a contact with a known direction is judged strictly, not by volume",
-  verdict({ linkedInInbound: 1, linkedInOutbound: 0, linkedInUndirected: 20 }) === "none"
+  verdict({ messageInbound: 1, messageOutbound: 0, messageUndirected: 20 }) === "none"
 );
 check(
   "and the fallback resumes for contacts still entirely undirected",
-  verdict({ linkedInUndirected: 20 }) === "linkedin_volume_fallback"
+  verdict({ messageUndirected: 20 }) === "message_volume_fallback"
 );
 
 console.log("\nIntent — what the user said, not what they did…");
@@ -147,22 +148,27 @@ check(
   "a scheduled follow-up qualifies",
   verdict({}, { nextFollowUpAt: new Date() }) === "intent"
 );
-check("a tag qualifies", verdict({}, { tagCount: 1 }) === "intent");
+check("a tag the user added qualifies", verdict({}, { userTagCount: 1 }) === "intent");
+check(
+  "import source tags are not the user's choice and count for nothing",
+  userTagCount(["linkedin", "Google-Contacts", "address-book", "messages"]) === 0 &&
+    userTagCount(["linkedin", "mentor"]) === 1
+);
 check(
   "but an unrated, unflagged, untagged contact does not",
-  verdict({}, { statedCloseness: null, priorityLevel: 0, tagCount: 0 }) === "none"
+  verdict({}, { statedCloseness: null, priorityLevel: 0, userTagCount: 0 }) === "none"
 );
 
 console.log("\nOperator thresholds…");
 const strict = clampThresholds({ minInbound: 5, minOutbound: 5 });
 check(
   "raising the bar excludes an exchange that cleared the default",
-  verdict({ linkedInInbound: 3, linkedInOutbound: 3 }, {}, strict) === "none"
+  verdict({ messageInbound: 3, messageOutbound: 3 }, {}, strict) === "none"
 );
 check(
   "and the fallback bar moves with it",
-  verdict({ linkedInUndirected: 9 }, {}, strict) === "none" &&
-    verdict({ linkedInUndirected: 10 }, {}, strict) === "linkedin_volume_fallback"
+  verdict({ messageUndirected: 9 }, {}, strict) === "none" &&
+    verdict({ messageUndirected: 10 }, {}, strict) === "message_volume_fallback"
 );
 check(
   "zero clamps up to 1, so a contact with no messages can never qualify on messages",

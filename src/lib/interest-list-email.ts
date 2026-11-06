@@ -516,7 +516,8 @@ async function deliver(
 /**
  * Best-effort. The signup itself is already durable in `interest_list_signups` by the time
  * this runs, so a Resend outage or a missing API key should never turn a successful signup
- * into a failed one — this only ever logs.
+ * into a failed one — this never throws. Returns whether Resend accepted the message, which
+ * the join counts (`waitlist_email_sent`) and otherwise ignores.
  */
 export async function sendInterestListWelcomeEmail(
   email: string,
@@ -525,8 +526,8 @@ export async function sendInterestListWelcomeEmail(
   links?: EmailLinks,
   position?: number | null,
   signupEventLabel?: string | null
-) {
-  await deliver(
+): Promise<boolean> {
+  return deliver(
     "welcome",
     email,
     unsubscribeUrl,

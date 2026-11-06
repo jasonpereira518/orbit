@@ -1,6 +1,7 @@
 import { verifyWebhook } from "@clerk/nextjs/webhooks";
 import type { NextRequest } from "next/server";
 import { purgeUserData } from "@/lib/user-data";
+import { bookChurnOnDeletion } from "@/lib/account-deletion";
 import {
   ensureUserSettings,
   recordTermsAcceptance,
@@ -105,8 +106,13 @@ export async function POST(req: NextRequest) {
           }
           // Clerk copies an invitation's public metadata onto the account it creates, so an
           // admin-invited sign-up arrives here already carrying the marker: it is eligible
-          // for founding pricing (no longer a comp).
-          await recordSiteInvite(userId, evt.data.public_metadata as Record<string, unknown>);
+          // for founding pricing (no longer a comp). The same marker names the ledger row and the
+          // waitlist row, so the account is linked to both by id (the email is only a fallback
+          // for invitations sent before the ledger existed). Idempotent under webhook retries.
+          await recordSiteInvite(userId, evt.data.public_metadata as Record<string, unknown>, {
+            email: primaryEmail(evt.data),
+            surface: "webhook",
+          });
         }
         result = { outcome: "handled", targetUserId: userId, resourceId: userId };
       } else {
@@ -119,6 +125,9 @@ export async function POST(req: NextRequest) {
         // `keepSettings: false` deletes the settings row too — email, name, avatar, every
         // encrypted provider key and the Stripe customer id. The Settings "Delete data" path
         // keeps that row on purpose (its person is still signed in); this one must not.
+        // Churn is booked first: it reads the subscription off the settings row the purge
+        // deletes. It never throws, so it cannot hold up the deletion.
+        await bookChurnOnDeletion(userId);
         await purgeUserData(userId, { keepSettings: false });
         result = { outcome: "handled", targetUserId: userId, resourceId: userId };
       } else {

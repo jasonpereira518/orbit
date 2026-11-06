@@ -21,7 +21,11 @@ export default defineConfig({
   // run one at a time, in file-name order.
   fullyParallel: false,
   workers: 1,
+  // One retry on CI, but a test that only passes on its retry still FAILS the run
+  // (`failOnFlakyTests`). The retry is there to label the failure — "flaky" vs "broken" in
+  // the report, with a trace of both attempts — not to turn it green.
   retries: process.env.CI ? 1 : 0,
+  failOnFlakyTests: Boolean(process.env.CI),
   timeout: 180_000,
   expect: { timeout: 30_000 },
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",

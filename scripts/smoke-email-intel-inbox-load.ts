@@ -20,7 +20,8 @@ import { ensureUserSettings } from "../src/lib/user-settings";
 const U = "smoke-eil-u";
 const V = "smoke-eil-v";
 const W = "smoke-eil-w";
-const NOW = new Date("2026-09-30T12:00:00Z");
+// The real clock, not a fixed day: `loadRadarPage` reads it, and the strip only looks 21 days back.
+const NOW = new Date();
 const DAY = 86_400_000;
 
 function check(label: string, ok: boolean, detail?: string) {

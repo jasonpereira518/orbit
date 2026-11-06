@@ -113,7 +113,7 @@ function OrbitRingsNodeComponent({
           return (
             <span
               key={`label-${r}`}
-              className="absolute whitespace-nowrap text-[9px] uppercase tracking-[0.16em] text-white/30"
+              className="absolute whitespace-nowrap text-3xs uppercase tracking-[0.16em] text-white/30"
               style={{
                 left: 6,
                 top: -r - 6,
@@ -172,7 +172,7 @@ function SunNodeComponent({
         style={{ width: 22, height: 22 }}
         title={data.label}
       />
-      <p className="absolute top-8 whitespace-nowrap text-[11px] font-medium tracking-wide text-white/95 drop-shadow-[0_0_8px_rgba(0,0,0,0.8)]">
+      <p className="absolute top-8 whitespace-nowrap text-2xs font-medium tracking-wide text-white/95 drop-shadow-[0_0_8px_rgba(0,0,0,0.8)]">
         {data.label}
       </p>
     </div>
@@ -747,6 +747,14 @@ function ClusterNameText({ data, showCount }: { data: ClusterLabelData; showCoun
   );
 }
 
+/**
+ * The keyboard focus ring for a cluster name. Focus lands on the React Flow node around it
+ * (`group/cluster`, set by the chart), whose own outline React Flow removes; a light ring
+ * reads on the night sky in either theme.
+ */
+const CLUSTER_NAME_FOCUS =
+  "rounded-full group-focus-visible/cluster:ring-2 group-focus-visible/cluster:ring-white/85";
+
 function ClusterLabelNodeComponent(props: NodeProps & { data: ClusterLabelData }) {
   const { data } = props;
   // Sixteenth-of-an-octave steps: proportional, so a far-out zoom (where the 12px floor sets the
@@ -772,7 +780,7 @@ function ClusterLabelNodeComponent(props: NodeProps & { data: ClusterLabelData }
    */
   return (
     <div
-      className="nopan nodrag flex cursor-pointer flex-col items-center px-[0.7em] py-[0.05em]"
+      className={cn("nopan nodrag flex cursor-pointer flex-col items-center px-[0.7em] py-[0.05em]", CLUSTER_NAME_FOCUS)}
       title={`Zoom to ${data.label}`}
       // Drawn at its size rather than scaled up: scaling magnifies glyphs the browser already
       // rasterised, which is why names went soft as the camera came in. It also makes the node's
@@ -834,7 +842,10 @@ function PinnableClusterName({
   return (
     <div className="pointer-events-none relative" style={{ width: box.width, height: box.height }}>
       <div
-        className="nopan nodrag pointer-events-auto absolute flex w-max cursor-pointer flex-col items-center px-[0.7em] py-[0.05em]"
+        className={cn(
+          "nopan nodrag pointer-events-auto absolute flex w-max cursor-pointer flex-col items-center px-[0.7em] py-[0.05em]",
+          CLUSTER_NAME_FOCUS
+        )}
         title={`Zoom to ${data.label}`}
         style={{
           left: anchor.x + dx,

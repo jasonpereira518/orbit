@@ -1,0 +1,4 @@
+               total        used        free      shared  buff/cache   available
+Mem:           16093         781       13382          14        2273       15311
+Swap:              0           0           0
+1.7G	latency/.data/tier-50000

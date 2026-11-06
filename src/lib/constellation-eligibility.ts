@@ -13,7 +13,7 @@
  * growing two subtly different copies of the rule.
  */
 
-/** How much LinkedIn back-and-forth counts as a real exchange. Operator-tunable. */
+/** How much two-way back-and-forth (LinkedIn, email, chat) counts as a real exchange. Operator-tunable. */
 export type ConstellationThresholds = {
   minInbound: number;
   minOutbound: number;
@@ -54,20 +54,21 @@ export function clampThresholds(
  */
 export type ContactSignalCounts = {
   noteInteractions: number;
-  /** `meeting` (calendar sync) and `in_person` (derived by the LinkedIn event extractor). */
+  /** `meeting` (calendar sync), `in_person` (derived by the LinkedIn event extractor) and `call`. */
   meetingInteractions: number;
-  linkedInInbound: number;
-  linkedInOutbound: number;
-  /** Message rows whose sender was never recorded — imported before `direction` existed. */
-  linkedInUndirected: number;
+  /** LinkedIn messages, emails and chat messages, by direction. */
+  messageInbound: number;
+  messageOutbound: number;
+  /** Message rows whose sender was never recorded — imported before `direction` existed, or forwarded mail. */
+  messageUndirected: number;
 };
 
 export const EMPTY_SIGNAL_COUNTS: ContactSignalCounts = {
   noteInteractions: 0,
   meetingInteractions: 0,
-  linkedInInbound: 0,
-  linkedInOutbound: 0,
-  linkedInUndirected: 0,
+  messageInbound: 0,
+  messageOutbound: 0,
+  messageUndirected: 0,
 };
 
 /** The contact-row half of the decision, all of it already on both payload scans. */
@@ -84,16 +85,40 @@ export type ConstellationContactFields = {
   statedCloseness: number | null;
   priorityLevel: number;
   nextFollowUpAt: Date | string | null;
-  tagCount: number;
+  /** Tags the user added — never the source tags an importer stamps (`userTagCount`). */
+  userTagCount: number;
 };
+
+/**
+ * The tags importers put on every contact they create (`ingest/people.ts`). They say where a
+ * person came from, not that the user cares about them; counting them put a whole imported
+ * network on the default sky. A user who tags someone "linkedin" by hand loses that one signal,
+ * which is the cheaper mistake.
+ */
+export const IMPORT_SOURCE_TAGS: readonly string[] = [
+  "linkedin",
+  "messages",
+  "address-book",
+  "google-contacts",
+  "outlook-contacts",
+  "whatsapp",
+  "imessage",
+];
+
+const IMPORT_SOURCE_TAG_SET = new Set(IMPORT_SOURCE_TAGS);
+
+/** How many of these tags the user chose themselves. */
+export function userTagCount(tagNames: readonly (string | null | undefined)[]): number {
+  return tagNames.filter((name) => name && !IMPORT_SOURCE_TAG_SET.has(name.trim().toLowerCase())).length;
+}
 
 export type EligibilityReason =
   | "pinned_in"
   | "pinned_out"
   | "notes"
   | "meeting"
-  | "linkedin_exchange"
-  | "linkedin_volume_fallback"
+  | "message_exchange"
+  | "message_volume_fallback"
   | "intent"
   | "none";
 
@@ -103,7 +128,8 @@ export type EligibilityVerdict = {
 };
 
 /**
- * Does this contact's LinkedIn history look like a conversation rather than a broadcast?
+ * Does this contact's message history (LinkedIn, email, chat) look like a conversation rather
+ * than a broadcast?
  *
  * Two rules, and which applies is per contact rather than a global mode. Where any direction
  * is known, a real exchange means both sides showed up — that is the whole point, and it is
@@ -120,16 +146,16 @@ function messagesQualify(
   counts: ContactSignalCounts,
   thresholds: ConstellationThresholds
 ): EligibilityReason | null {
-  const directedKnown = counts.linkedInInbound > 0 || counts.linkedInOutbound > 0;
+  const directedKnown = counts.messageInbound > 0 || counts.messageOutbound > 0;
   if (directedKnown) {
-    return counts.linkedInInbound >= thresholds.minInbound &&
-      counts.linkedInOutbound >= thresholds.minOutbound
-      ? "linkedin_exchange"
+    return counts.messageInbound >= thresholds.minInbound &&
+      counts.messageOutbound >= thresholds.minOutbound
+      ? "message_exchange"
       : null;
   }
-  if (counts.linkedInUndirected === 0) return null;
+  if (counts.messageUndirected === 0) return null;
   const bar = thresholds.minInbound + thresholds.minOutbound;
-  return counts.linkedInUndirected >= bar ? "linkedin_volume_fallback" : null;
+  return counts.messageUndirected >= bar ? "message_volume_fallback" : null;
 }
 
 /** True when the user has said, in some way, that this person matters. */
@@ -138,7 +164,7 @@ function hasIntentSignal(fields: ConstellationContactFields): boolean {
     fields.statedCloseness != null ||
     fields.priorityLevel >= 1 ||
     fields.nextFollowUpAt != null ||
-    fields.tagCount > 0
+    fields.userTagCount > 0
   );
 }
 

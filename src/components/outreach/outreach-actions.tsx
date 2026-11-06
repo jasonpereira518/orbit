@@ -3,6 +3,7 @@
 import { useTransition } from "react";
 import { Copy, ExternalLink, Send } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { copyText } from "@/lib/clipboard";
 import {
   markMessageAction,
   sendOutreachMessageAction,
@@ -58,8 +59,12 @@ export function OutreachActions({
       channel === "email" && subject
         ? `Subject: ${subject}\n\n${body}`
         : body;
-    navigator.clipboard.writeText(text);
     start(async () => {
+      // Only a copy that landed counts as "copied": Safari can reject the write.
+      if (!(await copyText(text))) {
+        toast.error(TOAST_COPY.copyFailed);
+        return;
+      }
       try {
         await markMessageAction({ messageId, status: "copied" });
         toast.success(TOAST_COPY.copied);
@@ -79,9 +84,15 @@ export function OutreachActions({
     } else if (channel === "sms" && prospect.phone) {
       window.open(buildSmsUrl({ phone: prospect.phone, body }), "_blank");
     } else if (channel === "linkedin" && prospect.linkedinUrl) {
-      navigator.clipboard.writeText(body);
+      // Start the copy inside the click, but open the tab without waiting on it so the
+      // popup blocker still sees a user gesture.
+      const copied = copyText(body);
       window.open(buildLinkedInUrl(prospect.linkedinUrl), "_blank");
-      toast.success("Draft copied — paste it into LinkedIn");
+      void copied.then((ok) =>
+        ok
+          ? toast.success("Draft copied — paste it into LinkedIn")
+          : toast.error(TOAST_COPY.copyFailed)
+      );
     }
 
     start(async () => {

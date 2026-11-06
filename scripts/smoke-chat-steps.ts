@@ -47,6 +47,25 @@ console.log("The emitter reports stages as they run...");
   check("the step id is stable across start and done", seen[0]?.id === seen[1]?.id);
 }
 
+console.log("\nOne kind, several steps — each research lookup keeps its own line");
+{
+  const { seen, emitter } = collect();
+  emitter.start("gather", "Looking a little further");
+  emitter.start("gather", "Searching your notes for “seed”", undefined, "gather:1");
+  emitter.start("gather", "Checking who you know at Ramp", undefined, "gather:2");
+  emitter.done("gather", { id: "gather:2", label: "Checked who you know at Ramp → 3 results" });
+  emitter.done("gather", { id: "gather:1", label: "Searched your notes for “seed” → 4 results" });
+  emitter.done("gather", { label: "Looked up 2 things" });
+  const snap = emitter.snapshot();
+  check("the parent and both lookups coexist", snap.map((st) => st.id).join() === "gather,gather:1,gather:2", JSON.stringify(snap.map((st) => st.id)));
+  check("each lookup finished with its own result", snap[1]?.label.endsWith("→ 4 results") === true && snap[2]?.label.endsWith("→ 3 results") === true);
+  check("the parent kept its own label", snap[0]?.label === "Looked up 2 things" && snap[0].status === "done");
+  check("every lookup is the gather kind", snap.every((st) => st.kind === "gather"));
+  check("a done for one lookup never touched the other", seen.filter((st) => st.id === "gather:1").length === 2);
+  emitter.update("gather", { id: "gather:1", detail: "late" });
+  check("update reaches the step it names", emitter.snapshot()[1]?.detail === "late" && emitter.snapshot()[0]?.detail === undefined);
+}
+
 console.log("\nOut-of-order completion — the parallel fan-out's actual behaviour");
 {
   const { seen, emitter } = collect();
@@ -217,6 +236,13 @@ console.log("\nWho circles the planet");
   });
 
   check("no steps, no one", collectOrbitPeople([]).length === 0);
+  check(
+    "a resolved person circles from the moment the name resolves",
+    collectOrbitPeople([
+      { id: "resolve", kind: "resolve", label: "Found Ada", status: "done", refs: [{ id: "ada", name: "Ada", kind: "contact" }] },
+      { id: "search", kind: "search", label: "Searching", status: "active" },
+    ]).map((p) => p.id).join() === "ada"
+  );
 
   const searching = [step("search", "done", [contact("a"), contact("b"), contact("c")]), step("rank", "active")];
   check("candidates are shown while the rerank is still running", collectOrbitPeople(searching).map((p) => p.id).join() === "a,b,c");

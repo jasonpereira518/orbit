@@ -30,7 +30,10 @@ export function SuggestedOutreachCard({
   items,
   networkIsEmpty,
   dueFollowUpCount,
+  replyRate,
 }: {
+  /** The account's reply rate, drawn beside the heading. */
+  replyRate?: React.ReactNode;
   items: SuggestedOutreachItem[];
   /** No contacts at all — the only case where "add contacts" is the right advice. */
   networkIsEmpty: boolean;
@@ -46,7 +49,10 @@ export function SuggestedOutreachCard({
   return (
     <Card className="flex h-full flex-col border-border/70 shadow-none">
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
-        <CardTitle as="h2" className="text-base">Suggested outreach</CardTitle>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <CardTitle as="h2" className="text-base">Suggested outreach</CardTitle>
+          {replyRate}
+        </div>
         <Link
           href="/capture"
           className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}

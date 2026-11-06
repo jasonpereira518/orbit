@@ -1,5 +1,7 @@
 import { AI_PROVIDERS, type AiProvider } from "@/lib/ai-providers";
 import type { Plan, PlanSource } from "@/lib/plan-limits";
+import { PLAN_CONFIG } from "@/lib/plans/plan-config";
+import { CREDIT_PACK_PRICE_LABEL } from "@/lib/stripe-config";
 import { integrationHref } from "@/components/settings/sections";
 
 /**
@@ -30,6 +32,7 @@ import { integrationHref } from "@/components/settings/sections";
  * day becomes a permanent badge. See `IMPORT_ALERT_WINDOW_MS`.
  */
 import { icsFailureLine, importFailureLine } from "@/lib/import-errors";
+import { daysSince, linkedInRefreshLevel } from "@/lib/linkedin-export";
 
 /** How many alerts the server will ever return. A pathological account cannot balloon the payload. */
 export const MAX_ACCOUNT_ALERTS = 6;
@@ -83,6 +86,9 @@ export type HealthCode =
   | "calendar.sync_error"
   | "import.failed"
   | "import.stalled"
+  /** The last LinkedIn upload is a month old: new connections are not reaching Orbit. */
+  | "import.linkedin_stale"
+  | "email.send_failed"
   | "plan.contact_cap_reached"
   | "plan.contact_cap_near"
   /** 80% of this cycle's AI allowance used (pricing v2). */
@@ -122,6 +128,11 @@ export type HealthInput = {
    */
   hasAiKey: boolean;
   onboardingCompletedAt: Date | null;
+  /**
+   * The guided tour's coach rail is on screen. The tour's own Capture and Chat stops explain
+   * the key, so the bell stays quiet until the tour is over or exited.
+   */
+  tourActive?: boolean;
 
   /** null = no connection at all, or OAuth is unconfigured on this deployment. */
   gmail: ConnectionFacts | null;
@@ -162,6 +173,13 @@ export type HealthInput = {
   importStalledRows: number | null;
   importStalledTotal: number | null;
 
+  /**
+   * Person-to-person emails (`email_sends`) that ended `failed`, windowed by the caller to
+   * `EMAIL_FAILED_ALERT_WINDOW_MS`. Mail that didn't go is the one outcome the person can't
+   * see from the screen they sent it from — they were told "Sending…" and moved on.
+   */
+  emailSendFailedCount: number;
+
   plan: Plan;
   planSource: PlanSource;
   subscriptionStatus: "active" | "past_due" | "canceled" | null;
@@ -176,10 +194,13 @@ export type HealthInput = {
    */
   /** Live REST API keys + webhook endpoints held on a plan that no longer includes them. */
   pausedApiItems?: number;
+  /** Newest finished, not-undone LinkedIn upload (`getLastLinkedInImportAt`). Absent = skip. */
+  lastLinkedInImportAt?: Date | null;
   credits?: {
     allowanceGranted: number;
     allowanceRemaining: number;
     packRemaining: number;
+    starterRemaining?: number;
     spendable: number;
     resetsAt: string | null;
   } | null;
@@ -193,7 +214,7 @@ export type HealthFinding = {
 };
 
 export type AccountAlertKind =
-  "ai_key" | "connection" | "calendar" | "import" | "billing" | "plan_limit";
+  "ai_key" | "connection" | "calendar" | "import" | "email" | "billing" | "plan_limit";
 
 export type AccountAlert = {
   /**
@@ -246,10 +267,11 @@ export function evaluateAccountHealth(
   const nowMs = now.getTime();
 
   // --- AI key -------------------------------------------------------------------------
-  // Gated on completed onboarding. A brand-new account has no key by definition, and the
-  // setup wizard already asks for one; without this gate anyone who abandons onboarding is
-  // met by a red dot before they have done anything at all.
-  if (!input.hasAiKey && input.onboardingCompletedAt !== null) {
+  // Gated on completed onboarding, and on the guided tour not being on screen. A brand-new
+  // account has no key by definition, and setup already asks for one; without this gate
+  // anyone who abandons onboarding is met by a red dot before they have done anything at
+  // all — and someone who skipped the key would see it during the very tour that explains it.
+  if (!input.hasAiKey && input.onboardingCompletedAt !== null && !input.tourActive) {
     findings.push({
       code: "ai.no_key",
       severity: "error",
@@ -350,6 +372,14 @@ export function evaluateAccountHealth(
       },
     });
   }
+  // --- Email -----------------------------------------------------------------------------
+  if (input.emailSendFailedCount > 0) {
+    findings.push({
+      code: "email.send_failed",
+      severity: "error",
+      data: { count: input.emailSendFailedCount },
+    });
+  }
   if (input.importStalledCount > 0) {
     findings.push({
       code: "import.stalled",
@@ -360,6 +390,16 @@ export function evaluateAccountHealth(
         rows: input.importStalledRows,
         total: input.importStalledTotal,
       },
+    });
+  }
+
+  // Advisory: the bell nudges at 30 days, the dashboard card takes over at 90
+  // (`linkedInRefreshLevel`). Dismissible, so the 7-day snooze is the cadence after that.
+  if (input.lastLinkedInImportAt && linkedInRefreshLevel(input.lastLinkedInImportAt, now)) {
+    findings.push({
+      code: "import.linkedin_stale",
+      severity: "warn",
+      data: { days: daysSince(input.lastLinkedInImportAt, now) },
     });
   }
 
@@ -395,7 +435,12 @@ export function evaluateAccountHealth(
     const c = input.credits;
     const resetsAt = c.resetsAt;
     if (c.spendable <= 0) {
-      findings.push({ code: "plan.credits_out", severity: "error", data: { resetsAt } });
+      findings.push({
+        code: "plan.credits_out",
+        severity: "error",
+        // `packs`: whether this plan can buy one (not Lifetime), so the copy offers only what exists.
+        data: { resetsAt, free: input.plan === "free" ? 1 : 0, packs: PLAN_CONFIG[input.plan].features.creditPacks ? 1 : 0 },
+      });
     } else if (c.allowanceGranted > 0 && c.allowanceRemaining <= 0 && c.packRemaining > 0) {
       findings.push({
         code: "plan.credits_on_packs",
@@ -403,13 +448,14 @@ export function evaluateAccountHealth(
         data: { resetsAt, packCredits: Math.floor(c.packRemaining / 10_000) },
       });
     } else if (
+      (c.starterRemaining ?? 0) <= 0 &&
       c.allowanceGranted > 0 &&
       c.allowanceGranted - c.allowanceRemaining >= Math.floor(c.allowanceGranted * CREDITS_WARN_RATIO)
     ) {
       findings.push({
         code: "plan.credits_near",
         severity: "warn",
-        data: { resetsAt, left: Math.floor(Math.max(0, c.allowanceRemaining) / 10_000) },
+        data: { resetsAt, left: Math.floor(Math.max(0, c.allowanceRemaining) / 10_000), free: input.plan === "free" ? 1 : 0 },
       });
     }
   }
@@ -461,8 +507,12 @@ export function evaluateAccountHealth(
 const DISMISSIBLE_CODES: ReadonlySet<HealthCode> = new Set<HealthCode>([
   // Already happened. The import is over; the row is a receipt, not a blocker.
   "import.failed",
+  // Already happened, like a failed import: the email didn't go, and it won't go by staring.
+  "email.send_failed",
   // Retried automatically by the stalled-import cron.
   "import.stalled",
+  // Advisory: nothing is broken, the snapshot is just getting old.
+  "import.linkedin_stale",
   // One input among several, and `lastSyncStatus` stays "error" until the next SUCCESS —
   // so a single transient feed failure would otherwise sit there for days.
   "calendar.sync_error",
@@ -500,6 +550,8 @@ const KIND_BY_CODE: Record<HealthCode, AccountAlertKind> = {
   "calendar.sync_error": "calendar",
   "import.failed": "import",
   "import.stalled": "import",
+  "import.linkedin_stale": "import",
+  "email.send_failed": "email",
   "plan.contact_cap_reached": "plan_limit",
   "plan.contact_cap_near": "plan_limit",
   "plan.credits_near": "plan_limit",
@@ -519,8 +571,9 @@ const KIND_RANK: Record<AccountAlertKind, number> = {
   connection: 1,
   billing: 2,
   plan_limit: 3,
-  import: 4,
-  calendar: 5,
+  email: 4,
+  import: 5,
+  calendar: 6,
 };
 
 /** Fully deterministic tiebreak, so two calls a second apart never reorder the list. */
@@ -539,8 +592,10 @@ const CODE_RANK: HealthCode[] = [
   "plan.credits_near",
   "plan.contact_cap_near",
   "plan.api_paused",
+  "email.send_failed",
   "import.failed",
   "import.stalled",
+  "import.linkedin_stale",
   "calendar.sync_error",
 ];
 
@@ -574,7 +629,7 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
         alerts.push({
           ...base,
           title: `Add your ${str(f.data.providerLabel) ?? "AI"} API key`,
-          body: "Capture, chat, suggestions and search stay switched off until Orbit has a key. On the Free Plan AI runs on your own key; Orbit Pro and Max include it.",
+          body: "Capture, chat, suggestions and search stay switched off until Orbit has a key. Add your own key in Settings to keep AI running",
           cta: {
             label: "Open AI settings",
             href: integrationHref("ai"),
@@ -682,6 +737,18 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
         break;
       }
 
+      case "email.send_failed": {
+        const n = int(f.data.count) ?? 1;
+        alerts.push({
+          ...base,
+          title: n === 1 ? "An email didn't send" : `${n} emails didn't send`,
+          body: "Nothing went out. Open the contact to send it again, or reconnect Gmail if it asks you to.",
+          cta: { label: "Open contacts", href: "/contacts", external: false },
+          surfaceKey: "page.contacts",
+        });
+        break;
+      }
+
       case "import.failed": {
         const n = int(f.data.count) ?? 1;
         const label = str(f.data.label);
@@ -730,6 +797,20 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
         break;
       }
 
+      case "import.linkedin_stale": {
+        const days = int(f.data.days) ?? 30;
+        alerts.push({
+          ...base,
+          title: "Time to refresh your LinkedIn export",
+          body: `Your last LinkedIn import was ${days} days ago, so newer connections aren't in Orbit yet. Request a fresh export from LinkedIn (it takes about a day), then upload it.`,
+          // In-app: the alert CTA renders as an app link, and /imports carries LinkedIn's
+          // export link plus the upload panel.
+          cta: { label: "Refresh LinkedIn", href: "/imports#import-panel-connections", external: false },
+          surfaceKey: "page.imports",
+        });
+        break;
+      }
+
       case "plan.contact_cap_reached": {
         const limit = int(f.data.limit) ?? 0;
         alerts.push({
@@ -772,13 +853,13 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
               ? "You’re out of AI credits"
               : f.code === "plan.credits_on_packs"
                 ? "Your monthly AI credits are used"
-                : `${left} ${plural(left, "credit", "credits")} left this cycle`,
+                : `${left} ${plural(left, "credit", "credits")} left this ${f.data.free ? "month" : "cycle"}`,
           body:
             f.code === "plan.credits_out"
-              ? `Included AI is paused${when ? ` until ${when}` : ""}. Nothing is charged automatically — add a $5 pack, or use your own key.`
+              ? `${f.data.free ? `Orbit’s AI refills${when ? ` on ${when}` : " next month"}` : `Included AI is paused${when ? ` until ${when}` : ""}`}. Nothing is charged automatically — ${f.data.packs ? `add a ${CREDIT_PACK_PRICE_LABEL} pack, or use your own key` : "add your own key to keep going"}.`
               : f.code === "plan.credits_on_packs"
                 ? `Orbit is now using your pack credits (${packs} left)${when ? ` until your allowance resets on ${when}` : ""}.`
-                : `You’ve used 80% of this cycle’s AI credits${when ? `; they reset on ${when}` : ""}.`,
+                : `You’ve used 80% of this ${f.data.free ? "month" : "cycle"}’s AI credits${when ? `; they reset on ${when}` : ""}.`,
           cta: { label: "View credits", href: integrationHref("ai"), external: false },
           surfaceKey: "settings.ai",
         });
