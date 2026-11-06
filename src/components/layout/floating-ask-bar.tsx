@@ -28,14 +28,15 @@ import { useViewerPlan } from "@/components/viewer-plan";
 import { aiDenialFromMessage, FREE_LOW_CREDITS } from "@/lib/ai-access-copy";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 import { getFreeCreditsLeft } from "@/actions/credits";
-import { askNetwork, createChatThread } from "@/actions/chat";
+import { createChatThread } from "@/actions/chat";
 import { streamChat } from "@/lib/chat-stream-client";
 import {
   createStreamSmoother,
   prefersReducedMotionNow,
   type StreamSmoother,
 } from "@/lib/stream-smoother";
-import type { ChatStep } from "@/lib/chat-stream-protocol";
+import type { ChatStep, ChatStreamEvent } from "@/lib/chat-stream-protocol";
+import type { ChatRecommendation } from "@/db/schema";
 import { ChatActivity } from "@/components/chat/chat-activity";
 import { OrbitMark } from "@/components/chat/orbit-mark";
 import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
@@ -71,10 +72,7 @@ function preloadChatMarkdown() {
   void import("@/components/chat/chat-markdown");
 }
 
-type ChatResult = Extract<
-  Awaited<ReturnType<typeof askNetwork>>,
-  { ok: true }
->;
+type RetrievedContact = Extract<ChatStreamEvent, { type: "done" }>["retrieved"];
 
 type AskBarContact = NonNullable<Awaited<ReturnType<typeof getAskBarContact>>>;
 
@@ -88,8 +86,8 @@ type AssistantMessage = {
   id: string;
   role: "assistant";
   answer: string;
-  recommendations: ChatResult["recommendations"];
-  retrieved: ChatResult["retrieved"];
+  recommendations: ChatRecommendation[];
+  retrieved: RetrievedContact;
   /** True while the answer is still arriving from `/api/chat`. */
   streaming?: boolean;
   /** The stages the server reported, so this bar narrates the same work `/chat` does. */
@@ -1066,7 +1064,7 @@ const AssistantBubble = memo(function AssistantBubble({
 const MiniRecommendation = memo(function MiniRecommendation({
   rec,
 }: {
-  rec: ChatResult["recommendations"][number];
+  rec: ChatRecommendation;
 }) {
   const [pending, start] = useTransition();
   const href = rec.recruiter_id

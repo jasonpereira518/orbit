@@ -31,10 +31,9 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 /**
- * Streaming chat. The server action (`askNetwork`) returned the whole answer at once, so
- * the user watched a spinner for the full model latency; this streams the prose as the
- * model produces it and sends the recommendations once the stream ends. Retrieval and
- * persistence are shared with the action (`prepareChatContext`, `persistAssistantTurn`).
+ * Streaming chat, the one path every chat answer takes (the page and the ask bar). It streams
+ * the prose as the model produces it and sends the recommendations once the stream ends.
+ * Retrieval and persistence live in `prepareChatContext` and `persistAssistantTurn`.
  *
  * Retrieval runs inside the stream rather than before it, so each stage can narrate itself
  * as `step` events — see `@/lib/chat-steps`. That is also why the headers now flush almost

@@ -194,7 +194,7 @@ export function promptArgsFromContext(
 }
 
 /**
- * The chat answer, for `/api/chat` and `askNetwork`: the shared prompt (`buildChatPrompt`),
+ * The chat answer, for `/api/chat`: the shared prompt (`buildChatPrompt`),
  * streamed, with the read tools available mid-answer and the chat writes as proposers. Contacts a lookup returns join
  * `ctx.allowedContacts` and `ctx.contactNames` (verified as this user's first), so they can be
  * shown as cards, recommended and named in a proposal like anyone retrieval found —

@@ -36,7 +36,6 @@ import { WritingInstructionsField } from "@/components/chat/writing-instructions
 import { clearSendResume, peekSendResumeFor } from "@/lib/chat-send-resume";
 import { describeOAuthReason, friendlyError } from "@/lib/errors";
 import {
-  askNetwork,
   createChatThread,
   deleteChatThread,
   getChatThread,
@@ -120,11 +119,6 @@ import { ANCHOR_INTERFERENCE, shiftAnchor, spliceSpan } from "@/lib/dictation";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { draftContactFollowUp } from "@/actions/contacts";
 import { useDictation } from "@/lib/use-dictation";
-
-type ChatResult = Extract<
-  Awaited<ReturnType<typeof askNetwork>>,
-  { ok: true }
->;
 
 export type ThreadSummary = {
   id: string;
@@ -2249,7 +2243,7 @@ const RecommendationCard = memo(function RecommendationCard({
   messageId,
   sentAt,
 }: {
-  rec: ChatResult["recommendations"][number];
+  rec: ChatRecommendation;
   /** The question the answer was for — what a draft written on demand is about. */
   question?: string;
   /** Role and company from retrieval — absent on a reloaded thread, which is fine. */
