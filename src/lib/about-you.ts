@@ -5,6 +5,7 @@
  */
 import { linkedinSlug } from "@/lib/duplicates";
 import { canonicalLinkedInUrl } from "@/lib/linkedin-paste";
+import type { CareerProfile } from "@/db/schema";
 
 export const AIM_KINDS = [
   "internship",
@@ -130,4 +131,23 @@ export function composeSelfIntro(a: AboutAnswers): string | null {
   if (headline) return `${headline}.`;
   if (aim) return `${aim[0].toUpperCase()}${aim.slice(1)}.`;
   return null;
+}
+
+/**
+ * The plain-language search the weekly "People to meet" run hands to Find people, or null
+ * when there is nothing to anchor on. Companies are capped at 3 so the sentence stays a
+ * search, not a list.
+ */
+export function buildDiscoveryQuery(input: {
+  aim: CareerProfile["aim"] | null;
+  companies: string[];
+  schools: string[];
+}): string | null {
+  const school = input.schools.map((s) => s.trim()).find(Boolean) ?? null;
+  const field = input.aim?.field ? FIELD_LABELS[input.aim.field as Field].toLowerCase() : null;
+  const at = atCompanies(input.companies.map((c) => c.trim()).filter(Boolean).slice(0, 3));
+  const what = field ? ` working in ${field}${at}` : at ? ` working${at}` : "";
+  if (school) return `${school} alumni${what}`;
+  if (what) return `People${what}`;
+  return input.aim ? "People in my field who could help me get started" : null;
 }

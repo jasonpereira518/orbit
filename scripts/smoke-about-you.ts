@@ -6,12 +6,12 @@
  */
 import {
   composeGoalSentence,
+  buildDiscoveryQuery,
   composeSelfIntro,
   isJobHuntingAim,
   parseOwnLinkedInUrl,
   type AboutAnswers,
 } from "../src/lib/about-you";
-
 let failures = 0;
 function check(label: string, condition: boolean, detail?: string) {
   if (condition) return console.log(`  ok  ${label}`);
@@ -64,6 +64,22 @@ console.log("\ncomposeSelfIntro");
 console.log("\nisJobHuntingAim");
 check("grow false", isJobHuntingAim("grow") === false);
 check("switch_roles true", isJobHuntingAim("switch_roles") === true);
+
+console.log("\nbuildDiscoveryQuery");
+{
+  const aim = (field: "product" | null) => ({ kind: "internship" as const, timeline: "this_year" as const, field, setAt: "2026-11-06" });
+  const q = buildDiscoveryQuery({ aim: aim("product"), companies: ["Stripe", "Figma"], schools: ["UNC"] });
+  check("school + field + companies", q === "UNC alumni working in product at Stripe or Figma", String(q));
+  const n = buildDiscoveryQuery({ aim: aim("product"), companies: ["Stripe", "Figma"], schools: [] });
+  check("no school", n === "People working in product at Stripe or Figma", String(n));
+  check("nothing -> null", buildDiscoveryQuery({ aim: null, companies: [], schools: [] }) === null);
+  const c = buildDiscoveryQuery({ aim: aim("product"), companies: ["A", "B", "C", "D"], schools: [] });
+  check("companies capped at 3", c === "People working in product at A, B, or C", String(c));
+  const f = buildDiscoveryQuery({ aim: aim(null), companies: [], schools: [] });
+  check("aim only is not empty", !!f && f.length > 10 && !/undefined|null/.test(f), String(f));
+  const s = buildDiscoveryQuery({ aim: null, companies: [], schools: ["UNC"] });
+  check("school only", s === "UNC alumni", String(s));
+}
 
 if (failures > 0) {
   console.log(`\n${failures} check(s) failed\n`);

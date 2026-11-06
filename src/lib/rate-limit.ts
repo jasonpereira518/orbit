@@ -70,6 +70,7 @@ const BUCKET_LABELS: Record<string, string> = {
   "email-intel-extract-daily": "email-insights reading",
   "web-search": "monthly web search",
   "web-search-all": "Orbit-wide web search",
+  "people-to-meet": "weekly people suggestion",
 };
 
 function formatRetryAfter(sec: number): string {
@@ -370,6 +371,8 @@ export const RATE_LIMITS = {
    * and only the mail is skipped, since the welcome is best-effort by design.
    */
   interestWelcome: { limit: 200, windowSec: 3600 },
+  /** The dashboard's "People to meet": one Find-people discovery run per account per week. */
+  peopleToMeet: { limit: 1, windowSec: 7 * 86_400 },
 } as const satisfies Record<string, BucketPolicy>;
 
 /**
