@@ -35,6 +35,13 @@ import type {
 import type { ChatStep as ChatStepRecord } from "@/lib/chat-stream-protocol";
 import type { EvidenceSource as EvidenceSourceRecord } from "@/lib/chat-evidence";
 import type { StoredProposedAction as StoredProposedActionRecord } from "@/lib/chat-proposed-actions";
+import type {
+  EmailEventKind,
+  EmailEventPerson,
+  EmailThreadStatus,
+  ThreadDecision,
+} from "@/lib/email-intel/types";
+import type { MemorySourceKind } from "@/lib/memory-chunks";
 
 /** Orbit ring a contact sits in. Mirrors `ClosenessBreakdown["tier"]` in `@/lib/closeness`. */
 export type ClosenessTier = "inner" | "mid" | "outer";
@@ -109,6 +116,7 @@ import type {
 } from "@/lib/capture/types";
 import type { CaptureParseHints } from "@/lib/ai";
 import type { MentionPick } from "@/lib/mentions/mention-picks";
+import type { NameGuess } from "@/lib/contact-name-guess";
 
 export const userSettings = pgTable("user_settings", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -562,6 +570,20 @@ export const userSettings = pgTable("user_settings", {
    */
   workHistoryAutoEnabled: integer("work_history_auto_enabled").default(1).notNull(),
   /**
+   * Email insights (docs/superpowers/specs/2026-09-30-email-intelligence-design.md). Opt-in,
+   * so it defaults to 0 and is deliberately NOT in `PRESERVED_SETTINGS_COLUMNS`: consent must
+   * not survive a data wipe. The cursor is the watermark (start of the last complete sweep);
+   * next_at is both the schedule and the lease, the same pattern as `work_history_due_at`.
+   */
+  emailIntelEnabled: integer("email_intel_enabled").default(0).notNull(),
+  emailIntelCursorAt: timestamp("email_intel_cursor_at", { withTimezone: true }),
+  emailIntelNextAt: timestamp("email_intel_next_at", { withTimezone: true }),
+  /**
+   * Days between "refresh your LinkedIn export" nudges. Null = the default (30, monthly); 0 = off.
+   * Read by `linkedInRefreshLevel`; set on the LinkedIn integration page.
+   */
+  linkedinRefreshIntervalDays: integer("linkedin_refresh_interval_days"),
+  /**
    * 1 = chat may make its small, reversible changes itself (a note, a tag, a reminder, a
    * snooze, ticking something off) instead of asking first; each one lands as a done card
    * with Undo. Off by default. The gate is `shouldAutoApply` (`@/lib/chat-auto-apply`).
@@ -678,6 +700,12 @@ export const contacts = pgTable(
     firstName: text("first_name"),
     lastName: text("last_name"),
     preferredName: text("preferred_name"),
+    /**
+     * Set when `fullName` was read from a handle ("jsmith42", "john.doe") rather than given.
+     * `weak` puts a "?" by the name to confirm or change it; null = never checked.
+     * See `@/lib/contact-name-guess`.
+     */
+    nameGuess: jsonb("name_guess").$type<NameGuess>(),
     company: text("company"),
     companyId: uuid("company_id").references(() => companies.id, {
       onDelete: "set null",
@@ -1369,7 +1397,7 @@ export type NoteBatchResult = {
    */
   opportunities?: { id: string; contactId: string; kind: string; label: string; dueIso: string | null }[];
   skipped: { relative: number; unverifiable: number; past: number; duplicate: number };
-  /** Present only when the batch came from a recorded meeting (`/capture?mode=meeting`). */
+  /** Present only when the batch came from a recorded meeting (`/meetings`). */
   meeting?: NoteBatchMeeting;
 };
 
@@ -1597,7 +1625,7 @@ export type MeetingSessionStatus = "recording" | "ended" | "analyzed" | "saved" 
 export type MeetingSegmentEngine = "deepgram" | "whisper" | "gemini" | "silent";
 
 /**
- * One recorded call on `/capture?mode=meeting`. Holds the text of the meeting while it is
+ * One recorded call on `/meetings`. Holds the text of the meeting while it is
  * still happening, so a crashed or closed tab can pick up where it left off — audio is
  * never stored, only what it was transcribed to. `digest` is the analysis
  * (`src/lib/meeting-digest.ts`), written once the call ends.
@@ -1648,6 +1676,8 @@ export const meetingSessions = pgTable(
     calendarEventKey: text("calendar_event_key"),
     /** That event's recurring series, so the next occurrence can open with "last time". */
     calendarSeriesId: text("calendar_series_id"),
+    /** The notes box from the call (`SideNotes`), saved as typed; edited later on /meetings. */
+    userNotes: text("user_notes"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -2906,7 +2936,7 @@ export const memoryChunks = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     userId: text("user_id").notNull(),
-    sourceKind: text("source_kind").$type<"interaction" | "note_batch" | "brief">().notNull(),
+    sourceKind: text("source_kind").$type<MemorySourceKind>().notNull(),
     sourceId: uuid("source_id").notNull(),
     /** The passage's primary subject. Null when nobody has been resolved from it yet. */
     contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }),
@@ -3217,6 +3247,13 @@ export type ConnectorSyncCursor = {
   ctag?: string | null;
   /** High-water mark for `updated_since`-style APIs. */
   syncedThrough?: string | null;
+  /**
+   * The OAuth client id a dynamically registered client was issued (Granola's MCP). Public,
+   * not a secret — but a refresh is refused without the client that obtained the token.
+   */
+  clientId?: string | null;
+  /** Granola: sync only notes in these folders. Absent or empty means every note. */
+  folderIds?: string[] | null;
 };
 
 export type ProviderSyncCursor = {
@@ -6411,6 +6448,67 @@ export const dataPurgeRuns = pgTable(
 
 export type StripeProcessedEventRow = typeof stripeProcessedEvents.$inferSelect;
 export type DataPurgeRunRow = typeof dataPurgeRuns.$inferSelect;
+
+/** One row per Gmail thread the email-insights sweep has judged. Metadata only, never a body. */
+export const emailThreads = pgTable(
+  "email_threads",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    provider: text("provider").$type<"gmail">().default("gmail").notNull(),
+    threadId: text("thread_id").notNull(),
+    lastMessageId: text("last_message_id").notNull(),
+    subject: text("subject").default("").notNull(),
+    participants: jsonb("participants").$type<string[]>().default([]).notNull(),
+    lastDirection: text("last_direction").$type<"in" | "out">().default("in").notNull(),
+    decision: text("decision").$type<ThreadDecision>().notNull(),
+    triageScore: integer("triage_score").default(0).notNull(),
+    status: text("status").$type<EmailThreadStatus>().notNull(),
+    /** The P2 extractor's claim lifecycle (same shape as capture_jobs). Unused until then. */
+    claimToken: uuid("claim_token"),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    stallResumes: integer("stall_resumes").default(0).notNull(),
+    processedAt: timestamp("processed_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("email_threads_thread_uidx").on(t.userId, t.provider, t.threadId),
+    index("email_threads_pending_idx").on(t.userId, t.status).where(sql`status = 'pending_ai'`),
+  ]
+);
+
+/** What an email meant: a hiring-stage change now, jobs/news/events once the extractor lands. */
+export const emailEvents = pgTable(
+  "email_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    threadRowId: uuid("thread_row_id")
+      .notNull()
+      .references(() => emailThreads.id, { onDelete: "cascade" }),
+    source: text("source").$type<"rule" | "ai">().default("rule").notNull(),
+    kind: text("kind").$type<EmailEventKind>().notNull(),
+    company: text("company"),
+    role: text("role"),
+    stage: text("stage"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    dueAt: timestamp("due_at", { withTimezone: true }),
+    summary: text("summary").notNull(),
+    evidenceQuote: text("evidence_quote").default("").notNull(),
+    confidence: real("confidence").default(0).notNull(),
+    people: jsonb("people").$type<EmailEventPerson[]>().default([]).notNull(),
+    asks: jsonb("asks").$type<string[]>().default([]).notNull(),
+    dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    // One rule-derived event per kind per thread; AI events (P2) replace by source instead.
+    uniqueIndex("email_events_rule_uidx").on(t.threadRowId, t.kind).where(sql`source = 'rule'`),
+    index("email_events_user_idx").on(t.userId, t.occurredAt),
+  ]
+);
 
 /**
  * Orbit's own record of an invitation. Clerk is still the system that sends and redeems it,

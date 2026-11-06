@@ -13,6 +13,10 @@ import { getMeetingTranscript } from "@/lib/meeting-sessions";
 import { MeetingRecapButton } from "@/components/meetings/meeting-recap-button";
 import { isSurfaceLive } from "@/lib/surface-visibility";
 import { COMPOSE_SURFACE_KEY } from "@/lib/surfaces";
+import { getNoteBatch } from "@/actions/note-batches";
+import { NoteBatchResultView } from "@/components/capture/note-batch-result";
+import { MeetingNotesEditor } from "@/components/meetings/meeting-notes-editor";
+import { isoDay } from "@/lib/suggested-reminder-utils";
 
 const SEARCH_MAX = 100;
 
@@ -89,8 +93,10 @@ export default async function MeetingDetailPage({
     loadMeetingTranscript(userId, id),
     isSurfaceLive(userId, COMPOSE_SURFACE_KEY).catch(() => false),
   ]);
-  // The same two states the list shows. A meeting still being recorded is Capture's.
+  // The same two states the list shows. A meeting still being recorded is the recorder's.
   if (!meeting || (meeting.session.status !== "analyzed" && meeting.session.status !== "saved")) notFound();
+  // What the meeting saved to people's timelines. A side read: the page stands without it.
+  const batch = meeting.session.noteBatchId ? await getNoteBatch(meeting.session.noteBatchId).catch(() => null) : null;
 
   const { session, segments, missingSeqs } = meeting;
   const digest = session.digest;
@@ -99,6 +105,16 @@ export default async function MeetingDetailPage({
   // The same 1:1 rule the summary used (one guest and one other voice is that guest), and
   // "Speaker 1, 2, ..." for everyone else, in order of first appearance.
   const voices = speakerDisplayNames(segments, guests);
+  // A digest can come back with nothing in it (a near-silent call): no empty card for that.
+  const hasSummary = Boolean(
+    digest &&
+      (digest.summary.trim() ||
+        digest.keyPoints.length ||
+        digest.decisions.length ||
+        digest.blockers.length ||
+        digest.openQuestions.length ||
+        digest.agenda?.length)
+  );
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -132,27 +148,15 @@ export default async function MeetingDetailPage({
             </span>
           )}
         </p>
-        {session.noteBatchId && (
-          <Link
-            href={`/capture/${session.noteBatchId}`}
-            className="inline-block text-sm font-medium text-primary underline-offset-2 hover:underline"
-          >
-            See what was saved from this meeting →
-          </Link>
-        )}
       </div>
 
       {digest && <MeetingRecapButton sessionId={session.id} composeLive={composeLive} />}
 
-      {digest ? (
+      {digest && hasSummary ? (
         <div className="space-y-5 rounded-2xl border border-border/70 bg-card p-6">
           <p className="text-sm leading-relaxed text-foreground">{digest.summary}</p>
           <Section title="Key points" items={digest.keyPoints} />
           <Section title="Decisions" items={digest.decisions} />
-          <Section
-            title="Action items"
-            items={digest.actionItems.map((a) => (a.owner ? `${a.text} — ${a.owner === "me" ? "you" : a.owner}` : a.text))}
-          />
           <Section title="Blockers" items={digest.blockers.map((b) => b.text)} />
           <Section title="Open questions" items={digest.openQuestions.map((o) => o.text)} />
           {digest.agenda && digest.agenda.length > 0 && (
@@ -174,8 +178,53 @@ export default async function MeetingDetailPage({
         </div>
       ) : null}
 
-      <section className="space-y-2">
-        <h2 className="text-sm font-medium text-ink">Transcript</h2>
+      {digest && digest.actionItems.length > 0 && (
+        <section className="space-y-2 rounded-2xl border border-border/70 bg-card p-6">
+          <h2 className="text-sm font-medium text-ink">Action items</h2>
+          <ul className="space-y-1.5 text-sm">
+            {digest.actionItems.map((a, i) => (
+              <li key={i} className="flex gap-2">
+                <span aria-hidden className="text-muted-foreground">○</span>
+                <span>
+                  {a.text}
+                  {a.owner && (
+                    <span className="text-muted-foreground"> — {a.owner === "me" ? "you" : a.owner}</span>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <MeetingNotesEditor sessionId={session.id} initial={session.userNotes ?? ""} />
+
+      {batch && (
+        <section className="space-y-3">
+          <h2 className="font-[family-name:var(--font-display)] text-xl text-ink">Saved to your network</h2>
+          <NoteBatchResultView
+            embedded
+            batchId={batch.id}
+            status={batch.status}
+            anchorIso={isoDay(new Date(batch.anchorDate))}
+            anchorBasis={batch.anchorBasis}
+            result={batch.result}
+            reminderStatus={batch.reminderStatus}
+            reminderDetails={batch.reminderDetails}
+            contactNames={batch.contactNames}
+          />
+        </section>
+      )}
+
+      {/* Folded away unless a search brought you here: then the matching line is the point. */}
+      <details open={Boolean(q) || undefined} className="group space-y-2">
+        <summary className="cursor-pointer select-none text-sm font-medium text-ink marker:text-muted-foreground">
+          Transcript
+          <span className="font-normal text-muted-foreground">
+            {" "}· {segments.filter((s) => s.text.trim()).length} lines
+          </span>
+        </summary>
+        <div className="mt-2 space-y-2">
         {missingSeqs.length > 0 && (
           <p className="text-xs text-amber-700 dark:text-warning">
             {missingSeqs.length} part{missingSeqs.length === 1 ? "" : "s"} of this transcript never reached Orbit, so
@@ -202,7 +251,8 @@ export default async function MeetingDetailPage({
               })}
           </div>
         )}
-      </section>
+        </div>
+      </details>
     </div>
   );
 }

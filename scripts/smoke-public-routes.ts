@@ -108,6 +108,7 @@ function main() {
     "/api/embeddings/backfill",
     "/api/work-history/research",
     "/api/work-history/sweep",
+    "/api/contacts/name-sweep",
     "/api/linkedin/timeline-events/backfill",
     "/api/ops/sweep",
     "/api/sync/run",

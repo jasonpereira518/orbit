@@ -21,7 +21,10 @@ type PreviewResult = Awaited<ReturnType<typeof previewLinkedInMessagesCsv>>;
 type MessagesPreview = Exclude<PreviewResult, { error: string }>;
 type MessagePerson = MessagesPreview["people"][number];
 
-export function LinkedInMessagesImport() {
+/** `bare`: see `LinkedInConnectionsImport`. */
+export function LinkedInMessagesImport({
+  bare = false,
+}: { bare?: boolean } = {}) {
   const job = useImportJob();
   const [pending, start] = useTransition();
 
@@ -60,29 +63,38 @@ export function LinkedInMessagesImport() {
   }
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 border-t-2 border-t-import-messages/70 bg-card p-6">
+    <section
+      className={
+        bare
+          ? "space-y-4"
+          : "space-y-4 rounded-2xl border border-border/70 border-t-2 border-t-import-messages/70 bg-card p-6"
+      }
+    >
       {/*
         The export guide shares the title's row, not the whole header's. Beside the full
         text block it took ~120px from a column already sharing a phone with the icon, and
         the description ran four words to a line. Here the description spans the card.
       */}
-      <div className="flex items-start gap-3">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-import-messages/10 text-import-messages">
-          <MessageSquare className="h-4 w-4" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
-            <h2 className="min-w-0 text-lg font-medium text-ink">
-              LinkedIn messages
-            </h2>
-            <LinkedInExportGuide variant="messages" />
+      {bare ? null : (
+        <div className="flex items-start gap-3">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-import-messages/10 text-import-messages">
+            <MessageSquare className="h-4 w-4" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start justify-between gap-3">
+              <h2 className="min-w-0 text-lg font-medium text-ink">
+                LinkedIn messages
+              </h2>
+              <LinkedInExportGuide variant="messages" />
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Upload a Messages CSV or ZIP, review conversation partners, then
+              import message history. Imports keep running if you leave this
+              page.
+            </p>
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Upload a Messages CSV or ZIP, review conversation partners, then
-            import message history. Imports keep running if you leave this page.
-          </p>
         </div>
-      </div>
+      )}
 
       <ImportFilePicker
         accept=".csv,.zip,text/csv,application/zip"

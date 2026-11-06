@@ -53,7 +53,7 @@ export function MeetingNudgeCard({ snap }: { snap: NudgeSnapshot }) {
   const open = () => {
     session.applyCalendarMeeting(nudge);
     dismissMeetingNudge(nudgeKey(nudge));
-    router.push("/capture?mode=meeting");
+    router.push("/meetings");
   };
 
   const record = () => {

@@ -7,6 +7,8 @@
  */
 import { cookies } from "next/headers";
 import { after } from "next/server";
+import { addInboxPersonForUser, dismissInboxPersonForUser } from "@/lib/email-intel/inbox-actions";
+import { reconcileEmailChunkContacts } from "@/lib/email-intel/search-index";
 import { AI_ACCESS_COPY } from "@/lib/ai-access-copy";
 import { friendlyError } from "@/lib/errors";
 import { requireUserForReleasedSurface } from "@/lib/plan-guards";
@@ -25,7 +27,8 @@ import {
 } from "@/lib/radar/actions-core";
 import { explainRecommendation } from "@/lib/radar/explain";
 import { loadRadarBriefing, loadRadarPage, type RadarBriefing, type RadarPageData } from "@/lib/radar/page-data";
-import { claimRadarLease, ensureRadarRun, maybeRefreshRadar, runRadarForUser } from "@/lib/radar/run";
+import { claimRadarLease, ensureRadarRun, maybeRefreshRadar, refreshRadarForNewContact, runRadarForUser } from "@/lib/radar/run";
+import { rebuildContactEmbedding } from "@/lib/search";
 import { markRecommendationsSeen } from "@/lib/radar/store";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
@@ -118,6 +121,37 @@ export async function restoreRecommendation(id: string): Promise<{ restored: boo
   const result = await restoreRecommendationForUser(userId, id);
   revalidateRadar();
   return result;
+}
+
+/**
+ * "Add to Orbit" on a person the strip offered. The key is all the client sends: the contact is
+ * built from the stored event (`addInboxPersonForUser`). Radar then updates, bounded, so the
+ * cards the new contact makes possible are there when the page redraws.
+ */
+export async function addInboxPerson(key: string): Promise<RadarActionResult & { contactId?: string }> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  const result = await addInboxPersonForUser(userId, key);
+  if (!result.ok) return { ok: false, message: result.message };
+  after(() => rebuildContactEmbedding(userId, result.contactId).catch(() => undefined));
+  // The new contact is named in emails already indexed for chat: make them findable from this person.
+  after(() => reconcileEmailChunkContacts(userId).catch(() => undefined));
+  await refreshRadarForNewContact(userId).catch(() => false);
+  revalidatePathIfRequestScoped("/contacts");
+  revalidatePathIfRequestScoped("/graph");
+  revalidateRadar();
+  return {
+    ok: true,
+    contactId: result.contactId,
+    message: result.created ? `${result.name} is in your orbit` : `${result.name} was already in your orbit`,
+  };
+}
+
+/** "Dismiss" on the strip: not offered again. They stay on Capture's Ignored people list if you change your mind. */
+export async function dismissInboxPerson(key: string): Promise<RadarActionResult> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  await dismissInboxPersonForUser(userId, key);
+  revalidateRadar();
+  return { ok: true, message: "Dismissed. You can still add them from Ignored people on Capture" };
 }
 
 /** "Refresh now": the same run the nightly pass does, inline and rate-limited. */

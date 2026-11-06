@@ -65,7 +65,7 @@ const PROCESSORS = [
   { name: "Gravatar", badge: "Automatic", body: "Checks for a public avatar for a contact's email. Receives a one-way hash of the address, not the address." },
   { name: "Deepgram", badge: "Always", body: "Speech-to-text for voice notes, meetings and the chat microphone. Receives your audio and a list of your recent contact names so it spells them correctly. Every request sets Deepgram's zero-retention flag, which Deepgram documents as not storing your audio, text, transcripts or synthesized audio after the response is returned. Each request also carries a label so Orbit can check its own bill: a recording's own id for a meeting, and for everything else a random value Orbit generated for your account — not your name, your email or your account id. Labels sit in Deepgram's usage records, which the zero-retention flag does not cover; deleting your data in Settings replaces yours." },
   { name: "Stripe", badge: "Optional", body: "Orbit Pro, Orbit Max and credit pack payments. Card details go to Stripe directly; Orbit stores a customer reference." },
-  { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider you choose in Settings: on your own key, or (for the Free Plan’s allowance and included AI on Orbit Pro, Orbit Max and Orbit Lifetime) on Orbit's account with that provider. Keeping a contact's work history current runs a web search through that same provider, by the contact's name, employer and public profile link. Looking up a meeting guest who is not yet a contact, when you press Look up, runs the same search by their name and the company named by their email domain — never the address." },
+  { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider you choose in Settings: on your own key, or (for the Free Plan’s allowance and included AI on Orbit Pro, Orbit Max and Orbit Lifetime) on Orbit's account with that provider. Keeping a contact's work history current runs a web search through that same provider, by the contact's name, employer and public profile link. Looking up a meeting guest who is not yet a contact, when you press Look up, runs the same search by their name and the company named by their email domain — never the address. When you review the people a capture found, each one who would be added as a new contact is looked up the same way, by their name with the company, role, place you met and city your note gives — never an email address or phone number." },
   { name: "OpenRouter", badge: "Optional", body: "The same AI features, routed through OpenRouter, only if you connect your own OpenRouter account in Settings." },
   { name: "TypeSafe", badge: "Optional", body: "Jev, a decision model, for yes-or-no and ranking steps: spotting recruiters during a mail scan you start, choosing which contacts a chat answer draws on, telling two contact records apart before they are merged, reading captured notes, judging which calendar events were meetings with people, and deciding whether a note or message has anything in it worth sending to your chat model. Only if you add your own TypeSafe key in Settings." },
   { name: "Google", badge: "Optional", body: "Gmail, Contacts and Calendar, one permission per feature you turn on. See Google user data." },
@@ -296,6 +296,47 @@ export default function PrivacyPage() {
               date; it stores no message bodies, reads no other mail, and never sends this mail to
               an AI provider. Turning it off stops the scanning and removes what it recorded about
               where each event was found.
+            </p>
+          </DocCallout>
+          <DocCallout title="Email insights">
+            <p>
+              If you turn on Email insights in Settings, Orbit checks your Gmail every fifteen
+              minutes for new threads that look like a job application or a recruiter
+              conversation, excluding newsletters and mailing lists. It first reads only the
+              sender, the subject, who is on the thread and the short preview Gmail supplies.
+            </p>
+            <p>
+              For a thread that looks like a hiring conversation, Orbit then reads the text of
+              its most recent messages — up to four, each cut to 4,000 characters — and sends it,
+              with the sender names and addresses, to the AI provider that runs your
+              account&rsquo;s AI features. The model notes the company, the role, where things
+              stand, any dates, the people named and what is being asked of you. Orbit keeps
+              those notes, the thread id, the subject, the participants and one short quote
+              (under 200 characters) copied from the mail as evidence. It stores no message
+              bodies, and it does not use this mail to train models or for advertising.
+            </p>
+            <p>
+              The notes it keeps can appear as reasons on your Radar cards, in the short lines
+              and drafts Radar writes with your AI provider, and in your in-app briefing. They
+              are never put in Radar&rsquo;s Monday email.
+            </p>
+            <p>
+              Radar can also list people an email names who are not in your orbit yet, showing
+              the name and job title the email gave. Orbit adds one only when you press Add; it
+              then saves their name, email address and job title as a contact, and nothing else
+              from the email. Dismissing someone keeps only their name, on the Ignored people
+              list, until you delete your insights data or disconnect Gmail.
+            </p>
+            <p>
+              Your chat assistant can search the same notes. When you ask a question, the notes
+              that match are sent with it to the AI provider that runs your account&rsquo;s AI
+              features, and an answer can cite them. Turning Email insights off removes them
+              from chat search at once; disconnecting Gmail or deleting your insights data
+              removes them for good.
+            </p>
+            <p>
+              Turning it off stops the checking; disconnecting Gmail, or deleting your insights
+              in Settings, removes what it recorded.
             </p>
           </DocCallout>
         </DocSection>

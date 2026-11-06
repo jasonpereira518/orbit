@@ -179,3 +179,16 @@ export function ChatGptMark({ className }: MarkProps) {
     </svg>
   );
 }
+
+/**
+ * Granola's spiral, as its own app icon: Granola publishes the mark only as a raster favicon
+ * (its vector logo is the full wordmark), so this is their 180px PNG, rounded like the tile
+ * it is. The green is part of the artwork, which is why it is the one mark here that does
+ * not follow `currentColor` — it reads the same on both themes.
+ */
+export function GranolaMark({ className }: MarkProps) {
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- a 180px static icon; next/image buys nothing here.
+    <img src="/integrations/granola.png" alt="" aria-hidden className={`rounded-[22%] ${className ?? ""}`} />
+  );
+}

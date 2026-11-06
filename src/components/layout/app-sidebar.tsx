@@ -38,6 +38,8 @@ import { useModKeyLabel } from "@/lib/use-mod-key";
 /** Nav destinations whose page leans on a lazy client chunk: warmed on hover or focus. */
 const CHUNK_WARMERS: Record<string, (() => void) | undefined> = {
   "/capture": preloadCaptureFlow,
+  // The recorder on /meetings is the same flow.
+  "/meetings": preloadCaptureFlow,
   "/chat": preloadChatPanel,
 };
 

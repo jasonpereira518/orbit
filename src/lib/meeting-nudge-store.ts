@@ -195,7 +195,7 @@ function alertDesktop(c: MeetingCandidate): void {
     id: `meeting-nudge:${nudgeKey(c)}`,
     title: c.title,
     body: `${nudgeTiming(c, Date.now())} — open Orbit to record it`,
-    url: "/capture?mode=meeting",
+    url: "/meetings",
   }).catch(() => {});
 }
 
