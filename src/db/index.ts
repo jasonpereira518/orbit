@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   terms_version text,
   timeline_backfill_enabled integer NOT NULL DEFAULT 1,
   work_history_auto_enabled integer NOT NULL DEFAULT 1,
+  linkedin_refresh_interval_days integer,
   chat_auto_apply integer NOT NULL DEFAULT 0,
   relationship_engine_enabled integer NOT NULL DEFAULT 1,
   chat_self_names jsonb NOT NULL DEFAULT '[]',
@@ -2826,7 +2827,12 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 186 = meeting_sessions.user_notes: the notes box from a recorded meeting, stored with it
 // instead of only in the browser, so /meetings can show and edit them. Rescanned every remote
 // ref and worktree on Nov 5 2026: 185 (main) was the highest claimed anywhere.
-export const SCHEMA_VERSION = 186;
+//
+// 188 = user_settings.linkedin_refresh_interval_days: how often Orbit nudges for a fresh
+// LinkedIn export (null = monthly, today's rule; 0 = off), set on the LinkedIn integration page.
+// NOT 187: the unpushed admin-tracking-events worktree claims it. Rescanned every remote ref
+// and worktree on Nov 5 2026: 187 (admin-tracking-events) was the highest claimed anywhere.
+export const SCHEMA_VERSION = 188;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -4119,6 +4125,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "contacts", "work_history_miss_slug", "text");
   await ensureColumn(client, "usage_events", "web_searches", "integer");
   await ensureColumn(client, "user_settings", "work_history_auto_enabled", "integer NOT NULL DEFAULT 1");
+  await ensureColumn(client, "user_settings", "linkedin_refresh_interval_days", "integer");
   await ensureColumn(client, "user_settings", "relationship_engine_enabled", "integer NOT NULL DEFAULT 1");
   await ensureColumn(client, "user_settings", "chat_self_names", "jsonb NOT NULL DEFAULT '[]'");
   await ensureColumn(client, "action_items", "owed_by", "text");
@@ -5045,6 +5052,7 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS work_history_due_at timestamptz`,
   `CREATE INDEX IF NOT EXISTS contacts_work_history_due_idx ON contacts(user_id, work_history_due_at) WHERE linkedin_url IS NOT NULL`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS work_history_auto_enabled integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS linkedin_refresh_interval_days integer`,
   // Schema v133: Radar's nightly schedule, lease and pause flag for each account.
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_next_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_lease_until timestamptz`,
