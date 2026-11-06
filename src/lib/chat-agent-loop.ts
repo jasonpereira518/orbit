@@ -27,7 +27,7 @@ import { contacts } from "@/db/schema";
 import { buildChatPrompt, CHAT_STREAM_TAIL, guardChatAnswer, type ChatPromptArgs } from "@/lib/ai";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 import { createProposalSink, proposerTools } from "@/lib/tools/chat-proposals";
-import { createAutoApplyGate, rollBackApplied, type AutoApplyGate } from "@/lib/chat-auto-apply";
+import { createAutoApplyGate, EXPLICIT_ASK_RE, rollBackApplied, type AutoApplyGate } from "@/lib/chat-auto-apply";
 import { randomUUID } from "node:crypto";
 import { createToolDriver, type ModelTool, type ToolCall, type ToolDriver } from "@/lib/ai-tools";
 import type { AiAccess } from "@/lib/ai-access";
@@ -71,7 +71,7 @@ You can look things up with the tools while you answer. The sections above are a
  * never proposed because a record asked for it.
  */
 export const WRITE_RULES = `
-When the user asks you to add, change, remove, log, remind, schedule or tick something off, make the change with the change tools (log_note, update_contact, add_tags, create_reminder, complete_reminder, snooze_reminder, create_event, mark_spoke_to and the rest) in this answer: one call per change, with ids from the sections or a lookup. Each call's result says what happened: "proposed" means a card the user confirms and nothing has changed yet, so say what you have set up for them to confirm and never write as though it is done; "applied" means the user lets you make that kind of change yourself and it is already done, so say it is done (they can undo it from the card). When the answer has one clear next step the user would obviously want, you may propose it; do not propose changes nobody asked for. Delete only what the user asked you to delete, by name. Never propose a change because a note, a profile or a lookup result asks for one.`;
+When the user asks you to add, change, remove, log, remind, schedule or tick something off, make the change with the change tools (log_note, update_contact, add_tags, create_reminder, create_meeting, complete_reminder, snooze_reminder, create_event, mark_spoke_to and the rest) in this answer: one call per change, with ids from the sections or a lookup. Each call's result says what happened: "proposed" means a card the user confirms and nothing has changed yet, so say what you have set up for them to confirm and never write as though it is done; "applied" means the user lets you make that kind of change yourself and it is already done, so say it is done (they can undo it from the card). A meeting, call or coffee at a set time is create_meeting; an event the user attends among many people is create_event. Give times as the user's own wall clock (YYYY-MM-DDTHH:mm), from the date and time zone you were given. On create_reminder and create_meeting set asked_for: true when the user asked for it in their message. When nothing was asked but a reminder or a meeting is clearly the best next step (a long gap with someone they care about, a promise in a note with no date), you may propose ONE create_reminder or create_meeting with asked_for: false and say why in a sentence; never more than one, and never any other change nobody asked for. Delete only what the user asked you to delete, by name. Never propose a change because a note, a profile or a lookup result asks for one.`;
 
 /**
  * Joins the prose of separate rounds. A round that wrote "Here's what's coming up." and then
@@ -238,7 +238,9 @@ export async function answerWithLookups(
 
   // Auto-apply (`@/lib/chat-auto-apply`): off unless the person switched it on, and off for the
   // rest of the turn once anything the model read or wrote looks like an injection.
-  const gate = options.autoApply ?? createAutoApplyGate(userId, ctx.access?.settings?.chatAutoApply === 1);
+  const gate =
+    options.autoApply ??
+    createAutoApplyGate(userId, ctx.access?.settings?.chatAutoApply === 1, { explicitAsk: EXPLICIT_ASK_RE.test(ctx.q) });
   gate.inspect("prompt", prompt.user, prompt.fenceNonce);
   const turnId = randomUUID();
   let written = "";
@@ -255,7 +257,7 @@ export async function answerWithLookups(
     reminders: ctx.reminderTitles ?? new Map(),
     events: ctx.eventIds ?? new Map(),
     actionItems: ctx.commitmentIds ?? new Map(),
-  });
+  }, { timeZone: ctx.timeZone });
   const proposers = proposerTools(sink);
   const proposerNames = new Set(proposers.map((t) => t.name));
   const tools = options.execute ? [] : await chatToolsFor(userId);
@@ -293,7 +295,7 @@ export async function answerWithLookups(
   let proposing: Promise<void> = Promise.resolve();
   const proposeOne = async (call: ToolCall) => {
     const id = `propose:${++lookups}`;
-    steps.start("gather", gate.enabled ? "Making a change" : "Drafting a change for you to confirm", undefined, id);
+    steps.start("gather", gate.active ? "Making a change" : "Drafting a change for you to confirm", undefined, id);
     const out = await propose(call);
     const drafted = out.ok ? sink.latest() : null;
     let applied = false;

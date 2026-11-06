@@ -12,6 +12,13 @@
  * and stores the same inverse a confirmed card does — so an applied change is a done card with
  * Undo, exactly like one the person clicked. Every one is recorded as a `chat_auto_apply`
  * security event.
+ *
+ * One path does not need the setting: a reminder or meeting the person asked for in so many
+ * words ("remind me Friday…", "set up coffee with Sam…"). That takes all three of: their own
+ * message matching `EXPLICIT_ASK_RE`, the write being one of `EXPLICIT_WRITES`, and the model
+ * marking it `asked_for: true` — plus every other condition above, at most
+ * `EXPLICIT_PER_TURN` a turn. A change the model suggests unasked (`asked_for: false`) is
+ * never applied, setting or not.
  */
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
@@ -24,6 +31,16 @@ import { chatWriteNamed, parseWriteInput, runUndo, touchesIdentity, type UndoSte
 export const AUTO_APPLY_PER_TURN = 5;
 /** Records one applied change may touch (attendees marked, tags added count one each). */
 export const AUTO_APPLY_MAX_RECORDS = 5;
+/** Changes one turn may apply on the person's explicit ask, without the setting. */
+export const EXPLICIT_PER_TURN = 2;
+/** The writes an explicit ask may apply without the setting. */
+export const EXPLICIT_WRITES: ReadonlySet<string> = new Set(["create_reminder", "create_meeting"]);
+/**
+ * The person's own message asks for a reminder or meeting. Read from what they typed, never
+ * the model's text; "what's on my schedule" is not an ask.
+ */
+export const EXPLICIT_ASK_RE =
+  /\b(?:remind me|(?:set|add|create|make)(?: up)? (?:a |an )?reminder|schedule (?:a|an|the|it|this|that|time|coffee|lunch|dinner|call|meeting|chat)\b|book (?:a|an|the|it|time|coffee|lunch|dinner|call|meeting)\b|set up (?:a |an )?(?:call|meeting|coffee|lunch|dinner|chat|time)|(?:put|add) .{1,80} (?:on|to) my calendar)/i;
 
 export async function saveChatAutoApplyFor(userId: string, enabled: boolean): Promise<void> {
   const db = await getDb();
@@ -43,19 +60,25 @@ export type AutoApplyFacts = {
   appliedThisTurn: number;
   /** Why the turn may not apply anything, when something in it looked wrong. */
   taintedBy: string | null;
+  /** The person asked for this one in so many words (see `EXPLICIT_ASK_RE`). */
+  explicit?: boolean;
+  explicitAppliedThisTurn?: number;
+  /** The model suggested it unasked (`asked_for: false`): always a card. */
+  unasked?: boolean;
 };
 
 /** The rule, pure. Every condition must hold; the default is to ask. */
 export function shouldAutoApply(f: AutoApplyFacts): boolean {
-  return (
-    f.enabled &&
+  const safe =
     f.tier === "auto" &&
     !f.destructive &&
     !f.identity &&
+    !f.unasked &&
     f.records <= AUTO_APPLY_MAX_RECORDS &&
-    f.appliedThisTurn < AUTO_APPLY_PER_TURN &&
-    f.taintedBy === null
-  );
+    f.taintedBy === null;
+  if (!safe) return false;
+  if (f.enabled && f.appliedThisTurn < AUTO_APPLY_PER_TURN) return true;
+  return Boolean(f.explicit) && (f.explicitAppliedThisTurn ?? 0) < EXPLICIT_PER_TURN;
 }
 
 /**
@@ -63,14 +86,20 @@ export function shouldAutoApply(f: AutoApplyFacts): boolean {
  * taint the turn when the text it read or wrote matches an injection shape or needs scrubbing,
  * and a tainted turn applies nothing more.
  */
-export function createAutoApplyGate(userId: string, enabled: boolean) {
+export function createAutoApplyGate(userId: string, enabled: boolean, opts: { explicitAsk?: boolean } = {}) {
+  const explicitAsk = Boolean(opts.explicitAsk);
+  // Injection checks run whenever anything may be applied, by either path.
+  const active = enabled || explicitAsk;
   let taintedBy: string | null = null;
   let applied = 0;
+  let explicitApplied = 0;
   const taint = (reason: string) => {
     taintedBy ??= reason;
   };
   return {
     enabled,
+    /** Whether anything this turn may be applied without a click. */
+    active,
     get taintedBy() {
       return taintedBy;
     },
@@ -79,7 +108,7 @@ export function createAutoApplyGate(userId: string, enabled: boolean) {
     },
     /** Text the model read this turn: the prompt, or a lookup's result. */
     inspect(source: string, text: string | null | undefined, ownFenceNonce?: string) {
-      if (!enabled || !text || taintedBy) return;
+      if (!active || !text || taintedBy) return;
       // The prompt's own fence lines carry its nonce, which nothing in the data can know; they
       // are dropped so they do not read as forged ones. A forged fence still taints the turn.
       if (ownFenceNonce && /^[0-9a-f]{12}$/.test(ownFenceNonce)) {
@@ -94,7 +123,7 @@ export function createAutoApplyGate(userId: string, enabled: boolean) {
     },
     /** The answer written so far: anything `guardModelOutput` would scrub taints the turn. */
     inspectOutput(text: string) {
-      if (enabled && guardModelOutput(text).findings.length) taint("output_scrubbed");
+      if (active && guardModelOutput(text).findings.length) taint("output_scrubbed");
     },
     /** Facts for `shouldAutoApply` about one stored proposal. */
     facts(action: StoredProposedAction): AutoApplyFacts {
@@ -114,6 +143,9 @@ export function createAutoApplyGate(userId: string, enabled: boolean) {
         records,
         appliedThisTurn: applied,
         taintedBy,
+        explicit: explicitAsk && EXPLICIT_WRITES.has(action.args.tool) && input.asked_for === true,
+        explicitAppliedThisTurn: explicitApplied,
+        unasked: input.asked_for === false,
       };
     },
     /**
@@ -126,7 +158,10 @@ export function createAutoApplyGate(userId: string, enabled: boolean) {
       const write = chatWriteNamed(action.args.tool);
       const input = write ? parseWriteInput(write, action.args.input) : null;
       if (!write || !input) return action;
+      // Which path let it through: the setting's share first, then the explicit ask's.
+      const viaExplicit = !(enabled && applied < AUTO_APPLY_PER_TURN);
       applied++;
+      if (viaExplicit) explicitApplied++;
       try {
         const outcome = await write.commit(userId, input, { messageId: turnId, actionId: action.id });
         for (const path of new Set([outcome.href, "/", "/reminders", "/contacts"].filter((p): p is string => Boolean(p)))) {
@@ -136,7 +171,7 @@ export function createAutoApplyGate(userId: string, enabled: boolean) {
           kind: "chat_auto_apply",
           userId,
           surface: "chat",
-          detail: { tool: write.name, actionId: action.id },
+          detail: { tool: write.name, actionId: action.id, ...(viaExplicit ? { via: "explicit_ask" } : {}) },
         });
         return {
           ...action,
@@ -148,6 +183,7 @@ export function createAutoApplyGate(userId: string, enabled: boolean) {
         };
       } catch {
         applied--;
+        if (viaExplicit) explicitApplied--;
         return action;
       }
     },
