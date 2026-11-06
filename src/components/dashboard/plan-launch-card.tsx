@@ -39,7 +39,14 @@ const PAID_TIER = {
   },
 } as const;
 
-export function PlanLaunchCard({ plan }: { plan: Plan }) {
+export function PlanLaunchCard({
+  plan,
+  freeContactLimit = FREE_CONTACT_LIMIT,
+}: {
+  plan: Plan;
+  /** The Free Plan's contact limit under the effective plan table (null = none). */
+  freeContactLimit?: number | null;
+}) {
   if (plan !== "free") {
     const tier = PAID_TIER[plan];
     const name = PLAN_LABELS[plan];
@@ -110,7 +117,9 @@ export function PlanLaunchCard({ plan }: { plan: Plan }) {
             Free plan
           </span>
           <h2 className="font-[family-name:var(--font-display)] text-2xl leading-tight tracking-tight text-[#e8f3f1]">
-            Your first {FREE_CONTACT_LIMIT} contacts are on us.
+            {freeContactLimit === null
+              ? "Orbit is on us."
+              : `Your first ${freeContactLimit} contacts are on us.`}
           </h2>
           <p className="text-sm leading-relaxed text-[#9aada8]">
             Past that, Orbit Pro keeps every contact, follow-up, and warm intro

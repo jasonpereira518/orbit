@@ -4,7 +4,8 @@
 # to happen more often: the known-condition ops sweep, the webhook drain and the email
 # outbox drain (every ten minutes), the process-stalled job (hourly, so a lost import continuation stalls for an
 # hour, not a day), the connector sync (every fifteen minutes), the job-feed sweep
-# (hourly), the work-history sweep (hourly), Radar's news sweep (hourly), the Deepgram usage
+# (hourly), the work-history sweep (hourly), the email-insights sweep (every fifteen minutes),
+# Radar's news sweep (hourly), the Deepgram usage
 # reconciliation (daily) and Radar's nightly pass (daily). vercel.json schedules nothing;
 # when Vercel Pro lands, move them all there and delete them here in one change.
 # It also tells the ops sweep where `main` is, so production pinned to an old deploy by a
@@ -40,6 +41,9 @@ on:
     - cron: "23 * * * *"
     # The work-history sweep: offset from :07 and :23 so no two long hourly jobs overlap.
     - cron: "37 * * * *"
+    # The email-insights sweep: every fifteen minutes on its own line, offset from the
+    # */10 and */15 jobs so it never shares a concurrency group with the connector sync.
+    - cron: "5,20,35,50 * * * *"
     # The contact name sweep: its own minute, so it never shares a run (and the 8-minute
     # job ceiling) with the work-history sweep.
     - cron: "43 * * * *"
@@ -63,6 +67,9 @@ on:
     - cron: "23 6 * * *"
     # Mondays: the weekly product digest to Slack. 13:47 UTC is the morning in the Americas.
     - cron: "47 13 * * 1"
+    # Once a day: the metrics rollup (metrics_daily) for today and the two days before it.
+    # 00:31 UTC, just after the day closes, clear of every hourly minute above.
+    - cron: "31 0 * * *"
   workflow_dispatch:
 
 # One group PER SCHEDULE, never one for the whole workflow. GitHub keeps at most one
@@ -301,6 +308,20 @@ jobs:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
 
+      # Email insights: new career-relevant Gmail threads for opted-in accounts, then events
+      # extracted from the hiring ones with each account's own AI key. Its own line for the same
+      # reason as the work-history sweep; 300s to match the route, which stops starting
+      # accounts at 100s (ingest) and work at 240s (extraction).
+      - name: Run the email-insights sweep (every 15 minutes)
+        if: github.event.schedule == '5,20,35,50 * * * *' && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail-with-body --max-time 300 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/email-intel/sweep"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
       # Radar's nightly pass (daily). Its own line and its own route, for the same reason as
       # the job feed: model calls on people's own keys must never make the alerting path's
       # cadence hostage to a provider being slow. 300s to match the route's own ceiling; the
@@ -375,6 +396,18 @@ jobs:
           curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 110 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/ops/weekly-digest"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      # The daily metrics rollup. Recomputes metrics_daily for the last three UTC days; the
+      # counts it wrote are in cron_runs. See src/app/api/ops/rollup/route.ts.
+      - name: Roll up daily metrics (daily)
+        if: github.event.schedule == '31 0 * * *' && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 110 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/ops/rollup"
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}

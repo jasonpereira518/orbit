@@ -13,11 +13,14 @@ import {
   MANAGED_LIMIT_MESSAGES,
   MANAGED_PROVIDER_FAILURE_MESSAGE,
   hintCopyFor,
+  nextPlanFor,
   noticeCopyFor,
   refusalCopyFor,
   refusalWithRefill,
 } from "../src/lib/ai-access-copy";
 import { isQuietFailureMessage } from "../src/lib/errors";
+import { PLAN_CONFIG } from "../src/lib/plans/plan-config";
+import { applyPlanOverrides, featureRuleRow, limitRuleRow, parsePlanRules } from "../src/lib/plans/plan-overrides";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: unknown) {
@@ -105,6 +108,12 @@ check("…and still points at a key", /api key/i.test(refill), refill);
 check("any other message passes through", refusalWithRefill("Something else broke", "free", null) === "Something else broke");
 check("Pro out of credits passes through", refusalWithRefill(FREE_LIMIT_MESSAGE, "orbit", null) === FREE_LIMIT_MESSAGE);
 check("Lifetime out of credits passes through", refusalWithRefill(MANAGED_LIMIT_MESSAGES.lifetime, "lifetime", null) === MANAGED_LIMIT_MESSAGES.lifetime);
+// The way out follows the EFFECTIVE plan table (an admin's plan rules), not the code defaults.
+check("the plan above: Free → Pro, Pro → Max, none above Max", nextPlanFor("free") === "orbit" && nextPlanFor("orbit") === "max" && nextPlanFor("max") === null && nextPlanFor("lifetime") === null);
+const flat = applyPlanOverrides(PLAN_CONFIG, parsePlanRules([limitRuleRow("max", "monthlyCredits", 300)]));
+check("Max with no more credits than Pro is not offered to Pro", !/move to/.test(noticeCopyFor("managed_limit", "orbit", reset, flat).body), noticeCopyFor("managed_limit", "orbit", reset, flat).body);
+const noPacks = applyPlanOverrides(PLAN_CONFIG, parsePlanRules([featureRuleRow("creditPacks", ["free"])]));
+check("a plan the admin took packs from gets the key-only notice", noticeCopyFor("managed_limit", "orbit", reset, noPacks).offer === null && !/pack/i.test(hintCopyFor("managed_limit", "orbit", noPacks)));
 const graph = readFileSync("src/components/graph/network-graph.tsx", "utf8");
 check("the constellation refresh words its refusal with the refill date", /error: refusalWithRefill\(result\.aiError/.test(graph));
 

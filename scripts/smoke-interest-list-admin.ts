@@ -67,6 +67,8 @@ function textOf(node: unknown, out: string[] = []): string[] {
         key === "title" ||
         key === "action" ||
         key === "subtitle" ||
+        // `AccessHeader` takes the tab's own header buttons as `actions`.
+        key === "actions" ||
         key === "hint" ||
         // The table's column headings live in `head`, not in its children.
         key === "head" ||
@@ -192,7 +194,7 @@ async function main() {
   });
 
   const { default: Page } = await import(
-    "../src/app/(clerk)/(admin)/admin/growth/interest-list/page"
+    "../src/app/(clerk)/(admin)/admin/access/page"
   );
 
   // --- unfiltered
@@ -207,7 +209,8 @@ async function main() {
   check("renders the signup trend panel", all.includes("Signups by week"));
   check("renders the source rollup panel", all.includes("Where they come from"));
   check("offers a search box", all.includes("Search"));
-  check("links to the broadcast composer", all.includes("Broadcasts"));
+  // Broadcasts is a sibling Access tab now, not a header link.
+  check("offers the CSV export", all.includes("Export CSV"));
   check("links to the email preview", all.includes("Preview emails"));
   check("shows the stored planet", all.toLowerCase().includes("jupiter"));
   check("offers the filter tabs", ["All", "Waiting", "Priority beta", "Early access", "Founding", "Converted", "Left"].every((f) => all.includes(f)));

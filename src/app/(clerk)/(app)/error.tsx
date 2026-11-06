@@ -13,6 +13,7 @@ export default function GroupError({
     <ErrorFallback
       error={error}
       retry={unstable_retry}
+      where="boundary.app"
       home={{ href: "/dashboard", label: "Go to dashboard" }}
     />
   );

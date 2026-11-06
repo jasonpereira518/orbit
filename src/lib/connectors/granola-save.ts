@@ -13,10 +13,23 @@ import { followUpStillAhead } from "@/lib/imports/drive-reminder-rules";
 import { DEFAULT_FOLLOW_UP_WINDOW_DAYS } from "@/lib/note-batches";
 import { saveNoteBatch, type SaveNoteBatchInput, type SaveNoteBatchOutput } from "@/lib/note-batch-save";
 import type { CaptureDecisions, CaptureParseResult } from "@/lib/capture/types";
+import type { CaptureParseHints } from "@/lib/ai";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { reportError } from "@/lib/report-error";
 
 export type GranolaNoteRef = { noteId: string; meetingAt: string };
+
+/**
+ * A picked note's job hints: the parse's own, plus which Granola note and when it happened.
+ * The parse never reads `granola`; the runner does, so the job's saves log the meeting as
+ * Granola's at its real time. Kept out of `CaptureParseHints` (ai.ts) on purpose.
+ */
+export type GranolaJobHints = CaptureParseHints & { granola?: GranolaNoteRef };
+
+/** Widen picked-note hints to the column's type (an object literal would trip excess-property checks). */
+export function granolaJobHints(hints: GranolaJobHints): CaptureParseHints {
+  return hints;
+}
 
 /** The parts of a Granola note every save of it carries. */
 export function granolaSaveFields(input: SaveNoteBatchInput, granola: GranolaNoteRef): SaveNoteBatchInput {

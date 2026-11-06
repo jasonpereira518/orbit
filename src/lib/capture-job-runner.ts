@@ -44,7 +44,7 @@ import { resolveAvatarNow } from "@/lib/avatar-backfill";
 import { downloadAndPersistAvatar } from "@/lib/contact-avatar";
 import { resolveLinkedInPhotoCached } from "@/lib/shared-avatars";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
-import { saveConfidentGranolaPeople } from "@/lib/connectors/granola-save";
+import { saveConfidentGranolaPeople, type GranolaJobHints } from "@/lib/connectors/granola-save";
 import { buildDuplicateIndex, findDuplicateCandidatesIndexed, linkedinSlug, DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { kickWorkHistoryResearch, linkedInCaptureContactIds } from "@/lib/work-history-research";
@@ -195,7 +195,7 @@ async function runExtraction(id: string, deps: CaptureRunnerDeps): Promise<Captu
     ]);
     if (!(await heartbeatCaptureJob(id, token))) throw new ClaimLostError();
     const { sourceText, sourceHash, ...rest } = parsed;
-    const granola = row.inputHints?.granola;
+    const granola = (row.inputHints as GranolaJobHints | null)?.granola;
     if (granola) {
       // A note picked from Granola: people already in Orbit are saved now, and only the new
       // ones (plus any dated commitments) wait for review. See `saveConfidentGranolaPeople`.

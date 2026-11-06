@@ -24,6 +24,7 @@ import {
   type GranolaPickable,
 } from "@/lib/connectors/granola";
 import { externalParticipants, noteText, type GranolaFolder } from "@/lib/connectors/granola-xml";
+import { granolaJobHints } from "@/lib/connectors/granola-save";
 import { createCaptureJob } from "@/lib/capture-jobs";
 import { runCaptureJobById } from "@/lib/capture-job-runner";
 import { auditUntrustedWrite } from "@/lib/ai-security";
@@ -248,12 +249,12 @@ export async function queueGranolaCapture(input: {
       sourceKind: "granola",
       status: "queued",
       inputText: text,
-      inputHints: {
+      inputHints: granolaJobHints({
         eventDate: meeting.meetingAt.slice(0, 10),
         seedPeople: attendees.map((p) => ({ name: p.name, email: p.email })),
         interactionType: "meeting",
         granola: { noteId: meeting.id, meetingAt: meeting.meetingAt },
-      },
+      }),
       batchGroupId: input.batchGroupId,
       sourceLabel: (meeting.title || "Granola note").slice(0, 200),
     });

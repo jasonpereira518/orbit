@@ -1,8 +1,10 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { NextResponse, type NextRequest } from "next/server";
 import { getDb } from "@/db";
-import { interestListSignups } from "@/db/schema";
+import { interestListSignups, outreachMessages } from "@/db/schema";
 import {
+  engagementOf,
+  eventTimeOf,
   recipientsOf,
   resendWebhookSecret,
   shouldSuppress,
@@ -21,7 +23,16 @@ export const runtime = "nodejs";
 
 /**
  * Delivery feedback from Resend: hard bounces and spam complaints take the address off the
- * interest list automatically.
+ * interest list automatically; `email.delivered`, `email.opened` and `email.clicked` stamp
+ * `delivered_at` / `opened_at` / `clicked_at` on the send they belong to.
+ *
+ * ENGAGEMENT MATCHES ON RESEND'S EMAIL ID, not the address: an address receives many emails,
+ * and only the id says which one was opened. The one table that keeps that id is
+ * `outreach_messages.delivery_id` (outreach email sent through Resend). `email_sends` never
+ * holds one — every row there goes out through the person's own Gmail or Outlook — and the
+ * waitlist and broadcast mail does not store it, so their events match nothing and are
+ * recorded as `no_matching_send`. Each column keeps the EARLIEST time seen (`least`), so a
+ * redelivered or out-of-order event cannot move it.
  *
  * WHY THIS MATTERS MORE THAN IT LOOKS. Without it a dead address is mailed forever and a
  * spam complaint changes nothing — and those two signals are exactly what mailbox providers
@@ -103,7 +114,9 @@ export async function POST(req: NextRequest) {
   let outcome: WebhookOutcome = "ignored";
   let reason: string | null = WEBHOOK_REASONS.unhandledType;
   let suppressed = 0;
+  let engaged = 0;
   const recipients = recipientsOf(event);
+  const engagement = engagementOf(event);
 
   try {
     if (shouldSuppress(event)) {
@@ -127,6 +140,23 @@ export async function POST(req: NextRequest) {
         // An address Resend bounced that is not on the list is normal, not a fault: the
         // same sending domain carries the contact form and outreach mail.
         reason = suppressed > 0 ? null : "not_on_list";
+      }
+    } else if (engagement) {
+      const emailId = event.data?.email_id;
+      if (!emailId) {
+        reason = "no_email_id";
+      } else {
+        const at = eventTimeOf(event);
+        const column = outreachMessages[engagement];
+        const db = await getDb();
+        const rows = await db
+          .update(outreachMessages)
+          .set({ [engagement]: sql`least(coalesce(${column}, ${at.toISOString()}::timestamptz), ${at.toISOString()}::timestamptz)` })
+          .where(and(eq(outreachMessages.deliveryId, emailId), eq(outreachMessages.channel, "email")))
+          .returning();
+        engaged = rows.length;
+        outcome = "handled";
+        reason = engaged > 0 ? null : "no_matching_send";
       }
     }
   } catch (err) {
@@ -154,6 +184,7 @@ export async function POST(req: NextRequest) {
       // The address is the point of the record; without it a suppression cannot be audited.
       recipients,
       suppressed,
+      engaged,
       bounceType: event.data?.bounce?.type ?? null,
     },
     durationMs: Date.now() - started,

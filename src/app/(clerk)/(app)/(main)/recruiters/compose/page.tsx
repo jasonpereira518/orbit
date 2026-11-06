@@ -12,6 +12,8 @@ import { RECRUITER_INTENT_OPTIONS } from "@/lib/recruiter-message-types";
 import { listMyRecruiters } from "@/actions/recruiters";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+import { availableOn } from "@/lib/plans/plan-config";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { LockedFeature } from "@/components/locked-feature";
 import { ComposeWorkspace } from "@/components/recruiters/compose-workspace";
 import { RenderStamp } from "@/components/layout/render-stamp";
@@ -24,8 +26,11 @@ export default async function RecruiterComposePage() {
 
   const { canUseRecruiters } = await getEntitlements(await requireUserId());
   if (!canUseRecruiters) {
+    const config = await getEffectivePlanConfig();
     return (
       <LockedFeature
+        feature="recruiters"
+        config={config}
         title="Recruiter outreach"
         description="Draft and send emails to the recruiters you already know, written from your actual history with them."
         highlights={[
@@ -34,7 +39,7 @@ export default async function RecruiterComposePage() {
           "Review every message before anything sends",
           "Sends from your Gmail, threaded into the original conversation",
         ]}
-        note="Included in Orbit Pro and Orbit Max."
+        note={`Included in ${availableOn("recruiters", config)}.`}
       />
     );
   }

@@ -55,7 +55,12 @@ export default async function CapturePage({
         <RenderStamp />
         <CaptureHeader contactName={null} />
         <ImportsTabBar showCloud={await cloudLivePromise} />
-        <ImportsPanel userId={await userIdPromise} />
+        {/* The Imports tab's `aria-controls` names this panel (`capturePanelId("imports")` and
+            `captureTabId("imports")` in capture-tabs.tsx, a client module a server page cannot
+            call): without it the tab points at nothing, a critical axe violation. */}
+        <div role="tabpanel" id="capture-panel-imports" aria-labelledby="capture-tab-imports">
+          <ImportsPanel userId={await userIdPromise} />
+        </div>
       </div>
     );
   }

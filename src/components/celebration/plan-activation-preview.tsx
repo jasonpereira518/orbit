@@ -5,6 +5,7 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { tierTheme, type PaidPlan } from "@/lib/celebration/tier-theme";
+import { useViewerPlan } from "@/components/viewer-plan";
 
 const CelebrationStage = dynamic(
   () =>
@@ -42,6 +43,7 @@ const PREVIEWS: { plan: PaidPlan; label: string; description: string }[] = [
 
 export function PlanActivationPreview() {
   const [active, setActive] = useState<PaidPlan | null>(null);
+  const { planConfig } = useViewerPlan();
   const [downgrade, setDowngrade] = useState<PaidPlan | null>(null);
   const [reducedMotion, setReducedMotion] = useState(false);
 
@@ -145,7 +147,7 @@ export function PlanActivationPreview() {
         createPortal(
           <CelebrationStage
             key={active}
-            theme={tierTheme(active)}
+            theme={tierTheme(active, planConfig)}
             handoffToAppLogo={false}
             onDone={() => setActive(null)}
           />,

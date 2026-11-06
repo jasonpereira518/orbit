@@ -25,6 +25,7 @@ import {
   userSettings,
 } from "@/db/schema";
 import { entitlementsForPlan, resolvePlan } from "@/lib/entitlements";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { managedKeysConfigured } from "@/lib/ai-access";
 import type { Entitlements, Plan, PlanSource } from "@/lib/entitlements";
 import { assertRevealable } from "@/lib/admin-redaction";
@@ -55,10 +56,10 @@ import { assertRevealable } from "@/lib/admin-redaction";
  * runtime assertion rather than a convention — add a column to the reads below that
  * collides with it and the query throws rather than quietly widening.
  *
- * Two tiers remain, but they are now about *cost*, not permission: `getAdminUserDetail`
- * returns a cheap summary row per contact, and `listAdminContacts` /
- * `getAdminContactDetail` populate the full `detail` object. A null `detail` means "this
- * read did not ask for it", never "you are not allowed to see it".
+ * `getAdminUserDetail` reads no contact rows at all — the inspector pages its contacts
+ * through `listAdminContacts`, and `getAdminContactDetail` reads one. Both populate the full
+ * `detail` object; a null `detail` would mean "this read did not ask for it", never "you are
+ * not allowed to see it".
  */
 
 export type AdminIdentity = {
@@ -152,15 +153,7 @@ export type AdminUsageSummary = {
   outputTokens: number;
   estimatedCostMicros: number;
   byOperation: Array<{ operation: string; calls: number; failures: number }>;
-  byModel: Array<{ provider: string; model: string; calls: number }>;
   recentErrors: Array<{ errorKind: string; model: string; at: Date | null }>;
-};
-
-export type AdminTimelineEntry = {
-  kind: string;
-  /** Structural label only — never a contact name or a message body. */
-  label: string;
-  at: Date;
 };
 
 export type AdminContactRow = {
@@ -172,8 +165,8 @@ export type AdminContactRow = {
   interactionCount: number;
   createdAt: Date;
   /**
-   * The full record. Null on the summary read (`getAdminUserDetail`), which does not select
-   * these columns because it does not render them — not because they are withheld.
+   * The full record. Null only from a read that did not select these columns — never
+   * because they are withheld.
    */
   detail: AdminContactFields | null;
 };
@@ -225,9 +218,6 @@ export type AdminUserDetail = {
   footprint: AdminFootprint;
   health: AdminHealthItem[];
   usage: AdminUsageSummary;
-  timeline: AdminTimelineEntry[];
-  contacts: AdminContactRow[];
-  contactTotal: number;
 };
 
 export async function getAdminUserDetail(
@@ -257,9 +247,7 @@ export async function getAdminUserDetail(
     outlookRow,
     usageAgg,
     usageByOperation,
-    usageByModel,
     usageErrors,
-    contactRows,
     [extra],
   ] = await Promise.all([
     db
@@ -384,16 +372,6 @@ export async function getAdminUserDetail(
 
     db
       .select({
-        provider: usageEvents.provider,
-        model: usageEvents.model,
-        calls: countInt,
-      })
-      .from(usageEvents)
-      .where(eq(usageEvents.userId, userId))
-      .groupBy(usageEvents.provider, usageEvents.model),
-
-    db
-      .select({
         errorKind: usageEvents.errorKind,
         model: usageEvents.model,
         createdAt: usageEvents.createdAt,
@@ -402,36 +380,6 @@ export async function getAdminUserDetail(
       .where(and(eq(usageEvents.userId, userId), eq(usageEvents.success, 0)))
       .orderBy(desc(usageEvents.createdAt))
       .limit(10),
-
-    // The summary read — identity and affiliation, no notes, summaries, key facts or
-    // opportunities. Those live behind `getAdminContactDetail`, one contact at a time,
-    // because a page listing twenty contacts has nowhere useful to put them.
-    //
-    // Each row's interaction count rides along as a correlated count — twenty index
-    // lookups — instead of a second, dependent round trip keyed on these ids. Never a
-    // full `GROUP BY` over the user's interactions: on a heavy account that is the largest
-    // table on the screen, scanned to decorate twenty rows.
-    //
-    // The correlation is spelled out by hand, on purpose. Drizzle prints a single-table
-    // select's columns unqualified, so `${contacts.id}` in here would become a bare `"id"`
-    // that binds to `interactions.id` and silently counts nothing — the same trap
-    // `db.query…extras` sets with its aliasing (see `src/lib/reminders.ts`).
-    db
-      .select({
-        id: contacts.id,
-        fullName: contacts.fullName,
-        email: contacts.email,
-        company: contacts.company,
-        title: contacts.title,
-        createdAt: contacts.createdAt,
-        interactionCount: sql<number>`(
-          SELECT count(*)::int FROM interactions i
-          WHERE i.user_id = ${userId} AND i.contact_id = "contacts"."id")`,
-      })
-      .from(contacts)
-      .where(eq(contacts.userId, userId))
-      .orderBy(desc(contacts.createdAt))
-      .limit(20),
 
     /**
      * The rest of the footprint, as scalar subqueries in one statement.
@@ -594,19 +542,6 @@ export async function getAdminUserDetail(
 
   const usage = usageAgg[0];
 
-  // Structural labels only. Never a contact name, never a message body.
-  const timeline: AdminTimelineEntry[] = [
-    ...importRows.map((job) => ({
-      kind: "import",
-      label: `Import ${job.status}: ${job.importType}${
-        job.totalRows ? ` (${job.totalRows} rows)` : ""
-      }`,
-      at: job.createdAt,
-    })),
-  ]
-    .sort((a, b) => b.at.getTime() - a.at.getTime())
-    .slice(0, 30);
-
   return {
     identity: {
       userId: settings.userId,
@@ -627,7 +562,8 @@ export async function getAdminUserDetail(
     billing: {
       plan,
       source,
-      entitlements: entitlementsForPlan(plan, source),
+      // The effective table: what this account actually gets, operator plan rules included.
+      entitlements: entitlementsForPlan(plan, source, await getEffectivePlanConfig()),
       compedPlan: settings.compedPlan ?? null,
       compedNote: settings.compedNote,
       compedAt: settings.compedAt,
@@ -687,20 +623,12 @@ export async function getAdminUserDetail(
           failures: num(r.failures),
         }))
         .sort((a, b) => b.calls - a.calls),
-      byModel: usageByModel.sort((a, b) => b.calls - a.calls),
       recentErrors: usageErrors.map((r) => ({
         errorKind: r.errorKind ?? "other",
         model: r.model,
         at: r.createdAt,
       })),
     },
-    timeline,
-    // `detail: null` here reflects the narrower query above, not a permission — the full
-    // record is one click away at `/admin/users/[userId]/contacts/[contactId]`.
-    contacts: contactRows.map(({ interactionCount, ...c }) =>
-      toContactRow(c, num(interactionCount), false)
-    ),
-    contactTotal: contactAgg[0]?.n ?? 0,
   };
 }
 

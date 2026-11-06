@@ -1,128 +1,227 @@
+import Link from "next/link";
+import { Download, Eye, MailCheck, MailX, Rocket, UserCheck, Users } from "lucide-react";
 import {
-  AdminPageHeader,
   AdminPanel,
   AdminTable,
   EmptyState,
-  RelativeTime,
+  MetricTile,
   Td,
   Th,
+  TrendBars,
 } from "@/components/admin/primitives";
-import { InviteForm, InviteRowActions, StealthSwitch } from "@/components/admin/site-access";
-import { isClerkConfigured } from "@/lib/demo-account";
+import { Pager } from "@/components/admin/pager";
+import { WaitlistDemoSwitch } from "@/components/admin/waitlist-demo-switch";
+import { getWaitlistDemoEnabled } from "@/lib/waitlist-demo";
 import { getSiteMode } from "@/lib/site-access";
-import { listSiteInvites, type SiteInviteRow } from "@/lib/site-invites";
+import { AccessHeader, absoluteUtc } from "./access-header";
+import {
+  InterestListTable,
+  type InterestListTableRow,
+} from "@/components/admin/interest-list-table";
+import { InterestListManualAddForm } from "@/components/admin/interest-list-manual-add";
 import { cn } from "@/lib/utils";
+import { REFERRAL_TIERS, SPOTS_PER_REFERRAL } from "@/lib/interest-list";
+import {
+  getInterestListSummary,
+  INTEREST_LIST_PAGE_SIZE,
+  interestListDisplayName,
+  interestListSources,
+  interestListTrend,
+  isInterestListFilter,
+  loadInterestList,
+  sourceLabel,
+  type InterestListFilter,
+  type InterestListSort,
+} from "@/lib/admin-interest-list";
 
-export const metadata = { title: "Admin · Access" };
+export const metadata = { title: "Admin · Waitlist" };
 
-/** Absolute date, spelled out, matching the waitlist roster. */
-function absolute(date: Date) {
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "UTC",
-  }).format(date);
+const FILTERS: Array<{ value: InterestListFilter; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "active", label: "Waiting" },
+  { value: "priority-beta", label: "Priority beta" },
+  { value: "early-access", label: "Early access" },
+  { value: "founding", label: "Founding" },
+  { value: "converted", label: "Converted" },
+  { value: "unsubscribed", label: "Left" },
+];
+
+/** Who gets in first is the question for the waiting and tier views; who just joined, for the rest. */
+function defaultSort(filter: InterestListFilter): InterestListSort {
+  return filter === "all" || filter === "converted" || filter === "unsubscribed" ? "newest" : "position";
 }
 
-const STATUS_LABEL: Record<SiteInviteRow["status"], string> = {
-  pending: "Waiting",
-  accepted: "Signed up",
-  revoked: "Revoked",
-  expired: "Expired",
-};
-
 /**
- * Who can get into the site: the stealth switch, and the invitations that let new people
- * past it. See `src/lib/site-access.ts` for what stealth does and `src/lib/site-invites.ts`
- * for how an invitation gets someone in.
+ * Everyone on the early-access waitlist: when they joined, where they stand in line, and
+ * who brought whom. The line is the order invites go out in.
  *
- * The invitation list is Clerk's own — Clerk tracks whether each one was accepted, revoked or
- * expired, so Orbit keeps no copy to drift from it. A Clerk failure empties that panel and
- * says so, never 500s the switch above it.
+ * The first Access tab: the waitlist is who gets let in next, so it sits beside the
+ * invitations that let them in and the broadcasts that keep them warm. `/admin/growth`
+ * keeps the "is anyone joining" number; this answers "who", which is a roster.
+ *
+ * EVERY COLUMN IS FIRST-PARTY. These addresses were typed into Orbit's own form by their
+ * owners, which is what separates this from the contact data the export route refuses to
+ * emit — nothing here is a third party's information held on someone else's behalf.
  */
-export default async function AdminAccessPage() {
-  const clerkOn = isClerkConfigured();
-  const [mode, invites] = await Promise.all([
+export default async function AdminInterestListPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ filter?: string; page?: string; q?: string; sort?: string }>;
+}) {
+  const params = await searchParams;
+  const filter: InterestListFilter = isInterestListFilter(params.filter)
+    ? params.filter
+    : "all";
+  const sort: InterestListSort =
+    params.sort === "position" || params.sort === "newest" || params.sort === "oldest"
+      ? params.sort : defaultSort(filter);
+  const q = (params.q ?? "").trim();
+  const requestedPage = Number.parseInt(params.page ?? "1", 10);
+
+  const [mode, summary, listing, trend, sources, demoEnabled] = await Promise.all([
     getSiteMode({ fresh: true }),
-    listSiteInvites().catch((err: unknown) => {
-      console.error("[admin] invitation list failed", err);
-      return null;
+    getInterestListSummary(),
+    loadInterestList({
+      page: Number.isFinite(requestedPage) ? requestedPage : 1,
+      filter,
+      q,
+      sort,
     }),
+    interestListTrend("week", 12),
+    interestListSources(),
+    // Fresh: the console must show what is stored, not a ten-second-old copy.
+    getWaitlistDemoEnabled({ fresh: true }).catch(() => true),
   ]);
+
+  const query = (over: Record<string, string | number>) => {
+    const sp = new URLSearchParams();
+    if (filter !== "all") sp.set("filter", filter);
+    if (q) sp.set("q", q);
+    if (sort !== defaultSort(filter)) sp.set("sort", sort);
+    for (const [k, v] of Object.entries(over)) sp.set(k, String(v));
+    const s = sp.toString();
+    return `/admin/access${s ? `?${s}` : ""}`;
+  };
+
+  const rows: InterestListTableRow[] = listing.rows.map((row) => ({
+    id: row.id,
+    email: row.email,
+    displayName: interestListDisplayName(row),
+    createdAtIso: row.createdAt.toISOString(),
+    createdAtLabel: absoluteUtc(row.createdAt),
+    source: sourceLabel(row),
+    status: row.unsubscribedAt ? "unsubscribed" : row.converted ? "converted" : "active",
+    position: row.position,
+    joinRank: row.joinRank,
+    referrals: row.referrals,
+    passCheckCount: row.passCheckCount,
+    passLastCheckedAtIso: row.passLastCheckedAt?.toISOString() ?? null,
+    tierLabel: row.tier && row.tier !== "joined" ? (REFERRAL_TIERS.find((t) => t.id === row.tier)?.label ?? null) : null,
+    planet: row.welcomePlanet,
+  }));
 
   return (
     <>
-      <AdminPageHeader
-        title="Access"
-        subtitle="Whether the site is open, and who's been invited in while it isn't."
+      <AccessHeader
+        mode={mode}
+        subtitle={
+          <>
+            Everyone waiting for early access. The line is join order, less {SPOTS_PER_REFERRAL} spots per
+            referral; “Newest” and “Oldest” show plain join order.
+          </>
+        }
+        actions={
+          <>
+            <a
+              href="/api/admin/email-preview?template=welcome"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 px-3 py-1.5 text-sm text-muted-foreground transition-colors duration-fast hover:text-primary"
+            >
+              <Eye className="size-3.5" aria-hidden />
+              Preview emails
+            </a>
+            <a
+              href={`/api/admin/export?dataset=interest-list&filter=${filter}`}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 px-3 py-1.5 text-sm text-muted-foreground transition-colors duration-fast hover:text-primary"
+            >
+              <Download className="size-3.5" aria-hidden />
+              Export CSV
+            </a>
+          </>
+        }
       />
 
-      <div className="space-y-6">
-        <AdminPanel title="Stealth">
-          <StealthSwitch
-            stealth={mode.stealth}
-            fromConsole={mode.fromConsole}
-            stealthSinceLabel={mode.stealthSince ? `${absolute(mode.stealthSince)} UTC` : null}
+      <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <MetricTile label="Signups" value={summary.total} icon={Users} />
+        <MetricTile
+          label="Waiting"
+          value={summary.active}
+          hint="On the list, no account yet — the line invites go out from"
+          icon={MailCheck}
+          tone="accent"
+        />
+        <MetricTile
+          label="Early access"
+          value={summary.earlyAccess}
+          hint="Brought in 5+ friends"
+          icon={Rocket}
+        />
+        <MetricTile
+          label="Converted"
+          value={summary.converted}
+          hint="Went on to create an Orbit account"
+          icon={UserCheck}
+        />
+        <MetricTile
+          label="Left"
+          value={summary.unsubscribed}
+          hint="Left the waitlist, or bounced"
+          icon={MailX}
+          tone={summary.unsubscribed > 0 ? "danger" : "muted"}
+        />
+      </div>
+
+      <AdminPanel title="Product demo" className="mb-6 p-4">
+        <WaitlistDemoSwitch enabled={demoEnabled} />
+      </AdminPanel>
+
+      <AdminPanel title="Add from event" className="mb-6 p-4">
+        <InterestListManualAddForm />
+      </AdminPanel>
+
+      <div className="mb-6 grid gap-6 lg:grid-cols-2">
+        <AdminPanel title="Signups by week">
+          <TrendBars
+            rows={trend.map((p) => ({
+              label: p.bucketStart.toISOString().slice(5, 10),
+              count: p.count,
+            }))}
+            emptyLabel="No signups yet."
           />
         </AdminPanel>
 
-        <AdminPanel title="Invite someone">
-          <div className="space-y-2">
-            <p className="text-xs text-muted-foreground">
-              An invitation lets one address create an account, even in stealth. Clerk sends the
-              email, or leave that off and send the link yourself. A wave label (w1, w2…) is optional; it
-              names this batch so waves can be compared later.
-            </p>
-            <InviteForm clerkOn={clerkOn} />
-          </div>
-        </AdminPanel>
-
-        <AdminPanel title="Invitations">
-          {invites === null ? (
-            <EmptyState>Couldn’t load invitations from Clerk. Reload to try again.</EmptyState>
-          ) : invites.length === 0 ? (
-            <EmptyState>{clerkOn ? "No invitations yet." : "No Clerk keys on this server."}</EmptyState>
+        {/* The conversion column is the point: a channel with volume and no accounts is
+            the thing worth knowing, and every column here was already being stored. */}
+        <AdminPanel title="Where they come from">
+          {sources.length === 0 ? (
+            <EmptyState>No signups yet.</EmptyState>
           ) : (
-            <AdminTable label="Invitations"
+            <AdminTable label="Where they come from" minWidth="none"
               head={
                 <>
-                  <Th>Email</Th>
-                  <Th>Wave</Th>
-                  <Th>Status</Th>
-                  <Th>Sent</Th>
-                  <Th className="text-right">Actions</Th>
+                  <Th>Source</Th>
+                  <Th numeric>Signups</Th>
+                  <Th numeric>Became accounts</Th>
                 </>
               }
             >
-              {invites.map((invite) => (
-                <tr key={invite.id} className="border-b border-border/40 last:border-0">
-                  <Td className="font-medium text-ink">{invite.email}</Td>
-                  <Td className="text-muted-foreground">{invite.waveId ?? "—"}</Td>
-                  <Td>
-                    <span
-                      className={cn(
-                        "text-xs",
-                        invite.status === "accepted" && "text-primary",
-                        invite.status === "pending" && "text-foreground",
-                        (invite.status === "revoked" || invite.status === "expired") &&
-                          "text-muted-foreground"
-                      )}
-                    >
-                      {STATUS_LABEL[invite.status] ?? invite.status}
-                    </span>
-                  </Td>
-                  <Td className="text-muted-foreground">
-                    <span title={`${absolute(invite.createdAt)} UTC`}>
-                      <RelativeTime date={invite.createdAt.toISOString()} /> ago
-                    </span>
-                  </Td>
-                  <Td className="text-right">
-                    {invite.status === "pending" ? (
-                      <InviteRowActions id={invite.id} email={invite.email} url={invite.url} />
-                    ) : null}
+              {sources.map((s) => (
+                <tr key={s.source} className="border-b border-border/40 last:border-0">
+                  <Td className="text-muted-foreground">{s.source}</Td>
+                  <Td numeric>{s.count}</Td>
+                  <Td numeric className={s.converted === 0 ? "text-muted-foreground/50" : undefined}>
+                    {s.converted}
                   </Td>
                 </tr>
               ))}
@@ -130,6 +229,106 @@ export default async function AdminAccessPage() {
           )}
         </AdminPanel>
       </div>
+
+      <AdminPanel
+        action={
+          <div className="flex flex-wrap items-center gap-3">
+            {/* A GET form, so a search is linkable and survives a reload — same reasoning
+                as the server-rendered pager. */}
+            <form method="GET" action="/admin/access" className="flex gap-1.5">
+              {filter !== "all" && <input type="hidden" name="filter" value={filter} />}
+              {sort !== defaultSort(filter) && <input type="hidden" name="sort" value={sort} />}
+              <input
+                type="search"
+                name="q"
+                defaultValue={q}
+                placeholder="Search email…"
+                aria-label="Search by email"
+                className="w-44 rounded-lg border border-border/70 bg-transparent px-2.5 py-1 text-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+              />
+              <button
+                type="submit"
+                className="rounded-lg border border-border/70 px-2.5 py-1 text-xs text-muted-foreground transition-colors duration-fast hover:text-primary"
+              >
+                Search
+              </button>
+            </form>
+
+            <nav className="flex flex-wrap items-center gap-1" aria-label="Filter">
+              {FILTERS.map((option) => {
+                const active = option.value === filter;
+                const sp = new URLSearchParams();
+                if (option.value !== "all") sp.set("filter", option.value);
+                if (q) sp.set("q", q);
+                const s = sp.toString();
+                return (
+                  <Link
+                    key={option.value}
+                    href={`/admin/access${s ? `?${s}` : ""}`}
+                    aria-current={active ? "true" : undefined}
+                    className={cn(
+                      "rounded-lg px-2.5 py-1 text-xs transition-colors duration-fast",
+                      active
+                        ? "bg-accent/15 text-accent-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    {option.label}
+                  </Link>
+                );
+              })}
+            </nav>
+
+            <nav className="flex items-center gap-1" aria-label="Sort">
+              {(["position", "newest", "oldest"] as const).map((value) => {
+                const active = value === sort;
+                const sp = new URLSearchParams();
+                if (filter !== "all") sp.set("filter", filter);
+                if (q) sp.set("q", q);
+                if (value !== defaultSort(filter)) sp.set("sort", value);
+                const s = sp.toString();
+                return (
+                  <Link
+                    key={value}
+                    href={`/admin/access${s ? `?${s}` : ""}`}
+                    aria-current={active ? "true" : undefined}
+                    className={cn(
+                      "rounded-lg px-2.5 py-1 text-xs transition-colors duration-fast",
+                      active
+                        ? "bg-accent/15 text-accent-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    {value === "position" ? "In line" : value === "newest" ? "Newest" : "Oldest"}
+                  </Link>
+                );
+              })}
+            </nav>
+          </div>
+        }
+      >
+        {rows.length === 0 ? (
+          <EmptyState>
+            {q
+              ? `No signups match “${q}”.`
+              : filter === "all"
+                ? "Nobody has joined yet."
+                : "No signups match this filter."}
+          </EmptyState>
+        ) : (
+          <>
+            <InterestListTable rows={rows} showInLine={sort === "position"} />
+            <Pager
+              page={listing.page}
+              pageCount={listing.pageCount}
+              total={listing.total}
+              pageSize={INTEREST_LIST_PAGE_SIZE}
+              hrefFor={(page) => query({ page })}
+              label="signups"
+            />
+          </>
+        )}
+      </AdminPanel>
     </>
   );
 }

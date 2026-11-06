@@ -28,11 +28,12 @@
  * request path go through `recordGateHitThrottled` instead (one row per user per hour); the
  * unthrottled version is correct in the key-issuance actions, which a human triggers.
  */
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { apiKeys } from "@/db/schema";
 import { bearerFrom, hashApiKey, looksLikeApiKey, type ApiKeyScope } from "@/lib/api/keys";
-import { entitlementsFromSettings, FEATURE_DENIAL, type Entitlements } from "@/lib/entitlements";
+import { entitlementsFromSettings, featureDenial, type Entitlements } from "@/lib/entitlements";
 import { recordGateHitThrottled } from "@/lib/gate-events";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { noteMachineSurfaceAccount } from "@/lib/attribution";
@@ -153,7 +154,8 @@ export async function assertAccountUsable(
     throw new ApiAuthError("suspended", "This account is waiting for an invitation.");
   }
 
-  const entitlements = entitlementsFromSettings(userId, settings);
+  const planConfig = await getEffectivePlanConfig();
+  const entitlements = entitlementsFromSettings(userId, settings, planConfig);
   // The MCP server is free on every plan; the REST API and webhooks are not. Two flags
   // rather than one so that making the connector free cannot quietly open the paid surfaces
   // beside it — see `canUseMcp` in `entitlements.ts`.
@@ -165,7 +167,7 @@ export async function assertAccountUsable(
       plan: entitlements.plan,
       context: { surface: opts.surface ?? "api" },
     });
-    throw new ApiAuthError("payment_required", FEATURE_DENIAL.api);
+    throw new ApiAuthError("payment_required", featureDenial("api", planConfig));
   }
   return entitlements;
 }

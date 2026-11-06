@@ -13,6 +13,7 @@ import { captureJobs, connectorConnections, contacts, interactions, noteBatches 
 import { createCaptureJob, getCaptureJobById, mergeCaptureBatchRows } from "../src/lib/capture-jobs";
 import { buildSaveInput, runCaptureJobById } from "../src/lib/capture-job-runner";
 import { syncGranola, takenGranolaNotes } from "../src/lib/connectors/granola";
+import { granolaJobHints } from "../src/lib/connectors/granola-save";
 import { upsertConnectorConnection } from "../src/lib/connectors/connections";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import type { CaptureParseResult } from "../src/lib/capture/types";
@@ -62,7 +63,7 @@ async function pickJob(noteId: string, text: string) {
     sourceKind: "granola",
     status: "queued",
     inputText: text,
-    inputHints: { eventDate: "2026-10-30", interactionType: "meeting", granola: { noteId, meetingAt: MEETING_AT } },
+    inputHints: granolaJobHints({ eventDate: "2026-10-30", interactionType: "meeting", granola: { noteId, meetingAt: MEETING_AT } }),
     sourceLabel: "Picked note",
   });
 }
@@ -144,7 +145,7 @@ async function main() {
       sourceKind: "granola",
       status: "queued",
       inputText: text,
-      inputHints: { granola: { noteId, meetingAt } },
+      inputHints: granolaJobHints({ granola: { noteId, meetingAt } }),
       batchGroupId: batch,
       sourceLabel: noteId,
     });

@@ -79,6 +79,11 @@ CREATE TABLE IF NOT EXISTS user_settings (
   signup_landing_path text,
   signup_attributed_at timestamptz,
   signup_attribution_source text,
+  last_touch_source text,
+  last_touch_medium text,
+  last_touch_campaign text,
+  last_touch_landing_path text,
+  last_touch_at timestamptz,
   signup_session_id text,
   account_kind text,
   ai_key_added_at timestamptz,
@@ -114,6 +119,9 @@ CREATE TABLE IF NOT EXISTS user_settings (
   terms_version text,
   timeline_backfill_enabled integer NOT NULL DEFAULT 1,
   work_history_auto_enabled integer NOT NULL DEFAULT 1,
+  email_intel_enabled integer NOT NULL DEFAULT 0,
+  email_intel_cursor_at timestamptz,
+  email_intel_next_at timestamptz,
   linkedin_refresh_interval_days integer,
   chat_auto_apply integer NOT NULL DEFAULT 0,
   relationship_engine_enabled integer NOT NULL DEFAULT 1,
@@ -814,9 +822,13 @@ CREATE TABLE IF NOT EXISTS outreach_messages (
   last_action_at timestamptz,
   error_message text,
   delivery_id text,
+  delivered_at timestamptz,
+  opened_at timestamptz,
+  clicked_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS outreach_messages_delivery_idx ON outreach_messages(delivery_id) WHERE delivery_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS outreach_messages_prospect_idx ON outreach_messages(prospect_id);
 CREATE INDEX IF NOT EXISTS outreach_messages_status_idx ON outreach_messages(status);
 CREATE INDEX IF NOT EXISTS outreach_messages_outcome_idx ON outreach_messages(outcome);
@@ -2013,6 +2025,49 @@ CREATE TABLE IF NOT EXISTS capture_jobs (
 );
 CREATE INDEX IF NOT EXISTS capture_jobs_user_status_idx ON capture_jobs(user_id, status, updated_at);
 CREATE INDEX IF NOT EXISTS capture_jobs_stall_idx ON capture_jobs(status, updated_at);
+CREATE TABLE IF NOT EXISTS email_threads (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  provider text NOT NULL DEFAULT 'gmail',
+  thread_id text NOT NULL,
+  last_message_id text NOT NULL,
+  subject text NOT NULL DEFAULT '',
+  participants jsonb NOT NULL DEFAULT '[]'::jsonb,
+  last_direction text NOT NULL DEFAULT 'in',
+  decision text NOT NULL,
+  triage_score integer NOT NULL DEFAULT 0,
+  status text NOT NULL,
+  claim_token uuid,
+  claimed_at timestamptz,
+  stall_resumes integer NOT NULL DEFAULT 0,
+  processed_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS email_threads_thread_uidx ON email_threads(user_id, provider, thread_id);
+CREATE INDEX IF NOT EXISTS email_threads_pending_idx ON email_threads(user_id, status) WHERE status = 'pending_ai';
+CREATE TABLE IF NOT EXISTS email_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  thread_row_id uuid NOT NULL REFERENCES email_threads(id) ON DELETE CASCADE,
+  source text NOT NULL DEFAULT 'rule',
+  kind text NOT NULL,
+  company text,
+  role text,
+  stage text,
+  occurred_at timestamptz NOT NULL,
+  due_at timestamptz,
+  summary text NOT NULL,
+  evidence_quote text NOT NULL DEFAULT '',
+  confidence real NOT NULL DEFAULT 0,
+  people jsonb NOT NULL DEFAULT '[]'::jsonb,
+  asks jsonb NOT NULL DEFAULT '[]'::jsonb,
+  dismissed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS email_events_rule_uidx ON email_events(thread_row_id, kind) WHERE source = 'rule';
+CREATE INDEX IF NOT EXISTS email_events_user_idx ON email_events(user_id, occurred_at);
 CREATE TABLE IF NOT EXISTS ignored_people (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -2046,6 +2101,9 @@ CREATE TABLE IF NOT EXISTS page_views (
   dwell_ms integer,
   load_ms integer,
   nav_type text,
+  lcp_ms integer,
+  inp_ms integer,
+  cls_milli integer,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS page_views_created_idx ON page_views(created_at);
@@ -2054,6 +2112,14 @@ CREATE INDEX IF NOT EXISTS page_views_session_idx ON page_views(session_id, crea
 CREATE INDEX IF NOT EXISTS page_views_visitor_idx ON page_views(visitor_hash, created_at);
 CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country, created_at);
 CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_internal, created_at);
+CREATE TABLE IF NOT EXISTS metrics_daily (
+  day date NOT NULL,
+  metric text NOT NULL,
+  dim text NOT NULL DEFAULT '',
+  value bigint NOT NULL,
+  computed_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (day, metric, dim)
+);
 `;
 
 // NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
@@ -2832,7 +2898,28 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // LinkedIn export (null = monthly, today's rule; 0 = off), set on the LinkedIn integration page.
 // NOT 187: the unpushed admin-tracking-events worktree claims it. Rescanned every remote ref
 // and worktree on Nov 5 2026: 187 (admin-tracking-events) was the highest claimed anywhere.
-export const SCHEMA_VERSION = 188;
+//
+// 189 = email insights (Email Intelligence P0/P1): user_settings.email_intel_enabled /
+// email_intel_cursor_at / email_intel_next_at plus the email_threads and email_events tables.
+// Built as 145 on Sep 30 2026 and renumbered here on Nov 5 2026 when merging main: main reached
+// 186, and a database stamped 186 would never run a 145. NOT 187 or 188: 188 is main's linkedin_refresh_interval_days
+// and claude/admin-tracking-events holds 187 (unpushed). Rescanned every
+// remote ref and every worktree's working file on Nov 5 2026: 188 was the highest claimed anywhere.
+// (Merged main at 186: both sides' DDL and alters are kept, and only the version is new, so a
+// database stamped 186 by main still runs this branch's 189 DDL.)
+//
+// 191 (built as 187) = standard tracking: page_views.lcp_ms / inp_ms / cls_milli (web vitals on a document's
+// first view), user_settings.last_touch_source / _medium / _campaign / _landing_path / _at (the
+// last channel-bearing landing before signup), and outreach_messages.delivered_at / opened_at /
+// clicked_at with outreach_messages_delivery_idx (Resend engagement, matched on delivery_id);
+// metrics_daily (new table: the daily rollup `src/lib/metrics-rollup.ts` writes, kept forever);
+// and indexes reminders_user_created_idx, capture_jobs_user_created_idx (the activity union),
+// product_events_created_idx, gate_events_created_idx (the retention prune), in
+// ADMIN_V2_STATEMENTS. Renumbered 187 → 191 on Nov 6 2026 when merging main at 189: a
+// database stamped 189 would never run a 187. NOT 190: the unpushed chat-loading-updates-pane
+// worktree claims it. Rescanned every remote ref and worktree on Nov 6 2026: 190 was the
+// highest claimed anywhere. Both sides' DDL and alters are kept; only the version is new.
+export const SCHEMA_VERSION = 191;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -4125,6 +4212,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "contacts", "work_history_miss_slug", "text");
   await ensureColumn(client, "usage_events", "web_searches", "integer");
   await ensureColumn(client, "user_settings", "work_history_auto_enabled", "integer NOT NULL DEFAULT 1");
+  await ensureColumn(client, "user_settings", "email_intel_enabled", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "user_settings", "email_intel_cursor_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "email_intel_next_at", "timestamptz");
   await ensureColumn(client, "user_settings", "linkedin_refresh_interval_days", "integer");
   await ensureColumn(client, "user_settings", "relationship_engine_enabled", "integer NOT NULL DEFAULT 1");
   await ensureColumn(client, "user_settings", "chat_self_names", "jsonb NOT NULL DEFAULT '[]'");
@@ -4232,6 +4322,18 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "contacts", "mastodon_acct", "text");
   await ensureColumn(client, "contacts", "name_guess", "jsonb");
   await ensureColumn(client, "meeting_sessions", "user_notes", "text");
+  // v187: standard tracking — web vitals, last-touch attribution, Resend engagement.
+  await ensureColumn(client, "page_views", "lcp_ms", "integer");
+  await ensureColumn(client, "page_views", "inp_ms", "integer");
+  await ensureColumn(client, "page_views", "cls_milli", "integer");
+  await ensureColumn(client, "user_settings", "last_touch_source", "text");
+  await ensureColumn(client, "user_settings", "last_touch_medium", "text");
+  await ensureColumn(client, "user_settings", "last_touch_campaign", "text");
+  await ensureColumn(client, "user_settings", "last_touch_landing_path", "text");
+  await ensureColumn(client, "user_settings", "last_touch_at", "timestamptz");
+  await ensureColumn(client, "outreach_messages", "delivered_at", "timestamptz");
+  await ensureColumn(client, "outreach_messages", "opened_at", "timestamptz");
+  await ensureColumn(client, "outreach_messages", "clicked_at", "timestamptz");
   await ensureColumn(client, "recommendations", "base_score", "integer");
   await ensureColumn(client, "recommendations", "ai_delta", "integer");
   await ensureColumn(client, "recommendations", "ai_angle", "text");
@@ -4280,6 +4382,13 @@ const ADMIN_V2_STATEMENTS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS reminders_user_item_hash_uidx ON reminders(user_id, item_hash)`,
   `CREATE INDEX IF NOT EXISTS reminders_note_batch_idx ON reminders(note_batch_id)`,
   `CREATE INDEX IF NOT EXISTS interactions_note_batch_idx ON interactions(note_batch_id)`,
+  // v187: the rest of the activity union's `(user_id, created_at)` scans
+  // (`intentionalActionsSince`; interactions and chat_messages have theirs above), and the
+  // `created_at` the retention prune deletes by (`analytics-retention.ts`).
+  `CREATE INDEX IF NOT EXISTS reminders_user_created_idx ON reminders(user_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS capture_jobs_user_created_idx ON capture_jobs(user_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS product_events_created_idx ON product_events(created_at)`,
+  `CREATE INDEX IF NOT EXISTS gate_events_created_idx ON gate_events(created_at)`,
 ];
 
 /**
@@ -5052,6 +5161,10 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS work_history_due_at timestamptz`,
   `CREATE INDEX IF NOT EXISTS contacts_work_history_due_idx ON contacts(user_id, work_history_due_at) WHERE linkedin_url IS NOT NULL`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS work_history_auto_enabled integer NOT NULL DEFAULT 1`,
+  // Schema v145: email insights — opt-in switch, watermark, and schedule/lease per account.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_intel_enabled integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_intel_cursor_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_intel_next_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS linkedin_refresh_interval_days integer`,
   // Schema v133: Radar's nightly schedule, lease and pause flag for each account.
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_next_at timestamptz`,
@@ -5074,6 +5187,20 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS name_guess jsonb`,
   // Schema v186: what the person typed during a recorded meeting, kept with it (/meetings).
   `ALTER TABLE meeting_sessions ADD COLUMN IF NOT EXISTS user_notes text`,
+  // Schema v187: web vitals on the first view, last-touch attribution, Resend engagement.
+  `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS lcp_ms integer`,
+  `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS inp_ms integer`,
+  `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS cls_milli integer`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_touch_source text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_touch_medium text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_touch_campaign text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_touch_landing_path text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_touch_at timestamptz`,
+  `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS delivered_at timestamptz`,
+  `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS opened_at timestamptz`,
+  `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS clicked_at timestamptz`,
+  `CREATE INDEX IF NOT EXISTS outreach_messages_delivery_idx ON outreach_messages(delivery_id) WHERE delivery_id IS NOT NULL`,
+  `CREATE TABLE IF NOT EXISTS metrics_daily (day date NOT NULL, metric text NOT NULL, dim text NOT NULL DEFAULT '', value bigint NOT NULL, computed_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (day, metric, dim))`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS base_score integer`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS ai_delta integer`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS ai_angle text`,

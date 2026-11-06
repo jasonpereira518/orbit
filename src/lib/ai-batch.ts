@@ -1,4 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { JSON_SYSTEM_SUFFIX } from "@/lib/ai-security";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
@@ -333,7 +334,7 @@ export async function submitAiBatch(
       userId,
       micros: estCostMicros ?? 0,
       operation: holdOperation,
-      packs: packsUsable(plan),
+      packs: packsUsable(plan, await getEffectivePlanConfig()),
       ttlMs: BATCH_HOLD_TTL_MS,
       // Room for the WHOLE batch, not merely a positive balance: a batch cannot be stopped
       // halfway the way one call can.

@@ -1,5 +1,5 @@
 /**
- * `mcp_connected` and `mcp_tool_called`: the product events for the MCP server.
+ * `mcp_connected`, `mcp_tool_called` and `mcp_disconnected`: the product events for the MCP server.
  *
  * Both are telemetry about a request that is already being served, so neither may change its
  * outcome: every function here swallows its own failures (a schema error throws in
@@ -41,6 +41,23 @@ export function trackMcpConnected(input: { userId: string; client: McpClient; vi
     );
   } catch (err) {
     reportError(err, { where: "mcp.track_connected", level: "warning" });
+  }
+}
+
+/**
+ * An MCP credential revoked by its owner: an `mcp_url` key from Settings. One per key (the id
+ * hashes it), so a double click or a retried action cannot count twice. OAuth grants are
+ * revoked in Clerk's account portal, which tells Orbit nothing, so they never reach this.
+ */
+export function trackMcpDisconnected(input: { userId: string; client: McpClient; credentialId: string }): void {
+  try {
+    track(
+      "mcp_disconnected",
+      { client: input.client },
+      { userId: input.userId, surface: "web", id: deterministicEventId("mcp_disconnected", input.credentialId) }
+    );
+  } catch (err) {
+    reportError(err, { where: "mcp.track_disconnected", level: "warning" });
   }
 }
 

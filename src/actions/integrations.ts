@@ -11,6 +11,8 @@ import { listCalendarSubscriptions } from "@/actions/calendar";
 import { listEventConnections } from "@/lib/events/connections";
 import { getConnectorConnection } from "@/lib/connectors/connections";
 import { requireUserId } from "@/lib/auth";
+import { availableOn } from "@/lib/plans/plan-config";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
 import { withDemoIntegrationStatuses } from "@/lib/demo-workspace-connections";
 import { connectionSummary } from "@/lib/connection-status";
@@ -119,7 +121,13 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
   // an unread plan is passed down as "unknown" and costs the inbox capability alone: the page
   // still reports its status, and an account that signed Orbit out still raises its attention
   // item, rather than the whole account going blank because a settings read timed out.
-  const plan = settings === "unknown" ? "unknown" : { canUseRecruiters: settings.plan.canUseRecruiters };
+  const plan =
+    settings === "unknown"
+      ? "unknown"
+      : {
+          canUseRecruiters: settings.plan.canUseRecruiters,
+          recruitersOn: availableOn("recruiters", await getEffectivePlanConfig()),
+        };
   accounts.google = google === "unknown" ? "unknown" : googleAccountStatus(google, plan);
   accounts.microsoft = outlook === "unknown" ? "unknown" : microsoftAccountStatus(outlook, plan);
   pages.google = accounts.google === "unknown" ? "unknown" : accountPageStatus(accounts.google);

@@ -10,7 +10,8 @@ import { RenderStamp } from "@/components/layout/render-stamp";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { requireUserId } from "@/lib/auth";
-import { FEATURE_DENIAL, getEntitlements } from "@/lib/entitlements";
+import { featureDenial, getEntitlements } from "@/lib/entitlements";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { getResumableMeeting } from "@/lib/meeting-sessions";
 import { listMeetingsFor, type MeetingSourceFilter } from "@/lib/meetings-list";
 import { cn } from "@/lib/utils";
@@ -44,11 +45,12 @@ export default async function MeetingsPage({ searchParams }: { searchParams: Pro
   const source: MeetingSourceFilter = rawSource === "orbit" || rawSource === "granola" ? rawSource : "all";
   const userId = await requireUserId();
 
-  const [page, settings, plan, { canUseMeetings }, resumableMeeting, jobs] = await Promise.all([
+  const [page, settings, plan, { canUseMeetings }, planConfig, resumableMeeting, jobs] = await Promise.all([
     listMeetingsFor(userId, { q, source }),
     getSettings(),
     getPlanOverview(),
     getEntitlements(userId),
+    getEffectivePlanConfig(),
     // Conveniences; a failure to read either must never take the page down.
     getResumableMeeting(userId).catch(() => null),
     getActiveCaptureJobs().catch(() => []),
@@ -75,7 +77,7 @@ export default async function MeetingsPage({ searchParams }: { searchParams: Pro
         aiReason={settings.ai.reason}
         canTranscribe={settings.ai.canTranscribe}
         canUseMeetings={canUseMeetings}
-        meetingsDeniedMessage={FEATURE_DENIAL.meetings}
+        meetingsDeniedMessage={featureDenial("meetings", planConfig)}
         resumableMeeting={resumableMeeting}
         quota={{ used: plan.usage.used, limit: plan.usage.limit }}
         userId={userId}

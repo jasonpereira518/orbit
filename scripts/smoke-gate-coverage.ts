@@ -15,7 +15,7 @@ import { readFileSync } from "node:fs";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { gateEvents, userSettings } from "../src/db/schema";
-import { FEATURE_DENIAL, isPaywallError, requireEntitlement } from "../src/lib/entitlements";
+import { featureDenial, isPaywallError, requireEntitlement } from "../src/lib/entitlements";
 import { RECENT_GATE_WINDOW_MS, isKnownGate, mostRecentGate, recordGateHit, unlockPlanForGate } from "../src/lib/gate-events";
 import { recordGateRefusal } from "../src/lib/gate-refusal";
 import { GATES } from "../src/lib/product-event-schemas";
@@ -109,7 +109,7 @@ async function main() {
   } catch (err) {
     refusal = err;
   }
-  check("a Free account is refused the API, with the same words", isPaywallError(refusal) && (refusal as Error).message === FEATURE_DENIAL.api, String(refusal));
+  check("a Free account is refused the API, with the same words", isPaywallError(refusal) && (refusal as Error).message === featureDenial("api"), String(refusal));
   const noWhere = (await rowsFor(FREE, "api"))[0];
   check("without a caller-supplied place, the context says it was the web", same(noWhere?.context, { surface: "web" }), noWhere?.context);
   let refusal2: unknown = null;
@@ -118,7 +118,7 @@ async function main() {
   } catch (err) {
     refusal2 = err;
   }
-  check("…the same refusal with a place", isPaywallError(refusal2) && (refusal2 as Error).message === FEATURE_DENIAL.api);
+  check("…the same refusal with a place", isPaywallError(refusal2) && (refusal2 as Error).message === featureDenial("api"));
   const apiRows = await rowsFor(FREE, "api");
   check(
     "…which is recorded with its surface and route",
@@ -138,9 +138,9 @@ async function main() {
   await db.insert(gateEvents).values({ userId: FREE, feature: "api", plan: "free", createdAt: new Date(Date.now() - RECENT_GATE_WINDOW_MS - 60_000) });
   check("a wall hit more than a day ago is not what sent them", (await mostRecentGate(FREE)) === null);
 
-  const demandPage = readFileSync("src/app/(clerk)/(admin)/admin/billing/demand/page.tsx", "utf8");
+  const demandPage = readFileSync("src/app/(clerk)/(admin)/admin/billing/revenue/page.tsx", "utf8");
   const unlabelled = GATES.filter((g) => !new RegExp(`\\b${g}:`).test(demandPage));
-  check("every gate key a checkout can be attributed to has a label on the Demand page", unlabelled.length === 0, unlabelled);
+  check("every gate key a checkout can be attributed to has a label on the Revenue page", unlabelled.length === 0, unlabelled);
 
   for (const u of [FREE, PRO]) {
     await db.delete(gateEvents).where(eq(gateEvents.userId, u));
