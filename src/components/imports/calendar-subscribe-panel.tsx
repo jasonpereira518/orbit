@@ -70,18 +70,22 @@ export function CalendarSubscribePanel({
       <div className="space-y-2">
         <Input
           placeholder="https://calendar.google.com/calendar/ical/…/private-…/basic.ics"
+          aria-label="Private ICS URL"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
         />
         <div className="grid gap-2 sm:grid-cols-2">
           <Input
             placeholder="Label (optional)"
+            aria-label="Label (optional)"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
           />
           <Input
             placeholder="Your email on this calendar (recommended)"
+            aria-label="Your email on this calendar (recommended)"
             type="email"
+            autoComplete="email"
             value={selfEmail}
             onChange={(e) => setSelfEmail(e.target.value)}
           />

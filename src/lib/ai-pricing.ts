@@ -81,6 +81,9 @@ const PRICES: Record<string, PriceEntry> = {
   "claude-opus-5": { input: 5, output: 25, cachedInput: 0.5 },
   "claude-sonnet-4-6": { input: 3, output: 15, cachedInput: 0.3 },
   "claude-sonnet-4-5": { input: 3, output: 15, cachedInput: 0.3 },
+  // Haiku 5.5: prompts up to 100K tokens. Orbit's prompts are far below that; above it the
+  // provider bills $0.50 / $2.50, which this table does not model.
+  "claude-haiku-5-5": { input: 0.1, output: 0.5, cachedInput: 0.01 },
   "claude-haiku-4-5": { input: 1, output: 5, cachedInput: 0.1 },
   "claude-opus-4-8": { input: 5, output: 25, cachedInput: 0.5 },
   "claude-opus-4-7": { input: 5, output: 25, cachedInput: 0.5 },
@@ -98,10 +101,15 @@ const PRICES: Record<string, PriceEntry> = {
 
   // Deepgram — Orbit's own hosted speech-to-text (`@/lib/deepgram`), metered on Orbit's key
   // rather than BYOK. It bills per second of audio, not per token, and `usage_events` has no
-  // separate duration column — so the caller reports the audio length in `inputTokens` (one
-  // "token" = one second) and this row prices that unit like any other: $0.0043/min ÷ 60 ≈
-  // 72 micros/sec, i.e. $72 per 1,000,000 seconds of audio. `output` stays 0; there is no
-  // second leg to a transcription call.
+  // duration column. This row is the pre-recorded list rate expressed as a per-"token" price
+  // (one "token" = one second): $0.0043/min ÷ 60 ≈ 72 micros/sec, i.e. $72 per 1,000,000
+  // seconds. It is only ever applied if a caller reports audio seconds in `inputTokens`, and
+  // NO caller does: Deepgram `usage_events` rows carry null `estimated_cost_micros`, and they
+  // are excluded from managed-credit settlement on purpose (`credits/ledger.ts`). What
+  // Deepgram actually costs Orbit — streaming vs file, the diarize and keyterm add-ons and
+  // the opt-out premium — is priced from `speech_usage` seconds in `speech-cost.ts`, and THAT
+  // is the figure every money view reads. Do not "fix" the null by writing seconds here: it
+  // would price at the wrong rate and leak Deepgram dollars into the credit ledger.
   [DEEPGRAM_MODEL]: { input: 72, output: 0 },
 };
 
@@ -200,3 +208,18 @@ export function formatCostMicros(micros: number | null | undefined): string | nu
 }
 
 export type { AiProvider };
+
+/**
+ * What one hosted web search costs on top of its tokens, in micros, by provider — charged by
+ * `webSearchJson` through `surchargeMicros` so included AI's credits and pools see it.
+ *
+ *  - anthropic: $10 per 1,000 searches (platform.claude.com/docs/en/about-claude/pricing,
+ *    checked 2026-10-18), counted from `usage.server_tool_use.web_search_requests`.
+ *  - openai: UNCONFIRMED; the hosted `web_search` tool's per-call fee priced at a pessimistic
+ *    $25 per 1,000 calls until checked against openai.com/api/pricing. One per
+ *    `web_search_call` output item.
+ *  - gemini: UNCONFIRMED; Google Search grounding priced at a pessimistic $35 per 1,000
+ *    grounded prompts (ai.google.dev pricing). One per grounded response.
+ *  - openrouter reports its own cost, plugin included, so it needs no entry.
+ */
+export const WEB_SEARCH_FEE_MICROS = { anthropic: 10_000, openai: 25_000, gemini: 35_000 } as const;

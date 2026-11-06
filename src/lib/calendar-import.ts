@@ -7,8 +7,14 @@ export type ParsedCalendarEvent = {
   location: string;
   start: Date | null;
   end: Date | null;
-  attendees: Array<{ name: string; email: string }>;
+  /**
+   * `partstat` (ICS `PARTSTAT`) and `resource` (a room or equipment `CUTYPE`) come from ICS only,
+   * and only when the line says — the iCloud window reads them to find the owner's own answer.
+   */
+  attendees: Array<{ name: string; email: string; partstat?: string; resource?: boolean }>;
   organizer: { name: string; email: string } | null;
+  /** A `DTSTART` that is a date, not a time. ICS only; Google says so in its own field. */
+  allDay?: boolean;
   /**
    * The event's own link, from the ICS `URL` property or Google's `source.url`.
    *
@@ -216,6 +222,29 @@ function getAllPropLines(block: string, name: string): string[] {
  * Minimal VEVENT parser for calendar exports (.ics).
  * Supports SUMMARY, DESCRIPTION, LOCATION, DTSTART/DTEND, ATTENDEE, ORGANIZER, UID.
  */
+/**
+ * Whether a payload is plausibly an iCalendar file at all.
+ *
+ * `parseIcsEvents` returns `[]` for a truncated export, an HTML error page saved as
+ * .ics, and an empty string alike — byte-identical to a valid calendar containing no
+ * events. The upload UI reported all of them the same cheerful way: a green toast
+ * reading "0 events in window · 0 with matches". Someone whose export was cut short was
+ * told, confidently, that they had no meetings.
+ *
+ * Deliberately separate from `parseIcsEvents`, which stays total: the feed sync and the
+ * capture ingest both parse payloads where an empty result is a normal outcome, and only
+ * the upload path has a human to tell.
+ */
+export function looksLikeCalendar(icsText: string): boolean {
+  const text = icsText.trim();
+  if (!text) return false;
+  // A VCALENDAR wrapper is required by RFC 5545 and present in every real export.
+  if (!/BEGIN:VCALENDAR/i.test(text)) return false;
+  // A calendar with no VEVENT at all is legitimate (a subscribed-but-empty feed), so the
+  // wrapper alone is enough to say "this is a calendar".
+  return true;
+}
+
 export function parseIcsEvents(icsText: string): ParsedCalendarEvent[] {
   const unfolded = unfoldIcs(icsText);
   const blocks = unfolded.split(/BEGIN:VEVENT/i).slice(1);
@@ -232,7 +261,12 @@ export function parseIcsEvents(icsText: string): ParsedCalendarEvent[] {
     const end = parseIcsDate(getProp(block, "DTEND"), tzidOf(block, "DTEND") ?? timezone);
 
     const attendees = getAllPropLines(block, "ATTENDEE")
-      .map(parsePerson)
+      .map((line) => {
+        const params = line.slice(0, line.indexOf(":") + 1);
+        const partstat = /;PARTSTAT=([^;:]+)/i.exec(params)?.[1]?.toUpperCase();
+        const resource = /;CUTYPE=(RESOURCE|ROOM)[;:]/i.test(params);
+        return { ...parsePerson(line), ...(partstat ? { partstat } : {}), ...(resource ? { resource } : {}) };
+      })
       .filter((p) => p.email || p.name);
 
     // A personal feed (Luma, Partiful) that lists anyone lists exactly one person: its owner.
@@ -286,6 +320,7 @@ export function parseIcsEvents(icsText: string): ParsedCalendarEvent[] {
       url: getProp(block, "URL") || null,
       status: getProp(block, "STATUS") || null,
       timezone,
+      ...(/^\d{8}$/.test(getProp(block, "DTSTART").trim()) ? { allDay: true } : {}),
       selfResponse,
       rrule,
       exDates: exDates.length > 0 ? exDates : null,

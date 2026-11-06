@@ -1,7 +1,8 @@
-import { and, desc, gte, lte, sql } from "drizzle-orm";
+import { and, desc, gte, lt, sql, type SQL } from "drizzle-orm";
 import { getDb } from "@/db";
-import { acquisitionSpend, startupExpenses } from "@/db/schema";
+import { acquisitionSpend, speechUsage, startupExpenses } from "@/db/schema";
 import { infraBreakdown, monthStart, monthlyInfraCents } from "@/lib/infra-costs";
+import { deepgramMicrosPerSecond } from "@/lib/speech-cost";
 
 /**
  * One answer to "what did Orbit spend this month", assembled from the two tables that
@@ -39,7 +40,7 @@ export type MonthlyCosts = {
   infraCents: number;
   /** One-off expenses incurred within the month. */
   oneOffCents: number;
-  /** Marketing and acquisition spend overlapping the month. */
+  /** Marketing and acquisition spend attributed to the month (by `created_at`; see below). */
   acquisitionCents: number;
   totalCents: number;
   /**
@@ -53,10 +54,12 @@ export type MonthlyCosts = {
 /**
  * Everything Orbit spent in one calendar month.
  *
- * Acquisition spend is counted by OVERLAP rather than by start date, for the same reason
- * `loadUnitEconomics` does it: the entry form always writes `periodEnd = now`, so a row
- * logged mid-month starts before the month it is being counted for and a start-based
- * filter drops it entirely.
+ * Acquisition spend belongs to exactly ONE month: the one its `created_at` falls in. The
+ * entry form takes a month and stamps the row at that month's first instant (the legacy
+ * `period_start`/`period_end` columns are still filled, as that month's bounds, but nothing
+ * reads them). The earlier rule counted rows by period OVERLAP, and because the form always
+ * wrote "the 30 days ending now", a row logged on the 10th overlapped two calendar months and
+ * was counted in both (audit M7).
  */
 export async function monthlyCosts(month: Date): Promise<MonthlyCosts> {
   const db = await getDb();
@@ -80,12 +83,7 @@ export async function monthlyCosts(month: Date): Promise<MonthlyCosts> {
     db
       .select({ total: sql<string>`coalesce(sum(${acquisitionSpend.amountUsd}), 0)` })
       .from(acquisitionSpend)
-      .where(
-        and(
-          gte(acquisitionSpend.periodEnd, start),
-          lte(acquisitionSpend.periodStart, end)
-        )
-      ),
+      .where(and(gte(acquisitionSpend.createdAt, start), lt(acquisitionSpend.createdAt, end))),
   ]);
 
   const num = (v: string | number | null | undefined) => {
@@ -117,26 +115,47 @@ export async function monthlyCostSeries(months = 6): Promise<MonthlyCosts[]> {
 }
 
 /**
- * What Stripe takes: 2.9% + 30c per successful charge.
+ * What Stripe takes: 2.9% + 30c per successful charge, plus Stripe Billing's 0.7% on
+ * subscription invoices.
  *
  * Computed rather than recorded, because Stripe's balance transactions are not mirrored
  * anywhere and five lines of arithmetic does not justify a sixth integration. It is an
  * ESTIMATE and is labelled as one on screen — the real figure moves with card type,
  * currency and country, and quoting a computed number as though it were reconciled is the
- * same mistake as `subscribers x $5`.
+ * same mistake as `subscribers x $5`. `cost/reconcile` compares it with the real fee total.
+ *
+ * The 30c is per CHARGE. An earlier version passed one charge for the whole month, which
+ * undercounted the fixed fee by 30c for every renewal after the first.
  */
 export const STRIPE_PERCENT_FEE = 0.029;
 export const STRIPE_FIXED_FEE_CENTS = 30;
+export const STRIPE_BILLING_PERCENT_FEE = 0.007;
 
 export function estimatedStripeFeesCents(
   grossCents: number,
-  chargeCount: number
+  chargeCount: number,
+  recurringCents = 0
 ): number {
   if (grossCents <= 0 || chargeCount <= 0) return 0;
-  return Math.round(grossCents * STRIPE_PERCENT_FEE + chargeCount * STRIPE_FIXED_FEE_CENTS);
+  return Math.round(
+    grossCents * STRIPE_PERCENT_FEE +
+      chargeCount * STRIPE_FIXED_FEE_CENTS +
+      Math.max(0, recurringCents) * STRIPE_BILLING_PERCENT_FEE
+  );
 }
 
-/** Acquisition spend grouped by channel, for CAC. Overlap-based, as above. */
+/** Total acquisition spend whose month falls in `[since, until)`, in dollars. One month per row. */
+export async function acquisitionSpendUsd(since: Date, until: Date): Promise<number> {
+  const db = await getDb();
+  const [row] = await db
+    .select({ total: sql<string>`coalesce(sum(${acquisitionSpend.amountUsd}), 0)` })
+    .from(acquisitionSpend)
+    .where(and(gte(acquisitionSpend.createdAt, since), lt(acquisitionSpend.createdAt, until)));
+  const n = Number(row?.total ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** Acquisition spend grouped by channel, for CAC. Attributed by `created_at` month, as above. */
 export async function acquisitionByChannel(since: Date, until: Date) {
   const db = await getDb();
   const rows = await db
@@ -145,9 +164,7 @@ export async function acquisitionByChannel(since: Date, until: Date) {
       total: sql<string>`coalesce(sum(${acquisitionSpend.amountUsd}), 0)`,
     })
     .from(acquisitionSpend)
-    .where(
-      and(gte(acquisitionSpend.periodEnd, since), lte(acquisitionSpend.periodStart, until))
-    )
+    .where(and(gte(acquisitionSpend.createdAt, since), lt(acquisitionSpend.createdAt, until)))
     .groupBy(acquisitionSpend.channel)
     .orderBy(desc(sql`sum(${acquisitionSpend.amountUsd})`));
 
@@ -155,4 +172,34 @@ export async function acquisitionByChannel(since: Date, until: Date) {
     channel: r.channel,
     spendCents: usdToCents(Number(r.total ?? 0)),
   }));
+}
+
+/**
+ * SQL: micros of Deepgram spend for one `speech_usage` row, priced from the same per-second
+ * rates `speechCostMicros` uses (`deepgramMicrosPerSecond`), so a grouped-in-SQL figure and the
+ * JS-priced total cannot disagree on the rate — only on sub-micro rounding.
+ */
+export function speechMicrosSql(): SQL {
+  const rate = (kind: "meeting" | "shortform", source: "stream" | "file") =>
+    sql.raw(deepgramMicrosPerSecond(kind, source).toFixed(6));
+  return sql`(${speechUsage.seconds}::numeric * CASE
+    WHEN ${speechUsage.kind} = 'meeting' AND ${speechUsage.source} = 'stream' THEN ${rate("meeting", "stream")}
+    WHEN ${speechUsage.kind} = 'meeting' THEN ${rate("meeting", "file")}
+    WHEN ${speechUsage.source} = 'stream' THEN ${rate("shortform", "stream")}
+    ELSE ${rate("shortform", "file")}
+  END)`;
+}
+
+/** Deepgram spend per account in `[since, until)`, priced from `speech_usage` seconds. */
+export async function speechSpendByUser(since: Date, until: Date = new Date()): Promise<Map<string, number>> {
+  const db = await getDb();
+  const rows = await db
+    .select({
+      userId: speechUsage.userId,
+      micros: sql<string>`round(coalesce(sum(${speechMicrosSql()}), 0))::bigint`,
+    })
+    .from(speechUsage)
+    .where(and(gte(speechUsage.createdAt, since), lt(speechUsage.createdAt, until)))
+    .groupBy(speechUsage.userId);
+  return new Map(rows.map((r) => [r.userId, Number(r.micros) || 0]));
 }

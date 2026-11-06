@@ -43,7 +43,7 @@ export function IngestResultCard({
             {summary.blockedByPlan}{" "}
             {summary.blockedByPlan === 1 ? "person wasn't" : "people weren't"} added — your
             plan&apos;s contact limit is full.{" "}
-            <Link href="/upgrade" className="underline underline-offset-2">
+            <Link href="/upgrade?gate=contacts" className="underline underline-offset-2">
               Upgrade to add them
             </Link>
             .

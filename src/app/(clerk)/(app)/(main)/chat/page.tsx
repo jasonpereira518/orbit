@@ -1,13 +1,19 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { listChatThreads } from "@/actions/chat";
 import { getSettings } from "@/actions/settings";
 import { AiKeyNotice } from "@/components/ai-key-notice";
 import { ChatPanelLazy } from "@/components/chat/chat-panel-lazy";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
+export const metadata = { title: "Chat" };
+
 /** Ask/chat server actions call AI providers — allow longer serverless runs. */
 export const maxDuration = 60;
 
 export default async function ChatPage() {
+  const gate = await pageVisibilityGate("page.chat");
+  if (gate) return gate;
+
   // AI runs on the user's own key, or on Orbit's for Lifetime: when neither applies, say so
   // here, before the first question fails, rather than in a toast after it.
   //
@@ -37,8 +43,11 @@ export default async function ChatPage() {
      * header: the raised Capture button overlaps the page bottom, and a smaller offset put
      * the composer under it. Measured at 375x812: page top 89px, Capture top 735px. The
      * safe-area term matters in standalone mode, where the nav rides above the home bar.
+     *
+     * Under 500px tall (a landscape phone, 200% zoom) the shell scrolls instead of fitting
+     * the viewport (app-shell.tsx), and a viewport-relative height left the thread 0px tall.
      */
-    <div className="flex h-[calc(100dvh-11.375rem-env(safe-area-inset-bottom))] min-h-0 flex-col gap-4 overflow-hidden md:h-[calc(100dvh-4rem)]">
+    <div className="flex h-[calc(100dvh-11.375rem-env(safe-area-inset-bottom))] min-h-0 flex-col gap-4 overflow-hidden md:h-[calc(100dvh-4rem)] [@media(max-height:500px)]:h-[30rem]">
       <RenderStamp />
       <div className="shrink-0">
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">

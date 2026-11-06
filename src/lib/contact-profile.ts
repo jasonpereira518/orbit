@@ -41,6 +41,8 @@ import {
 } from "@/db/schema";
 import { normalizeCompanyKey } from "@/lib/company-name";
 import { careerLine, orderExperiences } from "@/lib/contact-profile-format";
+import { cleanSingleLine } from "@/lib/ai-security";
+import { sanitizeAgentText } from "@/lib/mcp/sanitize";
 
 export type IncomingExperience = {
   kind: ContactExperienceKind;
@@ -283,19 +285,23 @@ function stringOrNull(value: unknown): string | null {
 export function sanitizeIncomingExperiences(value: unknown): IncomingExperience[] {
   if (!Array.isArray(value)) return [];
   const out: IncomingExperience[] = [];
+  // Read off public web pages by a model, then written onto the contact and its career moves
+  // with no review — so anyone who can publish a page about this person writes these. One-line
+  // fields fold and lose bidi/HTML (a newline in a title opens a new row in a later prompt).
   for (const raw of value.slice(0, MAX_INFERRED_EXPERIENCES)) {
     if (!raw || typeof raw !== "object") continue;
     const e = raw as Record<string, unknown>;
-    const organization = stringOrNull(e.organization)?.trim();
+    const organization = cleanSingleLine(stringOrNull(e.organization), 200);
     if (!organization) continue;
     const kind: ContactExperienceKind = e.kind === "education" ? "education" : "role";
+    const description = stringOrNull(e.description);
     out.push({
       kind,
       organization,
-      title: stringOrNull(e.title),
-      fieldOfStudy: stringOrNull(e.fieldOfStudy),
-      location: stringOrNull(e.location),
-      description: stringOrNull(e.description),
+      title: cleanSingleLine(stringOrNull(e.title), 200),
+      fieldOfStudy: cleanSingleLine(stringOrNull(e.fieldOfStudy), 200),
+      location: cleanSingleLine(stringOrNull(e.location), 200),
+      description: description ? sanitizeAgentText(description).trim().slice(0, 1000) || null : null,
       startYear: yearOrNull(e.startYear),
       startMonth: monthOrNull(e.startMonth),
       endYear: yearOrNull(e.endYear),

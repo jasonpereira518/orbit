@@ -65,6 +65,7 @@ import {
 import { cn } from "@/lib/utils";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { editTarget } from "@/lib/interaction-edit";
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -115,7 +116,11 @@ export function InteractionDetailSheet({
   const router = useRouter();
   const [pending, start] = useTransition();
   const [detail, setDetail] = useState<InteractionDetail | null>(null);
-  const [editing, setEditing] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  // Derived, like `loading`: the form is open only on the interaction its fields were seeded
+  // from. Stepping away, or the sheet losing its row under a refresh, closes it with no
+  // effect to keep in step, and Save can only write to the id the fields came from.
+  const editing = editTarget(editingId, interactionId) !== null;
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [checked, setChecked] = useState<Set<string>>(new Set());
 
@@ -150,34 +155,36 @@ export function InteractionDetailSheet({
   /** Closing resets here rather than in an effect, so reopening never flashes stale detail. */
   function close() {
     setDetail(null);
-    setEditing(false);
+    setEditingId(null);
     setConfirmOpen(false);
     setChecked(new Set());
     onOpenChange(false);
   }
 
   function beginEdit() {
-    if (!detail) return;
+    // The footer still shows while the next interaction loads; don't seed from the old one.
+    if (!detail || detail.id !== interactionId) return;
     setFormType(normalizeInteractionType(detail.interactionType));
     setFormDate(format(new Date(detail.interactionDate), "yyyy-MM-dd"));
     setFormSummary((detail.aiSummary || "").trim());
     setFormNotes((detail.rawNotes || "").trim());
-    setEditing(true);
+    setEditingId(detail.id);
   }
 
   function saveEdit() {
-    if (!detail) return;
+    const id = editTarget(editingId, interactionId);
+    if (!id) return;
     start(async () => {
       try {
-        await updateInteraction(detail.id, {
+        await updateInteraction(id, {
           interactionType: formType,
           interactionDate: formDate,
           aiSummary: formSummary.trim(),
           rawNotes: formNotes.trim(),
         });
         toast.success("Interaction updated");
-        setEditing(false);
-        await load(detail.id);
+        setEditingId(null);
+        await load(id);
         router.refresh();
       } catch (err) {
         toast.error(friendlyError(err, TOAST_COPY.saveFailed));
@@ -290,7 +297,7 @@ export function InteractionDetailSheet({
                   type="button"
                   size="icon-sm"
                   variant="ghost"
-                  disabled={pending || !canStep.newer}
+                  disabled={pending || editing || !canStep.newer}
                   aria-label="Newer interaction"
                   onClick={() => onStep(-1)}
                 >
@@ -300,7 +307,7 @@ export function InteractionDetailSheet({
                   type="button"
                   size="icon-sm"
                   variant="ghost"
-                  disabled={pending || !canStep.older}
+                  disabled={pending || editing || !canStep.older}
                   aria-label="Older interaction"
                   onClick={() => onStep(1)}
                 >
@@ -322,8 +329,12 @@ export function InteractionDetailSheet({
         ) : editing ? (
           <div className="flex-1 space-y-4 overflow-y-auto px-4 pb-2">
             <div className="space-y-2">
-              <Label>Type</Label>
-              <div className="grid grid-cols-3 gap-1.5">
+              <Label id="interaction-edit-type-label">Type</Label>
+              <div
+                role="group"
+                aria-labelledby="interaction-edit-type-label"
+                className="grid grid-cols-3 gap-1.5"
+              >
                 {SELECTABLE_INTERACTION_TYPES.map((t) => {
                   const fam = interactionFamilySpec(t.value);
                   const on = t.value === formType;
@@ -400,7 +411,7 @@ export function InteractionDetailSheet({
             {detail.topics.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
                 {detail.topics.map((topic) => (
-                  <Badge key={topic} variant="outline" className="text-[11px]">
+                  <Badge key={topic} variant="outline" className="text-2xs">
                     {topic}
                   </Badge>
                 ))}
@@ -441,7 +452,7 @@ export function InteractionDetailSheet({
                           {item.reminderId ? (
                             <Badge
                               variant="outline"
-                              className="mt-1 text-[10px]"
+                              className="mt-1 text-3xs"
                             >
                               reminder set
                             </Badge>
@@ -547,7 +558,7 @@ export function InteractionDetailSheet({
                   size="sm"
                   variant="ghost"
                   disabled={pending}
-                  onClick={() => setEditing(false)}
+                  onClick={() => setEditingId(null)}
                 >
                   Cancel
                 </Button>

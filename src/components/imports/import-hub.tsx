@@ -17,6 +17,8 @@ import {
   FileSpreadsheet,
   HardDrive,
   Loader2,
+  MailCheck,
+  MessageCircle,
   MessageSquare,
 } from "lucide-react";
 import {
@@ -25,6 +27,7 @@ import {
 } from "@/components/imports/import-history";
 import { ImportDropOverlay } from "@/components/imports/import-drop-overlay";
 import { ImportDropzone } from "@/components/imports/import-dropzone";
+import { FolderTriageCard } from "@/components/imports/folder-triage-card";
 import { ImportFinishCard } from "@/components/imports/import-finish-card";
 import { ImportQueueCard } from "@/components/imports/import-queue-card";
 import { DriveImportCard } from "@/components/imports/drive-import-card";
@@ -44,8 +47,10 @@ import {
   useWindowFileDrop,
   useWindowFilePaste,
 } from "@/lib/use-window-file-drop";
-import { detectImportFiles } from "@/lib/imports/detect-import-file";
-import { stageDrop, useImportQueue } from "@/lib/imports/use-import-queue";
+import { handOffChatFiles } from "@/lib/imports/chat-handoff";
+import { LINKEDIN_PRIVATE, detectImportFiles, type DetectionResult } from "@/lib/imports/detect-import-file";
+import { acceptsNewDrop } from "@/lib/imports/import-queue";
+import { getImportQueueState, stageDrop, useImportQueue } from "@/lib/imports/use-import-queue";
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
 import {
   openDrivePicker,
@@ -59,7 +64,7 @@ import { extractLinkedInProfileRefs } from "@/lib/linkedin-paste";
 import { startGmailOAuth } from "@/actions/gmail";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
-import { MAX_CONTACTS_FILE_BYTES } from "@/lib/imports/import-constants";
+import { maxImportBytesFor } from "@/lib/imports/import-constants";
 import { MAX_DROP_DEPTH } from "@/lib/capture/file-drop";
 import {
   calendarSources,
@@ -204,6 +209,14 @@ const ContactsFileImport = dynamic(
     })),
   { loading: () => <PanelSkeleton /> },
 );
+
+const EmailActivityPanelLoader = dynamic(
+  () =>
+    import("@/components/imports/email-activity-loader").then((m) => ({
+      default: m.EmailActivityPanelLoader,
+    })),
+  { loading: () => <PanelSkeleton /> },
+);
 const GoogleContactsImport = dynamic(
   () =>
     import("@/components/imports/google-contacts-import").then((m) => ({
@@ -225,6 +238,13 @@ const LinkedInMessagesImport = dynamic(
     })),
   { loading: () => <PanelSkeleton /> },
 );
+const ChatMessagesImport = dynamic(
+  () =>
+    import("@/components/imports/chat-messages-import").then((m) => ({
+      default: m.ChatMessagesImport,
+    })),
+  { loading: () => <PanelSkeleton /> },
+);
 const CalendarImportSection = dynamic(
   () =>
     import("@/components/imports/calendar-import-section").then((m) => ({
@@ -236,8 +256,10 @@ const CalendarImportSection = dynamic(
 type RowId =
   | "import-panel-connections"
   | "import-panel-messages"
+  | "import-panel-chats"
   | "import-contacts-file"
   | "import-google-contacts"
+  | "import-email-activity"
   | "import-outlook-contacts"
   | "import-panel-calendar"
   | "import-calendar-file";
@@ -253,6 +275,7 @@ const ROW_FOR_ANCHOR: Record<string, RowId | undefined> = {
   "import-google-contacts": "import-google-contacts",
   "import-outlook-contacts": "import-outlook-contacts",
   "import-panel-messages": "import-panel-messages",
+  "import-panel-chats": "import-panel-chats",
   "import-panel-calendar": "import-panel-calendar",
 };
 
@@ -278,6 +301,10 @@ function rowForImportJobKind(kind: ImportJobKind): RowId | null {
       return "import-calendar-file";
     case "drive_docs":
       return null;
+    case "chat":
+      return "import-panel-chats";
+    case "linkedin_export":
+      return null;
   }
 }
 
@@ -293,6 +320,7 @@ export function ImportHub({
   outlook,
   drive,
   latestFinish,
+  chatImports = false,
 }: {
   history: ImportHistoryItem[];
   calendarSubscriptions?: CalendarSub[];
@@ -308,6 +336,8 @@ export function ImportHub({
   drive?: DriveImportInput;
   /** The most recent completed import, drawn as the done card when nothing is running. */
   latestFinish?: LatestFinishedImport | null;
+  /** `feature.chat-imports` is live for this viewer; the WhatsApp/iMessage row exists only then. */
+  chatImports?: boolean;
 }) {
   const job = useImportJob();
   const queue = useImportQueue();
@@ -403,12 +433,78 @@ export function ImportHub({
    */
   const refreshAfterUndo = useCallback(() => router.refresh(), [router]);
 
-  const handleFiles = useCallback(async (files: DroppedFile[]) => {
-    const result = await detectImportFiles(files, {
-      maxBytes: MAX_CONTACTS_FILE_BYTES,
-    });
-    await stageDrop(result);
-  }, []);
+  /** A folder's importable files, waiting for the person to confirm which. */
+  const [triage, setTriage] = useState<DetectionResult | null>(null);
+  /** Reading a pick's files to work out what they are. Folders can be thousands deep. */
+  const [scanning, setScanning] = useState(false);
+
+  const handleFiles = useCallback(
+    async (files: DroppedFile[]) => {
+      // Also checked in `stageDrop`; here so a LinkedIn ZIP isn't read for seconds only to be refused.
+      if (!acceptsNewDrop(getImportQueueState().phase)) {
+        toast.message(IMPORT_COPY.queueBusy);
+        return;
+      }
+      const capped = files.length > IMPORT_DROP_LIMITS.maxFiles;
+      const kept = capped ? files.slice(0, IMPORT_DROP_LIMITS.maxFiles) : files;
+      setScanning(true);
+      try {
+        const result = await detectImportFiles(kept, {
+          maxBytes: maxImportBytesFor,
+          truncated: capped,
+          chatImports,
+        });
+        // A LinkedIn export is ~35 files: say up front what happens to them, so a person who
+        // dropped the whole folder knows the private ones never leave their device.
+        const exportKept = result.exportFiles.length;
+        const exportPrivate = result.ignored.filter((d) => d.reason === LINKEDIN_PRIVATE).length;
+        if (exportKept > 0) {
+          toast.info(
+            `Orbit will keep ${exportKept} files from your LinkedIn export${
+              exportPrivate
+                ? ` — ${exportPrivate} private ${exportPrivate === 1 ? "file stays" : "files stay"} on your device`
+                : ""
+            }`,
+          );
+        }
+        if (result.chatFiles.length) {
+          // Open the row first: the card mounts with it and picks the files up on mount.
+          setOpen("import-panel-chats");
+          handOffChatFiles(result.chatFiles);
+          requestAnimationFrame(() =>
+            document
+              .getElementById("import-panel-chats")
+              ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+          );
+        }
+        // A chat-only drop stages nothing; skipping avoids flashing an empty "done" queue.
+        if (
+          result.chatFiles.length &&
+          !result.staged.length &&
+          !result.ignored.length &&
+          !result.skipped.length
+        ) {
+          return;
+        }
+        // A folder with more than one file Orbit reads is a choice, not a guess: rank them and
+        // let the person confirm. Loose files were hand-picked, and one candidate has no choice
+        // to make, so both go straight to the review as before.
+        const fromFolder = kept.some((f) => f.path !== "");
+        if (fromFolder && result.candidates.length >= 2) {
+          setTriage(result);
+          return;
+        }
+        setTriage(null);
+        await stageDrop(result);
+        if (capped) {
+          toast.message(`That folder has ${files.length.toLocaleString()} files — checked the first ${IMPORT_DROP_LIMITS.maxFiles}`);
+        }
+      } finally {
+        setScanning(false);
+      }
+    },
+    [chatImports, setOpen],
+  );
 
   /**
    * A LinkedIn profile link dragged in from another tab (or pasted onto the page) adds that
@@ -556,7 +652,9 @@ export function ImportHub({
 
       <ImportDropzone
         onFiles={(files) => void handleFiles(files)}
-        busy={reading}
+        chatImports={chatImports}
+        busy={reading || scanning}
+        disabled={!acceptsNewDrop(queue.phase)}
         extraAction={
           driveConfigured ? (
             <Button
@@ -595,6 +693,17 @@ export function ImportHub({
           step={job?.step}
           cancelling={Boolean(job?.cancelling)}
           onCancel={cancelImportJob}
+        />
+      ) : null}
+
+      {triage ? (
+        <FolderTriageCard
+          result={triage}
+          onCancel={() => setTriage(null)}
+          onConfirm={(chosen) => {
+            setTriage(null);
+            void stageDrop(chosen);
+          }}
         />
       ) : null}
 
@@ -651,6 +760,18 @@ export function ImportHub({
             <LinkedInMessagesImport />
           </ImportSourceRow>
 
+          {chatImports ? (
+            <ImportSourceRow
+              {...row("import-panel-chats")}
+              icon={MessageCircle}
+              accent={MESSAGES_ACCENT}
+              title="Chat messages"
+              status="WhatsApp and iMessage exports, read on your device"
+            >
+              <ChatMessagesImport />
+            </ImportSourceRow>
+          ) : null}
+
           <ImportSourceRow
             {...row("import-contacts-file")}
             icon={BookUser}
@@ -673,6 +794,22 @@ export function ImportHub({
             }
           >
             <GoogleContactsImport />
+          </ImportSourceRow>
+
+          {/* Directly under the Google connection, because it reads the mailbox connected
+              there and the opt-in should not be somewhere the user has to go looking. */}
+          <ImportSourceRow
+            {...row("import-email-activity")}
+            icon={MailCheck}
+            accent={CONNECTIONS_ACCENT}
+            title="Email activity"
+            status={
+              google?.connected
+                ? "Log who you email, without storing messages"
+                : "Needs a connected Google account"
+            }
+          >
+            <EmailActivityPanelLoader />
           </ImportSourceRow>
 
           <ImportSourceRow
@@ -726,7 +863,7 @@ export function ImportHub({
                   "Networking meetings become logged interactions",
                   "New people from invites land in your contacts",
                 ]}
-                note="Connecting Google and Outlook is free on every plan, and so are LinkedIn imports and one-off calendar files."
+                note="Free connects one of Google or Outlook; Pro and Max connect both. LinkedIn imports and one-off calendar files are free on every plan."
               />
             )}
           </ImportSourceRow>

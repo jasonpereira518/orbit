@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { Copy, ExternalLink, Send } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { copyText } from "@/lib/clipboard";
 import {
   bulkSendOutreach,
   markMessageAction,
@@ -86,8 +87,11 @@ export function BulkActionBar({
         return `--- ${r.prospectName || r.prospectId} ---\n${header}${r.body}`;
       })
       .join("\n\n");
-    navigator.clipboard.writeText(text);
     start(async () => {
+      if (!(await copyText(text))) {
+        toast.error(TOAST_COPY.copyFailed);
+        return;
+      }
       try {
         for (const row of activeRows) {
           await markMessageAction({ messageId: row.messageId, status: "copied" });

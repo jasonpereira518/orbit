@@ -27,11 +27,19 @@ export const MICROSOFT_SCOPES = {
   contacts: `${GRAPH_PREFIX}Contacts.Read`,
   calendar: `${GRAPH_PREFIX}Calendars.Read`,
   mail: `${GRAPH_PREFIX}Mail.Read`,
+  /**
+   * Send mail as the user — the only write permission Orbit asks Microsoft for, and only when
+   * the person chooses to send from Outlook. Deliberately NOT Mail.ReadWrite: sending through
+   * `/me/sendMail` needs no access to what is already in the mailbox (direct-email P3).
+   */
+  mailSend: `${GRAPH_PREFIX}Mail.Send`,
+  /** Cloud notes: list recent OneDrive files and read the ones that look like meeting notes. */
+  files: `${GRAPH_PREFIX}Files.Read`,
 } as const;
 
 export type MicrosoftScope = (typeof MICROSOFT_SCOPES)[keyof typeof MICROSOFT_SCOPES];
 
-export const MICROSOFT_PURPOSES = ["contacts", "calendar", "recruiter_scan"] as const;
+export const MICROSOFT_PURPOSES = ["contacts", "calendar", "recruiter_scan", "send", "files"] as const;
 export type MicrosoftPurpose = (typeof MICROSOFT_PURPOSES)[number];
 
 const IDENTITY_SCOPES: readonly MicrosoftScope[] = [
@@ -46,6 +54,8 @@ const PURPOSE_SCOPE: Record<MicrosoftPurpose, MicrosoftScope> = {
   contacts: MICROSOFT_SCOPES.contacts,
   calendar: MICROSOFT_SCOPES.calendar,
   recruiter_scan: MICROSOFT_SCOPES.mail,
+  send: MICROSOFT_SCOPES.mailSend,
+  files: MICROSOFT_SCOPES.files,
 };
 
 export function isMicrosoftPurpose(value: unknown): value is MicrosoftPurpose {
@@ -89,6 +99,10 @@ export function hasCalendarScope(scopes: string | null | undefined): boolean {
 
 export function hasMailScope(scopes: string | null | undefined): boolean {
   return hasScope(scopes, MICROSOFT_SCOPES.mail);
+}
+
+export function hasSendScope(scopes: string | null | undefined): boolean {
+  return hasScope(scopes, MICROSOFT_SCOPES.mailSend);
 }
 
 export function grantCovers(purpose: MicrosoftPurpose, scopes: string | null | undefined): boolean {
@@ -164,6 +178,10 @@ export function missingScopeMessage(purpose: MicrosoftPurpose | null | undefined
       return "Microsoft didn’t grant contacts access — reconnect and allow it";
     case "calendar":
       return "Microsoft didn’t grant calendar access — reconnect and allow it";
+    case "send":
+      return "Microsoft didn’t grant permission to send — reconnect and allow it";
+    case "files":
+      return "Microsoft didn’t grant OneDrive access — reconnect and allow it";
     default:
       return "Microsoft didn’t grant mail access — reconnect and allow it";
   }

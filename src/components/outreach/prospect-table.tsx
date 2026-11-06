@@ -15,6 +15,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { MessageEditorRow } from "@/components/outreach/message-editor-row";
 import { OutcomeControls } from "@/components/outreach/outcome-controls";
 import { OutreachActions } from "@/components/outreach/outreach-actions";
+import { normalizeCompanyKey } from "@/lib/company-name";
+import type { WarmPath } from "@/lib/warm-paths";
 import { buildLinkedInSearchUrl, buildLinkedInUrl, channelLabel } from "@/lib/outreach-channels";
 import { isAwaitingReply, isDeliveredMessage } from "@/lib/outreach-metrics";
 import type { OutreachChannel, PipelineFilter } from "@/lib/outreach-types";
@@ -43,6 +45,7 @@ export type ProspectRow = {
     stepIndex?: number | null;
     outcome?: string | null;
     scheduledFor?: Date | string | null;
+    sentAt?: Date | string | null;
   } | null;
   messages?: Array<{
     id: string;
@@ -52,14 +55,64 @@ export type ProspectRow = {
   }>;
 };
 
+
+/**
+ * "You already know 2 people at Stripe" — the line that should stop a cold email being sent.
+ *
+ * Renders nothing when there is no connection, which is the common case and must stay quiet;
+ * a row of empty "no warm path" labels would train people to ignore the one that matters.
+ *
+ * Names link straight to the contact, because the next action is reading what you know about
+ * them before asking for anything.
+ */
+function WarmPathNote({
+  company,
+  warmPaths,
+}: {
+  company?: string | null;
+  warmPaths?: Record<string, WarmPath[]>;
+}) {
+  if (!company || !warmPaths) return null;
+  const paths = warmPaths[normalizeCompanyKey(company)];
+  if (!paths?.length) return null;
+
+  return (
+    <div className="mt-1.5 rounded-lg border border-primary/30 bg-primary/5 px-2 py-1.5 text-xs">
+      <span className="font-medium text-ink">
+        You know {paths.length} {paths.length === 1 ? "person" : "people"} here
+      </span>
+      <ul className="mt-1 space-y-0.5">
+        {paths.map((p) => (
+          <li key={p.contactId} className="text-muted-foreground">
+            <IntentLink
+              href={`/contacts/${p.contactId}`}
+              className="text-ink underline-offset-2 hover:underline"
+            >
+              {p.fullName}
+            </IntentLink>
+            {" — "}
+            {p.reasonLabel}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function ProspectTable({
   campaignId,
   prospects,
+  warmPaths,
   defaultChannel,
   onUpdated,
 }: {
   campaignId: string;
   prospects: ProspectRow[];
+  /**
+   * Normalised company key -> people the user already knows there. Absent for a company with
+   * nobody behind it, which is why the cell below tests presence rather than length.
+   */
+  warmPaths?: Record<string, WarmPath[]>;
   defaultChannel: OutreachChannel;
   onUpdated?: () => void;
 }) {
@@ -151,6 +204,7 @@ export function ProspectTable({
                   id: message.id,
                   status: message.status,
                   outcome: message.outcome ?? null,
+                  sentAt: message.sentAt ?? null,
                 });
               const delivered =
                 message &&
@@ -158,6 +212,7 @@ export function ProspectTable({
                   id: message.id,
                   status: message.status,
                   outcome: message.outcome ?? null,
+                  sentAt: message.sentAt ?? null,
                 });
               const profileUrl = prospect.linkedinUrl
                 ? buildLinkedInUrl(prospect.linkedinUrl)
@@ -226,6 +281,12 @@ export function ProspectTable({
                       {prospect.title || "—"}
                       {prospect.company ? ` @ ${prospect.company}` : ""}
                     </div>
+                    {/* The warm path, directly under the company it belongs to.
+                        This is the whole point of the feature: the moment a person decides
+                        whether to send a cold email is the moment they need to know they do
+                        not have to. Putting it anywhere else on the page — a panel, a tab —
+                        would be putting it somewhere they are not looking. */}
+                    <WarmPathNote company={prospect.company} warmPaths={warmPaths} />
                     <div className="mt-1 flex flex-wrap gap-1">
                       <Badge variant="outline">{prospect.status}</Badge>
                       {prospect.isDemo && <Badge variant="outline">Demo</Badge>}
@@ -339,7 +400,7 @@ export function ProspectTable({
  * the header row that normally names these columns is hidden below `md`.
  */
 const CELL_LABEL =
-  "mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground/80 md:hidden";
+  "mb-1 block text-2xs font-medium uppercase tracking-wide text-muted-foreground-subtle md:hidden";
 
 export function useSelectedProspectIds(prospects: ProspectRow[]) {
   return useMemo(

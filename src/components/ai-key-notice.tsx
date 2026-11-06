@@ -4,17 +4,20 @@ import Link from "next/link";
 import { BuyPackButton } from "@/components/credits/buy-pack-button";
 import { integrationHref } from "@/components/settings/sections";
 import { useViewerPlan } from "@/components/viewer-plan";
-import { AI_NOTICE_COPY } from "@/lib/ai-access-copy";
+import { noticeCopyFor } from "@/lib/ai-access-copy";
+import { PLAN_CONFIG } from "@/lib/plans/plan-config";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 
 /**
  * The one message for "AI can't run for you right now". Pages render it from what they
- * already loaded (`reason`); the only thing it reads for itself is the viewer's plan, so it
- * pitches the right way out.
+ * already loaded (`reason`); the only thing it reads for itself is the viewer's plan (and when
+ * its credits refill), so it pitches the right way out.
  *
  *  - No key on Free: add a key — or Pro and Max, which include AI.
- *  - Out of credits on Pro or Max: buy a $5 pack, or (Pro) upgrade to Max, or use a key.
- *    Nothing is charged automatically; this is where the person chooses.
+ *  - Out of credits on Free: says when they refill, offering a key or a look at the plans.
+ *  - Out of credits: buy a $5 pack, or (Free) compare plans, or (Pro) upgrade to Max, or use a key.
+ *    Lifetime has no packs and nothing above it, so it gets the key alone. Nothing is charged
+ *    automatically; this is where the person chooses.
  *  - Orbit's AI briefly unavailable: it comes back; a key keeps you going meanwhile.
  *
  * `compact` drops the explanation below `sm`, leaving the headline and the actions. On /chat
@@ -26,11 +29,15 @@ export function AiKeyNotice({
   reason,
   compact = false,
 }: {
-  feature: "capture" | "chat" | "setup" | "meeting";
+  feature: "capture" | "chat" | "setup" | "meeting" | "knowledge" | "draft";
   reason?: AiAccessDenial | null;
   compact?: boolean;
 }) {
-  const extra = compact ? "hidden sm:inline" : undefined;
+  const { plan, includedAiAvailable, creditsResetAt } = useViewerPlan();
+  const copy = noticeCopyFor(reason ?? null, plan, creditsResetAt);
+  // Free at zero keeps everything on phones too: the refill date is the point of that state.
+  const freeOut = reason === "managed_limit" && plan === "free";
+  const extra = compact && !freeOut ? "hidden sm:inline" : undefined;
   const verb =
     feature === "chat"
       ? "answer questions about your network"
@@ -38,12 +45,14 @@ export function AiKeyNotice({
         ? "extract people from notes"
         : feature === "meeting"
           ? "summarize meetings"
-          : "read your notes and answer questions";
-  const { plan, includedAiAvailable } = useViewerPlan();
-  const copy = AI_NOTICE_COPY[reason ?? "key_required"];
+          : feature === "knowledge"
+            ? "summarize people and see how they fit your goals"
+            : feature === "draft"
+              ? "write a follow-up"
+            : "read your notes and answer questions";
   // "Pro and Max include AI" only to a Free account, and only where it can actually run.
   const offerUpgrade = copy.offer === "upgrade" && plan === "free" && includedAiAvailable;
-  const offerCredits = copy.offer === "credits" && (plan === "orbit" || plan === "max");
+  const offerCredits = copy.offer === "credits" && PLAN_CONFIG[plan].features.creditPacks;
   const link = "font-medium text-primary underline-offset-2 hover:underline";
   return (
     <div
@@ -75,6 +84,11 @@ export function AiKeyNotice({
       {offerCredits && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <BuyPackButton />
+          {plan === "free" && (
+            <Link href="/pricing" className={link}>
+              Compare plans
+            </Link>
+          )}
           {plan === "orbit" && (
             <Link
               href="/settings#settings-plan"

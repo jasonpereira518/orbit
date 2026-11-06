@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { canConnect } from "@/lib/connection-limits";
 import { auth } from "@clerk/nextjs/server";
+import { kickSyncPass } from "@/lib/sync-kick";
 import { consumeGmailOAuthState } from "@/actions/gmail";
 import {
   exchangeCodeForTokens,
@@ -11,6 +12,7 @@ import { isDemoMode } from "@/lib/auth";
 import { deleteEventConnection } from "@/lib/events/connections";
 import { missingGooglePurposes, serializeGooglePurposes } from "@/lib/google-scopes";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
+import { dropCloudNoteSource, syncCloudNoteSource } from "@/lib/cloud-notes/sources";
 
 /** Keeps `error_events.kind` low-cardinality so the admin console can group on it. */
 function classifyOAuthFailure(err: unknown): string {
@@ -119,6 +121,15 @@ export async function GET(request: Request) {
       redirectBase.searchParams.set("reason", "missing_scope");
       return NextResponse.redirect(redirectBase);
     }
+
+    // Cloud notes: an account switch points the cursor at someone else's drive.
+    if (switchedFrom) await dropCloudNoteSource(sessionUserId, "google");
+    await syncCloudNoteSource(sessionUserId, "google", connection?.scopes);
+
+    // An armed connection is due this instant; without the kick it waits for the next
+    // scheduled tick (up to ~30 minutes late), which for someone connecting during
+    // onboarding is a first look at an empty app.
+    if (connection?.nextSyncAt) after(() => kickSyncPass());
 
     redirectBase.searchParams.set("gmail", "connected");
     redirectBase.searchParams.set("google", "connected");

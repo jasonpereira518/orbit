@@ -34,6 +34,7 @@ const SOURCES = [
   "src/lib/gmail-scan-type.ts",
   "src/lib/outlook-scan-type.ts",
   "src/lib/drive-import-type.ts",
+  "src/lib/linkedin-export-type.ts",
 ];
 
 const declared = new Map<string, string>();

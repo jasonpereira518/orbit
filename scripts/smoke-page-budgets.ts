@@ -46,6 +46,8 @@ import { traced } from "../src/lib/perf-trace";
 import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 import { scaleContactRows } from "./lib/scale-fixture";
 import { loadKnowledgeBase } from "../src/lib/knowledge-base";
+import { loadKnowledgePeople } from "../src/lib/knowledge-people";
+import { KNOWLEDGE_PEOPLE_LIMIT } from "../src/lib/knowledge-people-types";
 import { radarRuns, userSettings } from "../src/db/schema";
 import { claimRadarLease, runRadarForUser } from "../src/lib/radar/run";
 import { loadRadarBriefing, loadRadarPage } from "../src/lib/radar/page-data";
@@ -75,7 +77,9 @@ function contactScans(statements: string[]) {
 
 /** True when the column is selected as a bare value (not merely referenced inside an expression). */
 function selectsBare(statement: string, column: string) {
-  return new RegExp(`"${column}"\\s*(,|\\bfrom\\b)`, "i").test(statement);
+  // A comma followed by a number is a function argument (`substr("profile_image_url", 1, 11)`
+  // reads an 11-character prefix), not the next item of a projection.
+  return new RegExp(`"${column}"\\s*(,(?!\\s*\\d)|\\bfrom\\b)`, "i").test(statement);
 }
 
 type SpecialRow = {
@@ -262,11 +266,13 @@ async function main() {
   // windowed read of `contact_career_moves`), the news probe (one indexed read of the global
   // news tables with the account's company keys; a write only when it finds news), and the
   // posts read (recent `contact_signals` posts, one windowed read, LIMIT 200). The nightly
-  // post check itself runs on `schedule` runs only and is not counted here. 27, up from 26:
-  // the email-insights opt-in check (`produceEmailSignals`), one statement that returns nothing
+  // post check itself runs on `schedule` runs only and is not counted here. 28, up from 26 by two reads:
+  // `loadUserFocus` and the email-insights opt-in check (`produceEmailSignals`), one statement that returns nothing
   // for an account that has not opted in.
   check("radar run succeeds at 3,000 contacts", radarRun.ok);
-  check("radar run issues ≤ 27 statements", radarRunCount <= 27, `got ${radarRunCount}`);
+  // 26 + the one constant read of the user's imported skills/job titles (`loadUserFocus`) + the
+  // email-insights opt-in check above = 28.
+  check("radar run issues ≤ 28 statements", radarRunCount <= 28, `got ${radarRunCount}`);
   check(
     "radar run never pulls notes",
     radarRunQueries.every((q) => !selectsBare(q, "notes")),
@@ -576,7 +582,7 @@ async function main() {
       persistRemote: async () => null,
       resolveConnectedAccount: async () => {
         calls.push("connected");
-        return "https://connected.example.com/photo.jpg";
+        return { url: "https://connected.example.com/photo.jpg", source: "google" as const };
       },
       resolveLinkedIn: async () => {
         calls.push("linkedin");
@@ -691,6 +697,37 @@ async function main() {
     `${(knowledgeBytes / renderedContacts).toFixed(0)} bytes a contact`
   );
 
+  // ---- Knowledge people index --------------------------------------------------------
+  console.log("\nKnowledge people index (loadKnowledgePeople)…");
+  startQueryCount();
+  const people = await loadKnowledgePeople(USER);
+  const peopleCount = stopQueryCount();
+  const peopleStatements = capturedQueries();
+  const peopleScans = contactScans(peopleStatements);
+  console.log(`  statements: ${peopleCount}`);
+  check("people index issues ≤ 4 statements", peopleCount <= 4, `got ${peopleCount}`);
+  check(
+    "every people-index contacts scan is bounded by LIMIT",
+    peopleScans.length >= 1 && peopleScans.every((s) => /\blimit\b/i.test(s)),
+    peopleScans.find((s) => !/\blimit\b/i.test(s))?.slice(0, 200)
+  );
+  check(
+    "people index never pulls notes as a bare column",
+    peopleScans.every((s) => !selectsBare(s, "notes")),
+    peopleScans.find((s) => selectsBare(s, "notes"))?.slice(0, 200)
+  );
+  check("people index returns at most its limit", people.rows.length <= KNOWLEDGE_PEOPLE_LIMIT, `${people.rows.length}`);
+  check("people index still counts every contact", people.total === N + SPECIAL_ROWS, `${people.total}`);
+  const peopleBytes = JSON.stringify(people).length;
+  console.log(`  ${(peopleBytes / 1024).toFixed(0)} KB, ${(peopleBytes / Math.max(1, people.rows.length)).toFixed(0)} bytes a person`);
+  // A row is a name, a role, a one-line gist and a few flags. An avatar or a whole summary
+  // per row blows through this.
+  check(
+    "people index moves under 700 bytes per person",
+    peopleBytes / Math.max(1, people.rows.length) < 700,
+    `${(peopleBytes / Math.max(1, people.rows.length)).toFixed(0)} bytes a person`
+  );
+
   // ---- Payload scaling ---------------------------------------------------------------
   //
   // Everything above runs at ONE account size, so it can prove a payload is narrow but not
@@ -704,6 +741,7 @@ async function main() {
   const smallGraph = await loadGraphData(SCALE_USER, { profile: Promise.resolve(null), scope: "all" });
   const smallPanel = await loadNotificationPanel(SCALE_USER, new Date(), { withAlerts: false, radar: true });
   const smallKnowledge = await loadKnowledgeBase(SCALE_USER);
+  const smallPeople = await loadKnowledgePeople(SCALE_USER);
   check(
     "knowledge payload does not grow with the account",
     JSON.stringify(knowledge).length / Math.max(1, JSON.stringify(smallKnowledge).length) < 1.5,
@@ -741,6 +779,9 @@ async function main() {
     // Bounded in SQL: four limited queries (80 + 100 + 30 + 25) feed `items`. This is the
     // shape the other two should end up in.
     { name: "notifications panel", small: smallPanel.items.length, large: panel.items.length, bound: 235 },
+    // One LIMITed read of the most recently touched people; the account's size only moves the
+    // `total` counter beside it.
+    { name: "knowledge people", small: smallPeople.rows.length, large: people.rows.length, bound: KNOWLEDGE_PEOPLE_LIMIT, flat: true },
   ];
   const sizeRatio = (N + SPECIAL_ROWS) / (SCALE_N + SPECIAL_ROWS);
 
@@ -799,25 +840,21 @@ async function main() {
   //
   // Phase B flips both together: the contacts scan gets an ORDER BY … LIMIT, this check
   // inverts, and the surfaces above get real bounds.
-  // The network scan still reads one row per contact — clustering and constellation
-  // eligibility are whole-network questions that a sample cannot answer — but it is now
-  // NARROW, and that is the property worth pinning. A display column reappearing here would
-  // be selected for the entire account in order to render a few hundred rows, which is the
-  // mistake this whole section exists to catch.
-  //
-  // Identified by `constellation_pin`: the hydration queries below also select from
-  // `contacts`, so the scan has to be named by something only it asks for.
-  const networkScan = dashboardScans.find((q) => selectsBare(q, "constellation_pin"));
-  check("the dashboard's network scan is identifiable", Boolean(networkScan));
-  for (const column of [
-    "full_name", "ai_summary", "email", "title", "last_interaction_at", "created_at",
-  ]) {
-    check(
-      `the network scan does not select ${column}`,
-      Boolean(networkScan) && !selectsBare(networkScan!, column),
-      networkScan?.slice(0, 220)
-    );
-  }
+  // There is no network scan any more. Who the constellation may draw, the cluster counts,
+  // the metrics sample and the histogram are asked of Postgres (src/lib/dashboard-network.ts,
+  // held to the in-memory answers by smoke-dashboard-parity.ts), so no statement brings one
+  // row per contact into memory. Pinned two ways: the old scan's shape is absent, and the
+  // closeness map the page holds covers what it renders, not the account.
+  check(
+    "the dashboard runs no whole-network contact scan",
+    !dashboardScans.some((q) => selectsBare(q, "constellation_pin")),
+    dashboardScans.find((q) => selectsBare(q, "constellation_pin"))?.slice(0, 220)
+  );
+  check(
+    "the dashboard holds closeness only for the contacts it names",
+    dashboard.closenessById.size < N,
+    `${dashboard.closenessById.size} entries for a ${N + SPECIAL_ROWS}-contact account`
+  );
 
   // The dashboard's real size.
   //

@@ -20,7 +20,7 @@
  * and closing that hole also closed the pre-existing one where contact follow-up emails
  * skipped the cap (see `countSendsToday`).
  */
-import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { agentSendRequests, contacts, type AgentSendRequest } from "@/db/schema";
 import { sanitizeAgentText } from "@/lib/mcp/sanitize";
@@ -228,25 +228,34 @@ export async function getAgentSendRequest(
 /** Everything still awaiting a decision, newest first. */
 export async function listPendingAgentSends(userId: string): Promise<AgentSendSummary[]> {
   const db = await getDb();
-  await expireStale(userId);
-  const rows = await db
-    .select({
-      row: agentSendRequests,
-      contactName: contacts.fullName,
-      contactEmail: contacts.email,
-    })
-    .from(agentSendRequests)
-    // Joined on the owner too: `contactId` is resolved to the caller's own contact when the
-    // draft is created, and this keeps that true even if a row were ever written otherwise.
-    .leftJoin(
-      contacts,
-      and(eq(contacts.id, agentSendRequests.contactId), eq(contacts.userId, agentSendRequests.userId))
-    )
-    .where(
-      and(eq(agentSendRequests.userId, userId), eq(agentSendRequests.status, "pending"))
-    )
-    .orderBy(desc(agentSendRequests.createdAt))
-    .limit(50);
+  // The expiry sweep and the read run together: the read leaves out anything past its expiry
+  // itself, so it never had to wait for the UPDATE (one round, not two, per dashboard view).
+  const now = new Date();
+  const [, rows] = await Promise.all([
+    expireStale(userId),
+    db
+      .select({
+        row: agentSendRequests,
+        contactName: contacts.fullName,
+        contactEmail: contacts.email,
+      })
+      .from(agentSendRequests)
+      // Joined on the owner too: `contactId` is resolved to the caller's own contact when the
+      // draft is created, and this keeps that true even if a row were ever written otherwise.
+      .leftJoin(
+        contacts,
+        and(eq(contacts.id, agentSendRequests.contactId), eq(contacts.userId, agentSendRequests.userId))
+      )
+      .where(
+        and(
+          eq(agentSendRequests.userId, userId),
+          eq(agentSendRequests.status, "pending"),
+          gte(agentSendRequests.expiresAt, now)
+        )
+      )
+      .orderBy(desc(agentSendRequests.createdAt))
+      .limit(50),
+  ]);
   const known = await knownContactEmails(userId, rows.map(({ row }) => row.toEmail));
   return rows.map(({ row, contactName, contactEmail }) =>
     toSummary({ ...row, contactName, recipientTrust: classifyRecipient(row.toEmail, contactEmail, known) })
@@ -363,6 +372,23 @@ export async function finishAgentSend(
             updatedAt: new Date(),
           }
     )
+    .where(eq(agentSendRequests.id, id));
+}
+
+/**
+ * The send may have gone out (a timeout after the provider accepted it, and no way to check
+ * Sent). Never re-approvable — the person checks their Sent folder instead — so this uses the
+ * `failed` status reserved for exactly this case.
+ */
+export async function markAgentSendAmbiguous(id: string): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(agentSendRequests)
+    .set({
+      status: "failed",
+      errorMessage: "May have sent — check your Sent folder before sending it again.",
+      updatedAt: new Date(),
+    })
     .where(eq(agentSendRequests.id, id));
 }
 

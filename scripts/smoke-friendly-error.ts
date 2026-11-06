@@ -161,7 +161,7 @@ check("a truncated JSON transcript → the incomplete-answer copy",
 const aiSource = readFileSync("src/lib/ai.ts", "utf8");
 const wrapped = aiSource.match(/translatingProviderErrors\(/g)?.length ?? 0;
 // The definition is `translatingProviderErrors<T>(`, which this pattern does not match.
-check("all five bypassing paths are wrapped (streamText, 2× transcription, 2× embeddings)", wrapped === 5, `${wrapped} call sites`);
+check("all four bypassing paths are wrapped (2× transcription, 2× embeddings)", wrapped === 4, `${wrapped} call sites`);
 
 console.log("out of credit is not 'give it a moment'");
 const quotaCases: [string, string, "quota" | "rate_limit"][] = [

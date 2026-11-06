@@ -31,7 +31,7 @@ export type ExperienceSectionProps = {
   contactId: string;
   /** Null when nothing has been captured yet — the empty state is the entry point. */
   profile: {
-    source: "extension" | "web" | "apollo";
+    source: "extension" | "web" | "apollo" | "messages";
     capturedAt: string;
     warnings: string[];
     headline: string | null;
@@ -128,7 +128,7 @@ function ChipRow({ label, items }: { label: string; items: string[] }) {
         {items.map((item, index) => (
           <span
             key={`${index}-${item}`}
-            className="rounded-full border border-border/70 px-2.5 py-1 text-[11px] text-muted-foreground"
+            className="rounded-full border border-border/70 px-2.5 py-1 text-2xs text-muted-foreground"
           >
             {item}
           </span>

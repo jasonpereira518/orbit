@@ -497,6 +497,15 @@ check(
 );
 check("…so its card says so", finishCopy(legacyCalendar).headline === "38 meetings logged", finishCopy(legacyCalendar).headline);
 check("an engine-era calendar import reads its own counter", row({ stats: { interactionsLogged: 12 } }).meetingsLogged === 12);
+const chatPart = row({ importType: "whatsapp_chat", fileName: "WhatsApp Chat with Maya.zip", stats: { interactionsLogged: 7 } });
+check("a chat import's sessions are not meetings", chatPart.meetingsLogged === 0 && chatPart.chatSessionsLogged === 7, JSON.stringify(chatPart));
+check("…its card says chat sessions", finishCopy(chatPart).headline === "7 chat sessions logged", finishCopy(chatPart).headline);
+check(
+  "…one session reads singular",
+  finishCopy(row({ importType: "imessage_chat", stats: { interactionsLogged: 1 } })).headline === "1 chat session logged",
+);
+const chatRun = mergeFinishSummaries([chatPart, row({ importType: "imessage_chat", stats: { interactionsLogged: 3 } })]);
+check("a run of chat imports sums its sessions", chatRun?.chatSessionsLogged === 10 && finishCopy(chatRun!).headline === "10 chat sessions logged", JSON.stringify(chatRun));
 const people = row({
   importType: "linkedin_connections",
   fileName: null,

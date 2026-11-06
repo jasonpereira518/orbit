@@ -10,7 +10,7 @@ import { getDb } from "../src/db";
 import { contacts, emailEvents, emailThreads, radarRuns, recommendations, userSettings } from "../src/db/schema";
 import { syncIdentitiesForContact } from "../src/lib/contact-identity";
 import { upsertThreadResult } from "../src/lib/email-intel/store";
-import { draftIntent } from "../src/lib/radar/drafts";
+import { draftIntent } from "../src/lib/radar/types";
 import { loadDigestContent } from "../src/lib/radar/digest";
 import { EMAIL_DIGEST_LINE, EMAIL_DRAFT_INTENTS, EMAIL_REASON_CODES, digestLineFor, isEmailDerived } from "../src/lib/radar/email-text";
 import { claimRadarLease, runRadarForUser } from "../src/lib/radar/run";

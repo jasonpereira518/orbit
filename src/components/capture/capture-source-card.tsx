@@ -2,7 +2,7 @@
 
 import { useCallback, useState, useSyncExternalStore } from "react";
 import { format } from "date-fns";
-import { ChevronLeft, ChevronRight, Copy, Download, ExternalLink } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, Download, ExternalLink, FileText } from "lucide-react";
 import type { CaptureSourceKind } from "@/lib/note-batches";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -72,8 +72,12 @@ export function CaptureSourceCard({
   const current = viewing === null ? null : photos[viewing] ?? null;
 
   return (
-    <Card className="border-border/70 shadow-none">
-      <CardHeader className="space-y-1">
+    <Card className="border-l-4 border-border/70 border-l-teal-500 shadow-none">
+      <CardHeader className="flex-row items-start gap-3 space-y-0">
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-teal-500/15 text-teal-700 dark:text-teal-300">
+          <FileText className="size-5" aria-hidden />
+        </span>
+        <div className="min-w-0 space-y-1">
         <CardTitle as="h2">What you captured</CardTitle>
         <p className="text-xs text-muted-foreground">
           {/* Local time only once hydrated — see the history list for why. */}
@@ -85,6 +89,7 @@ export function CaptureSourceCard({
           )}
           {kinds.map((k) => CAPTURE_SOURCE_META[k].label).join(" + ")}
         </p>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         {photos.length > 0 && (
@@ -166,7 +171,7 @@ export function CaptureSourceCard({
                   </span>
                 )}
               </DialogTitle>
-              <div className="relative flex max-h-[75vh] items-center justify-center overflow-hidden rounded-lg bg-muted">
+              <div className="relative flex max-h-[75dvh] items-center justify-center overflow-hidden rounded-lg bg-muted">
                 {/* eslint-disable-next-line @next/next/no-img-element -- auth-gated API route. */}
                 <img
                   key={current.id}
@@ -174,7 +179,7 @@ export function CaptureSourceCard({
                   alt={current.fileName || `Photo ${viewing + 1} from this capture`}
                   width={current.width ?? undefined}
                   height={current.height ?? undefined}
-                  className="max-h-[75vh] w-auto max-w-full object-contain"
+                  className="max-h-[75dvh] w-auto max-w-full object-contain"
                 />
                 {photos.length > 1 && (
                   <>

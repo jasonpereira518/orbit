@@ -30,18 +30,28 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useMotionValue, type MotionValue } from "motion/react";
 import { createDownsampler, encodeWav16, rmsLevel, TARGET_SAMPLE_RATE } from "@/lib/voice-recording";
-import { MAX_MEETING_MS, MeetingChunker, type MeetingChunk } from "@/lib/meeting-chunking";
+import { ABSOLUTE_VOICE_RMS, MAX_MEETING_MS, MeetingChunker, type MeetingChunk } from "@/lib/meeting-chunking";
 import { LoudnessTimeline } from "@/lib/speaker-map";
 
 const WORKLET_URL = "/orbit-pcm-worklet.js";
 const WORKLET_NAME = "orbit-pcm-recorder";
 const TICK_MS = 500;
-/** Poll the per-source meters every N worklet frames (~30 Hz at 48 kHz). */
-const METER_EVERY_FRAMES = 12;
+/**
+ * Render quanta per worklet message: 12 × 128 = 1,536 samples, ~32 ms at 48 kHz. One message
+ * is one resample, one chunker push and ONE live-socket send, so this sets all three rates —
+ * ~31 a second instead of ~375 — and Deepgram asks for 20–100 ms per send anyway. The
+ * meters are read once per message, the same ~30 Hz they always ran at.
+ */
+const BATCH_QUANTA = 12;
+/** The share's video is never shown or recorded; Chrome just will not give audio without it. */
+const IDLE_VIDEO = { frameRate: { ideal: 1, max: 1 }, width: { max: 320 }, height: { max: 240 } };
 const LEVEL_ATTACK = 0.5;
 const LEVEL_RELEASE = 0.12;
+/** No sound from the shared call for this long, mid-meeting, and the user is asked about it. */
+export const CALL_QUIET_MS = 60_000;
 
-export type MeetingRecorderState = "idle" | "requesting" | "recording" | "error";
+/** `paused`: still holding the share and mic, but not recording — see `pause`. */
+export type MeetingRecorderState = "idle" | "requesting" | "recording" | "paused" | "error";
 
 export type MeetingRecorderErrorCode =
   /** The share picker was closed, or permission was refused. */
@@ -103,9 +113,31 @@ export type MeetingRecorderHandle = {
   elapsedMs: number;
   surface: MeetingSurface;
   micActive: boolean;
+  /** Recording right now (false while paused). */
   recording: boolean;
+  /**
+   * The shared call has been silent for `CALL_QUIET_MS` mid-meeting — a share that went
+   * quiet, or the wrong tab. Never set for mic-only recording, where a quiet room is normal.
+   */
+  callQuiet: boolean;
+  /** The user's microphone is muted: the call is still recorded, their side is not. */
+  micMuted: boolean;
+  /**
+   * Mute or unmute the microphone mid-meeting without touching the share or the clock. A no-op
+   * when there is no separate mic (none was asked for, or it was lost) — in mic-only mode the
+   * mic IS the call, so there is nothing to mute without stopping.
+   */
+  setMicMuted: (muted: boolean) => void;
   start: (opts: MeetingRecorderStart) => void;
   stop: () => void;
+  /**
+   * Stop recording WITHOUT letting go of the share or the mic: the last partial chunk is
+   * emitted and frames are dropped until `resume`. Returns this recorder's audio so far, in
+   * ms. Chrome's "sharing" bar and the mic light stay on — `stop` is what turns them off.
+   */
+  pause: () => number;
+  /** Carry on after `pause` with a fresh clock starting at `startOffsetMs` on the meeting's timeline. */
+  resume: (opts: { startSeq?: number; startOffsetMs: number }) => void;
   reset: () => void;
 };
 
@@ -154,6 +186,8 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
   const [elapsedMs, setElapsedMs] = useState(0);
   const [surface, setSurface] = useState<MeetingSurface>(null);
   const [micActive, setMicActive] = useState(false);
+  const [callQuiet, setCallQuiet] = useState(false);
+  const [micMuted, setMicMutedState] = useState(false);
   const callLevel = useMotionValue(0);
   const micLevel = useMotionValue(0);
   const loudnessRef = useRef(new LoudnessTimeline());
@@ -164,6 +198,18 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
   const nodesRef = useRef<AudioNode[]>([]);
   const workletRef = useRef<AudioWorkletNode | null>(null);
   const chunkerRef = useRef<MeetingChunker | null>(null);
+  /**
+   * What the worklet handler reads on every frame, kept in one mutable bag so `resume` can
+   * swap the chunker and clock without re-wiring the audio graph.
+   */
+  const runRef = useRef<{
+    chunker: MeetingChunker;
+    downsample: ReturnType<typeof createDownsampler>;
+    capMs: number;
+    paused: boolean;
+    lastSoundMs: number;
+    quiet: boolean;
+  } | null>(null);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sessionRef = useRef(0);
   const endedRef = useRef(true);
@@ -206,9 +252,12 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
     ctxRef.current = null;
     if (ctx && ctx.state !== "closed") void ctx.close().catch(() => {});
 
+    runRef.current = null;
     callLevel.set(0);
     micLevel.set(0);
     setMicActive(false);
+    setCallQuiet(false);
+    setMicMutedState(false);
   }, [callLevel, micLevel]);
 
   /** Stop, emit the final chunk, tear down. Safe to call twice. */
@@ -247,6 +296,65 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
     setError(null);
   }, []);
 
+  const setMicMuted = useCallback(
+    (muted: boolean) => {
+      const track = micRef.current?.getAudioTracks()[0];
+      if (!track) return;
+      // A disabled track delivers silence into the graph; the track and the permission stay,
+      // so unmuting is instant and needs no new prompt. (Chrome's mic indicator stays on.)
+      track.enabled = !muted;
+      if (muted) micLevel.set(0);
+      setMicMutedState(muted);
+    },
+    [micLevel]
+  );
+
+  const pause = useCallback((): number => {
+    const run = runRef.current;
+    if (endedRef.current || !run || run.paused) return chunkerRef.current?.elapsedMs ?? 0;
+    // From here the worklet handler drops every frame, so the flush below is the last audio
+    // of this stretch and `elapsedMs` stops moving — paused time is not meeting time.
+    run.paused = true;
+    // Stop the graph, not just the handler: a running context keeps the worklet posting and
+    // both analysers working for a pause that can last the rest of the call. The share and
+    // the mic stay open (resume needs no picker); `resume` restarts the context.
+    workletRef.current?.port.postMessage("reset");
+    void ctxRef.current?.suspend().catch(() => {});
+    const last = run.chunker.flush();
+    if (last) cb.current.onChunk(withWav(last));
+    if (tickRef.current) clearInterval(tickRef.current);
+    tickRef.current = null;
+    setElapsedMs(run.chunker.elapsedMs);
+    callLevel.set(0);
+    micLevel.set(0);
+    run.quiet = false;
+    setCallQuiet(false);
+    setState("paused");
+    return run.chunker.elapsedMs;
+  }, [callLevel, micLevel]);
+
+  const resume = useCallback((opts: { startSeq?: number; startOffsetMs: number }) => {
+    const run = runRef.current;
+    const ctx = ctxRef.current;
+    if (endedRef.current || !run || !ctx || !run.paused) return;
+    // Same as a hard resume, minus the picker: a new chunker on the meeting's timeline, a new
+    // resampler and loudness timeline. The audio graph and the share are untouched.
+    const chunker = new MeetingChunker({ startSeq: opts.startSeq ?? 0, startOffsetMs: opts.startOffsetMs });
+    chunkerRef.current = chunker;
+    run.chunker = chunker;
+    run.downsample = createDownsampler(ctx.sampleRate);
+    run.capMs = MAX_MEETING_MS - opts.startOffsetMs;
+    run.lastSoundMs = 0;
+    run.quiet = false;
+    loudnessRef.current = new LoudnessTimeline();
+    // `pause` suspended it (and Chrome can suspend an idle background context on its own).
+    if (ctx.state === "suspended") void ctx.resume().catch(() => {});
+    setElapsedMs(0);
+    tickRef.current = setInterval(() => setElapsedMs(chunker.elapsedMs), TICK_MS);
+    run.paused = false;
+    setState("recording");
+  }, []);
+
   const start = useCallback(
     (opts: MeetingRecorderStart) => {
       if (!endedRef.current) return;
@@ -257,6 +365,8 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
       }
       const session = ++sessionRef.current;
       setError(null);
+      setCallQuiet(false);
+      setMicMutedState(false);
       setElapsedMs(0);
       setSurface(null);
       setState("requesting");
@@ -310,8 +420,13 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
           : shared === "browser" || shared === "window" || shared === "monitor"
             ? shared
             : null;
-        // Kept, not stopped — see the header. Disabled so nothing renders it.
-        if (videoTrack) videoTrack.enabled = false;
+        // Kept, not stopped — see the header. Disabled so nothing renders it, and held to the
+        // cheapest capture again here: the TypeError fallback below asks for plain
+        // `video: true`, which would otherwise capture the full screen at full rate.
+        if (videoTrack) {
+          videoTrack.enabled = false;
+          void videoTrack.applyConstraints(IDLE_VIDEO).catch(() => {});
+        }
 
         // The mic is best-effort. A meeting with only the call's audio is still worth
         // recording, so a refusal carries on without it and says so. In mic-only mode the
@@ -350,6 +465,7 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
           channelCount: 1,
           channelCountMode: "explicit",
           channelInterpretation: "speakers",
+          processorOptions: { batchQuanta: BATCH_QUANTA },
         });
         const nodes: AudioNode[] = [worklet];
 
@@ -379,32 +495,49 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
         chunkerRef.current = chunker;
         // Stateful: per-frame `downsampleTo16k` drops the fractional tail of every 128-sample
         // frame, which over an hour is most of a minute — see `createDownsampler`.
-        const downsample = createDownsampler(ctx.sampleRate);
-        const capMs = MAX_MEETING_MS - (opts.startOffsetMs ?? 0);
+        const run = {
+          chunker,
+          downsample: createDownsampler(ctx.sampleRate),
+          capMs: MAX_MEETING_MS - (opts.startOffsetMs ?? 0),
+          paused: false,
+          lastSoundMs: 0,
+          quiet: false,
+        };
+        runRef.current = run;
         const meterBuf = new Float32Array(callAnalyser.fftSize);
-        let frames = 0;
-
         worklet.port.onmessage = (event: MessageEvent<Float32Array>) => {
-          if (session !== sessionRef.current || chunkerRef.current !== chunker) return;
+          if (session !== sessionRef.current || chunkerRef.current !== run.chunker) return;
+          // Paused: the share is still open but nothing is recorded, metered or streamed.
+          if (run.paused) return;
           const frame = event.data;
           if (!frame || frame.length === 0) return;
+          const { chunker } = run;
 
-          if (++frames % METER_EVERY_FRAMES === 0) {
-            callAnalyser.getFloatTimeDomainData(meterBuf);
-            const callRms = rmsLevel(meterBuf);
-            smooth(callLevel, callRms);
-            let micRms = 0;
-            if (micAnalyser) {
-              micAnalyser.getFloatTimeDomainData(meterBuf);
-              micRms = rmsLevel(meterBuf);
-              smooth(micLevel, micRms);
+          // Once per message (~30 Hz, see BATCH_QUANTA).
+          callAnalyser.getFloatTimeDomainData(meterBuf);
+          const callRms = rmsLevel(meterBuf);
+          smooth(callLevel, callRms);
+          if (!micOnly) {
+            // Raw loudness, not the meter's dB-scaled `callRms`: the same floor the chunker
+            // calls "sound", so the two cannot disagree about what silence is.
+            if (timeDomainRms(meterBuf) >= ABSOLUTE_VOICE_RMS) run.lastSoundMs = chunker.elapsedMs;
+            const quiet = chunker.elapsedMs - run.lastSoundMs > CALL_QUIET_MS;
+            if (quiet !== run.quiet) {
+              run.quiet = quiet;
+              setCallQuiet(quiet);
             }
-            // Raw values, not the smoothed motion values above — smoothing is for the eye,
-            // and would blur exactly the loudness contrast the speaker map depends on.
-            loudnessRef.current.push({ atMs: chunker.elapsedMs, mic: micRms, call: callRms });
           }
+          let micRms = 0;
+          if (micAnalyser) {
+            micAnalyser.getFloatTimeDomainData(meterBuf);
+            micRms = rmsLevel(meterBuf);
+            smooth(micLevel, micRms);
+          }
+          // Raw values, not the smoothed motion values above — smoothing is for the eye,
+          // and would blur exactly the loudness contrast the speaker map depends on.
+          loudnessRef.current.push({ atMs: chunker.elapsedMs, mic: micRms, call: callRms });
 
-          const resampled = downsample(frame);
+          const resampled = run.downsample(frame);
           if (resampled.length === 0) return;
           cb.current.onFrame?.(resampled);
           // Chunk boundaries come from here — the audio clock — never from a timer. This
@@ -412,7 +545,7 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
           for (const chunk of chunker.push(resampled)) cb.current.onChunk(withWav(chunk));
 
           // The cap stops and KEEPS the recording, like voice notes.
-          if (chunker.elapsedMs >= capMs) finish("cap");
+          if (chunker.elapsedMs >= run.capMs) finish("cap");
         };
 
         nodesRef.current = nodes;
@@ -482,10 +615,22 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
     surface,
     micActive,
     recording: state === "recording",
+    callQuiet,
+    micMuted,
+    setMicMuted,
     start,
     stop,
+    pause,
+    resume,
     reset,
   };
+}
+
+/** Plain RMS of a time-domain float buffer (-1..1) — not the meter's dB-scaled `rmsLevel`. */
+function timeDomainRms(buf: Float32Array): number {
+  let sum = 0;
+  for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+  return Math.sqrt(sum / buf.length);
 }
 
 function smooth(level: MotionValue<number>, measured: number) {
@@ -508,7 +653,7 @@ function withWav(chunk: MeetingChunk): RecordedMeetingChunk {
  */
 async function requestDisplayAudio(): Promise<MediaStream> {
   const options = {
-    video: { frameRate: { ideal: 1, max: 5 }, width: { max: 640 }, height: { max: 480 } },
+    video: IDLE_VIDEO,
     audio: {
       echoCancellation: false,
       noiseSuppression: false,

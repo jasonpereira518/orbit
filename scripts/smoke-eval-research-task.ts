@@ -7,8 +7,8 @@
  * checks everything that does not need one:
  *
  *  - the network and the notes seed, and the notes index through the real sweep;
- *  - routing is scored for EVERY case even though every answer fails — it is decided before
- *    any answer is written, and the fixture's expectations must match the router exactly;
+ *  - routing is NOT scored when the answer fails: it is whether the answer made a lookup, and
+ *    with no key no answer starts, so a keyless run reports no routing rather than a guess;
  *  - a case with no grant fails as a scored miss, not as a crash that loses the whole run;
  *  - the task leaves its user empty, so the chat task in the same invocation starts clean.
  *
@@ -21,6 +21,7 @@ import { getDb } from "../src/db";
 import { chatThreads, contacts, interactions, memoryChunks } from "../src/db/schema";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { runResearchTask } from "./lib/eval-ai-tasks";
+import researchFixture from "./eval-fixtures/ai-research-eval.json";
 
 const USER = "smoke-eval-research-user";
 
@@ -38,10 +39,10 @@ async function main() {
   const lines: string[] = [];
   const result = await runResearchTask({ userId: USER, log: (l) => lines.push(l) });
 
-  check("every fixture case ran", result.cases === 10, String(result.cases));
+  check("every fixture case ran", result.cases === researchFixture.cases.length, String(result.cases));
   check(
-    "routing was scored for every case, and matches the fixture exactly",
-    result.metrics.routingAccuracy === 1,
+    "keyless, no case is scored for routing — no answer ran to make a lookup",
+    result.metrics.routingAccuracy === null,
     `${result.metrics.routingAccuracy} — ${lines.filter((l) => l.includes("research/")).join(" | ")}`
   );
   check(

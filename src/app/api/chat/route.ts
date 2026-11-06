@@ -2,23 +2,28 @@ import { NextResponse } from "next/server";
 import { chatMessages, type ChatRecommendation } from "@/db/schema";
 import { discardCountAfter, NotLastTurnError, resolveVersionTarget, truncateAfter } from "@/lib/chat-versions";
 import { getDb } from "@/db";
-import { chatWithNetworkStream, completeJsonOn } from "@/lib/ai";
+import { completeJsonOn } from "@/lib/ai";
 import { resolveAiAccess, type AiAccess } from "@/lib/ai-access";
 import { requireAuthenticatedUser, type AuthenticatedUser } from "@/lib/auth";
-import { prepareChatContext } from "@/lib/chat-context";
-import { maybeGather } from "@/lib/chat-gather";
-import { persistAssistantTurn } from "@/lib/chat-persist";
+import { buildChatBlocks, prepareChatContext } from "@/lib/chat-context";
+import { expandLists, peopleIdsIn, stripInvalidDirectives } from "@/lib/chat-directives";
+import { rollBackApplied } from "@/lib/chat-auto-apply";
+import { answerDeadlineMs, answerWithLookups } from "@/lib/chat-agent-loop";
+import { isHandle } from "@/lib/meeting-context";
+import { CHAT_QUESTION_TOO_LONG_MESSAGE, isChatQuestionTooLong } from "@/lib/chat-question";
+import { discardEmptyThread, discardUnansweredQuestion, persistAssistantTurn, trackChatAnswerFailed } from "@/lib/chat-persist";
 import { createStepEmitter, deriveFollowUps, plural } from "@/lib/chat-steps";
 import { generateChatTitle, settleWithin, TITLE_GRACE_MS } from "@/lib/chat-title";
 import { formatSse, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
+import { labelAnswer } from "@/lib/chat-abstention";
 import { citedIds, stripUnresolvedMarkers } from "@/lib/chat-evidence";
-import { validateProposedActions } from "@/lib/chat-proposed-actions";
+import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 import { friendlyError } from "@/lib/errors";
 import { traced } from "@/lib/perf-trace";
 import { isPaywallError } from "@/lib/entitlements";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { TOAST_COPY } from "@/lib/toast-copy";
-import { reportedFailure } from "@/lib/report-error";
+import { reportedFailure, reportError } from "@/lib/report-error";
 import { createStreamRedactor } from "@/lib/ai-security";
 import { requireVisibleSurface } from "@/lib/surface-visibility";
 
@@ -40,8 +45,8 @@ export const maxDuration = 60;
  * retrieval onwards arrives as an `error` event, because the status line is long gone.
  */
 export async function POST(request: Request) {
-  // The research step budgets against this, not against its own start: retrieval has
-  // already spent part of `maxDuration` by the time it runs.
+  // The answer's deadlines count from here, not from its own start: retrieval has already
+  // spent part of `maxDuration` by the time it runs.
   const requestStartedAt = Date.now();
   let userId: string;
   let settings: AuthenticatedUser["settings"];
@@ -94,6 +99,14 @@ export async function POST(request: Request) {
     typeof versionOfRaw?.assistantMessageId === "string" ? versionOfRaw.assistantMessageId : null;
   const confirmDiscard = versionOfRaw?.confirmDiscard === true;
 
+  // What the person typed, checked before the version work below: that can already discard
+  // later turns, and a refused edit must not cost them anything.
+  const typed = versionAssistantId ? versionOfRaw?.question : body?.question;
+  const typedQuestion = typeof typed === "string" ? typed.trim() : "";
+  if (isChatQuestionTooLong(typedQuestion)) {
+    return NextResponse.json({ error: CHAT_QUESTION_TOO_LONG_MESSAGE }, { status: 400 });
+  }
+
   let question: string;
   let versionTarget: Awaited<ReturnType<typeof resolveVersionTarget>> | null = null;
   if (versionAssistantId) {
@@ -120,11 +133,9 @@ export async function POST(request: Request) {
       }
       return NextResponse.json({ error: friendlyError(err, "That answer couldn’t be found") }, { status: 404 });
     }
-    question =
-      (typeof versionOfRaw?.question === "string" ? versionOfRaw.question.trim() : "") ||
-      versionTarget.priorUserRow.content;
+    question = typedQuestion || versionTarget.priorUserRow.content;
   } else {
-    question = typeof body?.question === "string" ? body.question.trim() : "";
+    question = typedQuestion;
   }
   if (!question) return NextResponse.json({ error: "Question is required" }, { status: 400 });
 
@@ -133,10 +144,12 @@ export async function POST(request: Request) {
     async start(controller) {
       const send = (event: ChatStreamEvent) => controller.enqueue(encoder.encode(formatSse(event)));
       const steps = createStepEmitter((step) => send({ type: "step", step }));
+      // Hoisted out of the try so the failure path can clear a question nothing answered.
+      let persistedUserMessageId: string | null = null;
       try {
         // The account's AI access, resolved ONCE for the whole question from the row the
         // auth gate already read — the decider, query embedding, parse, rerank, writing
-        // notes, research, answer and title all used to re-read `user_settings` for it.
+        // notes, answer and title all used to re-read `user_settings` for it.
         // Only the read is shared: every model call still mints its own grant, which is
         // where the managed allowance is checked. Undefined if the open fails, and then
         // each call resolves its own, exactly as before.
@@ -163,7 +176,6 @@ export async function POST(request: Request) {
           excludeSlot: versionTarget?.slot ?? null,
           access,
         });
-        let persistedUserMessageId: string | null = null;
         if (threadId) {
           const db = await getDb();
           const [userRow] = await db
@@ -192,47 +204,44 @@ export async function POST(request: Request) {
         const titlePromise =
           threadId && !ctx.thread?.title ? generateChatTitle(userId, ctx.q, completeJsonOn(ctx.access)) : null;
 
-        // One retrieval answers most questions; the ones whose shape says it cannot — what
-        // was discussed and when, a path to someone, a follow-up that refers back — get a
-        // bounded research loop first. See `chooseDepth` and `gatherEvidence`.
-        const { evidence, notePassages } = await maybeGather(userId, ctx, {
-          requestStartedAt,
-          signal: request.signal,
-          steps,
-        });
+        // What the answer's `::people` / `::list` blocks may show, before its first word, so
+        // a block renders the moment its line arrives. `let`: a lookup mid-answer can find
+        // someone, and the
+        // blocks are resent so a `::people` line naming them renders and survives
+        // `stripInvalidDirectives` below.
+        let blocks = buildChatBlocks(ctx);
+        send({ type: "blocks", blocks });
 
         steps.start("answer", "Writing the answer");
         // Secrets and fence markers are scrubbed from the LIVE stream, not only from what is
         // stored afterwards — see `createStreamRedactor`. (A scrub is recorded once the
         // stored copy is guarded, by `guardChatAnswer`; nothing is recorded here twice.)
         const redactor = createStreamRedactor();
+        const deadlineSignal = AbortSignal.timeout(answerDeadlineMs(requestStartedAt));
+        const onDelta = (delta: string) => {
+          const safe = redactor.push(delta);
+          if (safe) send({ type: "answer", delta: safe });
+        };
         const result = await traced(
           "chat.stream",
           () =>
-            chatWithNetworkStream(
-              userId,
-              ctx.scopedQuestion,
-              ctx.modelContacts,
-              ctx.priorTurns,
-              ctx.orgRosters,
-              ctx.attention,
-              ctx.modelRecruiters,
-              (delta) => {
-                const safe = redactor.push(delta);
-                if (safe) send({ type: "answer", delta: safe });
+            answerWithLookups(userId, ctx, {
+              onDelta,
+              requestStartedAt,
+              signal: request.signal,
+              deadlineSignal,
+              steps,
+              notePassages: ctx.notePassages ?? [],
+              onEvidence: (all) => {
+                if (Object.keys(all).length) send({ type: "evidence", items: all });
               },
-              ctx.focusProfile,
-              ctx.attachedContext,
-              {
-                signal: request.signal,
-                goals: ctx.goals,
-                attentionLite: ctx.attentionLite,
-                evidence,
-                notePassages,
-                writingPreferences: ctx.writingInstructions,
-                access: ctx.access,
-              }
-            ),
+              onPeopleAdded: () => {
+                blocks = buildChatBlocks(ctx);
+                send({ type: "blocks", blocks });
+              },
+              // Cards appear as the loop drafts them, not only once the answer is done.
+              onProposed: (items) => send({ type: "actions", items }),
+            }),
           { userId }
         );
         const tail = redactor.flush();
@@ -244,18 +253,44 @@ export async function POST(request: Request) {
         // actually shown (`result.evidence`'s keys), not just the ones it used, so a marker
         // for an id outside that set can only be an invented citation.
         const validIds = new Set(Object.keys(result.evidence));
-        const { text: cleanAnswer, strippedCount } = stripUnresolvedMarkers(result.answer, validIds);
+        const { text: unblocked, strippedCount } = stripUnresolvedMarkers(result.answer, validIds);
+        // The same for blocks: an id the server never offered, or a roster that was not
+        // there, is dropped before anything is stored.
+        const { text: cleanAnswer, removed: strayBlockIds } = stripInvalidDirectives(unblocked, {
+          people: new Set(Object.keys(blocks.people)),
+          lists: new Set(Object.keys(blocks.lists)),
+        });
         const cited = citedIds(cleanAnswer);
         const citedEvidence = Object.fromEntries(cited.map((id) => [id, result.evidence[id]]));
         if (strippedCount > 0) {
           steps.done("verify", { label: `Removed ${plural(strippedCount, "unsupported citation")}` });
         }
+        if (strayBlockIds > 0) {
+          steps.done("verify", { label: `Removed ${plural(strayBlockIds, "person or list", "people or lists")} not in your network` });
+        }
 
         const rawRecommendations = result.recommendations as ChatRecommendation[];
-        const recommendations = ctx.filterRecommendations(rawRecommendations);
+        const listed = ctx.filterRecommendations(rawRecommendations);
+        // The people the answer placed as cards ARE its recommendations — stored as such, so a
+        // reload re-renders them and the chat Gmail send (which only mails a recommended
+        // contact) still works. Their line comes from the server, never the model; a draft is
+        // written on demand from the card. Model-listed ones (recruiters) follow.
+        const placed = peopleIdsIn(cleanAnswer);
+        const placedSet = new Set(placed);
+        const recommendations: ChatRecommendation[] = [
+          ...placed.map((id) => ({
+            contact_id: id,
+            recruiter_id: null,
+            name: blocks.people[id]!.name,
+            reason: blocks.people[id]!.subtitle ?? "",
+            suggested_action: "",
+            draft_message: null,
+          })),
+          ...listed.filter((r) => !r.contact_id || !placedSet.has(r.contact_id)),
+        ];
         // Only worth a step when it actually caught something — a filter that passed
         // everything through did no work the user needs to hear about.
-        const dropped = (rawRecommendations?.length ?? 0) - recommendations.length;
+        const dropped = (rawRecommendations?.length ?? 0) - listed.length;
         if (dropped > 0) {
           steps.done("verify", {
             label: `Dropped ${plural(dropped, "suggestion")} not in your network`,
@@ -264,10 +299,19 @@ export async function POST(request: Request) {
         send({ type: "recommendations", items: recommendations });
         if (cited.length > 0) send({ type: "evidence", items: citedEvidence });
 
-        // Never a chat tool call, never executed here — only stored, for a person to confirm
-        // from the transcript. See `@/lib/chat-proposed-actions` and the rule at the top of
-        // `src/lib/mcp/server.ts`, which this mirrors on the chat surface's own output.
-        const proposedActions = validateProposedActions(result.proposedActions, ctx.allowedContacts, ctx.contactNames);
+        // A JSON tail (recruiter recommendations) that did not parse used to mean zero cards
+        // with no trace anywhere. The answer still stands; this only makes the loss visible.
+        if (result.parseError) {
+          reportError(new Error(`chat answer JSON did not parse: ${result.parseError}`), {
+            where: "chat.stream.recommendations",
+            userId,
+            level: "warning",
+          });
+        }
+        // Never executed here unless the person's auto-apply setting allowed it — otherwise only
+        // stored, for a person to confirm from the transcript. Each came from a chat write the
+        // loop called, already checked against the ids the turn saw (`@/lib/tools/chat-proposals`).
+        const proposedActions: StoredProposedAction[] = result.proposals;
         if (proposedActions.length > 0) send({ type: "actions", items: proposedActions });
 
         // A beat for a title that is nearly there, never longer: if it is not ready the thread
@@ -276,17 +320,35 @@ export async function POST(request: Request) {
         // Persisted before `done` so the client learns the real message id and title. The
         // CLEANED text, not what streamed live — an invented citation was already visible
         // for that turn, but a reload should never show a dead `[e99]` nobody can resolve.
+        // A turn that applied changes itself and then failed to save would leave them with no card
+        // to undo from (`@/lib/chat-auto-apply`), so they are put back.
         const saved = await persistAssistantTurn(userId, threadId, ctx.thread?.title ?? null, ctx.q, {
-          answer: cleanAnswer,
+          // Lists are stored as the table they rendered as, so a reload needs no block data;
+          // people blocks stay as directives and re-render from `recommendations`.
+          answer: expandLists(cleanAnswer, blocks.lists),
           recommendations,
           activity: steps.snapshot(),
           title,
           evidence: citedEvidence,
           proposedActions,
+          // Labelled on the text with its blocks still as directives, so a people or list
+          // block counts as grounding — `expandLists` above has turned lists into tables.
+          answerOutcome: labelAnswer(cleanAnswer, {
+            citedCount: cited.length,
+            recommendedCount: recommendations.length,
+          }),
           version:
             versionTarget && persistedUserMessageId
               ? { slot: versionTarget.slot, version: versionTarget.nextVersion, userMessageId: persistedUserMessageId }
               : undefined,
+          metrics: {
+            durationMs: Date.now() - requestStartedAt,
+            // The rounds that looked something up: all but the last, which writes the answer.
+            toolRounds: Math.max(0, result.run.rounds - 1),
+          },
+        }).catch(async (err) => {
+          await rollBackApplied(userId, proposedActions);
+          throw err;
         });
         send({
           type: "done",
@@ -300,7 +362,11 @@ export async function POST(request: Request) {
             question: ctx.q,
             topRosterCompany: ctx.orgRosters[0]?.name ?? null,
             firstOverdueName: ctx.attention?.overdue[0]?.name ?? null,
-            topContactName: ctx.retrieved[0]?.fullName ?? null,
+            // Never for prep: the search's top hit is not the meeting's person. Never a handle
+            // ("calvintwong25").
+            topContactName: ctx.route?.prep
+              ? null
+              : ([ctx.retrieved[0]?.preferredName || ctx.retrieved[0]?.fullName].find((n) => n && !isHandle(n)) ?? null),
           }),
           retrieved: ctx.retrieved.map((c) => ({
             id: c.id,
@@ -311,9 +377,19 @@ export async function POST(request: Request) {
           })),
         });
       } catch (err) {
+        // The question was written before the model ran (it carries the attached people and,
+        // on a regenerate, the slot). Nothing answered it — a failure or a Stop alike — so it
+        // does not stay. Before the client-gone return: a Stop is exactly when it is gone.
+        await discardUnansweredQuestion(userId, threadId, persistedUserMessageId).catch(() => {});
+        // A first message that never got an answer leaves the thread empty: remove it too
+        // (a no-op when the thread has any message).
+        await discardEmptyThread(userId, threadId).catch(() => {});
         // The client is gone: there is nobody to tell, and enqueueing now would throw. Not
         // an error of ours either — the provider call was aborted on purpose.
         if (request.signal.aborted) return;
+        // Counted for the failure rate: the thread and a machine code, never the message. Not
+        // for a Stop (returned above) and not without a thread (nothing to key it to).
+        trackChatAnswerFailed(userId, threadId, err);
         // The status line is already sent, so this reaches the client as an event. Report it:
         // a mid-stream failure used to leave no trace outside the person's screen.
         send({ type: "error", message: reportedFailure(err, TOAST_COPY.chatFailed, { where: "route.chat.stream", userId }).error });

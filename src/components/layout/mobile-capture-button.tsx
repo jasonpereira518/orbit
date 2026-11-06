@@ -239,6 +239,10 @@ export function MobileCaptureButton({
 
       <motion.span
         aria-hidden
+        // Motion gives any element with `whileTap` tabindex="0" so it can be pressed from a
+        // keyboard. This circle is decoration inside the link, which is the real tab stop:
+        // left focusable it was an invisible, unnamed extra stop on every page.
+        tabIndex={-1}
         className={CAPTURE_CIRCLE_CLASS}
         // No tap-shrink during a hold: it would pin the circle small for the whole note.
         whileTap={reducedMotion || holding ? undefined : { scale: 0.88 }}

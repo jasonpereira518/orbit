@@ -1,4 +1,9 @@
-import { Suspense } from "react";
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
+import { Suspense, cache } from "react";
+import type { Metadata } from "next";
+import { listContactPendingSendsAction } from "@/actions/email-compose";
+import { PendingSends } from "@/components/email/pending-sends";
+import type { PendingSend } from "@/lib/email/compose";
 import { after } from "next/server";
 import {
   getContactForProfile,
@@ -10,6 +15,7 @@ import { ContactExperienceSection } from "@/components/contacts/contact-experien
 import { ContactFollowUpSection } from "@/components/contacts/contact-follow-up-section";
 import { ContactMentionsSection } from "@/components/contacts/contact-mentions-section";
 import { ContactProfileHero } from "@/components/contacts/contact-profile-hero";
+import { openNameGuess } from "@/lib/contact-name-guess";
 import { ContactProfileOverview } from "@/components/contacts/contact-profile-overview";
 import { ContactRelatedPeople } from "@/components/contacts/contact-related-people";
 import { ContactRemindersSection } from "@/components/contacts/contact-reminders-section";
@@ -22,7 +28,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { computeCloseness, formatInteractionFrequency } from "@/lib/closeness";
 import { getContactCloseness } from "@/lib/closeness-cohort";
 import { getConstellationConfig } from "@/lib/constellation-config";
-import { constellationEligibility } from "@/lib/constellation-eligibility";
+import { constellationEligibility, userTagCount } from "@/lib/constellation-eligibility";
 import { requireUserId } from "@/lib/auth";
 import { getEventsWithContact } from "@/actions/events";
 import { ContactEventsTogether } from "@/components/contacts/contact-events-together";
@@ -31,12 +37,14 @@ import {
   generateAndStoreContactBrief,
   getContactBrief,
   isBriefStale,
+  shouldAutoRefreshBrief,
 } from "@/lib/contact-brief";
 import { listContactMentions } from "@/lib/contact-mentions";
 import { listOpportunitiesForContact } from "@/lib/contact-opportunities";
 import { listJobMatchesForContact } from "@/lib/jobs/contact-matches";
 import { getContactProfile } from "@/lib/contact-profile";
 import { getWorkHistoryTracking } from "@/lib/job-changes";
+import { getRelationshipHealth } from "@/lib/relationship-health-read";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { getSettings } from "@/actions/settings";
 import { isLoggedTouch, latestLoggedTouch } from "@/lib/interaction-provenance";
@@ -52,11 +60,30 @@ import { RenderStamp } from "@/components/layout/render-stamp";
  */
 export const maxDuration = 300;
 
+/**
+ * Request-memoized so `generateMetadata` and the page share one read: the tab title costs no
+ * extra query.
+ */
+const loadContactForProfile = cache((id: string) => getContactForProfile(id));
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  const contact = await loadContactForProfile(id).catch(() => null);
+  return { title: contact ? contact.preferredName || contact.fullName : "Contact" };
+}
+
 export default async function ContactDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const gate = await pageVisibilityGate("page.contacts");
+  if (gate) return gate;
+
   const { id } = await params;
 
   // Every side query needs only the route param — start them all before the
@@ -65,6 +92,7 @@ export default async function ContactDetailPage({
   // (or racing notFound() into the error boundary on a bogus id); on
   // failure the section simply doesn't render.
   const sendOptionsPromise = getContactFollowUpSendOptions(id).catch(() => null);
+  const pendingSendsPromise = listContactPendingSendsAction(id).catch((): PendingSend[] => []);
   // Guarded like the others: an unhandled getSettings() rejection would take the whole
   // page down for a section that only decides whether the add-notes card and the
   // experience section's "Find work history" button are enabled.
@@ -113,11 +141,15 @@ export default async function ContactDetailPage({
   const trackingPromise = userIdPromise
     .then((u) => getWorkHistoryTracking(u, id))
     .catch(() => ({ moves: [], nextCheckAt: null }));
+  // Same mandatory `.catch`: a failed read costs the health pill, never the page.
+  const healthPromise = userIdPromise
+    .then((u) => getRelationshipHealth(u, id))
+    .catch(() => null);
 
   // notFound() must fire BEFORE any Suspense boundary renders so the route
   // still returns a real 404 status.
   const [contact, closenessCohort, constellationConfig] = await Promise.all([
-    getContactForProfile(id),
+    loadContactForProfile(id),
     cohortPromise,
     getConstellationConfig(),
   ]);
@@ -147,8 +179,22 @@ export default async function ContactDetailPage({
     // (see node_modules/next/dist/docs/.../functions/after.md), so
     // `after(() => requireUserId().then(...))` would throw there and never
     // regenerate the brief in production.
+    //
+    // Gated on AI the way the dossier is (`shouldAutoRefreshBrief`): a refused refresh leaves
+    // an AI-written brief stale, so without this every open would fire one more refusal. The
+    // settings promise was started during render, so the callback only waits on it — no
+    // request-time API is called inside after().
     const userId = await userIdPromise;
-    after(() => generateAndStoreContactBrief(userId, id).catch(() => null));
+    const modelWritten = brief?.model != null;
+    after(() =>
+      settingsPromise
+        .then((settings) => {
+          const aiReady = "ai" in settings && settings.ai.ready;
+          if (!shouldAutoRefreshBrief({ stale: true, goalsUnjudged: false, aiReady, modelWritten })) return null;
+          return generateAndStoreContactBrief(userId, id);
+        })
+        .catch(() => null)
+    );
   }
 
   // The contact arrives with its newest page of interactions. `interactionHistory` is null
@@ -239,6 +285,7 @@ export default async function ContactDetailPage({
   // Awaited once here rather than inline: both the brief card's next-steps list and the
   // timeline's per-interaction "N open" chips read the same rows.
   const nextSteps = await nextStepsPromise;
+  const health = await healthPromise;
 
   const formInitial = {
     fullName: contact.fullName,
@@ -286,6 +333,7 @@ export default async function ContactDetailPage({
           displayName={displayName}
           fullName={contact.fullName}
           preferredName={contact.preferredName}
+          nameGuess={openNameGuess(contact)}
           firstName={contact.firstName}
           title={contact.title}
           company={contact.company}
@@ -295,11 +343,13 @@ export default async function ContactDetailPage({
             // Same rule as the list's `clientAvatarUrlSql`: an inline `data:` image (up to
             // ~120 KB of base64) is served by `/api/avatars/{id}` instead of riding along in
             // this page's payload. The hero only needs to know a stored photo exists.
-            contact.profileImageUrl?.trim().startsWith("data:image/")
+            contact.sharedAvatarUrl ??
+            (contact.profileImageUrl?.trim().startsWith("data:image/")
               ? `/api/avatars/${contact.id}`
-              : contact.profileImageUrl
+              : contact.profileImageUrl)
           }
           linkedinUrl={contact.linkedinUrl}
+          source={contact.source}
           channels={channels}
           formInitial={formInitial}
         />
@@ -313,6 +363,7 @@ export default async function ContactDetailPage({
           closeness={closeness}
           lastTouchAt={lastTouchAt}
           hasLoggedInteraction={hasLoggedInteraction}
+          health={health}
           constellation={
             constellationConfig.enabled
               ? {
@@ -328,7 +379,7 @@ export default async function ContactDetailPage({
                       statedCloseness: contact.statedCloseness,
                       priorityLevel: contact.priorityLevel,
                       nextFollowUpAt: contact.nextFollowUpAt,
-                      tagCount: contact.tags.length,
+                      userTagCount: userTagCount(contact.tags),
                     },
                     constellationConfig.thresholds
                   ).eligible,
@@ -365,6 +416,9 @@ export default async function ContactDetailPage({
           keyFacts={contact.keyFacts || []}
           sharedInterests={contact.sharedInterests || []}
           industry={contact.industry}
+          // Whether a human actually set a 1-5, which `relationshipScore`'s non-null default
+          // of 2 cannot express: the card shows "Not rated yet" rather than a made-up number.
+          isRated={contact.statedCloseness != null}
           closeness={closeness}
           lastTouchAt={lastTouchAt}
           hasLoggedInteraction={hasLoggedInteraction}
@@ -392,6 +446,16 @@ export default async function ContactDetailPage({
           contactName={displayName}
           nextFollowUpAt={contact.nextFollowUpAt}
           phone={contact.phone}
+        />
+      </Suspense>
+
+      {/* Emails to this person still on their way, or that didn't make it — the outbox rows
+          the timeline won't show until they send. Renders nothing when there are none. */}
+      <Suspense fallback={null}>
+        <StreamedPendingSends
+          contactId={contact.id}
+          contactName={displayName}
+          sends={pendingSendsPromise}
         />
       </Suspense>
 
@@ -488,6 +552,18 @@ async function StreamedFollowUp({
       <ContactFollowUpSection {...rest} sendOptions={resolved} />
     </div>
   );
+}
+
+async function StreamedPendingSends({
+  contactId,
+  contactName,
+  sends,
+}: {
+  contactId: string;
+  contactName: string;
+  sends: Promise<PendingSend[]>;
+}) {
+  return <PendingSends contactId={contactId} contactName={contactName} sends={await sends} />;
 }
 
 async function StreamedTimeline({

@@ -18,6 +18,7 @@ import {
   CalendarSyncTokenExpiredError,
   advanceCursor,
   fetchCalendarPage,
+  fetchCalendarWindow,
   toNetworkEvents,
 } from "../src/lib/connectors/apple-calendar";
 import { parseIcsEvents } from "../src/lib/calendar-import";
@@ -427,6 +428,81 @@ async function main() {
       calls.length === 1,
       `${calls.length} call(s): ${calls.join(" | ")}`
     );
+  }
+
+  // --- The calendar_events window ----------------------------------------------------------
+  {
+    const WINDOW_ICS = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Orbit Test Fixture//EN
+BEGIN:VEVENT
+UID:weekly-1
+DTSTART:20260309T150000Z
+DTEND:20260309T153000Z
+RRULE:FREQ=WEEKLY;COUNT=10
+SUMMARY:Ada weekly
+DESCRIPTION:Notes\\nJoin: https://us02web.zoom.us/j/999
+ORGANIZER;CN=Ada:mailto:ada@example.com
+ATTENDEE;CN=Ada;PARTSTAT=ACCEPTED:mailto:ada@example.com
+ATTENDEE;CN=Me;PARTSTAT=DECLINED:mailto:${OWNER}
+ATTENDEE;CUTYPE=ROOM;CN=Room 4:mailto:room4@example.com
+END:VEVENT
+BEGIN:VEVENT
+UID:trip-1
+DTSTART;VALUE=DATE:20260312
+DTEND;VALUE=DATE:20260314
+SUMMARY:Trip
+END:VEVENT
+BEGIN:VEVENT
+UID:old-1
+DTSTART:20260101T150000Z
+DTEND:20260101T160000Z
+SUMMARY:Long ago
+END:VEVENT
+BEGIN:VEVENT
+UID:gone-1
+DTSTART:20260311T150000Z
+DTEND:20260311T160000Z
+STATUS:CANCELLED
+SUMMARY:Cancelled
+END:VEVENT
+END:VCALENDAR`;
+    const multistatus = `<?xml version="1.0" encoding="utf-8"?>
+<z:multistatus xmlns:z="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <z:response>
+    <z:href>/1234567/calendars/home/w.ics</z:href>
+    <z:propstat>
+      <z:prop>
+        <z:getetag>"1"</z:getetag>
+        <C:calendar-data>${WINDOW_ICS}</C:calendar-data>
+      </z:prop>
+      <z:status>HTTP/1.1 200 OK</z:status>
+    </z:propstat>
+  </z:response>
+</z:multistatus>`;
+    const { impl, calls } = stubFetch([xml(multistatus)]);
+    const rows = await fetchCalendarWindow({
+      creds: CREDS,
+      calendarUrl: CALENDAR_URL,
+      ownerEmail: OWNER,
+      from: new Date("2026-03-08T00:00:00Z"),
+      to: new Date("2026-03-22T00:00:00Z"),
+      fetchImpl: impl,
+    });
+    check("the window is one time-range REPORT", calls.length === 1 && /time-range start="20260308T000000Z"/.test(calls[0] ?? ""));
+    const weekly = rows.filter((r) => r.seriesId === "weekly-1");
+    check("a weekly series is expanded inside the window only", weekly.length === 2, rows.map((r) => r.providerEventId).join(","));
+    check("each instance has its own id", new Set(weekly.map((r) => r.providerEventId)).size === 2);
+    check("one-offs outside the window and cancelled ones are left out", !rows.some((r) => r.providerEventId === "old-1" || r.providerEventId === "gone-1"));
+    const first = weekly[0];
+    check(
+      "attendees leave out the owner and the room",
+      first?.attendees.length === 1 && first.attendees[0].email === "ada@example.com" && first.attendeeCount === 1,
+      JSON.stringify(first?.attendees)
+    );
+    check("the owner's PARTSTAT is their answer", first?.selfResponse === "declined", String(first?.selfResponse));
+    check("a Zoom link in the notes is the call", first?.conferenceKind === "zoom");
+    check("a date-only start is all-day", rows.find((r) => r.providerEventId === "trip-1")?.allDay === true);
   }
 
   if (failures > 0) {

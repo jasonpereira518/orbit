@@ -1,8 +1,9 @@
 /**
  * Pricing v2's server-side limits, on PGlite:
  *
- *  - Contact enrichment on Orbit's Apollo key: 10 a month on Pro, 25 on Max and Lifetime,
- *    none on Free — enforced atomically, even for two requests at the edge.
+ *  - The monthly meter behind contact enrichment on Orbit's Apollo key, enforced atomically,
+ *    even for two requests at the edge. No plan includes hosted enrichment today (limits are
+ *    all 0), so the limits below are explicit: this pins the meter, not a plan table.
  *  - The Free Plan's one Google OR Microsoft account: a second provider is refused; the one
  *    already connected can always reconnect; a Free account that had both keeps its earlier
  *    one syncing and the later one paused (never disconnected).
@@ -58,7 +59,7 @@ run(async () => {
     { userId: BOTH },
   ]);
 
-  console.log("Monthly contact enrichments on Orbit's key");
+  console.log("Monthly enrichment meter (explicit limits)");
   let used = 0;
   for (let i = 0; i < 10; i++) used += (await consumePlanMeter(PRO, "hosted_enrichment", 1, 10)) ? 1 : 0;
   check("Pro: ten enrichments fit", used === 10 && (await planMeterUsed(PRO, "hosted_enrichment")) === 10);

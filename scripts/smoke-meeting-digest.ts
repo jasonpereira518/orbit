@@ -8,9 +8,11 @@ import {
   CORPUS_MAX_CHARS,
   MAP_PIECE_CHARS,
   MAP_THRESHOLD_CHARS,
+  MAX_USER_NOTES_CHARS,
   analyzeMeetingTranscript,
   appearsIn,
   buildMeetingCorpus,
+  cleanUserNotes,
   formatTranscriptSegment,
   groundDigest,
   isSelf,
@@ -391,6 +393,27 @@ async function main() {
       threw = err instanceof Error && /Nothing was transcribed/.test(err.message);
     }
     check("an empty transcript is refused before any model call", threw);
+  }
+
+  // ── The user's notes ───────────────────────────────────────────────────────────────
+  {
+    check("notes: trimmed", cleanUserNotes("  Priya = Stripe \n") === "Priya = Stripe");
+    check("notes: capped", cleanUserNotes("x".repeat(MAX_USER_NOTES_CHARS + 500)).length === MAX_USER_NOTES_CHARS);
+    check("notes: anything but a string is no notes", cleanUserNotes(42) === "" && cleanUserNotes(undefined) === "" && cleanUserNotes(null) === "");
+
+    const prompts: { system: string; user: string }[] = [];
+    const capture: CompleteJsonFn = async (_u, input) => {
+      prompts.push({ system: input.system, user: input.user });
+      return reply();
+    };
+    const base = { paragraphs: TRANSCRIPT.split("\n\n"), title: null, startedAtIso: "2026-09-11T17:00:00.000Z", userName: null, attendees: [] };
+    await analyzeMeetingTranscript("u", { ...base, userNotes: "Priya = Stripe, wants the Marcus intro" }, { complete: capture, parseJson: JSON.parse });
+    check("notes: reach the model under MY NOTES", /MY NOTES:[\s\S]*Priya = Stripe, wants the Marcus intro/.test(prompts[0].user));
+    check("notes: the model is told they are the user's own typing", /typed their own notes/.test(prompts[0].system));
+
+    prompts.length = 0;
+    await analyzeMeetingTranscript("u", base, { complete: capture, parseJson: JSON.parse });
+    check("notes: absent means no notes section and no notes rule", !/MY NOTES/.test(prompts[0].user) && !/typed their own notes/.test(prompts[0].system));
   }
 
   console.log("\nsmoke-meeting-digest: all checks passed");

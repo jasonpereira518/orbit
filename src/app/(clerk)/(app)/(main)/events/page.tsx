@@ -16,6 +16,8 @@ import {
 } from "@/actions/events";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
+export const metadata = { title: "Events" };
+
 async function ConnectionsSection() {
   const { connections, eventbriteConfigured, googleConnected, googleMailGranted, googleCalendarGranted } =
     await getEventConnections();

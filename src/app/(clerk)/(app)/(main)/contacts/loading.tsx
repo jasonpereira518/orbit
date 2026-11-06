@@ -1,12 +1,13 @@
-import { cookies } from "next/headers";
 import { ContactsPageSkeleton } from "@/components/loading/page-skeletons";
-import { PEOPLE_NAV_COOKIE } from "@/lib/people-nav";
+import { PeopleNavFallback } from "@/components/contacts/people-nav-fallback";
 
-export default async function ContactsLoading() {
-  const jar = await cookies();
-  // Skip skeleton when switching from Recruiters via the people toggle.
-  if (jar.get(PEOPLE_NAV_COOKIE)?.value === "1") {
-    return null;
-  }
-  return <ContactsPageSkeleton />;
+export default function ContactsLoading() {
+  return (
+    <PeopleNavFallback
+      active="contacts"
+      title="Contacts"
+      subtitle="Your network"
+      skeleton={<ContactsPageSkeleton />}
+    />
+  );
 }

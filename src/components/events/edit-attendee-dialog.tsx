@@ -35,8 +35,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Field as FormField } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -156,13 +156,12 @@ export function EditAttendeeDialog({
             placeholder="https://www.linkedin.com/in/…"
           />
           <Field id="a-handle" label="X handle" value={form.xHandle} onChange={set("xHandle")} placeholder="without the @" />
-          <div className="sm:col-span-2">
-            <Label htmlFor="a-role">Role at this event</Label>
+          <FormField htmlFor="a-role" label="Role at this event" className="space-y-1 sm:col-span-2">
             <Select
               value={form.attendeeRole}
               onValueChange={(value) => set("attendeeRole")(value ?? NO_ROLE)}
             >
-              <SelectTrigger id="a-role" className="mt-1 w-full">
+              <SelectTrigger id="a-role" className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -171,7 +170,7 @@ export function EditAttendeeDialog({
                 <SelectItem value="speaker">Speaker</SelectItem>
               </SelectContent>
             </Select>
-          </div>
+          </FormField>
         </div>
 
         {confirmingDelete ? (
@@ -236,16 +235,16 @@ function Field({
   placeholder?: string;
 }) {
   return (
-    <div>
-      <Label htmlFor={id}>{label}</Label>
+    <FormField htmlFor={id} label={label} className="space-y-1">
       <Input
         id={id}
         type={type}
         value={value}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-1"
+        // These are someone else's details, not the user's own.
+        autoComplete="off"
       />
-    </div>
+    </FormField>
   );
 }

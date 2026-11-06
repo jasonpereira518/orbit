@@ -2,10 +2,13 @@ import { eq, sql } from "drizzle-orm";
 import { getCreditBalance } from "@/lib/credits/ledger";
 import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
 import { getDb, rowsOf } from "@/db";
+import { notTourExample } from "@/lib/onboarding-examples/sql";
+import { tourRailVisible } from "@/lib/tour/tour-state";
 import {
   appleConnections,
   calendarSubscriptions,
   contacts,
+  emailSends,
   gmailConnections,
   imports,
   outlookConnections,
@@ -34,6 +37,7 @@ import {
 } from "@/lib/outlook";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { ensureUserSettings } from "@/lib/user-settings";
+import { LINKEDIN_IMPORT_TYPE, LINKEDIN_MESSAGES_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-import-types";
 
 /**
  * The server half of account alerts: loads the facts, hands them to the pure predicates in
@@ -49,7 +53,7 @@ import { ensureUserSettings } from "@/lib/user-settings";
  * Neon HTTP every separate query is its own round trip, and one statement the planner runs
  * as a handful of index lookups is the same work at a fraction of the latency.
  *
- * Measured (`scripts/smoke-account-alerts.ts`, case 19): at most 4 statements called
+ * Measured (`scripts/smoke-account-alerts.ts`, case 19): at most 5 statements called
  * standalone with no request context, where the `cache()` memos cannot help. Inside a
  * request that has already resolved settings and surface visibility (or passes the row in),
  * the marginal cost is the one combined select. A paid account never pays for the contact count.
@@ -323,10 +327,28 @@ export async function loadAccountHealthInput(
           AND ${imports.updatedAt} > ${importWindowStart}
         ORDER BY ${imports.updatedAt} DESC LIMIT 1)`,
 
+      // Not windowed, and needn't be: it is advisory and dismissible, and moves forward with
+      // every upload. Same rule as `getLastLinkedInImportAt`.
+      lastLinkedInImportAt: sql<string | null>`(
+        SELECT max(${imports.createdAt}) FROM ${imports}
+        WHERE ${imports.userId} = ${userId}
+          AND ${imports.importType} IN (${LINKEDIN_IMPORT_TYPE}, ${LINKEDIN_MESSAGES_IMPORT_TYPE})
+          AND ${imports.status} = 'completed'
+          AND ${imports.revertedAt} IS NULL)`,
+
+      // Windowed like imports: a failure is history, and an unwindowed one would be a
+      // permanent badge on a device that never dismissed it.
+      emailSendFailedCount: sql<number>`(
+        SELECT count(*)::int FROM ${emailSends}
+        WHERE ${emailSends.userId} = ${userId} AND ${emailSends.status} = 'failed'
+          AND ${emailSends.dismissedAt} IS NULL
+          AND ${emailSends.updatedAt} > ${importWindowStart})`,
+
       contactCount: needContacts
         ? sql<number>`(
             SELECT count(*)::int FROM ${contacts}
-            WHERE ${contacts.userId} = ${userId})`
+            WHERE ${contacts.userId} = ${userId}
+              AND ${notTourExample(contacts.source)})`
         : sql<number>`0`,
     })
     .from(userSettings)
@@ -339,6 +361,7 @@ export async function loadAccountHealthInput(
     // The gate's own policy, presence-only: a Lifetime account on Orbit's key is not missing one.
     hasAiKey: aiReadyFromSettings(userId, settings),
     onboardingCompletedAt: toDate(settings.onboardingCompletedAt),
+    tourActive: tourRailVisible(settings),
 
     gmail: connectionFacts(
       getGmailOAuthConfigSummary().configured,
@@ -381,6 +404,8 @@ export async function loadAccountHealthInput(
     importStalledLabel: text(row.importStalledLabel),
     importStalledRows: row.importStalledRows == null ? null : num(row.importStalledRows),
     importStalledTotal: row.importStalledTotal == null ? null : num(row.importStalledTotal),
+    emailSendFailedCount: num(row.emailSendFailedCount),
+    lastLinkedInImportAt: row.lastLinkedInImportAt ? new Date(row.lastLinkedInImportAt) : null,
 
     plan: entitlements.plan,
     planSource: entitlements.source,
@@ -431,11 +456,14 @@ async function creditFacts(
   if (ownKey && row?.aiKeyPreference !== "included") return null;
   try {
     const balance = await getCreditBalance(userId, plan, settings, now, { ensure: false });
-    if (!balance.allowance && balance.packRemaining === 0) return null;
+    // Frozen packs (a downgrade from Pro) are never spent, so they are not part of the facts.
+    const packRemaining = balance.packsFrozen ? 0 : balance.packRemaining;
+    if (!balance.allowance && packRemaining === 0 && balance.starterRemaining === 0) return null;
     return {
       allowanceGranted: balance.allowance?.granted ?? 0,
       allowanceRemaining: balance.allowance?.remaining ?? 0,
-      packRemaining: balance.packRemaining,
+      packRemaining,
+      starterRemaining: balance.starterRemaining,
       spendable: balance.spendable,
       resetsAt: balance.allowance?.periodEnd ?? null,
     };

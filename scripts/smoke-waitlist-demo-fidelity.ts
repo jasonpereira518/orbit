@@ -88,7 +88,7 @@ function main() {
   // Hexes the app's own UI uses: its stylesheet and the screens the preview imitates — not the
   // waitlist's emails or marketing files, which still carry the old navy.
   const UI_SOURCES = [
-    "app/globals.css",
+    "app/theme.css",
     "lib/graph",
     "components/ui",
     "components/layout",

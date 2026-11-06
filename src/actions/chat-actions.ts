@@ -5,9 +5,9 @@
  *
  * Mirrors the two rules at the top of `src/lib/mcp/server.ts`: an agent composes, a human
  * sends; nothing sends, nothing approves a draft, without a click. The model proposed this
- * when the answer was written (`validateProposedActions`, @/lib/chat-proposed-actions) — the
- * arguments were validated then, against the ids the model was actually shown, and are taken
- * from the STORED row here, never re-read from the client. `commitProposedAction` takes no
+ * when the answer was written (@/lib/tools/chat-proposals) — the input was validated then,
+ * against the ids the model was actually shown, and is taken from the STORED row here, never
+ * re-read from the client. `commitProposedAction` takes no
  * argument beyond the two ids that address the proposal.
  *
  * Claiming is a single compare-and-swap UPDATE: the whole `proposed_actions` column is
@@ -19,13 +19,13 @@ import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { chatMessages } from "@/db/schema";
 import { requireUserForSurface } from "@/lib/plan-guards";
-import { createReminderForUser, scheduleContactFollowUpForUser } from "@/lib/reminder-writes";
-import { logNoteInteractionForUser } from "@/lib/contact-writes";
+import { UserFacingError } from "@/lib/errors";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
+import { chatWriteNamed, parseWriteInput, runUndo, type UndoStep } from "@/lib/tools/chat-writes";
 
 type ClaimOk = { ok: true; actions: StoredProposedAction[]; index: number; action: StoredProposedAction };
-type ClaimFail = { ok: false; reason: "not_found" | "already_done" | "already_dismissed" | "conflict" };
+type ClaimFail = { ok: false; reason: "not_found" | "already_done" | "already_dismissed" | "already_undone" | "conflict" };
 
 /**
  * Reads the message's `proposed_actions`, finds the one named, and — only if it is still
@@ -37,7 +37,9 @@ async function claim(
   userId: string,
   messageId: string,
   actionId: string,
-  nextStatus: "committing" | "dismissed"
+  nextStatus: "committing" | "dismissed" | "undoing",
+  /** The state the action must be in to be claimed: `done` for an undo, `proposed` otherwise. */
+  from: "proposed" | "done" = "proposed"
 ): Promise<ClaimOk | ClaimFail> {
   const db = await getDb();
   const row = await db.query.chatMessages.findFirst({
@@ -49,9 +51,12 @@ async function claim(
   const index = actions.findIndex((a) => a.id === actionId);
   if (index === -1) return { ok: false, reason: "not_found" };
   const current = actions[index]!;
-  if (current.status === "done") return { ok: false, reason: "already_done" };
-  if (current.status === "dismissed") return { ok: false, reason: "already_dismissed" };
-  if (current.status !== "proposed") return { ok: false, reason: "conflict" };
+  if (from === "proposed") {
+    if (current.status === "done") return { ok: false, reason: "already_done" };
+    if (current.status === "dismissed") return { ok: false, reason: "already_dismissed" };
+  }
+  if (current.status === "undone") return { ok: false, reason: "already_undone" };
+  if (current.status !== from) return { ok: false, reason: "conflict" };
 
   const before = JSON.stringify(actions);
   const claimed = actions.slice();
@@ -102,6 +107,7 @@ const REASON_COPY: Record<ClaimFail["reason"], string> = {
   not_found: "That action could not be found.",
   already_done: "Already added.",
   already_dismissed: "Already dismissed.",
+  already_undone: "Already undone.",
   conflict: "Someone else just acted on this — refresh to see the current state.",
 };
 
@@ -122,44 +128,22 @@ export async function commitProposedAction(messageId: string, actionId: string):
 
   const { args } = claimed.action;
   try {
-    let resultId: string | null = null;
-    if (args.kind === "log_interaction") {
-      // `skipRevalidate`: the lib function's own `revalidatePath` calls are unguarded and
-      // throw outside a request (a script exercising this action directly); this action
-      // does its own revalidation right after, through the safe wrapper.
-      const { row } = await logNoteInteractionForUser(
-        userId,
-        {
-          contactId: args.contactId,
-          rawNotes: args.text,
-          source: "chat_proposed",
-          externalId: `chat:${messageId}:${actionId}`,
-          direction: "out",
-        },
-        { skipRevalidate: true }
-      );
-      resultId = row.id;
-      revalidatePathIfRequestScoped(`/contacts/${args.contactId}`);
-      revalidatePathIfRequestScoped("/");
-      revalidatePathIfRequestScoped("/graph");
-    } else if (args.kind === "create_reminder") {
-      const row = await createReminderForUser(userId, {
-        contactId: args.contactId ?? undefined,
-        title: args.title,
-        description: args.description ?? undefined,
-        dueDate: args.dueDate ?? undefined,
-        reminderType: "manual",
-      });
-      resultId = row?.id ?? null;
-      revalidatePathIfRequestScoped("/reminders");
-    } else {
-      const result = await scheduleContactFollowUpForUser(userId, args.contactId, args.days);
-      resultId = result.reminder?.id ?? null;
-      revalidatePathIfRequestScoped(`/contacts/${args.contactId}`);
+    // A chat write (@/lib/tools/chat-writes), committed through its own catalog entry from
+    // the stored input — re-validated against that entry's schema, never trusted as stored.
+    const write = chatWriteNamed(args.tool);
+    const input = write ? parseWriteInput(write, args.input) : null;
+    if (!write || !input) throw new UserFacingError("That change can’t be made any more");
+    const outcome = await write.commit(userId, input, { messageId, actionId });
+    for (const path of new Set([outcome.href, "/", "/reminders", "/contacts"].filter((p): p is string => Boolean(p)))) {
+      revalidatePathIfRequestScoped(path);
     }
-
-    await settle(userId, messageId, claimed.actions, claimed.index, { status: "done", resultId });
-    return { ok: true, resultId };
+    await settle(userId, messageId, claimed.actions, claimed.index, {
+      status: "done",
+      resultId: outcome.resultId,
+      href: outcome.href,
+      undo: outcome.undo,
+    });
+    return { ok: true, resultId: outcome.resultId };
   } catch (err) {
     // Release the claim so a retry is possible — a transient failure (the contact was
     // deleted between propose and click, a DB hiccup) must not permanently strand the card.
@@ -173,4 +157,31 @@ export async function dismissProposedAction(messageId: string, actionId: string)
   const claimed = await claim(userId, messageId, actionId, "dismissed");
   if (!claimed.ok) return { ok: false, reason: REASON_COPY[claimed.reason] };
   return { ok: true };
+}
+
+/**
+ * Reverse a committed chat write, from the inverse its commit stored (`undo`). Claimed
+ * `done → undoing` by the same compare-and-swap as a commit, so a double click undoes once;
+ * a failed undo goes back to `done` and the card still offers it.
+ */
+export async function undoProposedAction(messageId: string, actionId: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const userId = await requireUserForSurface("page.chat");
+  const claimed = await claim(userId, messageId, actionId, "undoing", "done");
+  if (!claimed.ok) return { ok: false, reason: REASON_COPY[claimed.reason] };
+  const step = claimed.action.undo as UndoStep | null | undefined;
+  if (!step) {
+    await settle(userId, messageId, claimed.actions, claimed.index, { status: "done" });
+    return { ok: false, reason: "That can’t be undone from here." };
+  }
+  try {
+    await runUndo(userId, step);
+    for (const path of new Set([claimed.action.href, "/", "/reminders", "/contacts"].filter((p): p is string => Boolean(p)))) {
+      revalidatePathIfRequestScoped(path);
+    }
+    await settle(userId, messageId, claimed.actions, claimed.index, { status: "undone" });
+    return { ok: true };
+  } catch (err) {
+    await settle(userId, messageId, claimed.actions, claimed.index, { status: "done" });
+    return { ok: false, reason: err instanceof Error ? err.message : "Couldn’t undo that — try again?" };
+  }
 }

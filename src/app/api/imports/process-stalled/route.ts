@@ -1,19 +1,25 @@
-import { isNotNull, sql } from "drizzle-orm";
+import { isNotNull } from "drizzle-orm";
 import { sweepExpiredHolds } from "@/lib/credits/ledger";
 import { NextResponse } from "next/server";
-import { getDb, rowsOf } from "@/db";
-import { contacts, errorEvents, usageEvents } from "@/db/schema";
+import { getDb } from "@/db";
+import { contacts, errorEvents } from "@/db/schema";
 import { pruneAiResultCache } from "@/lib/ai-result-cache";
+import { pruneRateLimitBuckets } from "@/lib/rate-limit";
+import { pruneOlderThan, pruneUsageEvents } from "@/lib/event-prune";
 import { runAiBatchSweep } from "@/lib/ai-batch-apply";
 import { resumeStalledImports } from "@/lib/import-stall";
 import { resumeStrandedPurges } from "@/lib/user-data";
 import { sweepOrphanedAccounts } from "@/lib/clerk-orphan-sweep";
 import { isClerkConfigured } from "@/lib/demo-account";
 import { sweepAbandonedMeetingSessions } from "@/lib/meeting-sessions";
+import { sweepAbandonedStaging } from "@/lib/chat-import-preview";
 import { sweepExpiredHandoffs } from "@/lib/scan-handoff";
 import { clerkClient } from "@clerk/nextjs/server";
 import { kickCaptureJob, resumeStalledCaptureJobs } from "@/lib/capture-jobs";
 import { pruneUnattachedCapturePhotos } from "@/lib/capture-photos";
+import { hasBlobStorage } from "@/lib/contact-avatar";
+import { fillSharedAvatars, sweepOrphanedSharedAvatars } from "@/lib/shared-avatar-upkeep";
+import { sweepEmailAttachments } from "@/lib/email/attachments";
 import {
   finishCronRun,
   startCronRun,
@@ -28,9 +34,11 @@ import {
   usersWithPendingTimelineEvents,
 } from "@/lib/linkedin-timeline-backfill";
 import { backfillEmbeddingVectors, neonClient } from "@/db";
+import { runAnalyticsRetention } from "@/lib/analytics-retention";
 import { isInternalRequest } from "@/lib/internal-auth";
 import { reportAndContinue, reportError } from "@/lib/report-error";
-import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
+import { kickRelationshipRun } from "@/lib/relationship-engine/runner";
+import { usersWithPendingRelationshipWork } from "@/lib/relationship-engine/pending";
 
 export const maxDuration = 300;
 
@@ -39,7 +47,8 @@ export const maxDuration = 300;
 /**
  * `usage_events` is write-only and nothing user-facing reads it, so without a sweep it
  * quietly becomes the largest table in the database. Six months is well past the window
- * any admin view looks at.
+ * any admin view looks at. The one exception is Orbit-paid rows inside a managed AI pool's
+ * open window, which the pool's budget still counts (`pruneUsageEvents`).
  */
 const USAGE_EVENT_RETENTION_DAYS = 180;
 
@@ -91,48 +100,8 @@ const EMBED_SWEEP_BUDGET_MS = 90 * 1000;
  */
 const ERROR_EVENT_RETENTION_DAYS = 30;
 
-/** Rows deleted per statement by `pruneOlderThan`. */
-const PRUNE_BATCH = 5_000;
-
-/**
- * Wall-clock ceiling on pruning one table. A backlog still there when it runs out is the
- * next hour's; the resumption work below is what this route exists for.
- */
-const PRUNE_BUDGET_MS = 20 * 1000;
-
-/**
- * Deletes rows past the retention window in bounded batches, the way `prunePageViews`
- * does and for its reasons: one unbounded DELETE over a neglected table holds its locks
- * for as long as it takes inside a function with a timeout.
- *
- * Each batch counts itself (`RETURNING 1` into `count(*)`) rather than trusting a
- * driver-specific `rowCount` — neon-http and pglite disagree about the shape of a delete
- * result — so there is no separate count scan, and no deleted row leaves Postgres. Both
- * tables are indexed on created_at.
- */
-async function pruneOlderThan(
-  table: typeof usageEvents | typeof errorEvents,
-  days: number
-): Promise<number> {
-  const db = await getDb();
-  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-  const deadline = deadlineAfter(PRUNE_BUDGET_MS);
-  let pruned = 0;
-  for (;;) {
-    const res = await db.execute(sql`
-      WITH d AS (
-        DELETE FROM ${table} WHERE ${table.id} IN (
-          SELECT ${table.id} FROM ${table} WHERE ${table.createdAt} < ${cutoff} LIMIT ${PRUNE_BATCH}
-        )
-        RETURNING 1
-      )
-      SELECT count(*)::int AS n FROM d
-    `);
-    const n = Number(rowsOf<{ n: number }>(res)[0]?.n ?? 0);
-    pruned += n;
-    if (n < PRUNE_BATCH || deadlineReached(deadline)) return pruned;
-  }
-}
+/** Stages start only inside this much of `maxDuration`, leaving the rest for the one running. */
+const ROUTE_BUDGET_MS = 180_000;
 
 /**
  * The hourly backstop, scheduled by `.github/workflows/ops.yml` (the only scheduler):
@@ -174,14 +143,24 @@ export async function GET(request: Request) {
     errorEventsPruned: 0,
     /** Unsaved captures' photos past `UNATTACHED_PHOTO_TTL_MS`. */
     capturePhotosPruned: 0,
+    /** Email attachment blobs deleted: settled sends past ATTACHMENT_RETENTION_MS, and uploads never sent. */
+    emailAttachmentsSwept: 0,
     /** Meetings nobody finished, past `ABANDONED_SESSION_TTL_DAYS`. */
     meetingSessionsSwept: 0,
     /** Phone-scan grants past their expiry. */
     handoffsSwept: 0,
+    /** Chat uploads whose last chunk never arrived, deleted after 24 h in `staging`. */
+    chatStagingSwept: 0,
     creditHoldsSwept: 0,
     /** Background AI sent to a provider's Batch API: what came back this sweep. */
     aiBatchesApplied: 0,
     aiBatchesPending: 0,
+    /** Shared LinkedIn photo pool: slugs filled / found nothing this run, whether the source
+     *  quota stopped the fill, and rows removed because no contact has the slug any more. */
+    sharedAvatarsFilled: 0,
+    sharedAvatarsMissed: 0,
+    sharedAvatarFillDeferred: false,
+    sharedAvatarsSwept: 0,
     cohortsRecalibrated: 0,
     embeddingsBackfilled: 0,
     embeddingsGenerated: 0,
@@ -190,6 +169,8 @@ export async function GET(request: Request) {
     embeddingBackfillsKicked: 0,
     /** Users handed to the self-continuing LinkedIn timeline-event backfill route. */
     timelineBackfillsKicked: 0,
+    /** Users handed to the relationship engine runner (the cron backstop). */
+    relationshipKicks: 0,
     /** Deletion runs picked up, finished, still failing, and given up after 5 attempts. */
     purgesFound: 0,
     purgesFinished: 0,
@@ -201,7 +182,30 @@ export async function GET(request: Request) {
     orphansPurged: 0,
     orphanPurgeErrors: 0,
     orphanSweepAborted: false,
+    /** Stages left for the next run because the route reached `ROUTE_BUDGET_MS`. */
+    stagesSkipped: 0,
   };
+  /** Wall-clock ms per stage (`ms.<stage>`) and the skipped ones (`skipped.<stage>`), for `cron_runs.stats`. */
+  const stageStats: Record<string, number | boolean> = {};
+
+  // Every stage below is bounded on its own, but not their sum: past this, the rest wait
+  // for the next hourly run instead of the platform killing the route mid-stage, with the
+  // `cron_runs` row left "running".
+  const routeDeadline = Date.now() + ROUTE_BUDGET_MS;
+  let current: { name: string; at: number } | null = null;
+  /** Close the running stage's timing; open `name` unless the route is out of time. */
+  function stage(name: string | null): boolean {
+    if (current) stageStats[`ms.${current.name}`] = Date.now() - current.at;
+    current = null;
+    if (name === null) return false;
+    if (Date.now() > routeDeadline) {
+      stats.stagesSkipped += 1;
+      stageStats[`skipped.${name}`] = true;
+      return false;
+    }
+    current = { name, at: Date.now() };
+    return true;
+  }
 
   try {
     const db = await getDb();
@@ -211,7 +215,7 @@ export async function GET(request: Request) {
     stats.resumeFailed = sweep.resumeFailed;
     stats.resumeGaveUp = sweep.gaveUp;
 
-    try {
+    if (stage("captures")) try {
       const captures = await resumeStalledCaptureJobs({ now: new Date(), runner: kickCaptureJob });
       stats.captureStalledFound = captures.found;
       stats.captureResumed = captures.resumed;
@@ -223,17 +227,20 @@ export async function GET(request: Request) {
       reportError(err, { where: "job.process-stalled.captures" });
     }
 
-    try {
-      stats.usageEventsPruned = await pruneOlderThan(
-        usageEvents,
-        USAGE_EVENT_RETENTION_DAYS
-      );
+    if (stage("housekeeping")) try {
+      stats.usageEventsPruned = await pruneUsageEvents(USAGE_EVENT_RETENTION_DAYS);
       stats.errorEventsPruned = await pruneOlderThan(
         errorEvents,
         ERROR_EVENT_RETENTION_DAYS
       );
+      // The tables that used to grow without a limit: cron_runs, webhook_deliveries (and the
+      // recipient addresses in them sooner), gate_events, product_events, and converted
+      // waitlist rows. See src/lib/analytics-retention.ts for what is deliberately kept.
+      Object.assign(stats, await runAnalyticsRetention());
       // Remembered AI answers past the longest TTL any caller reads them with.
       await pruneAiResultCache();
+      // Rate-limit buckets whose window ended long ago; only the next hit ever reset one.
+      await pruneRateLimitBuckets();
       // Batched background AI: whatever the providers have finished since the last sweep.
       const batches = await runAiBatchSweep();
       stats.aiBatchesApplied = batches.applied;
@@ -242,6 +249,12 @@ export async function GET(request: Request) {
       // history only lists saved captures — so keeping them would be holding pictures of
       // someone's notes for no one.
       stats.capturePhotosPruned = await pruneUnattachedCapturePhotos();
+      // Email attachments: kept a week after the send settles (for a retry), and uploads the
+      // composer never sent.
+      if (hasBlobStorage()) {
+        const swept = await sweepEmailAttachments();
+        stats.emailAttachmentsSwept = swept.settled + swept.orphans;
+      }
       // Abandoned meeting transcripts. The per-user sweep only runs when that user records
       // again; without this, one recording never finished is kept forever.
       stats.meetingSessionsSwept = await sweepAbandonedMeetingSessions();
@@ -258,7 +271,17 @@ export async function GET(request: Request) {
       reportError(err, { where: "job.process-stalled.housekeeping" });
     }
 
-    try {
+    if (stage("chat-staging")) try {
+      // A chat import is uploaded in chunks and sits in `staging` until the last one lands.
+      // One whose tab closed mid-upload is invisible everywhere (history, engine, this
+      // route's own resume sweep), so without this its rows would be kept forever.
+      stats.chatStagingSwept = await sweepAbandonedStaging();
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.chat-staging" });
+    }
+
+    if (stage("purges")) try {
       // Deletion requests that stopped part-way: the user was told it is happening, so a
       // stranded run is finished here, and one that keeps failing surfaces as purge.stuck.
       const purges = await resumeStrandedPurges({ now: new Date() });
@@ -272,7 +295,7 @@ export async function GET(request: Request) {
       status = "partial";
     }
 
-    try {
+    if (stage("orphans")) try {
       if (isClerkConfigured() && process.env.CLERK_SECRET_KEY) {
         const clerk = await clerkClient();
         const sweep = await sweepOrphanedAccounts({
@@ -292,7 +315,7 @@ export async function GET(request: Request) {
       status = "partial";
     }
 
-    try {
+    if (stage("recalibrate")) try {
       // Redraw closeness for users whose ranking has been drifting.
       //
       // Ordinary edits score their own contact immediately and flag the distribution
@@ -313,7 +336,7 @@ export async function GET(request: Request) {
       reportError(err, { where: "job.process-stalled.recalibrate" });
     }
 
-    try {
+    if (stage("pgvector-copy")) try {
       // Copy JSONB embeddings into the pgvector column. This used to run on every cold
       // start, where it could spend up to 500 sequential round trips before the first
       // request was served. Nothing needs it to be immediate — an uncopied row just misses
@@ -325,7 +348,7 @@ export async function GET(request: Request) {
       reportError(err, { where: "job.process-stalled.pgvector-copy" });
     }
 
-    try {
+    if (stage("embedding-sweep")) try {
       // Backstop only — imports kick the backfill directly on completion. This catches
       // users whose kick was lost along with the invocation that sent it.
       const [staleContactUsers, memoryUsers] = await Promise.all([
@@ -374,7 +397,7 @@ export async function GET(request: Request) {
       reportError(err, { where: "job.process-stalled.embedding-sweep" });
     }
 
-    try {
+    if (stage("timeline-kicks")) try {
       // Backstop only — the LinkedIn messages adapter's `finalize` kicks this directly when
       // an import completes. This catches users whose kick was lost along with the
       // invocation that sent it, and users whose backlog outlived the kick chain.
@@ -389,20 +412,53 @@ export async function GET(request: Request) {
       reportError(err, { where: "job.process-stalled.timeline-kicks" });
     }
 
-    if (stats.resumeFailed > 0) status = "partial";
+    if (stage("relationship-kicks")) try {
+      // Backstop only — import finalize and the batch applier kick the runner directly. This
+      // catches lost kicks, expired leases, and runs parked in waiting_key whose key came back.
+      for (const pendingUser of await usersWithPendingRelationshipWork(TIMELINE_BACKFILL_USERS)) {
+        await kickRelationshipRun(pendingUser);
+        stats.relationshipKicks += 1;
+      }
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.relationship-kicks" });
+    }
+
+    if (stage("shared-avatar-fill")) try {
+      // A little of the shared photo pool each hour, most-shared slugs first. Last, with the
+      // orphan sweep: lookups are slow, and must never push the stages above past maxDuration.
+      const fill = await fillSharedAvatars();
+      stats.sharedAvatarsFilled = fill.found;
+      stats.sharedAvatarsMissed = fill.missed;
+      stats.sharedAvatarFillDeferred = fill.deferred;
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.shared-avatar-fill" });
+    }
+
+    if (stage("shared-avatar-sweep")) try {
+      stats.sharedAvatarsSwept = await sweepOrphanedSharedAvatars();
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.shared-avatar-sweep" });
+    }
+
+    stage(null);
+
+    if (stats.resumeFailed > 0 || stats.stagesSkipped > 0) status = "partial";
   } catch (err) {
     status = "failed";
     error = err;
     reportError(err, { where: "job.process-stalled" });
   } finally {
     // In `finally` so it survives an early return and cannot be forgotten in a new branch.
-    await finishCronRun(run, { status, stats, error });
+    await finishCronRun(run, { status, stats: { ...stats, ...stageStats }, error });
   }
 
   // A 500 turns the failure red in Vercel's own cron log for free. Vercel does not retry
   // failed crons, so there is no retry-storm risk in reporting honestly.
   return NextResponse.json(
-    { runId: run.id, status, ...stats },
+    { runId: run.id, status, ...stats, ...stageStats },
     { status: status === "failed" ? 500 : 200 }
   );
 }

@@ -67,6 +67,29 @@ function personIdentityKey(p: PersonRecord): string | null {
   return null;
 }
 
+/**
+ * How much a provider told us about someone — what "best" means when the plan's contact cap
+ * forces a choice.
+ *
+ * The people worth spending a free plan's 500 slots on are the ones Orbit can actually do
+ * something with: an email or a LinkedIn URL is a way to reach and to match them, a company or
+ * title is what places them on the sky. An address-book entry that is a bare name is the
+ * weakest thing in the book. Deliberately simple and additive, because it only has to sort a
+ * batch, and a tie keeps provider order (the sort is stable).
+ */
+export function completenessScore(p: PersonRecord): number {
+  const has = (v: string | null | undefined) => (v?.trim() ? 1 : 0);
+  return (
+    3 * has(p.email) +
+    2 * has(p.phone) +
+    2 * has(p.linkedinUrl) +
+    has(p.xHandle) +
+    has(p.company) +
+    has(p.title) +
+    has(p.notes)
+  );
+}
+
 /** First-non-empty wins — enrichment fills blanks, matching `bulkMergeContactsForUser`'s COALESCE. */
 function foldPersonInput(
   into: Partial<ContactInput>,
@@ -127,6 +150,7 @@ export async function ingestPeople(
    *     written — the in-batch case `findDuplicateCandidatesIndexed` alone cannot catch.
    */
   const toCreate: ContactInput[] = [];
+  const createScores: number[] = [];
   const createIndexByKey = new Map<string, number>();
   const mergeByContactId = new Map<string, Partial<ContactInput>>();
 
@@ -167,16 +191,33 @@ export async function ingestPeople(
         toCreate[pending],
         toContactInput(person, ctx.options.source)
       ) as ContactInput;
+      // The folded record knows more than either row did on its own.
+      createScores[pending] = Math.max(createScores[pending], completenessScore(person));
       continue;
     }
 
-    if (ctx.headroom !== null && ctx.headroom - toCreate.length <= 0) {
-      stats.blockedByPlan++;
-      continue;
-    }
-    const input = toContactInput(person, ctx.options.source);
+    // Tags belong on the create path only: a matched contact's tags are the user's to manage.
+    const input: ContactInput = {
+      ...toContactInput(person, ctx.options.source),
+      tagNames: ctx.options.tagNames,
+    };
     if (key !== null) createIndexByKey.set(key, toCreate.length);
     toCreate.push(input);
+    createScores.push(completenessScore(person));
+  }
+
+  // The plan's contact cap is applied here, AFTER the whole batch has been seen, so that when it
+  // bites the people who are kept are the best-described ones rather than whoever the provider
+  // happened to list first. In-batch repeats were already folded above, so each blocked person
+  // is counted once. `ctx.headroom` is decremented per created contact below, so across the
+  // pages of one book the cap is spent as it goes.
+  if (ctx.headroom !== null && toCreate.length > Math.max(0, ctx.headroom)) {
+    const keep = Math.max(0, ctx.headroom);
+    const ranked = toCreate
+      .map((input, i) => ({ input, score: createScores[i], i }))
+      .sort((a, b) => b.score - a.score || a.i - b.i);
+    stats.blockedByPlan += toCreate.length - keep;
+    toCreate.splice(0, toCreate.length, ...ranked.slice(0, keep).map((r) => r.input));
   }
 
   // 1 statement (plus the resolver's primed lookups, which are per-batch, not per-row).

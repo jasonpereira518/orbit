@@ -7,7 +7,7 @@
 - **P0:** a Next.js release with two critical and several high advisories (including a Proxy bypass), and an SSRF guard that IPv6-mapped addresses walked straight past.
 - **P1:** three user-controlled fetches that skipped the SSRF guard entirely, mass assignment that let a caller re-home rows into another account, and cross-tenant id references in events, opportunities and reminders.
 
-This is defence in depth, not a guarantee. The items marked **Open** below still need a decision or a dashboard change.
+This is defence in depth, not a guarantee. Items still open are tracked privately (see §3).
 
 Labels: **Fixed** means it was changed on this branch and a test pins it. **Open** means it is not changed, and the fix is given. **Dashboard** means it can only be checked or fixed in a Vercel, Neon, Clerk or GitHub setting.
 
@@ -125,30 +125,20 @@ Labels: **Fixed** means it was changed on this branch and a test pins it. **Open
 
 ---
 
-## 3. Open: recommended next
+## 3. Follow-ups
 
-| Sev | Pri | Issue | Exact fix |
-|-----|-----|-------|-----------|
-| Medium | P1 | **Backups never restore-tested; Blob not backed up; `ENCRYPTION_SECRET` not escrowed** (RUNBOOK drill log: "not yet run"). A restored dump cannot decrypt OAuth tokens or BYOK keys without the secret. | Run the restore drill now and log it. Add a monthly workflow that restores the latest artifact into a throwaway Neon branch and checks row counts. Store `ENCRYPTION_SECRET` next to the age private key. State RPO (24 h) and RTO in the runbook. Decide whether losing Blob (avatars, capture photos) is acceptable, or add an export job. |
-| Medium | P1 | **CSP is report-only, and `script-src` has `'unsafe-inline'`**, so it gives little XSS protection. | Dashboard: set `CSP_ENFORCE=1` in Vercel production once `csp.report` rows are quiet. Then move the authenticated app routes to a nonce plus `'strict-dynamic'` (marketing pages can stay static). Add `Cross-Origin-Opener-Policy: same-origin-allow-popups`, which keeps the Clerk and Google popups working. |
-| Low | P1 | **MCP OAuth ignores token scopes.** Every valid Clerk OAuth token gets read and write (`src/lib/mcp/oauth.ts:122`), so a dynamically registered client that asked only for `openid email` gets full CRM access. | Define an `orbit:mcp` scope in Clerk. Require `result.scopes?.includes("orbit:mcp")`, and map read vs. write from the scopes. Needs a Clerk dashboard change, so it was not done here. |
-| Medium | P2 | **Webhook drain is not fair across tenants.** Deliveries run one at a time, oldest first, across all users. | Pick rows with `ROW_NUMBER() OVER (PARTITION BY user_id)` and a per-user limit per run. Deliver with small bounded concurrency, and shorten the timeout for endpoints that keep failing. |
-| Medium | P2 | **The global 32 MB server-action body limit applies to every action**, and many text fields have no limit (chat question, reminder text, rawNotes, recruiter drafts). `listSuggestedReminders`, `listImports` and `listRecentMerges` accept an unbounded `limit`. | Add per-field caps as `clipInput` already does, and clamp every `limit`. Longer term, move capture uploads to a route handler and set the action limit back to 1–2 MB. |
-| Low | P2 | **`/api/track` rate limit** is keyed on IP plus User-Agent, so changing the UA resets it. The `dwell` and `load` kinds skip it, and it is held in memory per instance. | Key on IP (or a /24 bucket) and apply it before the `kind` branches. |
-| Low | P2 | **Least-privilege database roles.** The runtime role owns the schema (`reconcileSchema` can DROP), and the backup workflow uses that same URL. | Use a DML-only runtime role and a migrator URL used only in `scripts/migrate.ts`. Use a `pg_read_all_data` role (`BACKUP_DATABASE_URL`) for backups. Pass `fetchOptions: { signal: AbortSignal.timeout(25_000) }` to `neon()`. |
-| Low | P2 | **Recruiter pool gate:** `logRecruiter({ recruiterId })` links any recruiter row, skipping the "pooled and sharing" rule. After a downgrade, `loadRecruitersForChat` and `updateCalendarSubscription` / `syncDueCalendarSubscriptions` skip the plan gate. | Require the recruiter to be pooled and the viewer to be sharing (or an existing link). Use `requireRecruitersUser` and `requireSyncUser` respectively. |
-| Low | P3 | **Expand/contract is not enforced.** The DDL has `DROP COLUMN`s, which the runbook calls additive, and `migrate.ts` runs merges and backfills on every production build. | Add a smoke check that rejects a new `DROP` / `DELETE` / `ALTER … TYPE` unless it is allowlisted with a version note. Move the merges into a job that can be triggered on its own. |
-| Low | P3 | **Ops workflow concurrency:** one `ops` group with `cancel-in-progress: false` keeps only one pending run, so a long hourly run can cause a queued 10-minute sweep to be dropped. | Split the long jobs into their own workflow and concurrency group. |
-| Low | P3 | GitHub Actions are pinned by tag, not SHA. There are no `tags` unique index and no event-attendee `user_id` conflict guard. | Pin to SHAs (Dependabot will keep them current). Add `UNIQUE (user_id, lower(name))` on tags after deduping. |
-| Low | P3 | **DNS-rebinding window** between `assertDeliverable`'s lookup and `fetch`'s own lookup. This is documented as accepted. | To close it fully, use an undici `Agent` whose `connect.lookup` re-checks the resolved IP. |
+Status as of the 2026-10-13 audit. The open items' detail is tracked privately: this
+repository is public, and an unpatched weakness written up with its exact fix is a to-do list
+for an attacker.
 
-**Dashboard checks** (not visible from the repo):
-- `PRODUCTION_DB_HOST` is set, so preview builds cannot migrate production.
-- Neon `statement_timeout` is non-zero. `/api/health?token=…` reports it.
-- Backup secrets and the Better Stack heartbeat are configured.
-- "Dependabot security updates" is enabled in GitHub → Settings → Code security.
-
----
+| Item | Status |
+|---|---|
+| `/api/track` rate limit (keyed on IP plus User-Agent, skipped by some kinds) | **Fixed** Oct 13: per IP, before every branch |
+| Unbounded `limit` on list actions | **Fixed** Oct 13: clamped |
+| Recruiter pool gate on `logRecruiter({ recruiterId })` | **Fixed** Oct 13 |
+| GitHub Actions pinned by tag | **Fixed** Oct 13: pinned to SHAs |
+| Ops workflow concurrency | **Fixed**: one concurrency group per schedule |
+| Everything else from this section (infrastructure, policy and defence-in-depth items) | Tracked privately |
 
 ## 4. Already done well
 

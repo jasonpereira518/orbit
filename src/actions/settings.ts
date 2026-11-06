@@ -2,6 +2,7 @@
 
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
 import { getDb } from "@/db";
 import {
@@ -9,9 +10,14 @@ import {
   userSettings,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { normalizeSenderBio } from "@/lib/sender-profile";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { encrypt } from "@/lib/crypto";
 import { loadWritingInstructions, saveWritingInstructionsFor } from "@/lib/writing-instructions-store";
+import { saveChatAutoApplyFor } from "@/lib/chat-auto-apply";
+import { loadEmailSettings, saveDefaultSendProvider, saveEmailSignature } from "@/lib/email/settings";
+import { getSendCapability, type SendCapability } from "@/lib/email/sender";
+import { requireUserForSurface } from "@/lib/plan-guards";
 import {
   DATA_CATEGORY_IDS,
   deletionOutcome,
@@ -35,11 +41,14 @@ import {
 import { checkAiKey, checkDecisionKey, keyCheckOutcome } from "@/lib/ai-key-check";
 import { getAiAccessStatus, jevSwitchedOff, managedKeysConfigured } from "@/lib/ai-access";
 import { demoAccountReason } from "@/lib/demo-account";
+import { normalizeSocialLinks } from "@/lib/safe-links";
 import {
   applyAiKeyChange,
-  embeddingBackendFor,
+  clearedKeyPatch, clearMovesEmbeddings,
   managedEligibilityFor,
+  trackAiKeyAdded,
 } from "@/lib/ai-settings-write";
+import { track } from "@/lib/product-events";
 
 export async function getSettings() {
   const userId = await requireUserId();
@@ -100,6 +109,8 @@ export async function getSettings() {
     workHistoryAutoEnabled: (settings?.workHistoryAutoEnabled ?? 1) !== 0,
     /** Email insights (opt-in). Off unless switched on; see `user_settings.email_intel_enabled`. */
     emailIntelEnabled: (settings?.emailIntelEnabled ?? 0) !== 0,
+    /** Whether chat may apply its small, reversible changes itself. Off unless switched on. */
+    chatAutoApply: (settings?.chatAutoApply ?? 0) !== 0,
     /** Radar's Monday email. On unless switched off (Settings, or its one-click link). */
     radarDigestEnabled: (settings?.radarDigestEnabled ?? 1) !== 0,
     /**
@@ -123,6 +134,8 @@ export async function getSettings() {
               : Boolean(settings?.openrouterApiKeyEncrypted),
       /** Orbit holds a managed key for this provider AND this account may use it. */
       managedAvailable: Boolean(ai.eligibility) && managedKeysConfigured()[p.id],
+      /** Clearing this key moves search to another provider, which drops and rebuilds its index. */
+      clearResetsSearch: clearMovesEmbeddings(p.id, settings, ai.eligibility),
     })),
     // Mirrors the plan gate in `getOutreachSendConfig` / `getApolloApiKey`: Orbit's shared
     // keys only count as configured when the plan actually permits hosted sends, so the
@@ -159,6 +172,9 @@ export async function getSettings() {
       canUseSync: entitlements.canUseSync,
       canUseExtension: entitlements.canUseExtension,
     },
+    senderBio: settings?.senderBio || "",
+    /** What the LinkedIn export imports wrote about the user; null when nothing was imported. */
+    careerProfile: settings?.careerProfile ?? null,
     socialLinks: {
       linkedin: settings?.socialLinks?.linkedin || "",
       twitter: settings?.socialLinks?.twitter || "",
@@ -168,6 +184,30 @@ export async function getSettings() {
     /** Null until the account has recorded a choice — see the column in schema.ts. */
     desktopNotificationsEnabled: settings?.desktopNotificationsEnabled ?? null,
   };
+}
+
+/**
+ * Save how the user describes themselves. Fed to every message Orbit drafts for them.
+ *
+ * Normalizing on the way in rather than at each read site: this is pasted straight into
+ * prompts, where an embedded newline ends the block and turns the remainder into what looks
+ * like a fresh instruction.
+ */
+export async function saveSenderBio(bio: string) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const senderBio = normalizeSenderBio(bio);
+
+  await db
+    .insert(userSettings)
+    .values({ userId, senderBio })
+    .onConflictDoUpdate({
+      target: userSettings.userId,
+      set: { senderBio, updatedAt: new Date() },
+    });
+
+  revalidatePath("/settings");
+  return { senderBio: senderBio ?? "" };
 }
 
 export async function saveThemePreference(theme: ThemePreference) {
@@ -181,6 +221,12 @@ export async function saveThemePreference(theme: ThemePreference) {
       target: userSettings.userId,
       set: { theme, updatedAt: new Date() },
     });
+}
+
+/** The "Let chat make small changes for you" switch on the AI settings page. */
+export async function saveChatAutoApply(enabled: boolean) {
+  const userId = await requireUserId();
+  await saveChatAutoApplyFor(userId, enabled);
 }
 
 /** The "Keep work history current" switch on the AI settings page. */
@@ -210,9 +256,14 @@ export async function saveAiSettings(input: {
   const newKey = input.apiKey?.trim() || null;
   let keyNote: string | null = null;
   if (newKey) {
-    const outcome = keyCheckOutcome(await checkAiKey(provider, newKey), provider);
+    const verdict = await checkAiKey(provider, newKey);
+    const outcome = keyCheckOutcome(verdict, provider);
     // Returned, not thrown: a thrown message is a digest in production.
-    if (!outcome.save) return { ok: false as const, error: outcome.error };
+    if (!outcome.save) {
+      // The verdict is a closed word ("rejected" | "malformed"), never the key or the provider's text.
+      track("ai_key_check_failed", { provider, error_kind: verdict }, { userId });
+      return { ok: false as const, error: outcome.error };
+    }
     keyNote = outcome.note;
   }
   const encrypted = newKey ? encrypt(newKey) : null;
@@ -223,6 +274,10 @@ export async function saveAiSettings(input: {
     model: input.model,
     encryptedKey: encrypted,
   });
+
+  // A run parked in waiting_key resumes as soon as AI can run again.
+  // Lazy: every page that reads settings imports this file, and the engine is only needed here.
+  if (newKey) after(async () => (await import("@/lib/relationship-engine/runner")).kickRelationshipRun(userId));
 
   revalidatePath("/settings");
   revalidatePath("/chat");
@@ -241,14 +296,7 @@ export async function clearApiKey(provider?: AiProvider) {
   });
   const active = resolveAiProvider(provider || existing?.aiProvider);
 
-  const patch =
-    active === "gemini"
-      ? { geminiApiKeyEncrypted: null }
-      : active === "openai"
-        ? { openaiApiKeyEncrypted: null }
-        : active === "anthropic"
-          ? { anthropicApiKeyEncrypted: null }
-          : { openrouterApiKeyEncrypted: null };
+  const patch = clearedKeyPatch(active);
 
   await db
     .update(userSettings)
@@ -260,12 +308,8 @@ export async function clearApiKey(provider?: AiProvider) {
   // go, by the same rule `saveAiSettings` applies when a save changes the backend.
   let embeddingReset = false;
   if (existing) {
-    const selected = resolveAiProvider(existing.aiProvider);
     // Eligibility matters: on Lifetime, clearing a key can move search onto Orbit's managed key.
-    const eligibility = await managedEligibilityFor(userId);
-    const previousBackend = embeddingBackendFor(selected, existing, eligibility);
-    const nextBackend = embeddingBackendFor(selected, { ...existing, ...patch }, eligibility);
-    embeddingReset = Boolean(previousBackend && nextBackend && previousBackend !== nextBackend);
+    embeddingReset = clearMovesEmbeddings(active, existing, await managedEligibilityFor(userId));
     if (embeddingReset) {
       await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
     }
@@ -293,6 +337,26 @@ export async function saveWritingInstructions(text: string) {
   return { ok: true as const, text: stored };
 }
 
+/** The Email settings section: signature, and the mailbox Orbit sends from. */
+export async function getEmailSettings(): Promise<{ signature: string | null; capability: SendCapability }> {
+  const userId = await requireUserForSurface("settings.email");
+  const [{ signature }, capability] = await Promise.all([loadEmailSettings(userId), getSendCapability(userId)]);
+  return { signature, capability };
+}
+
+/** Which connected mailbox sends by default when more than one can. Null = automatic. */
+export async function saveDefaultSendProviderAction(provider: "gmail" | "outlook" | null): Promise<SendCapability> {
+  const userId = await requireUserForSurface("settings.email");
+  await saveDefaultSendProvider(userId, provider === "gmail" || provider === "outlook" ? provider : null);
+  return getSendCapability(userId);
+}
+
+export async function saveEmailSignatureAction(text: string): Promise<{ ok: true; signature: string | null }> {
+  const userId = await requireUserForSurface("settings.email");
+  if (typeof text !== "string") throw new Error("Invalid signature");
+  return { ok: true, signature: await saveEmailSignature(userId, text) };
+}
+
 /**
  * The decision model's key (TypeSafe's Jev). Its own action, not a branch of
  * `saveAiSettings`: TypeSafe is not a chat provider, so saving it changes no provider, no
@@ -303,12 +367,20 @@ export async function saveDecisionKey(apiKey: string) {
   const key = apiKey.trim();
   if (!key) return { ok: false as const, error: "Paste a TypeSafe key first" };
 
-  const outcome = keyCheckOutcome(await checkDecisionKey(key), "typesafe");
+  const verdict = await checkDecisionKey(key);
+  const outcome = keyCheckOutcome(verdict, "typesafe");
   // Returned, not thrown: a thrown message is a digest in production.
-  if (!outcome.save) return { ok: false as const, error: outcome.error };
+  if (!outcome.save) {
+    track("ai_key_check_failed", { provider: "typesafe", error_kind: verdict }, { userId });
+    return { ok: false as const, error: outcome.error };
+  }
 
   const encrypted = encrypt(key);
   const db = await getDb();
+  const before = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+    columns: { typesafeApiKeyEncrypted: true, createdAt: true },
+  });
   await db
     .insert(userSettings)
     .values({ userId, typesafeApiKeyEncrypted: encrypted })
@@ -316,6 +388,12 @@ export async function saveDecisionKey(apiKey: string) {
       target: userSettings.userId,
       set: { typesafeApiKeyEncrypted: encrypted, updatedAt: new Date() },
     });
+
+  // The decision key is a personal key too (`ai_key_added`, provider "typesafe"), but it does not
+  // make chat AI ready, so it does not stamp `user_settings.ai_key_added_at`.
+  if (!before?.typesafeApiKeyEncrypted) {
+    await trackAiKeyAdded(userId, "typesafe", before?.createdAt ?? new Date());
+  }
 
   revalidatePath("/settings");
   return { ok: true as const, keyNote: outcome.note };
@@ -385,14 +463,12 @@ export async function saveSocialLinks(input: {
   website?: string;
 }) {
   const userId = await requireUserId();
+  // Checked here, not only in the field: the stored value becomes a link on the sun's
+  // inspect panel, and a Server Action is reachable without this form.
+  const normalized = normalizeSocialLinks(input);
+  if (!normalized.ok) return normalized;
+  const socialLinks = normalized.links;
   const db = await getDb();
-
-  const socialLinks = {
-    linkedin: input.linkedin?.trim() || undefined,
-    twitter: input.twitter?.trim() || undefined,
-    github: input.github?.trim() || undefined,
-    website: input.website?.trim() || undefined,
-  };
 
   await db
     .insert(userSettings)
@@ -404,7 +480,7 @@ export async function saveSocialLinks(input: {
 
   revalidatePath("/settings");
   revalidatePath("/graph");
-  return { ok: true };
+  return { ok: true as const, links: socialLinks };
 }
 
 
@@ -453,3 +529,5 @@ export async function getPlanOverview() {
 
   return { entitlements, usage, demoAccount: demoAccountReason(userId) };
 }
+
+

@@ -221,7 +221,7 @@ export function ScanQrHandoff({
           </AnimatePresence>
         </div>
         {handoff && (
-          <p className="text-xs text-muted-foreground/70">
+          <p className="text-xs text-muted-foreground-subtle">
             Link expires in {formatRemaining(remaining)}
           </p>
         )}

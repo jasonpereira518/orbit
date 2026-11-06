@@ -1,4 +1,5 @@
 import { SETTINGS_SECTIONS } from "@/components/settings/sections";
+import { PLANS, PLAN_SHORT_LABELS, type Plan, type PurchasablePlan } from "@/lib/plans/plan-config";
 
 /**
  * The catalogue of things an operator can hide from every user at once.
@@ -14,7 +15,7 @@ import { SETTINGS_SECTIONS } from "@/components/settings/sections";
  * surface goes dark, and unhiding restores it as it was.
  */
 
-export type SurfaceKind = "page" | "dashboard" | "settings" | "widget";
+export type SurfaceKind = "page" | "dashboard" | "settings" | "widget" | "feature";
 
 export type Surface = {
   /** Stable storage key. Never rename one — the flag rows are keyed on it. */
@@ -37,9 +38,14 @@ export type Surface = {
   alwaysVisible?: true;
   reason?: string;
   /**
-   * Pages only: not released yet. Ordinary users get the coming-soon screen in place of the
-   * route (and every route under it) and the nav item carries a "Soon" tag. Set in code, not
-   * by an operator toggle — releasing the page is deleting this line.
+   * Pages and features: not released yet. On a page, ordinary users get the coming-soon screen
+   * in place of the route (and every route under it) and the nav item carries a "Soon" tag. A
+   * feature has no screen of its own, so it is simply hidden: every entry point disappears and
+   * its server actions refuse.
+   *
+   * This is the DEFAULT. An operator can mark any releasable page coming soon, or release one
+   * of these, from /admin/product; that override is stored as a flag row and wins over this
+   * line in both directions (see `effectiveComingSoonKeys`).
    */
   comingSoon?: true;
 };
@@ -55,13 +61,16 @@ const PAGES: Surface[] = [
     reason: "Onboarding and the app shell both redirect here.",
   },
   {
-    // Released. Hiding it in /admin/product stands down the nightly pass, the news sweep and
-    // the Monday email, and nothing points into it (see "Radar: switches" in docs/RUNBOOK.md).
+    // Ships dark again: released in #380, put back the same day. The page, the nightly
+    // pass's spend, the Monday email and the dashboard briefing all follow the effective
+    // coming-soon set. An admin previews it from /admin/product, where a `live:page.radar`
+    // override releases it without a deploy; releasing in code is deleting the line below.
     key: "page.radar",
     kind: "page",
     label: "Radar",
     description: "Who to reach out to this week, and why, rebuilt every night.",
     href: "/radar",
+    comingSoon: true,
   },
   {
     key: "page.events",
@@ -84,6 +93,24 @@ const PAGES: Surface[] = [
     label: "Capture",
     description: "Log an interaction. Also hides the sidebar's Log interaction button.",
     href: "/capture",
+  },
+  {
+    key: "page.meetings",
+    kind: "page",
+    label: "Meetings",
+    description: "Record a meeting, review its people, and browse past meetings (recorded and Granola).",
+    href: "/meetings",
+  },
+  {
+    // Ships dark. Brief someone who is not in the network yet, from a web search on the
+    // account's own AI key (`src/lib/web-research.ts`); briefs are kept 14 days, and only
+    // the people a user saves become contacts.
+    key: "page.find",
+    kind: "page",
+    label: "Find people",
+    description: "Research anyone outside your network before you reach out or meet.",
+    href: "/find",
+    comingSoon: true,
   },
   {
     key: "page.imports",
@@ -221,6 +248,60 @@ const WIDGETS: Surface[] = [
   },
 ];
 
+/**
+ * Capabilities that live inside other pages rather than being pages themselves. Hiding one
+ * removes every entry point to it and makes its server actions refuse (`requireUserForSurface`).
+ */
+export const COMPOSE_SURFACE_KEY = "feature.compose";
+export const OUTLOOK_SEND_SURFACE_KEY = "feature.outlook-send";
+export const REPLY_INBOX_SURFACE_KEY = "feature.reply-inbox";
+/** The key the chat-imports feature (WhatsApp / iMessage exports) gates on. */
+export const CHAT_IMPORTS_SURFACE_KEY = "feature.chat-imports";
+/** Cloud notes: watch Drive/OneDrive for meeting notes, and the /capture Drive & OneDrive tab. */
+export const CLOUD_NOTES_SURFACE_KEY = "feature.cloud-notes";
+const FEATURES: Surface[] = [
+  {
+    key: COMPOSE_SURFACE_KEY,
+    kind: "feature",
+    label: "Compose email",
+    description: "Write and send email to anyone from a contact's page or ⌘K, from your own mailbox.",
+    comingSoon: true,
+  },
+  {
+    key: OUTLOOK_SEND_SURFACE_KEY,
+    kind: "feature",
+    label: "Send from Outlook",
+    description: "Send Orbit email from a connected Outlook or Microsoft 365 mailbox (Mail.Send).",
+    // Until the privacy page discloses Mail.Send (direct-email P3, Task 8).
+    comingSoon: true,
+  },
+  {
+    key: REPLY_INBOX_SURFACE_KEY,
+    kind: "feature",
+    label: "Reply to inbox threads",
+    description: "Compose can reply to the latest email with a contact found in your mailbox (Gmail read / Mail.Read).",
+    // Until the privacy page discloses this use of the read scopes (direct-email P5).
+    comingSoon: true,
+  },
+  {
+    key: CHAT_IMPORTS_SURFACE_KEY,
+    kind: "feature",
+    label: "Chat imports (WhatsApp, iMessage)",
+    description:
+      "Upload WhatsApp and iMessage exports for relationship analysis. Hidden until the privacy policy discloses chat content.",
+    comingSoon: true,
+  },
+  {
+    key: CLOUD_NOTES_SURFACE_KEY,
+    kind: "feature",
+    label: "Cloud notes (Drive & OneDrive)",
+    description:
+      "Finds meeting notes in Google Drive or OneDrive, offers to extract them, and adds the Drive & OneDrive tab on Capture.",
+    // Google's drive.readonly is restricted: until CASA passes only consent-screen test users can grant it.
+    comingSoon: true,
+  },
+];
+
 const SETTINGS: Surface[] = SETTINGS_SECTIONS.map((section) => {
   const reason = SETTINGS_LOCKED[section.id];
   return {
@@ -236,7 +317,7 @@ const SETTINGS: Surface[] = SETTINGS_SECTIONS.map((section) => {
   };
 });
 
-export const SURFACES: Surface[] = [...PAGES, ...DASHBOARD_CARDS, ...WIDGETS, ...SETTINGS];
+export const SURFACES: Surface[] = [...PAGES, ...DASHBOARD_CARDS, ...WIDGETS, ...FEATURES, ...SETTINGS];
 
 const BY_KEY = new Map(SURFACES.map((s) => [s.key, s]));
 
@@ -273,11 +354,122 @@ export function isHrefHidden(href: string, hidden: ReadonlySet<string>): boolean
   return key !== null && hidden.has(key);
 }
 
-/** Settings anchor id → surface key, for filtering the settings page and its rail. */
-/** Page surfaces that are announced but not released. */
-export const COMING_SOON_KEYS: ReadonlySet<string> = new Set(
-  PAGES.filter((s) => s.comingSoon).map((s) => s.key)
+/**
+ * The plan a coming-soon surface will unlock on, said on its screen and in the nav tooltip.
+ * Every one is Pro today (Jason, Oct 2026). Only Outreach is gated in code so far — Radar and
+ * Events need a `FeatureKey` + `requireEntitlement` before they ship, or this copy over-promises.
+ */
+export const COMING_SOON_UNLOCK_PLAN: PurchasablePlan = "orbit";
+
+/** Page and feature surfaces that ship as announced-but-not-released, before any operator override. */
+export const DEFAULT_COMING_SOON_KEYS: ReadonlySet<string> = new Set(
+  SURFACES.filter((s) => s.comingSoon).map((s) => s.key)
 );
+
+/**
+ * Operator overrides of the default, stored as extra rows in `app_surface_flags` so no
+ * schema change is needed: `soon:<key>` marks a page coming soon, `live:<key>` releases one
+ * the code ships as coming soon. Absent both, the code default stands.
+ */
+export const SOON_FLAG_PREFIX = "soon:";
+export const LIVE_FLAG_PREFIX = "live:";
+
+/** Whether a page can be marked coming soon at all — never the escape-hatch pages. */
+export function canMarkComingSoon(key: string): boolean {
+  const surface = BY_KEY.get(key);
+  return surface?.kind === "page" && surface.alwaysVisible !== true;
+}
+
+/** The default set with the operator's override rows applied. Pure; the server reads the rows. */
+export function effectiveComingSoonKeys(flagRows: Iterable<string>): Set<string> {
+  const keys = new Set(DEFAULT_COMING_SOON_KEYS);
+  const rows = [...flagRows];
+  for (const row of rows) {
+    if (row.startsWith(SOON_FLAG_PREFIX)) {
+      const key = row.slice(SOON_FLAG_PREFIX.length);
+      if (canMarkComingSoon(key)) keys.add(key);
+    }
+  }
+  for (const row of rows) {
+    if (row.startsWith(LIVE_FLAG_PREFIX)) keys.delete(row.slice(LIVE_FLAG_PREFIX.length));
+  }
+  return keys;
+}
+
+/**
+ * The operator's sidebar order, stored as ONE more row in `app_surface_flags`:
+ * `order:page.a,page.b,...`. Like the coming-soon overrides, this avoids a schema change.
+ */
+export const ORDER_FLAG_PREFIX = "order:";
+
+/**
+ * Tier rules: `tiers:<pageKey>:<plan,plan>` — the plans allowed to open that page. No row
+ * means every plan may. One more row shape in `app_surface_flags`, like the overrides above,
+ * so limiting a page to some tiers needs no schema change.
+ */
+export const TIERS_FLAG_PREFIX = "tiers:";
+
+/** Pages an operator may limit to some tiers: the same set that can be marked coming soon. */
+export const canTierLock = canMarkComingSoon;
+
+/** `tiers:` rows → page key → allowed plans. Pure; ignores malformed or unknown rows. */
+export function parseTierRules(flagRows: Iterable<string>): Map<string, Plan[]> {
+  const rules = new Map<string, Plan[]>();
+  for (const row of flagRows) {
+    if (!row.startsWith(TIERS_FLAG_PREFIX)) continue;
+    const rest = row.slice(TIERS_FLAG_PREFIX.length);
+    const split = rest.lastIndexOf(":");
+    if (split === -1) continue;
+    const key = rest.slice(0, split);
+    const listed = rest.slice(split + 1).split(",");
+    const plans = PLANS.filter((p) => listed.includes(p));
+    if (canTierLock(key) && plans.length > 0) rules.set(key, plans);
+  }
+  return rules;
+}
+
+/**
+ * The pages `plan` may not open under `rules`, each with the plans that may. What the nav
+ * locks and the gates refuse for one viewer.
+ */
+export function tierLockedFor(
+  rules: ReadonlyMap<string, readonly Plan[]>,
+  plan: Plan
+): Map<string, Plan[]> {
+  const locked = new Map<string, Plan[]>();
+  for (const [key, plans] of rules) if (!plans.includes(plan)) locked.set(key, [...plans]);
+  return locked;
+}
+
+/** The plan a tier-limited page's nav tag names: the cheapest paid plan that opens it. */
+export function tierTagPlan(plans: readonly Plan[]): Plan {
+  return plans.find((p) => p !== "free") ?? plans[0];
+}
+
+/** "Radar — Max and Lifetime only", the tag's tooltip. */
+export function tierTagTitle(label: string, plans: readonly Plan[]): string {
+  return `${label} — ${plans.map((p) => PLAN_SHORT_LABELS[p]).join(" and ")} only`;
+}
+
+/**
+ * `items` sorted by the operator's order (surface keys). Items the order does not mention —
+ * a nav entry added after the operator last saved — keep their default relative order after
+ * the listed ones. Stable, so an empty order returns the code's own order.
+ */
+export function orderNavItems<T extends { href: string }>(
+  items: readonly T[],
+  order: readonly string[]
+): T[] {
+  const rank = (item: T) => {
+    const key = surfaceKeyForHref(item.href);
+    const i = key === null ? -1 : order.indexOf(key);
+    return i === -1 ? order.length : i;
+  };
+  return items
+    .map((item, index) => ({ item, index, rank: rank(item) }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((x) => x.item);
+}
 
 /**
  * Surfaces elsewhere in the app that only make sense once a coming-soon page is released.
@@ -286,11 +478,16 @@ export const COMING_SOON_KEYS: ReadonlySet<string> = new Set(
  */
 export const COMING_SOON_COMPANIONS: Readonly<Record<string, readonly string[]>> = {
   "page.outreach": ["dashboard.outreach-performance", "settings.outreach"],
+  [COMPOSE_SURFACE_KEY]: ["settings.email"],
 };
 
-export function isHrefComingSoon(href: string): boolean {
+/** True when `href` is a page in `soon` (the effective set; defaults to the code defaults). */
+export function isHrefComingSoon(
+  href: string,
+  soon: ReadonlySet<string> = DEFAULT_COMING_SOON_KEYS
+): boolean {
   const key = surfaceKeyForHref(href);
-  return key !== null && COMING_SOON_KEYS.has(key);
+  return key !== null && soon.has(key);
 }
 
 export function surfaceKeyForSettingsId(settingsId: string): string {

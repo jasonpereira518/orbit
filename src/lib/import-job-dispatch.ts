@@ -7,6 +7,10 @@ import { OUTLOOK_CONTACTS_IMPORT_TYPE } from "@/lib/import-adapters/outlook-cont
 import { CONTACTS_FILE_IMPORT_TYPE } from "@/lib/import-adapters/contacts-file";
 import { LINKEDIN_MESSAGES_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-messages";
 import {
+  IMESSAGE_CHAT_IMPORT_TYPE,
+  WHATSAPP_CHAT_IMPORT_TYPE,
+} from "@/lib/import-adapters/chat";
+import {
   CALENDAR_CSV_IMPORT_TYPE,
   CALENDAR_ICS_IMPORT_TYPE,
 } from "@/lib/import-adapters/calendar";
@@ -31,6 +35,8 @@ export {
   OUTLOOK_CONTACTS_IMPORT_TYPE,
   CONTACTS_FILE_IMPORT_TYPE,
   LINKEDIN_MESSAGES_IMPORT_TYPE,
+  WHATSAPP_CHAT_IMPORT_TYPE,
+  IMESSAGE_CHAT_IMPORT_TYPE,
   CALENDAR_ICS_IMPORT_TYPE,
   CALENDAR_CSV_IMPORT_TYPE,
 };
@@ -52,6 +58,8 @@ export const RESUMABLE_IMPORT_TYPES = [
   OUTLOOK_CONTACTS_IMPORT_TYPE,
   CONTACTS_FILE_IMPORT_TYPE,
   LINKEDIN_MESSAGES_IMPORT_TYPE,
+  WHATSAPP_CHAT_IMPORT_TYPE,
+  IMESSAGE_CHAT_IMPORT_TYPE,
   CALENDAR_ICS_IMPORT_TYPE,
   CALENDAR_CSV_IMPORT_TYPE,
   GMAIL_SCAN_IMPORT_TYPE,
@@ -86,6 +94,8 @@ export async function runImportJobById(importId: string): Promise<void> {
     case OUTLOOK_CONTACTS_IMPORT_TYPE:
     case CONTACTS_FILE_IMPORT_TYPE:
     case LINKEDIN_MESSAGES_IMPORT_TYPE:
+    case WHATSAPP_CHAT_IMPORT_TYPE:
+    case IMESSAGE_CHAT_IMPORT_TYPE:
     case CALENDAR_ICS_IMPORT_TYPE:
     case CALENDAR_CSV_IMPORT_TYPE:
       return runImportJob(importId);

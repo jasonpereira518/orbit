@@ -29,6 +29,7 @@ import { WaitlistStatsPanel } from "@/components/admin/waitlist-stats-panel";
 import { getWaitlistStats } from "@/lib/admin-interest-list";
 import { getWaitlist } from "@/lib/admin-product-health";
 import { analyticsDisabledReason } from "@/lib/analytics-visitor";
+import { describeActivation } from "@/lib/activity";
 import { formatRate } from "@/lib/format-rate";
 import {
   GRAIN_LABEL,
@@ -321,13 +322,13 @@ export default async function AdminGrowthPage({
             </p>
           </AdminPanel>
 
-          <AdminPanel title="Did something">
+          <AdminPanel title="Did something" action={<span className="text-xs text-muted-foreground">deliberate actions only</span>}>
             <TimeSeriesChart
               labels={labels}
               titles={titles}
               partialLast
               ariaLabel={`Active accounts: ${snapshot.dau} today, ${snapshot.wau} in 7 days, ${snapshot.mau} in 30 days.`}
-              emptyLabel="Nobody has written anything in this window."
+              emptyLabel="Nobody has done anything in this window."
               notes={rolling.map((p) => [
                 { label: "DAU of MAU", value: formatRate(p.dau, p.mau) },
               ])}
@@ -451,7 +452,7 @@ export default async function AdminGrowthPage({
           {activation.every((p) => p.signed === 0) ? (
             <EmptyState>No signups in this window.</EmptyState>
           ) : (
-            <AdminTable
+            <AdminTable label="Activation by signup cohort"
               minWidth="sm"
               head={
                 <>
@@ -459,6 +460,7 @@ export default async function AdminGrowthPage({
                   <Th numeric>Signed up</Th>
                   <Th numeric>Onboarded</Th>
                   <Th numeric>Added a contact</Th>
+                  <Th numeric>Activated</Th>
                 </>
               }
             >
@@ -481,10 +483,17 @@ export default async function AdminGrowthPage({
                       {formatRate(p.onboarded, p.signed)}
                     </Td>
                     <Td numeric>{formatRate(p.firstContact, p.signed)}</Td>
+                    <Td numeric>
+                      {/* Only accounts old enough to have had the whole window can be judged. */}
+                      {p.matured === 0 ? "—" : formatRate(p.activated, p.matured)}
+                    </Td>
                   </tr>
                 ))}
             </AdminTable>
           )}
+          <p className="mt-3 border-t border-border/40 pt-2 text-xs text-muted-foreground">
+            {describeActivation()} Internal and tester accounts are left out.
+          </p>
         </AdminPanel>
 
         <div className="grid gap-6 lg:grid-cols-2">

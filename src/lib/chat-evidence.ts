@@ -14,7 +14,6 @@
  * later chip and an earlier chip for "the same coffee" would otherwise land on two different,
  * confusingly identical snippets.
  */
-import { sanitizeProfileLine } from "@/lib/contact-profile-format";
 
 export type EvidenceSource =
   | {
@@ -31,6 +30,15 @@ export type EvidenceSource =
       contactId: string;
     }
   | {
+      kind: "meeting";
+      /** `meeting_sessions.id`. One chip per meeting, whichever of its lines was cited. */
+      sourceId: string;
+      /** ISO day, for display. */
+      date: string | null;
+      /** Where in the meeting the cited line was said; null for its summary. */
+      startMs: number | null;
+    }
+  | {
       kind: "email_event";
       /** `email_events.id`: what the user's mail meant, as the email-insights feature derived it. */
       sourceId: string;
@@ -40,43 +48,16 @@ export type EvidenceSource =
     };
 
 function keyOf(source: EvidenceSource): string {
-  if (source.kind === "interaction") return `interaction:${source.sourceId}`;
-  if (source.kind === "email_event") return `email_event:${source.sourceId}`;
-  return `contact:${source.contactId}`;
-}
-
-/**
- * One `search_notes` result, as the answer prompt sees it. Each is a single dated source, so
- * each can carry its own `[eN]` marker, unlike the rest of what the research step looked up.
- * `kind` is absent on a passage of the user's own notes (an interaction), which is how every
- * caller built one before mail was searchable.
- */
-export type NotePassage = {
-  kind?: "interaction" | "email_event";
-  sourceId: string;
-  contactId: string | null;
-  date: string | null;
-  snippet: string;
-};
-
-/**
- * The passages as lines of the answer prompt, minting each one's citation id.
- *
- * A note reads `[eN] 2026-03-02: ...` exactly as it always has. A passage derived from the
- * user's mail says so (`, from your email:`), because it is the user's own summary of what
- * someone else wrote, and an answer that quotes it should not present it as something the
- * user wrote down themselves. The block these lines sit in is fenced as untrusted data by the
- * caller either way.
- */
-export function renderNotePassages(passages: readonly NotePassage[], ledger: EvidenceLedger): string[] {
-  return passages.map((p) => {
-    const id =
-      p.kind === "email_event"
-        ? ledger.mint({ kind: "email_event", sourceId: p.sourceId, contactId: p.contactId, date: p.date })
-        : ledger.mint({ kind: "interaction", sourceId: p.sourceId, contactId: p.contactId, date: p.date });
-    const label = `${p.date ?? "undated"}${p.kind === "email_event" ? ", from your email" : ""}`;
-    return `- [${id}] ${label}: ${sanitizeProfileLine(p.snippet)}`;
-  });
+  switch (source.kind) {
+    case "interaction":
+      return `interaction:${source.sourceId}`;
+    case "meeting":
+      return `meeting:${source.sourceId}`;
+    case "email_event":
+      return `email_event:${source.sourceId}`;
+    default:
+      return `contact:${source.contactId}`;
+  }
 }
 
 export type EvidenceLedger = {

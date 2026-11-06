@@ -9,7 +9,7 @@
  */
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
 import { joinList } from "@/lib/imports/join-list";
-import { importSourceLabel } from "@/lib/imports/import-sources";
+import { importSourceLabel, isChatImport } from "@/lib/imports/import-sources";
 // Type-only, and it has to stay that way: `import-undo.ts` reaches `@/db`, and this module is
 // imported by client components. A type import is erased; anything more is the `node:fs`
 // chunk error.
@@ -62,6 +62,8 @@ export type FinishSummary = {
   /** People it matched to someone already here. */
   existing: number;
   meetingsLogged: number;
+  /** Conversation sessions a chat import logged — counted apart, because they are not meetings. */
+  chatSessionsLogged?: number;
   /** File names or connection labels, in the order they ran. */
   sources: string[];
   /** Set when a step didn't finish — the card leads with this instead of celebrating. */
@@ -138,11 +140,15 @@ export function finishPartFromImport(row: {
     failedRows?: number;
   } | null;
 }): FinishSummary {
+  const logged = row.stats?.interactionsLogged || row.stats?.meetingsLogged || 0;
+  // A chat import's interactions are conversation sessions, not meetings.
+  const chat = isChatImport(row.importType);
   return {
     importIds: [row.id],
     added: row.contactsCreated ?? 0,
     existing: row.contactsUpdated ?? 0,
-    meetingsLogged: row.stats?.interactionsLogged || row.stats?.meetingsLogged || 0,
+    meetingsLogged: chat ? 0 : logged,
+    ...(chat ? { chatSessionsLogged: logged } : {}),
     sources: [row.fileName ? row.fileName : importSourceLabel(row.importType)],
     // What this import could not bring in. The done card replaced the runner's completion
     // line, which was the only place refused rows were ever mentioned, so they ride along.
@@ -172,11 +178,13 @@ export function mergeFinishSummaries(
   if (!parts.length) return null;
   const blockedByPlan = parts.reduce((n, p) => n + (p.blockedByPlan ?? 0), 0);
   const failedRows = parts.reduce((n, p) => n + (p.failedRows ?? 0), 0);
+  const chatSessionsLogged = parts.reduce((n, p) => n + (p.chatSessionsLogged ?? 0), 0);
   return {
     importIds: parts.flatMap((p) => p.importIds),
     added: parts.reduce((n, p) => n + p.added, 0),
     existing: parts.reduce((n, p) => n + p.existing, 0),
     meetingsLogged: parts.reduce((n, p) => n + p.meetingsLogged, 0),
+    ...(chatSessionsLogged ? { chatSessionsLogged } : {}),
     sources: parts.flatMap((p) => p.sources),
     ...(unfinished ? { unfinished } : {}),
     ...(blockedByPlan ? { blockedByPlan } : {}),
@@ -189,6 +197,7 @@ export function mergeFinishSummaries(
 
 export function finishCopy(summary: FinishSummary): FinishCopy {
   const { added, existing, meetingsLogged, sources, importIds, unfinished } = summary;
+  const chatSessions = summary.chatSessionsLogged ?? 0;
 
   const headline = unfinished
     ? unfinished
@@ -196,9 +205,11 @@ export function finishCopy(summary: FinishSummary): FinishCopy {
       ? countingHeadline(added)
       : meetingsLogged > 0
         ? `${meetingsLogged} meeting${meetingsLogged === 1 ? "" : "s"} logged`
-        : existing > 0
-          ? "Everyone here already"
-          : "Nothing new this time";
+        : chatSessions > 0
+          ? `${chatSessions} chat session${chatSessions === 1 ? "" : "s"} logged`
+          : existing > 0
+            ? "Everyone here already"
+            : "Nothing new this time";
 
   const parts: string[] = [];
   if (existing > 0 && added > 0) {

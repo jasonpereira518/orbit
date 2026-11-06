@@ -14,7 +14,7 @@ import { revokeLifetimePurchase, setCompedPlan } from "@/lib/user-settings";
 
 /**
  * Orbit Lifetime is admin-assigned only (pricing v2): never sold, granted and revoked from the
- * console. Lifetime = every Max entitlement, with AI on the account's own key only.
+ * console. Lifetime = every Max entitlement, with a smaller monthly AI allowance and no packs.
  *
  * The bodies of `grantLifetimeAction` / `revokeLifetimeAction` / `previewLifetimeAction` in
  * `src/actions/admin.ts`, which add only the admin check — so a smoke can drive them without

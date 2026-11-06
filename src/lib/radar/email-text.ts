@@ -28,15 +28,8 @@ export function isEmailDerived(reasons: readonly RadarReason[]): boolean {
   return reasons.some((r) => isEmailReasonCode(r.code));
 }
 
-/** The intent a draft is written to, per email reason: fixed words, never third-party text. */
-export const EMAIL_DRAFT_INTENTS: Readonly<Record<string, string>> = {
-  email_prep: "an interview or call coming up",
-  email_followup: "a reply you owe them from your email",
-  email_job: "a role that came up at their company",
-  email_process: "a hiring process you are in at their company",
-  email_news: "news from their company",
-  email_event: "an event you were invited to",
-};
+/** The intent a draft is written to, per email reason lives with `draftIntent` in `types.ts`. */
+export { EMAIL_DRAFT_INTENTS } from "@/lib/radar/types";
 
 /** What the Monday email says about a card built from mail. */
 export const EMAIL_DIGEST_LINE = "An update from your email";

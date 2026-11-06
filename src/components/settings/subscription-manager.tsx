@@ -10,6 +10,7 @@ import {
   startPlanSwitch,
   type SubscriptionOverview,
 } from "@/actions/billing";
+import { answerSurvey } from "@/actions/surveys";
 import { ManageBillingButton } from "@/components/settings/manage-billing-button";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -23,6 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { friendlyError } from "@/lib/errors";
 import { FREE_CONTACT_LIMIT, PLAN_LABELS, type PurchasablePlan } from "@/lib/plans/plan-config";
+import { SURVEY_DEFINITIONS } from "@/lib/surveys";
 import type { SubscriptionDetails } from "@/lib/subscription-management";
 
 type Overview = Extract<SubscriptionOverview, { ok: true }>;
@@ -265,6 +267,10 @@ function CancelDialog({
 }) {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  // Optional, one tap, never in the way of cancelling: the answer is a closed choice recorded
+  // as a `survey_answered` event after the cancellation has gone through.
+  const [reason, setReason] = useState<string | null>(null);
+  const cancellation = SURVEY_DEFINITIONS.cancellation;
 
   return (
     <Dialog
@@ -292,6 +298,30 @@ function CancelDialog({
           <li>Credits from packs you bought are kept, frozen, and come back when you resubscribe.</li>
           <li>You can change your mind any time before then.</li>
         </ul>
+        <fieldset className="space-y-1.5 border-t border-border/60 pt-3">
+          <legend className="text-sm font-medium">{cancellation.question}</legend>
+          <p className="text-xs text-muted-foreground">Optional. It tells us what to fix.</p>
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            {cancellation.options.map((option) => (
+              <label
+                key={option.id}
+                className={`cursor-pointer rounded-lg border px-2.5 py-1 text-xs transition-colors duration-fast ${
+                  reason === option.id ? "border-primary bg-primary/10" : "border-border/70 hover:bg-muted"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="cancel-reason"
+                  value={option.id}
+                  checked={reason === option.id}
+                  onChange={() => setReason(option.id)}
+                  className="sr-only"
+                />
+                {option.label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
         {error && (
           <p role="alert" className="text-sm text-destructive">
             {error}
@@ -314,6 +344,7 @@ function CancelDialog({
                     setError(result.error);
                     return;
                   }
+                  if (reason) void answerSurvey("cancellation", reason);
                   onCanceled(result.subscription);
                   onOpenChange(false);
                   toast.success(

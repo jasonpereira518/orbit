@@ -85,6 +85,11 @@ type GoogleEvent = {
   guestsCanSeeOtherGuests?: boolean;
   /** Set when Google truncated the guest list; what came back is not the whole room. */
   attendeesOmitted?: boolean;
+  /** The series an instance belongs to (`singleEvents=true` expands recurrences). */
+  recurringEventId?: string;
+  /** The Meet link Google adds itself. */
+  hangoutLink?: string;
+  conferenceData?: { entryPoints?: Array<{ entryPointType?: string; uri?: string }> };
 };
 
 type GoogleEventsPage = {
@@ -173,6 +178,179 @@ export function selfEmailsFrom(raw: GoogleEvent): string[] {
   if (raw.organizer?.self && raw.organizer.email) found.push(raw.organizer.email.toLowerCase());
   // The organizer is usually also listed as a self attendee, so the raw list repeats.
   return [...new Set(found)];
+}
+
+export type ConferenceKind = "meet" | "zoom" | "teams" | "webex" | "other";
+
+const CONFERENCE_URL = /https:\/\/[^\s<>"')]*(meet\.google\.com|zoom\.us|teams\.microsoft\.com|teams\.live\.com|webex\.com)[^\s<>"')]*/i;
+
+function conferenceKindOf(url: string): ConferenceKind {
+  if (/meet\.google\.com/i.test(url)) return "meet";
+  if (/zoom\.us/i.test(url)) return "zoom";
+  if (/teams\.(microsoft|live)\.com/i.test(url)) return "teams";
+  if (/webex\.com/i.test(url)) return "webex";
+  return "other";
+}
+
+/**
+ * The call link, if the event has one: Google's own Meet link, then the conference's video
+ * entry point, then a Zoom/Teams/Webex link pasted into the location or description — which is
+ * how most webinars arrive.
+ */
+export function conferenceOf(raw: GoogleEvent): { url: string; kind: ConferenceKind } | null {
+  const video = raw.conferenceData?.entryPoints?.find((e) => e.entryPointType === "video" && e.uri)?.uri;
+  return conferenceFrom({ url: raw.hangoutLink || video, location: raw.location, description: raw.description });
+}
+
+/** Any provider's call link: the one it names, else a Zoom/Teams/Webex/Meet link in the text. */
+export function conferenceFrom(e: {
+  url?: string | null;
+  location?: string | null;
+  description?: string | null;
+}): { url: string; kind: ConferenceKind } | null {
+  const url = e.url || CONFERENCE_URL.exec(e.location || "")?.[0] || CONFERENCE_URL.exec(e.description || "")?.[0];
+  return url ? { url, kind: conferenceKindOf(url) } : null;
+}
+
+const AGENDA_MAX = 2000;
+
+/**
+ * An invite description as the summarizer should read it: plain text, without the call-joining
+ * boilerplate Meet, Zoom and Teams append ("Join with Google Meet", dial-ins, passcodes), and
+ * capped. Null when nothing is left — most invites have no agenda at all.
+ */
+export function agendaFrom(description: string | undefined): string | null {
+  if (!description) return null;
+  const text = description
+    .replace(/<\s*(br|\/p|\/li|\/div)\s*\/?>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "\n- ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+  const kept = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(
+      (l) =>
+        l &&
+        !CONFERENCE_URL.test(l) &&
+        !/^(-::~[:~]*::-|join (with|zoom|on|the meeting|microsoft teams)|meeting id|passcode|password|dial[- ]in|one tap mobile|find your local number|or call in|phone numbers|pin:|learn more about meet|please do not edit this section|invitation from google calendar|you are receiving this)/i.test(l)
+    );
+  const out = kept.join("\n").trim().slice(0, AGENDA_MAX);
+  return out || null;
+}
+
+export type StoredCalendarEvent = {
+  providerEventId: string;
+  icalUid: string | null;
+  seriesId: string | null;
+  title: string;
+  startAt: Date;
+  endAt: Date | null;
+  allDay: boolean;
+  location: string | null;
+  agenda: string | null;
+  conferenceUrl: string | null;
+  conferenceKind: ConferenceKind | null;
+  /** Everyone but the owner and rooms; empty when the guest list is not ours to keep. */
+  attendees: Array<{ name: string; email: string; response?: string | null }>;
+  /** How many other people are on it, which stays honest even when the names are hidden. */
+  attendeeCount: number;
+  guestsHidden: boolean;
+  selfResponse: string | null;
+  organizerEmail: string | null;
+};
+
+/** At most this many names per event — a webinar's guest list is not a meeting's. */
+export const MAX_STORED_ATTENDEES = 50;
+
+/**
+ * One Google event as a `calendar_events` row. Keyed on `id`, not `iCalUID`: every instance of
+ * a recurring series shares one `iCalUID`, and the instance is what has a time.
+ */
+export function toStoredEvent(raw: GoogleEvent): StoredCalendarEvent | null {
+  if (!raw.id || raw.status === "cancelled") return null;
+  const startAt = parseWhen(raw.start);
+  if (!startAt) return null;
+  const parsed = toParsedEvent(raw);
+  const self = new Set(selfEmailsFrom(raw));
+  const others = (raw.attendees || []).filter(
+    (a) => !a.resource && !a.self && !(a.email && self.has(a.email.toLowerCase()))
+  );
+  const guestsHidden = parsed?.guestsVisible === false;
+  const conference = conferenceOf(raw);
+  return {
+    providerEventId: raw.id,
+    icalUid: raw.iCalUID || null,
+    seriesId: raw.recurringEventId || null,
+    title: (raw.summary || "").trim().slice(0, 300),
+    startAt,
+    endAt: parseWhen(raw.end),
+    allDay: !raw.start?.dateTime,
+    location: raw.location?.trim().slice(0, 300) || null,
+    agenda: agendaFrom(raw.description),
+    conferenceUrl: conference?.url.slice(0, 500) ?? null,
+    conferenceKind: conference?.kind ?? null,
+    attendees: guestsHidden
+      ? []
+      : others
+          .map((a) => ({ name: a.displayName || "", email: (a.email || "").toLowerCase(), response: a.responseStatus ?? null }))
+          .filter((a) => a.name || a.email)
+          .slice(0, MAX_STORED_ATTENDEES),
+    attendeeCount: others.length,
+    guestsHidden,
+    selfResponse: parsed?.selfResponse ?? null,
+    organizerEmail: raw.organizer?.email?.toLowerCase() || null,
+  };
+}
+
+/** A Google window read as `calendar_events` rows. */
+export function storedEventsOf(items: GoogleEvent[]): StoredCalendarEvent[] {
+  return items.map(toStoredEvent).filter((e): e is StoredCalendarEvent => e !== null);
+}
+
+/**
+ * Every event between two instants, live — no sync token, ordered by start. What the recorder's
+ * suggestions and the `calendar_events` window both read. `complete` is false when the window
+ * held more than `maxPages` pages (or a page failed), so a caller that prunes by absence knows
+ * not to.
+ */
+export async function fetchCalendarWindow(opts: {
+  accessToken: string;
+  from: Date;
+  to: Date;
+  maxResults?: number;
+  maxPages?: number;
+  timeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}): Promise<{ items: GoogleEvent[]; complete: boolean; status: number }> {
+  const items: GoogleEvent[] = [];
+  let pageToken: string | undefined;
+  for (let page = 0; page < (opts.maxPages ?? 1); page++) {
+    const params = new URLSearchParams({
+      singleEvents: "true",
+      orderBy: "startTime",
+      maxResults: String(opts.maxResults ?? PAGE_SIZE),
+      timeMin: opts.from.toISOString(),
+      timeMax: opts.to.toISOString(),
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+    const res = await googleFetchWithRetry(`${CALENDAR_API}?${params}`, {
+      headers: { Authorization: `Bearer ${opts.accessToken}` },
+      timeoutMs: opts.timeoutMs ?? 20_000,
+      fetchImpl: opts.fetchImpl,
+    });
+    if (!res.ok) return { items, complete: false, status: res.status };
+    const body = (await res.json()) as GoogleEventsPage;
+    items.push(...(body.items || []));
+    pageToken = body.nextPageToken;
+    if (!pageToken) return { items, complete: true, status: res.status };
+  }
+  return { items, complete: false, status: 200 };
 }
 
 export type FetchPageOptions = {

@@ -206,7 +206,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                 {/* Hidden on phones: four steps share 370px there, and the figure cost each
                     label enough to truncate it ("1. Audien…"). The bar below says the same
                     thing, and carries the value for assistive tech. */}
-                <span className="hidden shrink-0 text-[10px] tabular-nums text-muted-foreground sm:inline">
+                <span className="hidden shrink-0 text-3xs tabular-nums text-muted-foreground sm:inline">
                   {Math.round(value * 100)}%
                 </span>
               </div>
@@ -282,8 +282,11 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
               <div className="grid gap-3 sm:grid-cols-2">
                 {sequenceSteps.map((s, index) => (
                   <div key={index} className="space-y-1.5">
-                    <Label>Follow-up {index + 1} delay (days)</Label>
+                    <Label htmlFor={`sequence-delay-${index}`}>
+                      Follow-up {index + 1} delay (days)
+                    </Label>
                     <Input
+                      id={`sequence-delay-${index}`}
                       type="number"
                       min={1}
                       value={s.delayDays}

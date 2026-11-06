@@ -1,5 +1,6 @@
 "use client";
 
+import { emitTourEvent } from "@/lib/tour/tour-events";
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
@@ -33,8 +34,9 @@ import { activePicks, type MentionPick } from "@/lib/mentions/mention-picks";
 import { friendlyError, isMissingAiApiKeyError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { TOAST_COPY } from "@/lib/toast-copy";
-import { AI_HINT_COPY, aiDenialFromMessage } from "@/lib/ai-access-copy";
+import { aiDenialFromMessage, hintCopyFor } from "@/lib/ai-access-copy";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
+import { useViewerPlan } from "@/components/viewer-plan";
 
 function todayYmd() {
   return format(new Date(), "yyyy-MM-dd");
@@ -83,6 +85,7 @@ export function LogInteractionSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const router = useRouter();
+  const { plan } = useViewerPlan();
   const submitRef = useRef<HTMLButtonElement>(null);
   const notesRef = useRef<HTMLTextAreaElement>(null);
 
@@ -132,9 +135,11 @@ export function LogInteractionSheet({
       parseDateFromNotes: !date,
     });
     toast.success(reason ? `Logged — ${reason}` : "Logged");
+    emitTourEvent("interaction.logged");
     onOpenChange(false);
     reset();
-    router.refresh();
+    // No `router.refresh()`: `logInteraction` revalidates `/contacts/{id}`, the page this sheet
+    // lives on, so the action's own response already carries the fresh render (SRV-1).
     if (from) {
       requestInteractionFlight({
         from,
@@ -251,7 +256,8 @@ export function LogInteractionSheet({
 
         onOpenChange(false);
         reset();
-        router.refresh();
+        // `confirmBulkCapture` revalidates `/contacts/{id}` for this contact: no second render.
+        emitTourEvent("interaction.logged");
 
         const batchId = out.batchId;
         toast.success(
@@ -308,8 +314,12 @@ export function LogInteractionSheet({
             void under the title. */}
         <div className="space-y-5 px-4 pb-4">
           <div className="space-y-2">
-            <Label>What happened</Label>
-            <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+            <Label id="log-interaction-type-label">What happened</Label>
+            <div
+              role="group"
+              aria-labelledby="log-interaction-type-label"
+              className="grid grid-cols-2 gap-1.5 sm:grid-cols-3"
+            >
               {/* The list is already ordered by family, so tinting each icon gives the
                   options a grouping the eye can use without extra headings in an
                   already tall sheet. */}
@@ -400,11 +410,11 @@ export function LogInteractionSheet({
                 textareaClassName={FIELD_BARE}
               />
             </div>
-            <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
+            <p className="flex items-start gap-1.5 text-2xs leading-relaxed text-muted-foreground">
               <Sparkles className="mt-px size-3 shrink-0" />
               {hasApiKey
                 ? "Write it however you like — the summary, action items and any dates get pulled out for you. Type @ to link someone else who came up."
-                : `Saved as written. ${AI_HINT_COPY[aiReason ?? "key_required"]}.`}
+                : `Saved as written. ${hintCopyFor(aiReason, plan)}.`}
             </p>
           </div>
 

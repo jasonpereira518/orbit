@@ -69,7 +69,13 @@ export const FALLBACK_RETRY_MS = 15_000;
 export const MAX_FANOUT_ATTEMPTS = 4;
 
 export type UploadOutcome =
-  | { ok: true; jobId: string; notice?: string | null }
+  | {
+      ok: true;
+      jobId: string;
+      notice?: string | null;
+      /** The server recognised the text as already captured and did not read it again. */
+      duplicate?: boolean;
+    }
   | { ok: false; error: string; status: number; retryAfterSec: number | null };
 
 export type FanoutSummary = {
@@ -148,6 +154,10 @@ export function applyOutcome(
   now: number
 ): FanoutEntry {
   const attempts = entry.attempts + 1;
+  if (outcome.ok && outcome.duplicate) {
+    // Not queued: nothing is being read, and no job is left behind to wait on.
+    return { ...entry, status: "skipped", jobId: null, error: null, notice: outcome.notice ?? null, retryAt: null, attempts };
+  }
   if (outcome.ok) {
     return {
       ...entry,

@@ -30,9 +30,12 @@ import type { Entitlements } from "@/lib/entitlements";
 import { PLAN_CONFIG } from "@/lib/plans/plan-config";
 import type { ApiKeyScope } from "@/lib/api/keys";
 import { buildOrbitMcpServer } from "@/lib/mcp/server";
+import { releaseCheckFor } from "@/lib/tools/released";
 import { resourceMetadataUrl, verifyOAuthCaller } from "@/lib/mcp/oauth";
 import { RATE_LIMITS, RateLimitedError, consumeBucket } from "@/lib/rate-limit";
 import { recordAiSecurityEvent } from "@/lib/ai-security";
+import { initializeClientName, mcpClientFrom } from "@/lib/mcp/client";
+import { trackMcpConnected } from "@/lib/mcp/events";
 
 /**
  * JSON-RPC messages one HTTP request may carry.
@@ -105,6 +108,10 @@ type McpCaller = {
   keyId: string | null;
   scopes: ApiKeyScope[];
   entitlements: Entitlements;
+  /** How the caller proved who they are; `mcp_connected` records it. */
+  via: "oauth" | "api_key";
+  /** Clerk's OAuth client id, kept for telemetry (it used to be discarded). Null for a key. */
+  clientId: string | null;
 };
 
 export async function handleMcpRequest(
@@ -123,7 +130,14 @@ export async function handleMcpRequest(
     const oauth = opts.token ? null : await verifyOAuthCaller();
     if (oauth) {
       const entitlements = await assertAccountUsable(oauth.userId, { surface: "mcp" });
-      caller = { userId: oauth.userId, keyId: null, scopes: oauth.scopes, entitlements };
+      caller = {
+        userId: oauth.userId,
+        keyId: null,
+        scopes: oauth.scopes,
+        entitlements,
+        via: "oauth",
+        clientId: oauth.clientId,
+      };
     } else {
       // "read" here: individual write tools are gated inside the server by the key's scopes,
       // so a read-only key connects successfully and simply sees fewer tools.
@@ -137,6 +151,8 @@ export async function handleMcpRequest(
         keyId: key.keyId,
         scopes: key.scopes,
         entitlements: key.entitlements,
+        via: "api_key",
+        clientId: null,
       };
     }
   } catch (err) {
@@ -158,7 +174,8 @@ export async function handleMcpRequest(
   if (declaredLength > MAX_MCP_BODY_BYTES) {
     return jsonRpcError(-32600, "Request body too large.", 413);
   }
-  const { messages, toolCalls } = countToolCalls(await peekJson(request));
+  const body = await peekJson(request);
+  const { messages, toolCalls } = countToolCalls(body);
   if (messages > MAX_MCP_BATCH) {
     void recordAiSecurityEvent({
       kind: "batch_rejected",
@@ -187,6 +204,15 @@ export async function handleMcpRequest(
     throw err;
   }
 
+  // Which assistant this is, from the OAuth client, the `initialize` request or the User-Agent,
+  // as a closed enum. The first request per (user, client) is the connection.
+  const client = mcpClientFrom({
+    clientId: caller.clientId,
+    clientName: initializeClientName(body),
+    userAgent: request.headers.get("user-agent"),
+  });
+  trackMcpConnected({ userId: caller.userId, client, via: caller.via });
+
   const keyId = caller.keyId;
   if (keyId) deferTelemetry(() => touchApiKeyLastUsed(keyId));
 
@@ -194,7 +220,13 @@ export async function handleMcpRequest(
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
   });
-  const server = buildOrbitMcpServer(caller.userId, { scopes: caller.scopes });
+  // Page-gated tools (events, radar, outreach…) are offered only once their page is released
+  // to this user, exactly as in chat.
+  const server = buildOrbitMcpServer(caller.userId, {
+    scopes: caller.scopes,
+    client,
+    isReleased: await releaseCheckFor(caller.userId),
+  });
   await server.connect(transport);
   try {
     return await transport.handleRequest(request);

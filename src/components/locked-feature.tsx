@@ -3,7 +3,13 @@ import { Lock } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { WarpLink } from "@/components/warp/warp-link";
-import { PURCHASABLE_PLANS, PLAN_RANK, type PurchasablePlan } from "@/lib/plans/plan-config";
+import {
+  PURCHASABLE_PLANS,
+  PLAN_RANK,
+  type Plan,
+  type PurchasablePlan,
+} from "@/lib/plans/plan-config";
+import { getSurface } from "@/lib/surfaces";
 import { PlanBadge } from "@/components/plan-badge";
 
 /**
@@ -21,6 +27,7 @@ export function LockedFeature({
   description,
   highlights,
   unlockPlan = "orbit",
+  plans: only,
   note,
 }: {
   title: string;
@@ -28,9 +35,12 @@ export function LockedFeature({
   highlights: string[];
   /** The cheapest plan that includes this feature (`unlockPlanFor`). */
   unlockPlan?: PurchasablePlan;
+  /** The exact plans on sale that include it, when they are not simply `unlockPlan` and up. */
+  plans?: readonly PurchasablePlan[];
   note?: string;
 }) {
-  const plans = PURCHASABLE_PLANS.filter((plan) => PLAN_RANK[plan] >= PLAN_RANK[unlockPlan]);
+  const plans =
+    only ?? PURCHASABLE_PLANS.filter((plan) => PLAN_RANK[plan] >= PLAN_RANK[unlockPlan]);
   return (
     <div
       data-plan={unlockPlan}
@@ -48,7 +58,7 @@ export function LockedFeature({
         </p>
       </div>
 
-      <ul className="mx-auto grid max-w-sm gap-2 text-left">
+      {highlights.length > 0 && <ul className="mx-auto grid max-w-sm gap-2 text-left">
         {highlights.map((item) => (
           <li
             key={item}
@@ -57,21 +67,14 @@ export function LockedFeature({
             {item}
           </li>
         ))}
-      </ul>
+      </ul>}
 
-      {plans.length > 0 && (
-        <div className="flex flex-wrap items-center justify-center gap-2 text-sm text-muted-foreground">
-          <span>Unlocks with</span>
-          {plans.map((planId) => (
-            <PlanBadge key={planId} plan={planId} />
-          ))}
-        </div>
-      )}
+      <UnlocksWith plans={plans} className="justify-center" />
 
       {note && <p className="text-xs text-muted-foreground">{note}</p>}
 
       <div className="flex flex-wrap items-center justify-center gap-3">
-        <WarpLink
+        {plans.length > 0 && <WarpLink
           href="/pricing"
           className={cn(
             buttonVariants({ size: "sm" }),
@@ -79,7 +82,7 @@ export function LockedFeature({
           )}
         >
           See plans
-        </WarpLink>
+        </WarpLink>}
         <Link
           href="/settings#settings-plan"
           className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
@@ -88,6 +91,53 @@ export function LockedFeature({
         </Link>
       </div>
     </div>
+  );
+}
+
+/**
+ * "Unlocks with [Pro] [Max]": the plans on sale that include a feature — `plan` and up, or
+ * exactly `plans` when an operator limited a page to some tiers. Shared by the paywall, the
+ * tier lock and the coming-soon screen so they can't disagree.
+ */
+export function UnlocksWith({
+  plan = "orbit",
+  plans: only,
+  className,
+}: {
+  plan?: PurchasablePlan;
+  plans?: readonly PurchasablePlan[];
+  className?: string;
+}) {
+  const plans = only ?? PURCHASABLE_PLANS.filter((p) => PLAN_RANK[p] >= PLAN_RANK[plan]);
+  if (!plans.length) return null;
+  return (
+    <div className={cn("flex flex-wrap items-center gap-2 text-sm text-muted-foreground", className)}>
+      <span>Unlocks with</span>
+      {plans.map((planId) => (
+        <PlanBadge key={planId} plan={planId} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A page an operator limited to some tiers on /admin/product (`setSurfaceTiers`). `plans`
+ * are the tiers that may open it; only the ones on sale are offered, so a Lifetime-only
+ * page says so in a note instead of pointing at a pricing page that cannot sell it.
+ */
+export function TierLocked({ surfaceKey, plans }: { surfaceKey: string; plans: readonly Plan[] }) {
+  const surface = getSurface(surfaceKey);
+  const onSale = PURCHASABLE_PLANS.filter((p) => plans.includes(p));
+  const cheapest = onSale[0] ?? "max";
+  return (
+    <LockedFeature
+      title={surface?.label ?? "This page"}
+      description={surface?.description ?? "This page isn't included in your plan."}
+      highlights={[]}
+      unlockPlan={cheapest}
+      plans={onSale}
+      note={onSale.length === 0 ? "Available on Orbit Lifetime." : undefined}
+    />
   );
 }
 
