@@ -94,6 +94,7 @@ import { UNDO_DELAY_MS } from "@/lib/email/config";
 import { enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
 import { scheduleDispatch } from "@/lib/email/schedule";
 import { getSendCapability, type MailboxId, type SendBlockReason } from "@/lib/email/sender";
+import { trackSearchPerformed } from "@/lib/search-events";
 
 export type {
   ContactInput,
@@ -143,7 +144,9 @@ export async function searchContactsForPicker(
    * broken rather than as waiting. Defaulted to the old behaviour so those three callers
    * are untouched.
    */
-  order: "alphabetical" | "recent" = "alphabetical"
+  order: "alphabetical" | "recent" = "alphabetical",
+  /** Set by the command palette only: records `search_performed` (sampled, never the text). */
+  surface?: "command_palette"
 ): Promise<ContactPickerOption[]> {
   const userId = await requireUserId();
   const db = await getDb();
@@ -181,6 +184,10 @@ export async function searchContactsForPicker(
     )
     .limit(Math.min(Math.max(limit, 1), 200));
 
+  // Client-supplied, so compared to the literal rather than trusted.
+  if (term && surface === "command_palette") {
+    trackSearchPerformed({ userId, surface, query: term, resultCount: rows.length });
+  }
   return rows;
 }
 

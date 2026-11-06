@@ -111,6 +111,7 @@ function main() {
     "/api/contacts/name-sweep",
     "/api/linkedin/timeline-events/backfill",
     "/api/ops/sweep",
+    "/api/ops/rollup",
     "/api/sync/run",
     "/api/radar/run",
     "/api/radar/feeds/sweep",

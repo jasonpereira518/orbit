@@ -23,7 +23,12 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // 2026-11-06: Email insights, which reads the sender, subject and Gmail's preview of new job and
 // hiring-process threads. Bumped a day after the text above so accounts that accepted 2026-11-05
 // are asked again.
-export const TERMS_VERSION = "2026-11-06";
+// 2026-11-06.2 (same day, after Email insights shipped as 2026-11-06): page-load timings, a
+// last-touch attribution cookie, the kind of error screen shown, search and notification
+// counts (never query text), and Resend delivery/open/click for outreach Orbit sends. A
+// suffix, not a new date: needsTermsAcceptance compares strings, and accounts that accepted
+// 2026-11-06 must be asked again.
+export const TERMS_VERSION = "2026-11-06.2";
 export const LEGAL_LAST_UPDATED = "November 6, 2026";
 
 /**

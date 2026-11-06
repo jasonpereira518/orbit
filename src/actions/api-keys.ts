@@ -25,7 +25,7 @@ import { requireUserId } from "@/lib/auth";
 import { isPaywallError, requireEntitlement } from "@/lib/entitlements";
 import { generateApiKey, type ApiKeyKind, type ApiKeyScope } from "@/lib/api/keys";
 import { getAppBaseUrl } from "@/lib/app-url";
-import { trackMcpConnected } from "@/lib/mcp/events";
+import { trackMcpConnected, trackMcpDisconnected } from "@/lib/mcp/events";
 
 export type ApiKeySummary = {
   id: string;
@@ -152,11 +152,15 @@ export async function createApiKey(
 export async function revokeApiKey(id: string): Promise<{ ok: true }> {
   const userId = await requireUserId();
   const db = await getDb();
-  await db
+  const revoked = await db
     .update(apiKeys)
     // Scoped by userId as well as id, so one user can never revoke another's key.
     .set({ revokedAt: new Date(), revokedReason: "revoked by user" })
-    .where(and(eq(apiKeys.id, id), eq(apiKeys.userId, userId)));
+    // Only a live key: a second revoke changes nothing and must not count as a disconnect.
+    .where(and(eq(apiKeys.id, id), eq(apiKeys.userId, userId), isNull(apiKeys.revokedAt)))
+    .returning();
+  // The twin of `createApiKey`'s `mcp_connected`: only an MCP-URL key is an assistant connection.
+  if (revoked[0]?.kind === "mcp_url") trackMcpDisconnected({ userId, client: "other", credentialId: id });
   revalidatePath("/settings");
   return { ok: true };
 }
