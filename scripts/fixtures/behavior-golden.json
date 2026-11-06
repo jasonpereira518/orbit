@@ -4656,6 +4656,7 @@
     },
     "hasApolloKey": false,
     "workHistoryAutoEnabled": true,
+    "emailIntelEnabled": false,
     "chatAutoApply": false,
     "radarDigestEnabled": true,
     "hasApiKey": false,
