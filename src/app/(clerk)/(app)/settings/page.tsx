@@ -1,3 +1,4 @@
+import { getGmailConnectionStatus } from "@/actions/gmail";
 import { getEmailSettings, getPlanOverview, getSettings } from "@/actions/settings";
 import { listGoals } from "@/actions/goals";
 import { getDisplayProfile, isClerkConfigured } from "@/lib/auth";
@@ -12,6 +13,7 @@ import { HelpSettings } from "@/components/settings/help-settings";
 import { KnowledgeSettings } from "@/components/settings/knowledge-settings";
 import { IntegrationsSettings } from "@/components/settings/integrations-settings";
 import { NotificationSettings } from "@/components/settings/notification-settings";
+import { EmailIntelSetting } from "@/components/settings/email-intel-setting";
 import { RadarDigestSetting } from "@/components/settings/radar-digest-setting";
 import { MeetingNudgeSetting } from "@/components/settings/meeting-nudge-setting";
 import { PlanSettings } from "@/components/settings/plan-settings";
@@ -26,6 +28,7 @@ import {
   type SettingsSectionId,
 } from "@/components/settings/sections";
 import { requireUserId } from "@/lib/auth";
+import { getEntitlements } from "@/lib/entitlements";
 import { tourResumable } from "@/lib/tour/tour-state";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
@@ -143,6 +146,11 @@ export default async function SettingsPage() {
     const tz = (await cookies()).get(TZ_COOKIE)?.value;
     after(() => captureRadarTimeZone(userId, tz).catch(() => undefined));
   }
+  // Email insights rides Radar's release, so its two extra reads happen only where it shows:
+  // whether the connected Gmail grant covers mail access, and whether the plan includes it.
+  const [emailIntelStatus, emailIntelEntitlements] = radarLive
+    ? await Promise.all([getGmailConnectionStatus(), getEntitlements(userId)])
+    : [null, null];
 
   // Section pages follow their own settings surface; account pages follow /imports, so
   // hiding it can't be undone by reaching it through Settings. The Google page's Gmail
@@ -221,6 +229,13 @@ export default async function SettingsPage() {
             ) : null}
             {shows("settings-notifications") && radarLive ? (
               <RadarDigestSetting initialEnabled={initialSettings.radarDigestEnabled} />
+            ) : null}
+            {shows("settings-notifications") && radarLive ? (
+              <EmailIntelSetting
+                initialEnabled={initialSettings.emailIntelEnabled}
+                canRead={emailIntelStatus?.canRead ?? false}
+                allowed={emailIntelEntitlements?.canUseRecruiters === true}
+              />
             ) : null}
             {shows("settings-notifications") ? <MeetingNudgeSetting /> : null}
           </SettingsSection>

@@ -298,6 +298,47 @@ export default function PrivacyPage() {
               where each event was found.
             </p>
           </DocCallout>
+          <DocCallout title="Email insights">
+            <p>
+              If you turn on Email insights in Settings, Orbit checks your Gmail every fifteen
+              minutes for new threads that look like a job application or a recruiter
+              conversation, excluding newsletters and mailing lists. It first reads only the
+              sender, the subject, who is on the thread and the short preview Gmail supplies.
+            </p>
+            <p>
+              For a thread that looks like a hiring conversation, Orbit then reads the text of
+              its most recent messages — up to four, each cut to 4,000 characters — and sends it,
+              with the sender names and addresses, to the AI provider that runs your
+              account&rsquo;s AI features. The model notes the company, the role, where things
+              stand, any dates, the people named and what is being asked of you. Orbit keeps
+              those notes, the thread id, the subject, the participants and one short quote
+              (under 200 characters) copied from the mail as evidence. It stores no message
+              bodies, and it does not use this mail to train models or for advertising.
+            </p>
+            <p>
+              The notes it keeps can appear as reasons on your Radar cards, in the short lines
+              and drafts Radar writes with your AI provider, and in your in-app briefing. They
+              are never put in Radar&rsquo;s Monday email.
+            </p>
+            <p>
+              Radar can also list people an email names who are not in your orbit yet, showing
+              the name and job title the email gave. Orbit adds one only when you press Add; it
+              then saves their name, email address and job title as a contact, and nothing else
+              from the email. Dismissing someone keeps only their name, on the Ignored people
+              list, until you delete your insights data or disconnect Gmail.
+            </p>
+            <p>
+              Your chat assistant can search the same notes. When you ask a question, the notes
+              that match are sent with it to the AI provider that runs your account&rsquo;s AI
+              features, and an answer can cite them. Turning Email insights off removes them
+              from chat search at once; disconnecting Gmail or deleting your insights data
+              removes them for good.
+            </p>
+            <p>
+              Turning it off stops the checking; disconnecting Gmail, or deleting your insights
+              in Settings, removes what it recorded.
+            </p>
+          </DocCallout>
         </DocSection>
 
         <DocSection id="recruiters" index={5} title="The recruiter scan and the shared directory">

@@ -198,6 +198,8 @@ export type HealthInput = {
   planConfig?: Record<Plan, PlanConfig>;
   /** Newest finished, not-undone LinkedIn upload (`getLastLinkedInImportAt`). Absent = skip. */
   lastLinkedInImportAt?: Date | null;
+  /** `user_settings.linkedin_refresh_interval_days`: null = monthly, 0 = no refresh alert. */
+  linkedInRefreshIntervalDays?: number | null;
   credits?: {
     allowanceGranted: number;
     allowanceRemaining: number;
@@ -395,9 +397,9 @@ export function evaluateAccountHealth(
     });
   }
 
-  // Advisory: the bell nudges at 30 days, the dashboard card takes over at 90
-  // (`linkedInRefreshLevel`). Dismissible, so the 7-day snooze is the cadence after that.
-  if (input.lastLinkedInImportAt && linkedInRefreshLevel(input.lastLinkedInImportAt, now)) {
+  // Advisory: the bell nudges one refresh interval after the last upload (a month unless the
+  // person chose otherwise), the dashboard card takes over at three (`linkedInRefreshLevel`). Dismissible, so the 7-day snooze is the cadence after that.
+  if (input.lastLinkedInImportAt && linkedInRefreshLevel(input.lastLinkedInImportAt, now, input.linkedInRefreshIntervalDays)) {
     findings.push({
       code: "import.linkedin_stale",
       severity: "warn",

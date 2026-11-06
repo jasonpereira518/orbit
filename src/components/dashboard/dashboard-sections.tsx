@@ -104,13 +104,12 @@ const revealDelay = (ms: number) =>
  */
 export async function LinkedInExportNudgeSection() {
   const userId = await requireUserId();
-  const lastImportAt = await getLastLinkedInImportAt(userId);
+  const [lastImportAt, settings] = await Promise.all([getLastLinkedInImportAt(userId), ensureUserSettings(userId)]);
   if (lastImportAt) {
     const now = new Date();
-    if (linkedInRefreshLevel(lastImportAt, now) !== "urgent") return null;
+    if (linkedInRefreshLevel(lastImportAt, now, settings.linkedinRefreshIntervalDays) !== "urgent") return null;
     return <LinkedInRefreshNudge days={daysSince(lastImportAt, now)} />;
   }
-  const settings = await ensureUserSettings(userId);
   if (await getLinkedInNudgeVisible(userId, settings)) return <LinkedInExportNudge email={settings.email ?? null} />;
   const state = linkedinCardState({
     imported: await hasLinkedInImport(userId),

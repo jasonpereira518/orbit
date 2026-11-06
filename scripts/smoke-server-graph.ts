@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { chainTo, serverImportGraph } from "./lib/import-graph";
 
 const LAYOUT = "src/app/(clerk)/(app)/layout.tsx";
-/** Room to grow from 68 (Oct 2026), but not another tripling. 92 since runtime plan rules (Nov 2026: plan-rules + plan-overrides). */
+/** Room to grow from 68 (Oct 2026), but not another tripling. Main reached 91 on Nov 5 2026 (LinkedIn page work); runtime plan rules (plan-rules + plan-overrides) took it to 93 on Nov 6, so 94. */
 const LAYOUT_MAX_FILES = 94;
 /** Modules that must never load on every page: heavy, and needed only by specific actions. */
 const LAYOUT_BANNED = [

@@ -20,8 +20,11 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // naming Vercel BotID and the Slack feedback excerpt, all of which were true and unsaid.
 // 2026-11-05: reviewing the people a capture found looks each NEW one up on the web, by
 // name with the company, role, place met and city the note gives — never an email or phone.
-export const TERMS_VERSION = "2026-11-05";
-export const LEGAL_LAST_UPDATED = "November 5, 2026";
+// 2026-11-06: Email insights, which reads the sender, subject and Gmail's preview of new job and
+// hiring-process threads. Bumped a day after the text above so accounts that accepted 2026-11-05
+// are asked again.
+export const TERMS_VERSION = "2026-11-06";
+export const LEGAL_LAST_UPDATED = "November 6, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.
@@ -92,8 +95,8 @@ export const GOOGLE_SCOPE_DISCLOSURES: readonly {
   {
     scope: GOOGLE_SCOPES.gmailRead,
     permission: "Read your email (gmail.readonly)",
-    use: "Recruiter scan: finds recruiting conversations and summarizes each with your AI key or Orbit's included AI. Confirmation emails: reads mail from Luma, Partiful, Eventbrite, Meetup and Posh to find events you registered for. Replying in a thread: when you compose an email to a contact, finds your latest message with them so you can reply in that conversation, reading only its Message-ID, subject, date and thread. Sending: checks your Sent folder so a retried send is never delivered twice. Message bodies are never stored.",
-    askedWhen: "Connect Gmail on Recruiters, or turn on Confirmation emails on Events",
+    use: "Recruiter scan: finds recruiting conversations and summarizes each with your AI key or Orbit's included AI. Confirmation emails: reads mail from Luma, Partiful, Eventbrite, Meetup and Posh to find events you registered for. Email insights: reads the sender, subject and Gmail’s short preview of new job and hiring-process threads, and for hiring conversations the text of the latest messages, which it sends to your AI provider to note the company, role, stage, dates and people. The notes can appear on your Radar cards, which can also offer to add people an email names to your contacts when you press Add. Your chat assistant can search the notes too. Replying in a thread: when you compose an email to a contact, finds your latest message with them so you can reply in that conversation, reading only its Message-ID, subject, date and thread. Sending: checks your Sent folder so a retried send is never delivered twice. Message bodies are never stored.",
+    askedWhen: "Connect Gmail on Recruiters, turn on Confirmation emails on Events, or turn on Email insights in Settings",
   },
   {
     scope: GOOGLE_SCOPES.gmailSend,
@@ -106,6 +109,12 @@ export const GOOGLE_SCOPE_DISCLOSURES: readonly {
     permission: "See your calendar events (calendar.readonly)",
     use: "Reads your primary calendar from two days back to two weeks ahead and keeps that window in Orbit, updating it as your calendar changes and deleting meetings that leave it. Adds meetings with people in your network to their timelines, and uses upcoming meetings for prep and follow-up reminders, recording suggestions, meeting prep, recording summaries and answers in Chat and in assistants you connect.",
     askedWhen: "Connect Google Calendar on Events",
+  },
+  {
+    scope: GOOGLE_SCOPES.calendarWrite,
+    permission: "Add events to your calendar (calendar.events)",
+    use: "Puts the meetings you set up in Chat on your primary calendar, with the title, time and place you gave, and removes one when you press Undo. Nobody is invited and no email is sent. Orbit never changes or deletes an event it did not add.",
+    askedWhen: "Add to calendar on a meeting in Chat",
   },
   {
     scope: GOOGLE_SCOPES.drive,

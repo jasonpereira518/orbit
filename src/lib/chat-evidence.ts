@@ -37,6 +37,14 @@ export type EvidenceSource =
       date: string | null;
       /** Where in the meeting the cited line was said; null for its summary. */
       startMs: number | null;
+    }
+  | {
+      kind: "email_event";
+      /** `email_events.id`: what the user's mail meant, as the email-insights feature derived it. */
+      sourceId: string;
+      contactId: string | null;
+      /** ISO day of the email. */
+      date: string | null;
     };
 
 function keyOf(source: EvidenceSource): string {
@@ -45,6 +53,8 @@ function keyOf(source: EvidenceSource): string {
       return `interaction:${source.sourceId}`;
     case "meeting":
       return `meeting:${source.sourceId}`;
+    case "email_event":
+      return `email_event:${source.sourceId}`;
     default:
       return `contact:${source.contactId}`;
   }
