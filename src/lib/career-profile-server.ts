@@ -4,7 +4,7 @@
  */
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { userSettings } from "@/db/schema";
+import { userSettings, type CareerProfile } from "@/db/schema";
 import type { YouCurrent, YouPatch } from "@/lib/career-profile";
 import type { UserFocus } from "@/lib/focus-fit";
 import { setSchools } from "@/lib/events/target-companies";
@@ -31,6 +31,12 @@ export async function loadUserFocus(userId: string): Promise<UserFocus | null> {
   const roleKeywords = (career.roleKeywords ?? []).filter((s) => typeof s === "string" && s.trim());
   if (!skills.length && !roleKeywords.length) return null;
   return { skills, roleKeywords, role: career.role ?? null };
+}
+
+/** The aim the person set in About you, or null. */
+export async function loadUserAim(userId: string): Promise<NonNullable<CareerProfile["aim"]> | null> {
+  const { career } = await loadYouCurrent(userId);
+  return career?.aim ?? null;
 }
 
 /**
