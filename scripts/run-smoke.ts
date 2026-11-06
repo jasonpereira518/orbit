@@ -244,6 +244,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-email-no-resend": "pure",
   "smoke-compose-draft": "pure",
   "smoke-graph-canvas": "pure",
+  "smoke-constellation-modules": "pure",
   "smoke-hash-stream": "pure",
   "smoke-sky-layout": "pure",
   "smoke-graph-family-seating": "pure",
