@@ -28,12 +28,16 @@ run(async () => {
   const db = await getDb();
   const users = ["A", "B", "Internal"].map((k) => P + k);
   const ids = sql.join(users.map((u) => sql`${u}`), sql`, `);
-  for (const table of ["chat_messages", "chat_threads", "reminders", "usage_events", "user_settings"]) {
-    await db.execute(sql`DELETE FROM ${sql.raw(table)} WHERE user_id IN (${ids})`);
-  }
-  await db.execute(sql`DELETE FROM outreach_campaigns WHERE user_id IN (${ids})`);
-  await db.delete(pageViews).where(eq(pageViews.route, "/__smoke-rollup"));
-  await db.delete(metricsDaily).where(inArray(metricsDaily.day, [D1, D2, D3]));
+  // The suite shares one PGlite database, so this runs at both ends: left behind, these 2020
+  // accounts shift every later smoke that counts users (growth-trends, clerk-orphan-sweep).
+  const cleanup = async () => {
+    for (const table of ["chat_messages", "chat_threads", "reminders", "usage_events", "outreach_campaigns", "user_settings"]) {
+      await db.execute(sql`DELETE FROM ${sql.raw(table)} WHERE user_id IN (${ids})`);
+    }
+    await db.delete(pageViews).where(eq(pageViews.route, "/__smoke-rollup"));
+    await db.delete(metricsDaily).where(inArray(metricsDaily.day, [D1, D2, D3]));
+  };
+  await cleanup();
 
   // Accounts: A signs up on D1 from a newsletter, B on D2 from Reddit, Internal on D1 (excluded).
   const signup = (id: string, day: string, kind: string | null, utm: string | null, ref: string | null) =>
@@ -124,5 +128,6 @@ run(async () => {
   const channel = await rollupSeries("signups_channel", { from: at(D1), to: at(D3), dim: "reddit.com" }, now);
   t.check("reads a dimension", JSON.stringify(channel) === JSON.stringify([{ day: D2, value: 1 }]), JSON.stringify(channel));
 
+  await cleanup();
   t.done("metrics rollup");
 });
