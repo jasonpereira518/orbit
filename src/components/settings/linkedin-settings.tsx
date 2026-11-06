@@ -111,7 +111,7 @@ export function LinkedInSettings() {
   }, []);
   useEffect(load, [load]);
 
-  // A finished run (here, on /imports, or from a row below) changes every count on the page.
+  // A finished run (here, on Capture's Imports tab, or from a row below) changes every count on the page.
   const phase = queue.phase;
   useEffect(() => {
     if (phase === "done") load();
@@ -128,7 +128,7 @@ export function LinkedInSettings() {
       }
     });
 
-  /** The whole export, the same way /imports takes it: detect, then stage for review. */
+  /** The whole export, the same way Capture's Imports tab takes it: detect, then stage for review. */
   const uploadExport = async (file: File) => {
     if (!acceptsNewDrop(getImportQueueState().phase)) {
       toast.message(IMPORT_COPY.queueBusy);
@@ -249,8 +249,8 @@ export function LinkedInSettings() {
               >
                 I’ve requested my export
               </DropdownMenuItem>
-              <DropdownMenuItem render={<Link href="/imports" />}>
-                Open Imports page
+              <DropdownMenuItem render={<Link href="/capture?mode=imports" />}>
+                Open Imports in Capture
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
