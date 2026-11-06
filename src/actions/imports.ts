@@ -340,7 +340,7 @@ export async function startLinkedInImport(
 
   after(() => runLinkedInImportJob(importRow.id).catch(() => {}));
 
-  revalidatePath("/imports");
+  revalidatePath("/capture");
 
   return { importId: importRow.id, totalRows: selectedIndexes.length };
 }
@@ -640,7 +640,7 @@ export async function undoImport(importId: string): Promise<UndoResult> {
     result = await performUndo(userId, importId);
     removed += result.removed;
   } while (!result.done && Date.now() - startedAt < UNDO_ACTION_BUDGET_MS);
-  revalidatePath("/imports");
+  revalidatePath("/capture");
   // The people just removed were on the People list too — and the done card's own button
   // links there, filtered to this import.
   revalidatePath("/contacts");
@@ -701,7 +701,7 @@ export async function cancelImportSession(importId: string) {
 
   revalidatePath("/");
   revalidatePath("/contacts");
-  revalidatePath("/imports");
+  revalidatePath("/capture");
   revalidatePath("/graph");
   revalidatePath("/chat");
   return updated;
@@ -932,7 +932,7 @@ export async function startLinkedInMessagesImport(
 
   after(() => runImportJobById(importRow.id).catch(() => {}));
 
-  revalidatePath("/imports");
+  revalidatePath("/capture");
 
   return { importId: importRow.id, totalRows: selectedConversations.length };
 }
@@ -1267,7 +1267,7 @@ export async function confirmCalendarImport(payload: {
   }
 
   after(() => runImportJobById(importRow.id).catch(() => {}));
-  revalidatePath("/imports");
+  revalidatePath("/capture");
 
   return { importId: importRow.id, totalRows: rowPayloads.length };
 }
@@ -1420,7 +1420,7 @@ export async function confirmGoogleContactsImport(
   );
 
   after(() => runImportJobById(importRow.id).catch(() => {}));
-  revalidatePath("/imports");
+  revalidatePath("/capture");
 
   return { importId: importRow.id, totalRows: rows.length };
 }
@@ -1575,7 +1575,7 @@ export async function confirmOutlookContactsImport(
   );
 
   after(() => runImportJobById(importRow.id).catch(() => {}));
-  revalidatePath("/imports");
+  revalidatePath("/capture");
 
   return { importId: importRow.id, totalRows: rows.length };
 }
@@ -1769,7 +1769,7 @@ export async function confirmContactsFileImport(
   );
 
   after(() => runImportJobById(importRow.id).catch(() => {}));
-  revalidatePath("/imports");
+  revalidatePath("/capture");
 
   return { importId: importRow.id, totalRows: selectedIndexes.length };
 }
@@ -1909,7 +1909,7 @@ export async function revertImportAction(importId: string) {
   // Everything an import touches, in reverse.
   revalidatePath("/");
   revalidatePath("/contacts");
-  revalidatePath("/imports");
+  revalidatePath("/capture");
   revalidatePath("/graph");
   revalidatePath("/chat");
   revalidatePath("/reminders");
