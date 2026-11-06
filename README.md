@@ -62,13 +62,12 @@ Your network is probably your most valuable asset, and you have no system for ke
 ### Works where you already are
 
 - **Inside Claude and ChatGPT.** Connect Orbit and ask about your network from the assistant you already use. It's free on every plan.
-- **In your browser.** A Chrome side panel on LinkedIn, Gmail, and anywhere else a person shows up. It tells you whether you already know them, what you know, and what to say.
 
 ## Why Orbit
 
 1. **Built for messy input.** Other CRMs need clean data entry. Orbit starts from the notes you actually take.
 2. **It tells you what to do next.** Orbit gives you a daily to-do list for your relationships, not just a database.
-3. **Your AI, your choice.** Bring your own Gemini, OpenAI, or Anthropic key on any plan, or use the AI included with Pro and Max.
+3. **Your AI, your choice.** Every plan includes AI, and you can bring your own Gemini, OpenAI, or Anthropic key on any plan.
 4. **You stay in control.** Orbit never sends anything without your approval, including messages an assistant drafts for you.
 5. **Personal, not corporate.** It's designed to feel like your own sky, not like enterprise software.
 
@@ -78,17 +77,16 @@ Your network is probably your most valuable asset, and you have no system for ke
 |---|---|---|---|
 | **Price** | $0 forever | $8.99/month or $89.99/year | $19.99/month or $199.99/year |
 | **Contacts** | Up to 500 | Unlimited | Unlimited |
-| **AI** | Your own key | Included: 200 credits a month | Included: 500 credits a month |
+| **AI** | Included: 50 credits a month, plus 25 to start | Included: 300 credits a month | Included: 650 credits a month |
 | **Capture, Chat, Constellation, Knowledge, reminders, LinkedIn import, export** | ✓ | ✓ | ✓ |
 | **Claude and ChatGPT connector** | ✓ | ✓ | ✓ |
 | **Google and Microsoft accounts** | One of the two | Both | Both |
 | **Recruiter tracking, calendar subscriptions** | | ✓ | ✓ |
 | **Voice notes** | 1 hour a month | 5 hours a month | 10 hours a month |
 | **Meeting transcription** | | 5 hours a month | 10 hours a month |
-| **Contact enrichment** | | 10 a month | 25 a month |
 | **REST API and webhooks** | | | ✓ |
 
-Free: bring your own AI key. Pro and Max: AI included, with $5 packs of 250 credits if you ever need more, and nothing charged automatically. A year paid up front is two months free. Hitting a limit only stops you adding new contacts. Orbit never hides or deletes your data.
+Every plan includes AI, and your own AI key is optional on any plan. $5 packs of 250 credits are there if you ever need more, and nothing is charged automatically. A year paid up front is two months free. Hitting a limit only stops you adding new contacts. Orbit never hides or deletes your data.
 
 ## Trust and privacy
 
@@ -100,6 +98,7 @@ Free: bring your own AI key. Pro and Max: AI included, with $5 packs of 250 cred
 
 ## Coming soon
 
+- **The Chrome extension.** A side panel on LinkedIn, Gmail, and anywhere else a person shows up, telling you whether you already know them, what you know, and what to say.
 - **Events.** Remember the conferences and meetups you went to and the people you met there.
 - **Radar.** Every night, Orbit looks over your network and tells you who is worth a message this week, and why.
 

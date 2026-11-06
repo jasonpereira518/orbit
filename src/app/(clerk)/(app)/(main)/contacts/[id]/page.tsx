@@ -1,4 +1,6 @@
-import { Suspense } from "react";
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
+import { Suspense, cache } from "react";
+import type { Metadata } from "next";
 import { listContactPendingSendsAction } from "@/actions/email-compose";
 import { PendingSends } from "@/components/email/pending-sends";
 import type { PendingSend } from "@/lib/email/compose";
@@ -13,6 +15,7 @@ import { ContactExperienceSection } from "@/components/contacts/contact-experien
 import { ContactFollowUpSection } from "@/components/contacts/contact-follow-up-section";
 import { ContactMentionsSection } from "@/components/contacts/contact-mentions-section";
 import { ContactProfileHero } from "@/components/contacts/contact-profile-hero";
+import { openNameGuess } from "@/lib/contact-name-guess";
 import { ContactProfileOverview } from "@/components/contacts/contact-profile-overview";
 import { ContactRelatedPeople } from "@/components/contacts/contact-related-people";
 import { ContactRemindersSection } from "@/components/contacts/contact-reminders-section";
@@ -25,7 +28,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { computeCloseness, formatInteractionFrequency } from "@/lib/closeness";
 import { getContactCloseness } from "@/lib/closeness-cohort";
 import { getConstellationConfig } from "@/lib/constellation-config";
-import { constellationEligibility } from "@/lib/constellation-eligibility";
+import { constellationEligibility, userTagCount } from "@/lib/constellation-eligibility";
 import { requireUserId } from "@/lib/auth";
 import { getEventsWithContact } from "@/actions/events";
 import { ContactEventsTogether } from "@/components/contacts/contact-events-together";
@@ -57,11 +60,30 @@ import { RenderStamp } from "@/components/layout/render-stamp";
  */
 export const maxDuration = 300;
 
+/**
+ * Request-memoized so `generateMetadata` and the page share one read: the tab title costs no
+ * extra query.
+ */
+const loadContactForProfile = cache((id: string) => getContactForProfile(id));
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  const contact = await loadContactForProfile(id).catch(() => null);
+  return { title: contact ? contact.preferredName || contact.fullName : "Contact" };
+}
+
 export default async function ContactDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const gate = await pageVisibilityGate("page.contacts");
+  if (gate) return gate;
+
   const { id } = await params;
 
   // Every side query needs only the route param — start them all before the
@@ -127,7 +149,7 @@ export default async function ContactDetailPage({
   // notFound() must fire BEFORE any Suspense boundary renders so the route
   // still returns a real 404 status.
   const [contact, closenessCohort, constellationConfig] = await Promise.all([
-    getContactForProfile(id),
+    loadContactForProfile(id),
     cohortPromise,
     getConstellationConfig(),
   ]);
@@ -311,6 +333,7 @@ export default async function ContactDetailPage({
           displayName={displayName}
           fullName={contact.fullName}
           preferredName={contact.preferredName}
+          nameGuess={openNameGuess(contact)}
           firstName={contact.firstName}
           title={contact.title}
           company={contact.company}
@@ -320,9 +343,10 @@ export default async function ContactDetailPage({
             // Same rule as the list's `clientAvatarUrlSql`: an inline `data:` image (up to
             // ~120 KB of base64) is served by `/api/avatars/{id}` instead of riding along in
             // this page's payload. The hero only needs to know a stored photo exists.
-            contact.profileImageUrl?.trim().startsWith("data:image/")
+            contact.sharedAvatarUrl ??
+            (contact.profileImageUrl?.trim().startsWith("data:image/")
               ? `/api/avatars/${contact.id}`
-              : contact.profileImageUrl
+              : contact.profileImageUrl)
           }
           linkedinUrl={contact.linkedinUrl}
           source={contact.source}
@@ -355,7 +379,7 @@ export default async function ContactDetailPage({
                       statedCloseness: contact.statedCloseness,
                       priorityLevel: contact.priorityLevel,
                       nextFollowUpAt: contact.nextFollowUpAt,
-                      tagCount: contact.tags.length,
+                      userTagCount: userTagCount(contact.tags),
                     },
                     constellationConfig.thresholds
                   ).eligible,

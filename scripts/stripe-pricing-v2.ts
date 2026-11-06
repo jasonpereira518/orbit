@@ -72,7 +72,7 @@ const PRODUCTS = {
   },
   max: {
     name: "Orbit Max",
-    description: "Everything in Orbit Pro with 650 AI credits a month, more transcription and enrichment, and the REST API.",
+    description: "Everything in Orbit Pro with 650 AI credits a month, more transcription, and the REST API.",
     metadata: { orbit_product: "max" },
   },
   pack: {

@@ -90,6 +90,7 @@ function restoreStatement(contactId: string, userId: string, snap: ImportRevertS
         first_name           = ${snap.firstName},
         last_name            = ${snap.lastName},
         profile_image_url    = ${snap.profileImageUrl},
+        profile_image_source = ${snap.profileImageSource ?? null},
         source               = ${snap.source},
         how_met              = ${snap.howMet},
         met_context          = ${snap.metContext},

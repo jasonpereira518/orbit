@@ -1,5 +1,6 @@
 "use server";
 
+import { startJobInOwnInvocation } from "@/lib/import-stall";
 import { canConnect, refusedConnectUrl } from "@/lib/connection-limits";
 import { and, desc, eq } from "drizzle-orm";
 import { safeReturnPath } from "@/lib/safe-return-path";
@@ -42,6 +43,7 @@ import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 import { demoWorkspaceEmail, isDemoWorkspace } from "@/lib/demo-workspace";
 import { demoGmailConnectionStatus } from "@/lib/demo-workspace-connections";
 import { recordDemoRecruiterScan } from "@/lib/demo-workspace-actions";
+import { dropCloudNoteSource } from "@/lib/cloud-notes/sources";
 
 const OAUTH_STATE_COOKIE = "orbit_gmail_oauth_state";
 
@@ -241,6 +243,7 @@ export async function disconnectGmail(opts: { alsoDelete?: boolean } = {}) {
   // id would otherwise never dedupe against the orphaned row and seedCalendarSources would
   // double the calendar.
   await deleteCalendarSourcesForProvider(userId, "google");
+  await dropCloudNoteSource(userId, "google");
   if (grant) await revokeGoogleGrant(grant);
   if (opts.alsoDelete === true) {
     await purgeUserData(userId, { only: DISCONNECT_DELETE_CATEGORIES.gmail });
@@ -251,7 +254,7 @@ export async function disconnectGmail(opts: { alsoDelete?: boolean } = {}) {
   await deleteEventConnection(userId, "gmail");
   revalidatePath("/recruiters");
   revalidatePath("/settings");
-  revalidatePath("/imports");
+  revalidatePath("/capture");
   revalidatePath("/events");
 }
 
@@ -369,7 +372,7 @@ export async function startGmailRecruiterScan(): Promise<
       })
       .returning();
 
-    after(() => runGmailRecruiterScanJob(row.id).catch(() => {}));
+    after(() => startJobInOwnInvocation(row.id, runGmailRecruiterScanJob).catch(() => {}));
     revalidatePath("/recruiters");
     return { importId: row.id };
   });

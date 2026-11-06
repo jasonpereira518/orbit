@@ -35,6 +35,18 @@ check("the work-history sweep is called from exactly one step",
 check("that step is gated on its own :37 schedule",
   ops.includes(`- cron: "37 * * * *"`) &&
     /if: github\.event\.schedule == '37 \* \* \* \*'[\s\S]{0,400}\/api\/work-history\/sweep/.test(ops));
+// A step that curls $APP_URL / $CRON_SECRET with no env block hits an empty host and a
+// blank bearer, so the sweep silently never runs. Every such step declares what it uses.
+for (const chunk of ops.split(/^ {6}- name: /m).slice(1)) {
+  const name = chunk.split("\n", 1)[0];
+  const body = chunk.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+  const [run = "", env = ""] = body.split(/^ {8}env:\s*$/m);
+  for (const v of ["APP_URL", "CRON_SECRET"]) {
+    if (new RegExp(`\\$${v}\\b`).test(run)) {
+      check(`step "${name}" declares ${v} in its env`, new RegExp(`^\\s+${v}: \\$\\{\\{ secrets\\.${v} \\}\\}`, "m").test(env));
+    }
+  }
+}
 check("the route no longer says it runs once a day", !/once\/day|Runs once/i.test(route));
 check("the runbook carries the 60-day re-enable steps",
   runbook.includes("gh workflow enable ops.yml") && runbook.includes("disabled_inactivity"));

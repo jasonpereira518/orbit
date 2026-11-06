@@ -6,7 +6,7 @@
 import type { MeetingCandidate } from "@/lib/meeting-calendar";
 
 /** The offer appears this long before a meeting starts… */
-export const NUDGE_LEAD_MS = 2 * 60_000;
+export const NUDGE_LEAD_MS = 5 * 60_000;
 /** …and stays until this long after, for the person who joins late. */
 export const NUDGE_GRACE_MS = 10 * 60_000;
 

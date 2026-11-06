@@ -85,16 +85,23 @@ export function SettingsSection({
  *
  * `id` makes the row an anchor in its own right, so `/settings#settings-notifications`
  * still lands on notifications now that they share a card with the theme picker.
+ *
+ * `labelFor` is for a row that IS one control: the title becomes that control's `<label>`
+ * (same look), and the description gets the id `${labelFor}-description` for the control's
+ * `aria-describedby`.
  */
 export function SettingsRow({
   id,
   title,
   description,
+  labelFor,
   children,
 }: {
   id?: string;
   title: string;
   description?: React.ReactNode;
+  /** The id of the single control this row's title labels. */
+  labelFor?: string;
   children?: React.ReactNode;
 }) {
   return (
@@ -103,9 +110,20 @@ export function SettingsRow({
       className={cn("space-y-3 border-t border-border/60 pt-4", id && "scroll-mt-8")}
     >
       <div>
-        <h4 className="text-sm font-medium text-ink">{title}</h4>
+        {labelFor ? (
+          <label htmlFor={labelFor} className="block text-sm font-medium text-ink">
+            {title}
+          </label>
+        ) : (
+          <h4 className="text-sm font-medium text-ink">{title}</h4>
+        )}
         {description ? (
-          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+          <p
+            id={labelFor ? `${labelFor}-description` : undefined}
+            className="mt-1 text-sm text-muted-foreground"
+          >
+            {description}
+          </p>
         ) : null}
       </div>
       {children}

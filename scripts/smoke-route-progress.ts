@@ -29,7 +29,7 @@ import {
 /** The stylesheet is where the crawl actually lives, so the checks read it. */
 let css: string | null = null;
 function readCss() {
-  css ??= fs.readFileSync(path.join(process.cwd(), "src", "app", "globals.css"), "utf8");
+  css ??= fs.readFileSync(path.join(process.cwd(), "src", "app", "theme.css"), "utf8");
   return css;
 }
 
@@ -199,7 +199,7 @@ function main() {
     `${ROUTE_PROGRESS_CEILING}`
   );
   check(
-    "the final keyframe in globals.css matches that ceiling",
+    "the final keyframe in theme.css matches that ceiling",
     readCss().includes(`scaleX(${ROUTE_PROGRESS_CEILING})`),
     "the constant and the stylesheet have to agree, or one of them is decoration"
   );

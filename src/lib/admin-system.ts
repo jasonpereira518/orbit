@@ -33,9 +33,9 @@ import {
 
 /**
  * A client-driven import untouched for this long is abandoned. Deliberately DIFFERENT from
- * `CRON_STALL_THRESHOLD_MS` (3 min) in the process-stalled route: that one means "the cron
- * will pick this up", this one means "nothing ever will". The two thresholds mark the two
- * ownership classes and must not be reconciled.
+ * `CRON_STALL_THRESHOLD_MS` (see `import-stall.ts`): that one means "the cron will pick
+ * this up", this one means "nothing ever will". The two thresholds mark the two ownership
+ * classes and must not be reconciled.
  */
 const WEDGED_IMPORT_MS = 10 * 60 * 1000;
 
@@ -457,6 +457,11 @@ export async function recentWebhookOutcomes(
 /** The sweep must have run this recently or its scheduler is presumed dead. */
 const SWEEP_QUIET_MS = 30 * 60 * 1000;
 
+/** The one rule for "the ops sweep has gone quiet", shared by the admin strip and the deep probe. */
+export function isSweepQuiet(lastRun: CronHealth["lastRun"], now: Date): boolean {
+  return !lastRun || now.getTime() - lastRun.startedAt.getTime() > SWEEP_QUIET_MS;
+}
+
 export type OpsStatus = {
   lastSweep: CronHealth["lastRun"];
   sweepQuiet: boolean;
@@ -487,7 +492,7 @@ export async function getOpsStatus(now = new Date()): Promise<OpsStatus> {
   const str = (v: unknown) => (typeof v === "string" ? v : null);
   return {
     lastSweep: sweep.lastRun,
-    sweepQuiet: !sweep.lastRun || now.getTime() - sweep.lastRun.startedAt.getTime() > SWEEP_QUIET_MS,
+    sweepQuiet: isSweepQuiet(sweep.lastRun, now),
     openAlerts: rows.map((r) => ({
       id: r.id,
       severity: r.severity,

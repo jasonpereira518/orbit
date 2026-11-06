@@ -1,6 +1,15 @@
 import type { ParsedCalendarEvent } from "@/lib/calendar-import";
 import { isEventPlatformInvite } from "@/lib/events/discovery/from-calendar";
 
+/** "priya.raman@x.com" → "Priya Raman": the best name an address alone gives. "" for none. */
+export function nameFromEmail(email: string): string {
+  return (email.split("@")[0] ?? "")
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map((w) => w[0]!.toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
 const NETWORKING_TITLE =
   /\b(1\s*[:/.-]?\s*1|one[-\s]?on[-\s]?one|coffee|catch[-\s]?up|catchup|intro(duction)?|networking|coffee chat|get to know|office hours|informational|mentor|meet(?:ing)?\s+with|chat\s+with|lunch\s+with|dinner\s+with|sync\s+with|call\s+with|walk\s+with|zoom\s+with|hang\s+with)\b/i;
 
@@ -56,7 +65,7 @@ export function counterpartsOf(
     if (email && self.has(email)) continue;
     seen.add(key);
     counterparts.push({
-      name: person.name || email.split("@")[0] || "Contact",
+      name: person.name || nameFromEmail(email) || "Contact",
       email,
     });
   }
@@ -78,7 +87,7 @@ export function peopleFromDescription(description: string): Array<{
     const key = (email || name).toLowerCase();
     if (!key || seen.has(key)) return;
     seen.add(key);
-    people.push({ name: name.trim() || email.split("@")[0] || "Contact", email });
+    people.push({ name: name.trim() || nameFromEmail(email) || "Contact", email });
   };
 
   // "Guests: Jane Doe <jane@x.com>, Bob <bob@y.com>"

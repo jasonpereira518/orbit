@@ -1,6 +1,10 @@
 import { desc, sql } from "drizzle-orm";
-import { getDb } from "@/db";
+import { getDb, rowsOf } from "@/db";
 import { managedKeysConfigured } from "@/lib/ai-access";
+import { initialsFromName } from "@/lib/initials";
+import { activatedSql } from "@/lib/activity";
+import { isExcludedAccount } from "@/lib/analytics-internal";
+import { TOUR_EXAMPLE_SOURCE } from "@/lib/onboarding-examples/marker";
 import {
   chatMessages,
   contacts,
@@ -61,6 +65,8 @@ export type AdminUserRow = {
   hasProviderKey: boolean;
   /** Set by `setAccountSuspendedAction`; blocks the account in `requireUserId()`. */
   suspendedAt: Date | null;
+  /** `internal` / `tester` accounts are excluded from every aggregate by default. */
+  accountKind: "internal" | "tester" | null;
   counts: {
     contacts: number;
     interactions: number;
@@ -115,11 +121,10 @@ export function initialsFor(row: {
 }): string {
   const first = row.firstName?.trim();
   const last = row.lastName?.trim();
-  if (first || last) {
-    return `${first?.[0] ?? ""}${last?.[0] ?? ""}`.toUpperCase();
-  }
+  // Grapheme-safe and letter-only: `first[0]` split emoji and accented names in half.
+  if (first || last) return initialsFromName(`${first ?? ""} ${last ?? ""}`);
   const email = row.email?.trim();
-  if (email) return email.slice(0, 2).toUpperCase();
+  if (email) return initialsFromName(email.split("@")[0] ?? email);
   // `user_2abc…` — the prefix is identical for everyone, so skip it.
   return row.userId.replace(/^user_/, "").slice(0, 2).toUpperCase();
 }
@@ -176,7 +181,7 @@ function maxDate(
 /** The five whole-table GROUP BY user_id scans — the expensive half of the rollup. */
 async function queryAggregates() {
   const db = await getDb();
-  const [contactAgg, interactionAgg, importAgg, chatAgg, usageAgg] = await Promise.all([
+  const [contactAgg, interactionAgg, importAgg, chatAgg, usageAgg, activated] = await Promise.all([
       db
         .select({
           userId: contacts.userId,
@@ -185,6 +190,10 @@ async function queryAggregates() {
           lastAt: sql<string | null>`max(${contacts.createdAt})`,
         })
         .from(contacts)
+        // The guided tour's eight example people are not the person's own network: counting
+        // them made every account that took the tour "have contacts" on the overview funnel,
+        // while the Conversion page (which excludes them) disagreed about the same account.
+        .where(sql`${contacts.source} IS DISTINCT FROM ${TOUR_EXAMPLE_SOURCE}`)
         .groupBy(contacts.userId),
 
       db
@@ -229,8 +238,12 @@ async function queryAggregates() {
         })
         .from(usageEvents)
         .groupBy(usageEvents.userId),
+
+      // Which accounts are activated (`activatedSql`). A database question the per-user
+      // counts above cannot answer, memoized with them so a warm overview stays one statement.
+      activatedUserIds(),
   ]);
-  return { contactAgg, interactionAgg, importAgg, chatAgg, usageAgg };
+  return { contactAgg, interactionAgg, importAgg, chatAgg, usageAgg, activated };
 }
 
 /**
@@ -255,11 +268,18 @@ function aggregatesWithin(maxAgeMs: number): ReturnType<typeof queryAggregates> 
 }
 
 export async function loadAdminUserRows(
-  options: { aggregatesMaxAgeMs?: number } = {}
+  options: { aggregatesMaxAgeMs?: number; includeExcluded?: boolean } = {}
 ): Promise<AdminUserRow[]> {
+  return (await loadAdminSnapshot(options)).rows;
+}
+
+/** The rows plus the set of activated accounts, from one pass over the aggregates. */
+export async function loadAdminSnapshot(
+  options: { aggregatesMaxAgeMs?: number; includeExcluded?: boolean } = {}
+): Promise<{ rows: AdminUserRow[]; activated: ReadonlySet<string> }> {
   const db = await getDb();
 
-  const [settingsRows, { contactAgg, interactionAgg, importAgg, chatAgg, usageAgg }] =
+  const [settingsRows, { contactAgg, interactionAgg, importAgg, chatAgg, usageAgg, activated }] =
     await Promise.all([
       db
         .select({
@@ -281,6 +301,7 @@ export async function loadAdminUserRows(
           hasAnthropic: sql<boolean>`${userSettings.anthropicApiKeyEncrypted} is not null`,
           hasOpenrouter: sql<boolean>`${userSettings.openrouterApiKeyEncrypted} is not null`,
           suspendedAt: userSettings.suspendedAt,
+          accountKind: userSettings.accountKind,
           compedPlan: userSettings.compedPlan,
           compedNote: userSettings.compedNote,
           compedAt: userSettings.compedAt,
@@ -304,7 +325,14 @@ export async function loadAdminUserRows(
   const chatBy = byUser(chatAgg);
   const usageBy = byUser(usageAgg);
 
-  return settingsRows.map((row): AdminUserRow => {
+  // Customers only, unless a caller says otherwise. Internal and tester accounts (the
+  // operator, the showcase account, anyone marked in `user_settings.account_kind`) used to be
+  // in every funnel, plan count, alert and total on the overview.
+  const visible = options.includeExcluded
+    ? settingsRows
+    : settingsRows.filter((r) => !isExcludedAccount({ userId: r.userId, accountKind: r.accountKind }));
+
+  const rows = visible.map((row): AdminUserRow => {
     const c = contactsBy.get(row.userId);
     const i = interactionsBy.get(row.userId);
     const im = importsBy.get(row.userId);
@@ -357,6 +385,7 @@ export async function loadAdminUserRows(
       aiModel: row.aiModel,
       hasProviderKey,
       suspendedAt: row.suspendedAt,
+      accountKind: row.accountKind,
       counts: {
         contacts: c?.n ?? 0,
         interactions: i?.n ?? 0,
@@ -371,6 +400,7 @@ export async function loadAdminUserRows(
       firstContactAt: toDate(c?.firstAt),
     };
   });
+  return { rows, activated };
 }
 
 /* ------------------------------------------------------------------------------------
@@ -391,7 +421,7 @@ function isOnboarded(row: AdminUserRow): boolean {
 
 export type FunnelStage = { label: string; count: number };
 
-export function buildFunnel(rows: AdminUserRow[]): FunnelStage[] {
+export function buildFunnel(rows: AdminUserRow[], activated?: ReadonlySet<string>): FunnelStage[] {
   return [
     { label: "Signed up", count: rows.length },
     { label: "Onboarded", count: rows.filter(isOnboarded).length },
@@ -411,6 +441,11 @@ export function buildFunnel(rows: AdminUserRow[]): FunnelStage[] {
       label: "10+ contacts",
       count: rows.filter((r) => r.counts.contacts >= 10).length,
     },
+    // Appears only when the caller supplies the set: it is a database question
+    // (`activatedSql`), not something the row aggregates can answer.
+    ...(activated
+      ? [{ label: "Activated", count: rows.filter((r) => activated.has(r.userId)).length }]
+      : []),
   ];
 }
 
@@ -419,12 +454,15 @@ export type PlanBreakdown = {
   comped: number;
   lifetime: number;
   subscribed: number;
-  paidTotal: number;
+  /** Accounts that paid: subscribers and Lifetime buyers. Comped accounts are NOT in this. */
+  paid: number;
+  /** Everyone on a paid plan, whoever is paying for it. Never a "paying customers" figure. */
+  paidOrComped: number;
 };
 
 /**
- * Comped, lifetime and subscribed are kept apart on purpose. Comps are currently the only
- * thing that writes a paid plan — a merged "paying customers" number would flatter itself.
+ * Comped, lifetime and subscribed are kept apart on purpose. A merged "paying customers"
+ * number would flatter itself, so `paid` excludes comps; `paidOrComped` is the plan count.
  */
 export function buildPlanBreakdown(rows: AdminUserRow[]): PlanBreakdown {
   const comped = rows.filter((r) => r.planSource === "comp").length;
@@ -435,7 +473,8 @@ export function buildPlanBreakdown(rows: AdminUserRow[]): PlanBreakdown {
     comped,
     lifetime,
     subscribed,
-    paidTotal: comped + lifetime + subscribed,
+    paid: lifetime + subscribed,
+    paidOrComped: comped + lifetime + subscribed,
   };
 }
 
@@ -600,11 +639,28 @@ export type AdminOverview = {
   missingKeyCount: number;
 };
 
+/**
+ * Accounts that are activated by the shared definition (`activatedSql` in `activity.ts`):
+ * captured and acted within seven days of signing up. Includes accounts too young to have had
+ * the whole window, who simply read as not yet — the Conversion page and the Growth cohort
+ * table are the ones that withhold the rate until an account has matured.
+ */
+export async function activatedUserIds(): Promise<Set<string>> {
+  const db = await getDb();
+  const result = await db.execute(sql`
+    SELECT s.user_id FROM user_settings s
+    WHERE ${activatedSql(sql`s.user_id`, sql`s.created_at`)}
+  `);
+  return new Set(rowsOf<{ user_id: string }>(result).map((r) => r.user_id));
+}
+
 export async function getAdminOverview(
   now = new Date(),
   options: { aggregatesMaxAgeMs?: number } = {}
 ): Promise<AdminOverview> {
-  const rows = await loadAdminUserRows({ aggregatesMaxAgeMs: options.aggregatesMaxAgeMs ?? ADMIN_AGGREGATES_TTL_MS });
+  const { rows, activated } = await loadAdminSnapshot({
+    aggregatesMaxAgeMs: options.aggregatesMaxAgeMs ?? ADMIN_AGGREGATES_TTL_MS,
+  });
   const ts = now.getTime();
 
   const activeSince = (days: number) =>
@@ -615,12 +671,11 @@ export async function getAdminOverview(
   const sum = (pick: (r: AdminUserRow) => number) =>
     rows.reduce((acc, r) => acc + pick(r), 0);
   const managedAi = Object.values(managedKeysConfigured()).some(Boolean);
-
   return {
     rows,
     totalUsers: rows.length,
     plans: buildPlanBreakdown(rows),
-    funnel: buildFunnel(rows),
+    funnel: buildFunnel(rows, activated),
     alerts: buildAlerts(rows, now, managedAi),
     signups: windowCount(
       rows.map((r) => r.signupAt),

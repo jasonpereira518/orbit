@@ -793,7 +793,7 @@ export function ContactTimeline({
                         className="scroll-mt-2"
                       >
                         {group.gapLabel ? (
-                          <p className="-mt-3 mb-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+                          <p className="-mt-3 mb-1 flex items-center gap-2 text-2xs text-muted-foreground">
                             <span
                               aria-hidden
                               className="ml-[20px] flex h-4 w-[7px] flex-col items-center justify-between"
@@ -906,7 +906,7 @@ export function ContactTimeline({
                                       {preview(i)}
                                     </span>
                                     {openCount > 0 || hasNotes || i.noteBatchId ? (
-                                      <span className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                                      <span className="mt-1.5 flex flex-wrap items-center gap-2 text-2xs text-muted-foreground">
                                         {openCount > 0 ? (
                                           <span className="inline-flex items-center gap-1 rounded-full border border-border/60 px-2 py-0.5">
                                             <span className="size-1.5 rounded-full bg-primary" />

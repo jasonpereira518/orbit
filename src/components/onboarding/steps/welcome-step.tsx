@@ -155,7 +155,7 @@ function PathCard({
     >
       <div className="space-y-1">
         {eyebrow && (
-          <span className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-primary">
+          <span className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wide text-primary">
             {eyebrow}
           </span>
         )}

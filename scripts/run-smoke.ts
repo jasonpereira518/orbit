@@ -12,6 +12,12 @@
  *   pure    — no database, no network. Safe anywhere.
  *   pglite  — uses `getDb()` against a throwaway PGlite directory (via the preamble).
  *   manual  — wall-clock budgets or long runs; not part of `--ci`.
+ *   bug     — `smoke-bug-*.ts`: a defect documented but not yet fixed. Each one asserts the
+ *             CORRECT behaviour, so it fails while the bug is there (see
+ *             scripts/smoke/check.ts → knownBug). Not part of `--ci`; `--bugs` runs only
+ *             these and inverts the verdict: exit 3 (still broken, as documented) passes,
+ *             exit 0 means the bug is FIXED and fails the run until the script is promoted
+ *             to an ordinary tier, and any other exit is a real failure.
  *
  * Scripts run SEQUENTIALLY: PGlite is single-writer, and the pglite tier shares one
  * throwaway directory per run so the DDL bootstraps once, not fifty times.
@@ -21,22 +27,29 @@
  * single-writer rule still holds, and the shards together cover every script exactly once.
  * `--list` prints the selection and exits, for checking a partition without running it.
  *
- * Run: npx tsx scripts/run-smoke.ts [--ci] [--check] [--shard i/n] [--list] [--only <name>...]
+ * Run: npx tsx scripts/run-smoke.ts [--ci | --bugs] [--check] [--shard i/n] [--list] [--only <name>...]
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { EXIT_KNOWN_BUG } from "./smoke/check";
 
-type Tier = "pure" | "pglite" | "manual";
+type Tier = "pure" | "pglite" | "manual" | "bug";
 
 /** Every smoke script, by tier. `--check` fails when a script on disk is missing here. */
 const MANIFEST: Record<string, Tier> = {
   // pure ------------------------------------------------------------------------------
+  "smoke-test-harness": "pure", // the fixtures, fetch mock and known-bug exit codes themselves
   "smoke-friendly-error": "pure",
   "smoke-ai-notice-copy": "pure",
   "smoke-interaction-edit": "pure",
   "smoke-inbox-search": "pure",
+  "smoke-contact-name-guess": "pure",
+  "smoke-granola": "pure",
+  "smoke-granola-activity": "pglite",
+  "smoke-contact-name-sweep": "pglite",
   "smoke-onboarding-steps": "pure",
   "smoke-onboarding-examples-cast": "pure",
   "smoke-onboarding-gate": "pure",
@@ -46,12 +59,15 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-sessions": "pure",
   "smoke-chat-read-files": "pure",
   "smoke-connectivity": "pure",
+  "smoke-constellation-industry": "pure",
   "smoke-waitlist-pass-news": "pure",
   "smoke-waitlist-demo-fidelity": "pure",
   "smoke-offline-queue": "pure",
   "smoke-chat-thread-prefetch": "pure",
   "smoke-chat-answer-landed": "pure",
   "smoke-render-stamp-pages": "pure",
+  "smoke-no-double-render": "pure",
+  "smoke-font-preload": "pure",
   "smoke-oauth-refresh-rejection": "pure",
   "smoke-oauth-return": "pure",
   "smoke-openrouter-oauth": "pure",
@@ -59,6 +75,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-toast-actions": "pure",
   "smoke-timeline-cost": "pure",
   "smoke-tap-targets": "pure",
+  "smoke-a11y-patterns": "pure",
   "smoke-action-user-scope": "pure",
   "smoke-consume-bucket-args": "pure",
   "smoke-toast-copy": "pure",
@@ -78,7 +95,6 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-avatar-tiers": "pure",
   "smoke-brand-colors": "pure",
   "smoke-backdrop-filter": "pure",
-  "smoke-backup-workflow": "pure",
   "smoke-connection-status": "pure",
   "smoke-connect-gates": "pure",
   "smoke-integration-status": "pure",
@@ -111,11 +127,13 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-route-progress": "pure",
   "smoke-settings-export": "pure",
   "smoke-chat-evidence": "pure",
-  "smoke-chat-proposed-actions": "pure",
+  "smoke-chat-abstention": "pure",
   "smoke-chat-pipeline": "pure",
   "smoke-chat-prompt": "pure",
   "smoke-chat-retrieval": "pure",
   "smoke-chat-route": "pure",
+  "smoke-chat-directives": "pure",
+  "smoke-chat-limits": "pure",
   "smoke-decisions-gates": "pure",
   "smoke-chat-search-notice": "pure",
   "smoke-chat-steps": "pure",
@@ -124,6 +142,41 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-commands": "pure",
   "smoke-chat-refine": "pure",
   "smoke-cross-tenant-refs": "pglite",
+  "smoke-contact-tags-ownership": "pglite",
+  "smoke-tenant-isolation": "pglite", // every id-taking tool and the v1 API, called with another account's ids
+  "smoke-extension-auth": "pglite",
+  "smoke-resend-signature": "pglite",
+  "smoke-cron-gates": "pglite", // every public route has a gate; every cron route answers 401 unauthenticated
+  "smoke-token-routes": "pglite",
+  // Third-party contracts: real response shapes, errors and malformed bodies, fetch mocked.
+  "smoke-contract-gmail": "pure",
+  "smoke-contract-microsoft-sync": "pure",
+  "smoke-contract-events-cloud": "pure",
+  "smoke-contract-oauth-tokens": "pglite",
+  "smoke-contract-llm": "pglite",
+  // Fixed connector bugs, promoted from the bug tier.
+  "smoke-gmail-401-reauth": "pglite",
+  "smoke-graph-nextlink-guard": "pure",
+  "smoke-graph-sync-resilience": "pure",
+  "smoke-cloud-notes-dead-cursor": "pglite",
+  // Fixed billing, export and AI bugs, promoted from the bug tier.
+  "smoke-stripe-revocation-regrant": "pglite",
+  "smoke-stripe-deleted-account-resurrect": "pglite",
+  "smoke-credit-period-overflow": "pglite",
+  "smoke-admin-export-formula": "pglite",
+  "smoke-relationship-trivial-excerpt": "pglite",
+  "smoke-llm-truncated-json": "pglite",
+  // Fixed contact bugs, promoted from the bug tier.
+  "smoke-merge-children": "pglite",
+  "smoke-merge-email-sends": "pglite",
+  "smoke-contact-delete-ghost-suggestion": "pglite",
+  "smoke-linkedin-slug": "pglite",
+  // Contacts, exports, billing and AI validation.
+  "smoke-merge-coverage": "pglite", // every FK and id column pointing at contacts is handled by merge, or named as a gap
+  "smoke-data-export-isolation": "pglite",
+  "smoke-relationship-malformed": "pglite",
+  "smoke-billing-helpers": "pure",
+  "smoke-credit-ledger-pure": "pure",
   "smoke-draft-follow-up-result": "pglite",
   "smoke-relationship-schema": "pglite",
   "smoke-ai-guardrails": "pglite",
@@ -173,6 +226,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-embedding-cache": "pure",
   "smoke-embedding-batches": "pure",
   "smoke-drizzle-guard": "pure",
+  "smoke-no-db-transaction": "pure",
   "smoke-env": "pure",
   "smoke-env-documented": "pure",
   "smoke-embedding-rate-limit-backoff": "pure",
@@ -211,17 +265,24 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-focus-fit": "pure",
   "smoke-import-rank": "pure",
   "smoke-import-errors": "pure",
+  "smoke-import-size-guard": "pure",
   "smoke-import-history-render": "pure",
   "smoke-import-sources": "pure",
   "smoke-import-queue": "pure",
   "smoke-import-progress-card": "pure",
   "smoke-drive-reminder-rules": "pure",
   "smoke-drive-triage": "pure",
+  "smoke-cloud-notes-detect": "pure",
   "smoke-drive-client": "pure",
   "smoke-import-provenance": "pure",
   "smoke-import-finish": "pure",
   "smoke-finish-scene-geometry": "pure",
   "smoke-linkedin-slug-guard": "pglite",
+  "smoke-shared-avatars": "pglite",
+  "smoke-shared-avatar-reads": "pglite",
+  "smoke-shared-avatar-writes": "pglite",
+  "smoke-shared-avatar-upkeep": "pglite",
+  "smoke-shared-avatar-takedown": "pglite",
   "smoke-legal-pages": "pure",
   "smoke-landing-anchors": "pure",
   "smoke-landing-cards": "pure",
@@ -234,8 +295,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-note-parse-schema": "pure",
   "smoke-note-window": "pure",
   "smoke-memory-chunks": "pure",
-  "smoke-chat-depth": "pure",
   "smoke-tool-loop": "pure",
+  "smoke-tool-stream-driver": "pure",
   "smoke-ops-alerts": "pure",
   "smoke-outreach-sender": "pure",
   "smoke-parsers": "pure",
@@ -272,6 +333,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-meeting-nudge": "pure",
   "smoke-meeting-upload-queue": "pure",
   "smoke-meeting-live-coverage": "pure",
+  "smoke-pcm-worklet": "pure",
   "smoke-outreach-email": "pure",
   "smoke-vocabulary-terms": "pure",
   "smoke-warp-journeys": "pure",
@@ -279,6 +341,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-account-alerts": "pglite",
   "smoke-import-history": "pglite",
   "smoke-account-deletion": "pglite",
+  "smoke-money-correctness": "pglite",
   "smoke-ai-access": "pglite",
   "smoke-jev-client": "pglite",
   "smoke-jev-recruiter-scan": "pglite",
@@ -294,6 +357,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-api-connector-routes-live": "pglite",
   "smoke-apollo-hosted-budget": "pglite",
   "smoke-apple-actions": "pglite",
+  "smoke-server-graph": "pure",
+  "smoke-site-css-sources": "pure",
   "smoke-action-items": "pglite",
   "smoke-admin": "pglite",
   "smoke-app-pulse": "pglite",
@@ -310,8 +375,13 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-avatar-source-budget": "pglite",
   "smoke-broadcasts": "pglite",
   "smoke-chat-context": "pglite",
+  "smoke-chat-lanes": "pglite",
   "smoke-chat-citations": "pglite",
   "smoke-chat-actions": "pglite",
+  "smoke-chat-legacy-proposals": "pglite",
+  "smoke-chat-writes": "pglite",
+  "smoke-chat-auto-apply": "pglite",
+  "smoke-chat-writes-features": "pglite",
   "smoke-chat-persist": "pglite",
   "smoke-chat-photos": "pglite",
   "smoke-clear-api-key": "pglite",
@@ -350,6 +420,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-demo-signin-message": "pure",
   "smoke-demo-data": "pglite",
   "smoke-linkedin-reminder": "pglite",
+  "smoke-linkedin-settings": "pglite",
   "smoke-credits-intro": "pglite",
   "smoke-onboarding-examples": "pglite",
   "smoke-demo-workspace": "pglite",
@@ -357,6 +428,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-event-companies": "pglite",
   "smoke-event-discovery-store": "pglite",
   "smoke-contacts-last-touch": "pglite",
+  "smoke-contacts-school-filter": "pglite",
   "smoke-email-activity": "pglite",
   "smoke-event-roster": "pglite",
   "smoke-fact-lists": "pglite",
@@ -365,11 +437,16 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-knowledge": "pglite",
   "smoke-constellation-admin": "pglite",
   "smoke-site-access": "pglite",
+  "smoke-invite-ledger": "pglite",
+  "smoke-attribution-chain": "pglite",
+  "smoke-account-kind": "pglite",
   "smoke-constellation-payload-leak": "pglite",
   "smoke-constellation-pin": "pglite",
   "smoke-constellation-signals": "pglite",
   "smoke-contact-profile": "pglite",
   "smoke-work-history-research": "pglite",
+  "smoke-web-research": "pglite",
+  "smoke-capture-review-quality": "pglite",
   "smoke-work-history-sweep": "pglite",
   "smoke-contact-search-rank": "pglite",
   "smoke-contacts-search-paging": "pglite",
@@ -395,9 +472,12 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-import-engine": "pglite",
   "smoke-import-revert": "pglite",
   "smoke-import-row-staging": "pglite",
+  "smoke-linkedin-connections-chunked": "pglite",
+  "smoke-touch-counts": "pglite",
   "smoke-capture-upload-parts": "pglite",
   "smoke-import-people": "pglite",
   "smoke-drive-import": "pglite",
+  "smoke-cloud-notes-scan": "pglite",
   "smoke-import-stall": "pglite",
   "smoke-import-undo": "pglite",
   "smoke-ingest-events": "pglite",
@@ -412,6 +492,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-instrumentation-streams": "pglite",
   "smoke-interest-list-admin": "pglite",
   "smoke-interest-list-join": "pglite",
+  "smoke-waitlist-analytics": "pglite",
   "smoke-interest-list-page": "pglite",
   "smoke-interest-ticket-image": "pglite",
   "smoke-waitlist-copy": "pglite",
@@ -425,6 +506,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-calendar-subscription-sync": "pglite",
   "smoke-calendar-source-rows": "pglite",
   "smoke-housekeeping-sweeps": "pglite",
+  "smoke-usage-prune": "pglite",
+  "smoke-export-limit": "pglite",
   "smoke-linkedin-direction": "pglite",
   "smoke-relationship-pending": "pglite",
   "smoke-relationship-gather": "pure",
@@ -439,14 +522,30 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-behavior-golden": "pglite",
   "smoke-due-follow-ups-parity": "pglite",
   "smoke-avatar-backfill-route": "pglite",
+  "smoke-avatar-route-cache": "pglite",
+  "smoke-poll-routes": "pglite",
+  "smoke-latency-depth": "pglite",
+  "smoke-avatar-sql-classify": "pglite",
+  "smoke-related-sql-lower": "pglite",
   "smoke-chat-lookup-tools": "pglite",
+  "smoke-calendar-events": "pglite",
+  "smoke-chat-calendar": "pglite",
+  "smoke-chat-prefetch": "pglite",
+  "smoke-calendar-reminders": "pglite",
+  "smoke-meeting-calendar-context": "pglite",
+  "smoke-meeting-prep": "pglite",
+  "smoke-extension-event-roster": "pglite",
+  "smoke-extension-telemetry": "pglite",
   "smoke-tool-registry": "pglite",
   "smoke-memory-search": "pglite",
   "smoke-memory-embedding": "pglite",
-  "smoke-chat-gather": "pglite",
+  "smoke-chat-agent-loop": "pglite",
+  "smoke-chat-feature-tools": "pglite",
+  "smoke-chat-answer-deadline": "pglite",
   "smoke-eval-research-task": "pglite",
   "smoke-agent-sends": "pglite",
   "smoke-dashboard-aggregates": "pglite",
+  "smoke-dashboard-parity": "pglite",
   "smoke-migration-guards": "pglite", // the pure half is here too: both guards belong in one place
   "smoke-outreach-guards": "pglite",
   "smoke-implied-steps": "pure",
@@ -468,6 +567,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-capture-history": "pglite",
   "smoke-capture-duplicate-upload": "pglite",
   "smoke-linkedin-you-db": "pglite",
+  "smoke-import-files": "pglite",
   "smoke-org-brand-colors": "pglite",
   "smoke-meeting-sessions": "pglite",
   "smoke-meetings-list": "pglite",
@@ -476,6 +576,17 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-no-silent-data-loss": "pglite",
   "smoke-ops-sweep": "pglite",
   "smoke-admin-analytics": "pglite",
+  "smoke-product-events": "pglite",
+  "smoke-activity-definitions": "pglite",
+  "smoke-product-alerts": "pglite",
+  "smoke-surveys": "pglite",
+  "smoke-weekly-digest": "pglite",
+  "smoke-admin-product-pages": "pglite",
+  "smoke-holdout": "pure",
+  "smoke-analytics-retention": "pglite",
+  "smoke-billing-reconcile": "pure",
+  "smoke-activation-events": "pglite",
+  "smoke-gate-coverage": "pglite",
   "smoke-admin-feature-adoption": "pglite",
   "smoke-page-load-timing": "pglite",
   "smoke-contact-closeness": "pglite",
@@ -513,6 +624,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-schema-bootstrap": "pglite",
   "smoke-schema-fingerprint": "pglite",
   "smoke-related-contacts-scale": "pglite",
+  "smoke-related-contacts-parity": "pglite",
   "smoke-sender-profile": "pglite",
   "smoke-contact-profile-reads": "pglite",
   "smoke-batched-writes": "pglite",
@@ -521,6 +633,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-schema-upgrade": "pglite",
   "smoke-connector-connections": "pglite",
   "smoke-speech-quota": "pglite",
+  "smoke-speech-credit": "pglite",
   "smoke-stripe-unattributed": "pglite",
   "smoke-stripe-webhook": "pglite",
   "smoke-pricing-v2-billing": "pglite",
@@ -552,6 +665,7 @@ const MANIFEST: Record<string, Tier> = {
   // manual ----------------------------------------------------------------------------
   "smoke-import-perf": "manual", // wall-clock budgets; run by hand or nightly
   "smoke-stripe-testclock": "manual", // Stripe sandbox + test clocks; several minutes
+  // bug: documented defects, expected to fail (see the header) ---------------------------
 };
 
 const TIMEOUT_MS: Partial<Record<string, number>> = {
@@ -596,6 +710,12 @@ function check(): string[] {
     if (tier === "pure" && DB_IMPORT.test(src)) {
       problems.push(`${name}: pure tier imports ../src/db — move it to the pglite tier`);
     }
+    if (tier === "bug" && DB_IMPORT.test(src) && !hasPreamble) {
+      problems.push(`${name}: bug tier touches the database, so it must start with import "./smoke/_env"`);
+    }
+    if ((tier === "bug") !== name.startsWith("smoke-bug-")) {
+      problems.push(`${name}: the bug tier is exactly the smoke-bug-*.ts scripts`);
+    }
   }
   return problems;
 }
@@ -603,6 +723,7 @@ function check(): string[] {
 function main() {
   const args = process.argv.slice(2);
   const ci = args.includes("--ci");
+  const bugs = args.includes("--bugs");
   const checkOnly = args.includes("--check");
   const onlyIdx = args.indexOf("--only");
   const only = onlyIdx >= 0 ? args.slice(onlyIdx + 1).filter((a) => !a.startsWith("--")) : null;
@@ -630,7 +751,9 @@ function main() {
   if (checkOnly) process.exit(0);
 
   const selected = Object.entries(MANIFEST)
-    .filter(([name, tier]) => (only ? only.includes(name) : ci ? tier !== "manual" : true))
+    .filter(([name, tier]) =>
+      only ? only.includes(name) : bugs ? tier === "bug" : ci ? tier !== "manual" && tier !== "bug" : tier !== "bug"
+    )
     .map(([name]) => name)
     // Round-robin over manifest order, so the few long scripts (see TIMEOUT_MS) land in
     // different shards rather than one shard inheriting a whole block of them.
@@ -645,6 +768,12 @@ function main() {
   const pgliteDir = mkdtempSync(join(tmpdir(), "orbit-smoke-run-"));
   const env: NodeJS.ProcessEnv = { ...process.env, ORBIT_PGLITE_DIR: pgliteDir, FORCE_COLOR: "0" };
   delete env.DATABASE_URL; // belt and braces; the preamble does this too
+  // Hermetic runs (see scripts/smoke/hermetic.mjs): DNS is answered locally, because the SSRF
+  // guard resolves hosts even under a stubbed fetch, and the real fetch refuses anything but
+  // loopback, so a missed stub fails at once instead of reaching a live service. NODE_OPTIONS
+  // rather than an argv flag because tsx runs the script in a child process of its own.
+  const hermetic = pathToFileURL(join(process.cwd(), "scripts", "smoke", "hermetic.mjs")).href;
+  env.NODE_OPTIONS = [env.NODE_OPTIONS, `--import ${hermetic}`].filter(Boolean).join(" ");
 
   // The CLI entry point rather than the `.bin` shim.
   //
@@ -683,7 +812,10 @@ function main() {
     if (r.stderr) process.stderr.write(r.stderr);
     const ms = Date.now() - started;
     const timedOut = r.error && (r.error as NodeJS.ErrnoException).code === "ETIMEDOUT";
-    const ok = !timedOut && r.status === 0;
+    // A bug-tier script under --bugs passes by still reproducing its documented bug
+    // (exit 3), and FAILS by passing: the fix has landed and the script needs promoting.
+    const expectBug = bugs && MANIFEST[name] === "bug";
+    const ok = !timedOut && (expectBug ? r.status === EXIT_KNOWN_BUG : r.status === 0);
 
     // A script that degraded rather than fully verified something signals it with a
     // "PENDING: <reason>" line on STDERR — stderr, not stdout, precisely so that stdout can
@@ -701,7 +833,13 @@ function main() {
       pending,
       note: timedOut
         ? `timed out after ${timeout / 1000}s`
-        : r.status !== 0
+        : expectBug
+          ? r.status === EXIT_KNOWN_BUG
+            ? "known bug still reproduces (expected)"
+            : r.status === 0
+              ? "FIXED — every known-bug check now passes; move it out of the bug tier"
+              : `exit ${r.status ?? r.signal} — an ordinary check failed, not just the known bug`
+          : r.status !== 0
           ? `exit ${r.status ?? r.signal}`
           : pending
             ? `PENDING: ${pendingReasons.join("; ")}`

@@ -7,15 +7,17 @@ import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import type { YouCurrent, YouPatch } from "@/lib/career-profile";
 import type { UserFocus } from "@/lib/focus-fit";
+import { setSchools } from "@/lib/events/target-companies";
 
 export async function loadYouCurrent(userId: string): Promise<YouCurrent> {
   const db = await getDb();
   const [row] = await db
-    .select({ career: userSettings.careerProfile, senderBio: userSettings.senderBio })
+    .select({ career: userSettings.careerProfile, senderBio: userSettings.senderBio, schools: userSettings.schools })
     .from(userSettings)
     .where(eq(userSettings.userId, userId))
     .limit(1);
-  return { career: row?.career ?? null, senderBio: row?.senderBio ?? null };
+  const schools = Array.isArray(row?.schools) ? row.schools.filter((s): s is string => typeof s === "string") : [];
+  return { career: row?.career ?? null, senderBio: row?.senderBio ?? null, schools };
 }
 
 /**
@@ -46,6 +48,8 @@ export async function saveCareerPatch(userId: string, patch: YouPatch): Promise<
       sender_bio = COALESCE(excluded.sender_bio, user_settings.sender_bio),
       updated_at = now()
   `);
+  // Education.csv writes the user's own schools list, the same one Settings edits.
+  if (patch.schools) await setSchools(userId, patch.schools);
 }
 
 /** Forget what was imported. Leaves `sender_bio` and everything else the person typed alone. */

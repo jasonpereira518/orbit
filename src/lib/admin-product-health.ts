@@ -14,7 +14,8 @@ import {
   userSettings,
 } from "@/db/schema";
 import { countInt, num } from "@/lib/admin-metrics";
-import { AI_OPERATION_IDS, type AiOperationId } from "@/lib/ai-operations";
+import { AI_OPERATION_IDS, BACKGROUND_AI_OPERATIONS, type AiOperationId } from "@/lib/ai-operations";
+import { internalAccountSql } from "@/lib/analytics-internal";
 
 /**
  * Product reads that `/admin/growth` cannot answer from `admin-trends.ts`.
@@ -44,9 +45,12 @@ export type FeatureAdoptionRow = {
 
 export type AiOperationRow = {
   operation: string;
+  /** Distinct accounts. For a background operation these are the accounts a job RAN for. */
   users: number;
   calls: number;
   failures: number;
+  /** A cron or sync ran this for the account; nobody asked. Never read it as adoption. */
+  background: boolean;
 };
 
 /**
@@ -69,7 +73,7 @@ export async function getAiOperationAdoption(days = 30, now = new Date()) {
       failures: sql<string>`count(*) filter (where ${usageEvents.success} = 0)`,
     })
     .from(usageEvents)
-    .where(gt(usageEvents.createdAt, since))
+    .where(and(gt(usageEvents.createdAt, since), sql`NOT ${internalAccountSql(sql`${usageEvents.userId}`)}`))
     .groupBy(usageEvents.operation);
 
   const adoption: AiOperationRow[] = rows
@@ -78,8 +82,10 @@ export async function getAiOperationAdoption(days = 30, now = new Date()) {
       users: num(r.users),
       calls: r.calls,
       failures: num(r.failures),
+      background: BACKGROUND_AI_OPERATIONS.has(r.operation),
     }))
-    .sort((a, b) => b.users - a.users || b.calls - a.calls);
+    // People first: an operation a person invoked outranks one a nightly job ran for them.
+    .sort((a, b) => Number(a.background) - Number(b.background) || b.users - a.users || b.calls - a.calls);
 
   const seen = new Set(adoption.map((a) => a.operation));
   return {

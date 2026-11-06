@@ -22,7 +22,7 @@ import {
 import { scheduleDispatch } from "@/lib/email/schedule";
 import { friendlyError } from "@/lib/errors";
 import { generateContactFollowUpDraft } from "@/lib/follow-up-drafts";
-import { requireUserForSurface } from "@/lib/plan-guards";
+import { requireUserForReleasedSurface, requireUserForSurface } from "@/lib/plan-guards";
 import { COMPOSE_SURFACE_KEY } from "@/lib/surfaces";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
@@ -69,7 +69,7 @@ export async function sendComposedEmail(input: Omit<ComposeInput, "fromName">): 
 export async function draftComposeWithAi(
   contactId: string
 ): Promise<{ ok: true; body: string } | { ok: false; message: string }> {
-  const userId = await requireUserForSurface(COMPOSE_SURFACE_KEY);
+  const userId = await requireUserForReleasedSurface(COMPOSE_SURFACE_KEY);
   try {
     const [goals, writingInstructions] = await Promise.all([
       listActiveGoalTextsForUser(userId),

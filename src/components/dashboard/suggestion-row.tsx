@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { X } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-import { companyBrandColor } from "@/lib/company-brand";
+import { companyBrandText } from "@/lib/company-brand";
 import { runToastAction, toast } from "@/lib/toast";
 import {
   acceptScoreBump,
@@ -80,7 +80,7 @@ export function SuggestionRow({
     ? formatDistanceToNow(new Date(lastInteractionAt), { addSuffix: true })
     : null;
   const nextStep = NEXT_STEP[suggestionType];
-  const companyColor = companyBrandColor(contactCompany);
+  const companyBrand = companyBrandText(contactCompany);
 
   return (
     <div className="rounded-xl border border-border/60 bg-card p-3">
@@ -100,7 +100,7 @@ export function SuggestionRow({
             {tier && <ClosenessTierBadge tier={tier} />}
             <span
               className={cn(
-                "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+                "rounded-full px-2 py-0.5 text-3xs font-medium uppercase tracking-wide",
                 REASON_STYLES[suggestionType] ?? "bg-muted text-muted-foreground"
               )}
             >
@@ -111,8 +111,8 @@ export function SuggestionRow({
             <p className="mt-0.5 text-sm">
               {contactCompany && (
                 <span
-                  className="font-semibold"
-                  style={companyColor ? { color: companyColor } : undefined}
+                  className={cn("font-semibold", companyBrand?.className)}
+                  style={companyBrand?.style}
                 >
                   {contactCompany}
                 </span>

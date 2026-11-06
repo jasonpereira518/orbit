@@ -237,7 +237,7 @@ export function ComposerToolsMenu({
         {/* What the green token will mean once it is in the box. Worth a line: the menu
             otherwise looks like it only types a name for you. */}
         {tab === "people" && (
-          <p className="border-b border-border/60 px-3 py-1.5 text-[11px] text-muted-foreground">
+          <p className="border-b border-border/60 px-3 py-1.5 text-2xs text-muted-foreground">
             Adds their role and interaction history to your question.
           </p>
         )}

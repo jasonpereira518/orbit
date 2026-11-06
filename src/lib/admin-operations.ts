@@ -15,6 +15,7 @@ import {
   RESUMABLE_IMPORT_TYPES,
   runImportJobById,
 } from "@/lib/import-job-dispatch";
+import { CRON_STALL_THRESHOLD_MS } from "@/lib/import-stall";
 import { purgeUserData } from "@/lib/user-data";
 
 /**
@@ -42,6 +43,7 @@ import { purgeUserData } from "@/lib/user-data";
 
 export { recordAdminAction } from "@/lib/admin-audit";
 import { recordAdminAction } from "@/lib/admin-audit";
+import { dropCloudNoteSource } from "@/lib/cloud-notes/sources";
 
 export function requireReason(reason: string, minimum = 4): string {
   const trimmed = reason.trim();
@@ -164,8 +166,11 @@ export async function recordContactView(
 
 /* ---------------------------------------------------------------------- sign-in link */
 
-/** How long a minted link stays valid before its first (only) use. */
-const SIGN_IN_LINK_EXPIRES_SECONDS = 30 * 24 * 60 * 60;
+/**
+ * How long a minted link stays valid before its first (only) use. A leaked link is a sign-in
+ * as that account, admins included, so a week (room to hand a demo over) rather than a month.
+ */
+const SIGN_IN_LINK_EXPIRES_SECONDS = 7 * 24 * 60 * 60;
 
 /**
  * Mint a one-click sign-in URL for any account, for the operator to hand to whoever needs
@@ -251,6 +256,11 @@ export async function retryImport(adminUserId: string, input: {
     );
   }
   if (job.status === "completed") throw new Error("That import already completed.");
+  // A runner lives up to the continue route's maxDuration; starting a second one now would
+  // have both claim the same rows.
+  if (job.status === "processing" && Date.now() - job.updatedAt.getTime() < CRON_STALL_THRESHOLD_MS) {
+    throw new Error("That import is still running — wait a few minutes and retry if it stays stuck.");
+  }
 
   await recordAdminAction({
     adminUserId,
@@ -399,6 +409,7 @@ export async function disconnectIntegration(adminUserId: string, input: {
   const table =
     input.provider === "gmail" ? gmailConnections : outlookConnections;
   await db.delete(table).where(eq(table.userId, input.targetUserId));
+  await dropCloudNoteSource(input.targetUserId, input.provider === "gmail" ? "google" : "microsoft");
 
 }
 

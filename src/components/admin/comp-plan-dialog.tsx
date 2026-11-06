@@ -67,8 +67,7 @@ function choicesFor(currentPlan: Plan, contactCount: number): ChoiceCopy[] {
         <>
           Costs you about <strong>{aiDollars(orbit.monthlyCredits ?? 0)} a month</strong> in AI
           ({orbit.monthlyCredits} credits on Orbit&rsquo;s keys), plus{" "}
-          {hoursLong(orbit.speech.meetingSeconds)} of meeting transcription and{" "}
-          {orbit.hostedEnrichmentsPerMonth} Apollo enrichments on Orbit&rsquo;s accounts.
+          {hoursLong(orbit.speech.meetingSeconds)} of meeting transcription on Orbit&rsquo;s account.
         </>
       ),
       chips: ["Unlimited contacts", `${orbit.monthlyCredits} credits`, "No REST API"],
@@ -82,8 +81,7 @@ function choicesFor(currentPlan: Plan, contactCount: number): ChoiceCopy[] {
         <>
           Costs you about <strong>{aiDollars(max.monthlyCredits ?? 0)} a month</strong> in AI
           ({max.monthlyCredits} credits on Orbit&rsquo;s keys), plus{" "}
-          {hoursLong(max.speech.meetingSeconds)} of transcription and{" "}
-          {max.hostedEnrichmentsPerMonth} enrichments a month on Orbit&rsquo;s accounts.
+          {hoursLong(max.speech.meetingSeconds)} of transcription a month on Orbit&rsquo;s account.
         </>
       ),
       chips: [`${max.monthlyCredits} credits`, `${hours(max.speech.meetingSeconds)} audio`, "REST API"],
@@ -95,13 +93,13 @@ function choicesFor(currentPlan: Plan, contactCount: number): ChoiceCopy[] {
       tagline: "Yours for good.",
       description: (
         <>
-          Costs you <strong>$0 in AI</strong>, since it runs on their own key. But{" "}
-          {hoursLong(lifetime.speech.meetingSeconds)} of transcription and{" "}
-          {lifetime.hostedEnrichmentsPerMonth} enrichments a month stay on Orbit&rsquo;s accounts
-          with no end date. A live subscription is set to end at its period end, with no refund.
+          Costs you about <strong>{aiDollars(lifetime.monthlyCredits ?? 0)} a month</strong> in AI
+          ({lifetime.monthlyCredits} credits on Orbit&rsquo;s keys, no packs), plus{" "}
+          {hoursLong(lifetime.speech.meetingSeconds)} of transcription a month, with no end date.
+          A live subscription is set to end at its period end, with no refund.
         </>
       ),
-      chips: ["Every Max feature", "No expiry", "Own AI key"],
+      chips: ["Every Max feature", "No expiry", `${lifetime.monthlyCredits} credits, no packs`],
     },
     {
       value: "none",
@@ -244,8 +242,9 @@ export function CompPlanButton(props: {
         <button
           type="button"
           onClick={() => setOpen(true)}
-          aria-label={`Change plan for ${props.email ?? props.targetUserId}`}
-          className="rounded-md transition-opacity duration-fast hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          // `relative` keeps the sr-only suffix inside the table's scroll box; positioned
+          // against an ancestor outside it, it widened the whole page on a phone.
+          className="relative rounded-md transition-opacity duration-fast hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         >
           <PlanBadge
             plan={props.currentPlan}
@@ -256,6 +255,9 @@ export function CompPlanButton(props: {
                 : "Click to change this plan"
             }
           />
+          {/* The name starts with what is visible (the plan), then says what it does: an
+              aria-label of "Change plan for …" hid the visible text from speech input. */}
+          <span className="sr-only">, change plan for {props.email ?? props.targetUserId}</span>
         </button>
       ) : props.variant === "menu" ? (
         <DropdownMenu>

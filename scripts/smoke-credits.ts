@@ -30,7 +30,7 @@ function check(label: string, ok: boolean, detail?: unknown) {
 run(async () => {
   const { and, eq } = await import("drizzle-orm");
   const { getDb } = await import("../src/db");
-  const { creditGrants, usageEvents, userSettings } = await import("../src/db/schema");
+  const { creditGrants, creditHolds, usageEvents, userSettings } = await import("../src/db/schema");
   const { ensureUserSettings } = await import("../src/lib/user-settings");
   const { getAccountAlerts, loadAccountHealthInput } = await import("../src/lib/account-health");
   const ledger = await import("../src/lib/credits/ledger");
@@ -41,6 +41,7 @@ run(async () => {
   const reset = async () => {
     await db.delete(creditGrants).where(eq(creditGrants.userId, USER));
     await db.delete(usageEvents).where(eq(usageEvents.userId, USER));
+    await db.delete(creditHolds).where(eq(creditHolds.userId, USER));
   };
   await reset();
 
@@ -176,12 +177,12 @@ run(async () => {
     allowanceGranted: 2_000_000, allowanceRemaining, packRemaining, starterRemaining,
     spendable: allowanceRemaining + packRemaining + starterRemaining, resetsAt: "2026-11-03T09:00:00.000Z",
   });
-  const healthFree = (credits: Parameters<typeof evaluateAccountHealth>[0]["credits"]) =>
+  const alertsFor = (plan: "free" | "orbit" | "max" | "lifetime", credits: Parameters<typeof evaluateAccountHealth>[0]["credits"]) =>
     toAccountAlerts(evaluateAccountHealth({
       hasAiKey: true, aiProvider: "gemini", onboardingCompletedAt: new Date(), gmail: null, outlook: null,
       googleCalendar: null, microsoftCalendar: null, appleCalendar: null, calendarErrorCount: 0, calendarErrorLabel: null,
       calendarErrorDetail: null, importFailedCount: 0, importFailedLabel: null, importFailedDetail: null, importStalledCount: 0,
-      importStalledLabel: null, importStalledRows: null, importStalledTotal: null, plan: "free", planSource: "free",
+      importStalledLabel: null, importStalledRows: null, importStalledTotal: null, plan, planSource: "free",
       subscriptionStatus: null, subscriptionPeriodEnd: null, contactLimit: null, contactCount: null, credits,
     } as Parameters<typeof evaluateAccountHealth>[0]));
   check("under 80% used: quiet", health(c(1_000_000)).every((code) => !code.startsWith("plan.credits")));
@@ -190,7 +191,7 @@ run(async () => {
   check("100% used, no packs: AI paused, as an error", health(c(0)).includes("plan.credits_out"));
   check("…the two heads-ups can be dismissed; the stop cannot",
     isDismissible("plan.credits_near") && isDismissible("plan.credits_on_packs") && !isDismissible("plan.credits_out"));
-  const out = toAccountAlerts(evaluateAccountHealth({ ...({} as object), credits: c(0) } as never)).find((a) => a.code === "plan.credits_out");
+  const out = toAccountAlerts(evaluateAccountHealth({ ...({} as object), plan: "orbit", credits: c(0) } as never)).find((a) => a.code === "plan.credits_out");
   check("…and says nothing is charged automatically", /Nothing is charged automatically/.test(out?.body ?? ""), out?.body);
   check("an allowance spent with starter credits left is NOT 'near'",
     !health({ ...c(0, 0, 250_000), allowanceGranted: 100_000, spendable: 250_000 }).includes("plan.credits_near"));
@@ -215,10 +216,16 @@ run(async () => {
   check("Free with a pack, allowance spent, starter left: not 'out'", !frozenCodes.includes("plan.credits_out"), frozenCodes);
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
   await reset();
-  const outAlert = healthFree({ allowanceGranted: 100_000, allowanceRemaining: 0, packRemaining: 0, starterRemaining: 0, spendable: 0, resetsAt: "2026-11-01T00:00:00.000Z" })
-    .find((a) => a.title === "You’re out of AI credits");
-  check("Free's out-of-credits alert offers a key, never a pack",
-    Boolean(outAlert) && !/pack/i.test((outAlert?.body ?? "")) && /own key/.test((outAlert?.body ?? "")), outAlert);
+  // Out of credits, per plan: the alert offers a pack only where `creditPacks` says one can be bought.
+  const outBody = (plan: "free" | "orbit" | "max" | "lifetime") =>
+    alertsFor(plan, { allowanceGranted: 100_000, allowanceRemaining: 0, packRemaining: 0, starterRemaining: 0, spendable: 0, resetsAt: "2026-11-01T00:00:00.000Z" })
+      .find((a) => a.title === "You’re out of AI credits")?.body ?? "";
+  for (const plan of ["free", "orbit", "max"] as const) {
+    check(`${plan}'s out-of-credits alert offers a $5 pack and a key`, /\$5 pack/.test(outBody(plan)) && /own key/.test(outBody(plan)), outBody(plan));
+  }
+  check("Free's alert names the refill date", /refills on November 1/.test(outBody("free")), outBody("free"));
+  check("Lifetime's out-of-credits alert offers a key, never a pack",
+    outBody("lifetime") !== "" && !/pack/i.test(outBody("lifetime")) && /own key/.test(outBody("lifetime")), outBody("lifetime"));
   check("no credits, no credit notices", health(null).every((code) => !code.startsWith("plan.credits")));
 
   console.log("\nEquivalents from measured cost");
@@ -236,6 +243,34 @@ run(async () => {
   }
   const measured = await measuredActionCosts(Date.now() + 4 * 60 * 60 * 1000);
   check("with enough captures, a capture costs the sum of its calls per capture", measured.capture === 8_000, measured);
+
+  console.log("\nA balance read is one round once the ledger is current");
+  await reset();
+  const { startQueryCount, stopQueryCount } = await import("../src/lib/query-counter");
+  const fresh = await ledger.getCreditBalance(USER, "free", null);
+  check("a Free account seen only through its balance gets the allowance and the starter", fresh.spendable === 75 * 10_000 && fresh.starterRemaining === 25 * 10_000, fresh);
+  startQueryCount();
+  const again = await ledger.getCreditBalance(USER, "free", null);
+  const statements = stopQueryCount();
+  check("…and the next read writes nothing: grants and holds, two statements in parallel", statements === 2 && again.spendable === fresh.spendable, { statements });
+
+  console.log("\nSettling releases the live hold, not an expired one");
+  await reset();
+  await ledger.ensureAllowance(USER, "orbit", cycle1);
+  // A call that outlived its hold's TTL left the oldest row behind; the next call's live hold
+  // is the one its own settle must release, or the account reads as holding less than it does.
+  const [expiredHold] = await db.insert(creditHolds).values({
+    userId: USER, micros: 10_000, operation: "capture.parse", createdAt: new Date(Date.now() - 20 * 60_000), expiresAt: new Date(Date.now() - 10 * 60_000),
+  }).returning();
+  const [liveHold] = await db.insert(creditHolds).values({
+    userId: USER, micros: 10_000, operation: "capture.parse", expiresAt: new Date(Date.now() + 10 * 60_000),
+  }).returning();
+  await ledger.settleCredits({ userId: USER, operation: "capture.parse", micros: 1_000 });
+  const heldIds = (await db.select({ id: creditHolds.id }).from(creditHolds).where(eq(creditHolds.userId, USER))).map((h) => h.id);
+  check("settle removes the live hold and leaves the older expired one", heldIds.length === 1 && heldIds[0] === expiredHold.id && !heldIds.includes(liveHold.id), heldIds);
+  await ledger.settleCredits({ userId: USER, operation: "capture.parse", micros: 1_000 });
+  check("with no live hold left, settle never touches an expired one (the sweep owns it)",
+    (await db.select({ id: creditHolds.id }).from(creditHolds).where(eq(creditHolds.userId, USER))).length === 1);
 
   await reset();
   if (failures > 0) throw new Error(`${failures} credit check(s) failed`);

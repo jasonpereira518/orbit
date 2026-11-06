@@ -148,9 +148,8 @@ async function resolveApolloKey(
   const personal = decryptOrNull(settings?.apolloApiKeyEncrypted);
   if (personal) return { apiKey: personal, hosted: false };
 
-  // Orbit's shared Apollo key: Pro, Max and Lifetime, capped per month by plan
-  // (`spendHostedApollo`). Free adds its own key in Settings, which the short-circuit above
-  // already prefers on every plan.
+  // Orbit's shared Apollo key: no plan includes it (`hostedEnrichment` is off everywhere), so
+  // this returns null unless a plan turns the flag back on. `spendHostedApollo` still caps it.
   const { canUseHostedEnrichment } = loadedSettings
     ? entitlementsFromSettings(userId, loadedSettings)
     : await getEntitlements(userId);
@@ -169,8 +168,8 @@ export async function getApolloApiKey(
 /**
  * Counts `units` hosted calls. A user's own key never gets here.
  *
- * Enrichments are capped per MONTH by plan (`PLAN_CONFIG[plan].hostedEnrichmentsPerMonth`:
- * Pro 10, Max and Lifetime 25) — the number the pricing page promises. Searches only run in
+ * Enrichments are capped per MONTH by plan (`PLAN_CONFIG[plan].hostedEnrichmentsPerMonth`,
+ * currently 0 everywhere: no plan reaches this path). Searches only run in
  * the unshipped Outreach and Leads surfaces and keep just the daily abuse ceiling, which
  * also stays under enrichments.
  */

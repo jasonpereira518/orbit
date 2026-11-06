@@ -182,6 +182,30 @@ async function main() {
     const rm = await row(m.id);
     check("marked ambiguous, provider never re-called", rm.failureKind === "ambiguous" && sent.length === before);
 
+    // --- email_send_failed: one event per row that reaches the terminal failed state
+    {
+      await new Promise((r) => setTimeout(r, 300)); // track() writes after the dispatch returns
+      const events = await db
+        .select()
+        .from(schema.productEvents)
+        .where(and(eq(schema.productEvents.userId, USER), eq(schema.productEvents.name, "email_send_failed")));
+      const failedRows = (await db.select().from(schema.emailSends).where(eq(schema.emailSends.userId, USER))).filter((r) => r.status === "failed");
+      check(
+        "every failed send (exhausted, permanent, auth, ambiguous) recorded exactly one email_send_failed",
+        failedRows.length === 4 && events.length === failedRows.length,
+        `${failedRows.length} failed rows, ${events.length} events`
+      );
+      check(
+        "…provider and kind only, never the error text",
+        events.every((e) => JSON.stringify(Object.keys(e.properties as object).sort()) === JSON.stringify(["kind", "provider"]) && (e.properties as { provider: string }).provider === "gmail" && (e.properties as { kind: string }).kind === "outreach" && e.actor === "system")
+      );
+      await dispatchEmailSend(p.id);
+      await dispatchEmailSend(m.id);
+      await new Promise((r) => setTimeout(r, 200));
+      const again = await db.select().from(schema.productEvents).where(and(eq(schema.productEvents.userId, USER), eq(schema.productEvents.name, "email_send_failed")));
+      check("…and dispatching an already-failed send again adds none", again.length === events.length);
+    }
+
     next = ["ambiguous"];
     const h = await must(enqueueEmail(USER, base));
     await dispatchEmailSend(h.id);
@@ -213,16 +237,21 @@ async function main() {
     if (k1.ok) await cancelEmailSend(USER, k1.id);
     check("key reusable after cancel", (await enqueueEmail(USER, { ...base, idempotencyKey: "k-1", delayMs: 10_000 })).ok);
 
-    // --- daily cap (free plan: 20). Canceled/failed rows don't count.
+    // --- daily cap (Free: 40 people in 24h). Every To/Cc/Bcc counts; canceled/failed rows don't.
     await resetBucket();
     const [{ n }] = rowsOf<{ n: number }>(
-      await db.execute(sql`SELECT count(*)::int AS n FROM email_sends WHERE user_id = ${USER} AND status IN ('queued','sending','sent')`)
+      await db.execute(sql`SELECT coalesce(sum(jsonb_array_length(to_emails) + jsonb_array_length(cc) + jsonb_array_length(bcc)), 0)::int AS n
+        FROM email_sends WHERE user_id = ${USER} AND status IN ('queued','sending','sent')`)
     );
-    const fill = Math.max(0, 20 - Number(n));
+    const fill = Math.max(0, 39 - Number(n));
     await db.execute(sql`INSERT INTO email_sends (user_id, provider, from_email, to_emails, subject, body_text, origin, status, send_at, rfc_message_id)
       SELECT ${USER}, 'gmail', 'me@x.org', '["z@x.org"]'::jsonb, 's', 'b', 'chat', 'sent', now(), '<cap-' || g || '@orbit.mail>' FROM generate_series(1, ${fill}::int) g`);
+    const overflow = await enqueueEmail(USER, { ...base, cc: ["second@work.org"] });
+    check("one message to two people past the 40th is refused on Free", !overflow.ok && overflow.reason === "cap_reached", JSON.stringify(overflow));
+    const fortieth = await enqueueEmail(USER, base);
+    check("the 40th person in 24h still goes", fortieth.ok, JSON.stringify(fortieth));
     const capped = await enqueueEmail(USER, base);
-    check("21st send in 24h refused on Free", !capped.ok && capped.reason === "cap_reached", JSON.stringify(capped));
+    check("the 41st person in 24h is refused on Free", !capped.ok && capped.reason === "cap_reached", JSON.stringify(capped));
 
     // --- drain picks up due rows and lapsed leases, skips future ones
     await db.execute(sql`DELETE FROM email_sends WHERE user_id = ${USER} AND origin = 'chat'`);

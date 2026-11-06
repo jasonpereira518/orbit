@@ -14,6 +14,8 @@
  * sibling nothing client-side imports.
  */
 
+import type { NameGuess } from "@/lib/contact-name-guess";
+
 /**
  * How a contacts page is ordered. The cursor's shape follows from this, so a page fetched
  * under one sort cannot be continued under another.
@@ -90,6 +92,9 @@ export function parseQuietDays(value: unknown): number | null {
 
 export const CONTACTS_PAGE_SIZE = 50;
 
+/** The `?school=` value meaning "any of my schools". Not a name a school could have. */
+export const SAME_SCHOOL_AS_ME = "@mine";
+
 export type ContactsPageFilters = {
   q?: string;
   company?: string;
@@ -105,6 +110,11 @@ export type ContactsPageFilters = {
   letter?: string;
   /** Restrict to contacts carrying this tag, matched case-insensitively. */
   tag?: string;
+  /**
+   * Alumni of a school (`schoolCondition`), or `SAME_SCHOOL_AS_ME` for anyone who went to one
+   * of the user's own schools (`user_settings.schools`).
+   */
+  school?: string;
   cursor?: string;
   limit?: number;
   /** Narrow the list to one import's people — the added and the matched-existing alike. */
@@ -117,6 +127,8 @@ export type ContactListRow = {
   firstName: string | null;
   lastName: string | null;
   preferredName: string | null;
+  /** Only an unsure guess (`openNameGuess`): the name gets a "?". */
+  nameGuess: NameGuess | null;
   title: string | null;
   company: string | null;
   school: string | null;

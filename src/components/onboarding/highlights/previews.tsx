@@ -45,7 +45,7 @@ function Initials({ name, tone = "primary" }: { name: string; tone?: "primary" |
     <span
       aria-hidden
       className={cn(
-        "flex size-8 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold",
+        "flex size-8 shrink-0 items-center justify-center rounded-full text-2xs font-semibold",
         tone === "primary" ? "bg-primary/12 text-primary" : "bg-amber-500/15 text-amber-700 dark:text-amber-300",
       )}
     >
@@ -68,7 +68,7 @@ export function CapturePreview() {
           <span
             key={label}
             className={cn(
-              "flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium",
+              "flex items-center gap-1 rounded-md px-2 py-1 text-2xs font-medium",
               active ? "bg-card text-primary shadow-sm" : "text-muted-foreground",
             )}
           >
@@ -83,7 +83,7 @@ export function CapturePreview() {
           to intro me to their university recruiting lead, Diego. Follow up in two weeks…
         </p>
       </StaggerItem>
-      <StaggerItem className="flex items-center justify-center gap-1.5 text-[11px] font-medium text-primary">
+      <StaggerItem className="flex items-center justify-center gap-1.5 text-2xs font-medium text-primary">
         <Sparkles className="size-3.5" aria-hidden />
         Orbit found 2 people and a follow-up
         <ArrowDown className="size-3" aria-hidden />
@@ -97,12 +97,12 @@ export function CapturePreview() {
             <Initials name={p.name} />
             <span className="min-w-0">
               <span className="block truncate text-xs font-medium text-ink">{p.name}</span>
-              <span className="block truncate text-[10px] text-muted-foreground">{p.meta}</span>
+              <span className="block truncate text-3xs text-muted-foreground">{p.meta}</span>
             </span>
           </StaggerItem>
         ))}
       </div>
-      <StaggerItem className="flex items-center gap-2 rounded-lg bg-accent/70 px-3 py-2 text-[11px] text-foreground">
+      <StaggerItem className="flex items-center gap-2 rounded-lg bg-accent/70 px-3 py-2 text-2xs text-foreground">
         <Bell className="size-3.5 text-primary" aria-hidden />
         Follow up with Sarah Chen · in 14 days
       </StaggerItem>
@@ -118,9 +118,9 @@ export function PeoplePreview() {
           <Initials name="Priya Nair" />
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-ink">Priya Nair</p>
-            <p className="text-[11px] text-muted-foreground">Notion · Product, AI agents</p>
+            <p className="text-2xs text-muted-foreground">Notion · Product, AI agents</p>
           </div>
-          <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+          <span className="rounded-full bg-primary/10 px-2 py-0.5 text-3xs font-medium text-primary">
             Inner orbit
           </span>
         </div>
@@ -129,13 +129,13 @@ export function PeoplePreview() {
           send her your internship application.
         </p>
         <div className="mt-2.5 flex flex-wrap gap-1.5">
-          <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+          <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-3xs font-medium text-emerald-700 dark:text-emerald-300">
             Referral offered
           </span>
-          <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+          <span className="rounded-full bg-muted px-2 py-0.5 text-3xs text-muted-foreground">
             Every 6 weeks
           </span>
-          <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+          <span className="rounded-full bg-muted px-2 py-0.5 text-3xs text-muted-foreground">
             Next: send application
           </span>
         </div>
@@ -148,9 +148,9 @@ export function PeoplePreview() {
           <Initials name={p.name} tone={p.gold ? "gold" : "primary"} />
           <div className="min-w-0 flex-1">
             <p className="text-xs font-medium text-ink">{p.name}</p>
-            <p className="text-[11px] text-muted-foreground">{p.meta}</p>
+            <p className="text-2xs text-muted-foreground">{p.meta}</p>
           </div>
-          <span className="text-[10px] text-muted-foreground">{p.tag}</span>
+          <span className="text-3xs text-muted-foreground">{p.tag}</span>
         </StaggerItem>
       ))}
     </Stagger>
@@ -166,18 +166,18 @@ export function FollowUpsPreview() {
   return (
     <Stagger className="flex h-full flex-col gap-2.5">
       <StaggerItem className={cn(card, "border-primary/25 bg-primary/[0.04] p-3")}>
-        <p className="text-[10px] font-medium uppercase tracking-wide text-primary">
+        <p className="text-3xs font-medium uppercase tracking-wide text-primary">
           Suggested follow-up
         </p>
         <p className="mt-1 text-sm font-medium text-ink">Reach out to Sam Okafor</p>
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-2xs text-muted-foreground">
           Last talked 47 days ago · you usually catch up every month
         </p>
         <div className="mt-2 flex gap-1.5">
-          <span className="rounded-md bg-primary px-2 py-1 text-[10px] font-medium text-primary-foreground">
+          <span className="rounded-md bg-primary px-2 py-1 text-3xs font-medium text-primary-foreground">
             Draft a note
           </span>
-          <span className="rounded-md border border-border/70 px-2 py-1 text-[10px] text-muted-foreground">
+          <span className="rounded-md border border-border/70 px-2 py-1 text-3xs text-muted-foreground">
             Snooze
           </span>
         </div>
@@ -189,7 +189,7 @@ export function FollowUpsPreview() {
             <p className="truncate text-xs font-medium text-ink">{r.title}</p>
             <p
               className={cn(
-                "text-[10px]",
+                "text-3xs",
                 r.overdue ? "font-medium text-amber-700 dark:text-amber-300" : "text-muted-foreground",
               )}
             >
@@ -220,7 +220,7 @@ export function AskPreview() {
           {["Marcus Lee", "Priya Nair"].map((n) => (
             <span
               key={n}
-              className="flex items-center gap-1 rounded-full border border-border/70 px-2 py-0.5 text-[10px] text-muted-foreground"
+              className="flex items-center gap-1 rounded-full border border-border/70 px-2 py-0.5 text-3xs text-muted-foreground"
             >
               <span className="size-1.5 rounded-full bg-primary" aria-hidden />
               {n}
@@ -230,8 +230,8 @@ export function AskPreview() {
       </StaggerItem>
       <StaggerItem className="mt-auto flex items-center gap-2 rounded-xl border border-border/70 bg-muted/40 px-3 py-2">
         <Sparkles className="size-3.5 text-primary" aria-hidden />
-        <span className="flex-1 text-[11px] text-muted-foreground">Ask about your network…</span>
-        <span className="flex items-center gap-0.5 rounded-md border border-border/70 bg-card px-1.5 py-0.5 text-[10px] text-muted-foreground">
+        <span className="flex-1 text-2xs text-muted-foreground">Ask about your network…</span>
+        <span className="flex items-center gap-0.5 rounded-md border border-border/70 bg-card px-1.5 py-0.5 text-3xs text-muted-foreground">
           <Command className="size-2.5" aria-hidden />K
         </span>
       </StaggerItem>
@@ -282,9 +282,9 @@ export function ConstellationPreview() {
         </svg>
       </StaggerItem>
       <StaggerItem className="absolute right-3 bottom-3 left-3 rounded-xl border border-white/10 bg-[#0f1420]/90 p-3 text-white sm:left-auto sm:w-56">
-        <p className="text-[10px] font-medium uppercase tracking-wide text-sky-300">Event · Tomorrow</p>
+        <p className="text-3xs font-medium uppercase tracking-wide text-sky-300">Event · Tomorrow</p>
         <p className="mt-0.5 text-xs font-medium">AI Founders Night</p>
-        <p className="mt-1 text-[11px] text-white/70">3 people you know are going · talk to Priya first</p>
+        <p className="mt-1 text-2xs text-white/70">3 people you know are going · talk to Priya first</p>
       </StaggerItem>
     </Stagger>
   );
@@ -296,18 +296,18 @@ export function OutreachPreview() {
       <StaggerItem className={cn(card, "flex items-start justify-between gap-2 p-3")}>
         <div>
           <p className="text-sm font-medium text-ink">Summer internships · AI labs</p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">14 people · 9 drafted · 5 sent · 2 replies</p>
+          <p className="mt-0.5 text-2xs text-muted-foreground">14 people · 9 drafted · 5 sent · 2 replies</p>
         </div>
-        <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">Active</span>
+        <span className="rounded-full bg-primary/10 px-2 py-0.5 text-3xs font-medium text-primary">Active</span>
       </StaggerItem>
       <StaggerItem className={cn(card, "p-3")}>
         <div className="flex items-center gap-2">
           <Initials name="Maya Patel" />
           <div className="min-w-0 flex-1">
             <p className="text-xs font-medium text-ink">To Maya Patel</p>
-            <p className="text-[10px] text-muted-foreground">Anthropic · Research engineering</p>
+            <p className="text-3xs text-muted-foreground">Anthropic · Research engineering</p>
           </div>
-          <span className="flex items-center gap-1 text-[10px] text-primary">
+          <span className="flex items-center gap-1 text-3xs text-primary">
             <Sparkles className="size-3" aria-hidden />
             AI draft
           </span>
@@ -318,8 +318,8 @@ export function OutreachPreview() {
         </p>
       </StaggerItem>
       <StaggerItem className="flex justify-end gap-1.5">
-        <span className="rounded-md border border-border/70 px-2.5 py-1 text-[10px] text-muted-foreground">Edit</span>
-        <span className="flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-[10px] font-medium text-primary-foreground">
+        <span className="rounded-md border border-border/70 px-2.5 py-1 text-3xs text-muted-foreground">Edit</span>
+        <span className="flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-3xs font-medium text-primary-foreground">
           <Send className="size-3" aria-hidden />
           Send
         </span>
@@ -336,7 +336,7 @@ export function EverywherePreview() {
           <span className="size-2 rounded-full bg-red-400/70" aria-hidden />
           <span className="size-2 rounded-full bg-amber-400/70" aria-hidden />
           <span className="size-2 rounded-full bg-emerald-400/70" aria-hidden />
-          <span className="ml-2 flex-1 truncate rounded bg-card px-2 py-0.5 text-[10px] text-muted-foreground">
+          <span className="ml-2 flex-1 truncate rounded bg-card px-2 py-0.5 text-3xs text-muted-foreground">
             linkedin.com/in/diego-alvarez
           </span>
           <Puzzle className="size-3.5 text-primary" aria-hidden />
@@ -349,9 +349,9 @@ export function EverywherePreview() {
             <div className="h-2 w-3/4 rounded bg-muted" />
           </div>
           <div className="rounded-lg border border-primary/25 bg-primary/[0.04] p-2">
-            <p className="text-[10px] font-medium text-ink">Diego Alvarez</p>
-            <p className="text-[9px] text-muted-foreground">Already in your orbit</p>
-            <span className="mt-1.5 flex items-center justify-center gap-1 rounded-md bg-primary py-1 text-[9px] font-medium text-primary-foreground">
+            <p className="text-3xs font-medium text-ink">Diego Alvarez</p>
+            <p className="text-3xs text-muted-foreground">Already in your orbit</p>
+            <span className="mt-1.5 flex items-center justify-center gap-1 rounded-md bg-primary py-1 text-3xs font-medium text-primary-foreground">
               <Plus className="size-2.5" aria-hidden />
               Add a note
             </span>
@@ -365,15 +365,15 @@ export function EverywherePreview() {
           { label: "Gmail", sub: "Mail sync", icon: Mail },
         ].map((s) => (
           <StaggerItem key={s.label} className={cn(card, "px-2.5 py-2")}>
-            <p className="text-[11px] font-medium text-ink">{s.label}</p>
-            <p className="flex items-center gap-1 text-[10px] text-muted-foreground">
+            <p className="text-2xs font-medium text-ink">{s.label}</p>
+            <p className="flex items-center gap-1 text-3xs text-muted-foreground">
               <Check className="size-2.5 text-primary" aria-hidden />
               {s.sub}
             </p>
           </StaggerItem>
         ))}
       </div>
-      <StaggerItem className="rounded-lg bg-muted/60 px-3 py-2 font-mono text-[10px] text-muted-foreground">
+      <StaggerItem className="rounded-lg bg-muted/60 px-3 py-2 font-mono text-3xs text-muted-foreground">
         POST /api/v1/contacts · MCP · webhooks
       </StaggerItem>
     </Stagger>

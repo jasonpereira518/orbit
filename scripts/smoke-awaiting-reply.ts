@@ -233,11 +233,10 @@ async function dbChecks() {
 
   section("Widening `direction` did not disturb constellation eligibility");
 
-  // `completeFollowUpWithTouch` used to set direction only for `linkedin_message`, and its
-  // comment now claims that recording it on other channels is invisible to closeness — the
-  // aggregates are scoped to `interaction_type = 'linkedin_message'`. A comment promising a
-  // guarantee the code does not provide is exactly the bug class this file exists to stop,
-  // so the claim is measured rather than trusted.
+  // `completeFollowUpWithTouch` records `out` on every channel. Since the constellation's
+  // exchange counts widened to email and chat (Oct 2026), that stamp moves an email from the
+  // undirected tally to the outbound one — intended: a sent follow-up is half an exchange —
+  // while closeness itself must still not move. Measured, not trusted.
   // The experiment has to vary ONE thing. Adding an interaction row moves closeness through
   // recency and volume no matter what direction says, so the row is created undirected,
   // measured, then stamped `out` in place and measured again. Anything that moves between
@@ -254,10 +253,11 @@ async function dbChecks() {
 
   const signalsOf = (r: typeof before, id: string) =>
     JSON.stringify(r.constellationSignals.get(id) ?? null);
+  const emailAfter = after.constellationSignals.get(subject.id);
   check(
-    "stamping `out` on an email row moves no constellation signal",
-    signalsOf(before, subject.id) === signalsOf(after, subject.id),
-    `${signalsOf(before, subject.id)} -> ${signalsOf(after, subject.id)} — if this moved, the comment in completeFollowUpWithTouch is wrong`
+    "stamping `out` on an email row moves it from undirected to outbound",
+    emailAfter?.messageOutbound === 1 && emailAfter?.messageUndirected === 0,
+    `${signalsOf(before, subject.id)} -> ${signalsOf(after, subject.id)}`
   );
 
   // Read through locals that must exist: comparing two `undefined`s passes without measuring
@@ -271,8 +271,7 @@ async function dbChecks() {
     `${closenessBefore} -> ${closenessAfter}`
   );
 
-  // The control. If direction were inert everywhere, the check above would prove nothing —
-  // it is the `linkedin_message` scoping specifically that spares email.
+  // LinkedIn rows behave the same way.
   const li = await person("LinkedIn Lee");
   await touched(li.id, [{ type: "linkedin_message", direction: null, days: 4 }]);
   const beforeLi = await recalibrateCloseness(USER);

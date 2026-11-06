@@ -7,14 +7,20 @@
  */
 
 /** The import targets that describe the user. They fill `career_profile`, not the contacts list. */
-export type YouTarget = "linkedin_profile" | "linkedin_positions" | "linkedin_skills" | "linkedin_alerts";
+export type YouTarget =
+  | "linkedin_profile"
+  | "linkedin_positions"
+  | "linkedin_skills"
+  | "linkedin_alerts"
+  | "linkedin_education";
 
 export function isYouTarget(target: string): target is YouTarget {
   return (
     target === "linkedin_profile" ||
     target === "linkedin_positions" ||
     target === "linkedin_skills" ||
-    target === "linkedin_alerts"
+    target === "linkedin_alerts" ||
+    target === "linkedin_education"
   );
 }
 
@@ -29,6 +35,12 @@ export function looksLikeLinkedInProfile(fields: string[]): boolean {
 export function looksLikeLinkedInPositions(fields: string[]): boolean {
   const lower = lowered(fields);
   return lower.includes("company name") && lower.includes("started on") && lower.includes("finished on");
+}
+
+/** Education.csv: the schools on the user's own profile. Fills `user_settings.schools`. */
+export function looksLikeLinkedInEducation(fields: string[]): boolean {
+  const lower = lowered(fields);
+  return lower.includes("school name") && lower.includes("degree name");
 }
 
 export function looksLikeLinkedInAlerts(fields: string[]): boolean {

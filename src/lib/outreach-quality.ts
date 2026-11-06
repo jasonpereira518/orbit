@@ -70,6 +70,15 @@ export type QualityIssue = {
 const LINK_OR_ADDRESS =
   /\b(?:https?:\/\/|www\.)[^\s<>"')\]]+|\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b|\b[a-z0-9-]+\.(?:com|io|co|net|org|ai|app|dev|xyz|ly|me)\/[^\s<>"')\]]*/i;
 
+/**
+ * The first link or address in a draft, or null. A model writing over other people's text
+ * (an email, an invite, an enrichment) can be talked into planting one, and the person then
+ * sends it from their own mailbox — so every surface showing an AI draft surfaces this.
+ */
+export function findLinkOrAddress(text: string): string | null {
+  return LINK_OR_ADDRESS.exec(text)?.[0] ?? null;
+}
+
 function normalizeBody(body: string) {
   return body.trim().toLowerCase().replace(/\s+/g, " ");
 }
@@ -153,7 +162,7 @@ export function assessOutreachQuality(rows: QualityGateRow[]): {
     // calendar), but a warning the bulk send must be explicitly told to ignore, and first in
     // line so it is the one the confirm shows.
     const text = `${row.subject ?? ""}\n${row.body ?? ""}`;
-    const link = LINK_OR_ADDRESS.exec(text)?.[0];
+    const link = findLinkOrAddress(text);
     if (link) {
       issues.unshift({
         messageId: row.messageId,

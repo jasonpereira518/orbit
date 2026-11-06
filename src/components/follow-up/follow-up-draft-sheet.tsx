@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { RefreshCw } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { copyText } from "@/lib/clipboard";
 import {
   draftContactFollowUp,
   getContactFollowUpSendOptions,
@@ -60,6 +61,7 @@ export function FollowUpDraftSheet({
 }) {
   const router = useRouter();
   const [draft, setDraft] = useState("");
+  const [aiDraft, setAiDraft] = useState<string | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const [sendOptions, setSendOptions] =
     useState<ContactFollowUpSendOptions | null>(null);
@@ -72,6 +74,7 @@ export function FollowUpDraftSheet({
     if (!open) return;
     const session = ++sessionRef.current;
     setDraft("");
+    setAiDraft(null);
     setAiError(null);
     setSendOptions(null);
 
@@ -96,7 +99,10 @@ export function FollowUpDraftSheet({
       // Opening the sheet shows the draft already written for this context; only
       // Regenerate below pays for a new one. A draft handed in (Radar's) needs no read at all.
       const handed = initialDraft?.trim();
-      if (handed) setDraft(handed);
+      if (handed) {
+        setDraft(handed);
+        setAiDraft(handed);
+      }
       const draftRead = handed
         ? Promise.resolve()
         : draftContactFollowUp(contactId, { reuse: true, intent }).then(
@@ -105,6 +111,7 @@ export function FollowUpDraftSheet({
               if (!result.ok) return setAiError(result.error);
               setAiError(null);
               setDraft(result.body);
+              setAiDraft(result.body);
             },
             report
           );
@@ -125,6 +132,7 @@ export function FollowUpDraftSheet({
         }
         setAiError(null);
         setDraft(result.body);
+        setAiDraft(result.body);
         toast.success("Draft ready");
       } catch (err) {
         toast.error(
@@ -213,24 +221,26 @@ export function FollowUpDraftSheet({
           <FollowUpDraftComposer
             contactName={contactName}
             draft={draft}
+            aiDraft={aiDraft}
             onDraftChange={setDraft}
             sendOptions={sendOptions}
             pending={pending}
             sending={sending}
             marking={marking}
-            onCopy={() => {
+            onCopy={async () => {
               if (!draft.trim()) return;
-              void navigator.clipboard.writeText(draft);
-              toast.success(TOAST_COPY.copied);
+              if (await copyText(draft)) toast.success(TOAST_COPY.copied);
+              else toast.error(TOAST_COPY.copyFailed);
             }}
             onSendEmail={sendEmail}
             onMarkSent={markSent}
             onOpenLinkedIn={(url) => {
-              if (draft.trim()) {
-                void navigator.clipboard.writeText(draft);
-                toast.success(TOAST_COPY.copied);
-              }
+              // The tab opens inside the click (popup blockers); the toast waits on the copy.
+              const copied = draft.trim() ? copyText(draft) : null;
               window.open(url, "_blank", "noopener,noreferrer");
+              void copied?.then((ok) =>
+                ok ? toast.success(TOAST_COPY.copied) : toast.error(TOAST_COPY.copyFailed)
+              );
             }}
           />
         </div>

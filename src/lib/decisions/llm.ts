@@ -35,6 +35,7 @@ import {
 export const LLM_OPERATION_FOR: Partial<Record<DecisionOperationId, AiOperationId>> = {
   "duplicates.same_person": "duplicates.same_person.llm",
   "mentions.resolve": "mentions.resolve.llm",
+  "notes.detect": "notes.detect.llm",
 };
 
 const SYSTEM = `You answer typed questions about a JSON "state" from a personal networking CRM.

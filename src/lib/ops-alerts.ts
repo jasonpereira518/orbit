@@ -3,6 +3,8 @@ import { PURGE_MAX_ATTEMPTS } from "@/lib/data-categories";
 import { hasMissedRun } from "@/lib/cron-runs";
 import { MANAGED_AI_ALERTS, MANAGED_AI_POOLS, MANAGED_AI_POOL_WARN_SHARE, poolWindowStart } from "@/lib/managed-ai-policy";
 import type { AiProvider } from "@/lib/ai-providers";
+import { productConditions, type ProductOpsFacts } from "@/lib/product-alerts";
+import { SPEECH_CREDIT_ALERTS, SPEECH_CREDIT_LADDER, creditRunwayDays } from "@/lib/speech-cost";
 
 /**
  * Known-condition alerting: the catalogue, and the state machine that keeps it quiet.
@@ -106,6 +108,24 @@ export type OpsSnapshot = {
   stuckPurges: number;
   /** Orbit's managed AI keys — the Lifetime cost exposure. See `managed-ai-ops.ts`. */
   managedAi: ManagedAiOpsFacts;
+  /** What Orbit is spending, against the Deepgram credit and the monthly budget. See `spend-ops.ts`. */
+  spend?: SpendOpsFacts;
+  /** Product health and money integrity (`product-ops.ts`, `product-alerts.ts`). Optional like `spend`. */
+  product?: ProductOpsFacts;
+};
+
+export type SpendOpsFacts = {
+  /** Priced Deepgram spend since the credit started (`speech-cost.ts`), and the credit's cap. */
+  creditSpentMicros: number;
+  creditCapMicros: number;
+  speechLast24hMicros: number;
+  speechLast7dMicros: number;
+  /**
+   * Month to date, everything Orbit pays: priced Deepgram, Orbit-paid AI, and the provider bills
+   * entered in `infra_costs` for the month. Null budget = `ORBIT_MONTHLY_BUDGET_CENTS` unset.
+   */
+  monthToDateMicros: number;
+  monthlyBudgetCents: number | null;
 };
 
 export type ManagedAiOpsFacts = {
@@ -683,6 +703,8 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
   }
 
   out.push(...managedAiConditions(s.managedAi));
+  if (s.spend) out.push(...spendConditions(s.spend));
+  if (s.product) out.push(...productConditions(s.product, now));
 
   if (s.reauthNeeded > 0) {
     out.push({
@@ -795,6 +817,98 @@ function managedAiConditions(m: ManagedAiOpsFacts): OpsCondition[] {
       detail: `${m.accountsAtCap} Pro or Max account(s) have used their whole allowance and hold no pack credits, so their included AI is paused until renewal. A rising count says the allowances are too tight for real use.`,
       href: "/admin/billing/costs",
     });
+  }
+
+  return out;
+}
+
+/** Budget shares that speak up, and how loudly. The highest one reached is the alert. */
+const BUDGET_RUNGS: Array<{ share: number; severity: OpsSeverity }> = [
+  { share: 1, severity: "critical" },
+  { share: 0.9, severity: "warning" },
+  { share: 0.75, severity: "warning" },
+  { share: 0.5, severity: "info" },
+];
+
+/**
+ * The Deepgram credit as it runs down — each rung of `SPEECH_CREDIT_LADDER` announced as it
+ * takes effect, so the Slack message says what users are now getting instead — plus its
+ * runway, a one-day spike, and month-to-date spend against the budget.
+ */
+function spendConditions(f: SpendOpsFacts): OpsCondition[] {
+  const out: OpsCondition[] = [];
+  const share = f.creditCapMicros > 0 ? f.creditSpentMicros / f.creditCapMicros : 0;
+  const left = `${usd(Math.max(0, f.creditCapMicros - f.creditSpentMicros))} of the ${usd(f.creditCapMicros)} usable credit left`;
+  const ladder = SPEECH_CREDIT_LADDER;
+  let credit: Pick<OpsCondition, "severity" | "title" | "detail"> | null = null;
+  if (share >= ladder.newMeetingsOffShare) {
+    credit = {
+      severity: "critical",
+      title: "The Deepgram credit is spent",
+      detail: `${left}. New meetings, voice notes and the chat mic now run on each account's own key or the browser's recogniser; meetings already recording finish. Top up Deepgram and raise DEEPGRAM_CREDIT in src/lib/speech-cost.ts.`,
+    };
+  } else if (share >= ladder.shortformOffShare) {
+    credit = {
+      severity: "critical",
+      title: "Deepgram credit nearly spent: voice notes are off Orbit's key",
+      detail: `${left}. Voice notes and the chat mic now fall back for every plan; meetings still run on Deepgram until the credit is gone.`,
+    };
+  } else if (share >= ladder.freeOffShare) {
+    credit = {
+      severity: "warning",
+      title: "Deepgram credit at 90%: Free voice notes are off Orbit's key",
+      detail: `${left}. Free accounts now transcribe on their own key or the browser's recogniser; paid plans are unaffected.`,
+    };
+  } else {
+    const rung = SPEECH_CREDIT_ALERTS.warnShares.filter((s) => share >= s).at(-1);
+    if (rung !== undefined) {
+      credit = {
+        severity: "warning",
+        title: `Deepgram credit ${Math.round(rung * 100)}% spent`,
+        detail: `${left}. At 90% Free voice notes fall back to the user's own key; at 97% every plan's do.`,
+      };
+    }
+  }
+  if (credit) out.push({ id: "speech.credit", href: "/admin/billing/costs", ...credit });
+
+  const days = creditRunwayDays(f.creditSpentMicros, f.speechLast7dMicros / 7, {
+    creditMicros: f.creditCapMicros,
+    capMicros: f.creditCapMicros,
+    since: "",
+  });
+  if (days !== null && days < SPEECH_CREDIT_ALERTS.runwayWarnDays && share < ladder.newMeetingsOffShare) {
+    out.push({
+      id: "speech.credit_runway",
+      severity: "warning",
+      title: `About ${Math.max(0, Math.round(days))} days of Deepgram credit left`,
+      detail: `At the last 7 days' pace (${usd(f.speechLast7dMicros / 7)} a day), the credit reaches its cap in about ${Math.round(days)} days. Top it up, or tighten the speech allowances in plan-config.ts.`,
+      href: "/admin/billing/costs",
+    });
+  }
+
+  if (f.speechLast24hMicros >= SPEECH_CREDIT_ALERTS.dailySpikeMicros) {
+    out.push({
+      id: "speech.spend_spike",
+      severity: "warning",
+      title: "Deepgram spend is spiking",
+      detail: `${usd(f.speechLast24hMicros)} of Deepgram in the last 24 hours (threshold ${usd(SPEECH_CREDIT_ALERTS.dailySpikeMicros)}). Check /api/ops/speech-usage's last reconciliation for an account streaming past its meter.`,
+      href: "/admin/billing/costs",
+    });
+  }
+
+  if (f.monthlyBudgetCents && f.monthlyBudgetCents > 0) {
+    const budgetMicros = f.monthlyBudgetCents * 10_000;
+    const used = f.monthToDateMicros / budgetMicros;
+    const rung = BUDGET_RUNGS.find((r) => used >= r.share);
+    if (rung) {
+      out.push({
+        id: "budget.month",
+        severity: rung.severity,
+        title: `Monthly spend at ${Math.round(used * 100)}% of budget`,
+        detail: `${usd(f.monthToDateMicros)} so far this month against a ${usd(budgetMicros)} budget (ORBIT_MONTHLY_BUDGET_CENTS): Deepgram (estimated, drawn from the credit), Orbit-paid AI, and the bills entered under Money → Costs.`,
+        href: "/admin/billing/costs",
+      });
+    }
   }
 
   return out;

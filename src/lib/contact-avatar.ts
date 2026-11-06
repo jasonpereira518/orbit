@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { putAvatarBlob } from "@/lib/avatar-blob";
+import { putAvatarBlob, putSharedAvatarBlob } from "@/lib/avatar-blob";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { linkedinSlug } from "@/lib/duplicates";
 import { internalFetch } from "@/lib/internal-auth";
@@ -235,7 +235,35 @@ export async function fetchLinkedInPhotoUrl(
   linkedinUrl: string,
   userId: string | null
 ): Promise<string | null> {
-  const slug = linkedinSlug(linkedinUrl);
+  return (await fetchLinkedInPhoto(linkedinUrl, userId, { contactId }))?.url ?? null;
+}
+
+/** An https `media.licdn.com` URL with a `/profile-displayphoto…` path segment: a LinkedIn profile photo. */
+export function isLinkedInProfilePhoto(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.protocol === "https:" &&
+      parsed.hostname === "media.licdn.com" &&
+      parsed.pathname.split("/").some((seg) => seg.startsWith("profile-displayphoto"))
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Where a resolved photo is stored: the contact's own object, or the shared pool's. */
+export type AvatarTarget = { contactId: string } | { sharedSlug: string };
+
+/** {@link fetchLinkedInPhotoUrl}, also saying which tier found the photo, stored at `target`. */
+export async function fetchLinkedInPhoto(
+  linkedinUrl: string,
+  userId: string | null,
+  target: AvatarTarget
+): Promise<{ url: string; source: AvatarQuotaSource } | null> {
+  // A shared-pool photo is stored under `sharedSlug`, so it must be looked up by exactly that
+  // slug too. Re-deriving it from the URL can name a different person (`/IN/a/in/b`).
+  const slug = "sharedSlug" in target ? target.sharedSlug : linkedinSlug(linkedinUrl);
   if (!slug) return null;
 
   // Free tier, but quota'd: 25 anonymous lookups a day. Nothing stores this URL —
@@ -250,8 +278,8 @@ export async function fetchLinkedInPhotoUrl(
     } else {
       const unavatarUrl = `https://unavatar.io/linkedin/${encodeURIComponent(slug)}?fallback=false`;
       try {
-        const fromUnavatar = await downloadAndPersistAvatar(contactId, unavatarUrl);
-        if (fromUnavatar) return fromUnavatar;
+        const fromUnavatar = await downloadAndPersist(target, unavatarUrl);
+        if (fromUnavatar) return { url: fromUnavatar, source: "unavatar" };
       } catch (err) {
         if (!(err instanceof AvatarSourceRateLimitError)) throw err;
         noteUnavatarRateLimit(err.resetAt);
@@ -274,9 +302,11 @@ export async function fetchLinkedInPhotoUrl(
 
   try {
     const imageUrl = await resolveLinkedInOgImage(normalized);
-    if (imageUrl) {
-      const photoUrl = await downloadAndPersistAvatar(contactId, imageUrl);
-      if (photoUrl) return photoUrl;
+    // The pool is shared across accounts: only a LinkedIn profile photo goes in, never a
+    // banner, post image or logo the og:image happened to be.
+    if (imageUrl && ("contactId" in target || isLinkedInProfilePhoto(imageUrl))) {
+      const photoUrl = await downloadAndPersist(target, imageUrl);
+      if (photoUrl) return { url: photoUrl, source: "microlink" };
     }
   } catch (err) {
     // A broken photo store, or exhausted quota, are both worth surfacing.
@@ -320,12 +350,29 @@ export async function downloadAndPersistAvatar(
   imageUrl: string,
   deps?: ImageFetchDeps
 ): Promise<string | null> {
-  if (isDurableAvatarUrl(imageUrl)) return imageUrl;
+  return downloadAndPersist({ contactId }, imageUrl, deps);
+}
+
+/** {@link downloadAndPersistAvatar} into the shared LinkedIn photo pool (Blob only). */
+export async function downloadAndPersistSharedAvatar(
+  slug: string,
+  imageUrl: string
+): Promise<string | null> {
+  return downloadAndPersist({ sharedSlug: slug }, imageUrl);
+}
+
+async function downloadAndPersist(
+  target: AvatarTarget,
+  imageUrl: string,
+  deps?: ImageFetchDeps
+): Promise<string | null> {
+  // A durable URL is some contact's own object: never adopt it into the shared pool.
+  if (isDurableAvatarUrl(imageUrl)) return "contactId" in target ? imageUrl : null;
   if (isUnfetchableImageUrl(imageUrl)) return null;
 
   const downloaded = await downloadImageBytes(imageUrl, deps);
   if (!downloaded) return null;
-  return persistAvatar(contactId, downloaded.buf, downloaded.contentType);
+  return persistAvatar(target, downloaded.buf, downloaded.contentType);
 }
 
 /**
@@ -506,7 +553,7 @@ async function encodeAvatar(
  * and throws, so callers stop instead of silently reporting "no photo".
  */
 async function persistAvatar(
-  contactId: string,
+  target: AvatarTarget,
   buf: Buffer,
   contentType: string
 ): Promise<string | null> {
@@ -514,13 +561,17 @@ async function persistAvatar(
   if (!encoded) return null;
 
   if (!hasBlobStorage()) {
+    // The shared pool only ever holds https URLs; an inline photo has nowhere to go.
+    if ("sharedSlug" in target) return null;
     warnMissingBlobOnce();
     if (encoded.buf.byteLength > MAX_INLINE_BYTES) return null;
     return `data:${encoded.contentType};base64,${encoded.buf.toString("base64")}`;
   }
 
   try {
-    return await putAvatarBlob(contactId, encoded.buf, encoded.contentType);
+    return "sharedSlug" in target
+      ? await putSharedAvatarBlob(target.sharedSlug, encoded.buf, encoded.contentType)
+      : await putAvatarBlob(target.contactId, encoded.buf, encoded.contentType);
   } catch (err) {
     throw new AvatarStorageError(
       `Couldn't save the photo to Blob storage: ${

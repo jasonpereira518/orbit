@@ -4,13 +4,10 @@ import { kickLinkedInTimelineBackfill } from "@/lib/linkedin-timeline-backfill";
 import { kickRelationshipRun } from "@/lib/relationship-engine/runner";
 
 /**
- * The `imports.import_type` value LinkedIn messages import jobs carry.
- *
- * Lives here rather than in `import-job-dispatch.ts` (which re-exports it, so every
- * existing call site is unchanged) so the adapter registry can key on it without importing
- * the dispatcher — the dispatcher reaches the engine, and the engine reaches the registry.
+ * Defined in a leaf module: importing it from here pulled this adapter's graph (timeline
+ * backfill, `ai.ts`, the relationship engine) into every signed-in page.
  */
-export const LINKEDIN_MESSAGES_IMPORT_TYPE = "linkedin_messages";
+export { LINKEDIN_MESSAGES_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-import-types";
 
 /**
  * Earliest and latest valid message dates in a conversation, or `null` if none parse.

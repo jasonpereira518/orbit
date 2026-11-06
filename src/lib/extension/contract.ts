@@ -61,7 +61,7 @@ export type ExtractedField = {
   confidence: FieldConfidence;
 } | null;
 
-export type PageSite = "linkedin" | "x" | "gmail" | "generic";
+export type PageSite = "linkedin" | "x" | "gmail" | "luma" | "partiful" | "generic";
 
 /**
  * What kind of thing the page is. Drives which popup state renders, and keeps
@@ -123,9 +123,33 @@ export type PageContext = {
   capturedAt: string;
   identity: PageIdentity;
   candidates?: PageCandidate[];
+  /**
+   * On a Luma or Partiful event page: the guest list the user has open, as their own session
+   * renders it. Read only when they click the icon, and saved only when they press Save.
+   */
+  roster?: EventRoster;
   text: PageText;
   /** Extractor diagnostics: "login-wall", "opaque-slug", "no-main", … */
   warnings: string[];
+};
+
+export type EventRoster = {
+  /** The event's name as the page shows it. */
+  title: string;
+  guests: PageCandidate[];
+};
+
+/* -------------------------------------------------------------------------- */
+/* Event roster                                                               */
+/* -------------------------------------------------------------------------- */
+
+export type EventRosterRequest = { page: PageContext };
+export type EventRosterResponse = {
+  eventId: string;
+  /** The guests now on the event in Orbit — new and already there. */
+  saved: number;
+  /** True when the event was already in Orbit (found by its link). */
+  existingEvent: boolean;
 };
 
 /* -------------------------------------------------------------------------- */

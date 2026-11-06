@@ -5,17 +5,25 @@ import { getDb } from "@/db";
 import { appSurfaceFlags } from "@/db/schema";
 import { isAdminUser } from "@/lib/admin";
 import { recordAdminAction } from "@/lib/admin-audit";
+import { isDemoAccount } from "@/lib/demo-account";
+import { isDemoWorkspace } from "@/lib/demo-workspace";
+import { PaywallError, getEntitlements } from "@/lib/entitlements";
+import { PLANS, PLAN_SHORT_LABELS, type Plan } from "@/lib/plans/plan-config";
 import {
   COMING_SOON_COMPANIONS,
   DEFAULT_COMING_SOON_KEYS,
   LIVE_FLAG_PREFIX,
   ORDER_FLAG_PREFIX,
   SOON_FLAG_PREFIX,
+  TIERS_FLAG_PREFIX,
   canMarkComingSoon,
+  canTierLock,
   effectiveComingSoonKeys,
   getSurface,
   isAlwaysVisible,
+  parseTierRules,
   surfaceKeyForHref,
+  tierLockedFor,
 } from "@/lib/surfaces";
 import { APP_NAV_CORE, APP_NAV_EXTRAS } from "@/components/layout/app-nav";
 
@@ -78,7 +86,12 @@ export function isSurfaceHiddenError(err: unknown): err is SurfaceHiddenError {
  * surface staying reachable for a few more seconds after it is hidden is acceptable.
  */
 const HIDDEN_KEYS_TTL_MS = 15_000;
-type FlagSnapshot = { hidden: Set<string>; comingSoon: Set<string>; navOrder: string[] };
+type FlagSnapshot = {
+  hidden: Set<string>;
+  comingSoon: Set<string>;
+  navOrder: string[];
+  tierRules: Map<string, Plan[]>;
+};
 let flagsMemo: { snapshot: FlagSnapshot; at: number } | null = null;
 
 /** Forget the cross-request copy. For writers of `app_surface_flags`, including tests. */
@@ -103,7 +116,8 @@ const getFlagSnapshot = cache(async (): Promise<FlagSnapshot> => {
     const isOverride = (k: string) =>
       k.startsWith(SOON_FLAG_PREFIX) ||
       k.startsWith(LIVE_FLAG_PREFIX) ||
-      k.startsWith(ORDER_FLAG_PREFIX);
+      k.startsWith(ORDER_FLAG_PREFIX) ||
+      k.startsWith(TIERS_FLAG_PREFIX);
     const orderRow = all.find((k) => k.startsWith(ORDER_FLAG_PREFIX));
     const snapshot: FlagSnapshot = {
       hidden: new Set(all.filter((k) => !isOverride(k))),
@@ -111,6 +125,7 @@ const getFlagSnapshot = cache(async (): Promise<FlagSnapshot> => {
       navOrder: orderRow
         ? orderRow.slice(ORDER_FLAG_PREFIX.length).split(",").filter(Boolean)
         : [],
+      tierRules: parseTierRules(all),
     };
     flagsMemo = { snapshot, at: now };
     return snapshot;
@@ -123,6 +138,8 @@ const getFlagSnapshot = cache(async (): Promise<FlagSnapshot> => {
       hidden: new Set<string>(),
       comingSoon: new Set(DEFAULT_COMING_SOON_KEYS),
       navOrder: [],
+      // Open, like `hidden`: a hiccup should not lock paying users out of a page.
+      tierRules: new Map(),
     };
   }
 });
@@ -151,6 +168,11 @@ export const getNavOrder = cache(async (): Promise<string[]> => {
  */
 export const getComingSoonKeys = cache(async (): Promise<Set<string>> => {
   return (await getFlagSnapshot()).comingSoon;
+});
+
+/** Every tier rule: page key → the plans allowed to open it. Absent means every plan. */
+export const getTierRules = cache(async (): Promise<Map<string, Plan[]>> => {
+  return (await getFlagSnapshot()).tierRules;
 });
 
 /** True when this request is an operator deliberately previewing the app as a user. */
@@ -194,6 +216,10 @@ export type SurfaceVisibility = {
   comingSoonMarked: Set<string>;
   /** Sidebar order chosen by the operator, as surface keys. */
   navOrder: string[];
+  /** Pages THIS viewer's plan may not open → the plans that may. Empty for an exempt admin and the demo workspace. */
+  tierLocked: Map<string, Plan[]>;
+  /** Every tier rule, whoever is asking — what an exempt admin's nav tags. */
+  tierRules: Map<string, Plan[]>;
 };
 
 
@@ -220,9 +246,17 @@ export async function resolveSurfaceVisibility(
   // takes the separate, explicit `previewingUnreleased` opt-in.
   const previewingUnreleased = admin && (await isPreviewingUnreleased(userId));
   const marked = await getComingSoonKeys();
+  // The demo workspace records product demos, so its unreleased PAGES read as released —
+  // no teaser, no "Soon" tag, companions shown. Unreleased features stay hidden.
+  const demoPages = marked.size > 0 && (await isDemoWorkspace(userId));
   const comingSoon = new Set<string>();
+  const comingSoonMarked = new Set(marked);
   if (!previewingUnreleased) {
     for (const key of marked) {
+      if (demoPages && getSurface(key)?.kind === "page") {
+        comingSoonMarked.delete(key);
+        continue;
+      }
       // A page gets the coming-soon screen; a feature has no screen of its own to show, so
       // it is simply hidden, which every entry point and guard already respects.
       if (getSurface(key)?.kind === "page") comingSoon.add(key);
@@ -230,6 +264,16 @@ export async function resolveSurfaceVisibility(
       for (const companion of COMING_SOON_COMPANIONS[key] ?? []) hidden.add(companion);
     }
   }
+  // Tier rules follow the same exemption as hiding (an operator checking a page keeps it).
+  // Demo accounts (localhost, the showcase) are exempt exactly as `getEntitlements` lifts
+  // every plan gate for them, and so is the demo workspace. Read the plan only when a rule
+  // exists: most requests then cost nothing extra, and when one does `getEntitlements` is
+  // the call the app layout has already made this request.
+  const tierRules = await getTierRules();
+  const tierLocked =
+    tierRules.size === 0 || exempt || isDemoAccount(userId) || (await isDemoWorkspace(userId))
+      ? new Map<string, Plan[]>()
+      : tierLockedFor(tierRules, (await getEntitlements(userId)).plan);
   return {
     hidden,
     hiddenForUsers,
@@ -237,9 +281,31 @@ export async function resolveSurfaceVisibility(
     viewingAsUser,
     comingSoon,
     previewingUnreleased,
-    comingSoonMarked: new Set(marked),
+    comingSoonMarked,
     navOrder: await getNavOrder(),
+    tierLocked,
+    tierRules,
   };
+}
+
+/** "Radar is on Orbit Max and Lifetime." — the refusal a tier-locked page's actions give. */
+export function tierLockedMessage(label: string, plans: readonly Plan[]): string {
+  const names = plans.map((p) => PLAN_SHORT_LABELS[p]);
+  const list =
+    names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+  return `${label} is available on ${list} plans.`;
+}
+
+/**
+ * Throws the upgrade refusal when this viewer's plan may not open `surfaceKey`. A
+ * `PaywallError`, not `SurfaceHiddenError`, so the toast names the plan that opens it.
+ */
+async function throwIfTierLocked(userId: string, visibility: SurfaceVisibility, surfaceKey: string) {
+  const plans = visibility.tierLocked.get(surfaceKey);
+  if (!plans) return;
+  const label = getSurface(surfaceKey)?.label ?? surfaceKey;
+  const { plan } = await getEntitlements(userId);
+  throw new PaywallError("page", plan, tierLockedMessage(label, plans));
 }
 
 export async function isSurfaceVisible(
@@ -247,8 +313,8 @@ export async function isSurfaceVisible(
   surfaceKey: string
 ): Promise<boolean> {
   if (isAlwaysVisible(surfaceKey)) return true;
-  const { hidden } = await resolveSurfaceVisibility(userId);
-  return !hidden.has(surfaceKey);
+  const { hidden, tierLocked } = await resolveSurfaceVisibility(userId);
+  return !hidden.has(surfaceKey) && !tierLocked.has(surfaceKey);
 }
 
 /**
@@ -258,15 +324,16 @@ export async function isSurfaceVisible(
  * suggestion drawn from a feature the viewer cannot open yet.
  */
 export async function isSurfaceLive(userId: string, surfaceKey: string): Promise<boolean> {
-  const { hidden, comingSoon } = await resolveSurfaceVisibility(userId);
-  return !hidden.has(surfaceKey) && !comingSoon.has(surfaceKey);
+  const { hidden, comingSoon, tierLocked } = await resolveSurfaceVisibility(userId);
+  return !hidden.has(surfaceKey) && !comingSoon.has(surfaceKey) && !tierLocked.has(surfaceKey);
 }
 
-/** Throws `SurfaceHiddenError` unless this viewer may reach `surfaceKey`. */
+/** Throws `SurfaceHiddenError` (or `PaywallError` for a tier-locked page) unless this viewer may reach `surfaceKey`. */
 export async function requireVisibleSurface(userId: string, surfaceKey: string) {
-  if (!(await isSurfaceVisible(userId, surfaceKey))) {
-    throw new SurfaceHiddenError(surfaceKey);
-  }
+  if (isAlwaysVisible(surfaceKey)) return;
+  const visibility = await resolveSurfaceVisibility(userId);
+  if (visibility.hidden.has(surfaceKey)) throw new SurfaceHiddenError(surfaceKey);
+  await throwIfTierLocked(userId, visibility, surfaceKey);
 }
 
 /**
@@ -277,10 +344,11 @@ export async function requireVisibleSurface(userId: string, surfaceKey: string) 
  */
 export async function requireReleasedSurface(userId: string, surfaceKey: string) {
   if (isAlwaysVisible(surfaceKey)) return;
-  const { hidden, comingSoon } = await resolveSurfaceVisibility(userId);
-  if (hidden.has(surfaceKey) || comingSoon.has(surfaceKey)) {
+  const visibility = await resolveSurfaceVisibility(userId);
+  if (visibility.hidden.has(surfaceKey) || visibility.comingSoon.has(surfaceKey)) {
     throw new SurfaceHiddenError(surfaceKey);
   }
+  await throwIfTierLocked(userId, visibility, surfaceKey);
 }
 
 /**
@@ -400,5 +468,54 @@ export async function setNavOrder(adminUserId: string, keys: string[]): Promise<
     resourceType: "surface",
     resourceId: "nav-order",
     detail: { order: keys },
+  });
+}
+
+/**
+ * Limit a page to some tiers, or open it to every tier again.
+ *
+ * Every plan deletes the rule rather than storing a redundant one. An empty list is refused:
+ * a page nobody may open is what Hide is for, and a rule that locks out everyone (operators
+ * aside) would be that switch wearing a disguise. Audited like every other operator write.
+ */
+export async function setSurfaceTiers(
+  adminUserId: string,
+  surfaceKey: string,
+  plans: readonly string[]
+): Promise<void> {
+  const surface = getSurface(surfaceKey);
+  if (!surface) throw new Error(`Unknown surface: ${surfaceKey}`);
+  if (!canTierLock(surfaceKey)) {
+    throw new Error(`${surface.label} cannot be limited to some plans. ${surface.reason ?? ""}`.trim());
+  }
+  if (plans.some((p) => !(PLANS as readonly string[]).includes(p))) {
+    throw new Error("That tier list includes a plan that does not exist.");
+  }
+  const allowed = PLANS.filter((p) => plans.includes(p));
+  if (allowed.length === 0) {
+    throw new Error("Pick at least one plan. To close a page for everyone, hide it instead.");
+  }
+
+  const db = await getDb();
+  await db
+    .delete(appSurfaceFlags)
+    .where(like(appSurfaceFlags.surfaceKey, `${TIERS_FLAG_PREFIX}${surfaceKey}:%`));
+  if (allowed.length < PLANS.length) {
+    await db
+      .insert(appSurfaceFlags)
+      .values({
+        surfaceKey: `${TIERS_FLAG_PREFIX}${surfaceKey}:${allowed.join(",")}`,
+        hiddenBy: adminUserId,
+      })
+      .onConflictDoNothing();
+  }
+  invalidateHiddenSurfaceKeys();
+
+  await recordAdminAction({
+    adminUserId,
+    action: "product.surface.tiers",
+    resourceType: "surface",
+    resourceId: surfaceKey,
+    detail: { label: surface.label, plans: allowed },
   });
 }

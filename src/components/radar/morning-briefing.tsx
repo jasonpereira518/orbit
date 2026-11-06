@@ -123,7 +123,7 @@ function BriefingRow({ rec }: { rec: RecommendationCardData }) {
               <IntentLink href={`/contacts/${rec.contactId}`} className="truncate text-sm font-medium text-primary hover:underline">
                 {rec.contactName}
               </IntentLink>
-              <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">{KIND_LABELS[rec.kind]}</span>
+              <span className="hidden shrink-0 text-2xs text-muted-foreground sm:inline">{KIND_LABELS[rec.kind]}</span>
             </div>
             {/* On a phone the kind moves down here, so the name gets the row's width. */}
             <p className={cn("truncate text-xs text-muted-foreground", !line && "sm:hidden")}>
@@ -146,7 +146,7 @@ function BriefingRow({ rec }: { rec: RecommendationCardData }) {
             aria-label={rec.draft ? `Review draft for ${rec.contactName}` : `Draft a message to ${rec.contactName}`}
           >
             <PenLine className="size-3.5" aria-hidden />
-            <span className="hidden sm:inline">{rec.draft ? "Review draft" : "Draft"}</span>
+            <span className="max-sm:sr-only">{rec.draft ? "Review draft" : "Draft"}</span>
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger className={iconButton} disabled={actions.pending} aria-label={`Schedule a follow-up with ${rec.contactName}`}>

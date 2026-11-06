@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { Suspense } from "react";
 import Link from "next/link";
 import { BookOpen, Sparkles } from "lucide-react";
@@ -9,6 +10,8 @@ import { DossierSkeleton } from "@/components/knowledge/knowledge-skeletons";
 import { PeopleIndex } from "@/components/knowledge/people-index";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { cn } from "@/lib/utils";
+
+export const metadata = { title: "Knowledge" };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -27,6 +30,9 @@ export default async function KnowledgePage({
 }: {
   searchParams: Promise<{ view?: string; p?: string }>;
 }) {
+  const gate = await pageVisibilityGate("page.knowledge");
+  if (gate) return gate;
+
   const sp = await searchParams;
   const view = sp.view === "overview" ? "overview" : "people";
   const selectedId = view === "people" && typeof sp.p === "string" && UUID.test(sp.p) ? sp.p : null;

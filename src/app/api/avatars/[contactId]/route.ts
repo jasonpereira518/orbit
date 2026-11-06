@@ -5,10 +5,11 @@ import { contacts } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { isTourExampleSource } from "@/lib/onboarding-examples/marker";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { sharedAvatarUrlSql } from "@/lib/contact-avatar-sql";
+import { resolveLinkedInPhotoCached, type ProfileImageSource } from "@/lib/shared-avatars";
 import {
   downloadAndPersistAvatar,
   fetchGravatarPhotoUrl,
-  fetchLinkedInPhotoUrl,
   isDurableAvatarUrl,
   isUnusableAvatarUrl,
   AvatarSourceRateLimitError,
@@ -64,15 +65,33 @@ function retryLater(retryAfterSec: number) {
   });
 }
 
+/**
+ * A redirect to the photo. Cacheable for a day only when the caller versioned the URL
+ * (`avatarRouteUrl` adds `?v=`, a hash of the photo URL it can see): a changed photo is then
+ * a new URL, so a cached redirect can never point at an old one. `private` keeps it out of
+ * any shared cache: the route is per user. An unversioned request stays uncached as before.
+ */
+function photoRedirect(url: string, versioned: boolean) {
+  const res = NextResponse.redirect(url);
+  if (versioned) res.headers.set("Cache-Control", "private, max-age=86400");
+  return res;
+}
+
+/** `source` undefined = the stored photo was only made durable: keep its source. */
 async function persistProfileImage(
   contactId: string,
   userId: string,
-  dataUrl: string
+  dataUrl: string,
+  source?: ProfileImageSource
 ) {
   const db = await getDb();
   await db
     .update(contacts)
-    .set({ profileImageUrl: dataUrl, updatedAt: new Date() })
+    .set({
+      profileImageUrl: dataUrl,
+      ...(source ? { profileImageSource: source } : {}),
+      updatedAt: new Date(),
+    })
     .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
 }
 
@@ -81,7 +100,7 @@ async function persistProfileImage(
  * (legacy data URL or Blob), proxy/persist a usable remote image into
  * Blob storage, or resolve their LinkedIn OG image on demand.
  */
-export async function GET(_req: Request, { params }: Params) {
+export async function GET(req: Request, { params }: Params) {
   let userId: string;
   try {
     userId = await requireUserId();
@@ -89,6 +108,7 @@ export async function GET(_req: Request, { params }: Params) {
     return new NextResponse(null, { status: 401 });
   }
   const { contactId } = await params;
+  const versioned = new URL(req.url).searchParams.has("v");
   const db = await getDb();
 
   const contact = await db.query.contacts.findFirst({
@@ -100,6 +120,7 @@ export async function GET(_req: Request, { params }: Params) {
       email: true,
       source: true,
     },
+    extras: { sharedUrl: sharedAvatarUrlSql.as("shared_url") },
   });
 
   if (!contact) {
@@ -112,6 +133,9 @@ export async function GET(_req: Request, { params }: Params) {
     return miss(404);
   }
 
+  // A shared LinkedIn photo (never an upload-sourced contact's) outranks the contact's own.
+  if (contact.sharedUrl) return photoRedirect(contact.sharedUrl, versioned);
+
   const stored = contact.profileImageUrl?.trim() || "";
 
   if (stored.startsWith("data:image/")) {
@@ -121,7 +145,7 @@ export async function GET(_req: Request, { params }: Params) {
 
   // Already durably stored in Blob — send the browser straight there.
   if (isDurableAvatarUrl(stored)) {
-    return NextResponse.redirect(stored);
+    return photoRedirect(stored, versioned);
   }
 
   // Proxy / persist a usable remote URL (Apollo / LinkedIn CDN, etc.) into Blob.
@@ -148,17 +172,24 @@ export async function GET(_req: Request, { params }: Params) {
       await consumeBucket("avatar.resolve", userId, RATE_LIMITS.avatarResolve);
 
       let photoUrl: string | null = null;
+      let source: ProfileImageSource = "public";
       if (linkedinUrl) {
-        photoUrl = await fetchLinkedInPhotoUrl(contactId, linkedinUrl, userId);
+        // Cache-first: a slug another account already resolved costs no lookup at all.
+        const linkedIn = await resolveLinkedInPhotoCached(contactId, linkedinUrl, userId);
+        if (linkedIn && typeof linkedIn === "object") {
+          return NextResponse.redirect(linkedIn.sharedUrl);
+        }
+        photoUrl = linkedIn;
       }
       // Same ladder as the backfill: an email-only contact must resolve here too,
       // or on-demand rows would silently never fill in for them.
       if (!photoUrl && email) {
         photoUrl = await fetchGravatarPhotoUrl(contactId, email);
+        source = "gravatar";
       }
 
       if (photoUrl) {
-        await persistProfileImage(contactId, userId, photoUrl);
+        await persistProfileImage(contactId, userId, photoUrl, source);
         return NextResponse.redirect(photoUrl);
       }
     } catch (err) {

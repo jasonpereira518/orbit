@@ -12,6 +12,8 @@
  */
 export const IMPORT_COPY = {
   previewFailed: "Couldn’t read that file — check it and try again",
+  tooLarge:
+    "That file is too big to upload in one go — import Connections.csv or messages.csv on its own instead of the whole archive, or split the file",
   importFailed: "That import didn’t finish — try again?",
   nothingRecognised:
     "Nothing in that drop looked like contacts, messages or a calendar — the Connections.csv from your LinkedIn export is a good place to start",

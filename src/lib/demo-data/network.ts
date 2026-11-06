@@ -45,6 +45,8 @@ export type DemoPerson = {
   title: string;
   company?: string;
   school?: string;
+  /** Free text; groups single-member orgs into an industry constellation. */
+  industry?: string;
   location?: string;
   email?: string;
   linkedinUrl?: string;

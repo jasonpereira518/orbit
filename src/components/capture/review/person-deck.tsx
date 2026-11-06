@@ -59,6 +59,9 @@ export function draftFromItem(item: BulkNotePersonPreview, decision: CaptureDeci
       website: edits.website ?? item.parsed.website ?? "",
       school: edits.school ?? item.parsed.school ?? "",
       industry: edits.industry ?? item.parsed.industry ?? "",
+      email: edits.email ?? item.parsed.email ?? "",
+      linkedinUrl: edits.linkedinUrl ?? item.parsed.linkedin_url ?? "",
+      location: edits.location ?? item.parsed.location ?? "",
     },
     mergeContactId: decision ? decision.mergeContactId : defaultMergeId(item, preferredContactId),
     closeness: clampCloseness(decision?.relationshipScore ?? item.parsed.relationship_score_suggestion),
@@ -93,6 +96,9 @@ export function decisionFromDraft(kind: CaptureDecisionKind, index: number, draf
       website: draft.fields.website.trim() || null,
       school: draft.fields.school.trim() || null,
       industry: draft.fields.industry.trim() || null,
+      email: draft.fields.email.trim() || null,
+      linkedinUrl: draft.fields.linkedinUrl.trim() || null,
+      location: draft.fields.location.trim() || null,
     },
     decidedAt: new Date().toISOString(),
   };
@@ -261,7 +267,7 @@ export function PersonDeck({
           >
             <div className="flex items-center gap-3 pr-16">
               <div className="min-w-0">
-                <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Up next</p>
+                <p className="text-2xs font-medium uppercase tracking-wider text-muted-foreground">Up next</p>
                 <p className="truncate font-[family-name:var(--font-display)] text-xl text-ink">{next.parsed.name || "Unnamed person"}</p>
               </div>
             </div>
@@ -320,7 +326,7 @@ export function PersonDeck({
           <Check className="size-6" />
         </Button>
       </div>
-      <p className="hidden text-center text-[11px] text-muted-foreground md:block">
+      <p className="hidden text-center text-2xs text-muted-foreground md:block">
         <ArrowLeft className="inline size-3" /> not now · <span className="font-medium">→</span> keep · <span className="font-medium">↓</span> later · drag the name to swipe
       </p>
     </div>

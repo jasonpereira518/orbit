@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { Suspense } from "react";
 import { getGraphData } from "@/actions/graph";
@@ -11,12 +12,17 @@ import { NetworkGraphLazy } from "@/components/graph/network-graph-lazy";
 import { STAGE_GROUND } from "@/lib/graph/stage-layers";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
+export const metadata = { title: "Constellation" };
+
 /**
  * The heading paints from the layout immediately; the full-network scan streams in behind
  * a Suspense boundary. Before, the page awaited the scan at the top, so the first byte
  * waited for the whole payload — on a large network, seconds of blank.
  */
-export default function GraphPage() {
+export default async function GraphPage() {
+  const gate = await pageVisibilityGate("page.graph");
+  if (gate) return gate;
+
   return (
     <div className="-mx-1 space-y-3 overflow-hidden md:-mx-2">
       <RenderStamp />
@@ -32,7 +38,7 @@ export default function GraphPage() {
       */}
       <div className="flex shrink-0 items-end justify-between gap-3 px-1">
         <div>
-          <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-primary">
+          <p className="text-2xs font-medium uppercase tracking-[0.2em] text-primary">
             Star chart
           </p>
           <h1 className="mt-0.5 font-[family-name:var(--font-display)] text-2xl text-ink md:text-3xl">

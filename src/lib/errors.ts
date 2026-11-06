@@ -196,6 +196,12 @@ export function withReference(message: string, ref: string | null | undefined): 
 }
 
 /**
+ * A timeout or an abort. The OpenAI and Anthropic SDKs' own abort error is named plain `Error`
+ * and says only "Request was aborted.", so neither the name nor the usual words would match.
+ */
+const TIMED_OUT = /timeout|timed out|ETIMEDOUT|AbortError|request was aborted/i;
+
+/**
  * The message plus the error's name, for classification only. `aiSignal` aborts a hung call,
  * and SDKs surface that as an `AbortError` whose message ("The operation was aborted.")
  * says nothing about time — keyed on the message alone it read as "couldn’t answer that"
@@ -277,7 +283,7 @@ export function aiProviderErrorMessage(err: unknown, provider: string): string {
   if (/rate limit|429|quota|resource.?exhausted/i.test(base)) {
     return AI_FAILURE_COPY.rate_limit(provider);
   }
-  if (/timeout|timed out|ETIMEDOUT|AbortError/i.test(base)) {
+  if (TIMED_OUT.test(base)) {
     return AI_FAILURE_COPY.timeout(provider);
   }
   if (/model|not found|404/i.test(base)) {
@@ -518,7 +524,7 @@ export function classifyAiError(err: unknown): AiErrorKind {
   if (OPENROUTER_PAYMENT_REQUIRED.test(base)) return "quota";
   if (isQuotaExhaustion(base)) return "quota";
   if (/rate limit|429|quota|resource.?exhausted/i.test(base)) return "rate_limit";
-  if (/timeout|timed out|ETIMEDOUT|AbortError/i.test(base)) return "timeout";
+  if (TIMED_OUT.test(base)) return "timeout";
   if (/model|not found|404/i.test(base)) return "model_unavailable";
   return "other";
 }

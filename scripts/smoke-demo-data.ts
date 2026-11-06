@@ -14,6 +14,7 @@ import {
   actionItems,
   apiKeys,
   chatThreads,
+  duplicateSuggestions,
   closenessCohorts,
   companies,
   contactBriefs,
@@ -49,6 +50,8 @@ import { buildExtendedCast } from "../src/lib/demo-data/seed-extended";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { resolveRecruiterPii } from "../src/lib/recruiters";
 import { needsOnboarding } from "../src/lib/onboarding";
+import { buildConstellationClusters, toNamedGraphClusters } from "../src/lib/constellation-clusters";
+import { seedDemoWorkspace } from "../src/lib/demo-data/seed";
 
 const FRESH = "smoke-demo-fresh";
 const REMOTE_USER = "smoke-demo-remote";
@@ -57,7 +60,12 @@ const EXISTING = "smoke-demo-existing";
 const SECOND = "smoke-demo-second";
 /** Seeded with `ORBIT_DEMO_PERSONA=student`. */
 const STUDENT = "smoke-demo-student";
-const DEMO_RECRUITER_EMAILS = ["alex@riveratalent.example", "morgan.blake@insightglobal.example", "marcus.lee@example.com"];
+/** Seeded with `persona: "gillings"`. */
+const GILLINGS_USER = "smoke-demo-gillings";
+const DEMO_RECRUITER_EMAILS = [
+  "alex@riveratalent.example", "morgan.blake@insightglobal.example", "marcus.lee@example.com",
+  "tasha.greene@rti.example", "mark.delaney@deloitte.example", "erica.simmons@unchealth.example",
+];
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -84,11 +92,11 @@ const contactCount = (userId: string) => rowsFor(contacts, contacts.userId, user
  */
 async function cleanup() {
   const db = await getDb();
-  const users = [FRESH, REMOTE_USER, EXISTING, SECOND, STUDENT];
+  const users = [FRESH, REMOTE_USER, EXISTING, SECOND, STUDENT, GILLINGS_USER];
   for (const table of [
     suggestedReminders, reminders, reminderLists, outreachCampaigns, events, chatThreads,
     recruiterMessages, userRecruiterLinks, imports, userGoals, contacts, companies, tags,
-    closenessCohorts, noteBatches, meetingSessions, apiKeys, userSettings,
+    closenessCohorts, noteBatches, meetingSessions, apiKeys, duplicateSuggestions, userSettings,
   ]) {
     await db.delete(table).where(inArray(table.userId, users));
   }
@@ -103,7 +111,7 @@ async function main() {
   delete env.ORBIT_DEMO_DATA;
   delete env.ORBIT_DEMO_PERSONA;
   const db = await getDb();
-  for (const u of [FRESH, REMOTE_USER, EXISTING, SECOND, STUDENT]) await ensureUserSettings(u);
+  for (const u of [FRESH, REMOTE_USER, EXISTING, SECOND, STUDENT, GILLINGS_USER]) await ensureUserSettings(u);
 
   try {
     console.log("\noff localhost");
@@ -256,6 +264,53 @@ async function main() {
     check("every student email is on a reserved example domain", STUDENT_PEOPLE.every((p) => !p.email || /@([a-z0-9-]+\.)*example(\.[a-z]+)?$/.test(p.email)));
     check("names are unique", new Set(STUDENT_PEOPLE.map((p) => p.fullName)).size === STUDENT_PEOPLE.length);
     check("the founder persona is still the default", (await contactCount(FRESH)) === people.length);
+
+    console.log("\nthe gillings persona");
+    const { GILLINGS_PEOPLE, GILLINGS_LISTS, GILLINGS_GOALS } = await import("../src/lib/demo-data/gillings");
+    const { GILLINGS_REAL_PEOPLE } = await import("../src/lib/demo-data/gillings-real");
+    const gSummary = await seedDemoWorkspace(GILLINGS_USER, { persona: "gillings" });
+    const gRows = await db
+      .select({ fullName: contacts.fullName, email: contacts.email, linkedinUrl: contacts.linkedinUrl, company: contacts.company, school: contacts.school, industry: contacts.industry, photo: contacts.profileImageUrl })
+      .from(contacts)
+      .where(eq(contacts.userId, GILLINGS_USER));
+    check("about a hundred people", gRows.length === GILLINGS_PEOPLE.length && gRows.length >= 95 && gRows.length <= 110, String(gRows.length));
+    check("every one has a photo", gRows.every((r) => Boolean(r.photo)), gRows.filter((r) => !r.photo).map((r) => r.fullName).join(", "));
+    check("over thirty real public figures", GILLINGS_REAL_PEOPLE.length >= 30, String(GILLINGS_REAL_PEOPLE.length));
+    const realNames = new Set(GILLINGS_REAL_PEOPLE.map((r) => r.person.fullName));
+    check(
+      "real people carry no email or LinkedIn URL",
+      gRows.filter((r) => realNames.has(r.fullName)).every((r) => !r.email && !r.linkedinUrl)
+    );
+    check(
+      "real people only appear in public settings",
+      GILLINGS_REAL_PEOPLE.every((r) => (r.person.touches ?? []).every((t) => ["event", "note", "in_person"].includes(t.type)))
+    );
+    check("every other email is on a reserved example domain", gRows.every((r) => !r.email || /@([a-z0-9-]+\.)*example(\.[a-z]+)?$/.test(r.email)));
+    check("names are unique", new Set(gRows.map((r) => r.fullName)).size === gRows.length);
+    const pendingDupes = await db.select({ c: duplicateSuggestions.confidence }).from(duplicateSuggestions).where(eq(duplicateSuggestions.userId, GILLINGS_USER));
+    check("one duplicate pair waits for review, under the auto-merge line", pendingDupes.length === 1 && pendingDupes[0].c < 0.85);
+    const gLists = await db
+      .select({ name: reminderLists.name })
+      .from(reminders)
+      .innerJoin(reminderLists, eq(reminders.listId, reminderLists.id))
+      .where(eq(reminders.userId, GILLINGS_USER));
+    const gListNames = new Set(gLists.map((r) => r.name));
+    check("every gillings list has a reminder in it", GILLINGS_LISTS.every((n) => gListNames.has(n)), [...gListNames].join(", "));
+    check("about twenty-five reminders", (gSummary.reminders ?? 0) >= 20, String(gSummary.reminders));
+    const gGoals = await db.select({ text: userGoals.text }).from(userGoals).where(eq(userGoals.userId, GILLINGS_USER));
+    check("public-health goals", gGoals.length === GILLINGS_GOALS.length);
+    const { clusters } = buildConstellationClusters(gRows.map((r, i) => ({ id: String(i), ...r })));
+    const named = toNamedGraphClusters(clusters);
+    const byKind = (k: string) => named.filter((c) => c.kind === k);
+    check(
+      "the constellation clusters by company, school and industry",
+      byKind("company").length >= 8 && byKind("school").length >= 1 && byKind("industry").length >= 3,
+      named.map((c) => `${c.kind}:${c.name}(${c.count})`).join(", ")
+    );
+    for (const key of ["captures", "meetings", "opportunities", "careerMoves", "signals", "campaigns", "recruiters", "events", "chatThreads"]) {
+      check(`seeds ${key}`, (gSummary[key] ?? 0) > 0, JSON.stringify(gSummary));
+    }
+    check("several recorded meetings", (gSummary.meetings ?? 0) >= 3, String(gSummary.meetings));
   } finally {
     setNodeEnv(priorNodeEnv);
     await cleanup();

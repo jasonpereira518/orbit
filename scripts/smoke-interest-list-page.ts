@@ -168,9 +168,19 @@ async function main() {
   const hrefs = hrefsOf(form);
   check(
     "it links only to itself and its privacy notice",
-    hrefs.length > 0 && hrefs.every((h) => h === "#interest-join" || h === "/interest/privacy"),
+    hrefs.length > 0 &&
+      // The sign-up-open copy (app domain, stealth off) is the one place that may point at /sign-up.
+      hrefs.every((h) => h === "#interest-join" || h === "/interest/privacy" || (h === "/sign-up" && findProp(form, "signupOpen") !== undefined)),
     hrefs.join(", ")
   );
+  // No request here, so this reads as the app domain: sign-up is open exactly when stealth is off.
+  const { getSiteMode } = await import("../src/lib/site-access");
+  check(
+    "the app domain gives the hero the sign-up-open copy exactly when stealth is off",
+    (findProp(form, "signupOpen") !== undefined) === !(await getSiteMode()).stealth,
+    String(findProp(form, "signupOpen"))
+  );
+  check("…and the path agrees", (findProp(await Page(sp({ me: TOKEN })), "openStops") !== undefined) === (findProp(form, "signupOpen") !== undefined));
   check("the hero gets the waitlist page URL, not the app's", String(findProp(form, "pageUrl")).endsWith("/interest"));
 
   // The poll lives in a client component this walk cannot enter; its props are the contract.
@@ -237,13 +247,21 @@ async function main() {
   const meta = await mod.generateMetadata(sp({ me: TOKEN }));
   const og = meta.openGraph as { images?: unknown } | undefined;
   check("ticket metadata carries the image", JSON.stringify(og?.images ?? "").includes(`ticket-image?token=${TOKEN}`), JSON.stringify(og));
-  check("ticket metadata keeps the one title", meta.title === "Early access — the future of networking", String(meta.title));
+  // Absolute, so the root layout's "%s · Orbit" template never brands the waitlist's tab.
+  check(
+    "ticket metadata keeps the one title",
+    (meta.title as { absolute?: string } | null | undefined)?.absolute === "Early access — the future of networking",
+    JSON.stringify(meta.title)
+  );
   check("no metadata names the product", !/orbit/i.test(JSON.stringify(meta)), JSON.stringify(meta));
   check("the page swaps out the product's icon", JSON.stringify(meta.icons ?? "").includes("/waitlist/icon.png"));
   const refMeta = await mod.generateMetadata(sp({ ref: TOKEN }));
   check("ref metadata carries the image too", JSON.stringify(refMeta.openGraph ?? "").includes("ticket-image"));
   const plain = await mod.generateMetadata(sp({}));
-  check("plain metadata is the default", plain.title === "Early access — the future of networking");
+  check(
+    "plain metadata is the default",
+    (plain.title as { absolute?: string } | null | undefined)?.absolute === "Early access — the future of networking"
+  );
   check("plain metadata still previews with the generic card", JSON.stringify(plain.openGraph ?? "").includes("ticket-image"));
 
   // --- the admin's switch for the product demo

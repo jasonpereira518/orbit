@@ -1,5 +1,6 @@
 /**
- * The LinkedIn files about YOU: Profile.csv, Positions.csv, Skills.csv, SavedJobAlerts.csv.
+ * The LinkedIn files about YOU: Profile.csv, Positions.csv, Skills.csv, SavedJobAlerts.csv,
+ * Education.csv.
  *
  * Fixtures use the real header rows and the real Java-style `QUERY_CONTEXT` string (the format
  * that makes these worth a test: it is not JSON, locations are numeric geo ids, and the one
@@ -9,6 +10,7 @@
  */
 import {
   parseLinkedInAlertsCsv,
+  parseLinkedInEducationCsv,
   parseLinkedInPositionsCsv,
   parseLinkedInProfileCsv,
   parseLinkedInSkillsCsv,
@@ -75,9 +77,20 @@ const keywords = parseLinkedInAlertsCsv(ALERTS);
 check("reads keywords= only, de-duplicated, skipping an alert with none", JSON.stringify(keywords) === JSON.stringify(["Software Engineer", "Platform Engineer"]), JSON.stringify(keywords));
 check("a file with no keywords gives an empty list, not an error", parseLinkedInAlertsCsv("ALERT_PARAMETERS,QUERY_CONTEXT,SAVED_SEARCH_ID\n" + ALERT_QUERY(null, "9") + "\n").length === 0);
 
+console.log("\nEducation.csv");
+const EDUCATION = [
+  "School Name,Start Date,End Date,Notes,Degree Name,Activities",
+  "University of North Carolina at Chapel Hill,2021,2025,,BS Computer Science,",
+  "stanford university,2025,2027,,MS,",
+  "University of North Carolina at Chapel Hill,2019,2021,,,",
+].join("\n");
+const schools = parseLinkedInEducationCsv(EDUCATION);
+check("reads School Name only, de-duplicated", JSON.stringify(schools) === JSON.stringify(["University of North Carolina at Chapel Hill", "stanford university"]), JSON.stringify(schools));
+check("a file that is not Education.csv is refused", throwsExport(() => parseLinkedInEducationCsv("Name\nGo\n")));
+
 console.log("\nthe review");
-const none = { career: null, senderBio: null };
-const typed = { career: { profile: { headline: "Old headline" }, skills: ["Go"] }, senderBio: "I am a founder looking for design partners" };
+const none = { career: null, senderBio: null, schools: [] };
+const typed = { career: { profile: { headline: "Old headline" }, skills: ["Go"] }, senderBio: "I am a founder looking for design partners", schools: ["Stanford University"] };
 let fields = previewYou("linkedin_profile", PROFILE, none);
 check("every offered field has a stable key", fields.map((f) => f.key).join() === "profile.headline,profile.industry,profile.location,profile.summary,about", fields.map((f) => f.key).join());
 check("with no About line typed, the About field starts ticked", fields.find((f) => f.key === "about")?.defaultOn === true);
@@ -102,6 +115,13 @@ patch = patchYou("linkedin_positions", POSITIONS, ["role"], none, now);
 check("role patch", patch?.career.role?.company === "Acme Cloud");
 patch = patchYou("linkedin_alerts", ALERTS, ["roleKeywords"], none, now);
 check("alert patch", patch?.career.roleKeywords?.join() === "Software Engineer,Platform Engineer");
+check("non-education patches leave schools alone", patch?.schools === null);
+patch = patchYou("linkedin_education", EDUCATION, ["schools"], typed, now);
+check(
+  "education adds to the schools typed in Settings, case-insensitively, never replacing them",
+  patch?.schools?.join("|") === "Stanford University|University of North Carolina at Chapel Hill",
+  patch?.schools?.join("|")
+);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nsmoke-linkedin-you: all checks passed");
 if (failures) process.exit(1);

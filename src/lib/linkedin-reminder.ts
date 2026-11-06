@@ -1,9 +1,8 @@
 import { cache } from "react";
-import { and, eq, gte, inArray, isNull, lte } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import { getDb } from "@/db";
 import { imports, userSettings } from "@/db/schema";
-import { LINKEDIN_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-connections";
-import { LINKEDIN_MESSAGES_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-messages";
+import { LINKEDIN_UPLOAD_IMPORT_TYPES } from "@/lib/import-adapters/linkedin-import-types";
 import {
   LINKEDIN_REMINDER_MAX_AGE_MS,
   LINKEDIN_REMINDER_MIN_AGE_MS,
@@ -33,11 +32,31 @@ export const hasLinkedInImport = cache(async (userId: string): Promise<boolean> 
   const row = await db.query.imports.findFirst({
     where: and(
       eq(imports.userId, userId),
-      inArray(imports.importType, [LINKEDIN_IMPORT_TYPE, LINKEDIN_MESSAGES_IMPORT_TYPE]),
+      inArray(imports.importType, [...LINKEDIN_UPLOAD_IMPORT_TYPES]),
     ),
     columns: { id: true },
   });
   return Boolean(row);
+});
+
+/**
+ * When the user last brought LinkedIn in: the newest finished, not-undone upload of either
+ * file or the whole export. Drives the refresh reminder (`linkedInRefreshLevel`); the bell reads the same rule
+ * through `account-health.ts`.
+ */
+export const getLastLinkedInImportAt = cache(async (userId: string): Promise<Date | null> => {
+  const db = await getDb();
+  const row = await db.query.imports.findFirst({
+    where: and(
+      eq(imports.userId, userId),
+      inArray(imports.importType, [...LINKEDIN_UPLOAD_IMPORT_TYPES]),
+      eq(imports.status, "completed"),
+      isNull(imports.revertedAt),
+    ),
+    orderBy: desc(imports.createdAt),
+    columns: { createdAt: true },
+  });
+  return row?.createdAt ?? null;
 });
 
 /**

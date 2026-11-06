@@ -34,7 +34,7 @@ async function ownedPending(userId: string, id: string) {
 export async function scheduleRecommendationForUser(userId: string, id: string, days: ScheduleDays) {
   const rec = await ownedPending(userId, id);
   if (!rec || rec.status !== "pending") return { ok: false as const };
-  const result = await scheduleContactFollowUpForUser(userId, rec.contactId, days);
+  const result = await scheduleContactFollowUpForUser(userId, rec.contactId, days, { origin: "suggestion" });
   const db = await getDb();
   const now = new Date();
   await db

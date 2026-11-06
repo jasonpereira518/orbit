@@ -31,8 +31,8 @@ check("the onboarding page loads the open capture job", onboardingPage.includes(
 check("the onboarding capture step runs on CaptureFlow, not the job-less panel",
   /CaptureFlow/.test(captureStep) && /initialJob=/.test(captureStep) && !captureStep.includes("BulkNotesPanel"));
 const captureFlow = readFileSync("src/components/capture/capture-flow.tsx", "utf8");
-check("embedded capture never opens on the meeting tab (tabs hidden, no meetings)",
-  /onSaved && initial === "meeting" \? "messy" : initial/.test(captureFlow));
+check("capture never opens on the meeting tab (recording lives on /meetings)",
+  /const opened = initial === "meeting" \? "messy" : initial;/.test(captureFlow));
 check("embedded capture hands off only a save it saw happen, never a stale saved job",
   /seenUnsavedRef\.current !== job\.id\) \{\s*clearCaptureJob\(\);\s*return;/.test(captureFlow));
 const chapters = readFileSync("src/components/onboarding/highlights/chapters.ts", "utf8");

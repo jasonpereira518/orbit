@@ -72,7 +72,7 @@ export async function AiOperationsPanel() {
       ) : aiOps.adoption.length === 0 ? (
         <EmptyState>No AI operations recorded in the last 30 days.</EmptyState>
       ) : (
-        <AdminTable
+        <AdminTable label="AI operations used"
           minWidth="sm"
           head={
             <>
@@ -85,7 +85,14 @@ export async function AiOperationsPanel() {
         >
           {aiOps.adoption.map((row) => (
             <tr key={row.operation} className="border-b border-border/40 last:border-b-0">
-              <Td className="font-mono text-xs">{row.operation}</Td>
+              <Td className="font-mono text-xs">
+                {row.operation}
+                {row.background && (
+                  <span className="ml-2 rounded bg-muted px-1.5 py-0.5 font-sans text-3xs text-muted-foreground">
+                    runs in the background
+                  </span>
+                )}
+              </Td>
               <Td numeric>{row.users}</Td>
               <Td numeric className="text-muted-foreground">
                 {row.calls}
@@ -125,7 +132,7 @@ export async function ArtifactsPanel() {
       {!artifacts ? (
         <EmptyState>Row counts are unavailable.</EmptyState>
       ) : (
-        <AdminTable
+        <AdminTable label="Durable artifacts"
           minWidth="none"
           head={
             <>
@@ -164,7 +171,7 @@ export async function DataQualityPanel() {
       {!quality ? (
         <EmptyState>Data-quality checks are unavailable.</EmptyState>
       ) : (
-        <AdminTable
+        <AdminTable label="Data quality"
           minWidth="none"
           head={
             <>

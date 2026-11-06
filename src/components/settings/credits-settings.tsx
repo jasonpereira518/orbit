@@ -77,7 +77,7 @@ export function CreditsSettings() {
                 </a>
               </p>
               {credit.detail ? (
-                <p className="text-xs text-muted-foreground/80">
+                <p className="text-xs text-muted-foreground-subtle">
                   {credit.detail}
                 </p>
               ) : null}

@@ -7,6 +7,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { SourceChip } from "@/components/chat/source-chip";
 import type { EvidenceSource } from "@/lib/chat-evidence";
+import { listToMarkdown, splitDirectives, type ChatBlocks } from "@/lib/chat-directives";
 import { cn } from "@/lib/utils";
 import { safeChatHref } from "@/lib/safe-links";
 
@@ -97,7 +98,8 @@ function linkNames(children: ReactNode, matcher: NameMatcher | null): ReactNode 
 
 /** Which number a citation's numbered chip shows, and the message its snippet is fetched from. */
 type EvidenceContext = {
-  messageId: string;
+  /** Absent while the answer streams: the chips are numbered but have nothing to open yet. */
+  messageId?: string;
   /** `[eN]`'s underlying id → the number the chip shows, by order of first appearance. */
   numberOf: Map<string, number>;
 };
@@ -177,6 +179,15 @@ function buildComponents(matcher: NameMatcher | null, evidence: EvidenceContext 
     a: ({ href, children }) => {
       const safe = safeChatHref(href);
       if (!safe) return <span className="font-medium">{children}</span>;
+      // An in-app link — a list block's people, a contact the answer names — stays in the
+      // tab, like every other link to a profile in the app.
+      if (safe.startsWith("/")) {
+        return (
+          <Link href={safe} className="font-medium text-primary underline underline-offset-2">
+            {children}
+          </Link>
+        );
+      }
       return (
         <a
           href={safe}
@@ -229,15 +240,24 @@ export const ChatMarkdown = memo(function ChatMarkdown({
   people,
   messageId,
   evidence,
+  blocks,
+  streaming = false,
+  renderPeople,
 }: {
   children: string;
   className?: string;
   /** People this answer is grounded in; their names become links. */
   people?: readonly ChatPerson[];
-  /** Required alongside `evidence` — the row `SourceChip` fetches a clicked snippet from. */
+  /** The saved row `SourceChip` fetches a snippet from; until then the chips do not open. */
   messageId?: string;
   /** This answer's citations, keyed by `[eN]` id — see `@/lib/chat-evidence`. */
   evidence?: Readonly<Record<string, EvidenceSource>>;
+  /** What `::list` blocks show — see `@/lib/chat-directives`. A list it lacks renders nothing. */
+  blocks?: ChatBlocks | null;
+  /** Still arriving: a half-written directive or citation is held back rather than shown raw. */
+  streaming?: boolean;
+  /** Renders a `::people` block. Without it the block is left out (the caller shows them elsewhere). */
+  renderPeople?: (ids: string[]) => ReactNode;
 }) {
   // Keyed on the names and hrefs, not the array's identity: the caller builds a fresh array
   // each render, and rebuilding the components would remount every rendered node.
@@ -249,7 +269,7 @@ export const ChatMarkdown = memo(function ChatMarkdown({
   // "cited first" and "id order" usually disagree, and 1, 2, 3 reading naturally is the point.
   const evidenceKey = evidence ? Object.keys(evidence).sort().join(",") : "";
   const evidenceContext = useMemo<EvidenceContext | null>(() => {
-    if (!evidence || !messageId) return null;
+    if (!evidence) return null;
     const numberOf = new Map<string, number>();
     let n = 0;
     for (const m of children.matchAll(/\[e(\d+)\]/g)) {
@@ -269,15 +289,28 @@ export const ChatMarkdown = memo(function ChatMarkdown({
     [key, evidenceContext]
   );
 
-  return (
-    <div className={cn("chat-markdown", className)}>
-      <ReactMarkdown
-        remarkPlugins={REMARK_PLUGINS}
-        components={components}
-        disallowedElements={DISALLOWED_ELEMENTS}
-      >
-        {normalizeChatMarkdown(children)}
+  const segments = useMemo(() => splitDirectives(children, { streaming }), [children, streaming]);
+  // One wrapper per segment: each run's last element drops its bottom margin, so the gap
+  // between a paragraph and the block after it comes from here.
+  const markdown = (text: string, key: number) => (
+    <div key={key}>
+      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components} disallowedElements={DISALLOWED_ELEMENTS}>
+        {text}
       </ReactMarkdown>
+    </div>
+  );
+
+  return (
+    <div className={cn("chat-markdown space-y-2", className)}>
+      {segments.map((segment, i) => {
+        if (segment.kind === "text") return markdown(normalizeChatMarkdown(segment.text), i);
+        if (segment.kind === "list") {
+          const list = blocks?.lists[segment.key];
+          // The same markdown the stored answer has in this place, so live and reloaded match.
+          return list ? markdown(listToMarkdown(list), i) : null;
+        }
+        return renderPeople ? <div key={i}>{renderPeople(segment.ids)}</div> : null;
+      })}
     </div>
   );
 });

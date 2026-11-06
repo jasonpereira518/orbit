@@ -20,14 +20,17 @@ import {
   LINKEDIN_REMINDER_MIN_AGE_MS,
   isLinkedInNudgeVisible,
   isLinkedInReminderDue,
+  linkedInRefreshLevel,
 } from "../src/lib/linkedin-export";
 import {
   claimLinkedInReminderFor,
+  getLastLinkedInImportAt,
   getLinkedInReminderState,
   markLinkedInExportRequestedFor,
 } from "../src/lib/linkedin-reminder";
 import { LINKEDIN_IMPORT_TYPE } from "../src/lib/import-adapters/linkedin-connections";
 import { LINKEDIN_MESSAGES_IMPORT_TYPE } from "../src/lib/import-adapters/linkedin-messages";
+import { LINKEDIN_EXPORT_IMPORT_TYPE } from "../src/lib/linkedin-export-type";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 const HOUR = 60 * 60 * 1000;
@@ -38,7 +41,8 @@ const FRESH = "smoke-li-reminder-fresh";
 const OLD = "smoke-li-reminder-old";
 const IMPORTED = "smoke-li-reminder-imported";
 const MESSAGES_ONLY = "smoke-li-reminder-messages";
-const USERS = [DUE, FRESH, OLD, IMPORTED, MESSAGES_ONLY];
+const EXPORT_ONLY = "smoke-li-reminder-export";
+const USERS = [DUE, FRESH, OLD, IMPORTED, MESSAGES_ONLY, EXPORT_ONLY];
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -99,6 +103,22 @@ function pureChecks() {
     "hidden past 30 days",
     !nudge({ requestedAt: ago(HOUR), createdAt: ago(LINKEDIN_NUDGE_MAX_AGE_MS + HOUR) }),
   );
+
+  console.log("\nrefresh reminder (pure)");
+  check("never imported: the first-import reminder owns it", linkedInRefreshLevel(null, now) === null);
+  check("29 days: fresh", linkedInRefreshLevel(ago(29 * DAY), now) === null);
+  check("30 days: bell", linkedInRefreshLevel(ago(30 * DAY), now) === "notify");
+  check("89 days: still the bell", linkedInRefreshLevel(ago(89 * DAY), now) === "notify");
+  check("90 days: urgent, top of the dashboard", linkedInRefreshLevel(ago(90 * DAY), now) === "urgent");
+
+  console.log("\nrefresh reminder interval (the LinkedIn page's choice)");
+  check("null keeps the default month", linkedInRefreshLevel(ago(30 * DAY), now, null) === "notify");
+  check("off: never, however stale", linkedInRefreshLevel(ago(400 * DAY), now, 0) === null);
+  check("every 3 months: 60 days is fresh", linkedInRefreshLevel(ago(60 * DAY), now, 90) === null);
+  check("every 3 months: 90 days rings the bell", linkedInRefreshLevel(ago(90 * DAY), now, 90) === "notify");
+  check("every 3 months: urgent at three intervals, not 90 days", linkedInRefreshLevel(ago(269 * DAY), now, 90) === "notify");
+  check("every 3 months: 270 days is urgent", linkedInRefreshLevel(ago(270 * DAY), now, 90) === "urgent");
+  check("every 2 months: 59 days is fresh", linkedInRefreshLevel(ago(59 * DAY), now, 60) === null);
 }
 
 async function main() {
@@ -113,11 +133,13 @@ async function main() {
     const oldRow = await createdAgo(OLD, 20 * DAY);
     const importedRow = await createdAgo(IMPORTED, 25 * HOUR);
     const messagesRow = await createdAgo(MESSAGES_ONLY, 25 * HOUR);
+    const exportRow = await createdAgo(EXPORT_ONLY, 25 * HOUR);
 
     const db = await getDb();
     await db.insert(imports).values([
       { userId: IMPORTED, importType: LINKEDIN_IMPORT_TYPE, status: "completed" },
       { userId: MESSAGES_ONLY, importType: LINKEDIN_MESSAGES_IMPORT_TYPE, status: "completed" },
+      { userId: EXPORT_ONLY, importType: LINKEDIN_EXPORT_IMPORT_TYPE, status: "completed" },
     ]);
 
     check("25h, nothing imported: due", (await getLinkedInReminderState(DUE, dueRow)).due);
@@ -131,6 +153,11 @@ async function main() {
       "messages imported: not due (the archive clearly arrived)",
       !(await getLinkedInReminderState(MESSAGES_ONLY, messagesRow)).due,
     );
+    check(
+      "whole export only: not due — it counts as an import",
+      !(await getLinkedInReminderState(EXPORT_ONLY, exportRow)).due,
+    );
+    check("whole export only: it is the last LinkedIn import", (await getLastLinkedInImportAt(EXPORT_ONLY)) !== null);
     check("requested is false until stamped", !(await getLinkedInReminderState(DUE, dueRow)).requested);
 
     console.log("\nclaim");

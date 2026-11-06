@@ -108,6 +108,28 @@ async function seed() {
     plan: "free",
   });
 
+  // v181 telemetry and identity links. product_events is deleted with "activity"; the waitlist
+  // row an account came from is deleted on a full purge (the waitlist notice promises that once
+  // someone has been let in), and the invite ledger row is anonymised rather than deleted.
+  await db.insert(schema.productEvents).values({
+    id: randomUUID(),
+    name: "capture_saved",
+    surface: "web",
+    actor: "user",
+    userId: USER,
+    properties: { source_kind: "text" },
+  });
+  await db.insert(schema.interestListSignups).values({
+    email: `${USER}@example.test`,
+    unsubscribeToken: `${USER}-unsub`,
+    userId: USER,
+  });
+  await db.insert(schema.siteInvites).values({
+    email: `${USER}@example.test`,
+    acceptedUserId: USER,
+    source: "waitlist",
+  });
+
   // Anonymised rather than deleted on purge — see `purgeUserData`. The count below is
   // `WHERE user_id = USER`, so nulling the column satisfies the no-leak check honestly.
   await db.insert(schema.billingEvents).values({
@@ -385,6 +407,15 @@ async function seed() {
     payload: {} as never,
   });
 
+  await db.insert(schema.importFiles).values({
+    importId: importJob.id,
+    userId: USER,
+    path: "Invitations.csv",
+    byteSize: 1,
+    role: "parsed",
+    gz: "",
+  });
+
   await db.insert(schema.calendarSubscriptions).values({
     userId: USER,
     icsUrl: "https://example.test/feed.ics",
@@ -519,6 +550,8 @@ async function seed() {
   // The recruiter scan's watermark, kept separate from `gmail_connections` on purpose but
   // no less user data than anything else here.
   await db.insert(schema.recruiterScanState).values({ userId: USER });
+  await db.insert(schema.cloudNoteSources).values({ userId: USER, provider: "google", cursor: "c1" });
+  await db.insert(schema.cloudNoteFiles).values({ userId: USER, provider: "google", fileId: "doc-1", name: "1:1 notes" });
 
   // Duplicate-prevention rows. `contact_merges` is the one that matters most here: it has
   // no foreign key to either contact (the losing contact's row is deleted by design), so
@@ -648,11 +681,21 @@ async function seed() {
 
   // A calendar picked off one of the connections above. No FK to any of the three connection
   // tables by design (they are separate — see provider-connections.ts), so any uuid does.
-  await db.insert(schema.calendarSources).values({
+  const [calendarSource] = await db
+    .insert(schema.calendarSources)
+    .values({
+      userId: USER,
+      provider: "google",
+      connectionId: randomUUID(),
+      calendarId: "primary",
+    })
+    .returning();
+  await db.insert(schema.calendarEvents).values({
     userId: USER,
-    provider: "google",
-    connectionId: randomUUID(),
-    calendarId: "primary",
+    sourceId: calendarSource.id,
+    providerEventId: "evt-1",
+    title: "Coffee",
+    startAt: new Date(),
   });
 
   const [thread] = await db

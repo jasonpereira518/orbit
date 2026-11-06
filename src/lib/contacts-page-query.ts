@@ -27,10 +27,13 @@ import {
   encodeContactsCursor,
 } from "@/lib/contacts-page-cursor";
 import { contactsListSelection } from "@/lib/contact-avatar-sql";
-import type { RankedContact } from "@/lib/hybrid-search";
+import { openNameGuess } from "@/lib/contact-name-guess";
+import { schoolCondition, type RankedContact } from "@/lib/hybrid-search";
+import { listSchools } from "@/lib/events/target-companies";
 import {
   CONTACTS_PAGE_SIZE,
   parseQuietDays,
+  SAME_SCHOOL_AS_ME,
   type ContactSort,
   type ContactsPage,
   type ContactsPageFilters,
@@ -80,8 +83,8 @@ export async function listContactsPage(
     matchReasons = matchReasonsFor(ranked);
     conditions.push(
       semanticIds.length
-        ? or(contactSearchCondition(q), inArray(contacts.id, semanticIds))!
-        : contactSearchCondition(q)
+        ? or(contactSearchCondition(q, userId), inArray(contacts.id, semanticIds))!
+        : contactSearchCondition(q, userId)
     );
   }
   // Name matches first in every sort while searching; see `contacts-page-cursor.ts`.
@@ -111,6 +114,13 @@ export async function listContactsPage(
         and t.user_id = ${userId}
         and lower(trim(t.name)) = ${tag.toLowerCase()}
     )`);
+  }
+
+  const school = filters?.school?.trim();
+  if (school) {
+    const schools = school === SAME_SCHOOL_AS_ME ? await listSchools(userId) : [school];
+    // No schools of your own means nobody shares one — not "the filter is off".
+    conditions.push(schools.length ? schoolCondition(userId, schools) : sql`false`);
   }
 
   // "Gone quiet": nothing logged for at least this many days. A contact with no interaction
@@ -155,6 +165,12 @@ export async function listContactsPage(
 
   if (cursor) conditions.push(contactsCursorCondition(cursor, tier));
 
+  // The total needs only the conditions, so it runs beside the page rather than after it:
+  // one round trip less on every first page and every search (LATENCY_PLAN DB-15).
+  const totalP = cursor ? Promise.resolve(null) : countContacts(and(...conditions));
+  // Still awaited below; this only keeps a failed count from going unhandled when the page
+  // query throws first.
+  totalP.catch(() => {});
   const rows = await db
     .select({ ...contactsListSelection, nameTier: tier ?? sql<number>`2` })
     .from(contacts)
@@ -171,7 +187,7 @@ export async function listContactsPage(
 
   const [tagsByContact, total, addedHere] = await Promise.all([
     tagsForContacts(page.map((r) => r.id)),
-    cursor ? Promise.resolve(null) : countContacts(and(...conditions)),
+    totalP,
     addedByImports(userId, importIds, page.map((r) => r.id)),
   ]);
 
@@ -182,6 +198,7 @@ export async function listContactsPage(
       firstName: row.firstName,
       lastName: row.lastName,
       preferredName: row.preferredName,
+      nameGuess: openNameGuess(row),
       title: row.title,
       company: row.company,
       school: row.school,

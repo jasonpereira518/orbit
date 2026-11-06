@@ -79,6 +79,7 @@ export const INTEGRATION_TABS = [
   { id: "google", label: "Google", group: "accounts", surface: "page.imports" },
   { id: "microsoft", label: "Microsoft", group: "accounts", surface: "page.imports" },
   { id: "linkedin", label: "LinkedIn", group: "accounts", surface: "page.imports" },
+  { id: "granola", label: "Granola", group: "accounts", surface: "page.imports" },
   { id: "ai", label: "AI", group: "ai", section: "settings-ai" },
   { id: "assistants", label: "Claude and ChatGPT", group: "ai", section: "settings-api" },
   { id: "reminders", label: "Reminders in calendar", group: "ai", section: "settings-calendar" },

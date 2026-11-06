@@ -29,8 +29,8 @@ export type AiKeySource = "personal" | "managed";
  * MANAGED AI IS ON (pricing v2). A code constant rather than an env var, so no deployment
  * flips the model by accident. Two switches still stop it without a deploy: the
  * `ORBIT_MANAGED_AI=off` env kill switch and the admin console's runtime pause
- * (`site_settings.managed_ai_paused`, which reads as PAUSED in production until set — the
- * legal text describing managed AI has to ship first).
+ * (`site_settings.managed_ai_paused`; never set reads as running, now that the legal text
+ * describing included AI has shipped).
  */
 export const MANAGED_AI_ENABLED: boolean = true;
 
@@ -66,6 +66,17 @@ export function poolWindowStart(pool: ManagedPool, now: Date): Date {
   let start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), day));
   if (start > now) start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, day));
   return start > since ? start : since;
+}
+
+/**
+ * The earliest start among every pool's current window, or null with no pools: spend from
+ * before it is no pool's concern. Used only by `managedPoolsSpent`, to bound its single
+ * per-provider spend read. The usage_events retention sweep does NOT use it: it keeps rows
+ * per provider, inside that provider's own `poolWindowStart`.
+ */
+export function earliestPoolWindowStart(now: Date): Date | null {
+  const starts = Object.values(MANAGED_AI_POOLS).flatMap((pool) => (pool ? [poolWindowStart(pool, now).getTime()] : []));
+  return starts.length > 0 ? new Date(Math.min(...starts)) : null;
 }
 
 /** Spend at which the ops sweep warns that the pool is running low. */

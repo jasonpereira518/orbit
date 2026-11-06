@@ -1,8 +1,12 @@
-import { eq, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { siteSettings } from "@/db/schema";
+import { siteSettings, usageEvents } from "@/db/schema";
+import { usageOperationLabel } from "@/lib/usage-summary-types";
 import { recordAdminAction } from "@/lib/admin-audit";
 import type { AiProvider } from "@/lib/ai-providers";
+import { bucketCount, RATE_LIMITS } from "@/lib/rate-limit";
+import { utcDayKey } from "@/lib/timeline-cost";
+import { WEB_SEARCH_ALL_SCOPE } from "@/lib/web-search-budget";
 import {
   forgetManagedAiPause,
   managedAiPausedDefault,
@@ -19,8 +23,8 @@ import {
  *  - `ORBIT_MANAGED_AI=off` in the environment always wins (a deploy-level kill switch);
  *  - Orbit must hold a key for at least one provider;
  *  - at least one provider pool (`MANAGED_AI_POOLS`) must have budget left;
- *  - this switch. Never set reads as PAUSED on production, so included AI cannot start before
- *    someone turns it on here, deliberately.
+ *  - this switch. Never set reads as running; pausing it here stops included AI for everyone
+ *    within the 30-second cache.
  */
 export type ManagedAiSwitchState = {
   paused: boolean;
@@ -76,4 +80,86 @@ export async function setManagedAiPaused(
   // Other instances pick it up within the gate's 30-second cache.
   forgetManagedAiPause();
   return getManagedAiSwitchState();
+}
+
+/**
+ * The admin console's web-search switch (`site_settings.web_search_paused`): stops hosted web
+ * search for every account on every key. Beside it, today's Orbit-wide count against the
+ * daily ceiling (`src/lib/web-search-budget.ts`).
+ */
+export type WebSearchSwitchState = {
+  paused: boolean;
+  todaySearches: number;
+  dailyCeiling: number;
+  /**
+   * Searches per operation over the last 7 and 30 days, every account, most first. The
+   * number to watch is `perSuccess`: searches per call that completed — a change meant to
+   * save searches should lower it without lowering the success count.
+   */
+  byOperation: Array<{ operation: string; label: string; searches7: number; searches30: number; calls30: number; perSuccess: number | null }>;
+};
+
+/** One grouped statement over `usage_events_created_idx`; rows without a count are other calls. */
+async function searchesByOperation(now: Date): Promise<WebSearchSwitchState["byOperation"]> {
+  const db = await getDb();
+  const weekAgo = new Date(now.getTime() - 7 * 86_400_000);
+  const rows = await db
+    .select({
+      operation: usageEvents.operation,
+      searches7: sql<number>`coalesce(sum(${usageEvents.webSearches}) filter (where ${usageEvents.createdAt} >= ${weekAgo}), 0)::int`,
+      searches30: sql<number>`coalesce(sum(${usageEvents.webSearches}), 0)::int`,
+      calls30: sql<number>`count(*)::int`,
+      successes30: sql<number>`(count(*) filter (where ${usageEvents.success} = 1))::int`,
+    })
+    .from(usageEvents)
+    .where(and(isNotNull(usageEvents.webSearches), gte(usageEvents.createdAt, new Date(now.getTime() - 30 * 86_400_000))))
+    .groupBy(usageEvents.operation)
+    .orderBy(desc(sql`sum(${usageEvents.webSearches})`));
+  return rows.map((r) => ({
+    operation: r.operation,
+    label: usageOperationLabel(r.operation),
+    searches7: Number(r.searches7),
+    searches30: Number(r.searches30),
+    calls30: Number(r.calls30),
+    perSuccess: Number(r.successes30) > 0 ? Number(r.searches30) / Number(r.successes30) : null,
+  }));
+}
+
+export async function getWebSearchSwitchState(now = new Date()): Promise<WebSearchSwitchState> {
+  const db = await getDb();
+  const [[row], todaySearches, byOperation] = await Promise.all([
+    db.select({ paused: siteSettings.webSearchPaused }).from(siteSettings).where(eq(siteSettings.id, 1)).limit(1),
+    bucketCount(WEB_SEARCH_ALL_SCOPE, utcDayKey(now), RATE_LIMITS.webSearchDaily),
+    searchesByOperation(now),
+  ]);
+  return { paused: row?.paused ?? false, todaySearches, dailyCeiling: RATE_LIMITS.webSearchDaily.limit, byOperation };
+}
+
+export async function setWebSearchPaused(
+  adminUserId: string,
+  paused: boolean,
+  reason = ""
+): Promise<WebSearchSwitchState> {
+  const before = await getWebSearchSwitchState();
+  const db = await getDb();
+  await db
+    .insert(siteSettings)
+    .values({ id: 1, webSearchPaused: paused })
+    .onConflictDoUpdate({
+      target: siteSettings.id,
+      set: { webSearchPaused: sql`excluded.web_search_paused` },
+    });
+
+  await recordAdminAction({
+    adminUserId,
+    action: paused ? "site.web_search.pause" : "site.web_search.resume",
+    resourceType: "site_settings",
+    resourceId: "1",
+    reason: reason.trim() || null,
+    detail: { from: before.paused, to: paused },
+  });
+
+  // Same 30-second cache as the managed-AI switch.
+  forgetManagedAiPause();
+  return getWebSearchSwitchState();
 }

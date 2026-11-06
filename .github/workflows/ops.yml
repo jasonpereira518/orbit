@@ -25,6 +25,9 @@
 #
 # Secrets: APP_URL (https://myorbitnetwork.com), CRON_SECRET (the same value as the
 # Vercel env var), SLACK_OPS_CRITICAL_WEBHOOK_URL (for the "app is down" fallback).
+#
+# The repository is public, and so are these logs: each job step prints its HTTP status
+# only. What a job did (counts, condition ids, error refs) is in cron_runs and Sentry.
 name: ops
 
 on:
@@ -37,6 +40,9 @@ on:
     - cron: "23 * * * *"
     # The work-history sweep: offset from :07 and :23 so no two long hourly jobs overlap.
     - cron: "37 * * * *"
+    # The contact name sweep: its own minute, so it never shares a run (and the 8-minute
+    # job ceiling) with the work-history sweep.
+    - cron: "43 * * * *"
     # Radar's news sweep: public feeds into the global news tables. :53, clear of every
     # other hourly job above.
     - cron: "53 * * * *"
@@ -50,6 +56,13 @@ on:
     # Once a day: Radar's nightly pass. Accounts aim at 04:00 UTC (radar_next_at), and :17
     # sits clear of the hourly :07 and :23 jobs and of the Deepgram reconciliation above.
     - cron: "17 4 * * *"
+    # Cloud notes: every 30 minutes at :29 and :59, clear of every */10, */15 and hourly line above.
+    - cron: "29,59 * * * *"
+    # Once a day: Stripe's live subscriptions against user_settings (the independent check the
+    # revenue ledger cannot make of itself). 06:23 UTC, clear of the :07/:23 hourly jobs' work.
+    - cron: "23 6 * * *"
+    # Mondays: the weekly product digest to Slack. 13:47 UTC is the morning in the Americas.
+    - cron: "47 13 * * 1"
   workflow_dispatch:
 
 # One group PER SCHEDULE, never one for the whole workflow. GitHub keeps at most one
@@ -72,7 +85,7 @@ jobs:
     # failure before its own timeout could answer.
     timeout-minutes: 8
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 1
           ref: main
@@ -156,7 +169,7 @@ jobs:
         run: |
           main_sha=$(git rev-parse HEAD)
           main_at=$(git log -1 --format=%cI)
-          curl -sS --fail-with-body --max-time 55 -X POST \
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 55 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" -H 'content-type: application/json' \
             --data "{\"mainSha\":\"$main_sha\",\"mainCommittedAt\":\"$main_at\"}" \
             "$APP_URL/api/ops/sweep"
@@ -167,7 +180,7 @@ jobs:
       - name: Run the stalled-import backstop (hourly)
         if: github.event.schedule == '7 * * * *' && steps.health.outcome == 'success'
         run: |
-          curl -sS --fail-with-body --max-time 300 \
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/imports/process-stalled"
         env:
@@ -180,7 +193,7 @@ jobs:
       - name: Drain outbound webhooks
         if: (github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success'
         run: |
-          curl -sS --fail-with-body --max-time 55 -X POST \
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 55 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/webhooks/outbound/drain"
         env:
@@ -193,7 +206,7 @@ jobs:
       - name: Drain the connector outbox
         if: (github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success'
         run: |
-          curl -sS --fail-with-body --max-time 55 -X POST \
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 55 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/connectors/outbox/drain"
         env:
@@ -206,7 +219,7 @@ jobs:
       - name: Drain the email outbox
         if: (github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success'
         run: |
-          curl -sS --fail-with-body --max-time 55 -X POST \
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 55 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/email/drain"
         env:
@@ -226,7 +239,7 @@ jobs:
       - name: Send the credit emails
         if: (github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success'
         run: |
-          curl -sS --fail-with-body --max-time 120 -X POST \
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 120 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/credits/notices"
         env:
@@ -236,7 +249,7 @@ jobs:
       - name: Run the connector sync (every 15 minutes)
         if: github.event.schedule == '*/15 * * * *' && steps.health.outcome == 'success'
         run: |
-          curl -sS --fail-with-body --max-time 300 -X POST \
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/sync/run"
         env:
@@ -254,7 +267,7 @@ jobs:
       - name: Run the job-feed sweep (hourly)
         if: github.event.schedule == '23 * * * *' && steps.health.outcome == 'success'
         run: |
-          curl -sS --fail-with-body --max-time 300 -X POST \
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/jobs/feed/sweep"
         env:
@@ -268,9 +281,25 @@ jobs:
       - name: Run the work-history sweep (hourly)
         if: github.event.schedule == '37 * * * *' && steps.health.outcome == 'success'
         run: |
-          curl -sS --fail-with-body --max-time 300 -X POST \
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/work-history/sweep"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      # Real names for contacts saved under a handle ("jsmith42"), hourly. Imports kick a pass
+      # for their own user; this is the backstop for CSV imports and the backfill for older
+      # contacts. Model calls run on the person's own AI, so it has its own line too.
+      - name: Run the contact name sweep (hourly)
+        if: github.event.schedule == '43 * * * *' && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/contacts/name-sweep"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
 
       # Radar's nightly pass (daily). Its own line and its own route, for the same reason as
       # the job feed: model calls on people's own keys must never make the alerting path's
@@ -279,9 +308,22 @@ jobs:
       - name: Run the Radar nightly pass (daily)
         if: github.event.schedule == '17 4 * * *' && steps.health.outcome == 'success'
         run: |
-          curl -sS --fail-with-body --max-time 300 -X POST \
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/radar/run"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      # Cloud notes (every 30 minutes): checks watched Drive/OneDrive folders for new meeting
+      # notes and reads their first lines. Its own line: provider calls and, for auto-extract,
+      # model calls on people's own AI must never hold up the alerting path.
+      - name: Run the cloud notes scan (every 30 minutes)
+        if: github.event.schedule == '29,59 * * * *' && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/cloud-notes/run"
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
@@ -292,7 +334,7 @@ jobs:
       - name: Run the Radar news sweep (hourly)
         if: github.event.schedule == '53 * * * *' && steps.health.outcome == 'success'
         run: |
-          curl -sS --fail-with-body --max-time 300 -X POST \
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/radar/feeds/sweep"
         env:
@@ -305,9 +347,34 @@ jobs:
       - name: Send Radar's Monday email (Sunday and Monday, hourly)
         if: github.event.schedule == '13 * * * 0,1' && steps.health.outcome == 'success'
         run: |
-          curl -sS --fail-with-body --max-time 300 -X POST \
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/radar/digest"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      # Stripe vs database reconciliation (daily). Counts only leave the job; a mismatch opens
+      # the billing.stripe_drift alert on the next ops sweep. See
+      # src/app/api/ops/billing-reconcile/route.ts.
+      - name: Reconcile Stripe subscriptions (daily)
+        if: github.event.schedule == '23 6 * * *' && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 110 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/ops/billing-reconcile"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      # The weekly product digest (Mondays). Counts only, posted to the ops Slack channel. See
+      # src/app/api/ops/weekly-digest/route.ts; add ?dry=1 to read it without posting.
+      - name: Post the weekly digest (Mondays)
+        if: github.event.schedule == '47 13 * * 1' && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 110 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/ops/weekly-digest"
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
@@ -318,7 +385,7 @@ jobs:
       - name: Reconcile Deepgram usage (daily)
         if: github.event.schedule == '41 5 * * *' && steps.health.outcome == 'success'
         run: |
-          curl -sS --fail-with-body --max-time 55 -X POST \
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 55 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/ops/speech-usage"
         env:

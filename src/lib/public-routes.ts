@@ -1,3 +1,5 @@
+import { BOTID_PATH_PREFIX } from "@/lib/waitlist-host";
+
 /**
  * Routes reachable without a Clerk session.
  *
@@ -69,15 +71,19 @@ export const PUBLIC_ROUTES = [
   "/api/embeddings/backfill",
   "/api/work-history/research",
   "/api/work-history/sweep",
+  "/api/contacts/name-sweep",
   "/api/linkedin/timeline-events/backfill",
   "/api/relationships/run",
   "/api/ops/sweep",
   "/api/ops/speech-usage",
+  "/api/ops/billing-reconcile",
+  "/api/ops/weekly-digest",
   "/api/sync/run",
   "/api/jobs/feed/sweep",
   // Radar's nightly pass, hourly news sweep and Monday email — same CRON_SECRET gate, same
   // reasons.
   "/api/radar/run",
+  "/api/cloud-notes/run",
   "/api/radar/feeds/sweep",
   "/api/radar/digest",
   // The credit emails, on the ten-minute schedule — same CRON_SECRET gate.
@@ -103,7 +109,15 @@ export const PUBLIC_ROUTES = [
   // Genuinely public: the traffic beacon. Anonymous marketing visitors are most of what
   // it exists to count, so requiring a session would measure only the people who already
   // converted. It stores no IP and sets no cookie — see src/lib/analytics-visitor.ts.
+  "/api/p/v",
+  // The same beacon at its old path (an ad-blocker list pattern), kept as a thin alias for one
+  // release so a cached client keeps reporting. Remove together with `src/app/api/track`.
   "/api/track",
+  // Crawler files (`src/app/robots.ts`, `src/app/sitemap.ts`). The proxy matcher sends
+  // `.txt` and `.xml` through Clerk, so without these a crawler is redirected to sign-in.
+  // Deliberately NOT in WAITLIST_ALLOWED_PATHS: the waitlist host stays unbranded.
+  "/robots.txt",
+  "/sitemap.xml",
   // Genuinely public: the liveness probe the uptime monitor polls. Its shallow body says
   // only "up or down" plus the deployed sha; the deep view needs HEALTH_TOKEN.
   "/api/health",
@@ -116,4 +130,7 @@ export const PUBLIC_ROUTES = [
   // is checked against a shape regex before any query, so malformed traffic costs nothing.
   "/scan/(.*)",
   "/api/scan/(.*)",
+  // Vercel BotID's challenge proxy (next.config.ts `withBotId`). The waitlist join's
+  // server-action POSTs carry its proof, so a signed-out visitor must reach it.
+  `/${BOTID_PATH_PREFIX}/(.*)`,
 ] as const;

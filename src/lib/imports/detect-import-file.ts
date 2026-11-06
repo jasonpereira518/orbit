@@ -34,11 +34,17 @@ import {
   looksLikeLinkedInPositions,
   looksLikeLinkedInProfile,
   looksLikeLinkedInSkills,
+  looksLikeLinkedInEducation,
 } from "@/lib/linkedin-you-shape";
 import {
   detectChatSource,
   pickChatMember,
 } from "@/lib/conversations/read-files";
+import {
+  exportRelativePath,
+  isInsideExport,
+  linkedInExportRole,
+} from "@/lib/imports/linkedin-export-files";
 
 /**
  * Deliberately the same strings as `imports.import_type`.
@@ -57,6 +63,11 @@ export type ImportTarget =
   | "linkedin_positions"
   | "linkedin_skills"
   | "linkedin_alerts"
+  | "linkedin_education"
+  // The whole export folder or ZIP, kept as files and read for the extras (invitations,
+  // notes, recommendations, job targets, background). Never a single file's classification:
+  // built from `DetectionResult.exportFiles` by the queue.
+  | "linkedin_export"
   | "contacts_file"
   | "calendar_ics"
   | "calendar_csv"
@@ -94,6 +105,18 @@ export type Detected = {
   bytes: number;
 };
 
+/** One CSV of a LinkedIn export that will be kept server-side. */
+export type ExportMember = {
+  /** Path inside the export: `Connections.csv`, `Jobs/Saved Jobs.csv`. */
+  path: string;
+  role: "parsed" | "stored";
+  bytes: number;
+  /** A folder member. */
+  file?: File;
+  /** A ZIP member, already decompressed. */
+  text?: string;
+};
+
 export type DetectionResult = {
   /** One per target, in run order. What the queue will actually import. */
   staged: Detected[];
@@ -114,6 +137,12 @@ export type DetectionResult = {
    * the same kind. What a folder review lists so the person can choose among them.
    */
   candidates: Detected[];
+  /**
+   * Every CSV of a LinkedIn export in the drop that Orbit keeps, parsed or not. Separate from
+   * `staged` so the folder review, which rebuilds `staged` from what the person ticks, cannot
+   * drop it. Private members are not here: they are in `ignored` with `LINKEDIN_PRIVATE`.
+   */
+  exportFiles: ExportMember[];
 };
 
 /**
@@ -271,6 +300,9 @@ export function classifyByHead(head: string, name = ""): Classification | null {
   if (looksLikeLinkedInAlerts(fields)) {
     return { target: "linkedin_alerts", confidence: "likely", reason: "your LinkedIn job alerts" };
   }
+  if (looksLikeLinkedInEducation(fields)) {
+    return { target: "linkedin_education", confidence: "likely", reason: "your LinkedIn education" };
+  }
   if (looksLikeLinkedInSkills(fields) && /^skills\.csv$/i.test(baseName(name))) {
     return { target: "linkedin_skills", confidence: "likely", reason: "your LinkedIn skills" };
   }
@@ -366,14 +398,24 @@ const LINKEDIN_EXPORT_MEMBER = /^(connections|messages)\.csv$/i;
  * count as one: `Profile.csv` and `Skills.csv` are names a résumé folder has, and treating that
  * folder as an export would throw away everything else in it.
  */
-const LINKEDIN_YOU_MEMBER = /^(profile|positions|skills|savedjobalerts)\.csv$/i;
+const LINKEDIN_YOU_MEMBER = /^(profile|positions|skills|savedjobalerts|education)\.csv$/i;
 
 function isLinkedInYouMember(name: string): boolean {
   return LINKEDIN_YOU_MEMBER.test(baseName(name));
 }
 
-/** Why every other file in a LinkedIn export folder is set aside — also how the hub counts them. */
+/** Why a non-CSV in a LinkedIn export folder is set aside — also how the hub counts them. */
 export const LINKEDIN_LEFT_OUT = "not needed from a LinkedIn export";
+
+/** Why a private export member (receipts, ID verification…) is never read or uploaded. */
+export const LINKEDIN_PRIVATE = "private — stays on your device";
+
+const EXPORT_ROOT_MEMBER = /(^|\/)(connections|messages)\.csv$/i;
+
+function dirOf(path: string): string {
+  const slash = path.lastIndexOf("/");
+  return slash < 0 ? "" : path.slice(0, slash);
+}
 
 function isLinkedInExportMember(name: string): boolean {
   return LINKEDIN_EXPORT_MEMBER.test(baseName(name));
@@ -392,6 +434,7 @@ const ZIP_MEMBERS: {
     { pattern: /(^|\/)positions\.csv$/i, target: "linkedin_positions", reason: "your LinkedIn positions", verify: true },
     { pattern: /(^|\/)skills\.csv$/i, target: "linkedin_skills", reason: "your LinkedIn skills", verify: true },
     { pattern: /(^|\/)savedjobalerts\.csv$/i, target: "linkedin_alerts", reason: "your LinkedIn job alerts", verify: true },
+    { pattern: /(^|\/)education\.csv$/i, target: "linkedin_education", reason: "your LinkedIn education", verify: true },
     {
       pattern: /(^|\/)connections\.csv$/i,
       target: "linkedin_connections",
@@ -414,18 +457,25 @@ const ZIP_MEMBERS: {
 async function expandZip(
   entry: DroppedFile,
   chatImports: boolean,
-): Promise<{ detected: Detected[]; chat: boolean }> {
+): Promise<{ detected: Detected[]; chat: boolean; exportFiles: ExportMember[] }> {
   const { default: JSZip } = await import("jszip");
   const zip = await JSZip.loadAsync(await entry.file.arrayBuffer());
   const members = Object.values(zip.files).filter(
     (f) => !f.dir && !isIgnorableFile(baseName(f.name)),
   );
+  // Each member is decompressed at most once, whether it is staged, kept, or both.
+  const texts = new Map<string, Promise<string>>();
+  const textOf = (m: (typeof members)[number]) => {
+    let t = texts.get(m.name);
+    if (!t) texts.set(m.name, (t = m.async("string")));
+    return t;
+  };
 
   const out: Detected[] = [];
   for (const known of ZIP_MEMBERS) {
     const member = members.find((m) => known.pattern.test(m.name));
     if (!member) continue;
-    const text = await member.async("string");
+    const text = await textOf(member);
     if (known.verify && classifyByHead(text.slice(0, HEAD_BYTES), member.name)?.target !== known.target) continue;
     out.push({
       file: entry.file,
@@ -476,12 +526,40 @@ async function expandZip(
     if (member) {
       const head = (await member.async("string")).slice(0, 4096);
       if (detectChatSource(entry.file.name, head)) {
-        return { detected: [], chat: true };
+        return { detected: [], chat: true, exportFiles: [] };
       }
     }
   }
 
-  if (!out.length) {
+  // A LinkedIn archive: keep every CSV under the folder its Connections/messages sit in, and
+  // list the private ones instead of opening them. Only now are the other members decompressed.
+  const exportFiles: ExportMember[] = [];
+  const anchor = members.find((m) => EXPORT_ROOT_MEMBER.test(m.name));
+  if (anchor) {
+    const root = dirOf(anchor.name);
+    for (const m of members) {
+      if (!isInsideExport(root, dirOf(m.name))) continue;
+      const rel = exportRelativePath(root, dirOf(m.name), baseName(m.name));
+      const role = linkedInExportRole(rel);
+      if (!role) continue;
+      if (role === "private") {
+        out.push({
+          file: entry.file,
+          path: m.name,
+          target: "unknown",
+          confidence: "certain",
+          reason: LINKEDIN_PRIVATE,
+          bytes: 0,
+          displayName: baseName(m.name),
+        });
+        continue;
+      }
+      const text = await textOf(m);
+      exportFiles.push({ path: rel, role, bytes: text.length, text });
+    }
+  }
+
+  if (!out.some((d) => d.target !== "unknown") && !exportFiles.length) {
     out.push({
       file: entry.file,
       path: entry.path,
@@ -492,12 +570,12 @@ async function expandZip(
       displayName: entry.file.name,
     });
   }
-  return { detected: out, chat: false };
+  return { detected: out, chat: false, exportFiles };
 }
 
 export type DetectOptions = {
-  /** Bytes past which a single file is refused rather than staged. */
-  maxBytes?: number;
+  /** Bytes past which a single file is refused rather than staged; a function sets it per kind. */
+  maxBytes?: number | ((target: ImportTarget) => number);
   /** Set when the drop itself was capped, so the caller can say so. */
   truncated?: boolean;
   /**
@@ -526,7 +604,8 @@ export async function detectImportFiles(
   // See `LINKEDIN_EXPORT_MEMBER` for why sniffing them is unsafe as well as merely wasteful.
   //
   // A FOLDER holding Connections.csv or messages.csv IS a LinkedIn export, whatever it is
-  // called and however many files it has: from such a folder only those two are taken. This
+  // called and however many files it has: from such a folder only the six with importers of
+  // their own are staged, and every other CSV is kept as a file (`exportFiles`). This
   // used to ask the folder to also LOOK like an archive (LinkedIn in its name, an archive-only
   // member, six or more CSVs) so that a hand-assembled Downloads folder was left alone; that
   // let the rest of a renamed or trimmed export through to be sniffed — including the
@@ -538,32 +617,58 @@ export async function detectImportFiles(
   const linkedInFolders = new Set(
     files.filter((f) => f.path !== "" && isLinkedInExportMember(f.file.name)).map((f) => f.path),
   );
+  // The export root a folder member belongs to, if any. LinkedIn nests `Jobs/` and
+  // `Verifications/` one level down, and those are part of the export too.
+  const exportRootOf = (dir: string) =>
+    [...linkedInFolders].find((root) => isInsideExport(root, dir));
 
   const detected: Detected[] = [];
   const chatFiles: File[] = [];
+  const exportFiles: ExportMember[] = [];
   for (const entry of files) {
     if (isIgnorableFile(baseName(entry.file.name))) continue;
     if (extensionOf(entry.file.name) === ".zip") {
       const expanded = await expandZip(entry, chatImports);
       if (expanded.chat) chatFiles.push(entry.file);
       detected.push(...expanded.detected);
+      exportFiles.push(...expanded.exportFiles);
       continue;
     }
-    if (
-      linkedInFolders.has(entry.path) &&
-      !isLinkedInExportMember(entry.file.name) &&
-      !isLinkedInYouMember(entry.file.name)
-    ) {
-      detected.push({
-        file: entry.file,
-        path: entry.path,
-        target: "unknown",
-        confidence: "certain",
-        reason: LINKEDIN_LEFT_OUT,
-        bytes: entry.file.size,
-        displayName: entry.file.name,
-      });
-      continue;
+    const root = entry.path !== "" ? exportRootOf(entry.path) : undefined;
+    if (root !== undefined) {
+      const rel = exportRelativePath(root, entry.path, entry.file.name);
+      const role = linkedInExportRole(rel);
+      if (role === "private") {
+        detected.push({
+          file: entry.file,
+          path: entry.path,
+          target: "unknown",
+          confidence: "certain",
+          reason: LINKEDIN_PRIVATE,
+          bytes: entry.file.size,
+          displayName: entry.file.name,
+        });
+        continue;
+      }
+      if (!role) {
+        detected.push({
+          file: entry.file,
+          path: entry.path,
+          target: "unknown",
+          confidence: "certain",
+          reason: LINKEDIN_LEFT_OUT,
+          bytes: entry.file.size,
+          displayName: entry.file.name,
+        });
+        continue;
+      }
+      exportFiles.push({ path: rel, role, bytes: entry.file.size, file: entry.file });
+      // Kept, and ALSO staged only when an importer of its own wants it — the six at the root,
+      // as before. Everything else is never sniffed: see `LINKEDIN_EXPORT_MEMBER` for why.
+      const ownImporter =
+        entry.path === root &&
+        (isLinkedInExportMember(entry.file.name) || isLinkedInYouMember(entry.file.name));
+      if (!ownImporter) continue;
     }
     if (chatImports && extensionOf(entry.file.name) === ".txt") {
       if (await isChatText(entry.file)) {
@@ -579,7 +684,9 @@ export async function detectImportFiles(
   const skipped: Detected[] = [];
 
   const oversize = recognised.filter(
-    (d) => maxBytes != null && d.bytes > maxBytes,
+    (d) =>
+      maxBytes != null &&
+      d.bytes > (typeof maxBytes === "function" ? maxBytes(d.target) : maxBytes),
   );
   for (const d of oversize) {
     skipped.push({ ...d, reason: "too big to import in one go" });
@@ -603,5 +710,5 @@ export async function detectImportFiles(
     }
   }
 
-  return { staged, ignored, skipped, truncated, chatFiles, candidates: usable };
+  return { staged, ignored, skipped, truncated, chatFiles, candidates: usable, exportFiles };
 }

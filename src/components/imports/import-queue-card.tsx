@@ -399,6 +399,7 @@ function isPeopleImport(item: QueuedImport): boolean {
   return (
     item.target !== "calendar_ics" &&
     item.target !== "calendar_csv" &&
+    item.target !== "linkedin_export" &&
     !isYouTarget(item.target)
   );
 }
@@ -489,7 +490,9 @@ function QueueRow({
                     ? `${item.fileName} — ${item.ids?.length ?? 0} of ${item.reviewCount ?? 0} details selected`
                     : isPeopleImport(item)
                       ? `${item.fileName} — ${item.ids?.length ?? 0} of ${item.reviewCount ?? 0} selected`
-                      : `${item.fileName} — meetings with people you already know`
+                      : item.target === "linkedin_export"
+                        ? `${item.fileName} — kept, and read for notes, recommendations and job targets`
+                        : `${item.fileName} — meetings with people you already know`
                   : item.fileName}
           </p>
         </div>
@@ -498,6 +501,18 @@ function QueueRow({
           <Badge variant={badge.variant} className="shrink-0">
             {badge.label}
           </Badge>
+        ) : null}
+
+        {item.target === "linkedin_export" && item.status === "needs_review" && !locked ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => skipItem(item.id)}
+          >
+            <X className="size-4" />
+            <span className="sr-only">Don’t keep the export files</span>
+          </Button>
         ) : null}
 
         {reviewable && !locked ? (

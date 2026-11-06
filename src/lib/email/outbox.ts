@@ -13,7 +13,7 @@ import {
 import { logInteractionForUser } from "@/lib/contact-writes";
 import {
   EMAIL_LEASE_SECONDS,
-  EMAIL_SEND_DAILY_CAP,
+  EMAIL_RECIPIENT_DAILY_CAP,
   MAX_EMAIL_ATTEMPTS,
   SCHEDULE_MAX_LEAD_MS,
   SCHEDULE_MIN_LEAD_MS,
@@ -26,11 +26,13 @@ import { originHooks } from "@/lib/email/origins";
 import { providerFor } from "@/lib/email/providers";
 import { MailProviderError, type SendResult } from "@/lib/email/providers/types";
 import { normalizeRecipients } from "@/lib/email/recipients";
-import { countEmailSendsToday, resolveSender, type MailboxId } from "@/lib/email/sender";
+import { countEmailRecipientsToday, resolveSender, type MailboxId } from "@/lib/email/sender";
 import { getEntitlements } from "@/lib/entitlements";
 import { markOutlookNeedsReauth } from "@/lib/outlook";
 import { consumeBucket, isRateLimitedError, RATE_LIMITS } from "@/lib/rate-limit";
 import { reportError } from "@/lib/report-error";
+import { track } from "@/lib/product-events";
+import { eventId } from "@/lib/product-event-ids";
 
 /**
  * The person-to-person email outbox. Every 1:1 send in Orbit — Compose, follow-ups, Chat,
@@ -68,7 +70,7 @@ export const ENQUEUE_COPY: Record<EnqueueRefusal, string> = {
   not_connected: "Connect your email to send from your own address",
   no_send_scope: "Allow Orbit to send from your email, then try again",
   needs_reauth: "Your email connection expired — reconnect to send",
-  cap_reached: "You've reached today's email limit — it resets over the next 24 hours",
+  cap_reached: "That's past today's limit of people to email — it resets over the next 24 hours",
   rate_limited: "That's a lot of email in a few minutes — try again shortly",
   no_recipient: "Add at least one recipient",
   too_many: "That's more than 20 recipients — trim the list",
@@ -165,8 +167,8 @@ export async function enqueueEmail(userId: string, input: EnqueueInput): Promise
     if (limited) return limited;
   }
 
-  const [ent, used] = await Promise.all([getEntitlements(userId), countEmailSendsToday(userId)]);
-  if (used >= EMAIL_SEND_DAILY_CAP[ent.plan]) return refuse("cap_reached");
+  const [ent, used] = await Promise.all([getEntitlements(userId), countEmailRecipientsToday(userId)]);
+  if (used + recipients.all.length > EMAIL_RECIPIENT_DAILY_CAP[ent.plan]) return refuse("cap_reached");
 
   const contactIds = input.contactIds ?? (await resolveRecipientContacts(userId, recipients.all));
   const db = await getDb();
@@ -235,6 +237,15 @@ export async function cancelEmailSend(
   // Idempotent: a second cancel (Undo after Edit already took it off the schedule) is not "sent".
   return existing.status === "canceled" ? "canceled" : "already_sent";
 }
+
+/** The outbox's origins as `email_send_failed.kind`. Every origin here is a person's own mail; digests and notices go through Resend elsewhere. */
+const EMAIL_FAILED_KIND = {
+  compose: "outreach",
+  follow_up: "followup",
+  chat: "outreach",
+  agent: "outreach",
+  recruiter: "outreach",
+} as const satisfies Record<EmailOrigin, "outreach" | "followup">;
 
 export type DispatchOutcome = "sent" | "retry" | "failed" | "not_due" | "not_claimable";
 
@@ -376,6 +387,16 @@ async function settleFailed(
     .returning();
   const done = settled[0];
   if (!done) return "not_claimable";
+  // The terminal failed state, reached once per row (the claim guard above is what makes it
+  // once; the id makes a replay harmless too). Provider and kind are closed enums, never the
+  // error text. The demo provider sends nothing, so its "failure" is not a delivery problem.
+  if (done.provider !== "demo") {
+    track(
+      "email_send_failed",
+      { provider: done.provider, kind: EMAIL_FAILED_KIND[done.origin] },
+      { userId: done.userId, actor: "system", id: eventId("email_send_failed", done.id) }
+    );
+  }
   if (kind === "auth" && done.provider === "gmail") {
     // A refused token is flagged by `getValidAccessToken`; a 401/403 on the send itself isn't.
     await db

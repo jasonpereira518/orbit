@@ -73,7 +73,8 @@ export default async function AdminAccessPage() {
           <div className="space-y-2">
             <p className="text-xs text-muted-foreground">
               An invitation lets one address create an account, even in stealth. Clerk sends the
-              email, or leave that off and send the link yourself.
+              email, or leave that off and send the link yourself. A wave label (w1, w2…) is optional; it
+              names this batch so waves can be compared later.
             </p>
             <InviteForm clerkOn={clerkOn} />
           </div>
@@ -85,10 +86,11 @@ export default async function AdminAccessPage() {
           ) : invites.length === 0 ? (
             <EmptyState>{clerkOn ? "No invitations yet." : "No Clerk keys on this server."}</EmptyState>
           ) : (
-            <AdminTable
+            <AdminTable label="Invitations"
               head={
                 <>
                   <Th>Email</Th>
+                  <Th>Wave</Th>
                   <Th>Status</Th>
                   <Th>Sent</Th>
                   <Th className="text-right">Actions</Th>
@@ -98,6 +100,7 @@ export default async function AdminAccessPage() {
               {invites.map((invite) => (
                 <tr key={invite.id} className="border-b border-border/40 last:border-0">
                   <Td className="font-medium text-ink">{invite.email}</Td>
+                  <Td className="text-muted-foreground">{invite.waveId ?? "—"}</Td>
                   <Td>
                     <span
                       className={cn(

@@ -1,31 +1,37 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { gmailConnections, type MeetingDigest } from "@/db/schema";
+import { calendarSources, gmailConnections, meetingSessions, type MeetingDigest } from "@/db/schema";
 import { completeJson, parseAiJson, type CaptureParseHints } from "@/lib/ai";
 import { requireUserId } from "@/lib/auth";
-import { deepgramEnabled } from "@/lib/deepgram";
+import { deepgramOpenFor } from "@/lib/speech-credit";
 import { ReauthRequiredError } from "@/lib/errors";
 import { getValidAccessToken, hasCalendarScope } from "@/lib/gmail";
-import { googleFetchWithRetry } from "@/lib/google-fetch";
-import { meetingCandidatesFrom, type MeetingCandidate } from "@/lib/meeting-calendar";
-import { listMeetingsFor, type MeetingsPage } from "@/lib/meetings-list";
+import { fetchCalendarWindow } from "@/lib/connectors/google-calendar";
+import { meetingCandidatesFrom, meetingCandidatesFromRows, type MeetingCandidate } from "@/lib/meeting-calendar";
+import { findEventByKey, listUpcomingEvents, matchEventForSession } from "@/lib/calendar-events";
+import { buildMeetingRecap, type MeetingRecap } from "@/lib/meeting-recap";
+import { listMeetingsFor, type MeetingSourceFilter, type MeetingsPage } from "@/lib/meetings-list";
 import {
   analyzeMeetingTranscript,
   buildMeetingCorpus,
   cleanUserNotes,
   formatTranscriptSegment,
   isSelf,
+  speakerDisplayNames,
 } from "@/lib/meeting-digest";
 import { requireMeetingsUser } from "@/lib/plan-guards";
 import {
   createMeetingSessionRow,
+  lastSeriesMeeting,
+  linkMeetingSessionToEvent,
   discardMeetingSessionRow,
   endMeetingSessionRow,
   getMeetingTranscript,
   loadMeetingSelf,
   resumeMeetingSessionRow,
+  setMeetingUserNotes,
   storeMeetingDigest,
   updateMeetingDetails,
   type MeetingAttendee,
@@ -64,6 +70,8 @@ export async function createMeetingSession(input: {
   includesMic: boolean;
   captureSurface?: string | null;
   recorderId: string;
+  calendarEventKey?: string | null;
+  calendarSeriesId?: string | null;
 }): Promise<{ ok: true; id: string; startedAtIso: string } | Fail> {
   try {
     const userId = await requireMeetingsUser();
@@ -83,7 +91,10 @@ export async function createMeetingSession(input: {
     // and tell them their hours are gone when their hours are not what is stopping them. The
     // read is skipped entirely rather than taken and ignored, so no stale number can leak
     // into copy from here.
-    if (deepgramEnabled()) {
+    //
+    // The same holds once the Deepgram credit is spent (`deepgramOpenFor`): a NEW meeting then
+    // records on the account's own key, so the cap is not Orbit's to enforce.
+    if (await deepgramOpenFor(userId, "meeting")) {
       const allowance = await speechAllowance(userId, "meeting");
       if (allowance.exhausted) {
         return { ok: false, error: `You’ve used this month’s meeting hours — they reset on ${resetLabel(allowance.resetsAt)}` };
@@ -144,6 +155,21 @@ export async function saveMeetingDetails(
     return { ok: true };
   } catch (err) {
     return { ok: false, error: await actionFailure(err, "Couldn’t update the meeting", "meetings.save-meeting-details") };
+  }
+}
+
+/**
+ * The notes box, saved as the person types (debounced by the engine) and from the detail
+ * page. Not plan-gated: they are the user's own words about a meeting they already have.
+ */
+export async function saveMeetingNotes(id: string, notes: string): Promise<{ ok: true } | Fail> {
+  try {
+    const userId = await requireUserId();
+    const saved = await setMeetingUserNotes(userId, id, cleanUserNotes(notes));
+    if (!saved) return { ok: false, error: "That meeting no longer exists" };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: await actionFailure(err, "Couldn’t save your notes", "meetings.save-meeting-notes") };
   }
 }
 
@@ -230,10 +256,36 @@ export async function analyzeMeetingSession(
     if (!t) return { ok: false, error: "That meeting no longer exists" };
     if (t.session.status === "saved") return { ok: false, error: "That meeting was already saved" };
 
-    const notes = cleanUserNotes(opts.notes);
+    // Notes sent with the request are new: they mean a fresh digest, and they are kept with
+    // the meeting. Without any, the stored notes still feed a digest made for another reason
+    // (Try again, a first summary) — but never force one by themselves.
+    const typed = cleanUserNotes(opts.notes);
+    if (typed && typed !== (t.session.userNotes ?? "")) await setMeetingUserNotes(userId, t.session.id, typed);
+    const notes = typed || cleanUserNotes(t.session.userNotes);
+
+    // The calendar event this was, when known — from the nudge, or matched now by time and guests.
+    let event = t.session.calendarEventKey ? await findEventByKey(userId, t.session.calendarEventKey) : null;
+    if (!t.session.calendarEventKey) {
+      event = await matchEventForSession(userId, t.session.startedAt, {
+        title: t.session.title,
+        attendees: t.session.attendees ?? [],
+      });
+      if (event) {
+        await linkMeetingSessionToEvent(userId, t.session.id, { eventKey: event.providerEventId, seriesId: event.seriesId });
+      }
+    }
+    const seriesId = t.session.calendarSeriesId ?? event?.seriesId ?? null;
+    const last = seriesId ? await lastSeriesMeeting(userId, seriesId, t.session.id) : null;
+    const lastOpen = last?.actionItems.map((a) => (a.owner ? `${a.text} (${a.owner})` : a.text)) ?? [];
+    // Names only: this goes to the AI provider, and an invitee with no display name would
+    // otherwise be their address.
+    const invited = event?.guestsHidden ? [] : (event?.attendees ?? []).map((a) => a.name).filter(Boolean);
+
+    // A 1:1's other voice is the other person; the transcript then reads "Priya:" not "Speaker 1:".
+    const voices = speakerDisplayNames(t.segments, invited.length ? invited : (t.session.attendees ?? []).map((a) => a.name));
     const paragraphs = t.segments
       .filter((s) => s.text.trim())
-      .map((s) => formatTranscriptSegment(s));
+      .map((s) => formatTranscriptSegment(s, voices));
     if (!paragraphs.length) {
       return {
         ok: false,
@@ -243,9 +295,19 @@ export async function analyzeMeetingSession(
 
     const self = await loadMeetingSelf(userId);
     const userName = [self.firstName, self.lastName].filter(Boolean).join(" ") || null;
-    const attendeeNames = (t.session.attendees ?? []).map((a) => a.name);
+    // The user's typed list wins; a recording started without one borrows the invite's guests.
+    const sessionAttendees = t.session.attendees ?? [];
+    const attendeeNames = sessionAttendees.length ? sessionAttendees.map((a) => a.name) : invited;
+    const emailFor = (name: string) => {
+      const key = name.trim().toLowerCase();
+      return (
+        sessionAttendees.find((a) => a.name.trim().toLowerCase() === key)?.email ??
+        event?.attendees.find((a) => (a.name || a.email).trim().toLowerCase() === key)?.email ??
+        null
+      );
+    };
 
-    let digest = !opts.force && !notes ? t.session.digest : null;
+    let digest = !opts.force && !typed ? t.session.digest : null;
     if (!digest) {
       try {
         digest = await analyzeMeetingTranscript(
@@ -257,6 +319,8 @@ export async function analyzeMeetingSession(
             userName,
             attendees: attendeeNames,
             userNotes: notes || undefined,
+            invite: event ? { attendees: invited, agenda: event.agenda } : undefined,
+            lastTime: lastOpen.length ? { date: isoDay(last!.startedAt), actionItems: lastOpen } : undefined,
           },
           { complete: completeJson, parseJson: parseAiJson }
         );
@@ -307,7 +371,7 @@ export async function analyzeMeetingSession(
           // review card, and someone merely mentioned should be a mention, not a card.
           seedPeople: present.map((name) => ({
             name,
-            email: t.session.attendees.find((a) => a.name.trim().toLowerCase() === name.toLowerCase())?.email ?? null,
+            email: emailFor(name),
           })),
           interactionType: "call",
         },
@@ -318,6 +382,39 @@ export async function analyzeMeetingSession(
     };
   } catch (err) {
     return { ok: false, error: await actionFailure(err, "Couldn’t analyze the meeting", "meetings.analyze-meeting-session") };
+  }
+}
+
+/**
+ * The recap email for a summarized meeting: to everyone invited (the calendar event's guests
+ * when it is still in the window, else the names typed when recording), from the stored digest.
+ * Nothing is sent from here — the page opens it in Compose or the user's own mail app.
+ */
+export async function getMeetingRecap(id: string): Promise<{ ok: true; recap: MeetingRecap } | Fail> {
+  try {
+    const userId = await requireMeetingsUser();
+    const db = await getDb();
+    const session = await db.query.meetingSessions.findFirst({
+      where: and(eq(meetingSessions.id, id), eq(meetingSessions.userId, userId)),
+      columns: { title: true, digest: true, attendees: true, calendarEventKey: true },
+    });
+    if (!session?.digest) return { ok: false, error: "That meeting hasn’t been summarized yet" };
+    const event = session.calendarEventKey ? await findEventByKey(userId, session.calendarEventKey) : null;
+    const typed = (session.attendees ?? []).map((a) => ({ name: a.name, email: a.email ?? null }));
+    const invited = (event?.attendees ?? []).map((a) => ({ name: a.name || a.email, email: a.email || null }));
+    const self = await loadMeetingSelf(userId);
+    return {
+      ok: true,
+      recap: buildMeetingRecap({
+        title: session.title?.trim() || session.digest.title || "our meeting",
+        digest: session.digest,
+        attendees: invited.length ? invited : typed,
+        userFirstName: self.firstName,
+        isSelf: (name) => isSelf(name, self),
+      }),
+    };
+  } catch (err) {
+    return { ok: false, error: await actionFailure(err, "Couldn’t write the recap", "meetings.get-meeting-recap") };
   }
 }
 
@@ -373,7 +470,23 @@ export async function getMeetingCandidates(): Promise<MeetingCandidatesResult> {
     await consumeBucket("meetingCandidates", userId, RATE_LIMITS.meetingCandidates);
     const db = await getDb();
     const conn = await db.query.gmailConnections.findFirst({ where: eq(gmailConnections.userId, userId) });
-    if (!conn) return { ok: true, status: "not-connected", events: [] };
+    if (!conn) {
+      // Outlook or iCloud: no live read here, but the mirrored window has the same meetings.
+      const now = new Date();
+      const hasCalendar = await db.query.calendarSources.findFirst({
+        where: and(eq(calendarSources.userId, userId), eq(calendarSources.enabled, 1)),
+        columns: { id: true },
+      });
+      if (!hasCalendar) return { ok: true, status: "not-connected", events: [] };
+      const rows = await listUpcomingEvents(userId, {
+        from: new Date(now.getTime() - CANDIDATES_PAST_MS),
+        to: new Date(now.getTime() + CANDIDATES_FUTURE_MS),
+        limit: 25,
+      });
+      const result: MeetingCandidatesResult = { ok: true, status: "ok", events: meetingCandidatesFromRows(rows, now) };
+      candidatesCache.set(userId, { at: Date.now(), result });
+      return result;
+    }
     if (!hasCalendarScope(conn.scopes)) return { ok: true, status: "needs-scope", events: [] };
     if (conn.status !== "active") return { ok: true, status: "reauth", events: [] };
 
@@ -386,23 +499,18 @@ export async function getMeetingCandidates(): Promise<MeetingCandidatesResult> {
     }
 
     const now = new Date();
-    const params = new URLSearchParams({
-      singleEvents: "true",
-      orderBy: "startTime",
-      maxResults: "25",
-      timeMin: new Date(now.getTime() - CANDIDATES_PAST_MS).toISOString(),
-      timeMax: new Date(now.getTime() + CANDIDATES_FUTURE_MS).toISOString(),
+    const page = await fetchCalendarWindow({
+      accessToken,
+      from: new Date(now.getTime() - CANDIDATES_PAST_MS),
+      to: new Date(now.getTime() + CANDIDATES_FUTURE_MS),
+      maxResults: 25,
+      timeoutMs: 10_000,
     });
-    const res = await googleFetchWithRetry(
-      `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
-      { headers: { Authorization: `Bearer ${accessToken}` }, timeoutMs: 10_000 }
-    );
-    if (res.status === 401) return { ok: true, status: "reauth", events: [] };
-    if (res.status === 403) return { ok: true, status: "needs-scope", events: [] };
-    if (!res.ok) throw new Error(`Google Calendar ${res.status}`);
+    if (page.status === 401) return { ok: true, status: "reauth", events: [] };
+    if (page.status === 403) return { ok: true, status: "needs-scope", events: [] };
+    if (page.status >= 400) throw new Error(`Google Calendar ${page.status}`);
 
-    const page = (await res.json()) as { items?: Parameters<typeof meetingCandidatesFrom>[0] };
-    const result: MeetingCandidatesResult = { ok: true, status: "ok", events: meetingCandidatesFrom(page.items ?? [], now) };
+    const result: MeetingCandidatesResult = { ok: true, status: "ok", events: meetingCandidatesFrom(page.items, now) };
     candidatesCache.set(userId, { at: Date.now(), result });
     return result;
   } catch (err) {
@@ -413,11 +521,13 @@ export async function getMeetingCandidates(): Promise<MeetingCandidatesResult> {
 /** One more page of past meetings, for the list's "Load more". */
 export async function listMeetingsPage(
   q: string | null,
-  cursor: string | null
+  cursor: string | null,
+  source: MeetingSourceFilter = "all"
 ): Promise<({ ok: true } & MeetingsPage) | Fail> {
   try {
-    const userId = await requireMeetingsUser();
-    return { ok: true, ...(await listMeetingsFor(userId, { q, cursor })) };
+    // A read of the user's own history, Granola rows included: not plan-gated.
+    const userId = await requireUserId();
+    return { ok: true, ...(await listMeetingsFor(userId, { q, cursor, source })) };
   } catch (err) {
     return { ok: false, error: await actionFailure(err, "Couldn’t load your meetings", "meetings.list-meetings-page") };
   }

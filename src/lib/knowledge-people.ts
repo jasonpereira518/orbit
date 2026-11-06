@@ -1,6 +1,7 @@
 import { desc, eq, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { contactBriefs, contacts } from "@/db/schema";
+import { sharedAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import {
   gistOf,
   KNOWLEDGE_PEOPLE_LIMIT,
@@ -36,7 +37,7 @@ export async function loadKnowledgePeople(userId: string): Promise<KnowledgePeop
         company: contacts.company,
         lastInteractionAt: contacts.lastInteractionAt,
         summary: sql<string | null>`left(${contacts.aiSummary}::text, 320)`,
-        hasPhoto: sql<boolean>`(${contacts.profileImageUrl} IS NOT NULL AND ${contacts.profileImageUrl} <> '')`,
+        hasPhoto: sql<boolean>`((${contacts.profileImageUrl} IS NOT NULL AND ${contacts.profileImageUrl} <> '') OR ${sharedAvatarUrlSql} IS NOT NULL)`,
         fitCount: sql<number>`coalesce((
           SELECT count(*)::int
             FROM jsonb_array_elements(${contactBriefs.goalFit} -> 'items') AS e

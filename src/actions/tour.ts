@@ -9,6 +9,7 @@ import { removeTourExamples } from "@/lib/onboarding-examples/remove";
 import { seedTourExamples } from "@/lib/onboarding-examples/seed";
 import { isTourStopId } from "@/lib/tour/tour-stops";
 import { ensureUserSettings } from "@/lib/user-settings";
+import { trackTourStopAdvance } from "@/lib/onboarding-events";
 
 const TOURED_PATHS = [
   "/onboarding",
@@ -65,10 +66,15 @@ export async function saveTourStop(stop: string) {
   if (!isTourStopId(stop)) return { ok: false as const };
   const userId = await requireUserId();
   const db = await getDb();
+  // The stop being left is the one that was finished. A failed read only skips the event.
+  const before = await db.query.userSettings
+    .findFirst({ where: eq(userSettings.userId, userId), columns: { tourStop: true } })
+    .catch(() => null);
   await db
     .update(userSettings)
     .set({ tourStop: stop, updatedAt: new Date() })
     .where(eq(userSettings.userId, userId));
+  if (before) trackTourStopAdvance(userId, before.tourStop, stop);
   return { ok: true as const };
 }
 

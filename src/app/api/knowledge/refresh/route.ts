@@ -28,8 +28,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Sign in to refresh this" }, { status: 401 });
   }
 
+  // `Origin: null` (sandboxed frames, some redirects) is not a URL; it is cross-origin, not a 500.
   const origin = request.headers.get("origin");
-  if (origin && new URL(origin).host !== new URL(request.url).host) {
+  if (origin && URL.parse(origin)?.host !== new URL(request.url).host) {
     return NextResponse.json({ error: "Cross-origin request refused" }, { status: 403 });
   }
 

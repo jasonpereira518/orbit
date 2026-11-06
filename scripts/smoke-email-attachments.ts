@@ -37,11 +37,15 @@ function putFake(pathname: string, size: number, contentType = "application/pdf"
 let outage = false;
 const deleted: string[] = [];
 let listed: { pathname: string; url: string; uploadedAt: Date }[] = [];
+/** Objects uploaded around the composer, with `access: "public"`. */
+const publicPaths = new Set<string>();
+const PUBLIC_HOST = "https://store1.public.blob.vercel-storage.com";
 setAttachmentBlobClientForTests({
   async head(p: string) {
     const b = store.get(p);
     if (!b) throw Object.assign(new Error("not found"), { name: "BlobNotFoundError" });
-    return { pathname: p, url: `https://blob.test/${p}`, size: b.size, contentType: b.contentType };
+    const url = publicPaths.has(p) ? `${PUBLIC_HOST}/${p}` : `https://blob.test/${p}`;
+    return { pathname: p, url, size: b.size, contentType: b.contentType };
   },
   async get(p: string) {
     if (outage) throw new Error("503");
@@ -78,6 +82,10 @@ async function main() {
   check("a traversal out of the prefix is refused", !escape.ok);
   const missing = await verifyAttachmentRefs(USER, [{ pathname: `${mine}9/gone.pdf`, filename: "gone.pdf" }], "gmail");
   check("a missing blob is refused", !missing.ok && missing.reason === "not_found");
+  putFake(`${mine}4/hosted.pdf`, 1 * MB);
+  publicPaths.add(`${mine}4/hosted.pdf`);
+  const hosted = await verifyAttachmentRefs(USER, [{ pathname: `${mine}4/hosted.pdf`, filename: "hosted.pdf" }], "gmail");
+  check("a public object (uploaded around the composer) is refused", !hosted.ok && hosted.reason === "not_found");
   const blocked = await verifyAttachmentRefs(USER, [{ pathname: `${mine}1/resume.pdf`, filename: "run.exe" }], "gmail");
   check("a blocked name is refused", !blocked.ok && blocked.reason === "blocked_type");
   const twoForOutlook = await verifyAttachmentRefs(USER, [
@@ -142,6 +150,7 @@ async function main() {
       { pathname: `${p}orphan/f.pdf`, url: "u", uploadedAt: ago(3 * day) },
       { pathname: `${p}live/f.pdf`, url: "u", uploadedAt: ago(9 * day) },
       { pathname: `${p}fresh/f.pdf`, url: "u", uploadedAt: ago(3600_000) },
+      { pathname: `${p}hosted/f.pdf`, url: `${PUBLIC_HOST}/${p}hosted/f.pdf`, uploadedAt: ago(60_000) },
     ];
     deleted.length = 0;
     const swept = await sweepEmailAttachments();
@@ -154,11 +163,12 @@ async function main() {
     check("an old unsent upload is deleted", deleted.includes(`${p}orphan/f.pdf`));
     check("a file a queued send needs is kept", files("live") === 1 && !deleted.includes(`${p}live/f.pdf`));
     check("a fresh upload is kept", !deleted.includes(`${p}fresh/f.pdf`));
-    check("counts add up", swept.settled === 1 && swept.orphans === 1, JSON.stringify(swept));
+    check("a public object goes at once, however fresh", deleted.includes(`${p}hosted/f.pdf`));
+    check("counts add up", swept.settled === 1 && swept.orphans === 2, JSON.stringify(swept));
 
     deleted.length = 0;
     await purgeEmailAttachmentsForUser(SWEEP);
-    check("purge deletes everything under the user's prefix", deleted.length === 3 && deleted.every((d) => d.startsWith(p)));
+    check("purge deletes everything under the user's prefix", deleted.length === listed.length && deleted.every((d) => d.startsWith(p)));
   } finally {
     await purgeUserData(SWEEP, { keepSettings: false }).catch(() => {});
   }

@@ -127,7 +127,7 @@ export function LinkedInScreenshot({
               )}
             />
           )}
-          <span className="absolute -top-2.5 -right-2.5 flex size-5 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground shadow-sm">
+          <span className="absolute -top-2.5 -right-2.5 flex size-5 items-center justify-center rounded-full bg-primary text-2xs font-semibold text-primary-foreground shadow-sm">
             {t.label}
           </span>
         </span>

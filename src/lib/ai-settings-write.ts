@@ -14,7 +14,7 @@
  * construction: it has no action id, so it is not reachable by POST at all. It uses `@/db`
  * and no `next/server`, so both callers can import it.
  */
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contactEmbeddings, userSettings } from "@/db/schema";
 import { resolveAiModel, resolveAiProvider, type AiProvider } from "@/lib/ai";
@@ -26,6 +26,34 @@ import {
   managedEligibility,
   type ManagedEligibility,
 } from "@/lib/managed-ai-policy";
+import { track } from "@/lib/product-events";
+import { eventId } from "@/lib/product-event-ids";
+import { reportError } from "@/lib/report-error";
+import type { AI_PROVIDERS } from "@/lib/product-event-schemas";
+
+/**
+ * `ai_key_added`: a key for `provider` went from absent to present. One per (account,
+ * provider), so a retried save or a clear-and-re-add does not count twice; the time-to-AI-ready
+ * question is about the first. Never throws and never waits on anything but the plan lookup,
+ * which is guarded: telemetry must not fail a key save.
+ */
+export async function trackAiKeyAdded(
+  userId: string,
+  provider: (typeof AI_PROVIDERS)[number],
+  signupAt: Date | null
+): Promise<void> {
+  try {
+    const { plan } = await getEntitlements(userId);
+    const seconds = signupAt ? Math.max(0, Math.round((Date.now() - signupAt.getTime()) / 1000)) : 0;
+    track(
+      "ai_key_added",
+      { provider, plan, seconds_since_signup: seconds },
+      { userId, id: eventId("ai_key_added", userId, provider) }
+    );
+  } catch (err) {
+    reportError(err, { where: "analytics.ai_key_added", level: "warning" });
+  }
+}
 
 /**
  * Which embedding backend a given key state would land on — the same policy function the
@@ -111,6 +139,20 @@ export async function applyAiKeyChange(input: {
         : (existing?.openrouterApiKeyEncrypted ?? null),
   };
 
+  // A key for THIS provider where there was none, and whether the account had no key at all.
+  // The first stamps `ai_key_added_at` (once, ever: it is coalesced, never moved or cleared);
+  // only the second is "time to AI ready". A person who already had a key before the column
+  // existed keeps NULL (unknown) rather than being dated to their next key.
+  const keyColumn = KEY_COLUMN[provider];
+  const providerKeyAdded = Boolean(encryptedKey) && !existing?.[keyColumn];
+  const hadAnyKey = Boolean(
+    existing?.geminiApiKeyEncrypted ||
+      existing?.openaiApiKeyEncrypted ||
+      existing?.anthropicApiKeyEncrypted ||
+      existing?.openrouterApiKeyEncrypted
+  );
+  const firstKeyEver = Boolean(encryptedKey) && !hadAnyKey;
+
   if (existing) {
     await db
       .update(userSettings)
@@ -120,6 +162,7 @@ export async function applyAiKeyChange(input: {
         // They have now seen the model they are on and chosen: the notice is spent.
         aiModelMigratedFrom: null,
         ...nextKeyState,
+        ...(firstKeyEver ? { aiKeyAddedAt: sql`coalesce(${userSettings.aiKeyAddedAt}, now())` } : {}),
         updatedAt: new Date(),
       })
       .where(eq(userSettings.userId, userId));
@@ -129,8 +172,11 @@ export async function applyAiKeyChange(input: {
       aiProvider: provider,
       aiModel,
       ...nextKeyState,
+      ...(firstKeyEver ? { aiKeyAddedAt: new Date() } : {}),
     });
   }
+
+  if (providerKeyAdded) await trackAiKeyAdded(userId, provider, existing?.createdAt ?? new Date());
 
   const nextBackend = embeddingBackendFor(provider, nextKeyState, eligibility);
   const embeddingReset = Boolean(previousBackend && nextBackend && previousBackend !== nextBackend);

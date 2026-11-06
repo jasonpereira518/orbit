@@ -12,6 +12,7 @@ import {
 import { withReference } from "@/lib/errors";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { reportError } from "@/lib/report-error";
+import { ipBucketKey } from "@/lib/client-ip";
 
 export type ContactMail = { from: string; to: string; replyTo: string; subject: string; text: string };
 export type ContactSender = (apiKey: string, mail: ContactMail) => Promise<{ error: unknown }>;
@@ -74,7 +75,7 @@ export async function submitContactMessageCore(
   // budget. Fails closed like every other limiter here: a limiter that cannot count must
   // not send on Orbit's key.
   try {
-    await consumeBucket("contactForm", ctx.ip, RATE_LIMITS.contactForm);
+    await consumeBucket("contactForm", ipBucketKey(ctx.ip), RATE_LIMITS.contactForm);
   } catch (err) {
     if (isRateLimitedError(err)) {
       return {

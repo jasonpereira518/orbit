@@ -13,9 +13,11 @@ import {
   Th,
 } from "@/components/admin/primitives";
 import { CopyId } from "@/components/admin/copy-id";
+import { SharedAvatarActions } from "@/components/admin/shared-avatar-actions";
 import { requireAdminUserId } from "@/lib/admin";
 import { recordAccountView, recordContactView } from "@/lib/admin-operations";
 import { getAdminContactDetail } from "@/lib/admin-user-detail";
+import { getSharedAvatar, sharedPhotoSlug } from "@/lib/shared-avatars";
 
 export const metadata = { title: "Admin · Contact" };
 
@@ -50,6 +52,8 @@ export default async function AdminContactDetailPage({
 
   const { contact, interactions } = detail;
   const fields = contact.detail;
+  const photoSlug = sharedPhotoSlug(fields?.linkedinUrl);
+  const sharedPhoto = photoSlug ? await getSharedAvatar(photoSlug) : null;
   const withNotes = interactions.filter((i) => i.hasRawNotes).length;
 
   return (
@@ -109,6 +113,29 @@ export default async function AdminContactDetailPage({
           </dl>
         </AdminPanel>
 
+        {photoSlug && (
+          <AdminPanel
+            title="Shared LinkedIn photo"
+            action={<SharedAvatarActions slug={photoSlug} blocked={!!sharedPhoto?.blockedAt} />}
+          >
+            <div className="flex items-center gap-3 text-sm">
+              {sharedPhoto?.imageUrl && !sharedPhoto.blockedAt && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={sharedPhoto.imageUrl} alt="" className="size-14 rounded-full object-cover" />
+              )}
+              <span className="text-muted-foreground">
+                <span className="font-mono text-xs">{photoSlug}</span>
+                {" · "}
+                {sharedPhoto?.blockedAt
+                  ? "Blocked — never fetched."
+                  : sharedPhoto?.imageUrl
+                    ? `Shown to every Orbit user who has this person (${sharedPhoto.source}).`
+                    : "No shared photo."}
+              </span>
+            </div>
+          </AdminPanel>
+        )}
+
         <AdminPanel title="Contact details">
           {fields ? (
             <dl className="space-y-0">
@@ -167,7 +194,7 @@ export default async function AdminContactDetailPage({
           {interactions.length === 0 ? (
             <EmptyState>Nothing logged against this contact.</EmptyState>
           ) : (
-            <AdminTable minWidth="sm"
+            <AdminTable label={`Interactions (${interactions.length})`} minWidth="sm"
               head={
                 <>
                   <Th>Type</Th>

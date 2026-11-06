@@ -133,7 +133,7 @@ export default async function AdminEngagementPage({
           {imports.length === 0 ? (
             <EmptyState>Nothing completed in this window yet.</EmptyState>
           ) : (
-            <AdminTable minWidth="sm"
+            <AdminTable label="Imports completed, by provider" minWidth="sm"
               head={
                 <>
                   <Th>Provider</Th>
@@ -159,7 +159,7 @@ export default async function AdminEngagementPage({
           {captures.length === 0 ? (
             <EmptyState>Nothing saved in this window yet.</EmptyState>
           ) : (
-            <AdminTable minWidth="sm"
+            <AdminTable label="Captures saved, by source" minWidth="sm"
               head={
                 <>
                   <Th>Source</Th>
@@ -185,7 +185,7 @@ export default async function AdminEngagementPage({
           {outreach.length === 0 ? (
             <EmptyState>Nothing sent in this window yet.</EmptyState>
           ) : (
-            <AdminTable minWidth="none"
+            <AdminTable label="Outreach messages sent, by channel" minWidth="none"
               head={
                 <>
                   <Th>Channel</Th>

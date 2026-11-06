@@ -143,7 +143,7 @@ Two files mirror app logic and will fail silently if they drift:
 - `src/inject/dom/url.ts` — `linkedinSlug` and `xHandle` must stay
   byte-identical to `src/lib/duplicates.ts`. If they diverge, the extension
   reports "new to your orbit" for someone the user has known for years.
-- `src/styles/tokens.css` — generated from the app's `globals.css`.
+- `src/styles/tokens.css` — generated from the app's `theme.css`.
   `npm run tokens:sync` regenerates; `npm run check:tokens` runs on every build
   and fails on drift.
 

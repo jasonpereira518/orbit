@@ -4,7 +4,9 @@ import {
   ANNUAL_MONTHLY_EQUIVALENT_CENTS,
   MONTHLY_CENTS,
   classifyMovement,
+  fallbackMonthlyCents,
 } from "@/lib/billing-events";
+import { LIFETIME_INTRO_PRICE, LIFETIME_STANDARD_PRICE } from "@/lib/plan-limits";
 import {
   CREDIT_PACK_CREDITS,
   CREDIT_PACK_METADATA_VALUE,
@@ -135,7 +137,18 @@ export type MirrorInstruction =
    * A full refund or lost dispute of a subscription charge: status `canceled`, paid through
    * `periodEnd` (epoch seconds, = now), so `resolvePlan` drops to free immediately.
    */
-  | { type: "subscription_revoked"; userId: string; periodEnd: number; reason: RevocationReason }
+  | {
+      type: "subscription_revoked";
+      userId: string;
+      periodEnd: number;
+      reason: RevocationReason;
+      /**
+       * The refund / dispute event's `created`. Advances `subscription_event_at` like any
+       * other subscription write, so a subscription event created before the revocation but
+       * delivered after it is ignored as stale instead of re-granting the refunded plan.
+       */
+      eventAt?: Date | null;
+    }
   | null;
 
 export type StripeDecision = {
@@ -159,6 +172,11 @@ export type DecideContext = {
   lastSubscriptionEventAt?: Date | null;
   /** The mirror's current status, for the same-second tie-break. */
   currentSubscriptionStatus?: "active" | "past_due" | "canceled" | null;
+  /**
+   * The mirror's current `subscription_period_end`. Read so a cancellation can never extend
+   * a subscription that has already ended — above all one a full refund revoked.
+   */
+  currentSubscriptionPeriodEnd?: Date | null;
   /**
    * What the charge behind a full refund or a lost dispute paid for. Only read for
    * `charge.refunded` and `charge.dispute.closed`. Absent means "unknown" — which is what
@@ -371,6 +389,54 @@ export function intervalFromAmountTotal(
 
 const ANNUAL_CENTS_TOTAL = 5000;
 
+/** Which Lifetime offer a purchase was: the first 100 buyers paid the intro price. */
+export type LifetimeTier = "intro" | "standard" | "unknown";
+
+/**
+ * Classify a Lifetime Checkout Session by what the buyer paid, tolerant of tax.
+ *
+ * `amount_total` includes sales tax, so a $25 intro purchase can read $27 and a $75 standard
+ * one $81 — comparing it to the list price exactly would call every taxed sale "unknown".
+ * Preference order: `amount_subtotal` (before tax and shipping; exact match), then the total
+ * less `total_details.amount_tax` (exact), then the bare total inside a +25% tolerance band
+ * (tax only ever adds). A discounted or unrecognised amount is "unknown" rather than a guess.
+ *
+ * Read from the session because the price OBJECT is not on the event unless expanded: the
+ * amount is what the buyer actually paid and survives a re-priced Stripe object.
+ */
+export function lifetimeTierFor(session: {
+  amount_total?: number | null;
+  amount_subtotal?: number | null;
+  total_details?: { amount_tax?: number | null } | null;
+}): LifetimeTier {
+  const intro = LIFETIME_INTRO_PRICE * 100;
+  const standard = LIFETIME_STANDARD_PRICE * 100;
+  const exact = (cents: number): LifetimeTier =>
+    cents === intro ? "intro" : cents === standard ? "standard" : "unknown";
+
+  if (typeof session.amount_subtotal === "number" && session.amount_subtotal > 0) {
+    return exact(session.amount_subtotal);
+  }
+  const total = session.amount_total;
+  if (typeof total !== "number" || total <= 0) return "unknown";
+  const tax = session.total_details?.amount_tax;
+  if (typeof tax === "number" && tax >= 0) return exact(total - tax);
+  const within = (list: number) => total >= list && total <= Math.round(list * 1.25);
+  if (within(intro)) return "intro";
+  if (within(standard)) return "standard";
+  return "unknown";
+}
+
+/** The Stripe price id behind a Checkout Session, when the payload (or an expansion) carries it. */
+function checkoutPriceId(session: Stripe.Checkout.Session): string | null {
+  const fromLines = (
+    session as unknown as { line_items?: { data?: Array<{ price?: { id?: string } | null }> } }
+  ).line_items?.data?.[0]?.price?.id;
+  if (typeof fromLines === "string") return fromLines;
+  const meta = session.metadata?.orbit_price_id ?? session.metadata?.price_id;
+  return typeof meta === "string" && meta ? meta : null;
+}
+
 function monthlyCentsForInterval(interval: BillingInterval | null): number {
   return interval === "year" ? ANNUAL_MONTHLY_EQUIVALENT_CENTS : MONTHLY_CENTS;
 }
@@ -498,7 +564,7 @@ const NO_REVOCATION: Revocation = { mirror: null, bookings: [] };
  */
 function revocationFor(
   reason: RevocationReason,
-  event: Pick<Stripe.Event, "id">,
+  event: Pick<Stripe.Event, "id" | "created">,
   ctx: DecideContext,
   userId: string,
   eventAt: Date,
@@ -528,6 +594,8 @@ function revocationFor(
         userId,
         reason,
         periodEnd: Math.floor(ctx.now.getTime() / 1000),
+        // Only a real `created` moves the ordering watermark, as for subscription events.
+        eventAt: typeof event.created === "number" ? new Date(event.created * 1000) : null,
       },
       // Keyed by the EVENT and carrying only MRR; the cash rows beside it are keyed by
       // their own objects and carry only cash.
@@ -617,6 +685,11 @@ export function decideStripeEvent(
                 // How a later refund or dispute is tied back to THIS purchase: charges carry
                 // a payment intent, never a session id. See `src/lib/stripe-charge-purpose.ts`.
                 paymentIntentId: paymentIntentIdOf(session),
+                // Which offer this was (intro $25 vs standard $75), so the price step can be
+                // analysed without inferring it from a tax-inclusive `amount_cents`. `priceId`
+                // is null unless the payload carries or expands the line items.
+                priceId: checkoutPriceId(session),
+                tier: lifetimeTierFor(session),
               },
             },
           ],
@@ -810,9 +883,28 @@ export function decideStripeEvent(
         subscription.metadata,
         (subscription as { start_date?: number }).start_date ?? null
       );
-      const listCents = shape.monthlyCents ?? MONTHLY_CENTS;
+      // Unknown price: the tier's own fallback (a Max subscription is not worth a legacy $5),
+      // the same one `monthlyValueCents` and `revenueAtRiskCents` use.
+      const listCents = shape.monthlyCents ?? fallbackMonthlyCents(tier);
       const offCents = foundingOffNow(terms, subscription, Math.floor(eventAt.getTime() / 1000));
       const monthlyCents = Math.max(0, listCents - offCents);
+
+      /*
+       * A cancellation never extends a mirror that is already canceled. Stripe's
+       * `current_period_end` on a `deleted` (or an `updated` with status canceled) is the
+       * period the subscriber PAID for, and normally equals what the mirror already holds, so
+       * a normal cancel still keeps access to the period end. The case it changes is a full
+       * refund or lost dispute: the revocation ended the period at the refund, and the
+       * operator's "refund, then cancel" must not hand back the refunded period.
+       */
+      const currentEnd = ctx.currentSubscriptionPeriodEnd ?? null;
+      const periodEnd =
+        mirrorStatus === "canceled" &&
+        ctx.currentSubscriptionStatus === "canceled" &&
+        currentEnd &&
+        shape.periodEnd !== null
+          ? Math.min(shape.periodEnd, Math.floor(currentEnd.getTime() / 1000))
+          : shape.periodEnd;
 
       /*
        * A terminal event forces the recurring value to zero rather than re-deriving it.
@@ -828,7 +920,7 @@ export function decideStripeEvent(
         : mirrorStatus === null
           ? 0
           : mirrorStatus === "canceled"
-            ? shape.periodEnd && shape.periodEnd * 1000 > eventAt.getTime()
+            ? periodEnd && periodEnd * 1000 > eventAt.getTime()
               ? monthlyCents
               : 0
             : monthlyCents;
@@ -842,7 +934,7 @@ export function decideStripeEvent(
           plan,
           status: mirrorStatus,
           periodStart: shape.periodStart,
-          periodEnd: shape.periodEnd,
+          periodEnd,
           monthlyCents: plan ? monthlyCents : null,
           interval: plan ? shape.interval : null,
           stripeCustomerId: customerIdOf(subscription),

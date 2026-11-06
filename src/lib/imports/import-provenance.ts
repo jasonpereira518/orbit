@@ -28,6 +28,10 @@ export type ImportedContactProvenance = { created: boolean; fp?: string };
  * after an import is a person acting — the contact form, capture, the extension's save, the
  * MCP `update_contact` tool, the "Refresh from LinkedIn" button, a merge, or a later import
  * the person ran — never a background job.
+ *
+ * One known exception (Oct 2026): web research (`work-history-research.ts`) fills an EMPTY
+ * `company`/`title`/`school` on a contact it finds. A researched import's people then read
+ * "edited" and undo keeps them — the safe failure, accepted rather than dropping the fields.
  */
 export type FingerprintInput = {
   fullName?: string | null;

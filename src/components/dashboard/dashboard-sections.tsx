@@ -12,7 +12,7 @@ import { DashboardGraphPreview } from "@/components/dashboard/dashboard-graph-pr
 import { DueFollowUpRow } from "@/components/dashboard/due-follow-up-row";
 import { GenerateFollowUpsButton } from "@/components/dashboard/generate-follow-ups-button";
 import { GoalsSummary } from "@/components/dashboard/goals-summary";
-import { LinkedInExportNudge } from "@/components/dashboard/linkedin-export-nudge";
+import { LinkedInExportNudge, LinkedInRefreshNudge } from "@/components/dashboard/linkedin-export-nudge";
 import { LinkedInExportCard } from "@/components/linkedin/linkedin-export-card";
 import { linkedinCardState } from "@/lib/linkedin-export-card";
 import { NetworkDepthChart } from "@/components/dashboard/network-depth-chart";
@@ -23,11 +23,12 @@ import { SuggestedOutreachCard } from "@/components/dashboard/suggested-outreach
 import { formatReplyRate } from "@/lib/outreach-metrics";
 import { buttonVariants } from "@/components/ui/button";
 import { CARD_HOVER, PRESS, ROW_HOVER_INSET } from "@/lib/interaction";
-import { companyBrandColor } from "@/lib/company-brand";
+import { companyBrandText } from "@/lib/company-brand";
 import { cn } from "@/lib/utils";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
-import { getLinkedInNudgeVisible, hasLinkedInImport } from "@/lib/linkedin-reminder";
+import { getLastLinkedInImportAt, getLinkedInNudgeVisible, hasLinkedInImport } from "@/lib/linkedin-reminder";
+import { daysSince, linkedInRefreshLevel } from "@/lib/linkedin-export";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { getGmailConnectionStatus } from "@/actions/gmail";
 import { getOutlookConnectionStatus } from "@/actions/outlook";
@@ -97,11 +98,17 @@ const revealDelay = (ms: number) =>
 
 /**
  * The LinkedIn export card (start it, then "ready about …") or the arrival nudge that follows
- * the full-screen reminder. Renders nothing once a LinkedIn import exists.
+ * the full-screen reminder. Once a LinkedIn import exists, only the refresh card: 90+ days
+ * after the last upload (`linkedInRefreshLevel`), so it leads the dashboard when it is urgent.
  */
 export async function LinkedInExportNudgeSection() {
   const userId = await requireUserId();
-  const settings = await ensureUserSettings(userId);
+  const [lastImportAt, settings] = await Promise.all([getLastLinkedInImportAt(userId), ensureUserSettings(userId)]);
+  if (lastImportAt) {
+    const now = new Date();
+    if (linkedInRefreshLevel(lastImportAt, now, settings.linkedinRefreshIntervalDays) !== "urgent") return null;
+    return <LinkedInRefreshNudge days={daysSince(lastImportAt, now)} />;
+  }
   if (await getLinkedInNudgeVisible(userId, settings)) return <LinkedInExportNudge email={settings.email ?? null} />;
   const state = linkedinCardState({
     imported: await hasLinkedInImport(userId),
@@ -577,8 +584,8 @@ export async function RecentlyUpdatedSection({
                       <p className="text-xs text-muted-foreground">
                         {c.company ? (
                           <span
-                            className="font-medium"
-                            style={{ color: companyBrandColor(c.company) ?? undefined }}
+                            className={cn("font-medium", companyBrandText(c.company)?.className)}
+                            style={companyBrandText(c.company)?.style}
                           >
                             {c.company}
                           </span>

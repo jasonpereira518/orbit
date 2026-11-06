@@ -11,13 +11,14 @@ import {
   meetingTranscriptSegments,
   type ChatRecommendation,
 } from "@/db/schema";
-import { chatWithNetwork } from "@/lib/ai";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { requireUserId } from "@/lib/auth";
 import { prepareChatContext } from "@/lib/chat-context";
-import { maybeGather } from "@/lib/chat-gather";
+import { labelAnswer } from "@/lib/chat-abstention";
+import { rollBackApplied } from "@/lib/chat-auto-apply";
+import { answerWithLookups } from "@/lib/chat-agent-loop";
 import { citedIds, stripUnresolvedMarkers } from "@/lib/chat-evidence";
-import { validateProposedActions } from "@/lib/chat-proposed-actions";
+import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 import {
   buildChatSuggestions,
   GENERIC_SUGGESTIONS,
@@ -406,25 +407,10 @@ async function askNetworkInner(
       askedMessageId = userRow?.id ?? null;
     }
 
-    // The same routing as the streaming route, so the two paths cannot answer differently.
-    const { evidence, notePassages } = await maybeGather(userId, ctx, { requestStartedAt });
-
-    const result = await chatWithNetwork(
-      userId,
-      ctx.scopedQuestion,
-      ctx.modelContacts,
-      ctx.priorTurns,
-      ctx.orgRosters,
-      ctx.attention,
-      ctx.modelRecruiters,
-      ctx.focusProfile,
-      ctx.attachedContext,
-      ctx.goals,
-      ctx.attentionLite,
-      evidence,
-      notePassages,
-      ctx.writingInstructions
-    );
+    // The same answer as the streaming route (`answerWithLookups`), with nothing to stream to.
+    const result = await answerWithLookups(userId, ctx, { onDelta: () => {}, requestStartedAt });
+    // The rounds that looked something up: every round but the last, which writes the answer.
+    const toolRounds = Math.max(0, result.run.rounds - 1);
     const recommendations = ctx.filterRecommendations(
       (result.recommendations || []) as ChatRecommendation[]
     );
@@ -433,13 +419,23 @@ async function askNetworkInner(
     const validIds = new Set(Object.keys(result.evidence));
     const { text: cleanAnswer } = stripUnresolvedMarkers(result.answer, validIds);
     const citedEvidence = Object.fromEntries(citedIds(cleanAnswer).map((id) => [id, result.evidence[id]]));
-    const proposedActions = validateProposedActions(result.proposedActions, ctx.allowedContacts, ctx.contactNames);
+    const proposedActions: StoredProposedAction[] = result.proposals;
 
+    // A turn that applied changes itself and then failed to save would leave them with no card
+    // to undo from (`@/lib/chat-auto-apply`), so they are put back.
     const saved = await persistAssistantTurn(userId, threadId, ctx.thread?.title ?? null, ctx.q, {
       answer: cleanAnswer,
       recommendations,
       evidence: citedEvidence,
       proposedActions,
+      answerOutcome: labelAnswer(cleanAnswer, {
+        citedCount: Object.keys(citedEvidence).length,
+        recommendedCount: recommendations.length,
+      }),
+      metrics: { durationMs: Date.now() - requestStartedAt, toolRounds },
+    }).catch(async (err) => {
+      await rollBackApplied(userId, proposedActions);
+      throw err;
     });
 
     return {

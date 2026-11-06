@@ -1,7 +1,6 @@
 import {
   CalendarCheck,
   Check,
-  Coins,
   Globe,
   Infinity as InfinityIcon,
   Megaphone,
@@ -105,7 +104,6 @@ const FEATURE_STYLE: ReadonlyArray<{
   { test: /Reminders/i, icon: Check, bold: /Reminders and follow-up feed/i },
   { test: /Knowledge/i, icon: Check, bold: /Knowledge base/i },
   { test: /^Export/i, icon: Check, bold: /^Export your data/i },
-  { test: /enrichment/i, icon: Coins, bold: /Contact enrichment/i },
   { test: /Outreach/i, icon: Megaphone, bold: /Outreach campaigns/i },
   { test: /Recruiter/i, icon: UserSearch, bold: /Recruiter tracking/i },
   { test: /Calendar/i, icon: CalendarCheck, bold: /Calendar links/i },
@@ -185,10 +183,11 @@ export function PlanSettings({
               accent.badge
             )}
           >
+            {/* Two sweeps, then it rests off-frame: an endless loop needs a pause control (SC 2.2.2). */}
             {accent.glint && (
               <span
                 aria-hidden="true"
-                className="plan-badge-glint pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/70 to-transparent"
+                className="plan-badge-glint pointer-events-none absolute [animation-iteration-count:2]! [animation-fill-mode:forwards]! inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/70 to-transparent"
               />
             )}
             {/* Above the glint, which is positioned. */}

@@ -68,8 +68,11 @@ export const PLAN_SHORT_LABELS: Record<Plan, string> = {
  * guard ("every connector manifest names an entitlement this layer knows",
  * `scripts/smoke-connector-registry.ts`) needs a list it can actually read at runtime.
  *
+ * - `hostedEnrichment`: OFF on every plan. Orbit does not sell contact enrichment; a user's own
+ *   Apollo key (Settings) is the only path, and `hostedEnrichmentsPerMonth` stays 0 to match.
  * - `outreach`, `hostedSending`: Outreach is NOT shipped (coming-soon gate). The flags stay
- *   so the gated code keeps a plan answer, but no pricing copy may mention them.
+ *   so the gated code keeps a plan answer, but no pricing copy may mention them (the coming-soon
+ *   screen may: `COMING_SOON_UNLOCK_PLAN`).
  * - `extension`: the extension's CORE is free on every plan; its Pro depth is decided by the
  *   extension's own gate (open PR #248), not by this flag.
  * - `sync`: pasted-ICS calendar subscriptions and event sources.
@@ -105,7 +108,7 @@ export type PlanConfig = {
   monthlyCredits: number | null;
   /** Deepgram audio seconds per month. */
   speech: { meetingSeconds: number; shortformSeconds: number };
-  /** Contact enrichments per month on Orbit's own Apollo key. */
+  /** Contact enrichments per month on Orbit's own Apollo key. 0 on every plan: not offered. */
   hostedEnrichmentsPerMonth: number;
   /** Connected Google + Microsoft accounts. null = no limit. */
   googleMicrosoftConnections: number | null;
@@ -119,7 +122,7 @@ const HOUR = 3_600;
 const PAID_FEATURES: Record<FeatureKey, boolean> = {
   outreach: true,
   hostedSending: true,
-  hostedEnrichment: true,
+  hostedEnrichment: false,
   recruiters: true,
   sync: true,
   extension: true,
@@ -137,7 +140,7 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
     annualPriceCents: 0,
     contactLimit: FREE_CONTACT_LIMIT,
     monthlyCredits: 50,
-    speech: { meetingSeconds: 0, shortformSeconds: 1 * HOUR },
+    speech: { meetingSeconds: 0, shortformSeconds: 1.5 * HOUR },
     hostedEnrichmentsPerMonth: 0,
     googleMicrosoftConnections: 1,
     mcpRateTier: "mcpFree",
@@ -161,8 +164,8 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
     annualPriceCents: 8999,
     contactLimit: null,
     monthlyCredits: 300,
-    speech: { meetingSeconds: 5 * HOUR, shortformSeconds: 5 * HOUR },
-    hostedEnrichmentsPerMonth: 10,
+    speech: { meetingSeconds: 8 * HOUR, shortformSeconds: 8 * HOUR },
+    hostedEnrichmentsPerMonth: 0,
     googleMicrosoftConnections: null,
     mcpRateTier: "mcp",
     // The REST API and outbound webhooks are Max and Lifetime only.
@@ -174,8 +177,8 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
     annualPriceCents: 19999,
     contactLimit: null,
     monthlyCredits: 650,
-    speech: { meetingSeconds: 10 * HOUR, shortformSeconds: 10 * HOUR },
-    hostedEnrichmentsPerMonth: 25,
+    speech: { meetingSeconds: 15 * HOUR, shortformSeconds: 15 * HOUR },
+    hostedEnrichmentsPerMonth: 0,
     googleMicrosoftConnections: null,
     mcpRateTier: "mcp",
     features: PAID_FEATURES,
@@ -188,8 +191,8 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
     annualPriceCents: null,
     contactLimit: null,
     monthlyCredits: 150,
-    speech: { meetingSeconds: 10 * HOUR, shortformSeconds: 10 * HOUR },
-    hostedEnrichmentsPerMonth: 25,
+    speech: { meetingSeconds: 15 * HOUR, shortformSeconds: 15 * HOUR },
+    hostedEnrichmentsPerMonth: 0,
     googleMicrosoftConnections: null,
     mcpRateTier: "mcp",
     features: { ...PAID_FEATURES, creditPacks: false },
@@ -227,18 +230,29 @@ export function planHasFeature(plan: Plan, feature: FeatureKey): boolean {
 }
 
 /**
- * The cheapest plan someone can BUY that unlocks `feature` — what an upgrade prompt
- * should offer, and what `gate_events.unlock_plan` records. Lifetime is never the answer:
- * it is not for sale. The free contact cap unlocks on Pro.
+ * The cheapest plan that unlocks `feature` — what an upgrade prompt should offer, and what
+ * `gate_events.unlock_plan` records. Free counts: a feature Free already has (packs, hosted
+ * AI, the extension) unlocks on "free", not on a paid plan. Lifetime is never the answer: it
+ * is not for sale. The free contact cap unlocks on Pro.
  */
-export function unlockPlanFor(feature: FeatureKey | "contacts"): PurchasablePlan {
+export function unlockPlanFor(feature: FeatureKey | "contacts"): "free" | PurchasablePlan {
   if (feature === "contacts") return "orbit";
-  return PURCHASABLE_PLANS.find((plan) => PLAN_CONFIG[plan].features[feature]) ?? "max";
+  return (["free", ...PURCHASABLE_PLANS] as const).find((plan) => PLAN_CONFIG[plan].features[feature]) ?? "max";
 }
 
 /** The refusal for a Free account's second Google or Microsoft account. */
 export const EXTRA_CONNECTION_DENIAL =
   "The Free Plan includes one Google or Microsoft account. Connecting both is available on Orbit Pro and Orbit Max.";
+
+/**
+ * A speech allowance as a person reads it: whole hours as hours ("8 hours", "1 hour"),
+ * anything else in minutes ("90 minutes") rather than "1.5 hours".
+ */
+export function formatSpeechAllowance(seconds: number): string {
+  if (seconds % HOUR === 0) return `${seconds / HOUR} hour${seconds === HOUR ? "" : "s"}`;
+  const minutes = Math.round(seconds / 60);
+  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+}
 
 /** Display money: 899 → "$8.99". */
 export function formatPlanPrice(cents: number): string {

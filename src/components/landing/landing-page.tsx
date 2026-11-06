@@ -62,7 +62,11 @@ export function LandingPage({
         <SceneFinale {...authProps} />
       </LandingPageShell>
 
-      <EarlyAccessPill />
+      {/* Its own landmark: a fixed corner link outside <main>, which must stay a direct
+       * child of this untransformed root. */}
+      <aside aria-label="Early access">
+        <EarlyAccessPill />
+      </aside>
 
       {/* Pinned to the viewport corner on every scroll position. Must stay a
        * direct child of this untransformed root, like the starfield. */}

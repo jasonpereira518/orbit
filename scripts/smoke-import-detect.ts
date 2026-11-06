@@ -14,6 +14,7 @@
 import JSZip from "jszip";
 import {
   LINKEDIN_LEFT_OUT,
+  LINKEDIN_PRIVATE,
   classifyByHead,
   classifyByName,
   detectImportFiles,
@@ -99,6 +100,7 @@ const YOU_PROFILE =
   "First Name,Last Name,Maiden Name,Address,Birth Date,Headline,Summary,Industry,Zip Code,Geo Location,Twitter Handles,Websites,Instant Messengers\nAda,T,,,,Engineer,,Technology,,Arlington,,,\n";
 const YOU_POSITIONS = "Company Name,Title,Description,Location,Started On,Finished On\nAcme,Engineer,,,May 2026,\n";
 const YOU_SKILLS = "Name\nGo\nPython\n";
+const YOU_EDUCATION = "School Name,Start Date,End Date,Notes,Degree Name,Activities\nState University,2020,2024,,BS,\n";
 const YOU_ALERTS =
   "ALERT_PARAMETERS,QUERY_CONTEXT,SAVED_SEARCH_ID\n\"{frequency=DAILY}\",\"{keywords=Software Engineer, spellCheckEnabled=true}\",1\n";
 
@@ -222,9 +224,24 @@ async function main() {
     fromZip.staged.map((d) => d.target).join(",") === "linkedin_connections,linkedin_messages",
     fromZip.staged.map((d) => d.target).join(",")
   );
+  // Every CSV is kept except the private one (Registration.csv: the sign-up IP), which is
+  // listed and never decompressed. Nothing else is staged or skipped.
   check(
-    `the other ${ARCHIVE_NOISE.length} members are silent`,
-    fromZip.ignored.length === 0 && fromZip.skipped.length === 0
+    "every other CSV member is kept, by its path inside the export",
+    fromZip.exportFiles.map((f) => `${f.path}:${f.role}`).sort().join(",") ===
+      "Connections.csv:parsed,Endorsement_Received_Info.csv:stored,Invitations.csv:parsed,Profile Summary.csv:stored,Rich_Media.csv:stored,messages.csv:parsed",
+    fromZip.exportFiles.map((f) => `${f.path}:${f.role}`).sort().join(",")
+  );
+  check(
+    "the private members are listed as staying on the device, and nothing is skipped",
+    fromZip.ignored.map((d) => `${d.displayName}=${d.reason}`).sort().join("|") ===
+      `Ad_Targeting.csv=${LINKEDIN_PRIVATE}|Registration.csv=${LINKEDIN_PRIVATE}` &&
+      fromZip.skipped.length === 0,
+    fromZip.ignored.map((d) => `${d.displayName}=${d.reason}`).join("|")
+  );
+  check(
+    "kept members carry their text, so nothing is decompressed twice",
+    fromZip.exportFiles.every((f) => typeof f.text === "string" && f.bytes === f.text.length)
   );
   check(
     "their text is carried, so nothing is read twice",
@@ -360,13 +377,15 @@ async function main() {
       !exportFolder.staged.some((d) => d.file.name === "Contacts.csv")
   );
   check(
-    "nothing is silently lost — the rest is accounted for as ignored",
-    exportFolder.ignored.length === ARCHIVE_NOISE.length + 1,
-    `${exportFolder.ignored.length} ignored`
+    "nothing is silently lost — every CSV is kept, the private ones are listed",
+    exportFolder.exportFiles.length === ARCHIVE_NOISE.length + 1 &&
+      exportFolder.ignored.length === 2 &&
+      exportFolder.ignored.every((d) => d.reason === LINKEDIN_PRIVATE),
+    `${exportFolder.exportFiles.length} kept, ${exportFolder.ignored.map((d) => d.file.name).join(",")} private`
   );
   check(
-    "...and says why, once",
-    exportFolder.ignored.every((d) => d.reason === LINKEDIN_LEFT_OUT)
+    "...and kept members are never staged on a header sniff",
+    exportFolder.exportFiles.some((f) => f.path === "Contacts.csv" && f.role === "stored")
   );
   check("nothing is skipped", exportFolder.skipped.length === 0);
 
@@ -388,9 +407,29 @@ async function main() {
     withYou.staged.map((d) => `${d.file.name}:${d.target}`).join(" | ")
   );
   check(
-    "Profile Summary.csv and Invitations.csv are still left out",
-    withYou.ignored.length === 2 && withYou.ignored.every((d) => d.reason === LINKEDIN_LEFT_OUT),
-    withYou.ignored.map((d) => d.file.name).join(",")
+    "Profile Summary.csv and Invitations.csv are kept, not staged",
+    withYou.ignored.length === 0 &&
+      withYou.exportFiles.find((f) => f.path === "Profile Summary.csv")?.role === "stored" &&
+      withYou.exportFiles.find((f) => f.path === "Invitations.csv")?.role === "parsed",
+    withYou.exportFiles.map((f) => `${f.path}:${f.role}`).join(",")
+  );
+
+  // LinkedIn nests Jobs/ and Verifications/ one level down. Both belong to the export; the
+  // second is private, and a nested file is never sniffed (Saved Jobs has Title/Date columns).
+  const nestedExport = await detectImportFiles([
+    folder("Connections.csv", CONNECTIONS_WITH_PREAMBLE),
+    drop("Saved Jobs.csv", "Saved Date,Job Url,Job Title,Company Name\n1/1/26,u,Engineer,Acme\n", "Basic_LinkedInDataExport_01-01-2024/Jobs"),
+    drop("Job Applicant Saved Answers.csv", "Question,Answer\nVisa?,No\n", "Basic_LinkedInDataExport_01-01-2024/Jobs"),
+    drop("Verifications.csv", "First name,Year of birth\nA,1999\n", "Basic_LinkedInDataExport_01-01-2024/Verifications"),
+  ]);
+  check(
+    "nested Jobs/ members are kept by their path; screening answers and Verifications stay private",
+    nestedExport.exportFiles.map((f) => `${f.path}:${f.role}`).sort().join(",") ===
+      "Connections.csv:parsed,Jobs/Saved Jobs.csv:parsed" &&
+      nestedExport.ignored.map((d) => d.file.name).sort().join(",") ===
+        "Job Applicant Saved Answers.csv,Verifications.csv" &&
+      nestedExport.staged.map((d) => d.target).join(",") === "linkedin_connections",
+    `${nestedExport.exportFiles.map((f) => f.path).join(",")} / ${nestedExport.ignored.map((d) => d.file.name).join(",")}`
   );
 
   // Generic names must not turn an ordinary folder into a "LinkedIn export": only Connections
@@ -412,10 +451,11 @@ async function main() {
     drop("SavedJobAlerts.csv", YOU_ALERTS),
     drop("Skills.csv", YOU_SKILLS),
     drop("other.csv", YOU_SKILLS),
+    drop("Education.csv", YOU_EDUCATION),
   ]);
   check(
     "loose files are recognised by their headers; a lone Name column is skills only when the file is called Skills.csv",
-    ["linkedin_profile", "linkedin_skills", "linkedin_alerts"].every((t) =>
+    ["linkedin_profile", "linkedin_skills", "linkedin_alerts", "linkedin_education"].every((t) =>
       loose.staged.some((d) => d.target === t)
     ) && !loose.staged.some((d) => d.file.name === "other.csv" && d.target === "linkedin_skills"),
     loose.staged.map((d) => `${d.file.name}:${d.target}`).join(" | ")
@@ -511,8 +551,10 @@ async function main() {
     renamedExport.staged.map((d) => `${d.file.name}:${d.target}`).join(" | ")
   );
   check(
-    "the rest is left out and says why",
-    renamedExport.ignored.length === 2 && renamedExport.ignored.every((d) => d.reason === LINKEDIN_LEFT_OUT),
+    "a non-CSV is left out and says why; the other CSV is kept",
+    renamedExport.ignored.length === 1 &&
+      renamedExport.ignored[0].reason === LINKEDIN_LEFT_OUT &&
+      renamedExport.exportFiles.some((f) => f.path === "my-contacts.csv" && f.role === "stored"),
     renamedExport.ignored.map((d) => `${d.file.name}:${d.reason}`).join(" | ")
   );
   const onlyMessages = await detectImportFiles([
@@ -521,7 +563,8 @@ async function main() {
   ]);
   check(
     "a messages.csv alone makes it an export folder too",
-    onlyMessages.staged.map((d) => d.file.name).join(",") === "messages.csv" && onlyMessages.ignored.length === 1,
+    onlyMessages.staged.map((d) => d.file.name).join(",") === "messages.csv" &&
+      onlyMessages.exportFiles.map((f) => f.path).sort().join(",") === "messages.csv,my-contacts.csv",
     onlyMessages.staged.map((d) => d.file.name).join(",")
   );
   const nested = await detectImportFiles([
@@ -532,8 +575,8 @@ async function main() {
   check(
     "any depth, any case — and only the folder the member sits in is gated",
     nested.staged.map((d) => d.file.name).sort().join(",") === "CONNECTIONS.CSV,my-contacts.csv" &&
-      nested.ignored.map((d) => d.file.name).join(",") === "notes.csv",
-    `${nested.staged.map((d) => d.file.name).join(",")} / ${nested.ignored.map((d) => d.file.name).join(",")}`
+      nested.exportFiles.map((f) => f.path).sort().join(",") === "CONNECTIONS.CSV,notes.csv",
+    `${nested.staged.map((d) => d.file.name).join(",")} / ${nested.exportFiles.map((f) => f.path).join(",")}`
   );
 
   console.log("Contracts");
@@ -545,8 +588,10 @@ async function main() {
     "linkedin_positions",
     "linkedin_skills",
     "linkedin_alerts",
+    "linkedin_education",
     "calendar_ics",
     "calendar_csv",
+    "linkedin_export",
   ];
   check(
     "RUN_ORDER covers every importable target exactly once",

@@ -19,8 +19,10 @@
  *               and sentences land a second or two behind the conversation. Chunks are still
  *               cut throughout as the recovery route.
  *   pausing   → Pause was pressed. The last sentence is flushed and the session marked ended.
- *   paused    → the share and mic are released. Resume re-asks for the share (a browser gate
- *               that needs a click) and carries on the same transcript and timeline.
+ *   paused    → the share and mic are KEPT and the audio graph suspended, so Resume is one
+ *               click with no picker. "Stop sharing" (`pause({ release: true })`) releases
+ *               them; Resume then re-asks for the share. Either way it carries on the same
+ *               transcript and timeline.
  *   finishing → the user CONFIRMED the meeting is done. The queue is drained.
  *   analyzing → the transcript becomes a digest (`analyzeMeetingSession`).
  *
@@ -50,6 +52,7 @@ import {
   endMeetingSession,
   loadMeetingTranscript,
   resumeMeetingSession,
+  saveMeetingNotes,
 } from "@/actions/meetings";
 import type { ResumableMeeting } from "@/lib/meeting-sessions";
 import { formatMeetingDuration } from "@/lib/format-meeting-duration";
@@ -80,11 +83,12 @@ import {
 export const MAX_SIDE_NOTES_CHARS = 20_000;
 
 /**
- * The notes box is not stored on the server — it travels with the summarize request — so
- * this browser copy is what survives a crash, a reload, or coming back to an unfinished
- * meeting. Every access is guarded: storage can be absent or full, and notes that fail to
- * persist are still sent if the tab lives.
+ * The notes box is saved to the meeting as you type (`typeNotes`, debounced) and also sent
+ * with the summarize request. This browser copy is the offline fallback: it survives a
+ * crash, a reload, or a save that never landed. Every access is guarded: storage can be
+ * absent or full, and notes that fail to persist are still sent if the tab lives.
  */
+const NOTES_SAVE_MS = 2_000;
 const notesKey = (sessionId: string) => `orbit:meeting-notes:${sessionId}`;
 
 function readNotes(sessionId: string): string {
@@ -147,7 +151,7 @@ export const MeetingEngine = memo(function MeetingEngine({ form }: { form: Meeti
   const router = useRouter();
   const [phase, setPhase] = useState<MeetingPhase>("setup");
   // The setup form lives in the shell (the calendar nudge fills it before this file loads).
-  const { title, attendeesText, includeMic } = form;
+  const { title, attendeesText, includeMic, calendarEventKey, calendarSeriesId } = form;
   const attendeeEmailsRef = form.emailsRef;
   const [segments, setSegments] = useState<Record<number, SegmentView>>({});
   const [fatal, setFatal] = useState<string | null>(null);
@@ -273,6 +277,21 @@ export const MeetingEngine = memo(function MeetingEngine({ form }: { form: Meeti
     [setSegment]
   );
 
+  /** The server relabels these sentences "you" when the claim lands; mirror it on screen. */
+  const handleLiveYou = useCallback((label: string, fromSeq: number) => {
+    setSegments((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const view of Object.values(prev)) {
+        if (view.seq >= fromSeq && view.speaker === label) {
+          next[view.seq] = { ...view, speaker: "you" };
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, []);
+
   /** The month's meeting minutes, and the day they come back. */
   const quotaResetLabel = useMemo(
     () =>
@@ -315,6 +334,7 @@ export const MeetingEngine = memo(function MeetingEngine({ form }: { form: Meeti
     loudness: () => recorderRef.current?.loudness ?? NO_LOUDNESS,
     recorderId: () => recorderIdRef.current,
     onSegment: handleLiveSegment,
+    onYou: handleLiveYou,
     onChunksNeeded: uploadChunks,
     onUnavailable: handleLiveUnavailable,
     onQuotaWarning: (remainingSeconds) => setQuotaWarnMinutes(Math.max(1, Math.round(remainingSeconds / 60))),
@@ -463,6 +483,8 @@ export const MeetingEngine = memo(function MeetingEngine({ form }: { form: Meeti
           includesMic: micActive,
           captureSurface: surface,
           recorderId: recorderIdRef.current,
+          calendarEventKey,
+          calendarSeriesId,
         });
         if (!res.ok) {
           fatalRef.current = true;
@@ -490,7 +512,7 @@ export const MeetingEngine = memo(function MeetingEngine({ form }: { form: Meeti
       // session existed is numbered first, then the live sentences.
       liveStart(id);
     },
-    [attendeeEmailsRef, attendeesText, includeMic, liveStart, openQueue, showTranscript, title, uploadChunk]
+    [attendeeEmailsRef, attendeesText, calendarEventKey, calendarSeriesId, includeMic, liveStart, openQueue, showTranscript, title, uploadChunk]
   );
 
   const handleEnd = useCallback(
@@ -556,6 +578,24 @@ export const MeetingEngine = memo(function MeetingEngine({ form }: { form: Meeti
     phaseRef.current = phase;
     shareKeptRef.current = shareKept;
   });
+
+  // Typing, and only typing, saves to the server: a reload that fills the box from this
+  // browser (or leaves it empty in another one) must never write over the stored notes.
+  const notesTimer = useRef<number | null>(null);
+  const typeNotes = useCallback((v: string) => {
+    const next = v.slice(0, MAX_SIDE_NOTES_CHARS);
+    setSideNotes(next);
+    if (notesTimer.current) window.clearTimeout(notesTimer.current);
+    notesTimer.current = window.setTimeout(() => {
+      notesTimer.current = null;
+      const id = sessionIdRef.current;
+      // A failed save is fine: the browser copy and the summarize request both carry it.
+      if (id) void saveMeetingNotes(id, next).catch(() => null);
+    }, NOTES_SAVE_MS);
+  }, []);
+  useEffect(() => () => {
+    if (notesTimer.current) window.clearTimeout(notesTimer.current);
+  }, []);
 
   // Keep the browser copy current. Keyed by session, so notes typed before the session
   // exists (the first second or two) are written the moment it does.
@@ -843,7 +883,7 @@ export const MeetingEngine = memo(function MeetingEngine({ form }: { form: Meeti
     quotaWarnMinutes,
     quotaResetLabel,
     sideNotes,
-    setSideNotes: (v: string) => setSideNotes(v.slice(0, MAX_SIDE_NOTES_CHARS)),
+    setSideNotes: typeNotes,
     startRecording,
     pause,
     resume,

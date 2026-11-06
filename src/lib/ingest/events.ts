@@ -155,10 +155,9 @@ export type IngestOptions = {
    * Tags attached to contacts this run CREATES (never to matched ones).
    *
    * The batch import adapters tag everyone they create (`google-contacts`, `address-book`),
-   * and a tag is an intent signal in `constellationEligibility` — which is what puts an
-   * imported network on the default sky. A synced address book has to land the same way, or
-   * connecting Google would leave `/graph` empty while a one-time import of the same people
-   * would not.
+   * and a synced address book is tagged the same way so the two read alike. These are source
+   * labels, not intent: `constellationEligibility` ignores them (`IMPORT_SOURCE_TAGS`) — add a
+   * new source tag there too, or its whole import lands on the default sky.
    */
   tagNames?: string[];
 };
@@ -670,4 +669,7 @@ export async function finalizeIngest(
     );
   }
   await kickEmbeddingBackfill(ctx.userId).catch(reportAndContinue({ where: "job.ingest.embedding-kick", userId: ctx.userId }, null));
+  // Contacts this import saved under a handle ("jsmith42") get a real name, or a "?".
+  const { kickNameSweep } = await import("@/lib/contact-name-sweep");
+  await kickNameSweep(ctx.userId);
 }

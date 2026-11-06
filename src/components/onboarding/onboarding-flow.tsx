@@ -318,7 +318,7 @@ export function OnboardingFlow({
 
       {/* Every step is sized to fit one laptop screen: the column centres it in whatever
           height is left under the header, and only a genuinely short window scrolls. */}
-      <main className="relative mx-auto flex w-full max-w-6xl flex-1 flex-col justify-center px-4 pt-4 pb-5 sm:px-8 sm:pt-5 sm:pb-6">
+      <main id="main-content" className="relative mx-auto flex w-full max-w-6xl flex-1 flex-col justify-center px-4 pt-4 pb-5 sm:px-8 sm:pt-5 sm:pb-6">
         <AnimatePresence mode="popLayout" initial={false} custom={slide}>
           <motion.div
             key={step}

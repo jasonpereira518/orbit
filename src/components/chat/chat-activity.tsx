@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { IntentLink } from "@/components/ui/intent-link";
 import { AnimatePresence, motion } from "motion/react";
 import { Check, ChevronDown, CircleDashed } from "lucide-react";
@@ -21,9 +21,12 @@ import type { ChatStep } from "@/lib/chat-stream-protocol";
  * so the counts, durations and names are facts rather than a scripted sequence. A stage
  * that was skipped sends nothing, and this renders nothing for it.
  *
- * Live, it is a card: the stage running now as its header, the stages already finished
- * ticked off beneath it. Finished, it collapses to a one-line summary you can open again.
- * The ask bar (`compact`) has no room for either, so it gets a single line.
+ * Live, it is a card: the stage running now as its header, and beneath it the whole trail —
+ * every stage, finished ones ticked with what they found, running ones marked as running.
+ * Once the answer's words start arriving the card folds to its header (it can be opened
+ * again), so the trail never pushes the answer down. Finished, it collapses to a one-line
+ * summary you can open again. The ask bar (`compact`) has no room for either, so it gets a
+ * single line.
  */
 
 export type ChatActivityProps = {
@@ -32,25 +35,21 @@ export type ChatActivityProps = {
   state: "live" | "final";
   /** `compact` is the ask bar: one line, no expansion. */
   variant?: "full" | "compact";
-  /** The answer's text has started arriving — the live card folds to its header for it. */
-  answering?: boolean;
+  /** The answer's first words have arrived: the live trail folds away unless opened by hand. */
+  answerStarted?: boolean;
   className?: string;
 };
 
-export function ChatActivity({
-  steps,
-  state,
-  variant = "full",
-  answering = false,
-  className,
-}: ChatActivityProps) {
+/** The orbit scene is secondary to the trail, so it sits at this fraction of its size. */
+const ORBIT_ZOOM = 0.7;
+
+export function ChatActivity({ steps, state, variant = "full", answerStarted = false, className }: ChatActivityProps) {
   // Two separate flags: whether the live card is folded and whether the finished summary is
   // open are different questions, and sharing one would make the summary spring open (or
-  // shut) the instant the answer lands.
-  // `null` until the user toggles it: open while the work runs, folded once the answer starts
-  // (the scene and the list would sit between them and what they are reading). A click wins.
-  const [liveOpenChoice, setLiveOpen] = useState<boolean | null>(null);
-  const liveOpen = liveOpenChoice ?? !answering;
+  // shut) the instant the answer lands. The live one is null until the person toggles it, and
+  // until then it follows the answer: open while working, folded once words arrive.
+  const [liveToggled, setLiveOpen] = useState<boolean | null>(null);
+  const liveOpen = liveToggled ?? !answerStarted;
   const [finalOpen, setFinalOpen] = useState(false);
   const reduceMotion = usePrefersReducedMotion();
 
@@ -66,12 +65,10 @@ export function ChatActivity({
     const running = [...steps].reverse().find((step) => step.status === "active");
     return running ?? steps[steps.length - 1] ?? null;
   }, [steps]);
-  // Everything but the header's stage, in the order it started — the stages run in parallel,
-  // so several can be running at once and each of them is shown, not just the newest.
-  const others = useMemo(() => steps.filter((step) => step.id !== current?.id), [steps, current]);
   const summary = useMemo(() => summarise(steps), [steps]);
   // Uncapped, so the caption can give the real count; the scene itself takes the first few.
   const people = useMemo(() => collectOrbitPeople(steps, Infinity), [steps]);
+  const doneCount = steps.filter((step) => step.status === "done").length;
 
   if (steps.length === 0) return null;
 
@@ -82,31 +79,18 @@ export function ChatActivity({
       <>
         <OrbitMark reduceMotion={reduceMotion} />
         {/*
-          `mode="wait"` is load-bearing, not a preference. Overlapping enter/exit left the
-          outgoing label mounted, so the line accumulated every stage it had ever shown —
-          and because this is an aria-live region, a screen reader read the whole history
-          aloud on each change. Waiting for the exit guarantees exactly one label.
+          One plain line, swapped in place. An animated swap needs `mode="wait"` to keep this
+          aria-live region to exactly one label — overlapping enter/exit left every stage
+          mounted, and a screen reader read the whole history aloud on each change. The trail
+          below now carries the history, so the header has no reason to animate at all.
         */}
-        <span className="min-w-0 flex-1 text-left" aria-live="polite" aria-atomic="true">
-          <AnimatePresence initial={false} mode="wait">
-            <motion.span
-              key={label}
-              className="block truncate"
-              initial={reduceMotion ? false : { opacity: 0, y: 3 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -3 }}
-              transition={{ duration: DUR.fast, ease: EASE_HOUSE }}
-            >
-              {/* Shimmer on the stage name only — the detail beside it is a fact, not
-                  the "still working" signal. `data-text` must mirror the label. */}
-              <span className="t-shimmer max-w-full truncate align-bottom" data-text={label}>
-                {label}
-              </span>
-              {current?.detail ? (
-                <span className="text-muted-foreground/70"> · {current.detail}</span>
-              ) : null}
-            </motion.span>
-          </AnimatePresence>
+        <span className="min-w-0 flex-1 truncate text-left" aria-live="polite" aria-atomic="true">
+          {/* Shimmer on the stage name only — the detail beside it is a fact, not the "still
+              working" signal. `data-text` must mirror the label. */}
+          <span className="t-shimmer t-shimmer-brand max-w-full truncate align-bottom" data-text={label}>
+            {label}
+          </span>
+          {current?.detail ? <span className="text-muted-foreground-subtle"> · {current.detail}</span> : null}
         </span>
       </>
     );
@@ -128,6 +112,13 @@ export function ChatActivity({
           className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-foreground"
         >
           {header}
+          {/* How far along, in facts: stages finished and real time spent. Outside the
+              aria-live line on purpose — a ticking clock in it would be read out constantly,
+              and the trail already tells a screen reader what is done and what is running. */}
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground" aria-hidden="true">
+            {doneCount > 0 ? `${doneCount} done · ` : null}
+            <LiveElapsed />
+          </span>
           <ChevronDown
             className={cn(
               "size-3.5 shrink-0 text-muted-foreground transition-transform",
@@ -146,40 +137,37 @@ export function ChatActivity({
               transition={{ duration: DUR.base, ease: EASE_HOUSE }}
               className="overflow-hidden"
             >
-              {/* The scene is the loading animation, so it is here from the first step —
-                  not held back until something has finished — with the finished stages
-                  ticked off beside it, or above it where there is no room to sit beside. */}
-              <div className="flex flex-col items-center gap-2 px-3 pb-3 sm:flex-row sm:items-center sm:gap-4">
-                <ul className="w-full min-w-0 flex-1 space-y-1.5 pl-[1.4rem]">
-                  {others.map((step) => (
-                    <li
-                      key={step.id}
-                      className="relative text-xs leading-snug text-muted-foreground"
-                    >
+              {/* The trail is the record of what ran, in the order it started; the scene beside
+                  it (above it where there is no room) shows who is in play, smaller, because
+                  it decorates the trail rather than explaining anything on its own. */}
+              <div className="flex flex-col items-center gap-2 px-3 pb-3 sm:flex-row sm:items-start sm:gap-4">
+                <ol className="w-full min-w-0 flex-1 space-y-1.5 pl-[1.4rem]">
+                  {steps.map((step) => (
+                    <li key={step.id} className="relative text-xs leading-snug text-muted-foreground">
                       {step.status === "done" ? (
-                        <Check
-                          className="absolute -left-[1.15rem] top-px size-3.5 text-primary"
+                        <Check className="absolute -left-[1.15rem] top-px size-3.5 text-primary" aria-hidden="true" />
+                      ) : (
+                        <CircleDashed
+                          className={cn(
+                            "absolute -left-[1.15rem] top-px size-3.5 text-muted-foreground",
+                            !reduceMotion && "animate-spin [animation-duration:2.5s]"
+                          )}
                           aria-hidden="true"
                         />
-                      ) : (
-                        <>
-                          <CircleDashed
-                            className="absolute -left-[1.15rem] top-px size-3.5 text-muted-foreground"
-                            aria-hidden="true"
-                          />
-                          <span className="sr-only">Still running: </span>
-                        </>
                       )}
                       <span className="text-foreground/80">{step.label}</span>
                       {step.detail && <span> · {step.detail}</span>}
+                      <span className="sr-only">{step.status === "done" ? " (done)" : " (running)"}</span>
                     </li>
                   ))}
-                </ul>
-                <ChatOrbit
-                  people={people.slice(0, ORBIT_CAPACITY)}
-                  total={people.length}
-                  reduceMotion={reduceMotion}
-                />
+                </ol>
+                <div style={{ zoom: ORBIT_ZOOM }}>
+                  <ChatOrbit
+                    people={people.slice(0, ORBIT_CAPACITY)}
+                    total={people.length}
+                    reduceMotion={reduceMotion}
+                  />
+                </div>
               </div>
             </motion.div>
           )}
@@ -222,10 +210,10 @@ export function ChatActivity({
                 <li key={step.id} className="text-xs text-muted-foreground">
                   <span className="text-foreground/80">{step.label}</span>
                   {typeof step.ms === "number" && (
-                    <span className="text-muted-foreground/70"> · {formatMs(step.ms)}</span>
+                    <span className="text-muted-foreground-subtle"> · {formatMs(step.ms)}</span>
                   )}
                   {step.detail && (
-                    <span className="block text-muted-foreground/70">{step.detail}</span>
+                    <span className="block text-muted-foreground-subtle">{step.detail}</span>
                   )}
                   {(step.kind !== "search" || !steps.some((s) => s.kind === "rank")) &&
                     step.refs &&
@@ -236,14 +224,14 @@ export function ChatActivity({
                           <IntentLink
                             key={`${step.id}-${ref.id}`}
                             href={`/contacts/${ref.id}`}
-                            className="rounded-full bg-muted/60 px-2 py-0.5 text-[11px] text-foreground/80 transition-colors hover:bg-muted hover:text-foreground"
+                            className="rounded-full bg-muted/60 px-2 py-0.5 text-2xs text-foreground/80 transition-colors hover:bg-muted hover:text-foreground"
                           >
                             {ref.name}
                           </IntentLink>
                         ) : (
                           <span
                             key={`${step.id}-${ref.id}`}
-                            className="rounded-full bg-muted/60 px-2 py-0.5 text-[11px] text-foreground/80"
+                            className="rounded-full bg-muted/60 px-2 py-0.5 text-2xs text-foreground/80"
                           >
                             {ref.name}
                           </span>
@@ -296,4 +284,18 @@ function summarise(steps: ChatStep[]): string {
 function formatMs(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+/**
+ * Seconds since the live card appeared — which is when the first step arrived, since the card
+ * renders nothing without one. Real wall-clock, ticking until the card goes final and unmounts.
+ */
+function LiveElapsed() {
+  const [start] = useState(() => Date.now());
+  const [now, setNow] = useState(start);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 100);
+    return () => clearInterval(timer);
+  }, []);
+  return <>{((now - start) / 1000).toFixed(1)}s</>;
 }

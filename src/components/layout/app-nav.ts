@@ -3,7 +3,6 @@ import {
   LayoutDashboard,
   Users,
   Sparkles,
-  Upload,
   Send,
   MessageSquare,
   Network,
@@ -14,6 +13,7 @@ import {
   PartyPopper,
   Radar,
   AudioLines,
+  UserSearch,
 } from "lucide-react";
 
 export type AppNavItem = {
@@ -58,11 +58,6 @@ const CAPTURE: AppNavItem = {
   label: "Capture",
   icon: Sparkles,
 };
-const IMPORTS: AppNavItem = {
-  href: "/imports",
-  label: "Imports",
-  icon: Upload,
-};
 const EVENTS: AppNavItem = {
   href: "/events",
   label: "Events",
@@ -101,6 +96,11 @@ const MEETINGS: AppNavItem = {
   label: "Meetings",
   icon: AudioLines,
 };
+const FIND: AppNavItem = {
+  href: "/find",
+  label: "Find people",
+  icon: UserSearch,
+};
 const KNOWLEDGE: AppNavItem = {
   href: "/knowledge",
   label: "Knowledge",
@@ -113,9 +113,9 @@ export const APP_NAV_CORE: AppNavItem[] = [
   RADAR,
   CONTACTS,
   CAPTURE,
+  MEETINGS,
   REMINDERS,
   CHAT,
-  IMPORTS,
   CONSTELLATION,
 ];
 
@@ -127,7 +127,7 @@ export const APP_NAV_CORE: AppNavItem[] = [
  * coming soon below the divider (see `AppSidebar`). Kept as a separate list as the code's
  * default order.
  */
-export const APP_NAV_EXTRAS: AppNavItem[] = [MEETINGS, EVENTS, OUTREACH, KNOWLEDGE];
+export const APP_NAV_EXTRAS: AppNavItem[] = [FIND, EVENTS, OUTREACH, KNOWLEDGE];
 
 export const APP_NAV_SETTINGS: AppNavItem = {
   href: "/settings",
@@ -154,9 +154,9 @@ export const MOBILE_BOTTOM_NAV: Array<
 export const MOBILE_MORE_NAV = [
   RADAR,
   REMINDERS,
-  IMPORTS,
   CONSTELLATION,
   MEETINGS,
+  FIND,
   EVENTS,
   OUTREACH,
   KNOWLEDGE,

@@ -35,7 +35,10 @@
  * (default all) · --runs N (default 1; use 2+ for a gate decision — models are not
  * deterministic) · --limit N (cases per task, for a quick look) · --label <name> ·
  * --out <file> (default docs/ai-evals/<date>-<label>.json) · --compare <baseline.json>
- * (exits 1 when a threshold in scripts/eval-fixtures/ai-eval-thresholds.json is broken).
+ * (exits 1 when a threshold in scripts/eval-fixtures/ai-eval-thresholds.json is broken) ·
+ * --network large (chat and research also seed ~300 generated look-alikes and the cases in
+ * chat-large-network-eval.json — the 16-person network returns nearly everyone, so retrieval
+ * and note-grounding changes cannot show there; compare large runs only with large runs).
  *
  * KEYS. Only `ORBIT_EVAL_{GEMINI,OPENAI,ANTHROPIC,OPENROUTER}_KEY` are used, stored as the
  * synthetic user's OWN keys — the same bring-your-own-key path a person's pasted key takes
@@ -78,7 +81,7 @@ import { FIXTURE_DIR, TASKS, TASK_NAMES, type TaskName, type TaskResult } from "
 import { AI_OPERATIONS, AI_OPERATION_IDS, type AiOperationId, type AiTier } from "../src/lib/ai-operations";
 import { FAST_MODELS, VISION_MODELS } from "../src/lib/ai";
 import type { ThinkingLevel } from "../src/lib/ai-request-options";
-import { formatMetric, gate, median, type GateRules, type TaskMetrics } from "./lib/eval-ai-score";
+import { formatMetric, gate, gatedMetrics, median, type GateRules, type TaskMetrics } from "./lib/eval-ai-score";
 
 const USER = "eval-ai-user";
 /** Tasks that never call a chat model. */
@@ -116,6 +119,8 @@ type Args = {
   decisions: "jev" | null;
   /** A folder of PRIVATE labels exported from a real account (never committed). */
   labelsDir?: string;
+  /** "large": chat/research seed ~300 look-alikes too (chat-large-network-eval.json). */
+  network: "large" | null;
 };
 
 type CandidateConfig = {
@@ -141,7 +146,11 @@ function parseArgs(argv: string[]): Args {
   const decisionsArg = get("--decisions");
   if (decisionsArg && decisionsArg !== "jev") throw new Error(`Unknown --decisions "${decisionsArg}". Only "jev".`);
   const decisions = decisionsArg === "jev" ? "jev" : null;
-  const label = get("--label") ?? `${provider}-${model}${decisions ? `-${decisions}` : ""}`;
+  const networkArg = get("--network");
+  if (networkArg && networkArg !== "large") throw new Error(`Unknown --network "${networkArg}". Only "large".`);
+  const network = networkArg === "large" ? "large" : null;
+  const label =
+    get("--label") ?? `${provider}-${model}${decisions ? `-${decisions}` : ""}${network ? `-${network}-network` : ""}`;
   const date = new Date().toISOString().slice(0, 10);
   return {
     provider,
@@ -156,6 +165,7 @@ function parseArgs(argv: string[]): Args {
     config: get("--config"),
     decisions,
     labelsDir: get("--labels-dir"),
+    network,
   };
 }
 
@@ -304,6 +314,7 @@ function fixtureDigest(): string {
     "ai-transcribe-eval.json", "ai-chat-eval.json", "ai-digest-eval.json", "contact-search-eval.json",
     // The research task's cases, and the notes both it and eval-retrieval seed.
     "ai-research-eval.json", "passage-search-eval.json", "ai-relationship-eval.json",
+    "chat-large-network-eval.json",
     // The decision-model tasks' own fixtures.
     "ai-chat-routing-eval.json", "ai-duplicates-eval.json", "ai-mentions-eval.json",
     "ai-calendar-eval.json", "ai-capture-checks-eval.json", "ai-skip-gates-eval.json",
@@ -339,6 +350,8 @@ export type EvalReport = {
   candidate?: CandidateConfig;
   /** "jev" when the decision-model paths ran (older reports lack the field: they did not). */
   decisions?: "jev" | null;
+  /** "large" when chat/research ran on the generated ~320-person network. */
+  network?: "large" | null;
   tasks: Partial<
     Record<
       TaskName,
@@ -362,6 +375,8 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   // Read by the tasks (`privateLabels`); a run without it uses the committed fixtures only.
   if (args.labelsDir) process.env.ORBIT_EVAL_LABELS_DIR = args.labelsDir.replace(/^~(?=\/)/, homedir());
+  // Read by `seedNetwork`; without it chat and research run on the 16-person network.
+  if (args.network) process.env.ORBIT_EVAL_NETWORK = args.network;
   const candidate: CandidateConfig = args.config
     ? (JSON.parse(readFileSync(args.config, "utf8")) as CandidateConfig)
     : {};
@@ -399,6 +414,7 @@ async function main() {
     runs: args.runs,
     ...(applied.length ? { candidate } : {}),
     decisions: args.decisions,
+    network: args.network,
     tasks: {},
   };
 
@@ -472,9 +488,7 @@ async function main() {
     if (baseline.fixtures !== report.fixtures) {
       console.warn(`\nWARNING: the fixtures changed since the baseline (${baseline.fixtures} → ${report.fixtures}); re-run the baseline before trusting this comparison.`);
     }
-    const pick = (r: EvalReport) =>
-      Object.fromEntries(Object.entries(r.tasks).map(([k, v]) => [k, v.metrics])) as Record<string, TaskMetrics>;
-    const findings = gate(rules, pick(baseline), pick(report));
+    const findings = gate(rules, gatedMetrics(baseline.tasks), gatedMetrics(report.tasks));
 
     console.log(`\nCompared with ${baseline.label} (${baseline.model}):`);
     for (const [task, t] of Object.entries(report.tasks)) {
@@ -490,7 +504,7 @@ async function main() {
     } else {
       console.log("\nGATE: FAIL");
       for (const f of findings) {
-        console.log(`  ${f.task}.${f.metric}: ${f.baseline.toFixed(3)} → ${f.candidate.toFixed(3)} (allowed ${f.allowed})`);
+        console.log(`  ${f.task}.${f.metric}: ${Number.isNaN(f.baseline) ? "—" : f.baseline.toFixed(3)} → ${f.candidate.toFixed(3)} (allowed ${f.allowed})`);
       }
       process.exit(1);
     }

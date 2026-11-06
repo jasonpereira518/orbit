@@ -26,6 +26,8 @@ export function subscriptionLookupKey(plan: "orbit" | "max", period: "monthly" |
 /** Credits in one $5 pack. */
 export const CREDIT_PACK_CREDITS = 250;
 export const CREDIT_PACK_PRICE_CENTS = 500;
+/** "$5", for copy. Whole dollars on purpose: `formatPlanPrice` would say "$5.00". */
+export const CREDIT_PACK_PRICE_LABEL = `$${(CREDIT_PACK_PRICE_CENTS / 100).toFixed(0)}`;
 
 /**
  * Founding coupons: `orbit-founding-<tier>-<n>m`, $2 off Pro or $4 off Max for n whole

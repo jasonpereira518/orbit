@@ -400,7 +400,7 @@ export function ProspectTable({
  * the header row that normally names these columns is hidden below `md`.
  */
 const CELL_LABEL =
-  "mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground/80 md:hidden";
+  "mb-1 block text-2xs font-medium uppercase tracking-wide text-muted-foreground-subtle md:hidden";
 
 export function useSelectedProspectIds(prospects: ProspectRow[]) {
   return useMemo(

@@ -28,6 +28,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { avatarRouteUrl } from "@/lib/contact-avatar-url";
 import { safeHttpUrl, safeProfileUrl } from "@/lib/safe-links";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { closenessPercentChipClass, closenessTierChipClass } from "@/lib/closeness";
@@ -422,7 +423,7 @@ function ContactPanelBody({
     )}`;
   const photoSrc =
     !photoFailed && (Boolean(data.profileImageUrl?.trim()) || canResolvePhoto)
-      ? `/api/avatars/${id}`
+      ? avatarRouteUrl(id, data.profileImageUrl)
       : null;
 
   const howMet = formatHowMetSummary({

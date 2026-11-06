@@ -8,9 +8,9 @@ import { cn } from "@/lib/utils";
 // its pair below md), and their boxes are 36px tall. The ::after layer adds 4px above and
 // below: 44px to a thumb, the same pill to the eye, and still inside the 52px header pill.
 const ghostClass =
-  "relative rounded-lg px-3 py-2 text-sm text-[#c5d4d1] transition-colors after:absolute after:inset-x-0 after:-inset-y-1 hover:text-white";
+  "relative rounded-lg px-2 py-2 text-sm whitespace-nowrap text-[#c5d4d1] sm:px-3 transition-colors after:absolute after:inset-x-0 after:-inset-y-1 hover:text-white";
 const solidClass =
-  "relative rounded-full bg-[#e8f3f1] px-4 py-2 text-sm font-medium text-[#0f3d3e] transition-colors after:absolute after:inset-x-0 after:-inset-y-1 hover:bg-white";
+  "relative rounded-full bg-[#e8f3f1] px-3 py-2 text-sm font-medium whitespace-nowrap sm:px-4 text-[#0f3d3e] transition-colors after:absolute after:inset-x-0 after:-inset-y-1 hover:bg-white";
 const ctaSolidClass =
   "inline-flex items-center justify-center rounded-full bg-[#e8f3f1] px-6 py-3 text-sm font-medium text-[#0f3d3e] transition-colors hover:bg-white";
 // Pill, to match the solid CTA it always sits beside. (The header's ghost

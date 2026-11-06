@@ -1,6 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contactTags, contacts, tags, type ClosenessTier } from "@/db/schema";
+import { sharedAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import {
   getContactBrief,
   goalFitOutOfDate,
@@ -102,7 +103,7 @@ export async function loadKnowledgeDossier(
       howMet: contacts.howMet,
       metContext: contacts.metContext,
       dateMet: contacts.dateMet,
-      hasPhoto: sql<boolean>`(${contacts.profileImageUrl} IS NOT NULL AND ${contacts.profileImageUrl} <> '')`,
+      hasPhoto: sql<boolean>`((${contacts.profileImageUrl} IS NOT NULL AND ${contacts.profileImageUrl} <> '') OR ${sharedAvatarUrlSql} IS NOT NULL)`,
     })
     .from(contacts)
     .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)))

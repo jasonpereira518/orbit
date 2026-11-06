@@ -213,7 +213,7 @@ export function HighlightsStep({
               aria-label="Previous feature"
             >
               <ArrowLeft className="size-4" aria-hidden />
-              <span className="hidden sm:inline">Previous</span>
+              <span className="max-sm:sr-only">Previous</span>
             </Button>
             <p className="text-xs tabular-nums text-muted-foreground" aria-live="polite">
               {index + 1} / {chapters.length}
@@ -283,7 +283,7 @@ function ChapterRail({
   return (
     <ol
       ref={railRef}
-      className="-mx-4 flex snap-x gap-1.5 overflow-x-auto px-4 pb-1 [scrollbar-width:none] lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0"
+      className="-mx-4 flex snap-x gap-1.5 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0"
       aria-label="Features"
     >
       {chapters.map((c, i) => {
@@ -320,11 +320,9 @@ function ChapterRail({
                 {seen ? <Check className="size-3.5" aria-hidden /> : <Icon className="size-3.5" aria-hidden />}
               </span>
               <span className="relative whitespace-nowrap font-medium">{c.label}</span>
-              {soon ? (
-                <SoonTag className="relative ml-auto" />
-              ) : (
-                locked && <ProTag className="relative ml-auto" />
-              )}
+              {/* Coming-soon chapters still say which plan they will unlock on. */}
+              {soon && <SoonTag className="relative ml-auto" />}
+              {(soon || locked) && <ProTag className={cn("relative", !soon && "ml-auto")} />}
             </button>
           </li>
         );
@@ -335,7 +333,7 @@ function ChapterRail({
 
 function NeedTag({ chapter, facts }: { chapter: HighlightChapter; facts: OverviewFacts }) {
   const base =
-    "inline-flex items-center rounded-full border border-border/70 bg-muted/40 px-2 py-px text-[11px] font-medium text-muted-foreground";
+    "inline-flex items-center rounded-full border border-border/70 bg-muted/40 px-2 py-px text-2xs font-medium text-muted-foreground";
   if (chapter.needs === "ai") return <span className={base}>Uses AI credits</span>;
   if (chapter.needs === "linkedin" && facts.linkedinPending) {
     return <span className={base}>Upload when your export arrives</span>;
@@ -363,7 +361,8 @@ function ChapterCopy({
         <span className="flex size-9 items-center justify-center rounded-xl bg-accent text-primary">
           <Icon className="size-4.5" aria-hidden />
         </span>
-        {soon ? <SoonTag /> : chapterLocked && <ProTag />}
+        {soon && <SoonTag />}
+        {(soon || chapterLocked) && <ProTag />}
         <NeedTag chapter={chapter} facts={facts} />
       </StaggerItem>
       <StaggerItem>
@@ -379,9 +378,10 @@ function ChapterCopy({
             <span className="min-w-0">
               {b.label}
               {b.soon && <SoonTag className="ml-1.5 align-[1px]" />}
-              {!b.soon && b.entitlement && !chapterLocked && !planFlags[b.entitlement] && (
+              {(b.soon && !soon && !chapterLocked) ||
+              (!b.soon && b.entitlement && !chapterLocked && !planFlags[b.entitlement]) ? (
                 <ProTag className="ml-1.5 align-[1px]" />
-              )}
+              ) : null}
             </span>
           </StaggerItem>
         ))}

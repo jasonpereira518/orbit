@@ -42,6 +42,7 @@ import { ensureUserSettings } from "@/lib/user-settings";
 import { MAX_APPEND_ROWS, SESSION_MAX_CHARS } from "@/lib/conversations/types";
 import { conversationKey } from "@/lib/conversations/sessions";
 import type { ChatConversationRow } from "@/lib/conversations/to-rows";
+import { auditUntrustedWrite } from "@/lib/ai-security";
 
 /** The browser-side row type and the stored payload type must not drift apart. */
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
@@ -575,6 +576,8 @@ export async function appendStagedRows(
     if (!parsed.success) throw new UserFacingError("Part of that chat couldn’t be read — try exporting it again");
     payloads.push(parsed.data);
   }
+  // Tripwire, never a block: these are other people's messages, read later by the relationship engine.
+  auditUntrustedWrite(userId, "chat.import", "messages", JSON.stringify(payloads).slice(0, 200_000));
 
   const db = await getDb();
   const claimed = await db

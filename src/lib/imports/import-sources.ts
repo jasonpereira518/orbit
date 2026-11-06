@@ -19,6 +19,7 @@ export const IMPORT_SOURCE_LABEL: Record<string, string> = {
   calendar_ics: "Calendar (.ics)",
   calendar_csv: "Calendar (CSV)",
   drive_docs: "Google Drive",
+  linkedin_export: "LinkedIn export",
 };
 
 /** A type this list has never heard of still gets a row that looks like the others. */
@@ -35,7 +36,11 @@ export function importSourceLabel(
 export function createsContacts(
   importType: string | null | undefined,
 ): boolean {
-  return importType !== "calendar_ics" && importType !== "calendar_csv";
+  return (
+    importType !== "calendar_ics" &&
+    importType !== "calendar_csv" &&
+    importType !== "linkedin_export"
+  );
 }
 
 /** Chat imports log one interaction per conversation session, not per meeting. */

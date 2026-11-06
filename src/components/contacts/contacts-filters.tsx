@@ -4,7 +4,7 @@ import { emitTourEvent } from "@/lib/tour/tour-events";
 import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Building2, ChevronDown, X } from "lucide-react";
+import { Building2, ChevronDown, GraduationCap, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -21,6 +21,7 @@ import {
 import {
   CONTACT_SORTS,
   QUIET_OPTIONS,
+  SAME_SCHOOL_AS_ME,
   type ContactSort,
 } from "@/lib/contacts-page";
 import { cn } from "@/lib/utils";
@@ -42,6 +43,7 @@ type FilterState = {
   followUp: string;
   sort: string;
   quiet: string;
+  school: string;
 };
 
 export function ContactsFilters({
@@ -53,6 +55,8 @@ export function ContactsFilters({
   initialQuiet,
   initialTag,
   initialLetter,
+  initialSchool = "",
+  schoolOptions = { mine: [], network: [] },
   importId,
   children,
 }: {
@@ -68,6 +72,10 @@ export function ContactsFilters({
    */
   initialTag?: string;
   initialLetter?: string;
+  /** `?school=`: a school name, or `SAME_SCHOOL_AS_ME`. */
+  initialSchool?: string;
+  /** The user's own schools and the network's, most common first (`listContactSchoolOptions`). */
+  schoolOptions?: { mine: string[]; network: string[] };
   /**
    * The active `/contacts?importId=…` scope, if any. Not a control this component offers —
    * only the page's banner sets or clears it — but every filter change here rebuilds the URL
@@ -86,6 +94,7 @@ export function ContactsFilters({
   const [followUp, setFollowUp] = useState(initialFollowUp || "");
   const [sort, setSort] = useState(initialSort || "name");
   const [quiet, setQuiet] = useState(initialQuiet || "");
+  const [school, setSchool] = useState(initialSchool);
   const debounceRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -102,12 +111,14 @@ export function ContactsFilters({
     const fu = next?.followUp ?? followUp;
     const so = next?.sort ?? sort;
     const qt = next?.quiet ?? quiet;
+    const sc = (next?.school ?? school).trim();
     if (qq) params.set("q", qq);
     if (cc) params.set("company", cc);
     if (ms && ms !== "any") params.set("minScore", ms);
     if (fu === "due") params.set("followUp", "due");
     if (so && so !== "name") params.set("sort", so);
     if (qt) params.set("quiet", qt);
+    if (sc) params.set("school", sc);
     // Neither is editable from this component, but both live in the same URL. Rebuilding
     // the query string from scratch without them meant that touching any filter here threw
     // away the active tag and the A-Z letter — the list jumped back to "everyone, from A"
@@ -117,8 +128,10 @@ export function ContactsFilters({
     if (importId) params.set("importId", importId);
     const qs = params.toString();
     const href = qs ? `/contacts?${qs}` : "/contacts";
+    // A new query string is a fresh server render already, and a revisited one served from
+    // the router cache is re-read by the page's `FreshOnArrival`. The `router.refresh()` that
+    // used to follow rendered the whole page a second time per search (LATENCY_PLAN CLI-3).
     router.replace(href);
-    router.refresh();
   }
 
   function scheduleSearch(value: string) {
@@ -142,6 +155,12 @@ export function ContactsFilters({
   const quietLabel =
     QUIET_OPTIONS.find((o) => String(o.value) === quiet)?.label ?? "";
   const companyActive = Boolean(company.trim());
+  const schoolActive = Boolean(school.trim());
+  const schoolLabel = school === SAME_SCHOOL_AS_ME ? "Same school as me" : school;
+  const pickSchool = (next: string) => {
+    setSchool(next);
+    apply({ school: next });
+  };
   const closenessActive = minScore !== "any";
 
   return (
@@ -280,6 +299,37 @@ export function ContactsFilters({
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
+        {(schoolActive || schoolOptions.mine.length > 0 || schoolOptions.network.length > 0) && (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  type="button"
+                  variant={schoolActive ? "default" : "outline"}
+                  size="sm"
+                  className="h-8 max-w-56 gap-1.5"
+                />
+              }
+            >
+              <GraduationCap className="size-3.5" aria-hidden />
+              <span className="truncate">{schoolActive ? schoolLabel : "School"}</span>
+              <ChevronDown className="size-3.5 opacity-60" aria-hidden />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="max-h-80 overflow-y-auto">
+              <DropdownMenuItem onClick={() => pickSchool("")}>Any school</DropdownMenuItem>
+              {schoolOptions.mine.length > 0 && (
+                <DropdownMenuItem onClick={() => pickSchool(SAME_SCHOOL_AS_ME)}>
+                  Same school as me
+                </DropdownMenuItem>
+              )}
+              {schoolOptions.network.map((name) => (
+                <DropdownMenuItem key={name} onClick={() => pickSchool(name)}>
+                  {name}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-border/70 bg-card">
@@ -326,7 +376,7 @@ function SearchPill({
     <div
       className={cn(
         "flex h-11 w-full items-center gap-1 rounded-full border border-border/70 bg-card pl-3.5 pr-1.5 shadow-sm",
-        "focus-within:border-primary/40 focus-within:ring-[3px] focus-within:ring-primary/15"
+        "focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
       )}
     >
       <input
@@ -369,16 +419,20 @@ function SearchPill({
           )}
         >
           <Building2 className="size-3.5" />
-          <span className="hidden max-w-[5rem] truncate sm:inline">
+          <span className="max-w-[5rem] truncate max-sm:sr-only">
             {companyActive ? company : "Company"}
           </span>
           <ChevronDown className="size-3 opacity-60" />
         </PopoverTrigger>
         <PopoverContent align="end" className="w-64 space-y-2 p-3">
-          <p className="text-xs font-medium text-muted-foreground">
+          <label
+            htmlFor="contacts-company-filter"
+            className="block text-xs font-medium text-muted-foreground"
+          >
             Exact company
-          </p>
+          </label>
           <Input
+            id="contacts-company-filter"
             autoFocus
             placeholder="e.g. Acme"
             value={companyDraft}

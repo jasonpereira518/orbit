@@ -65,8 +65,11 @@ import { listPendingRecommendations, loadModelTallies } from "../src/lib/radar/s
 import { scaleContactRows } from "./lib/scale-fixture";
 
 const USER = "smoke-radar-run-user";
-const NOW = new Date("2026-10-01T12:00:00Z");
 const DAY = 86_400_000;
+// The current hour, not a fixed date: the readers under test (the bell, the briefing) filter on
+// the database's real `now()` against each recommendation's expiry, so a pinned date made
+// this smoke fail every run once the calendar passed that expiry (Oct 14 2026).
+const NOW = new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000);
 const ago = (days: number) => new Date(NOW.getTime() - days * DAY);
 const ahead = (days: number) => new Date(NOW.getTime() + days * DAY);
 
@@ -407,6 +410,11 @@ run(async () => {
 
   console.log("\nthe rest of the app sees the same list");
   {
+    // The bell and the briefing filter on the real clock (`now()`), but these cards were made on
+    // the fixed NOW clock, so they lapse a week after it. Re-anchor their expiry to today.
+    await db.update(recommendations)
+      .set({ expiresAt: new Date(Date.now() + 7 * DAY) })
+      .where(and(eq(recommendations.userId, USER), eq(recommendations.status, "pending")));
     const live = await pending();
     check("the rest of the app points into Radar exactly when it is released",
       (await isSurfaceLive(USER, "page.radar")) === !DEFAULT_COMING_SOON_KEYS.has("page.radar"));

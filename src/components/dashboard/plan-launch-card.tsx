@@ -60,11 +60,12 @@ export function PlanLaunchCard({ plan }: { plan: Plan }) {
         <div className="relative flex flex-wrap items-center justify-between gap-5">
           <div className="min-w-0 max-w-md space-y-2">
             <span
-              className={`relative inline-flex items-center gap-1.5 overflow-hidden rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide shadow-sm bg-gradient-to-b from-tier-sheen-from to-tier-sheen-to text-tier-sheen-ink`}
+              className={`relative inline-flex items-center gap-1.5 overflow-hidden rounded-full px-2.5 py-1 text-2xs font-semibold uppercase tracking-wide shadow-sm bg-gradient-to-b from-tier-sheen-from to-tier-sheen-to text-tier-sheen-ink`}
             >
+              {/* Two sweeps, then it rests off-frame: an endless loop needs a pause control (SC 2.2.2). */}
               <span
                 aria-hidden="true"
-                className="plan-badge-glint pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/70 to-transparent"
+                className="plan-badge-glint pointer-events-none absolute [animation-iteration-count:2]! [animation-fill-mode:forwards]! inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/70 to-transparent"
               />
               <tier.Icon className="relative size-3" aria-hidden="true" />
               <span className="relative">{name}</span>
@@ -104,7 +105,7 @@ export function PlanLaunchCard({ plan }: { plan: Plan }) {
 
       <div className="relative flex flex-wrap items-center justify-between gap-5">
         <div className="min-w-0 max-w-md space-y-2">
-          <span className="inline-flex items-center gap-2 rounded-full border border-night-free/30 bg-night-free/10 px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-night-free">
+          <span className="inline-flex items-center gap-2 rounded-full border border-night-free/30 bg-night-free/10 px-2.5 py-1 text-2xs font-medium uppercase tracking-wide text-night-free">
             <Rocket className="size-3" aria-hidden="true" />
             Free plan
           </span>

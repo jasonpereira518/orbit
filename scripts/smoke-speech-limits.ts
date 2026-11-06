@@ -2,7 +2,7 @@
  * Plan caps and threshold maths for Deepgram minutes. Pure: no DB, no clock beyond what is
  * passed in. Run: npx tsx scripts/smoke-speech-limits.ts
  */
-import { SPEECH_LIMITS, limitFor, monthWindow, quotaState } from "../src/lib/speech-limits";
+import { SPEECH_LIMITS, limitFor, meetingSecondsAllowed, monthWindow, quotaState } from "../src/lib/speech-limits";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -12,13 +12,21 @@ function check(label: string, ok: boolean, detail?: string) {
 
 console.log("\nlimits");
 check("free gets no meeting minutes", limitFor("meeting", "free") === 0);
-check("Pro gets 5 meeting hours", limitFor("meeting", "orbit") === 18_000);
-check("Lifetime gets 10 meeting hours", limitFor("meeting", "lifetime") === 36_000);
-check("free short-form is 60 minutes", limitFor("shortform", "free") === 3_600);
-check("Pro short-form is 5 hours", limitFor("shortform", "orbit") === 18_000);
-check("Max and Lifetime short-form is 10 hours", limitFor("shortform", "max") === 36_000 && limitFor("shortform", "lifetime") === 36_000);
-check("Max gets 10 meeting hours", limitFor("meeting", "max") === 36_000);
+check("Pro gets 8 meeting hours", limitFor("meeting", "orbit") === 28_800);
+check("Lifetime gets 15 meeting hours", limitFor("meeting", "lifetime") === 54_000);
+check("free short-form is 90 minutes", limitFor("shortform", "free") === 5_400);
+check("Pro short-form is 8 hours", limitFor("shortform", "orbit") === 28_800);
+check("Max and Lifetime short-form is 15 hours", limitFor("shortform", "max") === 54_000 && limitFor("shortform", "lifetime") === 54_000);
+check("Max gets 15 meeting hours", limitFor("meeting", "max") === 54_000);
 check("every plan is covered", Object.keys(SPEECH_LIMITS.meeting).length === 4 && Object.keys(SPEECH_LIMITS.shortform).length === 4);
+
+console.log("\nlenient meetings");
+check("a new meeting gets only what the month has left", meetingSecondsAllowed({ remaining: 600, inProgress: false, elapsedMs: 0 }) === 600);
+check("…and nothing once the month is spent", meetingSecondsAllowed({ remaining: 0, inProgress: false, elapsedMs: 0 }) === 0);
+check("a meeting already recording may reach its three-hour limit past the cap",
+  meetingSecondsAllowed({ remaining: 0, inProgress: true, elapsedMs: 60 * 60_000 }) === 2 * 3600);
+check("…and never less than the month has left", meetingSecondsAllowed({ remaining: 5 * 3600, inProgress: true, elapsedMs: 60 * 60_000 }) === 5 * 3600);
+check("…and nothing past the three hours", meetingSecondsAllowed({ remaining: 0, inProgress: true, elapsedMs: 4 * 3600_000 }) === 0);
 
 console.log("\nquotaState");
 {

@@ -11,8 +11,11 @@
  */
 import "./smoke/_env";
 
-import { SCHEMA_VERSION } from "../src/db";
+import { inArray } from "drizzle-orm";
+import { SCHEMA_VERSION, getDb } from "../src/db";
+import { cronRuns } from "../src/db/schema";
 import { checkHealth } from "../src/lib/health";
+import { getCronHealth } from "../src/lib/admin-system";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -75,6 +78,52 @@ async function main() {
   check("deep view reports the role's statement_timeout",
     typeof deep.config?.statementTimeout === "string" || deep.config?.statementTimeout === null,
     JSON.stringify(deep.config?.statementTimeout));
+
+  // A dead scheduler: the nightly job's 25 h window is far too slow to notice that the
+  // ten-minute ops sweep stopped, so the deep view also degrades when the sweep is quiet.
+  console.log("\nDeep probe, scheduler liveness...");
+  const db = await getDb();
+  const JOBS = ["imports.process-stalled", "ops.sweep"];
+  const seed = async (job: string, minutesAgo: number) => {
+    const at = new Date(Date.now() - minutesAgo * 60_000);
+    await db.insert(cronRuns).values({ job, trigger: "manual", status: "ok", startedAt: at, finishedAt: at });
+  };
+  try {
+    await db.delete(cronRuns).where(inArray(cronRuns.job, JOBS));
+    await seed("imports.process-stalled", 5);
+    const neverSwept = await checkHealth({ deep: true });
+    check("no sweep ever recorded → degraded, still HTTP 200",
+      neverSwept.status === "degraded" && neverSwept.httpStatus === 200, JSON.stringify(neverSwept.cron));
+
+    await seed("ops.sweep", 45);
+    const quiet = await checkHealth({ deep: true });
+    check("a sweep last seen 45 min ago → degraded, still HTTP 200",
+      quiet.status === "degraded" && quiet.httpStatus === 200 && quiet.cron?.processStalled.missed === false,
+      JSON.stringify(quiet.cron));
+
+    await seed("ops.sweep", 5);
+    const live = await checkHealth({ deep: true });
+    // Control: with a live sweep the scheduler adds nothing. Other causes (missing config,
+    // open alerts, issues left behind by earlier smokes on the shared database) can still
+    // degrade the view, so only assert "ok" when none of them is present.
+    const otherCause =
+      (live.config?.missingRequired.length ?? 0) > 0 ||
+      (live.alerts ?? []).some((a) => a.severity !== "info") ||
+      Object.values(live.issues ?? {}).some((n) => n > 0);
+    check("a sweep seen 5 min ago → the scheduler does not degrade the view",
+      otherCause || live.status === "ok", JSON.stringify(live));
+
+    // A sweep read that times out is unknown, not quiet: it must not degrade the view by itself.
+    // Compared with the live run above, so any other cause cancels out.
+    const unknown = await checkHealth({
+      deep: true,
+      cronHealth: (job, now) => (job === "ops.sweep" ? Promise.reject(new Error("timed out")) : getCronHealth(job, now)),
+    });
+    check("a timed-out sweep read is unknown → it does not degrade the view",
+      unknown.cron?.sweep.state === null && unknown.status === live.status, JSON.stringify([unknown.status, live.status]));
+  } finally {
+    await db.delete(cronRuns).where(inArray(cronRuns.job, JOBS));
+  }
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

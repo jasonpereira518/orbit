@@ -76,7 +76,7 @@ for (const [file, expected] of Object.entries(FILES)) {
 for (const [file, gap] of CLUSTER_GAPS) {
   check(`${file} widens its cluster with ${gap}`, readFileSync(file, "utf8").includes(gap));
 }
-check("globals.css defines the utility", /@utility tap-target\b/.test(readFileSync("src/app/globals.css", "utf8")));
+check("theme.css defines the utility", /@utility tap-target\b/.test(readFileSync("src/app/theme.css", "utf8")));
 
 if (failures) {
   console.error(`\nsmoke-tap-targets: ${failures} check(s) failed`);

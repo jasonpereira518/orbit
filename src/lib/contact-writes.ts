@@ -24,6 +24,7 @@ import {
 } from "@/lib/memory-chunks";
 import { interactionTypeLabel } from "@/lib/interaction-types";
 import { mergeFactList } from "@/lib/fact-lists";
+import type { NameGuess } from "@/lib/contact-name-guess";
 import {
   contactIdentities,
   contactTags,
@@ -103,6 +104,12 @@ export type ContactInput = {
   firstName?: string;
   lastName?: string;
   preferredName?: string;
+  /**
+   * Only from the name sweep and the "?" review (`@/lib/contact-name-guess`). A `fullName`
+   * change written without it settles any guess already there: a person or a better source
+   * has named them.
+   */
+  nameGuess?: NameGuess | null;
   company?: string;
   title?: string;
   location?: string;
@@ -116,6 +123,11 @@ export type ContactInput = {
   blueskyHandle?: string | null;
   mastodonAcct?: string | null;
   profileImageUrl?: string | null;
+  /**
+   * Where `profileImageUrl` came from (`ProfileImageSource`). Only written together with a
+   * photo: a photo written without one is recorded as unknown.
+   */
+  profileImageSource?: string | null;
   relationshipScore?: number;
   /**
    * Set this ONLY from a flow where the user themselves supplied the rating
@@ -363,6 +375,7 @@ function contactInsertValues(
     blueskyHandle: normalizeBlueskyHandle(input.blueskyHandle),
     mastodonAcct: normalizeMastodonAcct(input.mastodonAcct),
     profileImageUrl: input.profileImageUrl ?? null,
+    profileImageSource: input.profileImageUrl ? (input.profileImageSource ?? null) : null,
     relationshipScore: input.relationshipScore ?? 2,
     // Deliberately NOT `input.statedCloseness ?? input.relationshipScore` —
     // that would resurrect the exact leak this field exists to prevent, since
@@ -881,6 +894,7 @@ export async function bulkMergeContactsForUser(
       ${v.firstName ?? null}::text,
       ${v.lastName ?? null}::text,
       ${v.profileImageUrl ?? null}::text,
+      ${v.profileImageUrl ? (v.profileImageSource ?? null) : null}::text,
       ${v.source ?? null}::text,
       ${v.howMet ?? null}::text,
       ${normalizeMetContext(v.metContext)}::text,
@@ -901,6 +915,8 @@ export async function bulkMergeContactsForUser(
         first_name        = COALESCE(v.first_name, c.first_name),
         last_name         = COALESCE(v.last_name, c.last_name),
         profile_image_url = COALESCE(v.profile_image_url, c.profile_image_url),
+        profile_image_source = CASE WHEN v.profile_image_url IS NULL THEN c.profile_image_source
+                                    ELSE v.profile_image_source END,
         source            = COALESCE(v.source, c.source),
         how_met           = COALESCE(v.how_met, c.how_met),
         met_context       = COALESCE(v.met_context, c.met_context),
@@ -913,7 +929,7 @@ export async function bulkMergeContactsForUser(
         updated_at        = ${now}
     FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(
       id, company, company_id, title, email, phone, linkedin_url,
-      first_name, last_name, profile_image_url, source, how_met, met_context, date_met,
+      first_name, last_name, profile_image_url, profile_image_source, source, how_met, met_context, date_met,
       first_interaction_at, last_interaction_at
     )
     WHERE c.id = v.id AND c.user_id = ${userId}
@@ -992,6 +1008,15 @@ export async function updateContactForUser(
       ...(input.preferredName !== undefined
         ? { preferredName: input.preferredName }
         : {}),
+      ...(input.nameGuess !== undefined
+        ? { nameGuess: input.nameGuess }
+        : input.fullName !== undefined
+          ? {
+              // Old values on the right of SET: only a name that actually changed settles it.
+              nameGuess: sql`CASE WHEN ${contacts.nameGuess} IS NOT NULL AND ${contacts.fullName} IS DISTINCT FROM ${input.fullName}
+                THEN ${contacts.nameGuess} || '{"weak": false}'::jsonb ELSE ${contacts.nameGuess} END`,
+            }
+          : {}),
       ...(companyPatch
         ? { company: companyPatch.company, companyId: companyPatch.companyId }
         : {}),
@@ -1009,7 +1034,10 @@ export async function updateContactForUser(
       ...(input.blueskyHandle !== undefined ? { blueskyHandle: normalizeBlueskyHandle(input.blueskyHandle) } : {}),
       ...(input.mastodonAcct !== undefined ? { mastodonAcct: normalizeMastodonAcct(input.mastodonAcct) } : {}),
       ...(input.profileImageUrl !== undefined
-        ? { profileImageUrl: input.profileImageUrl }
+        ? {
+            profileImageUrl: input.profileImageUrl,
+            profileImageSource: input.profileImageUrl ? (input.profileImageSource ?? null) : null,
+          }
         : {}),
       // A user moving this slider (contact-form.tsx, or the AI-capture review
       // step) is the strongest closeness signal the app ever gets, and it is
@@ -1078,7 +1106,10 @@ export async function updateContactForUser(
     await syncIdentitiesForContact(userId, id, contact, input.source);
   }
 
-  if (input.tagNames) {
+  // Only once the update matched the caller's own row. The UPDATE above is user-scoped, but
+  // `syncTags` deletes and attaches by contact id alone: run for another account's id, it
+  // stripped that contact's tags and attached the caller's (scripts/smoke-contact-tags-ownership.ts).
+  if (contact && input.tagNames) {
     await syncTags(userId, id, input.tagNames);
   }
 

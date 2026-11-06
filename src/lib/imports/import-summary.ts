@@ -37,6 +37,11 @@ export type SummarisableImport = {
     meetingsLogged?: number;
     docsRead?: number;
     flaggedCommitments?: unknown[];
+    filesSaved?: number;
+    filesTooLarge?: number;
+    filesPrivate?: number;
+    targetsAdded?: number;
+    backgroundAdded?: number;
   } | null;
 };
 
@@ -65,6 +70,16 @@ export function summarizeImport(item: SummarisableImport): ImportChip[] {
 
   if (item.importType === "drive_docs") {
     add(stats.docsRead, (n) => `${n} doc${n === 1 ? "" : "s"} read`, "neutral");
+  }
+
+  if (item.importType === "linkedin_export") {
+    add(stats.filesSaved, (n) => `${n} file${n === 1 ? "" : "s"} kept`, "neutral");
+    add(stats.interactionsLogged, (n) => `${n} note${n === 1 ? "" : "s"} on people`, "good");
+    add(stats.targetsAdded, (n) => `${n} target compan${n === 1 ? "y" : "ies"}`, "good");
+    add(stats.backgroundAdded, (n) => `${n} background entr${n === 1 ? "y" : "ies"}`, "neutral");
+    add(stats.filesPrivate, (n) => `${n} private left on your device`, "neutral");
+    add(stats.filesTooLarge, (n) => `${n} too big to keep`, "warn");
+    return chips;
   }
 
   if (createsContacts(item.importType)) {

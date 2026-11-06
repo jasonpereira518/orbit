@@ -67,6 +67,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Field as FormField } from "@/components/ui/field";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -1389,7 +1390,7 @@ export function BulkNotesPanel({
                       </span>
                     ) : null}
                   </span>
-                  <Badge variant="secondary" className="text-[10px]">
+                  <Badge variant="secondary" className="text-3xs">
                     {item.mergeContactId ? "Update" : "New"}
                   </Badge>
                 </li>
@@ -1510,17 +1511,17 @@ function PersonReviewCard({
         </p>
         <div className="flex flex-wrap gap-1.5">
           {item.parsed.linkedin_url && (
-            <Badge variant="secondary" className="text-[10px]">
+            <Badge variant="secondary" className="text-3xs">
               From LinkedIn
             </Badge>
           )}
           {item.sharedNoteTexts.length > 0 && (
-            <Badge variant="secondary" className="text-[10px]">
+            <Badge variant="secondary" className="text-3xs">
               Includes shared note
             </Badge>
           )}
           {item.suggestedMergeId && (
-            <Badge variant="secondary" className="text-[10px]">
+            <Badge variant="secondary" className="text-3xs">
               Likely existing
             </Badge>
           )}
@@ -1535,24 +1536,28 @@ function PersonReviewCard({
       >
         <Field label="Name" lowConfidence={lowConfidence.has("name")}>
           <Input
+            autoComplete="off"
             value={item.parsed.name || ""}
             onChange={(e) => updateParsed({ name: e.target.value })}
           />
         </Field>
         <Field label="Company" lowConfidence={lowConfidence.has("company")}>
           <Input
+            autoComplete="off"
             value={item.parsed.company || ""}
             onChange={(e) => updateParsed({ company: e.target.value })}
           />
         </Field>
         <Field label="Role" lowConfidence={lowConfidence.has("role")}>
           <Input
+            autoComplete="off"
             value={item.parsed.role || ""}
             onChange={(e) => updateParsed({ role: e.target.value })}
           />
         </Field>
         <Field label="Met at" lowConfidence={lowConfidence.has("met_at")}>
           <Input
+            autoComplete="off"
             value={item.parsed.met_at || ""}
             onChange={(e) => updateParsed({ met_at: e.target.value })}
           />
@@ -1611,7 +1616,7 @@ function PersonReviewCard({
       {(item.parsed.topics || []).length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {item.parsed.topics.map((t) => (
-            <Badge key={t} variant="secondary" className="text-[10px]">
+            <Badge key={t} variant="secondary" className="text-3xs">
               {t}
             </Badge>
           ))}
@@ -1628,8 +1633,13 @@ function PersonReviewCard({
             &apos;s timeline
           </p>
         ) : (
-          <>
-            <p className="text-xs font-medium">Save as</p>
+          // One named group, so each choice is announced as part of "Save as".
+          <div
+            role="radiogroup"
+            aria-labelledby={`save-as-${item.key}`}
+            className="space-y-1.5"
+          >
+            <p id={`save-as-${item.key}`} className="text-xs font-medium">Save as</p>
             <label className="flex items-center gap-2 text-xs">
               <input
                 type="radio"
@@ -1674,7 +1684,7 @@ function PersonReviewCard({
                 </span>
               </label>
             ))}
-          </>
+          </div>
         )}
       </div>
 
@@ -1728,6 +1738,10 @@ function PersonReviewCard({
   );
 }
 
+/**
+ * A labelled review field. One the parser was unsure of is outlined in amber and says so in
+ * words too, so the warning doesn't rest on color (or a bare asterisk) alone.
+ */
 function Field({
   label,
   children,
@@ -1738,16 +1752,15 @@ function Field({
   lowConfidence?: boolean;
 }) {
   return (
-    <div className={cn("space-y-1", lowConfidence && "rounded-lg")}>
-      <Label
-        className={cn(
-          "text-xs",
-          lowConfidence && "text-amber-700 dark:text-warning"
-        )}
-      >
-        {label}
-        {lowConfidence ? " *" : ""}
-      </Label>
+    <FormField
+      label={label}
+      description={lowConfidence ? "Check this — the notes weren’t clear" : undefined}
+      className="space-y-1"
+      labelClassName={cn(
+        "text-xs",
+        lowConfidence && "text-amber-700 dark:text-warning"
+      )}
+    >
       <div
         className={cn(
           lowConfidence &&
@@ -1756,6 +1769,6 @@ function Field({
       >
         {children}
       </div>
-    </div>
+    </FormField>
   );
 }

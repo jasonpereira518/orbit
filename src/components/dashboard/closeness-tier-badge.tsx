@@ -9,7 +9,8 @@ const TIER_LABELS = {
 const TIER_STYLES = {
   inner: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
   mid: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
-  outer: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+  // amber-800, not 700: 700 on this tint measured 4.48:1, just under AA.
+  outer: "bg-amber-500/15 text-amber-800 dark:text-amber-300",
 } as const;
 
 const TIER_DOT = {
@@ -43,7 +44,7 @@ export function ClosenessTierBadge({
   return (
     <span
       className={cn(
-        "inline-flex shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+        "inline-flex shrink-0 rounded-full px-2 py-0.5 text-3xs font-medium uppercase tracking-wide",
         TIER_STYLES[tier],
         className
       )}
