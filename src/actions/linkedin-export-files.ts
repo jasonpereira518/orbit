@@ -76,7 +76,7 @@ export async function startLinkedInExport(
         updatedAt: new Date(),
       })
       .where(and(eq(imports.id, importId), eq(imports.userId, userId)));
-    revalidatePath("/imports");
+    revalidatePath("/capture");
     return { importId, totalRows: 0 };
   } catch (err) {
     return failure(err, TRY_AGAIN, "linkedin-export-files.start");
@@ -95,7 +95,7 @@ export async function deleteLinkedInExportFiles(importId: string): Promise<{ ok:
   if (!isImportId(importId)) return refusal("Couldn’t delete those files — try again");
   try {
     await deleteExportFiles(userId, importId);
-    revalidatePath("/imports");
+    revalidatePath("/capture");
     return { ok: true };
   } catch (err) {
     return failure(err, "Couldn’t delete those files — try again", "linkedin-export-files.delete");

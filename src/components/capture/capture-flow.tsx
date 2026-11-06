@@ -92,6 +92,7 @@ export function CaptureFlow({
   initialMeeting = null,
   cloudNotes = null,
   openCloudReview = false,
+  showImports = false,
   onSaved,
   variant = "capture",
 }: {
@@ -126,6 +127,8 @@ export function CaptureFlow({
   cloudNotes?: CloudNotesState | null;
   /** Open the "these look like meeting notes" dialog on arrival (the toast's and the bell's Review). */
   openCloudReview?: boolean;
+  /** Show the Imports tab (the `page.imports` surface is live). Choosing it navigates to `/capture?mode=imports`. */
+  showImports?: boolean;
   /**
    * Embedded in onboarding: notes only (no mode tabs, no ignored-people list), and a save
    * hands back to the caller instead of showing the saved screen. The store is cleared
@@ -543,7 +546,13 @@ export function CaptureFlow({
 
       {phase === "input" && !onSaved && !meetingsHost && (
         <div className="space-y-2">
-          <CaptureTabs mode={mode} onChange={setMode} disabled={inputLocked} showCloud={Boolean(cloudNotes)} />
+          <CaptureTabs
+            mode={mode}
+            onChange={(next) => (next === "imports" ? router.push("/capture?mode=imports") : setMode(next))}
+            disabled={inputLocked}
+            showCloud={Boolean(cloudNotes)}
+            showImports={showImports}
+          />
           {blurb && <p className="text-sm text-muted-foreground">{blurb}</p>}
         </div>
       )}
@@ -680,6 +689,11 @@ export function CaptureFlow({
         {phase === "review" && job && reviewIndex >= 0 && (
           <motion.div key="review" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: DUR.base }} className="space-y-4">
             {meetingHeader}
+            {job.result?.skippedNonPeople?.length ? (
+              <p className="text-xs text-muted-foreground">
+                Skipped {job.result.skippedNonPeople.join(", ")}: {job.result.skippedNonPeople.length === 1 ? "reads" : "read"} as a company or group, not a person.
+              </p>
+            ) : null}
             <PersonDeck
               items={items}
               decisions={job.decisions}

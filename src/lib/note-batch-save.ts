@@ -38,6 +38,29 @@ import {
 import type { ExtractedOpportunity } from "@/lib/opportunity-extract";
 import { syncMemoryChunkMentions } from "@/lib/memory-chunks";
 import { enrichmentKeyFacts, takeawaysToSummary } from "@/lib/capture/person-enrichment";
+import { identityKeysFor } from "@/lib/duplicates";
+import { findIdentityOwners } from "@/lib/contact-identity";
+import { isHandle } from "@/lib/contact-name-guess";
+
+/**
+ * Whether a note's name for someone should replace the one on file. Only when it says more:
+ * "Sarah" must never shrink "Sarah Chen", and "Mike Torres" must not replace "Michael
+ * Torres". A handle or an empty name on file is always replaced.
+ */
+export function nameUpgrades(current: string | null | undefined, incoming: string | null | undefined): boolean {
+  const next = incoming?.trim();
+  if (!next) return false;
+  const now = current?.trim();
+  if (!now || isHandle(now)) return true;
+  return next.split(/\s+/).length > now.split(/\s+/).length;
+}
+
+/** "Ada King Lovelace" → first "Ada", last "Lovelace". One word is a first name only. */
+function splitName(name: string): { firstName?: string; lastName?: string } {
+  const parts = name.trim().split(/\s+/);
+  if (!parts[0]) return {};
+  return parts.length > 1 ? { firstName: parts[0], lastName: parts[parts.length - 1] } : { firstName: parts[0] };
+}
 import { getInboxListId } from "@/lib/reminder-lists";
 import { inferReminderActionKind } from "@/lib/reminder-action-kind";
 import { buildSuggestionItemHash, isoDay, isoDayToLocalNoon } from "@/lib/suggested-reminder-utils";
@@ -48,6 +71,11 @@ import { trackFollowUpSet } from "@/lib/reminder-writes";
 
 export type NoteBatchParticipantInput = {
   notes: string;
+  /**
+   * The cached web brief this card was filled from (`capture/web-lookup.ts`). Not read
+   * here: the capture runner attaches the brief's work history after the save.
+   */
+  webResearchKey?: string | null;
   /**
    * The note this person came from, when the batch folds several (a combined upload). Keys
    * their interaction, so the same contact in two notes gets both conversations; and a
@@ -300,6 +328,16 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
           : {}),
         ...(followUpDate ? { nextFollowUpAt: followUpDate.toISOString() } : {}),
       };
+      // A card headed for "new" whose email, LinkedIn, phone or X handle already belongs to
+      // one contact is that contact: update them rather than minting a duplicate that the
+      // identity claim would then leave orphaned.
+      if (!contactId) {
+        const keys = identityKeysFor(fields);
+        if (keys.length) {
+          const owners = new Set((await findIdentityOwners(userId, keys)).map((o) => o.contactId));
+          if (owners.size === 1) contactId = [...owners][0];
+        }
+      }
       if (contactId) {
         // Merge: never overwrite contacts.notes — the new material lives on the timeline.
         // Tags are ADDED to the contact's own, never a replacement list: `updateContactForUser`
@@ -311,6 +349,7 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
         // list outright would delete everything earlier notes taught Orbit about them.
         const [current] = await db
           .select({
+            fullName: contacts.fullName,
             phone: contacts.phone,
             xHandle: contacts.xHandle,
             website: contacts.website,
@@ -335,7 +374,7 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
           userId,
           contactId,
           {
-            fullName: parsed.name || undefined,
+            ...(nameUpgrades(current?.fullName, parsed.name) ? { fullName: parsed.name! } : {}),
             ...rest,
             // updateContactForUser mirrors this into statedCloseness.
             ...(p.closenessChosen ? { relationshipScore } : {}),
@@ -350,7 +389,14 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
         if (!parsed.name) throw new Error("A name is required to create a contact");
         const row = await createContactForUser(
           userId,
-          { fullName: parsed.name, ...fields, source: "ai_capture", notes: p.notes },
+          {
+            fullName: parsed.name,
+            ...splitName(parsed.name),
+            ...fields,
+            dateMet: p.interactionDate?.trim() || parsed.interaction_date?.trim() || input.anchorIso,
+            source: "ai_capture",
+            notes: p.notes,
+          },
           WRITE_OPTS
         );
         contactId = row.id;
